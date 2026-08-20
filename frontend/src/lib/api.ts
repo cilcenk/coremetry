@@ -1081,7 +1081,7 @@ export const api = {
   // v0.8.399 — thumbs up/down on an AI answer. exchangeId comes from
   // the chat SSE answer event; re-posting the same id replaces the
   // verdict (user changed their mind).
-  postAIFeedback: (body: { exchangeId: string; verdict: 1 | -1 }) =>
+  postAIFeedback: (body: { exchangeId: string; verdict: 1 | -1; comment?: string }) =>
     request<{ ok: boolean }>(`/api/ai/feedback`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

@@ -1739,6 +1739,10 @@ export interface NegativeFeedbackCall {
   userEmail?: string;
   prompt: string;
   response?: string;
+  // v0.9.1193 (Faz 5.1) — operatörün 👎'ye eklediği neden. Madenciliğin
+  // asıl sinyali: prompt neyin sorulduğunu, yorum neyin EKSİK olduğunu
+  // söyler.
+  comment?: string;
 }
 
 export interface AIRate {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -31,12 +32,39 @@ import (
 type aiFeedbackRequest struct {
 	ExchangeID string `json:"exchangeId"`
 	Verdict    int8   `json:"verdict"` // 1 | -1
+	// Comment (v0.9.1193, Faz 5.1) — 👎'nin serbest metni. POINTER ve bu
+	// tel sözleşmesinin kendisi: alan HİÇ yoksa (eski FE, ChatBubble'ın
+	// düz oy tıkları) saklanan yorum KORUNUR; boş dize gönderilirse
+	// TEMİZLENİR. İkisini ayırt etmeden, herhangi bir yüzeyden atılan bir
+	// oy flip'i operatörün yazdığı metni sessizce silerdi
+	// (ReplacingMergeTree tam-satır replace).
+	Comment *string `json:"comment"`
 }
 
 // aiFeedbackMaxIDLen bounds the exchangeId a client can post. The
 // server mints 32-char hex ids (newRandID(16)); 64 leaves headroom
 // without letting a hostile client stuff a blob into the dedup key.
 const aiFeedbackMaxIDLen = 64
+
+// aiFeedbackMaxCommentRunes — yorum tavanı, RUNE cinsinden (Türkçe metin
+// bayt tavanıyla karakter ortasından kesilirdi). 2000: birkaç paragraf
+// yeter; ai_feedback bir madencilik tablosu, günlük tutma yeri değil.
+const aiFeedbackMaxCommentRunes = 2000
+
+// normalizeFeedbackComment — SAF gövde-yorum kararı (tablo-testli).
+// nil → (preserve=true): saklanan taşınacak. Dolu → kırpılmış değer;
+// tavan aşımı hata (sessiz kesme, operatörün yazdığını "kaydettim" deyip
+// yarısını atmak olurdu).
+func normalizeFeedbackComment(c *string) (val string, preserve bool, err error) {
+	if c == nil {
+		return "", true, nil
+	}
+	v := strings.TrimSpace(*c)
+	if utf8.RuneCountInString(v) > aiFeedbackMaxCommentRunes {
+		return "", false, fmt.Errorf("comment en fazla %d karakter olabilir", aiFeedbackMaxCommentRunes)
+	}
+	return v, false, nil
+}
 
 // validateAIFeedback is the pure request gate — split out so the
 // v0.8.399 regression test can drive it table-style without HTTP.
@@ -69,6 +97,19 @@ func (s *Server) postAIFeedback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	comment, preserve, cerr := normalizeFeedbackComment(req.Comment)
+	if cerr != nil {
+		http.Error(w, cerr.Error(), http.StatusBadRequest)
+		return
+	}
+	if preserve {
+		// Gövde yorum taşımıyor (düz oy tıkı): saklananı taşı — tam-satır
+		// replace yorumlu satırı yoksa yorumsuz sürümle ezerdi. Soft-fail:
+		// okuma düşerse yorum kaybı, oy POST'unu düşürmekten ucuz.
+		if stored, serr := s.store.AIFeedbackCommentByExchange(r.Context(), req.ExchangeID); serr == nil {
+			comment = stored
+		}
+	}
 	surface, err := s.store.AICallSurfaceByExchange(r.Context(), req.ExchangeID)
 	if err != nil {
 		writeErr(w, err)
@@ -82,6 +123,7 @@ func (s *Server) postAIFeedback(w http.ResponseWriter, r *http.Request) {
 		ExchangeID: req.ExchangeID,
 		Surface:    surface,
 		Verdict:    req.Verdict,
+		Comment:    comment,
 		UserEmail:  email,
 	}); err != nil {
 		writeErr(w, err)

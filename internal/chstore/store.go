@@ -1550,6 +1550,14 @@ func (s *Store) migrate(ctx context.Context) error {
 		ORDER BY exchange_id
 		TTL toDate(created_at) + INTERVAL 90 DAY`,
 
+		// v0.9.1193 (AI Faz 5.1) — 👎'nin YORUMU. "Faydasız" tek başına
+		// madencilik için zayıf sinyal: /ai negatif paneli hangi soru
+		// şekillerinin kötü cevap aldığını gösteriyor ama NEDEN kötü
+		// olduğunu operatör söyleyemiyordu. Tam-satır replace sözleşmesi
+		// gereği HER yazıcı bu kolonu taşır; flip'te korunması API
+		// katmanında (ai_feedback.go preserve yolu).
+		`ALTER TABLE ai_feedback ADD COLUMN IF NOT EXISTS comment String DEFAULT '' CODEC(ZSTD(3))`,
+
 		// rca_verdicts — kök-neden hakem kararının KALICI kaydı
 		// (v0.9.591). Öncesinde verdict istek başına üretilip
 		// yalnızca HTTP yanıtında yaşıyordu: ne kararın kendisi ne de

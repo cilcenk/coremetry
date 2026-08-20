@@ -59,3 +59,42 @@ func TestAIFeedbackAcceptsMintedExchangeIDs(t *testing.T) {
 		}
 	}
 }
+
+// ── v0.9.1193 (AI Faz 5.1) — 👎 yorumu ─────────────────────────────────
+//
+// Telin en kritik ayrımı nil ↔ boş dize: alan HİÇ yoksa saklanan yorum
+// KORUNUR (eski FE'ler ve düz oy tıkları comment göndermez; tam-satır
+// replace, korunmasaydı herhangi bir flip operatörün yazdığı metni
+// sessizce silerdi), boş dize açıkça TEMİZLER.
+func TestNormalizeFeedbackComment(t *testing.T) {
+	strp := func(s string) *string { return &s }
+
+	t.Run("nil → preserve", func(t *testing.T) {
+		val, preserve, err := normalizeFeedbackComment(nil)
+		if err != nil || !preserve || val != "" {
+			t.Fatalf("nil = (%q, %v, %v); beklenen ('', true, nil)", val, preserve, err)
+		}
+	})
+	t.Run("boş dize → açık temizleme, preserve DEĞİL", func(t *testing.T) {
+		val, preserve, err := normalizeFeedbackComment(strp(""))
+		if err != nil || preserve || val != "" {
+			t.Fatalf("'' = (%q, %v, %v); beklenen ('', false, nil)", val, preserve, err)
+		}
+	})
+	t.Run("boşluk kırpılır", func(t *testing.T) {
+		val, preserve, _ := normalizeFeedbackComment(strp("  cevap eksikti  "))
+		if preserve || val != "cevap eksikti" {
+			t.Fatalf("= (%q, %v)", val, preserve)
+		}
+	})
+	t.Run("tavan RUNE cinsinden — Türkçe metin bayt tavanında kırpılmaz", func(t *testing.T) {
+		// 2000 rune 'ş' ≈ 4000 bayt: bayt tavanı olsaydı reddedilirdi.
+		ok := strings.Repeat("ş", aiFeedbackMaxCommentRunes)
+		if _, _, err := normalizeFeedbackComment(strp(ok)); err != nil {
+			t.Fatalf("tam tavan geçmeliydi: %v", err)
+		}
+		if _, _, err := normalizeFeedbackComment(strp(ok + "x")); err == nil {
+			t.Fatal("tavan+1 reddedilmeliydi")
+		}
+	})
+}

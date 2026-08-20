@@ -501,12 +501,17 @@ function NegativeFeedbackPanel() {
         {rows && rows.length > 0 && (
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Yüzey</th><th>Soru</th><th>Ne zaman</th><th>Kim</th></tr></thead>
+              <thead><tr><th>Yüzey</th><th>Soru</th><th>Yorum</th><th>Ne zaman</th><th>Kim</th></tr></thead>
               <tbody>
                 {rows.map((r, i) => (
                   <tr key={i} title={r.response ? `Cevap: ${r.response.slice(0, 400)}` : undefined}>
                     <td><span className="badge b-gray">{r.surface || '—'}</span></td>
-                    <td className="mono" style={{ fontSize: 11.5, maxWidth: 480, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.prompt || '—'}</td>
+                    <td className="mono" style={{ fontSize: 11.5, maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.prompt || '—'}</td>
+                    {/* v0.9.1193 — 👎'nin NEDENİ. Kırpma title'da tamamlanır;
+                        yorum çoğu satırda boş kalacak (opsiyonel), '—' ile
+                        "yorum yazılmadı" dürüstçe görünür. */}
+                    <td style={{ fontSize: 11.5, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        title={r.comment || undefined}>{r.comment || '—'}</td>
                     <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(r.createdAt)}</td>
                     <td style={{ fontSize: 11, color: 'var(--text3)' }}>{r.userEmail || '—'}</td>
                   </tr>

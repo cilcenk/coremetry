@@ -8,10 +8,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cilcenk/coremetry/internal/ai/assemble"
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/mcptools"
 )
+
+// chatMessageTexts — geçmiş turlarının METİN yarısı (rune bütçesi için).
+//
+// assemble paketi transport tipini BİLMİYOR ve bilmemeli (saf bütçe
+// hesabı, şekil-bağımsız); dönüşüm burada, tipin evinde yaşıyor.
+func chatMessageTexts(msgs []copilot.ChatMessage) []string {
+	out := make([]string, len(msgs))
+	for i, m := range msgs {
+		out[i] = m.Text
+	}
+	return out
+}
 
 // In-app AI chatbot (v0.6.53). An agentic loop that lets the
 // operator ask free-form questions ("why is payment-service slow?",
@@ -97,10 +110,26 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"messages required"}`, http.StatusBadRequest)
 		return
 	}
-	// Trim to the most recent N so a long session can't blow the
-	// token budget; the tail carries the active question + context.
-	if len(req.Messages) > chatMaxMessages {
-		req.Messages = req.Messages[len(req.Messages)-chatMaxMessages:]
+	// v0.9.1187 (AI Faz 4.5, K3) — geçmiş bütçesi SAYIDAN RUNE'A geçti.
+	//
+	// Eskiden yalnız "son 40 tur" vardı ve 40 sayısı BOYUT hakkında hiçbir
+	// şey söylemiyor: operatörün yapıştırdığı bir log yığını ya da modelin
+	// uzun cevapları, 40 turu rahatça bir 2B modelin bağlamının üstüne
+	// çıkarıyordu. Belirtisi de sinsi olurdu — kırılma değil, taze kanıtın
+	// eski konuşma tarafından bağlamdan atılması.
+	//
+	// Sayı tavanı KALDI (kısa turlarda bile 40 tur küçük modelde odak
+	// kaybettirir); rune bütçesi onun üstüne bindi. Karar saf ve
+	// deterministik: assemble.ClampHistory.
+	keep, trimmed := assemble.ClampHistory(
+		assemble.RuneLens(chatMessageTexts(req.Messages)),
+		chatMaxMessages, assemble.HistoryMaxRunes)
+	req.Messages = req.Messages[len(req.Messages)-keep:]
+	// Kırpma modele SÖYLENİR. Sessiz kırpma, modelin olmayan bir konuşmayı
+	// hatırlıyormuş gibi davranmasına yol açar ("az önce dediğin gibi…") ve
+	// operatör bunu uydurma sanır — kırpmanın kendisinden pahalı bir hata.
+	if note := assemble.TrimNoteIfNeeded(trimmed); note != "" {
+		req.Messages = append([]copilot.ChatMessage{{Role: "user", Text: note}}, req.Messages...)
 	}
 
 	// SSE plumbing — same header set + flusher assert the sse.Broker

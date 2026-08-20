@@ -35,7 +35,7 @@ func TestNormalizeExceptionTriage(t *testing.T) {
 		{
 			name: "kısmi PUT — yalnız P1 verilmiş",
 			in:   ExceptionTriageConfig{P1FreshHours: 8},
-			want: ExceptionTriageConfig{P1FreshHours: 8, P2SameDayHours: 24, StaleResolveHours: 24, BurstMinRate: 100, BurstMinTotal: 1000, P1MinOccurrences: 500},
+			want: ExceptionTriageConfig{P1FreshHours: 8, P2SameDayHours: 24, StaleResolveHours: 24, BurstMinRate: 100, BurstMinTotal: 1000, P1MinOccurrences: 500, StormWindowMinutes: 10, StormMinServices: 5},
 		},
 		{
 			// Ters basamak: P2 penceresi P1'den darsa taze bir
@@ -43,12 +43,12 @@ func TestNormalizeExceptionTriage(t *testing.T) {
 			// v0.9.699'un düzelttiği uçurumun ta kendisi.
 			name: "ters basamak kelepçelenir",
 			in:   ExceptionTriageConfig{P1FreshHours: 12, P2SameDayHours: 4, StaleResolveHours: 24},
-			want: ExceptionTriageConfig{P1FreshHours: 12, P2SameDayHours: 12, StaleResolveHours: 24, BurstMinRate: 100, BurstMinTotal: 1000, P1MinOccurrences: 500},
+			want: ExceptionTriageConfig{P1FreshHours: 12, P2SameDayHours: 12, StaleResolveHours: 24, BurstMinRate: 100, BurstMinTotal: 1000, P1MinOccurrences: 500, StormWindowMinutes: 10, StormMinServices: 5},
 		},
 		{
 			name: "geçerli ayar aynen geçer",
 			in:   ExceptionTriageConfig{P1FreshHours: 2, P2SameDayHours: 48, StaleResolveHours: 72},
-			want: ExceptionTriageConfig{P1FreshHours: 2, P2SameDayHours: 48, StaleResolveHours: 72, BurstMinRate: 100, BurstMinTotal: 1000, P1MinOccurrences: 500},
+			want: ExceptionTriageConfig{P1FreshHours: 2, P2SameDayHours: 48, StaleResolveHours: 72, BurstMinRate: 100, BurstMinTotal: 1000, P1MinOccurrences: 500, StormWindowMinutes: 10, StormMinServices: 5},
 		},
 	}
 	for _, c := range cases {
@@ -112,11 +112,12 @@ func TestExceptionTriageJSONKeys(t *testing.T) {
 		P1FreshHours: 4, P2SameDayHours: 24, StaleResolveHours: 24,
 		// v0.9.1188 — patlama kapıları da tel şeklinin parçası.
 		BurstMinRate: 100, BurstMinTotal: 1000, P1MinOccurrences: 500,
+		StormWindowMinutes: 10, StormMinServices: 5,
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	want := `{"p1FreshHours":4,"p2SameDayHours":24,"staleResolveHours":24,"burstMinRate":100,"burstMinTotal":1000,"p1MinOccurrences":500}`
+	want := `{"p1FreshHours":4,"p2SameDayHours":24,"staleResolveHours":24,"burstMinRate":100,"burstMinTotal":1000,"p1MinOccurrences":500,"stormWindowMinutes":10,"stormMinServices":5}`
 	if string(raw) != want {
 		t.Fatalf("JSON = %s, beklenen %s", raw, want)
 	}
@@ -128,6 +129,7 @@ func TestExceptionTriageJSONKeys(t *testing.T) {
 	if back != (ExceptionTriageConfig{
 		P1FreshHours: 4, P2SameDayHours: 24, StaleResolveHours: 24,
 		BurstMinRate: 100, BurstMinTotal: 1000, P1MinOccurrences: 500,
+		StormWindowMinutes: 10, StormMinServices: 5,
 	}) {
 		t.Fatalf("round-trip bozuldu: %+v", back)
 	}

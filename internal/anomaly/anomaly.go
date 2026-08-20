@@ -643,6 +643,11 @@ func (d *Detector) scan(ctx context.Context) {
 	// AYNI `now`: kova hesabı ve pencere sınırı yukarıdaki okumalarla
 	// hizalı kalsın (v0.8.507 tik-tutarlılığı).
 	d.scanBehavior(ctx, now, sens)
+
+	// v0.9.1194 — FIRTINA dedektörü, aynı tikin sonunda ve aynı gerekçeyle:
+	// kendi içinde soft-fail, ani-sapma hattına gecikme bindirmez. Tik
+	// başına iki küçük okuma (triage config + pencere sayımı).
+	d.checkExceptionStorm(ctx)
 }
 
 // batchSeries — bir tikin TOPLU OKUMALARINI toplar: izlenen her metrik

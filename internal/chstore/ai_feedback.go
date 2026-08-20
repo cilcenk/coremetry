@@ -17,10 +17,14 @@ import (
 // AIFeedback is one operator verdict on one AI answer.
 type AIFeedback struct {
 	ExchangeID string `json:"exchangeId"`
-	Surface    string `json:"surface"`             // resolved server-side from the ai_calls row
-	Verdict    int8   `json:"verdict"`             // 1 = thumbs up, -1 = thumbs down
-	UserEmail  string `json:"userEmail,omitempty"` // who rated (full fidelity, house policy)
-	CreatedAt  int64  `json:"createdAt"`           // unix ns
+	Surface    string `json:"surface"` // resolved server-side from the ai_calls row
+	Verdict    int8   `json:"verdict"` // 1 = thumbs up, -1 = thumbs down
+	// Comment (v0.9.1193, Faz 5.1) — 👎'nin serbest metni. Tam-satır
+	// replace: her Upsert bu alanı da taşır; flip'te korunması çağıranın
+	// (API preserve yolu) işi.
+	Comment   string `json:"comment,omitempty"`
+	UserEmail string `json:"userEmail,omitempty"` // who rated (full fidelity, house policy)
+	CreatedAt int64  `json:"createdAt"`           // unix ns
 }
 
 // UpsertAIFeedback inserts a verdict row. ReplacingMergeTree dedup by
@@ -33,11 +37,11 @@ func (s *Store) UpsertAIFeedback(ctx context.Context, f AIFeedback) error {
 		created = time.Unix(0, f.CreatedAt).UTC()
 	}
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO ai_feedback
-		(exchange_id, surface, verdict, user_email, created_at)`)
+		(exchange_id, surface, verdict, comment, user_email, created_at)`)
 	if err != nil {
 		return err
 	}
-	if err := batch.Append(f.ExchangeID, f.Surface, f.Verdict, f.UserEmail, created); err != nil {
+	if err := batch.Append(f.ExchangeID, f.Surface, f.Verdict, f.Comment, f.UserEmail, created); err != nil {
 		return err
 	}
 	return batch.Send()
@@ -119,6 +123,10 @@ type NegativeFeedbackCall struct {
 	UserEmail string `json:"userEmail,omitempty"`
 	Prompt    string `json:"prompt"`
 	Response  string `json:"response,omitempty"`
+	// Comment (v0.9.1193) — operatörün 👎'ye eklediği neden. Madenciliğin
+	// asıl sinyali: prompt neyin SORULDUĞUNU, yorum neyin EKSİK olduğunu
+	// söyler.
+	Comment string `json:"comment,omitempty"`
 }
 
 // ListNegativeFeedbackCalls (v0.9.423, CoSRE fikir #6) — pencere içindeki
@@ -132,7 +140,7 @@ func (s *Store) ListNegativeFeedbackCalls(ctx context.Context, from, to time.Tim
 	}
 	rows, err := s.conn.Query(ctx, `
 		SELECT f.surface, toUnixTimestamp64Nano(f.created_at), f.user_email,
-		       c.prompt_sample, c.response_sample
+		       c.prompt_sample, c.response_sample, f.comment
 		FROM ai_feedback FINAL AS f
 		LEFT JOIN ai_calls AS c ON c.exchange_id = f.exchange_id
 		WHERE f.verdict = -1 AND f.created_at >= ? AND f.created_at <= ?
@@ -146,10 +154,40 @@ func (s *Store) ListNegativeFeedbackCalls(ctx context.Context, from, to time.Tim
 	var out []NegativeFeedbackCall
 	for rows.Next() {
 		var r NegativeFeedbackCall
-		if err := rows.Scan(&r.Surface, &r.CreatedAt, &r.UserEmail, &r.Prompt, &r.Response); err != nil {
+		if err := rows.Scan(&r.Surface, &r.CreatedAt, &r.UserEmail, &r.Prompt, &r.Response, &r.Comment); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// AIFeedbackCommentByExchange — flip'te yorumun KORUNMASI için nokta
+// okuma (v0.9.1193). ReplacingMergeTree tam-satır replace: yorum
+// göndermeyen bir re-rate (👎→👍 ya da başka yüzeyden tık) yeni sürümü
+// yorumsuz yazar ve FINAL yorumlu satırı DÜŞÜRÜRDÜ — operatörün yazdığı
+// metin bir tık yüzünden kaybolurdu. API, gövdede comment alanı HİÇ
+// yoksa saklananı buradan taşır. Küçük state tablosu, FINAL nokta
+// okuması; soft-fail çağıranda (yorum kaybı, POST düşürmekten ucuz).
+func (s *Store) AIFeedbackCommentByExchange(ctx context.Context, exchangeID string) (string, error) {
+	if exchangeID == "" {
+		return "", nil
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT comment FROM ai_feedback FINAL
+		WHERE exchange_id = ?
+		LIMIT 1
+		SETTINGS max_execution_time = 5`, exchangeID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return "", err
+		}
+		return c, nil
+	}
+	return "", rows.Err()
 }

@@ -93,6 +93,9 @@ type Server struct {
 	// ölçülmüş bir örnekle döner, düşen bir probe trend tabanını bozmaz.
 	distQueueCur  *chstore.DistributionQueue
 	distQueuePrev *chstore.DistributionQueue
+	// spoolFlights (v0.9.1191) — Distributed spool runbook'unun flush
+	// uçuş defteri (spool_actions.go). Sıfır değeri kullanılabilir.
+	spoolFlights spoolFlights
 	// distQueueState — HİSTEREZİS durumu (v0.9.987). Karar artık iki
 	// ölçümden değil, ÖNCEKİ KARAR + iki ölçümden çıkıyor: durumsuz hâlde
 	// 44.320 → 44.318 (iki dosya) tek başına "degraded → ok" yapıyordu.
@@ -615,6 +618,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// ölçüsü; ayrı uç + 60s TTL çünkü gövde okumasından çok daha geniş
 	// bir satır kümesini grupluyor.
 	mux.HandleFunc("GET /api/admin/clickhouse/coordinators", auth.RequireRole(auth.RoleAdmin, s.getCHCoordinatorSpread))
+	// v0.9.1191 — Distributed spool runbook'u (spool_actions.go): durum
+	// okuması + iki adlandırılmış SYSTEM eylemi. /admin/sql salt-okunur
+	// kalır; bunlar serbest SQL değil, doğrulanmış-hedefli sabit komutlar.
+	mux.HandleFunc("GET /api/admin/clickhouse/spool", auth.RequireRole(auth.RoleAdmin, s.getSpoolState))
+	mux.HandleFunc("POST /api/admin/clickhouse/spool/flush", auth.RequireRole(auth.RoleAdmin, s.postSpoolFlush))
+	mux.HandleFunc("POST /api/admin/clickhouse/spool/start-sends", auth.RequireRole(auth.RoleAdmin, s.postSpoolStartSends))
 	// v0.9.543 — node iş dağılımı: CPU · merge · insert · fetch host
 	// başına, HAM kümülatif (pencereyi istemci delta ile açar).
 	mux.HandleFunc("GET /api/admin/clickhouse/nodework", auth.RequireRole(auth.RoleAdmin, s.getCHNodeWork))

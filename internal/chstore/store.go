@@ -38,6 +38,12 @@ import (
 const roundRobinConnLifetime = 5 * time.Minute
 
 type Store struct {
+	// chOpts (v0.9.1191) — New()'daki bağlantı seçenekleri fabrikası.
+	// Her çağrı TAZE bir Options üretir (Settings map'i sürücüde kalıyor;
+	// paylaşmak iki havuzu birbirine bağlardı). Tek tüketici uzun-işlem
+	// bağlantısı (spool_ops.go); nil (Store{} kuran testler) = özellik yok.
+	chOpts func() *clickhouse.Options
+
 	// v0.9.614 — DDL erteleme durumu (ddl_defer.go). YALNIZ boot
 	// sırasında, tek goroutine'den dokunulur; New dönmeden
 	// finishDeferredDDL ile temizlenir.
@@ -703,6 +709,11 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 		ingest: newTracedConn(ingest, poolIngest),
 		read:   newTracedConn(readConn, poolRead),
 		cfg:    cfg, ret: ret,
+		// v0.9.1191 — bağlantı fabrikası Store'da kalır: spool runbook'unun
+		// FLUSH DISTRIBUTED'ı saatler sürebilir ve ana havuzun 30 sn'lik
+		// ReadTimeout'u (v0.8.340) onu keserdi. Uzun işlemler kendi TEK
+		// bağlantısını bu fabrikadan, uzun zaman aşımıyla açar (spool_ops.go).
+		chOpts: chOpts,
 		// v0.9.975 — the SQL sites (topology/backtrace writers, the heavy
 		// raw-spans scans, the SQL playground) clamp against this.
 		memPlan: memPlan,

@@ -4403,6 +4403,25 @@ export interface ChatTurn extends ChatMessage {
   links?: ChatAnswerLink[];
 }
 
+// SpoolState (v0.9.1191) — /api/admin/clickhouse/spool: Distributed spool
+// runbook'unun otomatik yarısı. `queue` null = tek düğüm (kavram yok).
+// `flights` süreç-yerel flush uçuş defteri — doneAt yokken koşuyor demek.
+export interface SpoolFlight {
+  table: string;
+  startedBy: string;
+  startedAt: number; // unix ns
+  doneAt?: number;
+  error?: string;
+}
+export interface SpoolState {
+  queue: SystemStats['distributionQueue'] | null;
+  disks: { host: string; disk: string; free: number; total: number }[] | null;
+  disksError?: string;
+  tables: string[] | null;
+  tablesError?: string;
+  flights: SpoolFlight[];
+}
+
 // AiConversationSummary (v0.9.1139, AI Faz 4.1) — FAB çekmecesindeki
 // "Geçmiş" listesinin bir satırı. MESAJ GÖVDESİ TAŞIMAZ: `messages`
 // bir SAYI. Gövdeyi listeye koymak 50 threadlik arşivi her çekmece

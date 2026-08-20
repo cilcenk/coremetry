@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -486,6 +487,43 @@ func topoQueueClusterSQL() string {
 	return `if(msg_system != '', ` + clusterExpr + `, '')`
 }
 
+// topoJoinMemBudget — grace-hash spill eşiği (max_bytes_in_join), üç
+// topoloji JOIN pass'inin ortak değeri (v0.9.1190, operatör-bildirimli
+// prod 241).
+//
+// Canlı arıza: cross-service pass remote shard'da "would use 8.00 GiB
+// (attempt to allocate chunk of 2.50 GiB), maximum: 7.45 GiB" ile öldü.
+// 7.45 GiB bizim kendi tavanımız (heavyScanMemory = 8e9); 2.5 GiB'lık tek
+// parça ise join hash tablosunun RESIZE'ı. Eski eşik 4e9 idi ve kusur tam
+// buradaydı: join 3.7 GiB'a kadar BÜYÜMEYE HAKLI sayılıyordu, ama tablo
+// ~2 GiB'a vardığında bir sonraki resize TEK seferde ~2.5 GiB isteyip sol
+// blokların + aggregation state'lerinin üstüne binince toplam tavanı
+// deliyordu. Spill eşiği tavana bu kadar yakın olunca grace'in sigortası
+// HİÇ ateşlenemeden query ölüyor — query_memory.go'nun kendi cümlesi:
+// "a spill threshold at or above the cap can never fire".
+//
+// 1.5e9: tablo ~1.4 GiB'da spill'e döner, yani en kötü tek resize da o
+// mertebede kalır; 8 GB zarfın kalanı sol blokların ve aggregation'ın.
+// Değer heavyScanMemory'nin ÇEYREĞİNİN altında tutulmalı —
+// topology_mem_test.go bu oranı çiviler ki tavanı yükselten biri eşiği
+// sessizce yeniden tavana yaklaştırmasın.
+const topoJoinMemBudget int64 = 1_500_000_000
+
+// topoJoinMemSettings — üç JOIN pass'inin ortak bellek disiplini. TEK
+// kaynak: pass'lerden biri düzelirken diğerinde eski üçlünün kalması,
+// aggregator sıradaki pass'e geçtiği an aynı 241'i oradan üretir (bu
+// vakada olan tam buydu — cross-service düşünce op-bucket hiç koşmamıştı).
+//
+// grace_hash_join_initial_buckets = 16: tablo tek parça büyüyüp baskı
+// altında bölünmek yerine BAŞTAN 16 parçaya bölünür — gözlenen arızanın
+// yolu tam olarak "büyü, sonra dev resize" idi; ön-bölme o yolu kapatır.
+func (s *Store) topoJoinMemSettings() string {
+	return `join_algorithm = 'grace_hash',
+		         grace_hash_join_initial_buckets = 16,
+		         max_bytes_in_join = ` + strconv.FormatInt(topoJoinMemBudget, 10) + `,
+		         ` + s.queryMemSetting(heavyScanMemory)
+}
+
 func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) error {
 	end := bucketStart.Add(5 * time.Minute)
 
@@ -565,7 +603,15 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			toUInt32(uniqExact(label)) AS distinct_labels,
 			toUInt64(count())     AS calls,
 			toUInt64(sum(c.duration)) AS sum_duration_ns,
-			toFloat64(quantileExact(0.99)(c.duration)) / 1e6 AS p99_ms,
+			-- v0.9.1190 — quantileExact'ten TDigest'e (üç yazıcı pass'te
+			-- birden). Exact, grup başına TÜM süreleri bellekte tutar; prod
+			-- ölçeğinde sıcak bir kenarın 5 dakikası milyonlarca değer demek
+			-- ve hepsi JOIN'le AYNI 8 GB zarfın içinde. /clickhouse-schema
+			-- kuralı zaten net: ~1M satırın üstünde quantile() değil TDigest
+			-- (≤%2 hata). p99_ms düz Float64 kolonu — değer ~%2 oynayabilir;
+			-- bu, her 5 dakikada bir 241 ile kovayı tamamen KAYBETMEKTEN
+			-- (grafikte delik) ölçülemeyecek kadar ucuz bir bedel.
+			toFloat64(quantileTDigest(0.99)(c.duration)) / 1e6 AS p99_ms,
 			-- v0.5.367 — per-edge error count powers /api/service-graph
 			-- ErrorRate reads from the MV (no more raw-spans self-join).
 			toUInt64(countIf(c.status_code = 'error')) AS errors,
@@ -590,9 +636,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		  AND `+topoNoiseExcludeSQL("c.name")+`
 		GROUP BY parent_service, child_node, protocol
 		SETTINGS max_execution_time = 180,
-		         join_algorithm = 'grace_hash',
-		         max_bytes_in_join = 4000000000,
-		         `+s.queryMemSetting(heavyScanMemory)+`,
+		         `+s.topoJoinMemSettings()+`,
 		         distributed_product_mode = 'global'`,
 		bucketStart.Unix(),
 		uint64(time.Now().UnixNano()),
@@ -641,7 +685,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			toUInt32(uniqExact(label)) AS distinct_labels,
 			toUInt64(count())    AS calls,
 			toUInt64(sum(duration)) AS sum_duration_ns,
-			toFloat64(quantileExact(0.99)(duration)) / 1e6 AS p99_ms,
+			toFloat64(quantileTDigest(0.99)(duration)) / 1e6 AS p99_ms,
 			-- v0.5.367 — infra-edge errors mirror the service-pair pass.
 			toUInt64(countIf(status_code = 'error')) AS errors,
 			any(p_env)           AS parent_env,
@@ -834,7 +878,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			toUInt32(uniqExact(name))                           AS distinct_labels,
 			toUInt64(count())                                   AS calls,
 			toUInt64(sum(duration))                             AS sum_duration_ns,
-			toFloat64(quantileExact(0.99)(duration)) / 1e6      AS p99_ms,
+			toFloat64(quantileTDigest(0.99)(duration)) / 1e6      AS p99_ms,
 			toUInt64(countIf(status_code = 'error'))            AS errors,
 			''                                                  AS parent_env,
 			any(c_env)                                          AS child_env,
@@ -887,9 +931,7 @@ func (s *Store) WriteTopologyOpBucket(ctx context.Context, bucketStart time.Time
 		  AND `+topoNoiseExcludeSQL("c.name")+`
 		GROUP BY parent_service, parent_op, child_service, child_op
 		SETTINGS max_execution_time = 180,
-		         join_algorithm = 'grace_hash',
-		         max_bytes_in_join = 4000000000,
-		         `+s.queryMemSetting(heavyScanMemory)+`,
+		         `+s.topoJoinMemSettings()+`,
 		         distributed_product_mode = 'global'`,
 		bucketStart.Unix(),
 		uint64(time.Now().UnixNano()),
@@ -969,9 +1011,7 @@ func (s *Store) WriteRootFlowsBucket(ctx context.Context, bucketStart time.Time)
 		) AS sp ON sp.trace_id = rt.trace_id
 		GROUP BY rt.root_service, rt.root_op
 		SETTINGS max_execution_time = 180,
-		         join_algorithm = 'grace_hash',
-		         max_bytes_in_join = 4000000000,
-		         `+s.queryMemSetting(heavyScanMemory)+`,
+		         `+s.topoJoinMemSettings()+`,
 		         distributed_product_mode = 'global'`,
 		bucketStart.Unix(), end.Unix(),
 		bucketStart.Unix(),

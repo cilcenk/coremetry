@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -219,53 +218,26 @@ func fitChatBlob(blob aiChatBlob, maxMsgs, maxBytes int) (aiChatBlob, string, er
 	}
 }
 
-// ownAIConversations — SAHİPLİK SÜZGECİ + tavan.
+// metaToSummary (v0.9.1192) — CH-tarafı projeksiyon → liste öğesi.
 //
-// ListSavedViews bilinçli olarak İKİ kova döndürür: kullanıcının kendi
-// satırları VE owner_id=” takım-paylaşımlı satırlar (topbar dropdown'ı
-// için doğru davranış). Konuşmalar için paylaşımlı kova YANLIŞTIR —
-// owner_id=” bir satır herkese görünürdü. Bu yüzden eşitlik şart
-// (`OwnerID == ownerID`), "ya da boş" DEĞİL.
+// SAHİPLİK, TOMBSTONE, SIRA ve TAVAN artık SQL'de (ListSavedViewMeta:
+// owner_id TAM eşitlik — takım kovası yok; name != ''; created_at DESC;
+// LIMIT). Eski ownAIConversations bu dört garantiyi Go'da veriyordu ve
+// bunun bedeli 50 thread için 64 KB'a kadar blob × 200 satırı CH'den
+// taşımaktı — liste yalnız başlık+sayı gösterirken. Garantiler yer
+// değiştirdi, kaybolmadı: chstore/saved_view_meta_test.go SQL şeklini,
+// buradaki testler dönüşümü pinler.
 //
-// ownerID boşsa hiçbir şey dönmez: kimliksiz bir istek paylaşımlı
-// kovanın tamamını okuyabilirdi.
-//
-// Sıralama BURADA yapılır (store'un ORDER BY'ına güvenmek yerine): tavan
-// "en yenileri tut" anlamına gelmek zorunda ve bu özellik CH sıralaması
-// değişse bile test edilebilir kalmalı.
-func ownAIConversations(views []chstore.SavedView, ownerID string, limit int) []chstore.SavedView {
-	if strings.TrimSpace(ownerID) == "" {
-		return nil
+// "Bozuk blob listeyi boşaltmaz" sözleşmesi de taşındı: JSON olmayan /
+// eski bir gövdede CH'nin JSONExtract*'ı hata değil varsayılan üretir
+// (0 / boş) — satır 0 mesajla, created_at zamanıyla görünür.
+func metaToSummary(m chstore.SavedViewMeta) aiConversationSummary {
+	sum := aiConversationSummary{
+		ID: m.ID, Title: m.Name, UpdatedAt: m.CreatedAt,
+		Messages: m.BlobMessages, Subject: m.BlobSubject,
 	}
-	out := make([]chstore.SavedView, 0, len(views))
-	for _, v := range views {
-		if v.OwnerID != ownerID || v.Page != aiChatPage {
-			continue
-		}
-		if strings.TrimSpace(v.Name) == "" { // tombstone
-			continue
-		}
-		out = append(out, v)
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out
-}
-
-// summarizeAIConversation — satır → liste öğesi. Bozuk/eski bir blob
-// başlığı ve zamanı DÜŞÜRMEZ (0 mesaj olarak görünür): arşiv listesi,
-// tek bir çözümlenemeyen gövde yüzünden boşalmamalı.
-func summarizeAIConversation(v chstore.SavedView) aiConversationSummary {
-	sum := aiConversationSummary{ID: v.ID, Title: v.Name, UpdatedAt: v.CreatedAt}
-	var blob aiChatBlob
-	if err := json.Unmarshal([]byte(v.QueryString), &blob); err == nil {
-		sum.Messages = len(blob.Messages)
-		sum.Subject = blob.Subject
-		if blob.UpdatedAt > 0 {
-			sum.UpdatedAt = blob.UpdatedAt
-		}
+	if m.BlobUpdatedAt > 0 {
+		sum.UpdatedAt = m.BlobUpdatedAt
 	}
 	return sum
 }
@@ -320,15 +292,14 @@ func (s *Server) listAIConversations(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	views, err := s.store.ListSavedViews(r.Context(), ownerID, aiChatPage)
+	metas, err := s.store.ListSavedViewMeta(r.Context(), ownerID, aiChatPage, aiChatListLimit)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	mine := ownAIConversations(views, ownerID, aiChatListLimit)
-	out := make([]aiConversationSummary, 0, len(mine))
-	for _, v := range mine {
-		out = append(out, summarizeAIConversation(v))
+	out := make([]aiConversationSummary, 0, len(metas))
+	for _, m := range metas {
+		out = append(out, metaToSummary(m))
 	}
 	writeJSON(w, out)
 }

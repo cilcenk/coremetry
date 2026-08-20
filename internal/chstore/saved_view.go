@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -144,4 +146,89 @@ func newSavedViewID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// ── ListSavedViewMeta (v0.9.1192) — gövdesiz liste projeksiyonu ────────
+//
+// Operatör kuyruğundaki kalem: AI sohbetinin "Geçmiş" listesi
+// ListSavedViews'la satırın TAMAMINI çekiyordu — ai-chat blob'u 64 KB'a
+// kadar büyür ve fitChatBlob onu bilerek o tavana kadar doldurur; 50
+// thread'lik bir liste, yalnız başlık+sayı göstermek için CH'den megabayt
+// mertebesinde gövde taşıyordu. Liste yanıtının kendisi gövde taşımıyor
+// (aiConversationSummary sözleşmesi) — taşıma yalnız CH↔app arasında
+// israftı.
+//
+// Üç küçük alan CH TARAFINDA çıkarılır (JSONExtract*): tel yalnız
+// başlık+sayı+özne+zaman taşır. Bozuk/eski/JSON-olmayan bir gövdede CH
+// fonksiyonları hata DEĞİL varsayılan döndürür (0 / '') — "bozuk blob
+// listeyi boşaltmaz" sözleşmesi (summarizeAIConversation'ın devraldığı
+// davranış) böylece motorun kendisine taşınmış olur; docker'da her iki
+// girdiyle doğrulandı.
+//
+// ListSavedViews'tan BİLİNÇLİ sapma: owner_id = ? TAM EŞİTLİK — takım
+// kovası (owner_id='') YOK. ai-chat kişiseldir (aiChatOwner 401 zaten
+// zorluyor) ve boş ownerID burada takım kovasını okumak anlamına
+// gelirdi; o yüzden boş sahip sorgu KOŞMADAN hata alır.
+
+// SavedViewMeta — bir satırın gövdesiz özeti + ai-chat blob'unun üç
+// küçük alanı. Başka page'lerde (query_string JSON değil) blob alanları
+// 0/boş gelir — alan adları bunu söylesin diye Blob* önekli.
+type SavedViewMeta struct {
+	ID        string
+	Name      string
+	Pinned    bool
+	CreatedAt int64 // unix ns
+	// Blob* — query_string JSON'ından CH tarafında çekilir.
+	BlobUpdatedAt int64  // unix ns; 0 = blob taşımıyor (created_at kullan)
+	BlobMessages  int    // messages dizisinin uzunluğu
+	BlobSubject   string // çekmece öznesi (?ai= kodeği)
+}
+
+// savedViewMetaSQL — saf; saved_view_meta_test.go pinler. LIMIT bağlı
+// arg: tavan çağıranın sözleşmesi (aiChatListLimit), sorgunun değil.
+const savedViewMetaSQL = `
+	SELECT id, name, pinned, created_at,
+	       JSONExtractInt(query_string, 'updatedAt')    AS blob_updated,
+	       JSONLength(query_string, 'messages')         AS blob_msgs,
+	       JSONExtractString(query_string, 'subject')   AS blob_subject
+	FROM saved_views FINAL
+	WHERE name != '' AND page = ? AND owner_id = ?
+	ORDER BY created_at DESC
+	LIMIT ?
+	SETTINGS max_execution_time = 10`
+
+func (s *Store) ListSavedViewMeta(ctx context.Context, ownerID, page string, limit int) ([]SavedViewMeta, error) {
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" {
+		// Sorgu KOŞMADAN: owner_id = '' takım kovasıdır ve bu projeksiyon
+		// kişisel sayfalar için — boş sahiple çağırmak çağıranın bug'ıdır,
+		// sessizce paylaşımlı kovayı listelemek değil.
+		return nil, fmt.Errorf("ListSavedViewMeta: ownerID boş olamaz (owner_id='' takım kovasıdır)")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.conn.Query(ctx, savedViewMetaSQL, page, ownerID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SavedViewMeta
+	for rows.Next() {
+		var m SavedViewMeta
+		var pinned uint8
+		var createdAt time.Time
+		var blobUpdated int64
+		var blobMsgs uint64
+		if err := rows.Scan(&m.ID, &m.Name, &pinned, &createdAt,
+			&blobUpdated, &blobMsgs, &m.BlobSubject); err != nil {
+			return nil, err
+		}
+		m.Pinned = pinned == 1
+		m.CreatedAt = createdAt.UnixNano()
+		m.BlobUpdatedAt = blobUpdated
+		m.BlobMessages = int(blobMsgs)
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }

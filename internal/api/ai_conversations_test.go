@@ -241,79 +241,29 @@ func TestSanitizeChatMessages(t *testing.T) {
 	}
 }
 
-func TestOwnAIConversations(t *testing.T) {
-	rows := []chstore.SavedView{
-		{ID: "mine-old", OwnerID: "u1", Page: aiChatPage, Name: "eski", CreatedAt: 100},
-		{ID: "theirs", OwnerID: "u2", Page: aiChatPage, Name: "başkasının", CreatedAt: 900},
-		{ID: "shared", OwnerID: "", Page: aiChatPage, Name: "paylaşımlı kova", CreatedAt: 800},
-		{ID: "mine-new", OwnerID: "u1", Page: aiChatPage, Name: "yeni", CreatedAt: 300},
-		{ID: "a-view", OwnerID: "u1", Page: "traces", Name: "kayıtlı görünüm", CreatedAt: 999},
-		{ID: "tomb", OwnerID: "u1", Page: aiChatPage, Name: "", CreatedAt: 500},
-	}
-
-	got := ownAIConversations(rows, "u1", aiChatListLimit)
-	var ids []string
-	for _, v := range got {
-		ids = append(ids, v.ID)
-	}
-	// Yeni → eski sıra + yalnız kendi ai-chat satırları.
-	if strings.Join(ids, ",") != "mine-new,mine-old" {
-		t.Fatalf("id'ler = %v; beklenen [mine-new mine-old] (sahiplik + sayfa + tombstone + sıra)", ids)
-	}
-
-	// u2, u1'in thread'ini GÖREMEZ.
-	for _, v := range ownAIConversations(rows, "u2", aiChatListLimit) {
-		if v.OwnerID != "u2" {
-			t.Fatalf("u2, %s sahipli satırı gördü (%s)", v.OwnerID, v.ID)
-		}
-	}
-
-	// Kimliksiz istek paylaşımlı kovayı okumamalı.
-	if got := ownAIConversations(rows, "", aiChatListLimit); len(got) != 0 {
-		t.Errorf("boş ownerID %d satır döndürdü — owner_id='' PAYLAŞIMLI koCadır", len(got))
-	}
-	if got := ownAIConversations(rows, "   ", aiChatListLimit); len(got) != 0 {
-		t.Errorf("boşluklu ownerID %d satır döndürdü", len(got))
-	}
-
-	// Tavan EN YENİLERİ tutar.
-	many := make([]chstore.SavedView, 0, 60)
-	for i := 0; i < 60; i++ {
-		many = append(many, chstore.SavedView{
-			ID: fmt.Sprintf("c%02d", i), OwnerID: "u1", Page: aiChatPage,
-			Name: "k", CreatedAt: int64(i),
-		})
-	}
-	capped := ownAIConversations(many, "u1", aiChatListLimit)
-	if len(capped) != aiChatListLimit {
-		t.Fatalf("tavan = %d, beklenen %d", len(capped), aiChatListLimit)
-	}
-	if capped[0].ID != "c59" || capped[len(capped)-1].ID != "c10" {
-		t.Errorf("tavan yanlış uçtan kesti: ilk=%s son=%s", capped[0].ID, capped[len(capped)-1].ID)
-	}
-}
-
-func TestSummarizeAIConversation(t *testing.T) {
-	blob, _ := json.Marshal(aiChatBlob{
-		Messages: chatMsgs(4), Subject: "svc:checkout", UpdatedAt: 4242,
-	})
-	got := summarizeAIConversation(chstore.SavedView{
-		ID: "c1", Name: "başlık", Page: aiChatPage, QueryString: string(blob), CreatedAt: 7,
+// v0.9.1192 — SAHİPLİK/tombstone/sıra/tavan artık SQL'de
+// (chstore.ListSavedViewMeta: owner_id TAM eşitlik, name != '',
+// created_at DESC, LIMIT). Eski ownAIConversations/summarizeAIConversation
+// testlerinin garantileri iki yere taşındı: SQL şekli
+// chstore/saved_view_meta_test.go'da, satır→öğe dönüşümü burada.
+func TestMetaToSummary(t *testing.T) {
+	got := metaToSummary(chstore.SavedViewMeta{
+		ID: "c1", Name: "başlık", CreatedAt: 7,
+		BlobUpdatedAt: 4242, BlobMessages: 4, BlobSubject: "svc:checkout",
 	})
 	if got.Messages != 4 || got.Subject != "svc:checkout" || got.UpdatedAt != 4242 {
 		t.Fatalf("özet = %+v", got)
 	}
-	// Özet mesaj GÖVDESİ taşımaz (liste maliyeti) — JSON'da `messages`
-	// bir SAYI olmalı.
+	// Özet mesaj GÖVDESİ taşımaz (liste maliyeti sözleşmesi) — JSON'da
+	// `messages` bir SAYI olmalı.
 	raw, _ := json.Marshal(got)
 	if !strings.Contains(string(raw), `"messages":4`) {
 		t.Errorf("liste öğesi mesaj sayısı yerine gövde taşıyor: %s", raw)
 	}
 
-	// Bozuk gövde başlığı/zamanı DÜŞÜRMEZ.
-	bad := summarizeAIConversation(chstore.SavedView{
-		ID: "c2", Name: "yaşayan başlık", Page: aiChatPage, QueryString: "{bozuk", CreatedAt: 11,
-	})
+	// Bozuk/eski blob (CH projeksiyonu 0/boş döndürür) başlığı ve zamanı
+	// DÜŞÜRMEZ: satır 0 mesajla, created_at zamanıyla görünür.
+	bad := metaToSummary(chstore.SavedViewMeta{ID: "c2", Name: "yaşayan başlık", CreatedAt: 11})
 	if bad.Title != "yaşayan başlık" || bad.UpdatedAt != 11 || bad.Messages != 0 {
 		t.Fatalf("bozuk blob özeti = %+v", bad)
 	}

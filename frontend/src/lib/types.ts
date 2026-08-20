@@ -5070,6 +5070,11 @@ export interface ExceptionTriageConfig {
   // Öncesi 5 DAKİKALIK bir uçurumun ardındaydı; artık p1FreshHours
   // penceresini kullanıyor (888 olaylık grup 1sa12dk sonra P1 olamıyordu).
   p1MinOccurrences: number;
+  // v0.9.1194 — FIRTINA: bu pencerede (dk) bu kadar FARKLI servis yeni
+  // exception grubu açarsa tek bir P1 problemi açılır (25 sn'de 9 servis
+  // vakası — hiçbiri tek başına eşik geçmiyordu).
+  stormWindowMinutes: number;
+  stormMinServices: number;
 }
 
 // v0.9.838 — ALERT PROBLEMİ öncelik merdiveninin vidaları (backend:

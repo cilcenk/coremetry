@@ -134,17 +134,28 @@ func (s *Server) putExceptionTriage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "p1MinOccurrences must be between 1 and 10000000", http.StatusBadRequest)
 		return
 	}
+	if c.StormWindowMinutes < 1 || c.StormWindowMinutes > 1440 {
+		http.Error(w, "stormWindowMinutes must be between 1 and 1440", http.StatusBadRequest)
+		return
+	}
+	if c.StormMinServices < 2 || c.StormMinServices > 1000 {
+		// 1 "her yeni grup fırtınadır" demek olurdu — kavramı yok eder.
+		http.Error(w, "stormMinServices must be between 2 and 1000", http.StatusBadRequest)
+		return
+	}
 	if err := s.store.SaveExceptionTriage(r.Context(), c); err != nil {
 		writeErr(w, err)
 		return
 	}
 	setExceptionTriage(c)
 	s.audit(r, "settings.update", "exception_triage", "exception_triage",
-		fmt.Sprintf(`{"p1FreshHours":%d,"p2SameDayHours":%d,"staleResolveHours":%d,"burstMinRate":%.0f,"burstMinTotal":%d,"p1MinOccurrences":%d}`,
+		fmt.Sprintf(`{"p1FreshHours":%d,"p2SameDayHours":%d,"staleResolveHours":%d,"burstMinRate":%.0f,"burstMinTotal":%d,"p1MinOccurrences":%d,"stormWindowMinutes":%d,"stormMinServices":%d}`,
 			c.P1FreshHours, c.P2SameDayHours, c.StaleResolveHours,
-			c.BurstMinRate, c.BurstMinTotal, c.P1MinOccurrences))
-	log.Printf("[settings] exception_triage: P1 ≤%dsa · P2 ≤%dsa · stale %dsa · patlama ≥%.0f/dk & ≥%d · P1 hacim ≥%d",
+			c.BurstMinRate, c.BurstMinTotal, c.P1MinOccurrences,
+			c.StormWindowMinutes, c.StormMinServices))
+	log.Printf("[settings] exception_triage: P1 ≤%dsa · P2 ≤%dsa · stale %dsa · patlama ≥%.0f/dk & ≥%d · P1 hacim ≥%d · fırtına %ddk/%d servis",
 		c.P1FreshHours, c.P2SameDayHours, c.StaleResolveHours,
-		c.BurstMinRate, c.BurstMinTotal, c.P1MinOccurrences)
+		c.BurstMinRate, c.BurstMinTotal, c.P1MinOccurrences,
+		c.StormWindowMinutes, c.StormMinServices)
 	writeJSON(w, chstore.NormalizeExceptionTriage(c))
 }

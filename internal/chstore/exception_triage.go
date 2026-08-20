@@ -85,6 +85,22 @@ type ExceptionTriageConfig struct {
 	// Artık kapı P1FreshHours penceresini kullanıyor, yani hacim ve
 	// tazelik AYNI merdivende. Varsayılan 500 (eski gömülü değer).
 	P1MinOccurrences int `json:"p1MinOccurrences"`
+
+	// ── v0.9.1194 — FIRTINA (operatör-bildirimli + spec onayı) ──
+	//
+	// 2026-08-20 ekranı: 25 saniyede DOKUZ farklı servis yeni exception
+	// grubu açtı, her biri 1-7 olaylık — hiçbiri tek başına hiçbir eşiği
+	// geçmiyor ve eşik indirmekle de geçmez, çünkü sistemde "aynı anda
+	// birden çok servis patladı" diye bir kavram yoktu. Fırtına dedektörü
+	// (internal/anomaly/exception_storm.go) bu iki vidayı okur.
+	//
+	// StormWindowMinutes — pencere: bu kadar dakika içinde first_seen'i
+	// olan YENİ gruplar sayılır (yalnız yeni — spec onayı; kronik gürültü
+	// fırtına kanıtı değildir). Varsayılan 10.
+	StormWindowMinutes int `json:"stormWindowMinutes"`
+	// StormMinServices — eşik: pencerede yeni grup açan FARKLI servis
+	// sayısı bunu bulunca tek bir P1 fırtına problemi açılır. Varsayılan 5.
+	StormMinServices int `json:"stormMinServices"`
 }
 
 // DefaultExceptionTriage — v0.9.775'in gemiye giren davranışı.
@@ -104,6 +120,11 @@ func DefaultExceptionTriage() ExceptionTriageConfig {
 		// "her şey patlama olur" riskini taşımıyor.
 		BurstMinRate:  100,
 		BurstMinTotal: 1000,
+		// v0.9.1194 — fırtına varsayılanları: 10 dk / 5 servis. Bildirilen
+		// olay 25 saniyede 9 servisti; 5, tek bir paylaşılan bağımlılığın
+		// tipik patlama genişliğinin altında, iki bağımsız kazanın üstünde.
+		StormWindowMinutes: 10,
+		StormMinServices:   5,
 		// v0.9.1189 — eski gömülü değerin aynısı; değişen sabitin DEĞERİ
 		// değil, arkasındaki PENCERE (5dk → P1FreshHours).
 		P1MinOccurrences: 500,
@@ -166,7 +187,18 @@ func NormalizeExceptionTriage(c ExceptionTriageConfig) ExceptionTriageConfig {
 	if c.P1MinOccurrences <= 0 {
 		c.P1MinOccurrences = d.P1MinOccurrences
 	}
+	if c.StormWindowMinutes <= 0 {
+		c.StormWindowMinutes = d.StormWindowMinutes
+	}
+	if c.StormMinServices <= 0 {
+		c.StormMinServices = d.StormMinServices
+	}
 	return c
+}
+
+// StormWindow — dakika → süre, tek kaynak (birim-karışması sınıfına karşı).
+func (c ExceptionTriageConfig) StormWindow() time.Duration {
+	return time.Duration(NormalizeExceptionTriage(c).StormWindowMinutes) * time.Minute
 }
 
 // P1Window / P2Window / StaleHorizon — saatleri süreye çeviren tek

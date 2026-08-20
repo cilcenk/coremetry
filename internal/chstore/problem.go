@@ -265,6 +265,18 @@ func computePriority(p Problem, nowNs int64, cfg ProblemPriorityConfig) (string,
 		return "P3", "info"
 	}
 
+	// v0.9.1194 — FIRTINA tanım gereği P1 (operatör-bildirimli + spec
+	// onayı). Genel merdiven burada YANLIŞ cevap verir: Value=9 servis /
+	// Threshold=5 eşik → 1.8× < BigBreachRatio(2.0) → P2 çıkardı. Oysa
+	// dokuz servisin eş-zamanlı patlaması "şimdi"nin ta kendisi — dedektör
+	// zaten eşiği (StormMinServices) geçmeden bu satırı hiç açmıyor, yani
+	// satırın VARLIĞI ihlalin kanıtı; üstüne bir de oran kapısı koymak
+	// aynı eşiği iki kez, ikincisinde daha katı sormak olurdu. Gerekçe
+	// sayıları taşır ki operatör vidayı (exception_triage) görebilsin.
+	if p.RuleID == "exception-storm" {
+		return "P1", fmt.Sprintf("fırtına: %.0f servis (eşik %.0f)", p.Value, p.Threshold)
+	}
+
 	// Breach magnitude. If threshold is 0 we can't compute a
 	// ratio — fall back to severity alone. v0.8.321 — the FLIPPED
 	// ratio also feeds the reason strings below: they used to

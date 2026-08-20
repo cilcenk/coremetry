@@ -844,6 +844,32 @@ function ExceptionTriageSection() {
               </div>
             </Field>
 
+            {/* v0.9.1194 — FIRTINA. Tekil eşiklerin göremediği sinyal:
+                birden çok servisin EŞ-ZAMANLI patlaması (tipik kök: ortak
+                bağımlılık). Dedektör anomali tikinde koşar; satır critical
+                bildirim kanallarına normal Problem gibi düşer. */}
+            <Field label="Fırtına penceresi (dakika)">
+              <input type="number" min={1} max={1440} step={1}
+                value={cfg.stormWindowMinutes}
+                onChange={e => setCfg({ ...cfg, stormWindowMinutes: Number(e.target.value) })} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Bu pencerede <b>ilk kez görülen</b> exception grupları sayılır
+                (yalnız yeni — kronik gürültü fırtına kanıtı değildir).
+                Varsayılan 10 dakika.
+              </div>
+            </Field>
+
+            <Field label="Fırtına eşiği (farklı servis)">
+              <input type="number" min={2} max={1000} step={1}
+                value={cfg.stormMinServices}
+                onChange={e => setCfg({ ...cfg, stormMinServices: Number(e.target.value) })} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Pencerede yeni grup açan farklı servis sayısı bu eşiği bulunca
+                tek bir <b>P1 &laquo;Exception fırtınası&raquo;</b> problemi açılır ve
+                critical bildirim kanallarına düşer. Varsayılan 5.
+              </div>
+            </Field>
+
             <Field label="P2 aynı-gün penceresi (saat)">
               <input type="number" min={cfg.p1FreshHours} max={720} step={1}
                 value={cfg.p2SameDayHours}

@@ -73,7 +73,7 @@ never `s.copilot.Explain` direct (/ai attribution).
 - **Buttons/fields — one design language:** shared `<Button variant size>` atom (`components/ui/Button.tsx`), `Field.tsx` for labelled inputs, `.badge .b-ok/.b-err`. Never hand-roll `<button style={{…}}>`.
 - **Secrets in Settings:** never echo back; "stored" indicator; empty input preserves stored value.
 - **Logstore plurality:** detectors go through `logstore.Store.CountPatterns(...)` batched (ES `_msearch` / CH tokenbf) — never call ES directly from a detector.
-- **Triage:** P1 = now (critical + ayarlanabilir eşik katı (varsayılan 2×) / tamamen kayıp / ayarlanabilir açık-saat (varsayılan 4h); vida: `problem_priority` blobu), P2 = today, P3 = convenient. Reason string ships with every Problem. `fresh deploy` tetikleyicisi v0.9.612'de KALDIRILDI — deploy bilgisi görünür ama önceliğe karışmaz.
+- **Triage:** P1 = now (critical + ayarlanabilir eşik katı (varsayılan 2×) / tamamen kayıp / ayarlanabilir açık-saat (varsayılan 4h) / exception fırtınası (≥N servis aynı pencerede yeni grup, v0.9.1194; vida: `exception_triage`); vida: `problem_priority` blobu), P2 = today, P3 = convenient. Reason string ships with every Problem. `fresh deploy` tetikleyicisi v0.9.612'de KALDIRILDI — deploy bilgisi görünür ama önceliğe karışmaz.
 
 ## Workflow
 

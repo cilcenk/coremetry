@@ -4,12 +4,16 @@
 // effectiveness. Presentation-only — the page owns the queries and
 // hands each panel its (undefined | null | data) tri-state.
 
+import { useState } from 'react';
 import { Spinner } from '@/components/Spinner';
+import { Button } from '@/components/ui/Button';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
-import { fmtNum } from '@/lib/utils';
+import { api } from '@/lib/api';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
+import { fmtNum, fmtClock } from '@/lib/utils';
 import { KPI, fmtUptime, fmtBytes } from './shared';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { RedisStats, CacheStats, SystemStats } from '@/lib/types';
+import type { RedisStats, CacheStats, SystemStats, SpoolState } from '@/lib/types';
 
 type TopKeyRow = CacheStats['topKeys'][number];
 
@@ -217,6 +221,7 @@ export function DistributionQueuePanel({ dq }: { dq: SystemStats['distributionQu
             arızayı tanım gereği göremez. Son hata satırı nedeni söyler: <code>241</code>
             {' '}bellek tavanı, <code>159</code> zaman aşımı.
           </div>
+          <SpoolRunbook />
         </>
       )}
     </div>
@@ -550,6 +555,122 @@ export function ApiCachePanel({ data }: { data: CacheStats | null | undefined })
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+
+// ── SpoolRunbook (v0.9.1191) — "Runbook sen otomatik ekle, ben çalıştırayım" ──
+//
+// Operatör isteğinin birebir hâli: teşhis yukarıdaki kartta zaten vardı;
+// bu blok MÜDAHALEYİ ekler. Veri yalnız "Runbook'u aç"a basılınca çekilir
+// (fetch-on-open disiplini) ve poll YOKTUR — ilerlemenin gerçek göstergesi
+// zaten 30 sn'de bir ölçülen spool derinliği; buradaki "Yenile" düğmesi
+// operatörün elinde.
+//
+// İki düğme de admin-only uçlara gider ve audit düşer. FLUSH asenkron
+// başlar: saatler sürebilir, durum uçuş defterinde (flights) görünür.
+// Bellek tavanı ve spool dosyası silme adımları BİLEREK düğme değil metin:
+// biri k8s pod limiti, öteki veri kaybı — uygulamanın basacağı düğmeler
+// değil.
+function SpoolRunbook() {
+  const [state, setState] = useState<SpoolState | null | undefined>(undefined);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [note, setNote] = useState('');
+  const confirm = useConfirm();
+
+  const load = () => {
+    api.adminSpool().then(setState).catch(() => setState(null));
+  };
+  const act = async (kind: 'flush' | 'start', table: string) => {
+    if (kind === 'flush' && !await confirm({
+      title: `${table} spool'u zorla boşaltılsın mı?`,
+      body: `SYSTEM FLUSH DISTRIBUTED ${table} — kuyruğu senkron boşaltır; derin bir spool'da saatler sürebilir. İşlem arka planda koşar, ilerleme yukarıdaki dosya sayısından izlenir.`,
+      confirmLabel: 'Zorla boşalt',
+    })) return;
+    setBusy(kind + ':' + table); setNote('');
+    try {
+      if (kind === 'flush') {
+        await api.adminSpoolFlush(table);
+        setNote(`${table}: flush başladı — ilerleme yukarıdaki dosya sayısından izlenir.`);
+      } else {
+        await api.adminSpoolStartSends(table);
+        setNote(`${table}: gönderici başlatıldı (zaten açıksa zararsız).`);
+      }
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(''); load();
+    }
+  };
+
+  if (!open) {
+    return (
+      <div style={{ marginTop: 10 }}>
+        <Button variant="secondary" size="sm" onClick={() => { setOpen(true); load(); }}>
+          Runbook&apos;u aç
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>Runbook</span>
+        <span style={{ flex: 1 }} />
+        <Button variant="ghost" size="sm" onClick={load}>Yenile</Button>
+      </div>
+      {state === undefined && <Spinner />}
+      {state === null && <div className="err" style={{ fontSize: 11 }}>Durum okunamadı.</div>}
+      {state && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 11, lineHeight: 1.5 }}>
+          {/* 0 — disk: spool ~1 TiB'ken önce taşma riski cevaplanır. */}
+          <div>
+            <b>0 · Disk</b>
+            {state.disksError && <span className="err"> — okunamadı: {state.disksError}</span>}
+            {(state.disks ?? []).map(d => {
+              const pct = d.total > 0 ? (d.free / d.total) * 100 : 0;
+              return (
+                <div key={d.host + d.disk} style={{ color: pct < 15 ? 'var(--err)' : 'var(--text3)' }}>
+                  {d.host} · {d.disk}: {fmtBytes(d.free)} boş / {fmtBytes(d.total)} ({pct.toFixed(0)}%)
+                  {pct < 15 && <b> — KRİTİK: disk dolarsa spans/logs dahil her şey durur</b>}
+                </div>
+              );
+            })}
+          </div>
+          {/* 1 — tablo başına eylemler. Hedef listesi sunucunun kendi
+              Distributed envanteri; elle ad girilemez. */}
+          <div>
+            <b>1 · Eylemler</b> <span style={{ color: 'var(--text3)' }}>(admin; her biri audit&apos;e düşer)</span>
+            {(state.tables ?? []).map(t => {
+              const fl = state.flights.find(f => f.table === t && !f.doneAt);
+              const done = state.flights.find(f => f.table === t && f.doneAt);
+              return (
+                <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+                  <code style={{ minWidth: 140 }}>{t}</code>
+                  <Button variant="secondary" size="sm" disabled={busy !== ''}
+                    onClick={() => void act('start', t)}>Göndericiyi başlat</Button>
+                  <Button variant="ghost-danger" size="sm" disabled={busy !== '' || !!fl}
+                    onClick={() => void act('flush', t)}>Zorla boşalt (FLUSH)</Button>
+                  {fl && <span className="warn">flush koşuyor ({fmtClock(new Date(fl.startedAt / 1e6))})</span>}
+                  {!fl && done?.error && <span className="err" title={done.error}>son flush hata verdi — tekrar başlatmak kaldığı yerden sürer</span>}
+                  {!fl && done && !done.error && <span className="ok">son flush tamamlandı</span>}
+                </div>
+              );
+            })}
+          </div>
+          {/* 2+3 — düğmesi OLMAYAN adımlar; runbook yine de tam olsun. */}
+          <div style={{ color: 'var(--text3)' }}>
+            <b style={{ color: 'var(--text)' }}>2 · Bellek tavanı</b> — flush yine <code>241</code> ile
+            düşüyorsa CH pod limiti + <code>max_server_memory_usage</code> birlikte yükseltilmeli
+            (yalnız biri yetmez). <b style={{ color: 'var(--text)' }}>3 · Son çare</b> — spool
+            dosyalarını elle silmek kuyruktaki veriyi KAYBEDER; bu karar buradan verilemez,
+            düğmesi bilerek yok.
+          </div>
+          {note && <div style={{ fontWeight: 600 }}>{note}</div>}
+        </div>
       )}
     </div>
   );

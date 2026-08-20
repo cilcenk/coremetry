@@ -2364,6 +2364,22 @@ export const api = {
     if (opts?.spark === false) params.set('spark', '0');
     return get<SpanMetricsServicesResponse>(`/api/spanmetrics/services?${params.toString()}`);
   },
+  // v0.9.1191 — Distributed spool runbook'u (admin). GET taze durumu
+  // okur (cache YOK — "flush işe yaradı mı" bakışı bayat kopyayla
+  // yalanlanamaz); iki POST adlandırılmış SYSTEM eylemidir, serbest SQL
+  // değil. Flush 409'u "zaten koşuyor" demektir ve gövdede koşan uçuş var.
+  adminSpool: () =>
+    get<import('./types').SpoolState>('/api/admin/clickhouse/spool'),
+  adminSpoolFlush: (table: string) =>
+    request<import('./types').SpoolFlight>('/api/admin/clickhouse/spool/flush', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ table }),
+    }),
+  adminSpoolStartSends: (table: string) =>
+    request<{ ok: boolean; table: string }>('/api/admin/clickhouse/spool/start-sends', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ table }),
+    }),
   metricLabels: (metric: string, key: string, since: GoDuration = '24h') =>
     get<string[] | null>(withMetricSource(`/api/metrics/labels?metric=${encodeURIComponent(metric)}&key=${encodeURIComponent(key)}&since=${since}`)),
   // v0.9.771 — metricLabels'in anahtar yarısı: bir metrikte GÖRÜLMÜŞ datapoint

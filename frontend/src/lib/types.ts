@@ -5043,6 +5043,10 @@ export interface ExceptionTriageConfig {
   // eşiği gömülü bırakmak duvarı kaldırmadı, yerini değiştirdi.
   burstMinRate: number;
   burstMinTotal: number;
+  // v0.9.1189 — patlama SAYILMAYAN ama hacimli bir grubun P1 eşiği.
+  // Öncesi 5 DAKİKALIK bir uçurumun ardındaydı; artık p1FreshHours
+  // penceresini kullanıyor (888 olaylık grup 1sa12dk sonra P1 olamıyordu).
+  p1MinOccurrences: number;
 }
 
 // v0.9.838 — ALERT PROBLEMİ öncelik merdiveninin vidaları (backend:

@@ -70,6 +70,21 @@ type ExceptionTriageConfig struct {
 	// başına yeterli değil: 5 saniyede 20 olay da 240/dk eder ama patlama
 	// değildir. Varsayılan 1000 (değişmedi).
 	BurstMinTotal int `json:"burstMinTotal"`
+
+	// P1MinOccurrences — patlama SAYILMAYAN ama hacimli bir grubun P1
+	// olması için gereken toplam olay (v0.9.1189, operatör-bildirimli).
+	//
+	// Bu kapı zaten vardı ama BEŞ DAKİKALIK bir uçurumun ardındaydı:
+	// "son 5 dakikada görülmüş VE ≥500". v0.9.699 tam olarak bu uçurumu
+	// yanlış ilan etmişti ("şiddet bir OLGU, tazelik ONA ERİŞİM
+	// aciliyeti") ama düzeltmeyi yalnız PATLAMA yolunda yaptı; hacim yolu
+	// 5 dakikada kaldı. Sonuç, bildirilen vaka: 888 olaylık bir grup
+	// (mobil giriş) 1sa12dk önce durduğu için P1 olamadı, P2'de kaldı —
+	// oysa aynı grup 5 dakika önce durmuş olsa P1'di.
+	//
+	// Artık kapı P1FreshHours penceresini kullanıyor, yani hacim ve
+	// tazelik AYNI merdivende. Varsayılan 500 (eski gömülü değer).
+	P1MinOccurrences int `json:"p1MinOccurrences"`
 }
 
 // DefaultExceptionTriage — v0.9.775'in gemiye giren davranışı.
@@ -89,6 +104,9 @@ func DefaultExceptionTriage() ExceptionTriageConfig {
 		// "her şey patlama olur" riskini taşımıyor.
 		BurstMinRate:  100,
 		BurstMinTotal: 1000,
+		// v0.9.1189 — eski gömülü değerin aynısı; değişen sabitin DEĞERİ
+		// değil, arkasındaki PENCERE (5dk → P1FreshHours).
+		P1MinOccurrences: 500,
 	}
 }
 
@@ -144,6 +162,9 @@ func NormalizeExceptionTriage(c ExceptionTriageConfig) ExceptionTriageConfig {
 	}
 	if c.BurstMinTotal <= 0 {
 		c.BurstMinTotal = d.BurstMinTotal
+	}
+	if c.P1MinOccurrences <= 0 {
+		c.P1MinOccurrences = d.P1MinOccurrences
 	}
 	return c
 }

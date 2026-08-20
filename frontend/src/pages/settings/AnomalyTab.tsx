@@ -831,6 +831,19 @@ function ExceptionTriageSection() {
               </div>
             </Field>
 
+            <Field label="P1 hacim eşiği (olay)">
+              <input type="number" min={1} max={10000000} step={50}
+                value={cfg.p1MinOccurrences}
+                onChange={e => setCfg({ ...cfg, p1MinOccurrences: Number(e.target.value) })} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Patlama sayılmayan ama bu kadar olay biriktirmiş bir grup, P1
+                tazelik penceresi içinde görülmüşse P1 olur. Varsayılan 500.
+                <b> Bu kapı v0.9.1189&apos;a kadar beş dakikalık bir uçurumun
+                ardındaydı</b> &mdash; 888 olaylık bir grup 1sa12dk sonra P1
+                olamıyordu; artık yukarıdaki P1 penceresini kullanıyor.
+              </div>
+            </Field>
+
             <Field label="P2 aynı-gün penceresi (saat)">
               <input type="number" min={cfg.p1FreshHours} max={720} step={1}
                 value={cfg.p2SameDayHours}

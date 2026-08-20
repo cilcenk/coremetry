@@ -286,3 +286,86 @@ func TestExceptionReasonNeverLiesAboutSteady(t *testing.T) {
 		}
 	})
 }
+
+// ── v0.9.1189 — HACİM KAPISININ 5 DAKİKALIK UÇURUMU ───────────────────
+//
+// Operatör bildirimi (2026-08-20): "Mobile loginde 888 hata alınmış ama
+// bu P1 olmamış."
+//
+//	888 olay · son görülme 1sa12dk önce
+//	  burst?            888 < 1000 (BurstMinTotal)      → HAYIR
+//	  freshMin && ≥500? 1sa12dk > 5dk                    → HAYIR
+//	  fresh   && ≥100?  EVET                             → P2
+//
+// Yani 500+ hacimli bir grup, beş dakikayı aşar aşmaz P1 olamıyordu.
+// v0.9.699 bu uçurumu ZATEN yanlış ilan etmişti ("şiddet bir OLGU,
+// tazelik ONA ERİŞİM aciliyeti") ama düzeltmeyi yalnız PATLAMA yolunda
+// yaptı; hacim yolu 5 dakikada kaldı ve sınıf oradan geri döndü.
+//
+// Servis adları SENTETİK.
+func TestExceptionPriorityVolumeGateHasNoFiveMinuteCliff(t *testing.T) {
+	cfg := chstore.DefaultExceptionTriage()
+	const first = int64(1_700_000_000_000_000_000)
+	// Bildirilen satırın şekli: patlama eşiğinin ALTINDA hacim (888<1000),
+	// ama P1 hacim eşiğinin ÜSTÜNDE (888≥500).
+	g := chstore.ExceptionGroup{
+		Service: "mobile-login", Type: "java.sql.SQLTimeoutException",
+		Occurrences: 888, FirstSeen: first, LastSeen: first + int64(20*time.Minute),
+		State: "new",
+	}
+	if exceptionIsBurst(g.Occurrences, g.FirstSeen, g.LastSeen, cfg) {
+		t.Fatal("test kurgusu: bu grup patlama SAYILMAMALI (hacim tabanının altında)")
+	}
+
+	// Uçurumun iki yakası: 5 dakikanın altı ve üstü. İKİSİ DE P1 olmalı —
+	// aradaki tek fark gerekçenin cümlesi.
+	for _, c := range []struct {
+		name string
+		age  time.Duration
+	}{
+		{"hâlâ akıyor (2dk)", 2 * time.Minute},
+		{"uçurumun hemen ötesi (6dk)", 6 * time.Minute},
+		{"bildirilen vaka (1sa12dk)", 72 * time.Minute},
+		{"pencerenin hemen içi (3sa59dk)", 3*time.Hour + 59*time.Minute},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			prio, reason := exceptionPriorityAt(g, cfg, time.Unix(0, g.LastSeen).Add(c.age))
+			if prio != "P1" {
+				t.Errorf("öncelik %s, beklenen P1 (888 olay, yaş %v, pencere %v) — gerekçe %q",
+					prio, c.age, cfg.P1Window(), reason)
+			}
+			if !strings.Contains(reason, "888") {
+				t.Errorf("gerekçe hacmi söylemeli: %q", reason)
+			}
+		})
+	}
+
+	// Pencere KAPANINCA düşmeli — kapı kaldırılmadı, yeri düzeltildi.
+	prio, _ := exceptionPriorityAt(g, cfg, time.Unix(0, g.LastSeen).Add(5*time.Hour))
+	if prio == "P1" {
+		t.Error("P1 penceresi kapandıktan sonra hâlâ P1 — kapı kaldırılmış olurdu")
+	}
+}
+
+// TestExceptionVolumeGateIsConfigurable — eşik ayardan gelmeli; sabiti
+// bir çentik ötelemek bu sınıfta dört kez başarısız oldu.
+func TestExceptionVolumeGateIsConfigurable(t *testing.T) {
+	const first = int64(1_700_000_000_000_000_000)
+	g := chstore.ExceptionGroup{
+		Service: "mobile-login", Type: "java.sql.SQLTimeoutException",
+		Occurrences: 300, FirstSeen: first, LastSeen: first + int64(20*time.Minute),
+		State: "new",
+	}
+	now := time.Unix(0, g.LastSeen).Add(time.Hour)
+
+	// Varsayılan eşik (500): 300 olay P1 DEĞİL.
+	if prio, _ := exceptionPriorityAt(g, chstore.DefaultExceptionTriage(), now); prio == "P1" {
+		t.Error("300 olay varsayılan eşikte (500) P1 olmamalı")
+	}
+	// Eşik düşürülünce P1 OLMALI — vida gerçekten bağlı mı.
+	low := chstore.DefaultExceptionTriage()
+	low.P1MinOccurrences = 200
+	if prio, _ := exceptionPriorityAt(g, low, now); prio != "P1" {
+		t.Errorf("eşik 200'e indi ama 300 olay hâlâ P1 değil (%s) — vida bağlı değil", prio)
+	}
+}

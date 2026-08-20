@@ -1674,8 +1674,34 @@ func exceptionPriorityAt(g chstore.ExceptionGroup, cfg chstore.ExceptionTriageCo
 	// bir sorgu demek — v0.9.522/523'te tam o sınıfı azalttık. Doğru
 	// çözüm sayıyı uydurmak değil, elimizdeki iki gerçeği DOĞRU cümleyle
 	// söylemek: tazelik ayrı, toplam ayrı.
-	if freshMin && g.Occurrences >= 500 {
-		return "P1", fmt.Sprintf("active in last 5min · %s total", fmtThousands(g.Occurrences))
+	// v0.9.1189 (operatör-bildirimli) — HACİM KAPISI 5 DAKİKALIK UÇURUMDAN
+	// ÇIKTI.
+	//
+	// Bildirilen vaka: mobil giriş servisinde 888 olay, son görülme 1sa12dk
+	// önce. `freshMin` (≤5dk) kapalı olduğu için P1 olamadı; 888 < 1000
+	// olduğu için patlama da sayılmadı → P2'de kaldı. Aynı grup beş dakika
+	// önce durmuş olsaydı P1'di.
+	//
+	// v0.9.699 bu uçurumu ZATEN yanlış ilan etmişti — "şiddet bir OLGU,
+	// tazelik ONA ERİŞİM aciliyeti" — ama düzeltmeyi yalnız PATLAMA yolunda
+	// yaptı. Hacim yolu 5 dakikada kaldı ve aynı sınıf oradan geri döndü.
+	// Kapı artık diğerleriyle AYNI pencerede (P1FreshHours) ve eşik de
+	// ayarlanabilir (P1MinOccurrences).
+	//
+	// Gerekçe hâlâ "hâlâ akıyor mu" ayrımını taşıyor: ikisi operatör için
+	// farklı şeyler ("şu an devam ediyor" ≠ "iki saat önce bitti"), ve bu
+	// deponun kuralı gereği cümle olguyu doğru söylemeli.
+	if fresh && g.Occurrences >= uint64(cfg.P1MinOccurrences) {
+		if freshMin {
+			// v0.9.524'ün sözleşmesi BİREBİR korunuyor (inbox_test.go bu
+			// metni çiviliyor): tazelik ayrı, toplamın TOPLAM olduğu ayrı.
+			return "P1", fmt.Sprintf("active in last 5min · %s total", fmtThousands(g.Occurrences))
+		}
+		// Durmuş ama pencere içindeki hâli: aynı iki gerçek, artı ne zaman
+		// durduğu — "şu an devam ediyor" ile "iki saat önce bitti" operatör
+		// için farklı şeyler ve cümle bunu söylemeli.
+		return "P1", fmt.Sprintf("%s total · stopped %s ago",
+			fmtThousands(g.Occurrences), shortDur(time.Duration(age)))
 	}
 	// v0.9.775 — bu kapı da AYNI pencereye bağlandı. Operatörün ikinci
 	// şikâyeti tam buydu: 191 olaylık SQLTimeout grubu 1sa50dk'da

@@ -32,6 +32,8 @@ package api
 import (
 	"fmt"
 	"time"
+
+	"github.com/cilcenk/coremetry/internal/chstore"
 )
 
 // exceptionBurstMinRate — P1 için dakikadaki en az olay.
@@ -72,11 +74,15 @@ func exceptionBurstRate(occurrences uint64, firstSeen, lastSeen int64) float64 {
 //
 // Çağıran ayrıca tazelik kapısını (son 1 saat) uygular: bu fonksiyon
 // "ne kadar şiddetli" sorusuna bakar, "hâlâ güncel mi" sorusuna değil.
-func exceptionIsBurst(occurrences uint64, firstSeen, lastSeen int64) bool {
-	if occurrences < exceptionBurstMinTotal {
+// v0.9.1188 — eşikler artık AYARDAN (exception_triage). Gömülü sabitler
+// aşağıda varsayılan olarak duruyor ama tek okuyucusu chstore'un
+// DefaultExceptionTriage'ı; bu fonksiyon config'e bakar.
+func exceptionIsBurst(occurrences uint64, firstSeen, lastSeen int64, cfg chstore.ExceptionTriageConfig) bool {
+	cfg = chstore.NormalizeExceptionTriage(cfg)
+	if occurrences < uint64(cfg.BurstMinTotal) {
 		return false
 	}
-	return exceptionBurstRate(occurrences, firstSeen, lastSeen) >= exceptionBurstMinRate
+	return exceptionBurstRate(occurrences, firstSeen, lastSeen) >= cfg.BurstMinRate
 }
 
 // shortDur — insan okuyacak kısa süre ("12dk", "1sa 5dk", "45sn").

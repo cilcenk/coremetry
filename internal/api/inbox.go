@@ -1572,6 +1572,12 @@ func exceptionPriority(g chstore.ExceptionGroup) (string, string) {
 // Tablo testleri buradan geçer; sarmalayıcı yalnız zamanı ve ayarı
 // bağlar.
 func exceptionPriorityAt(g chstore.ExceptionGroup, cfg chstore.ExceptionTriageConfig, now time.Time) (string, string) {
+	// v0.9.1188 — kelepçe BURADA. Pencereler kendi P1Window()/P2Window()
+	// çağrılarında normalize oluyordu ama patlama eşikleri HAM alandan
+	// okunuyor: sıfır-değerli bir config (elle kurulmuş bir test, hidrate
+	// edilmemiş bir çağıran) eşiği 0/dk yapar, her grubu patlama sayar ve
+	// gerekçeye "patlama eşiği 0/dk" yazardı.
+	cfg = chstore.NormalizeExceptionTriage(cfg)
 	age := now.UnixNano() - g.LastSeen
 	freshMin := time.Duration(age) <= 5*time.Minute
 	// v0.9.775 — adı artık pencerenin DEĞERİNİ değil ANLAMINI söylüyor.
@@ -1637,7 +1643,7 @@ func exceptionPriorityAt(g chstore.ExceptionGroup, cfg chstore.ExceptionTriageCo
 	// saat önce biten bir patlamayı hâlâ "şimdi" sayacak kadar geniş.
 	// (b) Pencereler artık system_settings'te (exception_triage):
 	// dördüncü vaka bir sürüm değil bir ayar değişikliği olsun.
-	burst := exceptionIsBurst(g.Occurrences, g.FirstSeen, g.LastSeen)
+	burst := exceptionIsBurst(g.Occurrences, g.FirstSeen, g.LastSeen, cfg)
 	burstDesc := ""
 	if burst {
 		burstDesc = fmt.Sprintf("%s olay / %s (~%.0f/dk)",
@@ -1692,6 +1698,26 @@ func exceptionPriorityAt(g chstore.ExceptionGroup, cfg chstore.ExceptionTriageCo
 	// düşebilir, cümle yalan olamaz.
 	if burst {
 		return "P3", burstDesc + " · " + shortDur(time.Duration(age)) + " önce"
+	}
+	// v0.9.1188 (operatör-bildirimli) — "steady" YALNIZ gerçekten öyle
+	// olanlar için, ve patlama KAPISINI KAÇIRAN bir grup da öyle değildir.
+	//
+	// Bildirilen satır: 2.374 olay / 13dk 09sn = 180,5/dk. Eski gömülü kapı
+	// 200/dk olduğu için burst=false çıktı, sonra 8 saatlik yaş diğer bütün
+	// kapıları kapattı ve satır "steady" gerekçesiyle P3'e düştü. Öncelik
+	// tartışılır; CÜMLE tartışılmaz — 13 dakikada 2.374 olay hiçbir okumada
+	// "steady" değildir. Bu deponun kuralı: öncelik düşebilir, cümle yalan
+	// olamaz (v0.9.524, v0.9.699).
+	//
+	// Eşik ayarlanabilir olduğuna göre kapıyı kaçıran her grup bir sonraki
+	// ayar değişikliğinin adayıdır; gerekçe bunu SÖYLEMELİ ki operatör
+	// vidayı nereye çevireceğini görebilsin. Kapıyı gerçekten uzaktan
+	// kaçıranlar (kronik, düşük hızlı gruplar) eskisi gibi "steady".
+	if rate := exceptionBurstRate(g.Occurrences, g.FirstSeen, g.LastSeen); rate >= cfg.BurstMinRate/2 {
+		return "P3", fmt.Sprintf("%s olay / %s (~%.0f/dk · patlama eşiği %.0f/dk)",
+			fmtThousands(g.Occurrences),
+			shortDur(time.Duration(g.LastSeen-g.FirstSeen)),
+			rate, cfg.BurstMinRate)
 	}
 	return "P3", "steady"
 }

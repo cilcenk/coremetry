@@ -41,27 +41,43 @@ func TestExceptionBurstRate(t *testing.T) {
 }
 
 func TestExceptionIsBurst(t *testing.T) {
+	// v0.9.1188 — tablo artık EŞİĞE GÖRELİ. Öncesi 200/dk'ya çakılıydı ve
+	// varsayılan 100'e inince üç vaka kırıldı; oysa bu bug'ın dersi tam
+	// olarak "eşik bir sabit değil, bir ayar". Süreleri eşikten türetince
+	// test bir sonraki değişiklikte de anlamını koruyor.
+	cfg := chstore.DefaultExceptionTriage()
+	rate := cfg.BurstMinRate
+	total := uint64(cfg.BurstMinTotal)
+	// spanFor — `occ` olayı tam olarak `perMin` hızında üretecek süre.
+	spanFor := func(occ uint64, perMin float64) int64 {
+		return int64(float64(occ) / perMin * float64(time.Minute))
+	}
+
 	cases := []struct {
 		name   string
 		occ    uint64
 		spanNs int64
 		want   bool
 	}{
-		{"operatörün olayı", 11260, int64(12*time.Minute + 5*time.Second), true},
+		{"operatörün olayı (v0.9.627)", 11260, int64(12*time.Minute + 5*time.Second), true},
+		// v0.9.1188'in bildirdiği satır: 2.374 olay / 13dk09sn = 180,5/dk.
+		// Eski 200'lük kapıyı %10 farkla kaçırıyordu.
+		{"v0.9.1188 satırı", 2374, int64(13*time.Minute + 9*time.Second), true},
 		// Hacim yüksek ama üç güne yayılmış: kronik, olay değil.
 		{"kronik birikim", 11260, int64(72 * time.Hour), false},
-		// Hız yüksek ama hacim düşük: 5 saniyede 20 olay = 240/dk,
-		// yine de P1 değil — taban bunun için var.
+		// Hız yüksek ama hacim düşük: taban bunun için var.
 		{"küçük ama hızlı", 20, int64(5 * time.Second), false},
-		{"taban hacmin hemen altı", 999, int64(time.Minute), false},
-		{"taban hacim + taban hız", 1000, int64(5 * time.Minute), true},
-		{"tam eşikte hız", 1000, int64(5 * time.Minute), true},
-		{"eşiğin hemen altında hız", 1000, int64(6 * time.Minute), false},
+		{"taban hacmin hemen altı", total - 1, int64(time.Minute), false},
+		{"tam eşikte hız", total, spanFor(total, rate), true},
+		// Eşiğin hemen ALTI: %10 aşağıda.
+		{"eşiğin hemen altında hız", total, spanFor(total, rate*0.9), false},
+		// Eşiğin hemen ÜSTÜ: %10 yukarıda.
+		{"eşiğin hemen üstünde hız", total, spanFor(total, rate*1.1), true},
 	}
 	for _, c := range cases {
-		if got := exceptionIsBurst(c.occ, 0, c.spanNs); got != c.want {
-			t.Errorf("%s: isBurst=%v, beklenen %v (hız %.0f/dk)",
-				c.name, got, c.want, exceptionBurstRate(c.occ, 0, c.spanNs))
+		if got := exceptionIsBurst(c.occ, 0, c.spanNs, cfg); got != c.want {
+			t.Errorf("%s: isBurst=%v, beklenen %v (hız %.0f/dk, eşik %.0f/dk)",
+				c.name, got, c.want, exceptionBurstRate(c.occ, 0, c.spanNs), rate)
 		}
 	}
 }
@@ -167,4 +183,106 @@ func TestShortDur(t *testing.T) {
 			t.Errorf("shortDur(%v) = %q, beklenen %q", d, got, want)
 		}
 	}
+}
+
+// ── v0.9.1188 — operatör-bildirimli satır (2026-08-20) ────────────────
+//
+// Bildirilen: 2.374 olaylık bir java.net.UnknownHostException grubu, 8
+// saat önce bitmiş 13 dakikalık bir patlama, ekranda P3 · "steady".
+//
+//	first 01:02:26 · last 01:15:35 → 13dk 09sn
+//	2.374 / 13,15dk = 180,5/dk     → eski gömülü kapı 200/dk
+//
+// Kapıyı %10 farkla kaçırdı → burst=false → 8 saatlik yaş diğer bütün
+// kapıları kapattı → son satır "steady".
+//
+// İki ayrı kusur ve ikisi de burada çivileniyor:
+//
+//	(1) EŞİK GÖMÜLÜYDÜ. Bu sınıfın DÖRDÜNCÜ bildirimi; v0.9.775 pencereleri
+//	    ayarlanabilir yapmış ama patlamanın TANIMINI kodda bırakmıştı, yani
+//	    duvarı kaldırmamış yerini değiştirmişti.
+//	(2) GEREKÇE YALAN SÖYLÜYORDU. 13 dakikada 2.374 olay hiçbir okumada
+//	    "steady" değildir. Deponun kuralı: öncelik düşebilir, cümle yalan
+//	    olamaz (v0.9.524, v0.9.699).
+//
+// Servis/exception adları SENTETİK — kurulum adları depoya girmez.
+func TestExceptionPriorityReportedRow20260820(t *testing.T) {
+	const first = int64(1_700_000_000_000_000_000)
+	last := first + int64(13*time.Minute+9*time.Second)
+	g := chstore.ExceptionGroup{
+		Service:     "checkout-bff",
+		Type:        "java.net.UnknownHostException",
+		Occurrences: 2374,
+		FirstSeen:   first,
+		LastSeen:    last,
+		State:       "new",
+	}
+	cfg := chstore.DefaultExceptionTriage()
+	now := time.Unix(0, last).Add(8*time.Hour + 16*time.Minute)
+
+	prio, reason := exceptionPriorityAt(g, cfg, now)
+
+	// Patlama artık TANINIYOR (180,5/dk ≥ 100/dk varsayılan kapı).
+	if !exceptionIsBurst(g.Occurrences, g.FirstSeen, g.LastSeen, cfg) {
+		t.Fatalf("patlama tanınmadı: %.1f/dk, kapı %.0f/dk",
+			exceptionBurstRate(g.Occurrences, g.FirstSeen, g.LastSeen), cfg.BurstMinRate)
+	}
+	// Yaş 8sa16dk: P1 penceresinin (4sa) DIŞINDA ama P2'nin (24sa) içinde.
+	// Yani doğru cevap P2 — "bugün". P1 istenirse P1FreshHours vidası var;
+	// bitmiş bir patlamayı "şimdi" saymak merdivenin kendi felsefesine
+	// aykırı olurdu (v0.9.699: şiddet OLGU, tazelik ERİŞİM aciliyeti).
+	if prio != "P2" {
+		t.Errorf("öncelik %s, beklenen P2 (yaş 8sa16dk, P1 penceresi %v, P2 %v)",
+			prio, cfg.P1Window(), cfg.P2Window())
+	}
+	// Gerekçe patlamanın GERÇEK büyüklüğünü taşımalı, "steady" DEMEMELİ.
+	if strings.Contains(reason, "steady") {
+		t.Errorf("gerekçe hâlâ yalan söylüyor: %q", reason)
+	}
+	for _, want := range []string{"2,374", "13dk", "/dk"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("gerekçe %q içermeli: %q", want, reason)
+		}
+	}
+}
+
+// TestExceptionReasonNeverLiesAboutSteady — kapıyı KAÇIRAN gruplar da
+// "steady" diyemez.
+//
+// Eşik ayarlanabilir olduğuna göre kapının hemen altındaki her grup bir
+// sonraki ayar değişikliğinin adayı; gerekçe bunu söylemeli ki operatör
+// vidayı nereye çevireceğini görsün. Gerçekten kronik olanlar (düşük hız)
+// eskisi gibi "steady" kalır — aksi hâlde kelime anlamını yitirirdi.
+func TestExceptionReasonNeverLiesAboutSteady(t *testing.T) {
+	cfg := chstore.DefaultExceptionTriage()
+	const first = int64(1_700_000_000_000_000_000)
+	mk := func(occ uint64, span time.Duration) chstore.ExceptionGroup {
+		return chstore.ExceptionGroup{
+			Service: "checkout-bff", Type: "java.lang.IllegalStateException",
+			Occurrences: occ, FirstSeen: first, LastSeen: first + int64(span), State: "new",
+		}
+	}
+	// Eski/uzak yaş: bütün tazelik kapıları kapalı, son satıra düşülüyor.
+	age := 30 * time.Hour
+
+	t.Run("kapının hemen altı steady DEMEZ", func(t *testing.T) {
+		// 900 olay / 10dk = 90/dk → kapı 100'ün altında ama yarısının üstünde.
+		g := mk(900, 10*time.Minute)
+		_, reason := exceptionPriorityAt(g, cfg, time.Unix(0, g.LastSeen).Add(age))
+		if strings.Contains(reason, "steady") {
+			t.Errorf("90/dk için 'steady' yalan: %q", reason)
+		}
+		if !strings.Contains(reason, "eşiği") {
+			t.Errorf("gerekçe eşiği söylemeli ki operatör vidayı görsün: %q", reason)
+		}
+	})
+
+	t.Run("gerçekten kronik olan steady KALIR", func(t *testing.T) {
+		// 11.260 olay / 72 saat = ~2,6/dk — kelime burada doğru.
+		g := mk(11260, 72*time.Hour)
+		_, reason := exceptionPriorityAt(g, cfg, time.Unix(0, g.LastSeen).Add(age))
+		if reason != "steady" {
+			t.Errorf("kronik grup için 'steady' beklenirdi: %q", reason)
+		}
+	})
 }

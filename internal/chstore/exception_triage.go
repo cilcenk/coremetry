@@ -47,6 +47,29 @@ type ExceptionTriageConfig struct {
 	// cümleyle düşünüyor: "bir exception ne kadar süre benim
 	// gündemimde kalsın?"
 	StaleResolveHours int `json:"staleResolveHours"`
+
+	// ── v0.9.1188 — PATLAMA KAPILARI (operatör-bildirimli, DÖRDÜNCÜ kez) ──
+	//
+	// Yukarıdaki v0.9.775 notu "sabitin DEĞERİ hiç doğru cevap değildi,
+	// sabitin KENDİSİ yanlıştı" diyor ve PENCERELERİ ayarlanabilir yaptı.
+	// Ama patlamanın TANIMI (hız + hacim eşiği) kodda gömülü kaldı ve
+	// dördüncü vaka tam oradan geldi:
+	//
+	//	2.374 olay / 13dk 09sn → 180,5/dk   (gömülü kapı: 200/dk)
+	//
+	// Kapıyı %10 farkla kaçırdı, patlama sayılmadı, sonra 8 saatlik yaş
+	// diğer bütün kapıları kapattı ve satır "steady" gerekçesiyle P3'e
+	// düştü. Aynı ders bir katman aşağıda tekrarlanmış: pencereleri
+	// ayarlanabilir yapıp eşiği gömülü bırakmak, duvarı kaldırmadı —
+	// yerini değiştirdi.
+	//
+	// BurstMinRate — patlama sayılmak için dakikadaki en az olay.
+	// Varsayılan v0.9.1188'de 200 → 100 İNDİ (aşağıdaki gerekçe).
+	BurstMinRate float64 `json:"burstMinRate"`
+	// BurstMinTotal — hız ne olursa olsun gereken taban hacim. Hız tek
+	// başına yeterli değil: 5 saniyede 20 olay da 240/dk eder ama patlama
+	// değildir. Varsayılan 1000 (değişmedi).
+	BurstMinTotal int `json:"burstMinTotal"`
 }
 
 // DefaultExceptionTriage — v0.9.775'in gemiye giren davranışı.
@@ -55,6 +78,17 @@ func DefaultExceptionTriage() ExceptionTriageConfig {
 		P1FreshHours:      4,
 		P2SameDayHours:    24,
 		StaleResolveHours: int(DefaultExceptionStaleHorizon / time.Hour),
+		// v0.9.1188 — 200'den 100'e İNDİ ve bu bilinçli bir davranış
+		// değişikliği. Eski 200, TEK bir vakadan türetilmişti (v0.9.627'de
+		// ölçülen olay ~938/dk) ve o notun kendi cümlesi zaten sınırı
+		// söylüyordu: "gürültülü ama sağlıklı bir servisin ürettiği
+		// tekrarlayan uyarı tipik olarak bu mertebenin altında kalıyor."
+		// 100/dk = saniyede 1,7 olay; on üç dakika sürdürülen bu hız
+		// sağlıklı bir servisin gürültüsü değil, kırılmış bir bağımlılıktır.
+		// Küçük grupları BurstMinTotal (1000) zaten eliyor, yani indirme
+		// "her şey patlama olur" riskini taşımıyor.
+		BurstMinRate:  100,
+		BurstMinTotal: 1000,
 	}
 }
 
@@ -100,6 +134,16 @@ func NormalizeExceptionTriage(c ExceptionTriageConfig) ExceptionTriageConfig {
 	// olarak düzelttiği kusur.
 	if c.P2SameDayHours < c.P1FreshHours {
 		c.P2SameDayHours = c.P1FreshHours
+	}
+	// v0.9.1188 — patlama kapıları. Sıfır/negatif varsayılana düşer;
+	// 0 "kapıyı kaldır" ANLAMINA GELMEZ, çünkü 0/dk her grubu patlama
+	// yapar ve basamağın üst ucunu anlamsızlaştırırdı (BigBreachRatio'nun
+	// ≥1.1 kelepçesiyle aynı gerekçe).
+	if c.BurstMinRate <= 0 {
+		c.BurstMinRate = d.BurstMinRate
+	}
+	if c.BurstMinTotal <= 0 {
+		c.BurstMinTotal = d.BurstMinTotal
 	}
 	return c
 }

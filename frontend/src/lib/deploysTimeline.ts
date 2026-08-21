@@ -26,6 +26,8 @@ export type TimelineRow = {
   errDeltaPp?: number;
   p99DeltaPct?: number;
   impactTitle?: string;
+  // v0.9.1204 — 'event' = pipeline/operatör kaydı (span çıkarımı değil).
+  source?: string;
 };
 
 function churnBits(ro: FleetRollout): Pick<TimelineRow, 'podsDelta' | 'podsChurn' | 'podsTitle'> {
@@ -51,6 +53,7 @@ export function buildDeployTimeline(
     const row: TimelineRow = {
       timeNs: dep.firstSeenNs, kind: 'deploy', service: dep.service,
       version: dep.version, podsDelta: '—', spanCount: dep.spanCount,
+      source: dep.source,
     };
     if (dep.impact) {
       row.errDeltaPp = dep.impact.errorRateDeltaPct;

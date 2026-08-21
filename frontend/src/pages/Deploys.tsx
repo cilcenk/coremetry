@@ -121,7 +121,11 @@ export default function DeploysPage() {
         {q.data && rows.length === 0 && (
           <Empty icon="🚀" title="Bu pencerede deploy/rollout yok">
             Sürüm ilk-görülmeleri service.version / image-tag attribute'larından,
-            pod-churn ise aktif pod kümesi değişimlerinden türetilir.
+            pod-churn aktif pod kümesi değişimlerinden türetilir. Attribute
+            taşımayan kurulumlarda (ör. JBoss WAR) release pipeline'ından
+            POST /api/operator-events ile kind=deploy kaydı gönderin — banner, marker,
+            etki analizi ve kök-neden korelasyonu onu da kaynak sayar
+            (docs/DEPLOY-EVENTS.md).
           </Empty>
         )}
         {q.data && rows.length > 0 && (
@@ -142,7 +146,13 @@ export default function DeploysPage() {
                       </Link>
                     </td>
                     <td className="mono" style={{ fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                      title={r.version}>{r.version}</td>
+                      title={r.version}>
+                      {r.version}
+                      {r.source === 'event' && (
+                        <span className="badge b-info" style={{ marginLeft: 6, fontSize: 9.5 }}
+                          title="Pipeline/operatör kaydı (events kind=deploy) — span çıkarımı değil">pipeline</span>
+                      )}
+                    </td>
                     <td className="mono" style={{ fontSize: 11.5 }} title={r.podsTitle}>{r.podsDelta}</td>
                     <td className="num mono" style={{ fontSize: 11.5, color: 'var(--text3)' }}>
                       {r.spanCount !== undefined ? r.spanCount.toLocaleString() : '—'}

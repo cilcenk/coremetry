@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sort"
 	"strings"
 	"time"
 )
@@ -31,6 +32,8 @@ type Deploy struct {
 	// version that produced 3 spans is probably a stuck
 	// straggler instance, not a real deploy.
 	SpanCount int `json:"spanCount"`
+	// Source — bkz. RecentDeployEntry.Source (v0.9.1204).
+	Source string `json:"source,omitempty"`
 }
 
 // RecentDeployEntry is one row from GetRecentDeploys —
@@ -40,6 +43,11 @@ type RecentDeployEntry struct {
 	Version     string `json:"version"`
 	FirstSeenNs int64  `json:"firstSeenNs"`
 	SpanCount   uint64 `json:"spanCount"`
+	// Source — deploy kaydının nereden öğrenildiği (v0.9.1204):
+	// "" = span çıkarımı (versiyon attribute zinciri), "event" =
+	// operatör/pipeline kaydı (events kind='deploy'). Event kaynaklı
+	// satırlar span taşımaz — SpanCount=0 dürüst değerdir.
+	Source string `json:"source,omitempty"`
 }
 
 // v0.5.278 — placeholder versions that aren't real deploys.
@@ -107,7 +115,7 @@ const effectiveVersionExpr = `
 // for hours doesn't dominate the result. Limit 20 caps the
 // banner footprint; SETTINGS max_execution_time = 5 keeps it
 // snappy enough to fire from a global 30s poll.
-func (s *Store) GetRecentDeploys(ctx context.Context, since time.Duration, limit int) ([]RecentDeployEntry, error) {
+func (s *Store) recentDeploysInferred(ctx context.Context, since time.Duration, limit int) ([]RecentDeployEntry, error) {
 	if since <= 0 {
 		since = 30 * time.Minute
 	}
@@ -363,7 +371,7 @@ const serviceDeploysSQL = `
 		SETTINGS max_execution_time = 15,
 		         `
 
-func (s *Store) GetServiceDeploys(
+func (s *Store) serviceDeploysInferred(
 	ctx context.Context, service string, from, to time.Time,
 ) ([]Deploy, error) {
 	// v0.5.278 — same placeholder filter + image-tag fallback
@@ -958,7 +966,7 @@ func (s *Store) deploysInWindowFromMV(ctx context.Context, from, to time.Time, l
 	return out, rows.Err()
 }
 
-func (s *Store) GetDeploysInWindow(ctx context.Context, from, to time.Time, limit int) ([]RecentDeployEntry, error) {
+func (s *Store) deploysInWindowInferred(ctx context.Context, from, to time.Time, limit int) ([]RecentDeployEntry, error) {
 	if limit <= 0 || limit > 2000 {
 		limit = 200
 	}
@@ -1018,4 +1026,138 @@ func (s *Store) GetDeploysInWindow(ctx context.Context, from, to time.Time, limi
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// ── Deploy event'leri kaynağa terfi (v0.9.1204) ─────────────────────────────
+//
+// Operatör-bildirimi: prod'da (JBoss WAR deploy'ları) versiyon attribute
+// zincirinin hiçbir halkası değişmiyor — span çıkarımı deploy'u hiç
+// göremiyor, DeployImpact hiç hesaplanmıyor, RCA'nın "ne değişti" ekseni
+// kör. Ürünün v0.5.476'dan beri taşıdığı events(kind='deploy') kanalı
+// yalnız grafik marker'ı çiziyordu; artık deploy OKUYAN üç huni
+// (GetRecentDeploys / GetServiceDeploys / GetDeploysInWindow) span
+// çıkarımı ∪ deploy-event birleşimini döner — banner, marker'lar,
+// problem zenginleştirme, hipotez, impact ve rollouts bedavaya görür.
+//
+// Kararlar (operatör onayı): event Label'ı OLDUĞU GİBİ versiyondur
+// (parse yok); aynı (service, version) iki kaynaktan gelirse EVENT
+// KAZANIR (pipeline kaydı gerçeğin kendisi); event okuması soft-fail —
+// events tablosu tökezlerse deploy listesi span çıkarımıyla yaşar.
+
+// deployEventEntries — events(kind='deploy') penceresini deploy
+// kayıtlarına çevirir. service="" = tüm servisler. Servissiz ya da
+// etiketsiz event deploy OLAMAZ (deploy bir servise olur) — atlanır.
+func (s *Store) deployEventEntries(ctx context.Context, service string, from, to time.Time) []RecentDeployEntry {
+	evs, err := s.ListEvents(ctx, EventFilter{
+		From: from, To: to, Service: service, Kind: "deploy", Limit: 1000,
+	})
+	if err != nil {
+		log.Printf("[deploys] event kaynağı okunamadı: %v — yalnız span çıkarımı", err)
+		return nil
+	}
+	out := make([]RecentDeployEntry, 0, len(evs))
+	for _, e := range evs {
+		v := strings.TrimSpace(e.Label)
+		if e.Service == "" || v == "" {
+			continue
+		}
+		out = append(out, RecentDeployEntry{
+			Service: e.Service, Version: v, FirstSeenNs: e.Time, Source: "event",
+		})
+	}
+	return out
+}
+
+// mergeDeployEntries — SAF birleşim: (service, version) anahtarında
+// event kazanır; sonuç FirstSeenNs DESC (banner/pencere sözleşmesi),
+// limit'e kırpılır.
+func mergeDeployEntries(inferred, events []RecentDeployEntry, limit int) []RecentDeployEntry {
+	if len(events) == 0 {
+		return inferred
+	}
+	byKey := map[string]int{}
+	out := make([]RecentDeployEntry, 0, len(inferred)+len(events))
+	key := func(e RecentDeployEntry) string { return e.Service + "\x00" + e.Version }
+	for _, e := range inferred {
+		byKey[key(e)] = len(out)
+		out = append(out, e)
+	}
+	for _, e := range events {
+		if i, ok := byKey[key(e)]; ok {
+			// Event kazanır ama span sayısı çıkarımdan kalır — iki
+			// kaynağın bildiği birleşir, çelişen alan (zaman) event'ten.
+			e.SpanCount = out[i].SpanCount
+			out[i] = e
+			continue
+		}
+		byKey[key(e)] = len(out)
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].FirstSeenNs > out[j].FirstSeenNs })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// GetRecentDeploys — banner hunisi: span çıkarımı ∪ deploy event'leri.
+func (s *Store) GetRecentDeploys(ctx context.Context, since time.Duration, limit int) ([]RecentDeployEntry, error) {
+	if since <= 0 {
+		since = 30 * time.Minute
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	inferred, err := s.recentDeploysInferred(ctx, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	ev := s.deployEventEntries(ctx, "", time.Now().Add(-since), time.Now())
+	return mergeDeployEntries(inferred, ev, limit), nil
+}
+
+// GetDeploysInWindow — pencere hunisi: span çıkarımı ∪ deploy event'leri.
+func (s *Store) GetDeploysInWindow(ctx context.Context, from, to time.Time, limit int) ([]RecentDeployEntry, error) {
+	if limit <= 0 || limit > 2000 {
+		limit = 200
+	}
+	inferred, err := s.deploysInWindowInferred(ctx, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	ev := s.deployEventEntries(ctx, "", from, to)
+	return mergeDeployEntries(inferred, ev, limit), nil
+}
+
+// GetServiceDeploys — servis hunisi (grafik marker'ları + impact
+// panelleri): span çıkarımı ∪ deploy event'leri, zaman ASC
+// (PickDeploysAroundStart sözleşmesi).
+func (s *Store) GetServiceDeploys(
+	ctx context.Context, service string, from, to time.Time,
+) ([]Deploy, error) {
+	inferred, err := s.serviceDeploysInferred(ctx, service, from, to)
+	if err != nil {
+		return nil, err
+	}
+	evs := s.deployEventEntries(ctx, service, from, to)
+	if len(evs) == 0 {
+		return inferred, nil
+	}
+	entries := make([]RecentDeployEntry, 0, len(inferred))
+	for _, d := range inferred {
+		entries = append(entries, RecentDeployEntry{
+			Service: d.Service, Version: d.Version,
+			FirstSeenNs: d.TimeUnixNs, SpanCount: uint64(d.SpanCount), Source: d.Source,
+		})
+	}
+	merged := mergeDeployEntries(entries, evs, 0)
+	out := make([]Deploy, 0, len(merged))
+	for _, e := range merged {
+		out = append(out, Deploy{
+			Service: service, Version: e.Version,
+			TimeUnixNs: e.FirstSeenNs, SpanCount: int(e.SpanCount), Source: e.Source,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TimeUnixNs < out[j].TimeUnixNs })
+	return out, nil
 }

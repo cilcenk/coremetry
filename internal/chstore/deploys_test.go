@@ -148,9 +148,12 @@ func TestDeployWindowJudgmentLookback(t *testing.T) {
 	if !strings.Contains(src, "countIf(time >= ?) AS span_count") {
 		t.Error("span_count lookback'i sayıyor — hacim kolonu yalnız sayfa penceresini saymalı")
 	}
-	i := strings.Index(src, "func (s *Store) GetDeploysInWindow")
+	// v0.9.1204 — huni yeniden adlandı: ham sorgu artık
+	// deploysInWindowInferred'da (GetDeploysInWindow event birleşimli
+	// sarmalayıcı oldu). Pinin özü DEĞİŞMEDİ: bind sırası.
+	i := strings.Index(src, "func (s *Store) deploysInWindowInferred")
 	if i < 0 {
-		t.Fatal("GetDeploysInWindow yok")
+		t.Fatal("deploysInWindowInferred yok")
 	}
 	// v0.9.508 — erişimci s.conn → s.telemetryReadConn() oldu (deploys.go
 	// RoundRobin okuma havuzuna taşındı). Bu testin pinlediği şey BAĞLANTI
@@ -186,4 +189,45 @@ func TestNanToZero(t *testing.T) {
 		t.Fatalf("sanitize sonrası marshal düşmemeli: %v", err)
 	}
 	_ = b
+}
+
+// v0.9.1204 — deploy event'leri kaynağa terfi. Operatör-bildirimi:
+// prod'da (JBoss WAR) versiyon attribute zinciri hiç değişmiyor, span
+// çıkarımı deploy'u göremiyor. Pinler: (a) aynı (service,version)
+// çakışmasında EVENT kazanır ama span sayısı çıkarımdan kalır,
+// (b) yalnız-event deploy listeye girer (prod'un ana senaryosu),
+// (c) sıra FirstSeenNs DESC + limit kırpması, (d) boş event tarafı
+// çıkarımı bayt-bayt bırakır.
+func TestMergeDeployEntries(t *testing.T) {
+	inferred := []RecentDeployEntry{
+		{Service: "a", Version: "v1", FirstSeenNs: 100, SpanCount: 500},
+		{Service: "b", Version: "v9", FirstSeenNs: 90, SpanCount: 30},
+	}
+	events := []RecentDeployEntry{
+		{Service: "a", Version: "v1", FirstSeenNs: 120, Source: "event"},    // çakışma — event kazanır
+		{Service: "c", Version: "rel-7", FirstSeenNs: 110, Source: "event"}, // yalnız-event (JBoss senaryosu)
+	}
+	out := mergeDeployEntries(inferred, events, 10)
+	if len(out) != 3 {
+		t.Fatalf("3 kayıt beklenirdi, %d döndü: %+v", len(out), out)
+	}
+	if out[0].Service != "a" || out[0].FirstSeenNs != 120 || out[0].Source != "event" {
+		t.Errorf("çakışmada event kazanmalı (zaman 120): %+v", out[0])
+	}
+	if out[0].SpanCount != 500 {
+		t.Errorf("span sayısı çıkarımdan kalmalı (500): %+v", out[0])
+	}
+	if out[1].Service != "c" || out[1].Source != "event" {
+		t.Errorf("yalnız-event deploy listede olmalı ve DESC sırada: %+v", out)
+	}
+	if out[2].Service != "b" {
+		t.Errorf("sıra FirstSeenNs DESC olmalı: %+v", out)
+	}
+
+	if got := mergeDeployEntries(inferred, nil, 10); len(got) != 2 || got[0] != inferred[0] {
+		t.Errorf("boş event tarafı çıkarımı değiştirmemeli: %+v", got)
+	}
+	if got := mergeDeployEntries(inferred, events, 2); len(got) != 2 {
+		t.Errorf("limit kırpması çalışmalı: %+v", got)
+	}
 }

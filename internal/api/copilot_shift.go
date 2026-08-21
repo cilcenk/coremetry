@@ -65,15 +65,18 @@ func (s *Server) guidedShiftSummaryBundle(ctx context.Context, emit func(string,
 	// katmanda (mcptools.ReadProblemWindowEvents); list_problem_window_events
 	// tool'u AYNI şekli döndürüyor. Zincir orada sabit: pencere okuması →
 	// deploy ÖNCE, öncelik SONRA (v0.9.553) → yapısal veri.
-	emitGuidedStep(emit, "problem_window_events", "")
+	nProb := emitGuidedStep(emit, "problem_window_events", "")
 	pw, perr := mcptools.ReadProblemWindowEvents(ctx, s.mcpDeps(), service, from, to, guidedShiftProblemRows)
 	if perr != nil {
+		emitGuidedStepResult(emit, nProb, "problem_window_events", "", perr)
 		return "", "", perr
 	}
-	b.WriteString(renderShiftProblemsTR(pw, to))
+	probBlk := renderShiftProblemsTR(pw, to)
+	emitGuidedStepResult(emit, nProb, "problem_window_events", probBlk, nil)
+	b.WriteString(probBlk)
 
 	// ── Anomali olayları (v0.9.394 FromNs/ToNs penceresi) ────────────────
-	emitGuidedStep(emit, "anomaly_window_events", "")
+	nAnom := emitGuidedStep(emit, "anomaly_window_events", "")
 	var svcFilter []string
 	if service != "" {
 		svcFilter = []string{service}
@@ -81,6 +84,7 @@ func (s *Server) guidedShiftSummaryBundle(ctx context.Context, emit func(string,
 	evs, aerr := s.store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{
 		FromNs: from.UnixNano(), ToNs: to.UnixNano(), Limit: 50, Services: svcFilter,
 	})
+	atAnom := b.Len()
 	if aerr == nil {
 		if len(evs) == 0 {
 			b.WriteString("\nANOMALİLER: pencerede anomali olayı yok.\n")
@@ -96,9 +100,13 @@ func (s *Server) guidedShiftSummaryBundle(ctx context.Context, emit func(string,
 		}
 	}
 
+	emitGuidedStepResult(emit, nAnom, "anomaly_window_events", guidedStepSegment(&b, atAnom), aerr)
+
 	// ── Deploy'lar ───────────────────────────────────────────────────────
-	emitGuidedStep(emit, "recent_deploys", "")
-	if deps, derr := s.store.GetRecentDeploys(ctx, time.Since(from), 100); derr == nil {
+	nDep := emitGuidedStep(emit, "recent_deploys", "")
+	atDep := b.Len()
+	deps, derr := s.store.GetRecentDeploys(ctx, time.Since(from), 100)
+	if derr == nil {
 		inWin := make([]chstore.RecentDeployEntry, 0, 10)
 		for _, d := range deps {
 			if d.FirstSeenNs >= from.UnixNano() && d.FirstSeenNs <= to.UnixNano() &&
@@ -124,10 +132,14 @@ func (s *Server) guidedShiftSummaryBundle(ctx context.Context, emit func(string,
 	// ListExceptionGroups'ta first_seen penceresi yok — state=new + yoğunluk
 	// ön-süzgeciyle bounded liste çekilir, pencere Go'da uygulanır ve kesme
 	// İFŞA edilir.
-	emitGuidedStep(emit, "new_exception_groups", "")
-	if groups, gerr := s.store.ListExceptionGroups(ctx, chstore.ExceptionGroupFilter{
+	emitGuidedStepResult(emit, nDep, "recent_deploys", guidedStepSegment(&b, atDep), derr)
+
+	nEx := emitGuidedStep(emit, "new_exception_groups", "")
+	atEx := b.Len()
+	groups, gerr := s.store.ListExceptionGroups(ctx, chstore.ExceptionGroupFilter{
 		State: chstore.ExStateNew, Limit: 100, MinOccurrences: 50,
-	}); gerr == nil {
+	})
+	if gerr == nil {
 		born := make([]chstore.ExceptionGroup, 0, 8)
 		for _, g := range groups {
 			if g.FirstSeen >= from.UnixNano() && (service == "" || g.Service == service) {
@@ -150,6 +162,8 @@ func (s *Server) guidedShiftSummaryBundle(ctx context.Context, emit func(string,
 			}
 		}
 	}
+
+	emitGuidedStepResult(emit, nEx, "new_exception_groups", guidedStepSegment(&b, atEx), gerr)
 
 	src := fmt.Sprintf("problem pencere olayları + anomali olayları + deploy'lar + yeni exception grupları (%s, %s)",
 		fmtAgoTR(rangeS), scope)

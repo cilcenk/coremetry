@@ -400,7 +400,7 @@ func (s *Server) copilotChatDrawer(ctx context.Context, emit func(string, any), 
 		return false, false
 	}
 	// Şeffaflık: guided'ın "bağlam: … (önceki sorudan)" çipiyle aynı dil.
-	emitGuidedStep(emit, "bağlam: ekrandaki AI açıklaması", "")
+	emitGuidedContextStep(emit, "bağlam: ekrandaki AI açıklaması")
 
 	// Kanıt: operatör SORU SORDUĞU için çekilir (v0.9.166 disiplini),
 	// soru başına tek pass. Çekilemezse çip de düşmez, akış bozulmaz.
@@ -409,7 +409,11 @@ func (s *Server) copilotChatDrawer(ctx context.Context, emit func(string, any), 
 		if evidence = s.drawerSubjectEvidence(ctx, subj); evidence != "" {
 			evidenceKind = subj.Kind
 			if step := drawerEvidenceStep(subj.Kind); step != "" {
-				emitGuidedStep(emit, step, "")
+				// v0.9.1229 — çipin kanıtı, anlatıma giren HAM kanıt paketinin
+				// ta kendisi: çekmece sohbeti de guided ile aynı denetlenebilirlik
+				// seviyesinde olmalı.
+				nEv := emitGuidedStep(emit, step, "")
+				emitGuidedStepResult(emit, nEv, step, evidence, nil)
 			}
 		}
 	}

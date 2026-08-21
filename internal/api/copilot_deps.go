@@ -37,7 +37,7 @@ const guidedDepRows = 10
 const guidedDepSlowest = 3
 
 func (s *Server) guidedDBHealthBundle(ctx context.Context, emit func(string, any), service string, from, to time.Time, rangeS int64) (string, string, error) {
-	emitGuidedStep(emit, "db_summary", "")
+	nDB := emitGuidedStep(emit, "db_summary", "")
 	// v0.9.821 — çağıran listesi ve receiver keşfi bu bundle'a hiç
 	// girmiyor (aşağıda yalnız sayaç/quantile okunuyor), o yüzden HAFİF
 	// ikiz: dört katalog probu + dört metric_points taraması + bir tam
@@ -45,9 +45,12 @@ func (s *Server) guidedDBHealthBundle(ctx context.Context, emit func(string, any
 	// artık ReadDBHealth'in içinde — zarfın RowsCapped bayrağı bonus.)
 	data, err := mcptools.ReadDBHealth(ctx, s.mcpDeps(), from, to, guidedDepRows)
 	if err != nil {
+		emitGuidedStepResult(emit, nDB, "db_summary", "", err)
 		return "", "", err
 	}
-	return renderDBHealthEvidenceTR(data, service, rangeS)
+	ev, src, rerr := renderDBHealthEvidenceTR(data, service, rangeS)
+	emitGuidedStepResult(emit, nDB, "db_summary", ev, rerr)
+	return ev, src, rerr
 }
 
 // renderDBHealthEvidenceTR — SAF. (kanıt metni, kaynak) döndürür; hata
@@ -91,15 +94,18 @@ func renderDBHealthEvidenceTR(data mcptools.DBHealthData, service string, rangeS
 }
 
 func (s *Server) guidedMessagingBundle(ctx context.Context, emit func(string, any), service string, from, to time.Time, rangeS int64) (string, string, error) {
-	emitGuidedStep(emit, "messaging_summary", "")
+	nMsg := emitGuidedStep(emit, "messaging_summary", "")
 	// v0.9.813 — GetMessaging artık zarf döndürüyor (RowsCapped ilanı
 	// için); copilot bağlamı satırların kendisini istiyor. v0.9.1147 —
 	// zarfı ortak katman açıyor ve bayrağı BURAYA da taşıyor.
 	data, err := mcptools.ReadMessagingHealth(ctx, s.mcpDeps(), from, to, guidedDepRows)
 	if err != nil {
+		emitGuidedStepResult(emit, nMsg, "messaging_summary", "", err)
 		return "", "", err
 	}
-	return renderMessagingEvidenceTR(data, service, rangeS)
+	ev, src, rerr := renderMessagingEvidenceTR(data, service, rangeS)
+	emitGuidedStepResult(emit, nMsg, "messaging_summary", ev, rerr)
+	return ev, src, rerr
 }
 
 // renderMessagingEvidenceTR — SAF (bkz. renderDBHealthEvidenceTR).

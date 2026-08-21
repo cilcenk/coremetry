@@ -50,9 +50,12 @@ function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onP
   // sayısı (iki backend'de de), yani kapsama SIFIR ek sorguyla çıkar.
   windowTotal?: number;
 }) {
+  // v0.9.1223 — "daha fazla": top-5 → top-20 (sunucu kıskaç tavanı).
+  // Yalnız iki basamak — cache-key kardinalitesi sınırlı (v0.8.270).
+  const [size, setSize] = useState<5 | 20>(5);
   const q = useQuery({
-    queryKey: ['logs', 'fieldstats', field, scope],
-    queryFn: () => api.logsFieldStats({ field, ...scope }),
+    queryKey: ['logs', 'fieldstats', field, scope, size],
+    queryFn: () => api.logsFieldStats({ field, ...scope, ...(size !== 5 ? { size } : {}) }),
     staleTime: 60_000, // matches the server-side cache TTL
     retry: 1,
   });
@@ -110,6 +113,18 @@ function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onP
         );
       })}
       <div style={{ display: 'flex', gap: 6, marginTop: 2, flexWrap: 'wrap' }}>
+        {/* v0.9.1223 — 5 değer geldiyse devamı olabilir; 5'ten az geldiyse
+            zaten hepsi ekranda, düğme çizilmez (yalancı vaat olmasın). */}
+        {d && size === 5 && d.values.length >= 5 && (
+          <Button variant="secondary" size="sm" onClick={() => setSize(20)}>
+            daha fazla (20)
+          </Button>
+        )}
+        {size === 20 && (
+          <Button variant="secondary" size="sm" onClick={() => setSize(5)}>
+            daha az
+          </Button>
+        )}
         <Button variant="secondary" size="sm"
           onClick={() => onToggleColumn(field)}>
           {isColumn ? '− Remove table column' : '+ Add table column'}

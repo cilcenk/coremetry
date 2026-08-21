@@ -841,6 +841,7 @@ export const api = {
     severity?: number;
     traceId?: string;
     spanId?: string;
+    size?: number; // v0.9.1223 — yalnız 5|20 basamakları (sunucu kıskacı)
   }) =>
     get<LogFieldStats>(`/api/logs/fieldstats?${qs(params)}`),
 

@@ -36,13 +36,19 @@ export interface FieldStatsScope {
   spanId?: string;
 }
 
-function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onPillExclude }: {
+function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onPillExclude, onExists, windowTotal }: {
   field: string;
   scope: FieldStatsScope;
   isColumn: boolean;
   onToggleColumn: (id: string) => void;
   onPillAdd: (key: string, value: string) => void;
   onPillExclude: (key: string, value: string) => void;
+  // v0.9.1217 (Kibana paritesi, dilim 5) — varlık pill'i (⊕ ∃ / ⊖ ∃).
+  onExists?: (key: string, negated: boolean) => void;
+  // Pencerede eşleşen toplam doküman (sayfanın arama total'i) — kapsama
+  // yüzdesinin paydası. FieldStats.Total zaten "alanı taşıyan doküman"
+  // sayısı (iki backend'de de), yani kapsama SIFIR ek sorguyla çıkar.
+  windowTotal?: number;
 }) {
   const q = useQuery({
     queryKey: ['logs', 'fieldstats', field, scope],
@@ -60,6 +66,15 @@ function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onP
       {q.isError && <div style={{ fontSize: 11, color: 'var(--err)' }}>Top values unavailable</div>}
       {d && d.values.length === 0 && (
         <div style={{ fontSize: 11, color: 'var(--text3)' }}>No values in this window</div>
+      )}
+      {/* v0.9.1217 — kapsama: alanın pencerede eşleşen dokümanların
+          yüzde kaçında bulunduğu. Çok-değerli alanlarda terms toplamı
+          doküman sayısını aşabilir — 100'e kıstırılır, '~' bunu söyler. */}
+      {d && windowTotal != null && windowTotal > 0 && d.total > 0 && (
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>
+          dokümanların ~%{Math.min(100, (d.total / windowTotal) * 100).toFixed(
+            (d.total / windowTotal) * 100 >= 10 ? 0 : 1)}'inde
+        </div>
       )}
       {d && d.values.map(v => {
         const pct = d.total > 0 ? (v.count / d.total) * 100 : 0;
@@ -94,11 +109,26 @@ function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onP
           </div>
         );
       })}
-      <Button variant="secondary" size="sm"
-        style={{ marginTop: 2 }}
-        onClick={() => onToggleColumn(field)}>
-        {isColumn ? '− Remove table column' : '+ Add table column'}
-      </Button>
+      <div style={{ display: 'flex', gap: 6, marginTop: 2, flexWrap: 'wrap' }}>
+        <Button variant="secondary" size="sm"
+          onClick={() => onToggleColumn(field)}>
+          {isColumn ? '− Remove table column' : '+ Add table column'}
+        </Button>
+        {onExists && (
+          <>
+            <Button variant="secondary" size="sm"
+              onClick={() => onExists(field, false)}
+              title={`Yalnız ${field} alanı OLAN kayıtlar (_exists_:${field})`}>
+              ⊕ ∃ var
+            </Button>
+            <Button variant="secondary" size="sm"
+              onClick={() => onExists(field, true)}
+              title={`Yalnız ${field} alanı OLMAYAN kayıtlar (NOT _exists_:${field})`}>
+              ⊖ ∃ yok
+            </Button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -121,6 +151,7 @@ const POPULAR_FIELDS: readonly string[] = [
 
 export function LogFieldsPanel({
   fields, fieldsTotal, columns, scope, onToggleColumn, onPillAdd, onPillExclude,
+  onExists, windowTotal,
 }: {
   fields: string[];          // available fields from the backend mapping
   // v0.9.292 — how many paths the mapping actually had. The backend
@@ -133,6 +164,9 @@ export function LogFieldsPanel({
   onToggleColumn: (id: string) => void;
   onPillAdd: (key: string, value: string) => void;
   onPillExclude: (key: string, value: string) => void;
+  // v0.9.1217 — bkz. FieldAccordion (varlık pill'i + kapsama paydası).
+  onExists?: (key: string, negated: boolean) => void;
+  windowTotal?: number;
 }) {
   // v0.8.286 (operator-reported "sürekli durmasın") — the fields rail is now
   // CLOSED by default so /logs opens with a full-width table; the thin "ƒ Fields"
@@ -222,6 +256,7 @@ export function LogFieldsPanel({
       </div>
       {expandedField === f && (
         <FieldAccordion field={f} scope={scope}
+          onExists={onExists} windowTotal={windowTotal}
           isColumn={selectedSet.has(f)}
           onToggleColumn={onToggleColumn}
           onPillAdd={onPillAdd} onPillExclude={onPillExclude} />

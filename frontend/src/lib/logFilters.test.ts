@@ -131,3 +131,47 @@ describe('encode/parse round-trip', () => {
     expect(parseFiltersParam('[["ok","1"],["bad"],[42,"x"]]')).toEqual([f('ok', '1')]);
   });
 });
+
+// ── v0.9.1217 (Kibana paritesi, dilim 5) — exists pill'i ────────────
+import { toggleExistsFilter } from './logFilters';
+
+describe('exists filtresi', () => {
+  it('compile: _exists_:key + NOT hâli; değer pill\'leriyle yan yana', () => {
+    const fs = [
+      { key: 'attributes.CHANNEL_CODE', value: '', negated: false, disabled: false, exists: true },
+      { key: 'level', value: 'error', negated: false, disabled: false },
+      { key: 'trace_id', value: '', negated: true, disabled: false, exists: true },
+    ];
+    expect(compileSearch(fs, '')).toBe(
+      '_exists_:attributes.CHANNEL_CODE AND level:"error" AND NOT _exists_:trace_id');
+  });
+
+  it('toggle: kimlik key+exists — değer pill\'inden ayrı uzay', () => {
+    let fs = toggleExistsFilter([], 'k', false);
+    expect(fs).toHaveLength(1);
+    expect(fs[0].exists).toBe(true);
+    // Aynı polarite → kaldır; zıt → çevir.
+    expect(toggleExistsFilter(fs, 'k', false)).toHaveLength(0);
+    expect(toggleExistsFilter(fs, 'k', true)[0].negated).toBe(true);
+    // Değer pill'i exists toggle'ından etkilenmez.
+    const mixed = [{ key: 'k', value: 'v', negated: false, disabled: false }];
+    expect(toggleExistsFilter(mixed, 'k', false)).toHaveLength(2);
+  });
+
+  it('URL gidiş-dönüşü: 5. eleman yalnız exists\'te; eski biçim aynen çözülür', () => {
+    const fs = [
+      { key: 'a', value: 'x', negated: false, disabled: false },
+      { key: 'b', value: '', negated: true, disabled: false, exists: true },
+    ];
+    const enc = encodeFiltersParam(fs);
+    expect(enc).toBe('[["a","x",0,0],["b","",1,0,1]]');
+    expect(parseFiltersParam(enc)).toEqual([
+      { key: 'a', value: 'x', negated: false, disabled: false },
+      { key: 'b', value: '', negated: true, disabled: false, exists: true },
+    ]);
+    // Eski 4-elemanlı biçim (kayıtlı görünümler) değişmeden çözülür.
+    expect(parseFiltersParam('[["a","x",1,0]]')).toEqual([
+      { key: 'a', value: 'x', negated: true, disabled: false },
+    ]);
+  });
+});

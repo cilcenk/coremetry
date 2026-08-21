@@ -36,7 +36,7 @@ import { accumulatePage, narrowLoaded } from '@/lib/logAccumulate';
 import { logsToCSV, logsToNDJSON, downloadText, exportFilename } from '@/lib/logsExport';
 import {
   compileSearch, toggleFilter, encodeFiltersParam, parseFiltersParam,
-  extractHighlightTerms,
+  extractHighlightTerms, toggleExistsFilter,
 } from '@/lib/logFilters';
 import type { LogFilter } from '@/lib/logFilters';
 import { logsUrlSig, writeLogsParams, readLogsParams } from '@/lib/logsUrl';
@@ -577,6 +577,8 @@ function LogsInner() {
   // pill; ⊖ → adds a negated pill. Toggle semantics (same polarity
   // removes, opposite flips) live in lib/logFilters.ts.
   const addFromRow      = (key: string, value: string) => applyPills(toggleFilter(filters, key, value, false));
+  // v0.9.1217 — varlık pill'i (alan paneli ∃ düğmeleri).
+  const existsFromPanel = (key: string, negated: boolean) => applyPills(toggleExistsFilter(filters, key, negated));
   const excludeFromRow  = (key: string, value: string) => applyPills(toggleFilter(filters, key, value, true));
   // v0.8.406 — trace-only toggle. Auto-applies (facet-chip semantics,
   // not draft/Search): state + paging + URL in one step so Copy link
@@ -873,7 +875,7 @@ function LogsInner() {
             {filters.map((f, i) => {
               const tone = f.negated ? 'var(--err)' : 'var(--accent2)';
               return (
-                <span key={`${f.key}\u0000${f.value}`} style={{
+                <span key={`${f.exists ? 'E' : 'V'}\u0000${f.key}\u0000${f.value}`} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
                   padding: '3px 6px 3px 9px', borderRadius: 4, fontSize: 11.5,
                   border: `1px solid ${f.negated ? 'var(--err)' : 'var(--border)'}`,
@@ -885,7 +887,7 @@ function LogsInner() {
                     color: tone,
                     textDecoration: f.disabled ? 'line-through' : 'none',
                   }}>
-                    {f.negated && <b>NOT </b>}{f.key}: {f.value}
+                    {f.negated && <b>NOT </b>}{f.exists ? <>∃ {f.key}</> : <>{f.key}: {f.value}</>}
                   </span>
                   <Button variant="ghost" size="sm" className={f.negated ? 'is-err' : undefined}
                     onClick={() => negatePill(i)}
@@ -1015,7 +1017,9 @@ function LogsInner() {
             scope={fieldStatsScope}
             onToggleColumn={toggleColumn}
             onPillAdd={addFromRow}
-            onPillExclude={excludeFromRow} />
+            onPillExclude={excludeFromRow}
+            onExists={existsFromPanel}
+            windowTotal={total} />
           <div style={{ flex: 1, minWidth: 0 }}>
 
         {/* Severity-stacked histogram (v0.5.235) — spike of errors

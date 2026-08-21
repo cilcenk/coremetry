@@ -236,10 +236,25 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	tools := toolsForRole(mcptools.ToolList(s.mcpDeps()), role)
 	byName := make(map[string]func(context.Context, json.RawMessage) (any, error), len(tools))
 	specs := make([]copilot.ToolSpec, 0, len(tools))
+	// v0.9.1230 (AI perf) — katalog DİYETİ: spec'e t.Description değil
+	// t.ChatDescription() girer.
+	//
+	// Ölçüm: 33 tool = 24.268 B İngilizce açıklama + 17.672 B şema =
+	// 41.940 B, ve bu katalog her ChatWithTools turunda (aşağıdaki
+	// döngü, chatMaxToolRounds=5) YENİDEN gönderiliyordu. Yerel gemma4
+	// için bu, copilot_guided.go başlığında adı konmuş başarısızlık
+	// modunun ("schema soup") doğrudan kaynağı. ChatDescription() aynı
+	// KAYIT DEFTERİNDEN türeyen kompakt Türkçe görünümü verir; MCP
+	// tools/list dış istemciye tam İngilizce sözleşmeyi servis etmeye
+	// devam eder (mcptools/short_desc_test.go iki yönü de pinler).
+	//
+	// Şemalar bilinçli olarak DOKUNULMADAN kalıyor: arg adları ve
+	// varsayılan/tavan şerhleri doğru ÇAĞRININ koşulu — orada kazanılan
+	// bayt, yanlış argümanla harcanan bir tura değmez.
 	for _, t := range tools {
 		byName[t.Name] = t.Handler
 		specs = append(specs, copilot.ToolSpec{
-			Name: t.Name, Description: t.Description, InputSchema: t.InputSchema,
+			Name: t.Name, Description: t.ChatDescription(), InputSchema: t.InputSchema,
 		})
 	}
 
@@ -368,6 +383,18 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			emit("step-result", stepEv)
+			// v0.9.1230 — MODEL tarafındaki bütçe, çipten SONRA uygulanır:
+			// önizleme ve `bytes` kırpılmamış GERÇEK boyu göstermeye devam
+			// etsin (operatörün "ne kadarını görmüyorum" sorusu orada
+			// cevaplanıyor), modele giden metin ise tavana insin — kırpma
+			// içeriğin içinde SÖYLENEREK (chat_tool_budget.go).
+			//
+			// Konuşmanın tur başında yeniden bütçelenmesi (ClampHistory'nin
+			// döngü içinde tekrarı) BİLEREK yapılmıyor: asistanın tool-call
+			// turu ile onun ToolResults turu ikizdir, birini düşürmek
+			// sağlayıcıda sahipsiz tool sonucu bırakır. Kaynağı burada
+			// kesmek doğru yer.
+			tr.Content, _ = clampToolResultForModel(tr.Content)
 			results = append(results, tr)
 		}
 		conv = append(conv, copilot.ChatMessage{Role: "user", ToolResults: results})

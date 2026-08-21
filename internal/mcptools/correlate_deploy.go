@@ -26,7 +26,8 @@ type getCorrelatedChangesArgs struct {
 
 func getCorrelatedChangesTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "get_correlated_changes",
+		Name:             "get_correlated_changes",
+		ShortDescription: "Pencerede trafiği / hata oranı / p99'u en çok DEĞİŞEN servisler (baseline'a karşı işaretli delta + skor). 'Bu olayın çevresinde başka ne değişti' — at_iso = olay başlangıcı.",
 		Description: "Rank services whose traffic/error-rate/p99 CHANGED most in a window vs the preceding baseline " +
 			"(per service: baseline vs current rate, error rate, p99 + signed delta percentages and a combined score). " +
 			"Use it to answer 'what else changed around this incident' — pass at_iso = the incident start. " +
@@ -105,7 +106,8 @@ type getDeployDiffArgs struct {
 
 func getDeployDiffTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "get_deploy_diff",
+		Name:             "get_deploy_diff",
+		ShortDescription: "Bir deploy'un ÖNCESİ/SONRASI RED kıyası (p99, avg, hata oranı, istek hızı + işaretli delta; artı = kötüleşme). 'Deploy mu bozdu'. version boşsa en yeni deploy.",
 		Description: "Before/after RED comparison for one deploy of a service: p99, avg latency, error rate and " +
 			"request rate over a symmetric window around the version's first-seen time, with signed delta percentages " +
 			"(positive = worse). Use after list_problems/get_correlated_changes point at a service to answer 'did the deploy break it'. " +

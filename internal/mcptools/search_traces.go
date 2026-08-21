@@ -34,7 +34,8 @@ type searchTracesArgs struct {
 
 func searchTracesTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "search_traces",
+		Name:             "search_traces",
+		ShortDescription: "ID'SİZ trace arama → özet liste (trace_id, kök operasyon, giriş servisi, süre, hata). Zincirin ilk halkası: önce trace id'yi BUL, sonra get_trace. sort=duration en yavaşlar.",
 		Description: "Search traces WITHOUT a trace id and get summaries " +
 			"(trace_id, root operation, entry service, start time, duration ms, span count, error flag). " +
 			"This is the entry point of the trace chain: use it to FIND a trace id, then drill with get_trace / get_logs_for_trace. " +

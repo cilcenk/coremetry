@@ -253,6 +253,43 @@ type Tool struct {
 	// (v0.9.1136 A7: /api/anomalies/active editor'dı, list_anomalies
 	// kapısızdı; REST viewer'a indi, sapma sıfırlandı).
 	MinRole string
+	// ShortDescription (v0.9.1230) — kataloğun KOMPAKT görünümü,
+	// SADECE in-app sohbetin LLM isteğini kurarken kullanılır.
+	//
+	// Neden: tek kayıt defterinin İKİ tüketicisi var ve bağlam
+	// bütçeleri taban tabana zıt. Dış MCP istemcisi (Claude Desktop,
+	// bir frontier model) kataloğu bir kez okur ve uzun İngilizce
+	// sözleşmeden — maliyet sınırları, dürüstlük şerhleri, "şunu
+	// uydurma" negatifleri — kazanç sağlar. Yerel gemma4 ise AYNI
+	// kataloğu her tur yeniden yutar: ölçüm (v0.9.1230) 33 tool için
+	// 24.268 B açıklama + 17.672 B şema = 41.940 B, ve serbest döngü
+	// 5 tura kadar çıkıyor. Küçük modelde bu, "schema soup"un ta
+	// kendisi (copilot_guided.go başlığındaki başarısızlık modu).
+	//
+	// Sözleşme: MCP tools/list DAİMA Description'ı servis eder —
+	// dış istemcinin gördüğü şey değişmedi (mcptools testi pinliyor).
+	// Sohbet tarafı ChatDescription()'ı çağırır. Alan bu yüzden
+	// AYNI literal'de, Name'in hemen altında yaşıyor: ikinci bir
+	// elle-bakımlı liste açılırsa sürüklenme kaçınılmazdı, burada
+	// yeni tool'un yazarı iki görünümü de yan yana görür (ve
+	// mcptools'taki yapısal test boş bırakılmasına izin vermez).
+	ShortDescription string
+}
+
+// ChatDescription — kataloğun sohbet (küçük model) görünümü.
+//
+// Boşsa tam Description'a düşer: bu, geri-uyum değil GÜVENLİ YÖN —
+// kompakt metni unutulmuş bir tool yine de doğru çağrılabilir, yalnız
+// pahalı olur. Sessiz YANLIŞ çağrı ihtimali sıfır. Boş kalmasını
+// mcptools'taki yapısal test engeller (kapı ORADA, çünkü kayıt
+// defteri orada).
+//
+// SAF — tablo testli.
+func (t Tool) ChatDescription() string {
+	if t.ShortDescription != "" {
+		return t.ShortDescription
+	}
+	return t.Description
 }
 
 // ToolHandler runs one tools/call invocation. Returns a value

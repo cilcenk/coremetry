@@ -91,8 +91,9 @@ type getLogsForTraceArgs struct {
 
 func getLogsForTraceTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name:        "get_logs_for_trace",
-		Description: "Fetch the log lines that carry one trace's context — the trace→log pivot. Pass span_id to narrow to a single span's logs. Runs under a 3-second budget: if the log backend is slow or unreachable the result comes back with degraded=true and empty logs instead of an error, so treat degraded=true as 'logs unavailable right now', not 'no logs exist'. Use after get_trace to see what the failing span logged; chain interesting log attributes into search_logs for a wider look.",
+		Name:             "get_logs_for_trace",
+		ShortDescription: "Bir trace'in bağlamını taşıyan log satırları (trace→log pivotu); span_id ile tek span'a daralt. degraded=true = log backend'i yetişemedi, 'log YOK' demek değil.",
+		Description:      "Fetch the log lines that carry one trace's context — the trace→log pivot. Pass span_id to narrow to a single span's logs. Runs under a 3-second budget: if the log backend is slow or unreachable the result comes back with degraded=true and empty logs instead of an error, so treat degraded=true as 'logs unavailable right now', not 'no logs exist'. Use after get_trace to see what the failing span logged; chain interesting log attributes into search_logs for a wider look.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -179,8 +180,9 @@ type getExemplarTracesArgs struct {
 
 func getExemplarTracesTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name:        "get_exemplar_traces",
-		Description: "THE metric→trace pivot: given a metric spike, returns real trace ids recorded as OTLP exemplars in the window — producer-captured trace context for individual measurements, so each item is {ts, value, trace_id, span_id} tying a concrete data point to the exact request that produced it. Follow with get_trace on an interesting trace_id (e.g. the highest value) to see the full waterfall. Bounded primary-key/granule read on the exemplars table — cheap. Empty result means the instrumentation exports no exemplars for this metric, not that the metric is healthy.",
+		Name:             "get_exemplar_traces",
+		ShortDescription: "Metrik→trace pivotu: OTLP exemplar'larından gerçek trace id'ler ({ts, value, trace_id, span_id}). İlginç olanı get_trace ile aç. Boş = exemplar yok, 'metrik sağlıklı' değil.",
+		Description:      "THE metric→trace pivot: given a metric spike, returns real trace ids recorded as OTLP exemplars in the window — producer-captured trace context for individual measurements, so each item is {ts, value, trace_id, span_id} tying a concrete data point to the exact request that produced it. Follow with get_trace on an interesting trace_id (e.g. the highest value) to see the full waterfall. Bounded primary-key/granule read on the exemplars table — cheap. Empty result means the instrumentation exports no exemplars for this metric, not that the metric is healthy.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -249,8 +251,9 @@ type getLinkedTracesArgs struct {
 
 func getLinkedTracesTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name:        "get_linked_traces",
-		Description: "Traverse OTel span links for one trace, BOTH directions in one call: 'outgoing' = links this trace's spans declare (causal predecessors — e.g. the producer trace a consumer span links back to), 'incoming' = links other traces declare pointing AT this one (its downstream consumers/batch followers). Each link carries trace/span ids on both ends plus link attributes. This finds async/batch relationships the parent-child waterfall can't show. Both directions are primary-key point-lookups — cheap. Follow an interesting linked trace id with get_trace.",
+		Name:             "get_linked_traces",
+		ShortDescription: "Bir trace'in OTel span link'leri, İKİ yönde: outgoing (nedensel öncüller) + incoming (bunu işaret eden takipçiler). Şelalenin gösteremediği async/batch ilişkiler.",
+		Description:      "Traverse OTel span links for one trace, BOTH directions in one call: 'outgoing' = links this trace's spans declare (causal predecessors — e.g. the producer trace a consumer span links back to), 'incoming' = links other traces declare pointing AT this one (its downstream consumers/batch followers). Each link carries trace/span ids on both ends plus link attributes. This finds async/batch relationships the parent-child waterfall can't show. Both directions are primary-key point-lookups — cheap. Follow an interesting linked trace id with get_trace.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -307,8 +310,9 @@ type getMetricsForSpanArgs struct {
 
 func getMetricsForSpanTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name:        "get_metrics_for_span",
-		Description: "The span→metric pivot: the service's RED series (rate, error_rate, p99 latency) bracketing one span's timestamp — 'was the whole service degraded when this span ran, or is this span an outlier?'. COPY at_unix_ns from a get_trace span's startTime field (already unix nanoseconds) — do not construct the timestamp yourself. Reads the 5-minute pre-aggregate, cheap to call. Returns up to three series of {time, value} points covering ±window_s around the anchor. Use after get_trace when deciding whether a slow/error span reflects a service-wide problem.",
+		Name:             "get_metrics_for_span",
+		ShortDescription: "Span→metrik pivotu: span'ın anını kuşatan servis RED serileri — 'servis genelinde mi bozuktu, yoksa bu span aykırı mı'. at_unix_ns'i span'ın startTime alanından KOPYALA.",
+		Description:      "The span→metric pivot: the service's RED series (rate, error_rate, p99 latency) bracketing one span's timestamp — 'was the whole service degraded when this span ran, or is this span an outlier?'. COPY at_unix_ns from a get_trace span's startTime field (already unix nanoseconds) — do not construct the timestamp yourself. Reads the 5-minute pre-aggregate, cheap to call. Returns up to three series of {time, value} points covering ±window_s around the anchor. Use after get_trace when deciding whether a slow/error span reflects a service-wide problem.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

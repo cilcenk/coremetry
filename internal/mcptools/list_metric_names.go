@@ -24,7 +24,8 @@ type listMetricNamesArgs struct {
 
 func listMetricNamesTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "list_metric_names",
+		Name:             "list_metric_names",
+		ShortDescription: "Bilinen metrik adlarını listele (ad, birim, enstrüman tipi). query_metric'ten ÖNCE çağır — tahmin edilen semconv adı sessizce BOŞ seri döndürür.",
 		Description: "List metric names known to Coremetry (name, unit, instrument type, description, last-seen time), " +
 			"optionally narrowed to one service and/or a substring pattern. " +
 			"ALWAYS use this before query_metric when you are not certain of the exact metric name — " +

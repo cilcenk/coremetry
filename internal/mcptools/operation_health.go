@@ -108,7 +108,8 @@ type getOperationHealthArgs struct {
 
 func getOperationHealthTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "get_operation_health",
+		Name:             "get_operation_health",
+		ShortDescription: "Tek servisin ENDPOINT bazlı RED'i ((path, method) başına çağrı/hata/p50-p95-p99). 'Servisin NERESİ yavaş' sorusu; list_operations sayı vermez, bu verir.",
 		Description: "Answer 'which ENDPOINT of this service is slow / erroring' — per-(path, method) RED rows for ONE service from the 1-minute " +
 			"pre-aggregate: calls, errors, error rate, avg and p50/p95/p99 latency plus req/min throughput, ordered by `sort`. " +
 			"This is the numeric companion to list_operations (which is a name catalogue with NO numbers) and to get_service_health (which is one " +

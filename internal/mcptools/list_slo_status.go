@@ -26,7 +26,8 @@ type listSLOStatusArgs struct {
 
 func listSLOStatusTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "list_slo_status",
+		Name:             "list_slo_status",
+		ShortDescription: "SLO'lar: tanım, canlı SLI, kalan hata bütçesi, yanma hızı + DETERMİNİSTİK tükenme tahmini (hours_to_exhaust). Tükenmeyi kendin hesaplama, alanı oku.",
 		Description: "List SLOs with their definition (service, target, rolling window days, latency threshold), " +
 			"live status (SLI, error-budget remaining, burn rate, healthy flag) and a DETERMINISTIC exhaustion forecast " +
 			"(hours_to_exhaust, will_breach_within_24h, safe_burn). Use this to answer 'are we meeting our SLOs / which budget dies first' — " +

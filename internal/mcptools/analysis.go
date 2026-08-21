@@ -352,7 +352,8 @@ type getTopologyArgs struct {
 
 func getTopologyTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "get_topology",
+		Name:             "get_topology",
+		ShortDescription: "Servis grafı — kim kimi çağırıyor, her kenarda RED. `service` ile o servisin upstream (çağıranlar) + downstream (bağımlılıklar) komşuları, boşken en yoğun kenarlar. TEK hop.",
 		Description: "Read the SERVICE GRAPH — who calls whom — with RED metrics on every edge: calls, errors, error rate, avg + p99 latency, the protocol " +
 			"(http / rpc / db / kafka / internal) and the busiest operation labels riding that edge. " +
 			"Pass `service` to get that service's DIRECT neighbours, split by direction: `upstream` = the services that CALL it, `downstream` = what it " +
@@ -544,7 +545,8 @@ type getBlastRadiusArgs struct {
 
 func getBlastRadiusTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "get_blast_radius",
+		Name:             "get_blast_radius",
+		ShortDescription: "'Bu servis bozulursa kim etkilenir' — UPSTREAM çağıranlar, kaskad işaretiyle (çağıranın kendi problemi de açık mıydı). Bağımlılıklar için get_topology downstream.",
 		Description: "Answer 'if this service is degraded, WHO ELSE is hurting' — the UPSTREAM callers of `service` in the window, each with calls, errors, " +
 			"error rate, rps and had_open_problem_in_window (the cascade signal: that caller had its OWN Problem open during the same window, i.e. the " +
 			"failure is propagating up the call graph). Cascading callers are listed FIRST, regardless of volume. " +
@@ -782,7 +784,8 @@ type getLogHistogramArgs struct {
 
 func getLogHistogramTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "get_log_histogram",
+		Name:             "get_log_histogram",
+		ShortDescription: "Log HACMİNİN zaman serisi, severity bandlarına ayrık — 'hata ne zaman başladı', 'artış mı sabit mi'. search_logs SATIR verir, bu ŞEKİL. Boş kova = eşleşme yok.",
 		Description: "Log VOLUME over time, split into canonical severity bands — the SHAPE question search_logs cannot answer, because that tool returns " +
 			"rows and this one returns a time series: 'when did the errors start', 'is this a spike or steady state', 'did the flood stop after the deploy'. " +
 			"Bands are ERROR (FATAL folds into it), WARN, INFO, DEBUG, TRACE and OTHER (a level outside the vocabulary, or a document with no severity " +

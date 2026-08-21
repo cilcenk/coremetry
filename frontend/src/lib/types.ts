@@ -1745,6 +1745,20 @@ export interface NegativeFeedbackCall {
   comment?: string;
 }
 
+// KBCandidate (v0.9.1195, AI Faz 5.2) — 👍 almış, henüz KB'ye alınmamış
+// cevap adayı. Terfi işareti ayrı tablo değil: rag_chunks'ta
+// source='curated' + source_ref=exchangeId varlığı — chunk silinirse aday
+// listeye geri düşer (bilerek: yanlışlıkla silinen küratörlük yeniden
+// terfi edilebilir kalmalı).
+export interface KBCandidate {
+  exchangeId: string;
+  surface: string;
+  createdAt: number; // unix ns
+  userEmail?: string;
+  prompt: string;
+  response: string;
+}
+
 export interface AIRate {
   inputPer1M: number;
   outputPer1M: number;

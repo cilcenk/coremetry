@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button, useConfirm } from '@/components/ui';
 import { api } from '@/lib/api';
+import { tsLong } from '@/lib/utils';
 import { Field2, FlashBox, Row } from './shared';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -355,6 +356,90 @@ export function KnowledgeTab() {
         </div>
       )}
       {msg && <FlashBox kind={msg.kind}>{msg.text}</FlashBox>}
+
+      <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '24px 0 18px' }} />
+      <KBCandidatesSection enabled={cfg.enabled} onCurated={load} />
+    </div>
+  );
+}
+
+// ── KBCandidatesSection (v0.9.1195, AI Faz 5.2) — terfi kuyruğu ─────────
+//
+// Döngünün kapanan halkası: 👍'lı cevaplar burada aday listelenir; "KB'ye
+// ekle" Soru+Cevap'ı rag_chunks'a source='curated' olarak yazar ve RAG bir
+// dahaki benzer soruda onu bulur. KB yalnız ONAYLA büyür — 👍'lı her şeyi
+// otomatik almak tek yanlış oyla bilgi tabanını zehirlerdi.
+//
+// Veri sekme AÇILINCA bir kez çekilir (60 sn sunucu cache'li admin
+// okuması); poll yok. Terfi eden satır listeden düşer — sunucu tarafında
+// da düşmüştür (NOT IN curated), yani yenile aynı sonucu verir.
+function KBCandidatesSection({ enabled, onCurated }: { enabled: boolean; onCurated: () => void }) {
+  const [rows, setRows] = useState<import('@/lib/types').KBCandidate[] | null | undefined>(undefined);
+  const [busy, setBusy] = useState('');
+  const [note, setNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  useEffect(() => {
+    api.listKBCandidates().then(r => setRows(r.rows)).catch(() => setRows(null));
+  }, []);
+
+  const promote = async (xid: string) => {
+    setBusy(xid); setNote(null);
+    try {
+      const r = await api.curateKBCandidate(xid);
+      setRows(prev => (prev ?? []).filter(c => c.exchangeId !== xid));
+      setNote({ kind: 'ok', text: `KB'ye eklendi (${r.chunks} parça).` });
+      onCurated(); // doküman kataloğu yukarıda — yeni curated satırı görünsün
+    } catch (e) {
+      setNote({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally { setBusy(''); }
+  };
+
+  return (
+    <div>
+      <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+        Terfi kuyruğu <span style={{ color: 'var(--text3)', fontWeight: 400 }}>— 👍 alan cevaplar (son 30 gün)</span>
+      </h3>
+      <p style={{ color: 'var(--text2)', fontSize: 12, marginBottom: 10 }}>
+        Onayladığın soru-cevap çifti bilgi tabanına <code>curated</code> dokümanı
+        olarak girer ve CoSRE benzer sorularda kaynak atıflı kullanır.
+        {!enabled && <b> RAG kapalı — terfi için önce yukarıdan etkinleştir.</b>}
+      </p>
+      {rows === undefined && <Spinner />}
+      {rows === null && <div className="err" style={{ fontSize: 12 }}>Aday listesi okunamadı.</div>}
+      {rows && rows.length === 0 && (
+        <div style={{ color: 'var(--text3)', fontSize: 12 }}>
+          Bekleyen aday yok — 👍 alan yeni cevaplar burada birikir.
+        </div>
+      )}
+      {rows && rows.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {rows.map(c => (
+            <div key={c.exchangeId} style={{
+              border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px',
+              display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 12,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', marginBottom: 4 }}>
+                  <span className="badge b-gray">{c.surface || '—'}</span>
+                  <span style={{ color: 'var(--text3)', fontSize: 11 }}>{tsLong(c.createdAt)}</span>
+                  {c.userEmail && <span style={{ color: 'var(--text3)', fontSize: 11 }}>👍 {c.userEmail}</span>}
+                </div>
+                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                     title={c.prompt}><b>S:</b> {c.prompt || '—'}</div>
+                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text2)' }}
+                     title={c.response}><b>C:</b> {c.response}</div>
+              </div>
+              <Button variant="secondary" size="sm"
+                disabled={!enabled || busy !== ''}
+                loading={busy === c.exchangeId}
+                onClick={() => void promote(c.exchangeId)}>
+                KB&apos;ye ekle
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      {note && <FlashBox kind={note.kind}>{note.text}</FlashBox>}
     </div>
   );
 }

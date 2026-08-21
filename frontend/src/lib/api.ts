@@ -1757,6 +1757,16 @@ export const api = {
   syncRagSources: () =>
     request<{ sources: number; pages: number; indexed: number; skipped: number; pruned: number; errors?: string[] }>(
       '/api/rag/sync', { method: 'POST' }),
+  // v0.9.1195 (Faz 5.2) — KB terfi kuyruğu. Terfi içeriği LİSTEDEN değil
+  // sunucuda ai_calls'tan okunur; buradan yalnız kimlik gider.
+  listKBCandidates: (rangeS?: number) =>
+    get<{ rows: import('./types').KBCandidate[]; rangeS: number }>(
+      `/api/rag/candidates${rangeS ? `?rangeS=${rangeS}` : ''}`),
+  curateKBCandidate: (exchangeId: string) =>
+    request<{ docId: string; chunks: number }>('/api/rag/curate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ exchangeId }),
+    }),
   deleteRagDocument: (id: string) =>
     request<{ ok: boolean }>(`/api/rag/documents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 

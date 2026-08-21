@@ -47,6 +47,11 @@ func (s *Server) registerRAGRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET    /api/rag/documents", s.listRAGDocuments)
 	mux.HandleFunc("POST   /api/rag/documents", auth.RequireAnyRole(editorRoles, s.uploadRAGDocument))
 	mux.HandleFunc("DELETE /api/rag/documents/{id}", auth.RequireAnyRole(editorRoles, s.deleteRAGDocument))
+	// v0.9.1195 (Faz 5.2) — KB terfi kuyruğu: 👍'lı cevap adayları + onay.
+	// Upload'la aynı rol kapısı: KB'yi kim büyütebiliyorsa kuyruğu da o
+	// yönetir.
+	mux.HandleFunc("GET  /api/rag/candidates", auth.RequireAnyRole(editorRoles, s.listKBCandidates))
+	mux.HandleFunc("POST /api/rag/curate", auth.RequireAnyRole(editorRoles, s.curateKBCandidate))
 	mux.HandleFunc("POST   /api/rag/sync", auth.RequireAnyRole(editorRoles, s.syncRAGSources))
 }
 

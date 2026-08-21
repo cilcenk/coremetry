@@ -182,7 +182,11 @@ const rcaVerdictSurface = "rootcause-verdict"
 // verdict.summary'ye yazılır, prose'a DEĞİL — aksi hâlde yedek cümle
 // gerçek LLM anlatımıyla aynı kutuda çizilir ve operatör ayırt edemez.
 func (s *Server) buildRCAVerdict(ctx context.Context, h *chstore.RootCauseHypothesis, anchorStartNs int64) (*RCAVerdict, *string) {
-	cat := buildRCAEvidenceCatalog(h)
+	// v0.9.1203 (Faz 6.1) — katalog artık hipotezin ötesini de anlatır:
+	// BlastRadius + Correlations + BubbleUp, E-uzayına satır olur.
+	// Toplama soft-fail; boş extras = bugüne kadarki katalog.
+	extras := s.gatherRCACatalogExtras(ctx, h, anchorStartNs)
+	cat := buildRCAEvidenceCatalogExt(h, extras)
 
 	candidates := make([]string, 0, len(h.Candidates))
 	for _, c := range h.Candidates {

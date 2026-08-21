@@ -752,6 +752,14 @@ export const api = {
   // (GET /api/exemplars, pivot Phase 2). Either a comma-separated
   // `fingerprints` set (PK scan) or a `metric`(+`service`) fallback.
   // 30s server-side cache — client staleTime must stay ≥ that.
+  // v0.9.1211 — exemplar çifti withMetricSource ile BİLİNÇLİ damgasız
+  // (VM adaptasyon keşfinin 4. boşluğu, karar: kalıcı muafiyet).
+  // Exemplar deposu YALNIZ ClickHouse'tur (metric_points kolonları);
+  // VM okuma-backend'i açıkken de OTLP ingest CH'ye akmaya devam eder,
+  // yani ◆ süslemesi aynı verinin tek meşru kaynağından gelir. Damga
+  // eklemek sunucuda hiçbir şey değiştirmez; src=vm'de ◆'ları söndürmek
+  // ise çalışan özelliği bozar. VM-ONLY (CH'siz) kurulum bu üründe yok.
+  //
   // Grouped-chart variant (v0.8.432): send the chart's own query shape;
   // the server resolves series → fingerprints and tags each item with
   // the series groupKey. 30s server cache — staleTime must stay ≥ that.

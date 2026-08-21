@@ -127,6 +127,10 @@ func (s *Server) registerAIRoutes(mux *http.ServeMux) {
 	// kanıt trace/span'leri deterministik döner (copilot_exception.go).
 	mux.HandleFunc("POST   /api/copilot/explain-exception/{fp}", s.requireCopilot(s.copilotExplainException))
 	mux.HandleFunc("POST   /api/copilot/suggest-service-tags", auth.RequireAnyRole(editorRoles, s.requireCopilot(s.copilotSuggestServiceTags)))
+	// v0.9.1197 (Faz 5.4) — incident kanıtından postmortem TASLAĞI.
+	// Editör kapılı: taslak, editörün kaydedeceği postmortem alanına
+	// düşer (viewer o alanı zaten yazamaz; suggest-service-tags emsali).
+	mux.HandleFunc("POST   /api/copilot/draft-postmortem/{id}", auth.RequireAnyRole(editorRoles, s.requireCopilot(s.draftPostmortem)))
 
 	// ── Konuşma kalıcılığı (Faz 4.1, v0.9.1139) ──
 	//

@@ -18,6 +18,10 @@ import type { Incident } from '@/lib/types';
 import { serviceHref, eventLifespanWindow } from '@/lib/serviceHref';
 import { Button } from '@/components/ui/Button';
 import { PageShell } from '@/components/ui/PageShell';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
+import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
+import { IconSparkles } from '@/components/icons';
+import { aiErrorHint } from '@/lib/aiErrors';
 
 export default function IncidentPage() {
   return <Suspense fallback={<Spinner />}><Inner /></Suspense>;
@@ -47,6 +51,12 @@ function Inner() {
   const [postmortemDraft, setPostmortemDraft] = useState('');
   const [editingPM, setEditingPM] = useState(false);
   const [busy, setBusy] = useState<IncidentAction | null>(null);
+  // v0.9.1197 (Faz 5.4) — AI taslağı + KB'ye ekleme durumları. İkisi de
+  // `busy` guard'ından ayrı: taslak üretimi incident yazmaz (audit yok),
+  // KB ekleme kendi ucunda audit'lenir.
+  const [aiPM, setAiPM] = useState<{ busy: boolean; err: string | null; xid?: string }>({ busy: false, err: null });
+  const [kbPM, setKbPM] = useState<{ busy: boolean; done: string | null; err: string | null }>({ busy: false, done: null, err: null });
+  const confirm = useConfirm();
 
   useEffect(() => {
     if (inc && !editingPM) setPostmortemDraft(inc.postmortem ?? '');
@@ -114,6 +124,44 @@ function Inner() {
     await api.updateIncident(id, { ...inc, postmortem: postmortemDraft });
     setEditingPM(false); refresh();
   });
+
+  // AI taslağı: kanıt paketini sunucu kurar, taslak textarea'ya düşer —
+  // operatör düzenler, kaydeden yine savePM. Dolu taslağın üzerine
+  // yazmadan önce onay (ConfirmDialog, K6).
+  const draftPM = async () => {
+    if (aiPM.busy) return;
+    if (postmortemDraft.trim()) {
+      const ok = await confirm({
+        title: 'AI taslağı üzerine yazılsın mı?',
+        body: 'Editördeki mevcut metin AI taslağıyla değiştirilecek.',
+        confirmLabel: 'Üzerine yaz',
+      });
+      if (!ok) return;
+    }
+    setAiPM({ busy: true, err: null });
+    try {
+      const rsp = await api.draftPostmortem(id);
+      setPostmortemDraft(rsp.draft);
+      setAiPM({ busy: false, err: null, xid: rsp.exchangeId });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setAiPM({ busy: false, err: aiErrorHint(msg) ?? msg });
+    }
+  };
+
+  // Kayıtlı postmortem'i KB'ye indeksle (Faz 5.4 ikinci yarı). İçeriği
+  // sunucu incidents satırından okur; yeniden basmak kopya üretmez
+  // (docID incident'a çakılı).
+  const addPMToKB = async () => {
+    if (kbPM.busy) return;
+    setKbPM({ busy: true, done: null, err: null });
+    try {
+      const rsp = await api.ragIngestPostmortem(id);
+      setKbPM({ busy: false, done: `KB'ye eklendi (${rsp.chunks} parça)`, err: null });
+    } catch (e) {
+      setKbPM({ busy: false, done: null, err: e instanceof Error ? e.message : String(e) });
+    }
+  };
 
   const elapsedNs = (inc.resolvedAt ?? Date.now() * 1_000_000) - inc.startedAt;
 
@@ -297,14 +345,34 @@ function Inner() {
                     <textarea value={postmortemDraft} onChange={e => setPostmortemDraft(e.target.value)}
                       rows={12} style={{ width: '100%', resize: 'vertical', fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
                       placeholder={POSTMORTEM_TEMPLATE} />
-                    <div style={{ display: 'flex', gap: 6, marginTop: 6, justifyContent: 'flex-end' }}>
-                      <Button variant="secondary" disabled={busy !== null}
-                        onClick={() => { setEditingPM(false); setPostmortemDraft(inc.postmortem ?? ''); }}>Cancel</Button>
-                      <Button variant="primary" onClick={savePM} loading={busy === 'pm'} disabled={busy !== null}>Save</Button>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center' }}>
+                      <Button variant="secondary" size="sm" onClick={draftPM} loading={aiPM.busy} disabled={busy !== null}
+                        title="Incident kanıtından (zaman çizelgesi + problemler + kök-neden hipotezleri) taslak üret">
+                        <IconSparkles /> AI taslağı
+                      </Button>
+                      {aiPM.xid && !aiPM.busy && <AIFeedbackButtons exchangeId={aiPM.xid} />}
+                      {aiPM.err && <span style={{ color: 'var(--err)', fontSize: 12 }}>{aiPM.err}</span>}
+                      <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                        <Button variant="secondary" disabled={busy !== null}
+                          onClick={() => { setEditingPM(false); setPostmortemDraft(inc.postmortem ?? ''); }}>Cancel</Button>
+                        <Button variant="primary" onClick={savePM} loading={busy === 'pm'} disabled={busy !== null}>Save</Button>
+                      </div>
                     </div>
                   </div>
                 ) : inc.postmortem ? (
-                  <pre className="mono" style={{ fontSize: 12, whiteSpace: 'pre-wrap', margin: 0 }}>{inc.postmortem}</pre>
+                  <div>
+                    <pre className="mono" style={{ fontSize: 12, whiteSpace: 'pre-wrap', margin: 0 }}>{inc.postmortem}</pre>
+                    {isAdmin && (
+                      <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+                        <Button variant="secondary" size="sm" onClick={addPMToKB} loading={kbPM.busy}
+                          title="Kayıtlı postmortem'i bilgi tabanına indeksle — AI benzer incident'larda bulur">
+                          KB'ye ekle
+                        </Button>
+                        {kbPM.done && <span className="badge b-ok">{kbPM.done}</span>}
+                        {kbPM.err && <span style={{ color: 'var(--err)', fontSize: 12 }}>{kbPM.err}</span>}
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <div style={{ color: 'var(--text3)', fontSize: 12 }}>
                     {isAdmin ? 'Once resolved, write a blameless postmortem here.' : 'No postmortem yet.'}

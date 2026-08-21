@@ -52,6 +52,8 @@ func (s *Server) registerRAGRoutes(mux *http.ServeMux) {
 	// yönetir.
 	mux.HandleFunc("GET  /api/rag/candidates", auth.RequireAnyRole(editorRoles, s.listKBCandidates))
 	mux.HandleFunc("POST /api/rag/curate", auth.RequireAnyRole(editorRoles, s.curateKBCandidate))
+	// v0.9.1197 (Faz 5.4) — kayıtlı incident postmortem'ini KB'ye indeksle.
+	mux.HandleFunc("POST /api/rag/postmortem", auth.RequireAnyRole(editorRoles, s.curatePostmortem))
 	mux.HandleFunc("POST   /api/rag/sync", auth.RequireAnyRole(editorRoles, s.syncRAGSources))
 }
 

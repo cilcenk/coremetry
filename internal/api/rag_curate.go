@@ -26,20 +26,37 @@ import (
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
 
-// curatedDocTitle — adayın Knowledge listesindeki adı: prompt'un tek
-// satıra indirilmiş, 60 RUNE'a kırpılmış başı. SAF, tablo-testli.
-// Rune, bayt değil: Türkçe bir soru bayt kesmesiyle karakter ortasından
-// bölünürdü (aiChatTitleMaxRunes ile aynı gerekçe ve aynı tavan).
-func curatedDocTitle(prompt string) string {
-	t := strings.Join(strings.Fields(prompt), " ") // satır sonları + çoklu boşluk tek boşluğa
-	if t == "" {
-		return "KB: (sorusuz cevap)"
-	}
+// collapsedTitle — tek satıra indirilmiş, 60 RUNE'a kırpılmış başlık
+// gövdesi. SAF. Rune, bayt değil: Türkçe bir başlık bayt kesmesiyle
+// karakter ortasından bölünürdü (aiChatTitleMaxRunes ile aynı gerekçe
+// ve aynı tavan). Boş girişte boş döner; öneki çağıran koyar.
+func collapsedTitle(s string) string {
+	t := strings.Join(strings.Fields(s), " ") // satır sonları + çoklu boşluk tek boşluğa
 	r := []rune(t)
 	if len(r) > 60 {
 		t = string(r[:60]) + "…"
 	}
+	return t
+}
+
+// curatedDocTitle — adayın Knowledge listesindeki adı. SAF, tablo-testli.
+func curatedDocTitle(prompt string) string {
+	t := collapsedTitle(prompt)
+	if t == "" {
+		return "KB: (sorusuz cevap)"
+	}
 	return "KB: " + t
+}
+
+// postmortemDocTitle — kaydedilmiş postmortem'in Knowledge listesindeki
+// adı (Faz 5.4). "PM: " öneki curated "KB: " ile aynı katalogda yaşar;
+// önek, kaynağı tek bakışta ayırır.
+func postmortemDocTitle(incidentTitle string) string {
+	t := collapsedTitle(incidentTitle)
+	if t == "" {
+		return "PM: (başlıksız incident)"
+	}
+	return "PM: " + t
 }
 
 // curatedDocText — chunk'lanacak gövde. Soru ve cevap AYRI başlıklarla:
@@ -140,5 +157,85 @@ func (s *Server) curateKBCandidate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "rag.curate", "rag_document", docID,
 		fmt.Sprintf(`{"exchangeId":%q,"surface":%q,"chunks":%d}`, xid, surface, n))
+	writeJSON(w, map[string]any{"docId": docID, "chunks": n})
+}
+
+// ── Postmortem → KB (v0.9.1197, Faz 5.4'ün ikinci yarısı) ──
+//
+// "Kaydedilen postmortem'e KB'ye ekle önerisi": incident sayfası,
+// kayıtlı postmortem'in altında bir "KB'ye ekle" düğmesi gösterir;
+// basılınca postmortem markdown'ı curated dokümanlarla AYNI katalogda
+// source='postmortem' olarak indekslenir ve RAG bir dahaki benzer
+// incident'ta bulur. İçerik istekten değil incidents satırından okunur
+// — KB'ye giren şey her zaman KAYITLI postmortem'dir, editördeki
+// kaydedilmemiş taslak değil.
+
+// postmortemDocText — chunk'lanacak gövde. Başlık satırları retrieval'da
+// chunk'ın tek başına anlaşılmasını sağlar (curatedDocText gerekçesi).
+func postmortemDocText(inc *chstore.Incident) string {
+	var b strings.Builder
+	b.WriteString("Incident postmortemi (operatör yazımı).\n")
+	b.WriteString("Incident: " + strings.TrimSpace(inc.Title) + "\n")
+	if inc.Service != "" {
+		b.WriteString("Servis: " + inc.Service + "\n")
+	}
+	b.WriteString("Önem: " + inc.Severity + "\n\n")
+	b.WriteString(strings.TrimSpace(inc.Postmortem))
+	return b.String()
+}
+
+// curatePostmortem — POST /api/rag/postmortem {incidentId}.
+func (s *Server) curatePostmortem(w http.ResponseWriter, r *http.Request) {
+	if !s.rag.Enabled() {
+		http.Error(w, "RAG etkin değil (Settings → AI → RAG)", http.StatusServiceUnavailable)
+		return
+	}
+	var in struct {
+		IncidentID string `json:"incidentId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	id := strings.TrimSpace(in.IncidentID)
+	if id == "" || len(id) > aiFeedbackMaxIDLen {
+		writeJSONError(w, http.StatusBadRequest, "incidentId required")
+		return
+	}
+	inc, err := s.store.GetIncident(r.Context(), id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if inc == nil {
+		writeJSONError(w, http.StatusNotFound, "incident not found")
+		return
+	}
+	if strings.TrimSpace(inc.Postmortem) == "" {
+		writeJSONError(w, http.StatusBadRequest,
+			"bu incident'ta kayıtlı postmortem yok — önce yazıp kaydedin")
+		return
+	}
+	docs, err := s.store.ListRagDocuments(r.Context())
+	if err == nil && len(docs) >= ragMaxDocs {
+		writeJSONError(w, http.StatusBadRequest,
+			fmt.Sprintf("doküman tavanı (%d) dolu — önce silin", ragMaxDocs))
+		return
+	}
+	email := ""
+	if c := auth.FromContext(r.Context()); c != nil {
+		email = c.Email
+	}
+	// docID incident'a ÇAKILI: postmortem güncellenip yeniden eklenirse
+	// katalogda kopya doğmaz, aynı doküman tazelenir.
+	docID := "postmortem-" + id
+	n, err := s.ragIngestDocument(r.Context(), docID, postmortemDocTitle(inc.Title),
+		"postmortem", id, email, postmortemDocText(inc))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.audit(r, "rag.postmortem", "rag_document", docID,
+		fmt.Sprintf(`{"incidentId":%q,"chunks":%d}`, id, n))
 	writeJSON(w, map[string]any{"docId": docID, "chunks": n})
 }

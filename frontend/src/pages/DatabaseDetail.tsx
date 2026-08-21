@@ -202,14 +202,17 @@ export default function DatabaseDetailPage() {
               env={env}
             </span>
           )}
-          <span style={{ marginLeft: 'auto', display: 'flex', gap: 12, fontSize: 12 }}>
-            <Link to={dbTracesHref({
-              window: range, system: refObj.system,
-              instance: refObj.instance, dbName: refObj.dbName || undefined,
-            })}>Traces →</Link>
-            <Link to={`/databases/slow-queries?dbsys=${encodeURIComponent(refObj.system)}`
-              + (refObj.dbName ? `&dbname=${encodeURIComponent(refObj.dbName)}` : '')}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          {/* v0.9.1210 — EndpointDetail ile aynı bağlantı-düğme tedavisi
+              (kardeş detay sayfası; operatör bildirimi "belli olmuyor"). */}
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, fontSize: 12 }}>
+            <Link className="sec" style={{ fontSize: 12, padding: '3px 10px' }}
+              to={dbTracesHref({
+                window: range, system: refObj.system,
+                instance: refObj.instance, dbName: refObj.dbName || undefined,
+              })}>Traces →</Link>
+            <Link className="sec" style={{ fontSize: 12, padding: '3px 10px', gap: 5 }}
+              to={`/databases/slow-queries?dbsys=${encodeURIComponent(refObj.system)}`
+                + (refObj.dbName ? `&dbname=${encodeURIComponent(refObj.dbName)}` : '')}>
               <Turtle size={13} strokeWidth={1.75} /> Top statements →
             </Link>
           </span>

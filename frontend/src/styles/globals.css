@@ -543,6 +543,19 @@ summary:focus-visible,
 }
 button.sec { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
 button.sec:hover:not(:disabled) { background: var(--bg2); }
+/* v0.9.1210 (operatör bildirimi) — bağlantı-düğme: `<Link className="sec">`
+   DÖRT çağrı yerinde yaşıyordu ama yukarıdaki kural button-scoped —
+   anchor'a sınıf SESSİZCE hiç uygulanmıyordu; "Traces → / Explore →"
+   pivotları düz metin gibi görünüyordu ("çok belli olmuyor"). Anchor
+   ikizi button tabanının anatomisini (radius/padding/font) + sec
+   yüzeyini birlikte giyer; underline yok (düğme, metin-link değil). */
+a.sec {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--bg3); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 5px 14px; font-size: 13px;
+  text-decoration: none; transition: background .15s;
+}
+a.sec:hover { background: var(--bg2); }
 button.danger { background: var(--err); color: var(--on-accent); }
 button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--err) 88%, white); }
 button.ghost { background: transparent; color: var(--text2); border: 1px solid transparent; }

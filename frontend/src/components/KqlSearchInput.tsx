@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
-import { detectFieldNameToken, rankFieldNames, applyFieldName, fieldNameHint } from '@/lib/kqlFieldToken';
+import { kqlLint } from '@/lib/kqlLint';
+import { detectFieldNameToken, rankFieldNames, applyFieldName, fieldNameHint, KQL_OPERATORS, mergeOperatorSuggestions } from '@/lib/kqlFieldToken';
 
 // KqlSearchInput (v0.5.464) — drop-in replacement for the bare
 // <input> on /logs search. Layers field-aware autocomplete on
@@ -138,6 +139,9 @@ export function KqlSearchInput({
   const [values, setValues] = useState<string[]>([]);
   const [highlight, setHighlight] = useState(0);
   const [loading, setLoading] = useState(false);
+  // v0.9.1216 (dilim 4) — gönderim-öncesi sözdizimi uyarısı; her
+  // düzenlemede temizlenir, yalnız Enter'da hesaplanır.
+  const [lintMsg, setLintMsg] = useState<string | null>(null);
 
   const token = useMemo(() => detectFieldToken(value, cursor), [value, cursor]);
   // v0.9.955 (F4/Ö16) — ALAN ADI konumu. Değer token'ı VARSA burası
@@ -146,8 +150,15 @@ export function KqlSearchInput({
   const nameToken = useMemo(
     () => (token ? null : detectFieldNameToken(value, cursor)),
     [token, value, cursor]);
+  // v0.9.1216 — operatörler (AND/OR/NOT) alan-adı listesinin başına
+  // girer: query_string yalnız BÜYÜK HARF operatör tanır, küçük harfle
+  // yazılan `and` sessizce arama terimi olur (çalışır-ama-yanlış sınıfı).
   const nameSuggestions = useMemo(
-    () => (nameToken && fields?.length ? rankFieldNames(fields, nameToken.prefix) : []),
+    () => (nameToken
+      ? mergeOperatorSuggestions(
+          fields?.length ? rankFieldNames(fields, nameToken.prefix) : [],
+          nameToken.prefix)
+      : []),
     [nameToken, fields]);
   // v0.9.970 (Ö16 ikinci tur) — katalog kırpıksa bunu SÖYLE. Kritik hâl
   // `clipped-no-match`: operatör bir önek yazdı, hiçbir şey eşleşmedi ve
@@ -250,9 +261,27 @@ export function KqlSearchInput({
     });
   };
 
+  // v0.9.1216 — operatör seçimi ':' değil BOŞLUK ekler (alan adı değil,
+  // bağlaç) ve büyük harfe normalize eder.
+  const insertOperator = (op: string) => {
+    if (!nameToken) return;
+    const next = value.slice(0, nameToken.start) + op + ' ' + value.slice(nameToken.end);
+    const nextCursor = nameToken.start + op.length + 1;
+    onChange(next);
+    setOpen(false);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(nextCursor, nextCursor);
+      setCursor(nextCursor);
+    });
+  };
+
   const pick = (i: number) => {
-    if (nameMode) insertFieldName(nameSuggestions[i]);
-    else insertValue(values[i]);
+    if (nameMode) {
+      const s = nameSuggestions[i];
+      if ((KQL_OPERATORS as readonly string[]).includes(s)) insertOperator(s);
+      else insertFieldName(s);
+    } else insertValue(values[i]);
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -287,6 +316,14 @@ export function KqlSearchInput({
     if (e.key === 'Enter' && onSubmit) {
       // Single-line input: Enter runs the search.
       e.preventDefault();
+      // v0.9.1216 — nesnel sözdizimi kırığı gönderilmez: hata anında
+      // görünür VE başarısız bir ES _search turu hiç atılmaz.
+      const msg = kqlLint(value);
+      if (msg) {
+        setLintMsg(msg);
+        return;
+      }
+      setLintMsg(null);
       onSubmit();
     }
   };
@@ -314,7 +351,7 @@ export function KqlSearchInput({
         {...(shortcutSearch ? { 'data-shortcut-search': '' } : {})}
         {...(pcLead ? { 'data-pc-lead': '' } : {})}
         value={value}
-        onChange={e => { onChange(e.target.value); setCursor(e.target.selectionStart ?? e.target.value.length); }}
+        onChange={e => { onChange(e.target.value); setLintMsg(null); setCursor(e.target.selectionStart ?? e.target.value.length); }}
         onSelect={onSelect}
         onClick={onSelect}
         onKeyDown={onKeyDown}
@@ -373,6 +410,14 @@ export function KqlSearchInput({
               }}>{v}</div>
           ))}
         </div>
+      )}
+      {lintMsg && (
+        <span role="alert" style={{
+          position: 'absolute', top: '100%', left: 0, marginTop: 3,
+          fontSize: 11, color: 'var(--err)', whiteSpace: 'nowrap', zIndex: 5,
+        }}>
+          {lintMsg}
+        </span>
       )}
     </span>
   );

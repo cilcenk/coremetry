@@ -145,7 +145,9 @@ export function QueryRow({ q, canRemove, canDuplicate, onChange, onDuplicate, on
           </div>
         )}
         {q.source !== 'span' || !grouped ? (
-          <FilterBuilder value={q.filters} onChange={f => onChange({ ...q, filters: f })} />
+          <FilterBuilder value={q.filters} onChange={f => onChange({ ...q, filters: f })}
+            metricName={q.source === 'metric' ? q.metric : undefined}
+            metricService={q.source === 'metric' ? q.scope : undefined} />
         ) : (
           <FilterGroupBuilder value={q.filterGroup ?? { join: 'AND', filters: [] }}
             onChange={setGroup} />
@@ -165,7 +167,9 @@ export function QueryRow({ q, canRemove, canDuplicate, onChange, onDuplicate, on
       </div>
 
       <span style={{ color: 'var(--text2)', fontSize: 12, alignSelf: 'center' }}>Split:</span>
-      <SplitByPicker value={q.splitBy} onChange={by => onChange({ ...q, splitBy: by })} />
+      <SplitByPicker value={q.splitBy} onChange={by => onChange({ ...q, splitBy: by })}
+        metric={q.source === 'metric' ? q.metric : undefined}
+        service={q.source === 'metric' ? q.scope : undefined} />
 
       {/* v0.9.847 — ⧉ Çoğalt. Silme düğmesinin SOLUNDA ve aynı sessiz
           dilde: ikinci sorgu pratikte hep "A'nın aynısı ama p50" ya da

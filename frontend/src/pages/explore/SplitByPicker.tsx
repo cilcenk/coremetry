@@ -13,11 +13,20 @@ import { SUGGESTED_GROUPBY } from './presets';
 // (api.attributeKeys — plan ground-truth #8). The fetch is shared across
 // every query row via one react-query key, 60s stale.
 
-export function SplitByPicker({ value, onChange }: {
+export function SplitByPicker({ value, onChange, metric, service }: {
   value: string[];
   onChange: (keys: string[]) => void;
+  /**
+   * v0.9.1200 — metrik-kaynak modu: split önerileri span taramasından değil
+   * o metrikte GÖRÜLMÜŞ etiketlerden (metricAttrKeys — metricsource seam'i,
+   * VM'de /api/v1/labels). Span paleti (http.route vb.) metrik etiketi
+   * olmayabilir ve VM'de sessizce hiç eşleşmezdi.
+   */
+  metric?: string;
+  service?: string;
 }) {
   const [draft, setDraft] = useState('');
+  const metricMode = !!metric?.trim();
 
   // v0.9.953 (F3/Ö14c) — keşif penceresi sayfanın aralığından, BASAMAKLI.
   // Basamak hem sunucu cache anahtarına hem react-query anahtarına aynen
@@ -38,11 +47,25 @@ export function SplitByPicker({ value, onChange }: {
     queryKey: ['attribute-keys', winSig],
     queryFn: () => api.attributeKeys(attrWindow, 200),
     staleTime: 60_000,
+    enabled: !metricMode,
+  });
+  const metricKeysQ = useQuery({
+    queryKey: ['metric-attr-keys', metric ?? '', service ?? ''],
+    queryFn: () => api.metricAttrKeys(metric!.trim(), service ?? ''),
+    staleTime: 60_000,
+    enabled: metricMode,
   });
 
   const options = useMemo(() => {
     const seen = new Set(value);
     const out: string[] = [];
+    if (metricMode) {
+      // Yalnız gerçek etiketler — span paleti burada tahmin olurdu.
+      for (const k of metricKeysQ.data ?? []) {
+        if (!seen.has(k)) { out.push(k); seen.add(k); }
+      }
+      return out;
+    }
     for (const k of SUGGESTED_GROUPBY) {
       if (!seen.has(k)) { out.push(k); seen.add(k); }
     }
@@ -50,7 +73,7 @@ export function SplitByPicker({ value, onChange }: {
       if (!seen.has(row.key)) { out.push(row.key); seen.add(row.key); }
     }
     return out;
-  }, [keysQ.data, value]);
+  }, [keysQ.data, metricKeysQ.data, metricMode, value]);
 
   const add = (k: string) => {
     const t = k.trim();

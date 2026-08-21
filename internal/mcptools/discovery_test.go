@@ -548,10 +548,11 @@ func TestDiscoveryToolsGroupedNearConsumers(t *testing.T) {
 	// v0.9.1146 — 25 → 28 (analysis.go: get_topology / get_blast_radius /
 	// get_log_histogram); v0.9.1147 — 28 → 32 (guided_parity.go:
 	// get_db_health / get_messaging_health / get_pod_health /
-	// list_problem_window_events). Sayı ÜÇ yerde daha yazılı ve üçü de bu
-	// testle birlikte güncellenir; aksi hâlde katalog büyürken doküman ve
-	// duruş notu sessizce bayatlar.
-	if len(tools) != 32 {
+	// list_problem_window_events); v0.9.1227 — 32 → 33 (get_operation_
+	// health). Sayı ÜÇ yerde daha yazılı ve üçü de bu testle birlikte
+	// güncellenir; aksi hâlde katalog büyürken doküman ve duruş notu
+	// sessizce bayatlar.
+	if len(tools) != 33 {
 		t.Errorf("katalog %d tool — sayı değiştiyse tools.go başlığındaki sayım yorumunu, "+
 			"api/mcp_authz_test.go'daki duruş notunu ve docs/runbooks/mcp-claude-code.md'yi de güncelle", len(tools))
 	}

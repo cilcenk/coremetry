@@ -190,7 +190,7 @@ func TestMCPCallGateMissingClaimsDenied(t *testing.T) {
 // Spec filtresi — property: süzülmüş kümede rolü AŞAN hiçbir tool
 // kalmaz; admin her şeyi görür; viewer tam olarak MinRole>"" olanları
 // kaybeder. Gerçek kayıt defteri + sentetik editor/admin tool'la
-// koşar (bugün 32 tool'un tamamı "" olduğu için sentetik olmadan
+// koşar (bugün 33 tool'un tamamı "" olduğu için sentetik olmadan
 // property boş yere yeşil kalırdı).
 func TestToolsForRoleFiltersByMinRole(t *testing.T) {
 	registry := append(mcptools.ToolList(mcptools.Deps{}),
@@ -233,7 +233,7 @@ func TestToolsForRoleFiltersByMinRole(t *testing.T) {
 	}
 }
 
-// Bugünkü duruş: 32 tool'un tamamı MinRole "" (salt-okunur + REST eşi
+// Bugünkü duruş: 33 tool'un tamamı MinRole "" (salt-okunur + REST eşi
 // viewer'a açık). Bir tool'a MinRole eklendiğinde bu test bilinçli
 // olarak kırmızı yanar — REST eşinin kapısıyla eşleştiğini doğrula ve
 // listeyi güncelle (mcptools/tools.go başlığındaki sözleşme).
@@ -245,8 +245,10 @@ func TestToolsForRoleFiltersByMinRole(t *testing.T) {
 // mcptools/discovery_test.go'daki sayım kardeşi (aynı sayı, ayrı paket).
 func TestAllShippedToolsAreViewerLevel(t *testing.T) {
 	tools := mcptools.ToolList(mcptools.Deps{})
-	if len(tools) != 32 {
-		t.Errorf("katalog %d tool (32 bekleniyordu) — yeni tool'un REST eşinin kapısını (auth.RequireRole/"+
+	// v0.9.1227 — 33: get_operation_health'in REST eşi GET /api/endpoints
+	// kapısız (viewer-açık, api.go:690), MinRole "" ona eşit.
+	if len(tools) != 33 {
+		t.Errorf("katalog %d tool (33 bekleniyordu) — yeni tool'un REST eşinin kapısını (auth.RequireRole/"+
 			"RequireAnyRole) kontrol et, MinRole'ü ona eşitle, sonra bu sayıyı güncelle", len(tools))
 	}
 	for _, tool := range tools {

@@ -262,6 +262,9 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// sayaç. İstek boyunca tekil olmalı: çipler tur döngüsü boyunca birikiyor,
 	// tur-içi indeks ikinci turda çakışırdı.
 	stepN := 0
+	// v0.9.1228 — döngü boyunca biriken ürün köprüleri (toolCallLink):
+	// cevap çipi olarak yayınlanır; request-ID linkleriyle birleşir.
+	var loopLinks []guidedAnswerLink
 	// v0.9.528 Faz 2 — serbest döngünün sistem prompt'u da kiminle
 	// konuşulduğunu taşır. Ön-söz boşsa sabitin aynısı.
 	loopPrompt := withAddressee(addressee, copilot.SystemPromptChat())
@@ -282,8 +285,14 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			// v0.9.709 (operatör-bildirimi) — cevaptaki request_id'ler log
 			// köprüsü çipi olur; altyapı (links + ChatBubble çipleri)
 			// v0.9.419'dan beri hazırdı, yalnız guided yayınlıyordu.
+			// v0.9.1228 — tool köprüleri önce (yapısal, döngüden), sonra
+			// metin-madeni request-ID linkleri; href'e göre tekil.
+			links := loopLinks
+			for _, l := range s.answerRequestIDLinks(ctx, finalText, req.Context.Service) {
+				links = mergeToolLinks(links, l)
+			}
 			emit("answer", map[string]any{"text": finalText, "exchangeId": exchangeID,
-				"links": s.answerRequestIDLinks(ctx, finalText, req.Context.Service)})
+				"links": links})
 			break
 		}
 		// Record the assistant's tool-call turn, then execute each
@@ -336,10 +345,20 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			// modelin okuduğu şey olmalı. `bytes` kırpılmamış gerçek boy,
 			// yani "ne kadarını görmüyorum" cevaplanabilir.
 			preview, truncated := clipStepPreview(tr.Content)
-			emit("step-result", map[string]any{
+			stepEv := map[string]any{
 				"i": stepN, "tool": tc.Name, "ok": !tr.IsError,
 				"preview": preview, "truncated": truncated, "bytes": len(tr.Content),
-			})
+			}
+			// v0.9.1228 — çipe ürün köprüsü: başarılı çağrının hedef
+			// görünümü (K4-denetimli harita, chat_tool_links.go). Eski FE
+			// alanı yok sayar (links/suggestions ileri-uyum sınıfı).
+			if !tr.IsError {
+				if l, ok := toolCallLink(tc.Name, tc.Input); ok {
+					stepEv["href"] = l.Href
+					loopLinks = mergeToolLinks(loopLinks, l)
+				}
+			}
+			emit("step-result", stepEv)
 			results = append(results, tr)
 		}
 		conv = append(conv, copilot.ChatMessage{Role: "user", ToolResults: results})
@@ -358,10 +377,14 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			} else {
 				finalText = appendCharts(turn2.Text)
 				// v0.9.709 (operatör-bildirimi) — cevaptaki request_id'ler log
-			// köprüsü çipi olur; altyapı (links + ChatBubble çipleri)
-			// v0.9.419'dan beri hazırdı, yalnız guided yayınlıyordu.
-			emit("answer", map[string]any{"text": finalText, "exchangeId": exchangeID,
-				"links": s.answerRequestIDLinks(ctx, finalText, req.Context.Service)})
+				// köprüsü çipi olur. v0.9.1228 — tool köprüleri de burada:
+				// tur-tavanı cevabı da döngünün kanıt linklerini taşır.
+				links := loopLinks
+				for _, l := range s.answerRequestIDLinks(ctx, finalText, req.Context.Service) {
+					links = mergeToolLinks(links, l)
+				}
+				emit("answer", map[string]any{"text": finalText, "exchangeId": exchangeID,
+					"links": links})
 			}
 		}
 	}

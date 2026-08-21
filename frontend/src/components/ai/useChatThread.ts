@@ -156,7 +156,7 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
             ...t,
             stepDetails: (t.stepDetails ?? []).map(d =>
               d.i === e.i
-                ? { ...d, ok: e.ok, preview: e.preview, truncated: e.truncated, bytes: e.bytes }
+                ? { ...d, ok: e.ok, preview: e.preview, truncated: e.truncated, bytes: e.bytes, href: e.href }
                 : d),
           }));
         } else if (e.kind === 'delta') {

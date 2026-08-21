@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { fmtNum, tsLong } from '@/lib/utils';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import type { LogRow } from '@/lib/types';
+import { highlightSegments } from '@/lib/logFilters';
 
 // LogContextModal — v0.5.402. Datadog "Context" tab for /logs.
 // Operator clicks "≡ ±50" on an expanded log row → this modal
@@ -25,11 +26,15 @@ import type { LogRow } from '@/lib/types';
 // can collide on busy services where two logs hit the same ns
 // bucket.
 export function LogContextModal({
-  pivot, onClose, onTracePeek,
+  pivot, onClose, onTracePeek, highlightTerms,
 }: {
   pivot: LogRow | null;
   onClose: () => void;
   onTracePeek?: (traceId: string) => void;
+  // v0.9.1215 (Kibana paritesi, dilim 6) — pivot sorgusunun serbest-metin
+  // terimleri bağlam satırlarında da vurgulanır (mesaj hücresiyle aynı
+  // yardımcı + 4KB tarama tavanı; saf istemci işi).
+  highlightTerms?: string[];
 }) {
   const [before, setBefore] = useState<LogRow[] | null | undefined>(undefined);
   const [after,  setAfter]  = useState<LogRow[] | null | undefined>(undefined);
@@ -148,7 +153,10 @@ export function LogContextModal({
                   <span style={{
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }} title={l.body}>
-                    {l.body}
+                    {highlightTerms && highlightTerms.length > 0
+                      ? highlightSegments(l.body, highlightTerms).map((seg, i) =>
+                          seg.hl ? <mark key={i}>{seg.text}</mark> : <span key={i}>{seg.text}</span>)
+                      : l.body}
                   </span>
                   <span style={{ textAlign: 'right' }}>
                     {l.traceId && onTracePeek && (

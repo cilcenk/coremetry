@@ -1178,6 +1178,7 @@ function LogsInner() {
               onToggleExpand={toggle}
               onFilterAdd={addFromRow}
               onFilterExclude={excludeFromRow}
+              onToggleColumn={toggleColumn}
               onTracePeek={tid => setPeekTraceId(tid)}
               onContextOpen={l => setContextPivot(l)} />
             {/* Load more (v0.8.260 — replaced the Back/Next pager;
@@ -1232,6 +1233,7 @@ function LogsInner() {
         anchor={peekTraceId ? { kind: 'trace', traceId: peekTraceId } : null}
         onClose={() => setPeekTraceId(null)} />
       <LogContextModal pivot={contextPivot}
+        highlightTerms={highlightTerms}
         onClose={() => setContextPivot(null)}
         onTracePeek={tid => { setContextPivot(null); setPeekTraceId(tid); }} />
     </>

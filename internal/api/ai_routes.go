@@ -118,6 +118,9 @@ func (s *Server) registerAIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST   /api/copilot/explain-alert-noise", s.requireCopilot(s.explainAlertNoise))   // v0.9.1080 — F3.3 gürültü anlatıcısı ✨
 	mux.HandleFunc("POST   /api/copilot/explain-log-patterns", s.requireCopilot(s.explainLogPatterns)) // v0.9.1100 — F3.5 desen anlatıcısı ✨
 	mux.HandleFunc("POST   /api/copilot/runbook/{id}", s.requireCopilot(s.copilotRunbook))
+	// v0.9.1198 (Faz 5.5) — probleme bağlı koşudan runbook güncelleme
+	// önerisi ({id} = execution). Rol kapısı yok — copilotRunbook emsali.
+	mux.HandleFunc("POST   /api/copilot/runbook-update/{id}", s.requireCopilot(s.runbookUpdateSuggest))
 	mux.HandleFunc("POST   /api/copilot/compare-traces", s.requireCopilot(s.copilotCompareTraces))
 	mux.HandleFunc("POST   /api/copilot/deploy-impact", s.requireCopilot(s.copilotDeployImpact))
 	mux.HandleFunc("POST   /api/copilot/explain-slo/{id}", s.requireCopilot(s.copilotExplainSLO))

@@ -1937,6 +1937,12 @@ export const api = {
   copilotRunbook: (id: string, opts?: ExplainStreamOpts) =>
     explainCall<{ explanation: string; exchangeId?: string; similarCount: number }>(
       `/api/copilot/runbook/${id}`, { method: 'POST' }, opts),
+  // v0.9.1198 (Faz 5.5) — probleme bağlı koşudan runbook güncelleme
+  // önerisi; id = execution. Öneri saklanmaz, uygulamak operatörün
+  // runbook düzenlemesi.
+  runbookUpdateSuggestion: (execId: string, opts?: ExplainStreamOpts) =>
+    explainCall<{ explanation: string; exchangeId?: string; runbookId: string; problemId: string }>(
+      `/api/copilot/runbook-update/${encodeURIComponent(execId)}`, { method: 'POST' }, opts),
   copilotCompareTraces: (aId: string, bId: string) =>
     request<{ explanation: string; exchangeId?: string }>(`/api/copilot/compare-traces`, {
       method: 'POST',

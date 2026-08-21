@@ -348,6 +348,7 @@ func TestAISurfaceFromInsightPath(t *testing.T) {
 		// Komşuların etiketi değişmemeli.
 		{"/api/copilot/explain-problem/p1", "explain-problem"},
 		{"/api/copilot/draft-postmortem/inc-1", "draft-postmortem"}, // v0.9.1197 Faz 5.4
+		{"/api/copilot/runbook-update/ex-1", "runbook-update"},      // v0.9.1198 Faz 5.5
 		{"/api/admin/clickhouse/optimize-query", "ch-optimize"},
 		{"/api/problems", "other"},
 	}

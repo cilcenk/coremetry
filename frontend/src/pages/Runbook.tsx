@@ -16,6 +16,9 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useRunbook, useUpdateRunbook, useDeleteRunbook, useRunbookExecutions, useExecuteRunbook } from '@/lib/queries';
+import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
+import { IconSparkles } from '@/components/icons';
+import { aiErrorHint } from '@/lib/aiErrors';
 import { tsLong } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { AuditEntry, Runbook, RunbookStep, RunbookStepKind, RunbookExecution } from '@/lib/types';
@@ -213,12 +216,27 @@ const EXEC_COLS: DataTableColumn<RunbookExecution>[] = [
   { id: 'steps',     label: 'Steps',      sortValue: e => e.stepStates.length,   numeric: true, width: 90 },
   { id: 'duration',  label: 'Duration',   sortValue: e => (e.completedAt ? e.completedAt - e.startedAt : 0), numeric: true, width: 110 },
   { id: 'startedBy', label: 'Triggered by', sortValue: e => e.startedBy ?? '',   naturalDir: 'asc', width: 200 },
-  { id: 'open',      label: '',                                                  width: 80 },
+  { id: 'open',      label: '',                                                  width: 130 },
 ];
 
 function ExecutionsTab({ runbookId }: { runbookId: string }) {
   const navigate = useNavigate();
   const q = useRunbookExecutions({ runbookId });
+  // v0.9.1198 (Faz 5.5) — probleme bağlı tamamlanmış koşudan güncelleme
+  // önerisi. Tek açık öneri (kanıt bakışı, veri sayfası değil); tıkla-getir,
+  // liste prefetch'i yok. Öneri saklanmaz — uygulamak runbook'u düzenlemek.
+  const [sugg, setSugg] = useState<{ execId: string; busy: boolean; text: string; err: string | null; xid?: string } | null>(null);
+  const suggest = async (e: RunbookExecution) => {
+    if (sugg?.busy) return;
+    setSugg({ execId: e.id, busy: true, text: '', err: null });
+    try {
+      const r = await api.runbookUpdateSuggestion(e.id);
+      setSugg({ execId: e.id, busy: false, text: r.explanation, err: null, xid: r.exchangeId });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSugg({ execId: e.id, busy: false, text: '', err: aiErrorHint(msg) ?? msg });
+    }
+  };
   // v0.9.865 (tutarlılık denetimi MT1) — `?? []` okuma hatasını "No runs yet"e
   // çeviriyordu: koşmuş bir runbook hiç koşmamış gibi okunuyordu.
   const execs = q.isLoading ? undefined : q.isError ? null : q.data ?? [];
@@ -257,7 +275,14 @@ function ExecutionsTab({ runbookId }: { runbookId: string }) {
                 <td className="num mono">{done}/{e.stepStates.length}</td>
                 <td className="num mono" style={{ fontSize: 11 }}>{e.completedAt ? fmtDur(e.completedAt - e.startedAt) : '—'}</td>
                 <td className="mono" style={{ color: 'var(--text2)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.startedBy || '—'}</td>
-                <td style={{ textAlign: 'right' }}>
+                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  {!!e.problemId && !!e.completedAt && (
+                    <Button variant="secondary" size="sm" onClick={() => suggest(e)}
+                      loading={sugg?.busy === true && sugg.execId === e.id} style={{ marginRight: 6 }}
+                      title="Bu koşu + bağlı problemin çözüm kanıtından runbook güncelleme önerisi üret">
+                      <IconSparkles /> Öneri
+                    </Button>
+                  )}
                   <Button variant="secondary" size="sm" onClick={() => navigate(`/runbook-exec?id=${encodeURIComponent(e.id)}`)}>Open</Button>
                 </td>
               </tr>
@@ -265,6 +290,23 @@ function ExecutionsTab({ runbookId }: { runbookId: string }) {
           })}
         </tbody>
       </table>
+      {sugg && !sugg.busy && (
+        <div className="card" style={{ marginTop: 10 }}>
+          <div className="ov-card-h">
+            <h3><IconSparkles /> Güncelleme önerisi — koşu <span className="mono" style={{ fontSize: 12 }}>{sugg.execId}</span></h3>
+          </div>
+          <div className="ov-card-b">
+            {sugg.err ? (
+              <div style={{ color: 'var(--err)', fontSize: 12 }}>{sugg.err}</div>
+            ) : (
+              <>
+                <RenderedMarkdown text={sugg.text} />
+                <div style={{ marginTop: 6 }}><AIFeedbackButtons exchangeId={sugg.xid} /></div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

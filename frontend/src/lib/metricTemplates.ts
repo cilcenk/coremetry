@@ -23,7 +23,7 @@ export interface MetricTemplate {
   // Regex against metric name. Case-insensitive automatically.
   match: RegExp;
   // Defaults applied on auto-apply.
-  agg: 'avg' | 'sum' | 'last' | 'min' | 'max' | 'p50' | 'p95' | 'p99';
+  agg: 'avg' | 'sum' | 'last' | 'min' | 'max' | 'rate' | 'p50' | 'p95' | 'p99';
   unit?: string;            // display hint; overrides MetricInfo.unit when set
   groupBy?: string[];       // suggested split keys (operator can clear)
   // SLO-style threshold suggestion. Used for the chart's threshold
@@ -185,7 +185,9 @@ const TEMPLATES: MetricTemplate[] = [
   {
     id: 'Error counter',
     match: /\.errors?$|_errors?(_total)?$|\.error\.count$/i,
-    agg: 'sum',
+    // v0.9.1201 — sum→rate: kümülatif counter'da sum "tırmanan toplam"dı;
+    // açıklama zaten "Error rate" diyordu, şimdi grafik de onu çiziyor.
+    agg: 'rate',
     groupBy: ['error.type'],
     threshold: { value: 0, cmp: '>', reason: 'any error in window = investigate' },
     description: 'Error rate, split by type. Threshold: > 0.',
@@ -195,7 +197,7 @@ const TEMPLATES: MetricTemplate[] = [
   {
     id: 'Request counter',
     match: /\.requests?$|_requests?(_total)?$|\.request\.count$|\.calls?(_total)?$/i,
-    agg: 'sum',
+    agg: 'rate', // v0.9.1201 — sum→rate, Error counter ile aynı gerekçe
     groupBy: ['service.name'],
     description: 'Request rate, split by service.',
   },
@@ -226,7 +228,12 @@ function fallbackForType(type: string): { agg: MetricTemplate['agg']; descriptio
     case 'histogram':     return { agg: 'p99',  description: 'Histogram → p99 (override if you want avg/p50).' };
     case 'exp_histogram': return { agg: 'p99',  description: 'Exponential histogram → p99.' };
     case 'summary':       return { agg: 'p99',  description: 'Summary → p99.' };
-    case 'sum':           return { agg: 'sum',  description: 'Counter → sum over window.' };
+    // v0.9.1201 — sum→rate. v0.9.271 sum'ı seçmişti çünkü FE agg seti
+    // rate sunmuyordu (en iyi mevcut); artık sunuyor ve kümülatif
+    // counter'ın doğru varsayılanı hızdır (VM'de bare sum(sel) tırmanan
+    // kümülatifi çizer — prod'un yaşadığı grafik tam buydu). Monotonik
+    // olmayan sum azınlığı yine önce şablonlara yakalanır (Runtime level).
+    case 'sum':           return { agg: 'rate', description: 'Counter → per-second rate.' };
     case 'gauge':         return { agg: 'last', description: 'Gauge → last value.' };
     default:              return { agg: 'avg',  description: '' };
   }

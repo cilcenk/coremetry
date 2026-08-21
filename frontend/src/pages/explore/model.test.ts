@@ -161,6 +161,24 @@ describe('queryUnit', () => {
     });
   }
 
+  // v0.9.1201 — metrik-kaynak rate birimi SANİYELİK: bytes→Bps,
+  // birimsiz→/s; süre counter'ının hızı oran-benzeri, birim UYDURULMAZ.
+  // increase pencere-toplamı: taban birim aynen kalır.
+  const rateCases: [string, string, string][] = [
+    ['rate', 'By', 'Bps'],
+    ['rate', '1', '/s'],
+    ['rate', '', '/s'],
+    ['rate', 's', ''],
+    ['rate', 'ms', ''],
+    ['increase', 'By', 'bytes'],
+    ['increase', '1', ''],
+  ];
+  for (const [agg, raw, want] of rateCases) {
+    it(`metric source: ${agg} + katalog '${raw}' → panel '${want}'`, () => {
+      expect(queryUnit(metricQ({ metric: 'm', unit: raw, agg }))).toBe(want);
+    });
+  }
+
   // spanAggUnit sözleşmesi DEĞİŞMEDİ — bu satırlar regresyon çapası.
   const spanCases: [string, string][] = [
     ['count', ''], ['rate', '/s'], ['per_min', '/min'], ['error_rate', '%'],

@@ -31,10 +31,17 @@ export type ExploreViz = 'line' | 'area' | 'bars' | 'stacked' | 'stat' | 'toplis
 export const EXPLORE_VIZ: ExploreViz[] = ['line', 'area', 'bars', 'stacked', 'stat', 'toplist', 'pie', 'table', 'heatmap'];
 
 // Aggregations differ per source (plan ground-truth #10): the metric query
-// API supports avg|sum|min|max|last|p50|p95|p99; span signals add
-// rate / count / errors / error_rate and the wider percentile set.
-export type MetricCatalogAgg = 'avg' | 'sum' | 'min' | 'max' | 'last' | 'p50' | 'p95' | 'p99';
-export const METRIC_CATALOG_AGGS: MetricCatalogAgg[] = ['avg', 'sum', 'min', 'max', 'last', 'p50', 'p95', 'p99'];
+// API supports avg|sum|min|max|last|rate|increase|p50|p95|p99; span signals
+// add count / errors / error_rate and the wider percentile set.
+//
+// v0.9.1201 — rate/increase eklendi. İki backend'de de yıllardır vardı
+// (CH v0.9.106 metricrate, VM v0.9.1154 MetricsQL çevirisi) ama FE hiç
+// sunmuyordu: kümülatif bir counter'ı sum ile çizmek "tırmanan toplam"
+// gösterir, operatörün istediği hız eğrisini değil.
+export type MetricCatalogAgg =
+  'avg' | 'sum' | 'min' | 'max' | 'last' | 'rate' | 'increase' | 'p50' | 'p95' | 'p99';
+export const METRIC_CATALOG_AGGS: MetricCatalogAgg[] =
+  ['avg', 'sum', 'min', 'max', 'last', 'rate', 'increase', 'p50', 'p95', 'p99'];
 
 export interface BuilderQuery {
   letter: string;          // 'A'..'D' — stable id the formula references
@@ -275,7 +282,20 @@ export function querySignature(q: BuilderQuery, step: number): string {
 // Bilinmeyen birim '' döner (birimsiz): uydurulmuş bir birim, birimsiz
 // olandan kötüdür.
 export function queryUnit(q: BuilderQuery): string {
-  return q.source === 'span' ? spanAggUnit(q.agg) : (otlpUnitToGrafana(q.unit) ?? '');
+  if (q.source === 'span') return spanAggUnit(q.agg);
+  return metricAggUnit(q.agg, otlpUnitToGrafana(q.unit));
+}
+
+// metricAggUnit — v0.9.1201. rate değeri SANİYELİK'tir; taban birimi aynen
+// göstermek (bytes çizip B/s kastetmek) v0.9.774 dürüstlük deseninin tam
+// ihlali olurdu. Tablo bilinçli dar: bytes → Bps, birimsiz → /s; süre/yüzde
+// counter'ının hızı oran-benzeridir ve birim UYDURULMAZ ('' döner).
+// increase pencere-toplamıdır — taban birim doğru kalır.
+export function metricAggUnit(agg: string, baseUnit: string | undefined): string {
+  if (agg !== 'rate') return baseUnit ?? '';
+  if (baseUnit === 'bytes') return 'Bps';
+  if (baseUnit === undefined || baseUnit === '') return '/s';
+  return '';
 }
 
 // queryDesc — one-line human summary ("p95 of duration_ms by service.name").

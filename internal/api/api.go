@@ -9713,6 +9713,16 @@ func (s *Server) copilotRunbook(w http.ResponseWriter, r *http.Request) {
 		sb.WriteString("\nNo past resolved instances of this exact rule on this service — use first-principles reasoning grounded in the metric + service.\n")
 	}
 
+	// v0.9.1198 (Faz 5.5) — kanıt zinciri girdiye eklendi: checklist
+	// artık "geçmişte ne kadar sürdü"nün yanında otomatik araştırmacının
+	// neyi suçlu bulduğunu da biliyor (şüpheli + aday yollar + bulunan
+	// derin sinyaller). Hipotez yoksa blok hiç eklenmez.
+	if hyp, _ := s.store.GetHypothesis(r.Context(), "problem", id); hyp != nil {
+		if chain := renderRunbookEvidenceChain(hyp); chain != "" {
+			sb.WriteString("\n" + chain)
+		}
+	}
+
 	r, xid := withExchange(r)
 	s.deliverExplain(w, r, xid,
 		map[string]any{"similarCount": len(similar)},

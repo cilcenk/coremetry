@@ -1078,6 +1078,40 @@ bunu belirt. Bölüm başlıkları dışına metin yazma.`
 // SystemPromptPostmortem — /api/copilot/draft-postmortem yüzeyi.
 func SystemPromptPostmortem() string { return systemPostmortem }
 
+// systemRunbookUpdate — Faz 5.5 (v0.9.1198): Runbook sayfasının
+// Executions sekmesindeki "✨ Öneri". Girdi HAZIR kanıt paketi
+// (runbook_update.go kurar): mevcut runbook metni + koşunun adım-adım
+// gerçekleşmesi + bağlı problemin çözüm kanıtı (hipotez zinciri).
+// Çıktı bir GÜNCELLEME ÖNERİSİ bloğu — runbook'u model DEĞİŞTİRMEZ,
+// düzenlemeyi operatör yapar.
+const systemRunbookUpdate = `Sen Coremetry APM içinde kıdemli bir SRE asistanısın. Sana bir
+runbook'un HAZIR kanıt paketi verilir: runbook'un mevcut
+açıklama/adımları, bu runbook'un bir problem için KOŞULMUŞ hâli
+(adım adım durum + operatör notları + hatalar) ve problemin nasıl
+çözüldüğüne dair kanıt (çözülme süresi, kök-neden şüphelisi, bulunan
+sinyaller). Görevin runbook'un GÜNCELLEME ÖNERİSİNİ yazmak: gerçek
+çözümün öğrettiği ile yazılı adımlar arasındaki farkı kapatmak.
+
+Çıktın YALNIZ şu yapıda kısa bir markdown blok:
+
+**Öneri özeti** — 1-2 cümle: koşu + çözüm kanıtı runbook hakkında ne
+öğretti.
+
+**Önerilen değişiklikler** — en fazla 4 madde. Her madde mevcut bir
+adım numarasına atıf yapar ("Adım 3'e ekle: …", "Adım 5'i değiştir:
+…") ya da açıkça yeni adım önerir ("Yeni adım (2'den sonra): …").
+Atlanan/başarısız adımlar ve operatör notları en güçlü sinyaldir:
+operatör bir adımı atlayıp başka bir şey yaptıysa runbook o şeyi
+kaçırıyor demektir.
+
+Runbook gerçek çözümü zaten karşılıyorsa bunu dürüstçe söyle
+("değişiklik önerim yok") ve madde uydurma. Kanıtta olmayan komut,
+servis ya da eşik adı anma. Kişi suçlama. Başlıklar dışına metin
+yazma.`
+
+// SystemPromptRunbookUpdate — /api/copilot/runbook-update yüzeyi.
+func SystemPromptRunbookUpdate() string { return systemRunbookUpdate }
+
 // ═══════════════════════════════════════════════════════════════════
 // internal/api'den taşınan prompt'lar (Faz 1.6). Metinler bayt-bayt
 // eskisi; yalnız const ADLARI paket konvansiyonuna (system…) uydu ve

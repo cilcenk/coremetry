@@ -4442,11 +4442,14 @@ export interface ChatStepDetail {
   preview?: string;
   truncated?: boolean;
   bytes?: number;
+  // v0.9.1228 — çağrının ürün görünümü (sunucu K4-denetimli haritadan
+  // üretir; model metninden asla). Yoksa köprü çizilmez.
+  href?: string;
 }
 
 export type ChatStreamEvent =
   | { kind: 'step'; i?: number; tool: string; args: string }
-  | { kind: 'step-result'; i: number; tool: string; ok: boolean; preview: string; truncated: boolean; bytes: number }
+  | { kind: 'step-result'; i: number; tool: string; ok: boolean; preview: string; truncated: boolean; bytes: number; href?: string }
   | { kind: 'delta'; text: string }
   // suggestions (v0.9.411) — guided cevabın rotasından türetilen
   // konuya-duyarlı takip önerileri; yoksa frontend statik listesine düşer.

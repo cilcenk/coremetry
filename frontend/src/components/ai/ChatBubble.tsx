@@ -280,6 +280,14 @@ function ToolEvidence({ d }: { d: ChatStepDetail }) {
           {d.tool}({d.args})
         </div>
       )}
+      {/* v0.9.1228 — çağrının ürün görünümü: sunucunun K4-denetimli
+          haritasından gelir (model metninden asla), yoksa çizilmez. */}
+      {d.href && (
+        <a className="sec" href={d.href} target="_blank" rel="noopener"
+          style={{ fontSize: 10.5, padding: '2px 8px', marginBottom: 4, display: 'inline-block' }}>
+          ↗ Üründe aç
+        </a>
+      )}
       {d.truncated && (
         <div className="badge b-warn" style={{ marginBottom: 4 }}>
           kırpıldı · {fmtPreviewBytes(d.bytes ?? 0)} içinden ilk {fmtPreviewBytes(4096)}

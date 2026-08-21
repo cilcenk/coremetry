@@ -425,14 +425,49 @@ func promMatcher(fe chstore.FilterExpr) (string, error) {
 		return key + "=~" + quotePromString(vals[0]), nil
 	case "!~":
 		return key + "!~" + quotePromString(vals[0]), nil
+	case "LIKE":
+		// v0.9.1199 — Faz 1'in ertelediği çeviri. CH tarafı LIKE'ı zaten
+		// CONTAINS olarak derliyor (filterexpr.go: `%`+v+`%`); parite için
+		// AYNI kompozit kalıp ("%v%") SQL-joker→RE2 çevirisinden geçer —
+		// iki backend tek tanımdan türediği için ayrışamaz. PromQL =~ tam
+		// anchor'lıdır; baş/son `.*` contains'i geri verir.
+		return key + "=~" + quotePromString(likePatternToRegex("%"+vals[0]+"%")), nil
+	case "NOT LIKE":
+		return key + "!~" + quotePromString(likePatternToRegex("%"+vals[0]+"%")), nil
 	}
-	// LIKE / NOT LIKE and the numeric comparisons have no MetricsQL label-
-	// matcher equivalent. LIKE could be rewritten to a regex, but the
-	// `%`/`_` → `.*`/`.` mapping has enough edge cases (escaped literals)
-	// that a wrong rewrite would filter silently-wrongly; refusing is the
-	// honest answer for Faz 1.
+	// Numeric comparisons have no MetricsQL label-matcher equivalent
+	// (labels are strings; `n > 5` as a lexicographic regex would be the
+	// silent-wrong-answer class). Refusing is the honest answer.
 	return "", fmt.Errorf("filter operator %q is %w (supported: =, !=, =~, !~, IN, NOT IN, "+
-		"EXISTS, NOT EXISTS)", fe.Op, ErrUnsupported)
+		"LIKE, NOT LIKE, EXISTS, NOT EXISTS)", fe.Op, ErrUnsupported)
+}
+
+// likePatternToRegex — SQL LIKE kalıbının RE2 karşılığı: `%` → `.*`,
+// `_` → `.`, `\%`/`\_` → literal, diğer her rune QuoteMeta. Faz 1'in
+// "edge case'ler riskli" gerekçesindeki sınıf tam bu escape'lerdi;
+// kalıbı rune-rune yürüyerek kapatıyoruz. Sondaki tek `\` literal
+// kalır (CH LIKE de öyle okur).
+func likePatternToRegex(pattern string) string {
+	var b strings.Builder
+	rs := []rune(pattern)
+	for i := 0; i < len(rs); i++ {
+		switch rs[i] {
+		case '\\':
+			if i+1 < len(rs) && (rs[i+1] == '%' || rs[i+1] == '_') {
+				b.WriteString(regexp.QuoteMeta(string(rs[i+1])))
+				i++
+				continue
+			}
+			b.WriteString(regexp.QuoteMeta(`\`))
+		case '%':
+			b.WriteString(".*")
+		case '_':
+			b.WriteString(".")
+		default:
+			b.WriteString(regexp.QuoteMeta(string(rs[i])))
+		}
+	}
+	return b.String()
 }
 
 // ── The unfiltered-bucket-scan guard (v0.9.1164) ────────────────────────────

@@ -1008,11 +1008,30 @@ func TestPromMatcher(t *testing.T) {
 		{name: "EXISTS", fe: chstore.FilterExpr{Key: "pod", Op: "EXISTS"}, want: `pod!=""`},
 		{name: "NOT EXISTS", fe: chstore.FilterExpr{Key: "pod", Op: "NOT EXISTS"}, want: `pod=""`},
 		{name: "lowercase exists", fe: chstore.FilterExpr{Key: "pod", Op: "exists"}, want: `pod!=""`},
+		// LIKE — v0.9.1199: CH'nin CONTAINS derlemesiyle ("%v%") birebir
+		// parite. Kullanıcı jokerleri yaşar, regex metakarakterleri ölür.
+		{name: "LIKE is contains", fe: chstore.FilterExpr{Key: "pod", Op: "LIKE", Values: []string{"api"}},
+			want: `pod=~".*api.*"`},
+		{name: "NOT LIKE is not-contains", fe: chstore.FilterExpr{Key: "pod", Op: "NOT LIKE", Values: []string{"api"}},
+			want: `pod!~".*api.*"`},
+		{name: "LIKE inner percent stays a wildcard", fe: chstore.FilterExpr{Key: "pod", Op: "LIKE", Values: []string{"api%1"}},
+			want: `pod=~".*api.*1.*"`},
+		{name: "LIKE underscore is single char", fe: chstore.FilterExpr{Key: "pod", Op: "LIKE", Values: []string{"api-_"}},
+			want: `pod=~".*api-..*"`},
+		{name: "LIKE escaped wildcard is literal", fe: chstore.FilterExpr{Key: "pod", Op: "LIKE", Values: []string{`50\%`}},
+			want: `pod=~".*50%.*"`},
+		{name: "LIKE regex metachars are quoted", fe: chstore.FilterExpr{Key: "route", Op: "LIKE", Values: []string{"v1.0(beta)"}},
+			want: `route=~".*v1\\.0\\(beta\\).*"`},
+		{
+			// İnce nokta: değer `\` ile bitince kompozit "%v%" kalıbında o
+			// ters bölü KAPANIŞ %'ini escape'ler — CH LIKE `%a\%`yi "a% ile
+			// biter" okur. Çeviri kalıp-bazlı olduğu için aynı anlamı verir;
+			// değer-bazlı olsaydı burada CH'den ayrışırdı (parite kanıtı).
+			name: "LIKE trailing backslash escapes the closing wrapper — CH parity",
+			fe:   chstore.FilterExpr{Key: "pod", Op: "LIKE", Values: []string{`a\`}},
+			want: `pod=~".*a%"`,
+		},
 		// Refusals — a filter we cannot express must never be dropped.
-		{name: "LIKE refused", fe: chstore.FilterExpr{Key: "pod", Op: "LIKE", Values: []string{"api%"}},
-			wantErr: "unsupported"},
-		{name: "NOT LIKE refused", fe: chstore.FilterExpr{Key: "pod", Op: "NOT LIKE", Values: []string{"api%"}},
-			wantErr: "unsupported"},
 		{name: "gt refused", fe: chstore.FilterExpr{Key: "n", Op: ">", Values: []string{"5"}},
 			wantErr: "unsupported"},
 		{name: "gte refused", fe: chstore.FilterExpr{Key: "n", Op: ">=", Values: []string{"5"}},

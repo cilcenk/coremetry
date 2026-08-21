@@ -1,6 +1,9 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -221,9 +224,44 @@ func (s *Server) insightProblem(w http.ResponseWriter, r *http.Request, id strin
 	ev := problemEvidence(&enriched, hyp, blast, started.UnixNano(), end.UnixNano(), now.UnixNano())
 	resp := insight.Response{Charts: insight.ProblemCharts(ev), Links: insight.ProblemLinks(ev)}
 	resp.Signals, resp.Truncated = insight.ProblemSignals(ev)
+	// v0.9.1207 (Faz 6.3) — HAZIR verdict'i tüket, ÜRETME. Bir operatör
+	// son ~30 dk içinde ✨ Explain tıkladıysa kalkanlı verdict
+	// rootcause-explain önbelleğinde duruyor; kart onu bedavaya taşır
+	// (kanıt-ID'li anlatı karta iner). Miss = sessiz yokluk — A2 kararı
+	// (kart otomatik LLM ateşlemez) aynen geçerli; verdict'in kendi
+	// LLM'i yalnız ✨ Explain yolunda çağrılır.
+	if hyp != nil {
+		resp.Verdict = s.peekRCAVerdict(r.Context(), "problem", p.ID, hyp.Version)
+	}
 	s.deliverInsight(w, r, resp,
 		copilot.SystemPromptProblem(),
 		insight.ProblemPromptUser(ev, anomaly.HypothesisPromptBlockTR(hyp)))
+}
+
+// peekRCAVerdict — rootcause-explain önbelleğindeki gövdeden verdict'in
+// HAM JSON'unu çıkarır; yoksa nil. Anahtar rootcause.go:525 ile AYNI
+// biçim (kind:id:version — sürüm anahtarda olduğu için bayat hipotezin
+// verdict'i asla dönmez).
+// rootcauseExplainCacheKey — TEK tanım: hem serveCached yazan taraf
+// (rootcause.go) hem peek okuyan taraf bunu kullanır. İki elle kurulan
+// anahtar bir gün sessizce ayrışır ve peek sonsuza dek miss olurdu.
+func rootcauseExplainCacheKey(anchorKind, id string, hypVersion uint64) string {
+	return fmt.Sprintf("rootcause-explain:%s:%s:%d", anchorKind, id, hypVersion)
+}
+
+func (s *Server) peekRCAVerdict(ctx context.Context, anchorKind, id string, hypVersion uint64) json.RawMessage {
+	key := rootcauseExplainCacheKey(anchorKind, id, hypVersion)
+	body, ok := s.cachePeek(ctx, key)
+	if !ok {
+		return nil
+	}
+	var envl struct {
+		Verdict json.RawMessage `json:"verdict"`
+	}
+	if err := json.Unmarshal(body, &envl); err != nil || len(envl.Verdict) == 0 {
+		return nil
+	}
+	return envl.Verdict
 }
 
 // problemEvidence — chstore → saf kanıt dönüşümü. SAF; hypothesis /

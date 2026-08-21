@@ -706,3 +706,20 @@ func (cs *cacheStats) snapshot(l1 *l1Cache) CacheStatsSnapshot {
 	}
 	return out
 }
+
+// cachePeek — v0.9.1207 (Faz 6.3). serveCached gövdesine YAN ETKİSİZ
+// bakış: L1, sonra L2; miss'te üretim YOK (fn parametresi yok — bu
+// bilinçli, insight kartının "LLM ateşlemez" kuralının altyapısı).
+// SWR tazelemesi de tetiklenmez: bakış, sahiplik değildir.
+func (s *Server) cachePeek(ctx context.Context, key string) ([]byte, bool) {
+	if data, ok := s.l1.get(key); ok {
+		return data, true
+	}
+	if raw, ok, err := s.cache.Get(ctx, key); err == nil && ok && len(raw) > 0 {
+		if _, body, isEnv := unwrapEnvelope(raw); isEnv {
+			return body, true
+		}
+		return raw, true
+	}
+	return nil, false
+}

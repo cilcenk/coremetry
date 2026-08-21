@@ -148,10 +148,23 @@ func buildRCAEvidenceCatalog(h *chstore.RootCauseHypothesis) rcaEvidenceCatalog 
 	}
 
 	// ── 3. Deploy korelasyonu ─────────────────────────────────────────
+	//
+	// v0.9.1206 (Faz 6.2) — YAPISAL önce/sonra RED. Impact hipotezde
+	// saklıydı (v0.9.1059) ama katalog satırı yalnız "sürüm + yaş"
+	// diyordu; asıl kanıt (deploy'dan sonra p99/hata NE OLDU) modelin
+	// gözünden kaçıyordu — tek cümlelik Reason'a gömülüydü. Aynı E
+	// satırı, Impact varken ölçümü de taşır (ID konumu değişmez).
 	if h.RecentDeploy != nil && h.RecentDeploy.Version != "" {
-		addPos(h.Service, fmt.Sprintf(
-			"deploy: %s sürümü, problem açılmadan %d sn önce",
-			h.RecentDeploy.Version, h.RecentDeploy.AgeSeconds))
+		txt := fmt.Sprintf("deploy: %s sürümü, problem açılmadan %d sn önce",
+			h.RecentDeploy.Version, h.RecentDeploy.AgeSeconds)
+		if imp := h.RecentDeploy.Impact; imp != nil {
+			txt += fmt.Sprintf(" — etki (±%ddk): p99 %.0f→%.0fms (%+.0f%%), hata %%%.2f→%%%.2f, rps %.1f→%.1f",
+				imp.WindowSec/60,
+				imp.Before.P99Ms, imp.After.P99Ms, imp.P99DeltaPct,
+				imp.Before.ErrorRate*100, imp.After.ErrorRate*100,
+				imp.Before.RPS, imp.After.RPS)
+		}
+		addPos(h.Service, txt)
 	}
 
 	// ── 4. Derin soruşturma izi — BURADA AYRIŞIR ──────────────────────

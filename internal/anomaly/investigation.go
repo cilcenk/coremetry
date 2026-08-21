@@ -156,9 +156,11 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Pro
 			// tarafta yanlış-kanıt (rca_evidence'ın negatif-kanıt uyarısının
 			// tersi).
 			heap, herr := store.JVMHeapPodUsage(ctx, from, to)
-			heap = samplesForService(heap, p.Service)
+			heap = samplesForService(heap, p.Service, true)
+			// v0.9.1206 — GC tavan istemez: JVMGCPodPause Limit doldurmaz,
+			// eski koşulsuz Limit>0 filtresi GC'nin tamamını eliyordu.
 			gc, gerr := store.JVMGCPodPause(ctx, from, to)
-			gc = samplesForService(gc, p.Service)
+			gc = samplesForService(gc, p.Service, false)
 			err := herr
 			if err == nil {
 				err = gerr
@@ -306,14 +308,25 @@ func noteChecked(d *chstore.DeepEvidence, f signalFamily, err error, n int, deta
 
 // samplesForService — CapacitySample'da Instance servis, Subkey pod
 // (guided pod bundle ile aynı eşleme, copilot_guided.go:1150).
-func samplesForService(in []chstore.CapacitySample, service string) []chstore.CapacitySample {
+//
+// v0.9.1206 (Faz 6.2) — requireLimit parametresi. Eski hâl KOŞULSUZ
+// `s.Limit > 0` istiyordu; JVMGCPodPause Limit'i HİÇ doldurmadığından
+// (runtime_pods.go yalnız Instance/Subkey/Usage tarar) GC örneklerinin
+// TAMAMI eleniyordu: d.GCPause hep boş, render dalı ölü kod, denetim
+// izi "N örnek" derken GC payı hep 0'dı. Heap tavan ister (yüzde onunla
+// anlamlı); GC istemez (Usage ms cinsinden mutlak değer).
+func samplesForService(in []chstore.CapacitySample, service string, requireLimit bool) []chstore.CapacitySample {
 	out := in[:0:0]
 	for _, s := range in {
-		if s.Instance == service && s.Limit > 0 {
-			out = append(out, s)
-			if len(out) >= deepEvidenceLimit {
-				break
-			}
+		if s.Instance != service {
+			continue
+		}
+		if requireLimit && s.Limit <= 0 {
+			continue
+		}
+		out = append(out, s)
+		if len(out) >= deepEvidenceLimit {
+			break
 		}
 	}
 	return out
@@ -389,13 +402,50 @@ func renderDeepEvidence(sb *strings.Builder, d chstore.DeepEvidence) {
 		if i == 0 {
 			sb.WriteString("Pod heap kullanımı:\n")
 		}
-		fmt.Fprintf(sb, "  - %s: heap %%%.0f\n", s.Subkey, s.Usage/s.Limit*100)
+		// v0.9.1206 — Limit==0 render guard'ı. Bölme paniklemez ama +Inf
+		// üretir ve "heap %+Inf" satırı modele çöp olarak girer. Girdi
+		// SAKLANAN JSON (eski yazıcı, gevşemiş filtre) — kaynak filtresine
+		// güvenmek yetmez, guard render'da da durmalı (CapacitySample
+		// dokümanı Limit=0'ı meşru durum sayar: ham-rate kontrolleri).
+		if s.Limit > 0 {
+			fmt.Fprintf(sb, "  - %s: heap %%%.0f\n", s.Subkey, s.Usage/s.Limit*100)
+		} else {
+			fmt.Fprintf(sb, "  - %s: heap %.3g (tavan bilinmiyor)\n", s.Subkey, s.Usage)
+		}
 	}
 	for i, s := range d.GCPause {
 		if i == 0 {
 			sb.WriteString("GC duraklamaları:\n")
 		}
 		fmt.Fprintf(sb, "  - %s: GC duraklama %.0f\n", s.Subkey, s.Usage)
+	}
+	// v0.9.1206 (Faz 6.2) — Runtime render branşı. Alan TOPLANIYOR ve
+	// hipotez JSON'unda SAKLANIYORDU ama hiç render edilmiyordu: denetim
+	// izi "çalışma zamanı durumu okundu" derken model içeriği hiç
+	// görmüyordu. Öncelik FE emsaliyle aynı (language+runtimeVersion >
+	// runtimeName > sdkVersion); GetServiceRuntime satır yokken boş-alanlı
+	// non-nil döner — o durumda satır hiç basılmaz.
+	if rt := d.Runtime; rt != nil {
+		parts := []string{}
+		switch {
+		case rt.Language != "" && rt.RuntimeVersion != "":
+			parts = append(parts, rt.Language+" "+rt.RuntimeVersion)
+		case rt.Language != "":
+			parts = append(parts, rt.Language)
+		case rt.RuntimeName != "":
+			parts = append(parts, rt.RuntimeName)
+		case rt.SDKVersion != "":
+			parts = append(parts, "sdk "+rt.SDKVersion)
+		}
+		if rt.Host != "" {
+			parts = append(parts, "host "+rt.Host)
+		}
+		if rt.OS != "" {
+			parts = append(parts, "os "+rt.OS)
+		}
+		if len(parts) > 0 {
+			fmt.Fprintf(sb, "Çalışma zamanı: %s\n", strings.Join(parts, ", "))
+		}
 	}
 	for _, key := range businessDimKeys {
 		sl := d.Business[key]

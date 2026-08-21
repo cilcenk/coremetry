@@ -177,3 +177,26 @@ func TestBuildProblemPromptHypothesisFusion(t *testing.T) {
 		t.Fatalf("no-suspect hypothesis must be byte-identical to nil-hypothesis prompt\nwith: %q\nwithout: %q", noSuspect, without)
 	}
 }
+
+// v0.9.1206 (Faz 6.2) — hipotez bloğu deploy Impact'ini YAPISAL basar;
+// Impact yokken eski satır bayt-bayt.
+func TestHypothesisPromptBlockDeployImpact(t *testing.T) {
+	h := &chstore.RootCauseHypothesis{
+		Service: "checkout", TopSuspect: "checkout", TopScore: 2, Confidence: 0.7,
+		RecentDeploy: &chstore.RecentDeploy{Version: "rel-42", AgeSeconds: 300},
+	}
+	plain := HypothesisPromptBlockTR(h)
+	if strings.Contains(plain, "Deploy etkisi") {
+		t.Fatalf("Impact yokken etki satırı basılmamalı:\n%s", plain)
+	}
+	h.RecentDeploy.Impact = &chstore.DeployImpact{
+		WindowSec:   600,
+		Before:      chstore.DeployImpactStats{P99Ms: 210, ErrorRate: 0.004, RPS: 42.1},
+		After:       chstore.DeployImpactStats{P99Ms: 890, ErrorRate: 0.061, RPS: 40.9},
+		P99DeltaPct: 323.8,
+	}
+	rich := HypothesisPromptBlockTR(h)
+	if !strings.Contains(rich, "Deploy etkisi (±10dk): p99 210→890ms (+324%), hata %0.40→%6.10, rps 42.1→40.9") {
+		t.Fatalf("yapısal etki satırı yok:\n%s", rich)
+	}
+}

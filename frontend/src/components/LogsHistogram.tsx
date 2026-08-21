@@ -46,7 +46,14 @@ type Filter = {
 
 type Series = { name: string; points: { t: number; v: number }[] };
 
-export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSeries }: {
+// v0.9.1220 (Kibana dilim 3) — histogram kırılımı. İki backend'in de
+// (ES terms agg + CH whitelist) desteklediği tek grup ekseni ikilisi:
+// canonical seviye bantları (varsayılan) ve servis. Namespace/cluster
+// KASITLI yok — logstore.Histogram alan haritası iki backend'de de
+// tanımlı değil; sessizce _total'a düşerdi.
+export type LogsBreakdown = 'severity' | 'service';
+
+export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSeries, breakdown, onBreakdown }: {
   range: { from?: number; to?: number };
   filter: Filter;
   // Drag-select a horizontal span → called with the selection as unix-ns
@@ -55,8 +62,18 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
   // v0.9.373 — çift-tık geri: TimeChart'ın zoom-yığını pop'una aynen
   // iletilir; verilmezse eski davranış (yalnız brush).
   onZoomReset?: () => void;
-  // v0.9.358 — opsiyonel; verilirse fetch edilen serilerin bant toplamları iletilir.
-  onSeries?: (s: { name: string; total: number }[]) => void;
+  // v0.9.358 — opsiyonel; verilirse fetch edilen serilerin bant toplamları
+  // iletilir. SEVİYE-sözleşmeli: servis kırılımında ÇAĞRILMAZ (seri adları
+  // artık bant değil — çip sayaçlarını servis adlarıyla beslemek v0.9.216
+  // sınıfı bir sessiz-yanlış olurdu). v0.9.1220: fetch HATASI null iletir
+  // (tri-state) — ebeveyn sonsuz '·' yerine hata/geri-düşüş gösterebilsin
+  // (v0.9.215 "error leg renders nothing" sınıfı).
+  onSeries?: (s: { name: string; total: number }[] | null) => void;
+  // v0.9.1220 — kırılım ekseni; verilmezse seviye (eski davranış bire bir).
+  breakdown?: LogsBreakdown;
+  // Verilirse başlıkta kırılım seçicisi çizilir (yalnız /logs geçirir;
+  // servis Logs sekmesi + anomali çekmecesi seviye modunda kalır).
+  onBreakdown?: (b: LogsBreakdown) => void;
 }) {
   const [data, setData] = useState<Series[] | null | undefined>(undefined);
   // v0.9.358 — the per-band series this chart ALREADY fetches, exposed to the
@@ -64,6 +81,7 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
   // onZoomRef pattern) so a per-render callback identity doesn't re-run the
   // fetch effect.
   const onSeriesRef = useRef(onSeries); onSeriesRef.current = onSeries;
+  const bd: LogsBreakdown = breakdown ?? 'severity';
 
   useEffect(() => {
     setData(undefined);
@@ -73,6 +91,7 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
       setData([]);
       return;
     }
+    let alive = true;
     api.logsTimeseries({
       from: range.from, to: range.to,
       service: filter.service || undefined,
@@ -82,24 +101,51 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
       severity: filter.severity > 0 ? filter.severity : undefined,
       traceId: filter.traceId || undefined,
       hasTrace: filter.hasTrace || undefined, // v0.9.287
-      groupBy: 'severity',
+      groupBy: bd,
       bucketSec: pickBucket(range),
     })
       .then(d => {
+        // v0.9.1220 review — bayat-yanıt korkuluğu: dep değişimiyle aşılmış
+        // bir istek geç çözülünce ne grafiği (kırılım değişmişse seviye
+        // bantları "servis" çizgisi olarak çizilirdi) ne çipleri (ERROR
+        // tabanının alt-küme toplamları All sayımı olarak kalırdı) ezebilir.
+        if (!alive) return;
         setData(d ?? []);
-        onSeriesRef.current?.((d ?? []).map(sr => ({
-          name: sr.name,
-          total: sr.points.reduce((a, p) => a + p.v, 0),
-        })));
+        // Seviye sözleşmesi (v0.9.358): servis kırılımında sessiz kal —
+        // ebeveynin çip sayaçları o zaman kendi seviye sorgusuna döner.
+        if (bd === 'severity') {
+          onSeriesRef.current?.((d ?? []).map(sr => ({
+            name: sr.name,
+            total: sr.points.reduce((a, p) => a + p.v, 0),
+          })));
+        }
       })
-      .catch(() => setData(null));
-  }, [range.from, range.to, filter.service, filter.cluster, filter.env, filter.search, filter.severity, filter.traceId, filter.hasTrace]);
+      .catch(() => {
+        if (!alive) return;
+        setData(null);
+        // v0.9.1220 — hata da bir sonuçtur: fold modundaki ebeveyn sonsuz
+        // '·' yerine rozet gösterebilsin (v0.9.215 sınıfı).
+        if (bd === 'severity') onSeriesRef.current?.(null);
+      });
+    return () => { alive = false; };
+  }, [range.from, range.to, filter.service, filter.cluster, filter.env, filter.search, filter.severity, filter.traceId, filter.hasTrace, bd]);
 
   const { times, series, totals } = useMemo(
-    () => collapse(data ?? [], filter.severity > 0), [data, filter.severity]);
+    () => (bd === 'service'
+      ? collapseGroups(data ?? [])
+      : collapse(data ?? [], filter.severity > 0)),
+    [data, filter.severity, bd]);
 
   if (data === undefined) return <div style={{ height: 104, marginBottom: 10 }} />;
-  if (data === null || times.length === 0) return null;
+  // v0.9.1220 review — hata/boş durumda TAMAMEN kaybolmak, kırılım
+  // seçicisini de götürüyordu: ?breakdown=service'te hatalı/boş bir
+  // pencereye düşen operatörün seviyeye dönecek UI'ı kalmıyordu. Seçici
+  // taşıyan kullanımda gövde yerine tek satırlık dürüst not çizilir;
+  // seçicisiz kullanımlar (servis sekmesi, anomali çekmecesi) eski
+  // davranışta (hiç çizme).
+  const degraded = data === null ? 'histogram yüklenemedi'
+    : times.length === 0 ? 'bu pencerede seri yok' : '';
+  if (degraded && !onBreakdown) return null;
 
   return (
     <div style={{
@@ -107,10 +153,24 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
       borderRadius: 6, padding: 8, marginBottom: 10,
     }}>
       <div style={{
-        display: 'flex', justifyContent: 'flex-end', marginBottom: 4,
+        display: 'flex', justifyContent: onBreakdown ? 'space-between' : 'flex-end',
+        alignItems: 'center', marginBottom: 4,
         fontSize: 10, color: 'var(--text-faint)',
         fontFamily: 'ui-monospace, monospace',
       }}>
+        {/* v0.9.1220 — kırılım seçicisi (Kibana "Break down by"). Sabit
+            2 değerli küme → düz select (frontend-conventions §3). */}
+        {onBreakdown && (
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            kırılım
+            <select value={bd} aria-label="Histogram kırılımı"
+              onChange={e => onBreakdown(e.target.value === 'service' ? 'service' : 'severity')}
+              style={{ fontSize: 10, padding: '1px 4px' }}>
+              <option value="severity">seviye</option>
+              <option value="service">servis</option>
+            </select>
+          </label>
+        )}
         {/* The hand-drawn version's only hint that it was draggable was a
             crosshair cursor. Say it. */}
         <span>
@@ -118,7 +178,7 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
           {/* v0.9.287 — a severity floor narrows the denominator, so the
               rate isn't the error rate any more. Say that instead of
               printing a plausible wrong number (or nothing at all). */}
-          {totals.ratePct === null && filter.severity > 0 && (
+          {bd === 'severity' && totals.ratePct === null && filter.severity > 0 && (
             <span title="Hata oranı tüm loglara göre hesaplanır. Seviye süzgeci açıkken payda zaten süzülmüş oluyor, o yüzden oran gösterilmiyor — süzgeci kaldırınca geri gelir.">
               seviye süzgeci açık — oran yok ·{' '}
             </span>
@@ -128,26 +188,31 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
               operatörü sessizce yarı yolda bırakıyordu. */}
           {/* v0.9.431 — "çift tık = geri" YALNIZ reset bağlıyken vaat
               edilir (dürüst ipucu sınıfı, v0.9.373 devamı). */}
-          {onRangeSelect
-            ? (onZoomReset ? 'sürükle = zaman seç · çift tık = geri' : 'sürükle = zaman seç')
-            : 'hover = detay'}
+          {degraded ? degraded
+            : onRangeSelect
+              ? (onZoomReset ? 'sürükle = zaman seç · çift tık = geri' : 'sürükle = zaman seç')
+              : 'hover = detay'}
         </span>
       </div>
-      <TimeChart
-        times={times}
-        series={series}
-        height={140}
-        rightUnit="%"
-        fmtRight={fmtPct}
-        onBrush={onRangeSelect
-          ? (fromMs, toMs) => onRangeSelect(fromMs * 1e6, toMs * 1e6)
-          : undefined}
-        onZoomReset={onZoomReset}
-        // v0.9.489 (operatör: "Series gözükmesine ihtiyacım yok") — seviye
-        // kimliği zaten yüzeydeki level chip'lerinde/renklerde; alttaki
-        // istatistik lejantı log yüzeylerinde tamamen kapalı.
-        hideLegend
-      />
+      {!degraded && (
+        <TimeChart
+          times={times}
+          series={series}
+          height={140}
+          rightUnit="%"
+          fmtRight={fmtPct}
+          onBrush={onRangeSelect
+            ? (fromMs, toMs) => onRangeSelect(fromMs * 1e6, toMs * 1e6)
+            : undefined}
+          onZoomReset={onZoomReset}
+          // v0.9.489 (operatör: "Series gözükmesine ihtiyacım yok") — seviye
+          // kimliği zaten yüzeydeki level chip'lerinde/renklerde; alttaki
+          // istatistik lejantı log yüzeylerinde tamamen kapalı.
+          // v0.9.1220 — servis kırılımında AÇIK: seri kimliği artık renkten
+          // okunamaz (servis adları), lejant o kimliğin tek taşıyıcısı.
+          hideLegend={bd !== 'service'}
+        />
+      )}
     </div>
   );
 }
@@ -179,6 +244,78 @@ function fmtPct(v: number): string {
 // the rows we got back are already a subset. The error RATE is
 // undefined against that denominator and is withheld rather than
 // guessed; totals.ratePct goes null for the same reason.
+// collapseGroups (v0.9.1220) — servis kırılımı: toplamda ilk 5 seri
+// kendi çizgisiyle, kalanı tek "diğer" çizgisinde. Çizgi (bar değil):
+// TimeChart bar'ları yığmaz, ÖRTER — 6 grupta öndeki çubuk arkadakini
+// tamamen gizlerdi; overlay-okuma numarası (total⊃warn⊃err) yalnız
+// altküme serilerde çalışır. Hata-oranı ekseni yok — oran seviye
+// türevi, servis serilerinden türetilemez.
+const GROUP_COLORS = [
+  'var(--accent2)', 'var(--purple)', 'var(--teal)', 'var(--orange)', 'var(--ok)',
+];
+export function collapseGroups(input: Series[]) {
+  const empty = {
+    times: [] as number[],
+    series: [] as TimeChartSeries[],
+    totals: { all: 0, error: 0, ratePct: null as number | null },
+  };
+  if (input.length === 0) return empty;
+
+  const timeSet = new Set<number>();
+  for (const s of input) for (const p of s.points) timeSet.add(p.t);
+  const tsNs = Array.from(timeSet).sort((a, b) => a - b);
+  if (tsNs.length === 0) return empty;
+  const idx = new Map(tsNs.map((t, i) => [t, i]));
+
+  // ES backend'i terms-agg artığını sentetik "OTHER" serisi olarak basar
+  // (elasticsearch.go:2076, v0.5.396) — binlerce serviste bu çoğu zaman EN
+  // BÜYÜK seridir; sıralamaya sokulsa bir servis gibi renk+lejant kapardı.
+  // Adıyla ayıklanıp "diğer"e katlanır. CH tarafı da top_groups LIMIT 20
+  // ile keser: kesilen servisler HİÇ gelmez — bu yüzden "diğer" etikete
+  // sayı YAZMAZ (iki backend'de de tam sayı bilinemez, v0.9.1220 review).
+  const withTotal = (s: Series) =>
+    ({ s, total: s.points.reduce((a, p) => a + p.v, 0) });
+  const otherSeries = input.filter(s => s.name === 'OTHER').map(withTotal);
+  const ranked = input
+    .filter(s => s.name !== 'OTHER')
+    .map(withTotal)
+    .sort((a, b) => b.total - a.total);
+  const top = ranked.slice(0, GROUP_COLORS.length);
+  const rest = ranked.slice(GROUP_COLORS.length).concat(otherSeries);
+
+  const toData = (list: { s: Series }[]) => {
+    const arr = new Array(tsNs.length).fill(0);
+    for (const { s } of list) {
+      for (const p of s.points) {
+        const i = idx.get(p.t);
+        if (i !== undefined) arr[i] += p.v;
+      }
+    }
+    return arr;
+  };
+
+  const series: TimeChartSeries[] = top.map(({ s }, i) => ({
+    key: `g${i}`, label: s.name, data: toData([{ s }]),
+    type: 'line' as const, axis: 'left' as const,
+    color: GROUP_COLORS[i], width: 1.6,
+  }));
+  if (rest.length > 0) {
+    series.push({
+      key: 'rest', label: 'diğer', data: toData(rest),
+      type: 'line', axis: 'left',
+      color: 'color-mix(in srgb, var(--text3) 55%, transparent)', width: 1.2,
+    });
+  }
+
+  const all = ranked.reduce((a, r) => a + r.total, 0)
+    + otherSeries.reduce((a, r) => a + r.total, 0);
+  return {
+    times: tsNs.map(t => Math.round(t / 1e9)),
+    series,
+    totals: { all, error: 0, ratePct: null as number | null },
+  };
+}
+
 export function collapse(input: Series[], severityFiltered = false) {
   const empty = {
     times: [] as number[],

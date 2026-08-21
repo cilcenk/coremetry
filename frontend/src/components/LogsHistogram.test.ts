@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { collapse } from './LogsHistogram';
+import { collapse, collapseGroups } from './LogsHistogram';
 
 // v0.9.218 — the severity-stacked histogram was replaced by a
 // total + error-overlay + error-rate fold. The fold is where the chart's
@@ -156,5 +156,74 @@ describe('collapse under a severity filter', () => {
     const rate = r.series.find(s => s.key === 'rate')!;
     expect(rate.data[0]).toBeNull();
     expect(rate.data[1]).toBe(0);
+  });
+});
+
+// v0.9.1220 (Kibana dilim 3) — servis kırılımı katlaması: ilk 5 seri
+// kendi çizgisi, kalanı "diğer", oran ekseni yok (seviye türevi).
+describe('collapseGroups', () => {
+  it('keeps top-5 by total as own series, folds the rest into diğer', () => {
+    const input = Array.from({ length: 8 }, (_, i) =>
+      S(`svc-${i}`, [[T0, (8 - i) * 100], [T1, 10]]));
+    const r = collapseGroups(input);
+    expect(r.series).toHaveLength(6); // 5 + diğer
+    expect(r.series.slice(0, 5).map(s => s.label))
+      .toEqual(['svc-0', 'svc-1', 'svc-2', 'svc-3', 'svc-4']);
+    // Sayı YOK: ES terms-artığı (OTHER) + CH LIMIT 20 kesmesi yüzünden
+    // tam grup sayısı iki backend'de de bilinemez (v0.9.1220 review).
+    expect(r.series[5].label).toBe('diğer');
+    // diğer = svc-5..7 toplamları bucket-hizalı
+    expect(r.series[5].data[0]).toBe(300 + 200 + 100);
+    expect(r.series[5].data[1]).toBe(30);
+  });
+
+  it('ES synthetic OTHER never ranks as a service — folds into diğer', () => {
+    // Binlerce serviste OTHER çoğu zaman EN BÜYÜK seridir; sıralamaya
+    // girseydi 1. rengi "OTHER" adlı sahte bir servis kapardı.
+    const r = collapseGroups([
+      S('OTHER', [[T0, 99999]]),
+      S('svc-a', [[T0, 10]]),
+      S('svc-b', [[T0, 5]]),
+    ]);
+    expect(r.series.map(s => s.label)).toEqual(['svc-a', 'svc-b', 'diğer']);
+    expect(r.series[2].data[0]).toBe(99999);
+    expect(r.totals.all).toBe(99999 + 15);
+  });
+
+  it('ranks by TOTAL volume, not first-bucket volume', () => {
+    const r = collapseGroups([
+      S('bursty', [[T0, 1000], [T1, 0]]),
+      S('steady', [[T0, 600], [T1, 600]]),
+    ]);
+    expect(r.series[0].label).toBe('steady');
+    expect(r.series[1].label).toBe('bursty');
+  });
+
+  it('≤5 groups → no diğer series, totals.all sums everything', () => {
+    const r = collapseGroups([
+      S('a', [[T0, 10]]),
+      S('b', [[T1, 20]]),
+    ]);
+    expect(r.series.map(s => s.label)).toEqual(['b', 'a']);
+    expect(r.totals.all).toBe(30);
+    // Oran seviye türevi — servis kırılımında daima yok.
+    expect(r.totals.ratePct).toBeNull();
+    expect(r.totals.error).toBe(0);
+  });
+
+  it('empty input → empty shape (chart renders nothing, not a crash)', () => {
+    const r = collapseGroups([]);
+    expect(r.times).toEqual([]);
+    expect(r.series).toEqual([]);
+  });
+
+  it('sparse buckets: a group missing a bucket contributes 0 there', () => {
+    const r = collapseGroups([
+      S('full', [[T0, 5], [T1, 7]]),
+      S('gappy', [[T1, 3]]),
+    ]);
+    const gappy = r.series.find(s => s.label === 'gappy')!;
+    expect(gappy.data).toEqual([0, 3]);
+    expect(r.times).toEqual([T0 / 1e9, T1 / 1e9].map(Math.round));
   });
 });

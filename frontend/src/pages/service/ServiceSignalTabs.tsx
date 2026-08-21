@@ -174,7 +174,10 @@ export function ServiceLogsTab({ service, range, windowNs, onZoom, onZoomReset }
   // popülasyonu saymalı; eskiden çip en yeni 200 satırı sayıyordu.
   // Histogram verisi gelmeden sayfa-türevi sayılara düşer (yüklenme anı).
   const [bandTotals, setBandTotals] = useState<Record<string, number> | null>(null);
-  const onHistSeries = useMemo(() => (series: { name: string; total: number }[]) => {
+  const onHistSeries = useMemo(() => (series: { name: string; total: number }[] | null) => {
+    // v0.9.1220 — histogram fetch hatası null iletir: bandTotals'ı sıfırla
+    // ki aşağıdaki memo sayfa-türevi sayılara (dürüst geri-düşüş) dönsün.
+    if (series === null) { setBandTotals(null); return; }
     const c: Record<string, number> = { all: 0, error: 0, warn: 0, info: 0, debug: 0 };
     for (const sr of series) { c[bandOfName(sr.name)] += sr.total; c.all += sr.total; }
     setBandTotals(c);

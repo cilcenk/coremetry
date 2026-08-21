@@ -16,7 +16,7 @@ import { LogTable, DEFAULT_LOG_COLUMNS } from '@/components/LogTable';
 import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer';
 import { LogContextModal } from '@/components/LogContextModal';
 import { LogPillEditor } from '@/components/LogPillEditor';
-import { LogsHistogram } from '@/components/LogsHistogram';
+import { LogsHistogram, type LogsBreakdown } from '@/components/LogsHistogram';
 import { LogFieldsPanel } from '@/components/LogFieldsPanel';
 import { Button } from '@/components/ui/Button';
 import { RenderedMarkdown } from '@/components/Markdown';
@@ -122,6 +122,20 @@ function pickVolumeBucket(from?: number, to?: number): number {
 
 function LogsInner() {
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // v0.9.1220 (Kibana dilim 3) — histogram kırılımı. URL tek kaynak
+  // (yerel state YOK — sig-guard gerektirmez, Share/SavedViews bedava);
+  // varsayılan seviye hiç yazılmaz ki eski linkler bayt-bayt kalsın.
+  const breakdown: LogsBreakdown =
+    searchParams.get('breakdown') === 'service' ? 'service' : 'severity';
+  const setBreakdown = (b: LogsBreakdown) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (b === 'service') next.set('breakdown', 'service');
+      else next.delete('breakdown');
+      return next;
+    }, { replace: true });
+  };
 
   // v0.9.431 — v0.9.390'ın sayfa-yerel yığını paylaşılan
   // usePageZoomRange hook'una taşındı. İki boşluk da kapandı:
@@ -393,6 +407,25 @@ function LogsInner() {
   // drift doesn't thrash it (the parent memo already froze them).
   const volumeEnabled = (from !== undefined && to !== undefined) || !!filter.traceId;
   const volumeBucket = useMemo(() => pickVolumeBucket(from, to), [from, to]);
+  // v0.9.1220 — çift-fetch katlaması: severity=0 + seviye-kırılımında bu
+  // sorgu LogsHistogram'ın iç fetch'iyle BAYT-BAYT aynıydı (aynı uç, aynı
+  // parametreler) — her /logs açılışında iki özdeş ES _search. O durumda
+  // çipler histogramın onSeries'inden beslenir; bu sorgu yalnız seviye
+  // tabanı aktifken (histogram alt-küme çeker, çipler TAM sayım ister —
+  // yukarıdaki "chips must show counts for every level" sözleşmesi) veya
+  // servis kırılımındayken (seriler artık bant değil) koşar.
+  const chipsFromHistogram = filter.severity === 0 && breakdown === 'severity';
+  // Tri-state: undefined = yükleniyor · null = histogram fetch'i HATA verdi
+  // (v0.9.1220 review bulgusu — sonsuz '·' yerine hata rozeti) · dizi = veri.
+  const [histTotals, setHistTotals] =
+    useState<{ name: string; total: number }[] | null | undefined>(undefined);
+  useEffect(() => {
+    // Pencere/filtre değişti → histogram yeniden çekiyor; bayat toplamları
+    // taze diye göstermemek için çipleri yükleniyor'a döndür. severity da
+    // dep: ERROR tabanındayken onSeries ALT-KÜME toplamları vermişti;
+    // All'a dönüşte o alt-küme "tüm seviyelerin sayımı" gibi görünmesin.
+    setHistTotals(undefined);
+  }, [from, to, filter.service, filter.cluster, env, compiledSearch, filter.severity, filter.traceId, filter.hasTrace, breakdown]);
   const volumeQ = useQuery({
     // v0.9.216 — cluster joins the key AND the request: without it the chips
     // counted every cluster while the table below showed one.
@@ -408,21 +441,27 @@ function LogsInner() {
       groupBy: 'severity',
       bucketSec: volumeBucket,
     }),
-    enabled: volumeEnabled,
+    enabled: volumeEnabled && !chipsFromHistogram,
     staleTime: 30_000,
   });
   const sevSeries: SevSeries[] = volumeQ.data ?? [];
   // Per-chip counts (summed across all buckets), keyed by facet.
+  // v0.9.1220 — kaynak ikili: katlama modunda histogramın zaten çektiği
+  // seviye toplamları, aksi hâlde bu sayfanın kendi sorgusu.
   const facetCounts = useMemo(() => {
     const c: Record<string, number> = { all: 0, error: 0, warn: 0, info: 0, debug: 0 };
-    for (const s of sevSeries) {
-      const facet = bandToFacet(s.name);
-      const sum = s.points.reduce((a, p) => a + p.v, 0);
-      c[facet] += sum;
-      c.all += sum;
+    const totals = chipsFromHistogram
+      ? (histTotals ?? []).map(t => ({ name: t.name, sum: t.total }))
+      : sevSeries.map(s => ({ name: s.name, sum: s.points.reduce((a, p) => a + p.v, 0) }));
+    for (const t of totals) {
+      c[bandToFacet(t.name)] += t.sum;
+      c.all += t.sum;
     }
     return c;
-  }, [sevSeries]);
+  }, [sevSeries, histTotals, chipsFromHistogram]);
+  const facetLoading = chipsFromHistogram
+    ? (volumeEnabled && histTotals === undefined)
+    : volumeQ.isLoading;
 
   // Live-tail (v0.8.x) — server-pushed SSE replaces the old 10s poll. The
   // table renders a bounded, newest-first client buffer fed by
@@ -982,7 +1021,7 @@ function LogsInner() {
                   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                   fontSize: 10.5, color: on ? 'var(--accent2)' : 'var(--text3)',
                 }}>
-                  {volumeQ.isLoading ? '·' : count.toLocaleString()}
+                  {facetLoading ? '·' : count.toLocaleString()}
                 </span>
               </span>
             );
@@ -1012,7 +1051,7 @@ function LogsInner() {
                   counts need a bounded time range
                 </span>
               )}
-              {volumeQ.isError && (
+              {(chipsFromHistogram ? histTotals === null : volumeQ.isError) && (
                 <span style={{ fontSize: 11, color: 'var(--err)' }}>
                   level counts unavailable
                 </span>
@@ -1050,7 +1089,9 @@ function LogsInner() {
             (LogsHistogram sınır sözleşmesi ns, hook saniye alır). */}
         <LogsHistogram range={{ from, to }} filter={{ ...filter, env, search: compiledSearch }}
           onRangeSelect={(fromNs, toNs) => handleZoom(fromNs / 1e9, toNs / 1e9)}
-          onZoomReset={handleZoomReset} />
+          onZoomReset={handleZoomReset}
+          breakdown={breakdown} onBreakdown={setBreakdown}
+          onSeries={setHistTotals} />
 
         {data === undefined && <TableSkeleton rows={12} cols={5} />}
         {/* v0.9.215 — the error leg of the tri-state used to render NOTHING:

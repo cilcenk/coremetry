@@ -33,7 +33,15 @@ Parite ÜSTÜ mevcutlar: dürüstlük zarfı (partial/timed_out `Logs.tsx:854-86
   Dilim 2 → v0.9.1218 (artımlı ±N tavan 200 + servis-kapsam anahtarı;
   POD/NAMESPACE kapsamı bilinçli kesildi — logstore.Filter'a Pod alanı
   + iki backend clause'u ister, takip dilimi olarak açık).
-- Kalan: Dilim 1 (pill EDIT popover) · Dilim 3 (histogram breakdown).
+- Dilim 1 → v0.9.1219 (pill EDIT popover: alan/operatör/değer(ler),
+  is-one-of `key:("a" OR "b")`, öneriler mevcut logsFieldValues ucundan).
+- Dilim 3 → v0.9.1220 (histogram kırılım seçicisi seviye|servis — İKİ
+  backend'in de desteklediği eksenler; namespace/cluster alan haritası
+  ister, takip dilimi. Servis modu: top-5 çizgi + "diğer", oran ekseni
+  yalnız seviye modunda. + çift-fetch katlaması: severity=0'da çipler
+  histogramın onSeries'inden, 'sev-volume' sorgusu yalnız seviye tabanı
+  veya servis kırılımı aktifken — /logs açılışında 1 ES _search eksik).
+- **TÜM 6 DİLİM GEMİDE** (v0.9.1215-1220).
 
 ## Önerilen 6 dilim (değer/efor sırasıyla)
 

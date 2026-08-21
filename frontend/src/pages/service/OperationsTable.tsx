@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -127,6 +127,24 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
   // Filter input ref — wired into useDataTable's searchRef so the
   // app-wide "/" shortcut focuses it (UX#4 keyboard nav).
   const searchRef = useRef<HTMLInputElement>(null);
+  // v0.9.1212 (operatör-bildirimi: "sayfa sağa sığmıyor expand edince") —
+  // tablo kendi kabında yatay kaydırıyor (.table-wrap overflow-x) ama
+  // genişletilmiş detay satırı colSpan'la TABLONUN tam genişliğine
+  // (~1100px+) yayılıyordu: P99 karosunu görmek için sağa kaydırıp sol
+  // yarıyı kaybediyordun. Çözüm: panel, kabın GÖRÜNÜR penceresine
+  // yapışır (sticky left:0) ve genişliği kabın ölçülen clientWidth'i —
+  // üç karo daima görünür alana sığar, tabloyu kaydırmak paneli oynatmaz.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [wrapW, setWrapW] = useState(0);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const update = () => setWrapW(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   // v0.5.392 — per-row metric drill-in. Clicking the sparkline
   // v0.9.347 — artık satır ALTINDA açılıyor (eskiden Modal). Üç senkron
   // uPlot grafiği aynı (calls, errors,
@@ -360,7 +378,7 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
           tableLayout:fixed. Body cell order tracks OP_COLS:
           Operation · Trend · Impact · Calls · Err% · Avg · P50 · P95 ·
           P99 · Apdex. */}
-      <div className="table-wrap is-fit">
+      <div className="table-wrap is-fit" ref={wrapRef}>
         <table style={{ tableLayout: 'fixed', width: '100%' }}>
           <DataTableColgroup dt={dt} />
           {/* v0.9.498 — Trend başlığı üç serinin lejantını taşıyor. Lejant
@@ -537,16 +555,25 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                   <td colSpan={OP_COLS.length} style={{
                     background: 'var(--bg2)', borderLeft: '2px solid var(--accent)', padding: 0,
                   }}>
-                    <OperationMetricPanel
-                      service={service}
-                      op={freshOpRow ?? opDetail}
-                      opIsStale={!freshOpRow}
-                      focus={opFocus}
-                      onClose={() => setOpDetail(null)}
-                      range={range}
-                      onZoom={onZoom}
-                      onZoomReset={onZoomReset}
-                    />
+                    {/* v0.9.1212 — görünür-pencere sarmalayıcısı (gerekçe
+                        wrapRef bildiriminde). wrapW ölçülmeden ilk boyamada
+                        genişlik sınırsız kalır ve ilk ResizeObserver
+                        tick'inde oturur. */}
+                    <div style={{
+                      position: 'sticky', left: 0, boxSizing: 'border-box',
+                      width: wrapW > 0 ? wrapW - 2 : undefined,
+                    }}>
+                      <OperationMetricPanel
+                        service={service}
+                        op={freshOpRow ?? opDetail}
+                        opIsStale={!freshOpRow}
+                        focus={opFocus}
+                        onClose={() => setOpDetail(null)}
+                        range={range}
+                        onZoom={onZoom}
+                        onZoomReset={onZoomReset}
+                      />
+                    </div>
                   </td>
                 </tr>
               )];

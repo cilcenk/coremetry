@@ -202,10 +202,13 @@ func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request) {
 // logsFieldStatsKey / logsTimeseriesKey — the /api/logs/fieldstats and
 // /api/logs/timeseries cache keys, extracted pure alongside
 // logsSearchKey (v0.8.400) for the same hash-ALL-inputs test.
-func logsFieldStatsKey(field string, f logstore.Filter, fromRaw, toRaw string) string {
-	return fmt.Sprintf("logs-fieldstats:f=%s:svc=%s:cl=%s:env=%s:sev=%d:trace=%s:span=%s:from=%s:to=%s:q=%s",
+func logsFieldStatsKey(field string, f logstore.Filter, fromRaw, toRaw string, size int) string {
+	// v0.9.1223 — size anahtara girer: 5'lik yanıtın 20'lik isteğe (ya da
+	// tersine) 60 sn TTL içinde servis edilmesi v0.5.187 sınıfı çapraz
+	// zehirlenme olurdu.
+	return fmt.Sprintf("logs-fieldstats:f=%s:svc=%s:cl=%s:env=%s:sev=%d:trace=%s:span=%s:from=%s:to=%s:q=%s:n=%d",
 		field, f.Service, f.Cluster, f.Env, f.SeverityMin, f.TraceID, f.SpanID,
-		fromRaw, toRaw, f.Search)
+		fromRaw, toRaw, f.Search, size)
 }
 
 // v0.9.216 — cluster joined the filter set, so it MUST join the key: a
@@ -873,11 +876,18 @@ func (s *Server) getLogsFieldStats(w http.ResponseWriter, r *http.Request) {
 		TraceID:     q.Get("traceId"),
 		SpanID:      q.Get("spanId"),
 	}
-	key := logsFieldStatsKey(field, f, q.Get("from"), q.Get("to"))
+	// v0.9.1223 — "daha fazla" genişletmesi: yalnız İKİ basamak (5 | 20;
+	// 20 = iki backend'in mevcut kıskaç tavanı). Basamaklı olması ES-cost
+	// disiplini: cache-key kardinalitesi sınırlı kalır (v0.8.270 sınıfı).
+	size := 5
+	if q.Get("size") == "20" {
+		size = 20
+	}
+	key := logsFieldStatsKey(field, f, q.Get("from"), q.Get("to"), size)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
-		res, err := s.logs.FieldStats(tctx, f, field, 5)
+		res, err := s.logs.FieldStats(tctx, f, field, size)
 		if err != nil {
 			// v0.8.350 (HA 🟡6) — slow/unreachable backend degrades the
 			// accordion to 200 {degraded:true} + empty values instead of

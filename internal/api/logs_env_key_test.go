@@ -31,13 +31,27 @@ func TestLogsSearchKey_CarriesEnv(t *testing.T) {
 
 func TestLogsFieldStatsKey_CarriesEnv(t *testing.T) {
 	key := func(env string) string {
-		return logsFieldStatsKey("k8s.pod.name", logstore.Filter{Env: env}, "1", "2")
+		return logsFieldStatsKey("k8s.pod.name", logstore.Filter{Env: env}, "1", "2", 5)
 	}
 	if key("uat") == key("") || key("uat") == key("prep") {
 		t.Fatal("fieldstats key must differentiate envs")
 	}
 	if !strings.Contains(key("uat"), "env=uat") {
 		t.Fatalf("key must carry the env value; got %q", key("uat"))
+	}
+}
+
+// v0.9.1223 — size anahtara girdi: 5'lik yanıt 20'lik isteğe (60s TTL)
+// servis edilirse "daha fazla" düğmesi hiçbir şey yapmıyor görünür
+// (v0.5.187 çapraz-zehirlenme sınıfı).
+func TestLogsFieldStatsKey_CarriesSize(t *testing.T) {
+	k5 := logsFieldStatsKey("f", logstore.Filter{}, "1", "2", 5)
+	k20 := logsFieldStatsKey("f", logstore.Filter{}, "1", "2", 20)
+	if k5 == k20 {
+		t.Fatal("fieldstats key must differentiate size rungs")
+	}
+	if !strings.Contains(k20, "n=20") {
+		t.Fatalf("key must carry the size; got %q", k20)
 	}
 }
 

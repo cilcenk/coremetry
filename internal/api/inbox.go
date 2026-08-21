@@ -1585,7 +1585,6 @@ func exceptionPriorityAt(g chstore.ExceptionGroup, cfg chstore.ExceptionTriageCo
 	// sabitin üç kez ötelendiği bir yerde ismin değere çakılı olması
 	// başlı başına bir tuzak.
 	p1Window := cfg.P1Window()
-	p2Window := cfg.P2Window()
 	fresh := time.Duration(age) <= p1Window
 
 	// v0.9.627 — operatör-bildirimli: tek servisten 12 dakikada 11.260
@@ -1643,6 +1642,25 @@ func exceptionPriorityAt(g chstore.ExceptionGroup, cfg chstore.ExceptionTriageCo
 	// saat önce biten bir patlamayı hâlâ "şimdi" sayacak kadar geniş.
 	// (b) Pencereler artık system_settings'te (exception_triage):
 	// dördüncü vaka bir sürüm değil bir ayar değişikliği olsun.
+	// v0.9.1205 (operatör-bildirimli) — AYNI SINIF BEŞİNCİ KEZ, ve bu kez
+	// pencere oynatmıyoruz: MERDİVENİN P1 FELSEFESİ DEĞİŞTİ.
+	//
+	// Tarihçe: 627 (5dk→1sa) → 699 (uçurum→basamak) → 775 (1sa→4sa +
+	// vida) → 1189 (hacim kapısı da pencereye) → bugün. Dört düzeltme de
+	// "şiddet OLGU, tazelik ERİŞİM aciliyeti — aciliyet zamanla düşer"
+	// ilkesini korudu ve operatör dördünde de aynı duvara çarptı: gece
+	// biten P1-şiddetinde bir olay, sabah bakıldığında P2/P3'e gömülmüş.
+	//
+	// Operatör direktifi (2026-08-21): "Regressed olan sorun bittiyse
+	// P2/P3 dönmesin, hep P1 kalsın." Yani: P1'İ HAK ETMİŞ bir grup, ele
+	// alınana (resolve/ignore) dek P1 KALIR — akışın bitmiş olması
+	// önceliği DÜŞÜRMEZ, yalnız gerekçeye yazılır. Kuyruktan düşürmenin
+	// yolu zaman değil, operatör aksiyonudur. "Öncelik düşebilir, cümle
+	// yalan olamaz" kuralının P1 yarısı artık "öncelik de düşmez"dir;
+	// cümle dürüstlüğü aynen sürüyor ("· N önce bitti").
+	//
+	// P1-altı basamaklar (P2/P3) ESKİSİ gibi zamanla iner — direktif
+	// yalnız P1'i çiviliyor.
 	burst := exceptionIsBurst(g.Occurrences, g.FirstSeen, g.LastSeen, cfg)
 	burstDesc := ""
 	if burst {
@@ -1653,11 +1671,9 @@ func exceptionPriorityAt(g chstore.ExceptionGroup, cfg chstore.ExceptionTriageCo
 		if fresh {
 			return "P1", burstDesc
 		}
-		if time.Duration(age) <= p2Window {
-			// Bitiş yaşı gerekçeye giriyor: operatör satıra bakarken
-			// "neden P1 değil" sorusunun cevabını da görsün.
-			return "P2", burstDesc + " · " + shortDur(time.Duration(age)) + " önce bitti"
-		}
+		// Bitiş yaşı gerekçede: satıra bakan operatör "devam ediyor mu"
+		// sorusunun cevabını da görsün.
+		return "P1", burstDesc + " · " + shortDur(time.Duration(age)) + " önce bitti"
 	}
 
 	if g.State == "regressed" {
@@ -1691,17 +1707,28 @@ func exceptionPriorityAt(g chstore.ExceptionGroup, cfg chstore.ExceptionTriageCo
 	// Gerekçe hâlâ "hâlâ akıyor mu" ayrımını taşıyor: ikisi operatör için
 	// farklı şeyler ("şu an devam ediyor" ≠ "iki saat önce bitti"), ve bu
 	// deponun kuralı gereği cümle olguyu doğru söylemeli.
-	if fresh && g.Occurrences >= uint64(cfg.P1MinOccurrences) {
+	// v0.9.1205 — hacim kapısında pencere-dışı kalıcılık: YOĞUN bir
+	// bölüm yaşamış (ömür hızı ≥ patlama eşiğinin yarısı — "neredeyse
+	// patlama" P3 dalıyla aynı çizgi) ve eşiği aşmış grup, akışı bitse
+	// de P1 KALIR (direktif). Kronik damlama (düşük hız, büyük ömür
+	// toplamı) ESKİ davranışında: aktifken taze kapılardan P1/P2, ölünce
+	// basamaklara iner — 35 günlük 11 binlik bir damlanın ölümü
+	// operatörün kastettiği "bitmiş sorun" değil ve onu sonsuza dek P1
+	// tutmak kuyruğu şişirirdi (steady-pini bilinçli korunuyor).
+	if g.Occurrences >= uint64(cfg.P1MinOccurrences) {
 		if freshMin {
 			// v0.9.524'ün sözleşmesi BİREBİR korunuyor (inbox_test.go bu
 			// metni çiviliyor): tazelik ayrı, toplamın TOPLAM olduğu ayrı.
 			return "P1", fmt.Sprintf("active in last 5min · %s total", fmtThousands(g.Occurrences))
 		}
-		// Durmuş ama pencere içindeki hâli: aynı iki gerçek, artı ne zaman
-		// durduğu — "şu an devam ediyor" ile "iki saat önce bitti" operatör
-		// için farklı şeyler ve cümle bunu söylemeli.
-		return "P1", fmt.Sprintf("%s total · stopped %s ago",
-			fmtThousands(g.Occurrences), shortDur(time.Duration(age)))
+		intense := exceptionBurstRate(g.Occurrences, g.FirstSeen, g.LastSeen) >= cfg.BurstMinRate/2
+		if fresh || intense {
+			// Durmuş hâli: aynı iki gerçek, artı ne zaman durduğu — "şu
+			// an devam ediyor" ile "iki saat önce bitti" operatör için
+			// farklı şeyler ve cümle bunu söylemeli.
+			return "P1", fmt.Sprintf("%s total · stopped %s ago",
+				fmtThousands(g.Occurrences), shortDur(time.Duration(age)))
+		}
 	}
 	// v0.9.775 — bu kapı da AYNI pencereye bağlandı. Operatörün ikinci
 	// şikâyeti tam buydu: 191 olaylık SQLTimeout grubu 1sa50dk'da
@@ -1717,14 +1744,9 @@ func exceptionPriorityAt(g chstore.ExceptionGroup, cfg chstore.ExceptionTriageCo
 		return "P2", fmt.Sprintf("seen in last %s · %s total",
 			shortDur(p1Window), fmtThousands(g.Occurrences))
 	}
-	// v0.9.699 — "steady" YALNIZ gerçekten öyle olanlar için. 24 saati
-	// geçmiş bir patlama P3'e düşer (aciliyet gitti) ama gerekçesi hâlâ
-	// ne olduğunu söylemeli: 3 dakikada 101 bin olay için "steady"
-	// yazmak, verinin şekli hakkında YANLIŞ bir iddiadır. Öncelik
-	// düşebilir, cümle yalan olamaz.
-	if burst {
-		return "P3", burstDesc + " · " + shortDur(time.Duration(age)) + " önce"
-	}
+	// (v0.9.1205 — buradaki "24 saati geçmiş patlama → P3" dalı öldü:
+	// patlama artık yukarıda koşulsuz P1 dönüyor. burstDesc yalnız o
+	// dalda yaşıyor; derleyici ölü kodu bırakmasın diye dal silindi.)
 	// v0.9.1188 (operatör-bildirimli) — "steady" YALNIZ gerçekten öyle
 	// olanlar için, ve patlama KAPISINI KAÇIRAN bir grup da öyle değildir.
 	//

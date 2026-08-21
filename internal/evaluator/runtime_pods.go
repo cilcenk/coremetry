@@ -155,7 +155,30 @@ func (e *Evaluator) evaluateRuntimePods(ctx context.Context) {
 		log.Printf("[evaluator] runtime pods: açık problem anlık görüntüsü alınamadı, tik atlanıyor: %v", err)
 		return
 	}
-	e.drainRetiredRuntimeProblems(ctx, snap)
+	// v0.9.1213 — GC çiftinin VM DÖNÜŞÜ (gerekçe runtime_vm.go başlığında).
+	// vmActive iken gc çifti tahliye setinden çıkar ve değerlendirme
+	// koşar; değilse v0.9.1075 emekliliği aynen sürer. VM sonradan
+	// kapatılırsa açık GC problemleri bir sonraki tikte tahliyeyle kapanır.
+	vmActive := e.vmetrics != nil && e.vmetrics.Configured()
+	e.drainRetiredRuntimeProblems(ctx, snap, vmActive)
+	if !vmActive {
+		return
+	}
+	pauses, acts, err := e.vmGCSamples(ctx)
+	if err != nil {
+		// VM erişilemez: tik ATLANIR, sessiz boş yok — boş kabul etmek
+		// tüm açık GC problemlerini yanlışlıkla çözerdi (snapshot-hata
+		// yolunun aynı ilkesi).
+		log.Printf("[evaluator] runtime GC: VM okunamadı, tik atlanıyor: %v", err)
+		return
+	}
+	cfg := e.store.GetRuntimeAlerts(ctx)
+	for _, s := range pauses {
+		e.reconcileRuntimeGC(ctx, s, cfg, snap)
+	}
+	for _, a := range acts {
+		e.reconcileRuntimeGCShare(ctx, a, cfg, snap)
+	}
 }
 
 // drainRetiredRuntimeProblems — emekliye ayrılan runtime kurallarının
@@ -171,10 +194,10 @@ func (e *Evaluator) evaluateRuntimePods(ctx context.Context) {
 // Maliyet sıfır: tik başında zaten okunan snapshot üzerinden döner,
 // yeni CH sorgusu yok. Açık emekli problem kalmayınca hiçbir iş
 // yapmaz, yani kendini tüketen bir geçiş adımıdır.
-func (e *Evaluator) drainRetiredRuntimeProblems(ctx context.Context, snap *chstore.OpenProblems) {
+func (e *Evaluator) drainRetiredRuntimeProblems(ctx context.Context, snap *chstore.OpenProblems, vmActive bool) {
 	now := time.Now().UnixNano()
 	for _, p := range snap.All() {
-		if !shouldDrainRetiredRuntimeProblem(p) {
+		if !shouldDrainRetiredRuntimeProblem(p, vmActive) {
 			continue
 		}
 		resolved := *p
@@ -204,8 +227,8 @@ func (e *Evaluator) drainRetiredRuntimeProblems(ctx context.Context, snap *chsto
 //     değişmez.
 var retiredRuntimeRules = map[string]string{
 	"runtime:jvm-heap":     "kural v0.9.551'de kaldırıldı — false pozitif oranı; GC baskısı kuralları o sürümde yerindeydi",
-	"runtime:jvm-gc":       "kural v0.9.1075'te kaldırıldı — operatör kararı; VictoriaMetrics geçişinde yeniden değerlendirilecek",
-	"runtime:jvm-gc-share": "kural v0.9.1075'te kaldırıldı — operatör kararı; VictoriaMetrics geçişinde yeniden değerlendirilecek",
+	"runtime:jvm-gc":       "VM yapılandırılmamışken askıda (v0.9.1075 operatör kararı; v0.9.1213 VM dönüşü)",
+	"runtime:jvm-gc-share": "VM yapılandırılmamışken askıda (v0.9.1075 operatör kararı; v0.9.1213 VM dönüşü)",
 }
 
 // shouldDrainRetiredRuntimeProblem — saf karar: bu satır, emekli bir
@@ -222,8 +245,14 @@ var retiredRuntimeRules = map[string]string{
 //     veri kaybı olurdu — tahliye yalnız emekli seti temizler.
 //   - Status: zaten kapalı bir satırı yeniden kapatmak her tikte
 //     ResolvedAt'i ileri iter ve problemin gerçek süresini bozar.
-func shouldDrainRetiredRuntimeProblem(p *chstore.Problem) bool {
+func shouldDrainRetiredRuntimeProblem(p *chstore.Problem, vmActive bool) bool {
 	if p == nil || p.Status != "open" {
+		return false
+	}
+	// v0.9.1213 — VM açıkken gc çifti CANLI kurallardır: kendi
+	// resolve kolları var, tahliye onlara dokunamaz (dokunsa her tik
+	// gerçek bir ihlali "kural kaldırıldı" notuyla kapatırdı).
+	if vmActive && (p.RuleID == "runtime:jvm-gc" || p.RuleID == "runtime:jvm-gc-share") {
 		return false
 	}
 	_, retired := retiredRuntimeRules[p.RuleID]

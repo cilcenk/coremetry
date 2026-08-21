@@ -28,48 +28,64 @@ import (
 
 func TestShouldDrainRetiredRuntimeProblem(t *testing.T) {
 	cases := []struct {
-		name string
-		p    *chstore.Problem
-		want bool
+		name     string
+		p        *chstore.Problem
+		vmActive bool
+		want     bool
 	}{
-		{"nil satır", nil, false},
+		{"nil satır", nil, false, false},
 		{
 			"açık heap problemi → tahliye",
-			&chstore.Problem{RuleID: "runtime:jvm-heap", Status: "open"}, true,
+			&chstore.Problem{RuleID: "runtime:jvm-heap", Status: "open"}, false, true,
+		},
+		{
+			// v0.9.1213 — heap VM açıkken de emekli: v0.9.551 nedeni
+			// sinyal hatasıydı (kaynakla ilgisi yok), VM dönüşü onu
+			// diriltmez.
+			"açık heap problemi, VM açık → yine tahliye",
+			&chstore.Problem{RuleID: "runtime:jvm-heap", Status: "open"}, true, true,
 		},
 		{
 			// Zaten kapalı satırı yeniden kapatmak her tikte
 			// ResolvedAt'i ileri iter ve problemin gerçek
 			// süresini bozar.
 			"zaten kapalı heap problemi → dokunma",
-			&chstore.Problem{RuleID: "runtime:jvm-heap", Status: "resolved"}, false,
+			&chstore.Problem{RuleID: "runtime:jvm-heap", Status: "resolved"}, false, false,
 		},
 		{
-			// v0.9.1075 — operatör kararıyla GC çifti de emekli;
-			// açık kalan satırları artık tahliye KAPATIR.
-			"açık GC problemi → tahliye (v0.9.1075)",
-			&chstore.Problem{RuleID: "runtime:jvm-gc", Status: "open"}, true,
+			// v0.9.1075 — VM yokken GC çifti emekli; açık satırları
+			// tahliye kapatır.
+			"açık GC problemi, VM kapalı → tahliye",
+			&chstore.Problem{RuleID: "runtime:jvm-gc", Status: "open"}, false, true,
 		},
 		{
-			"açık GC-share problemi → tahliye (v0.9.1075)",
-			&chstore.Problem{RuleID: "runtime:jvm-gc-share", Status: "open"}, true,
+			"açık GC-share problemi, VM kapalı → tahliye",
+			&chstore.Problem{RuleID: "runtime:jvm-gc-share", Status: "open"}, false, true,
+		},
+		{
+			// v0.9.1213 — VM açıkken GC çifti CANLI: tahliye dokunamaz,
+			// yoksa her tik gerçek bir ihlali "kural kaldırıldı" notuyla
+			// kapatırdı.
+			"açık GC problemi, VM açık → CANLI, dokunma",
+			&chstore.Problem{RuleID: "runtime:jvm-gc", Status: "open"}, true, false,
+		},
+		{
+			"açık GC-share problemi, VM açık → CANLI, dokunma",
+			&chstore.Problem{RuleID: "runtime:jvm-gc-share", Status: "open"}, true, false,
 		},
 		{
 			"zaten kapalı GC problemi → dokunma",
-			&chstore.Problem{RuleID: "runtime:jvm-gc", Status: "resolved"}, false,
+			&chstore.Problem{RuleID: "runtime:jvm-gc", Status: "resolved"}, false, false,
 		},
 		{
 			// EN ÖNEMLİ VAKA: tahliye yalnız EMEKLİ seti temizler.
-			// Buranın gevşemesi (örn. "runtime:" öneki yeter demek)
-			// gelecekte eklenecek runtime kurallarını da sessizce
-			// kapatırdı.
 			"ilgisiz kural → dokunma",
-			&chstore.Problem{RuleID: "builtin-error-rate", Status: "open"}, false,
+			&chstore.Problem{RuleID: "builtin-error-rate", Status: "open"}, false, false,
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := shouldDrainRetiredRuntimeProblem(c.p); got != c.want {
+			if got := shouldDrainRetiredRuntimeProblem(c.p, c.vmActive); got != c.want {
 				t.Errorf("shouldDrainRetiredRuntimeProblem = %v, beklenen %v", got, c.want)
 			}
 		})
@@ -83,23 +99,37 @@ func TestShouldDrainRetiredRuntimeProblem(t *testing.T) {
 // uçtan uca sahte store ile koşturulamıyor. Birinin heap ya da GC
 // değerlendirmesini "geçici olarak" geri açması hâlinde bu test
 // düşer ve operatörün kararı sessizce geri alınmaz.
-func TestRuntimeEvaluationRemoved(t *testing.T) {
-	b, err := os.ReadFile("runtime_pods.go")
-	if err != nil {
-		t.Fatalf("kaynak okunamadı: %v", err)
+// v0.9.1213 — testin ESKİ hâli GC değerlendirmesinin geri gelmemesini
+// pinliyordu; VM dönüşüyle sözleşme DEĞİŞTİ. Yeni pinler:
+//
+//	(a) heap değerlendirmesi geri GELMEZ (v0.9.551 sinyal-hatası —
+//	    VM'le ilgisi yok),
+//	(b) GC değerlendirmesi CH okuyucularına ASLA dönmez (kaynak yalnız
+//	    VM — JVMGCPodPause/JVMGCActivity evaluator'da yasak; sessiz CH
+//	    dönüşü v0.9.1075 operatör kararını arkadan dolanmak olurdu),
+//	(c) vmActive kapısı ve tahliye çağrısı yerinde.
+func TestRuntimeGCReturnsOnlyViaVM(t *testing.T) {
+	read := func(name string) string {
+		b, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("kaynak okunamadı: %v", err)
+		}
+		return string(b)
 	}
-	src := string(b)
+	pods, vm := read("runtime_pods.go"), read("runtime_vm.go")
 
-	for banned, why := range map[string]string{
-		"e.reconcileRuntimeHeap(":    "operatör kararı v0.9.551: heap alarmı false pozitif oranı yüzünden kaldırıldı",
-		"e.reconcileRuntimeGC(":      "operatör kararı v0.9.1075: JVM GC alarmları VictoriaMetrics geçişine dek askıda",
-		"e.reconcileRuntimeGCShare(": "operatör kararı v0.9.1075: JVM GC alarmları VictoriaMetrics geçişine dek askıda",
-	} {
-		if strings.Contains(src, banned) {
-			t.Errorf("%s geri gelmiş — %s", banned, why)
+	if strings.Contains(pods+vm, "e.reconcileRuntimeHeap(") {
+		t.Error("heap değerlendirmesi geri gelmiş — v0.9.551 kararı sinyal hatasıydı, VM dönüşü onu diriltmez")
+	}
+	for _, banned := range []string{"JVMGCPodPause", "JVMGCActivity"} {
+		if strings.Contains(pods, banned) || strings.Contains(vm, banned) {
+			t.Errorf("%s evaluator'da — GC alarmlarının kaynağı YALNIZ VM (v0.9.1213); CH okuyucusuna sessiz dönüş yasak", banned)
 		}
 	}
-	if !strings.Contains(src, "e.drainRetiredRuntimeProblems(ctx, snap)") {
+	if !strings.Contains(pods, "e.vmetrics != nil && e.vmetrics.Configured()") {
+		t.Error("vmActive kapısı kaybolmuş — GC değerlendirmesi VM'siz koşamaz")
+	}
+	if !strings.Contains(pods, "e.drainRetiredRuntimeProblems(ctx, snap, vmActive)") {
 		t.Error("tahliye çağrısı kaybolmuş — açık emekli-runtime problemleri " +
 			"Problems'ta sonsuza dek kalır, kapatacak başka kod yok")
 	}

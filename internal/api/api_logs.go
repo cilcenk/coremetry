@@ -778,9 +778,15 @@ func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
 	// SAME service name deployed in 3 environments, so context around a
 	// pivot must not interleave the other envs' lines.
 	env := strings.TrimSpace(q.Get("env"))
+	// v0.9.1224 — filtre-koruma: modaldaki "sorguyu koru" anahtarı aktif
+	// sorguyu iki yarıya da taşır (Kibana'nın context filtre pill'leri).
+	// Varsayılan BOŞ — bağlam normalde süzgeçsiz komşuluktur; Search
+	// zaten her iki backend'de Filter alanı, sıfır yeni yol.
+	search := strings.TrimSpace(q.Get("search"))
 	beforeF := logstore.Filter{
 		Service: service,
 		Env:     env,
+		Search:  search,
 		From:    pivot.Add(-30 * time.Minute),
 		To:      pivot,
 		Limit:   n,
@@ -788,12 +794,15 @@ func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
 	afterF := logstore.Filter{
 		Service:   service,
 		Env:       env,
+		Search:    search,
 		From:      pivot,
 		To:        pivot.Add(30 * time.Minute),
 		Limit:     n,
 		Ascending: true,
 	}
-	key := fmt.Sprintf("logs-context:ts=%d:svc=%s:env=%s:n=%d", ts, service, env, n)
+	// search anahtarda (v0.5.187 sınıfı: süzgeçli yarılar süzgeçsiz
+	// girdiden servis edilemez).
+	key := fmt.Sprintf("logs-context:ts=%d:svc=%s:env=%s:n=%d:q=%s", ts, service, env, n, search)
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.350 (HA 🟡6) — a slow/unreachable backend degrades the
 		// modal to 200 {degraded:true} + empty halves instead of a 5xx.

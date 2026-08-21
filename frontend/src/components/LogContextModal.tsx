@@ -26,7 +26,7 @@ import { highlightSegments } from '@/lib/logFilters';
 // can collide on busy services where two logs hit the same ns
 // bucket.
 export function LogContextModal({
-  pivot, onClose, onTracePeek, highlightTerms,
+  pivot, onClose, onTracePeek, highlightTerms, search,
 }: {
   pivot: LogRow | null;
   onClose: () => void;
@@ -35,6 +35,9 @@ export function LogContextModal({
   // terimleri bağlam satırlarında da vurgulanır (mesaj hücresiyle aynı
   // yardımcı + 4KB tarama tavanı; saf istemci işi).
   highlightTerms?: string[];
+  // v0.9.1224 — sayfanın derlenmiş sorgusu; "⧩ sorguyu koru" anahtarı
+  // açılırsa iki bağlam yarısına da taşınır (Kibana context filtreleri).
+  search?: string;
 }) {
   const [before, setBefore] = useState<LogRow[] | null | undefined>(undefined);
   const [after,  setAfter]  = useState<LogRow[] | null | undefined>(undefined);
@@ -46,6 +49,9 @@ export function LogContextModal({
   // yazdı") Kibana'nın tek-index görünümünün karşılığı.
   const [n, setN] = useState(50);
   const [scopeService, setScopeService] = useState(true);
+  // v0.9.1224 — varsayılan KAPALI: bağlam normalde süzgeçsiz komşuluk
+  // (Kibana varsayılanı da bu); operatör isterse aktif sorguyu taşır.
+  const [keepQuery, setKeepQuery] = useState(false);
   // v0.8.400 — the global ?env= filter narrows both context halves: the
   // operator's scenario is the SAME service name deployed in several
   // environments, and context around a pivot must not interleave the
@@ -54,7 +60,7 @@ export function LogContextModal({
 
   // Pivot değişince pencere/kapsam sıfırlanır — önceki kaydın
   // büyütülmüş penceresi yeni kayda taşınmaz.
-  useEffect(() => { setN(50); setScopeService(true); }, [pivot?.id]);
+  useEffect(() => { setN(50); setScopeService(true); setKeepQuery(false); }, [pivot?.id]);
 
   useEffect(() => {
     if (!pivot) {
@@ -68,6 +74,7 @@ export function LogContextModal({
       service: scopeService ? (pivot.serviceName || undefined) : undefined,
       env: env || undefined,
       n,
+      search: keepQuery && search ? search : undefined,
     })
       .then(r => {
         if (cancelled) return;
@@ -79,7 +86,7 @@ export function LogContextModal({
         setBefore(null); setAfter(null);
       });
     return () => { cancelled = true; };
-  }, [pivot, env, n, scopeService]);
+  }, [pivot, env, n, scopeService, keepQuery, search]);
 
   // Unified chronological list with pivot inserted between the two
   // halves. Both halves arrive sorted (before DESC, after ASC) so
@@ -145,6 +152,17 @@ export function LogContextModal({
                   ? 'Servis filtresini bırak — aynı anda TÜM servislerin satırları (kaskad okuma)'
                   : `Yalnız ${pivot.serviceName} satırlarına dön`}>
                 {scopeService ? '⇲ Tüm servisler' : `⇱ Yalnız ${pivot.serviceName}`}
+              </Button>
+            )}
+            {/* v0.9.1224 — filtre-koruma: yalnız sayfada aktif sorgu VARSA
+                çizilir; varsayılan kapalı (bağlam = süzgeçsiz komşuluk). */}
+            {!!search && (
+              <Button variant="secondary" size="sm"
+                onClick={() => setKeepQuery(v => !v)}
+                title={keepQuery
+                  ? 'Sorgu filtresini bırak — pencerenin TÜM satırları'
+                  : 'Sayfadaki aktif sorguyu bağlam satırlarına da uygula'}>
+                {keepQuery ? '⧨ sorgu filtresi AÇIK' : '⧩ sorguyu koru'}
               </Button>
             )}
           </div>

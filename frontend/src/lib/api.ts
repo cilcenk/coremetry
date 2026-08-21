@@ -1035,7 +1035,7 @@ export const api = {
   // Datadog Context tab equivalent. Two parallel server-side
   // searches (before / after); 30-min symmetric window, capped
   // at n=200 per side.
-  logsContext: (params: { ts: number; service?: string; env?: string; n?: number }) =>
+  logsContext: (params: { ts: number; service?: string; env?: string; n?: number; search?: string }) =>
     get<{
       pivotTs: number; service: string;
       before: import('./types').LogRow[];

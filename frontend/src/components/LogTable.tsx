@@ -60,15 +60,21 @@ const COL_WIDTHS: Record<string, number> = {
 // to the parent's filter, ⊖ adds `NOT key:value`. The callbacks
 // are optional so surfaces without a filter state (trace detail
 // Logs tab) silently omit the buttons.
-function KvRow({ k, v, onAdd, onExclude }: {
+function KvRow({ k, v, onAdd, onExclude, onToggleCol, isCol }: {
   k: string; v: string;
   onAdd?: (key: string, value: string) => void;
   onExclude?: (key: string, value: string) => void;
+  // v0.9.1215 (Kibana paritesi, dilim 6) — doc-viewer'dan alanı tablo
+  // sütunu yap/kaldır. Kibana Discover'ın "Toggle column in table"
+  // eylemi; toggleColumn makinesi sayfada zaten vardı, kayıp halka
+  // keşfin başladığı yerdeki (genişletilmiş satır) düğmeydi.
+  onToggleCol?: (key: string) => void;
+  isCol?: boolean;
 }) {
   // The buttons only render at all when a callback was provided.
   // CSS hover state (kv-actions visible only on tr:hover) keeps
   // the table tidy when the operator is just reading.
-  const canFilter = !!(onAdd || onExclude);
+  const canFilter = !!(onAdd || onExclude || onToggleCol);
   return (
     <tr className={canFilter ? 'kv-filterable' : ''}>
       <td title={k}>{k}</td>
@@ -92,6 +98,13 @@ function KvRow({ k, v, onAdd, onExclude }: {
                   title={`Filter out ${k}: ${v}`}
                   aria-label={`Filter out ${k}: ${v}`}
                   icon="⊖" />
+              )}
+              {onToggleCol && (
+                <IconButton variant="bare" size="xs" className="ib-add"
+                  onClick={(e) => { e.stopPropagation(); onToggleCol(k); }}
+                  title={isCol ? `Remove ${k} column` : `Add ${k} as column`}
+                  aria-label={isCol ? `Remove ${k} column` : `Add ${k} as column`}
+                  icon={isCol ? '▣' : '▤'} />
               )}
             </span>
           )}
@@ -177,6 +190,7 @@ export function LogTable({
   extraExpanded,
   onFilterAdd,
   onFilterExclude,
+  onToggleColumn,
   onTracePeek,
   onContextOpen,
 }: {
@@ -220,6 +234,10 @@ export function LogTable({
   // filter to mutate (e.g. trace detail Logs tab).
   onFilterAdd?: (key: string, value: string) => void;
   onFilterExclude?: (key: string, value: string) => void;
+  // v0.9.1215 (Kibana paritesi) — doc-viewer kv satırından alanı tablo
+  // sütunu yap/kaldır (Discover "Toggle column in table"). Omitted on
+  // surfaces without column state (trace detail Logs tab).
+  onToggleColumn?: (key: string) => void;
   // v0.5.398 — trace-id peek drill-in. When set, the trace_id
   // cell renders a small "👁" button alongside the existing
   // "open full trace" link; clicking opens the parent's
@@ -308,6 +326,7 @@ export function LogTable({
                 extraExpanded={extraExpanded}
                 onFilterAdd={onFilterAdd}
                 onFilterExclude={onFilterExclude}
+                onToggleColumn={onToggleColumn}
                 onTracePeek={onTracePeek}
                 onContextOpen={onContextOpen}
               />
@@ -321,7 +340,7 @@ export function LogTable({
 
 function LogRow({
   l, idx, tableId, cols, colIds, highlightTerms, hideTraceColumn, selected, expanded, onClick, extraExpanded,
-  onFilterAdd, onFilterExclude, onTracePeek, onContextOpen,
+  onFilterAdd, onFilterExclude, onToggleColumn, onTracePeek, onContextOpen,
 }: {
   l: LogRow;
   idx: number;
@@ -336,6 +355,7 @@ function LogRow({
   extraExpanded?: (l: LogRow) => React.ReactNode;
   onFilterAdd?: (key: string, value: string) => void;
   onFilterExclude?: (key: string, value: string) => void;
+  onToggleColumn?: (key: string) => void;
   onTracePeek?: (traceId: string) => void;
   onContextOpen?: (pivot: LogRow) => void;
 }) {
@@ -520,13 +540,20 @@ function LogRow({
                   overflowWrap: 'anywhere', color: 'var(--text)',
                   marginBottom: attrs.length ? 8 : 0,
                 }}>
-                  {prettyMaybe(l.body)}
+                  {/* v0.9.1215 — vurgu artık genişletilmiş gövdede de
+                      (mesaj hücresiyle aynı yardımcı + aynı 4KB tarama
+                      tavanı; saf istemci işi). */}
+                  {highlightTerms && highlightTerms.length > 0
+                    ? highlightSegments(prettyMaybe(l.body), highlightTerms).map((seg, i) =>
+                        seg.hl ? <mark key={i}>{seg.text}</mark> : <span key={i}>{seg.text}</span>)
+                    : prettyMaybe(l.body)}
                 </pre>
                 {attrs.length > 0 && (
                   <table className="kv-table"><tbody>
                     {attrs.map(([k, v]) => (
                       <KvRow key={k} k={k} v={String(v)}
-                        onAdd={onFilterAdd} onExclude={onFilterExclude} />
+                        onAdd={onFilterAdd} onExclude={onFilterExclude}
+                        onToggleCol={onToggleColumn} isCol={colIds.includes(k)} />
                     ))}
                   </tbody></table>
                 )}
@@ -538,7 +565,8 @@ function LogRow({
                     <table className="kv-table"><tbody>
                       {res.map(([k, v]) => (
                         <KvRow key={k} k={k} v={String(v)}
-                          onAdd={onFilterAdd} onExclude={onFilterExclude} />
+                          onAdd={onFilterAdd} onExclude={onFilterExclude}
+                          onToggleCol={onToggleColumn} isCol={colIds.includes(k)} />
                       ))}
                     </tbody></table>
                   </details>

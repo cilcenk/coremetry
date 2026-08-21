@@ -28,6 +28,13 @@ Taranan: `frontend/src/pages/Logs.tsx` (1250), `components/{KqlSearchInput,LogFi
 
 Parite ÜSTÜ mevcutlar: dürüstlük zarfı (partial/timed_out `Logs.tsx:854-863`, envUnapplied `:802-809`, hasTraceUnapplied `:838-845`), yerel "narrow within results" (`:1089-1158`, sıfır ES turu), CSV/NDJSON yüklü-satır exportu, Kibana derin linki (`:654-673`).
 
+## Uygulama durumu (2026-08-21 gecesi)
+- Dilim 6 → v0.9.1215 · Dilim 4 → v0.9.1216 · Dilim 5 → v0.9.1217 ·
+  Dilim 2 → v0.9.1218 (artımlı ±N tavan 200 + servis-kapsam anahtarı;
+  POD/NAMESPACE kapsamı bilinçli kesildi — logstore.Filter'a Pod alanı
+  + iki backend clause'u ister, takip dilimi olarak açık).
+- Kalan: Dilim 1 (pill EDIT popover) · Dilim 3 (histogram breakdown).
+
 ## Önerilen 6 dilim (değer/efor sırasıyla)
 
 1. **Pill EDIT popover + operatör sözlüğü** (değer 4, efor M) — pill'e tıkla → alan/operatör/değer düzenle; `is / is not / exists / is one of` (exists → `_exists_:field`, is-one-of → `key:("a" OR "b")`). *ES korkuluğu:* her şey `compileSearch` (`logFilters.ts:33-40`) üzerinden AYNI tek query-string'e derlenir — yeni endpoint yok, sorgu sayısı değişmez; değer önerisi mevcut `logsFieldValues` (since-sınırlı, 30s cache) ile.

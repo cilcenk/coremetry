@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Modal, IconButton } from '@/components/ui';
+import { Modal, IconButton, Button } from '@/components/ui';
 import { Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { fmtNum, tsLong } from '@/lib/utils';
@@ -38,11 +38,23 @@ export function LogContextModal({
 }) {
   const [before, setBefore] = useState<LogRow[] | null | undefined>(undefined);
   const [after,  setAfter]  = useState<LogRow[] | null | undefined>(undefined);
+  // v0.9.1218 (Kibana paritesi, dilim 2) — artımlı pencere + kapsam.
+  // n yalnız TIKLAMAYLA büyür (sunucu tavanı 200; her (n, kapsam) kendi
+  // 15 sn'lik sunucu cache anahtarı — ES disiplini korunur, otomatik
+  // yükleme/scroll-fetch yok). scopeService=false pivotun servıs
+  // filtresini düşürür: kaskad okuma ("aynı anda BAŞKA servisler ne
+  // yazdı") Kibana'nın tek-index görünümünün karşılığı.
+  const [n, setN] = useState(50);
+  const [scopeService, setScopeService] = useState(true);
   // v0.8.400 — the global ?env= filter narrows both context halves: the
   // operator's scenario is the SAME service name deployed in several
   // environments, and context around a pivot must not interleave the
   // other envs' lines.
   const [env] = useUrlEnv();
+
+  // Pivot değişince pencere/kapsam sıfırlanır — önceki kaydın
+  // büyütülmüş penceresi yeni kayda taşınmaz.
+  useEffect(() => { setN(50); setScopeService(true); }, [pivot?.id]);
 
   useEffect(() => {
     if (!pivot) {
@@ -53,9 +65,9 @@ export function LogContextModal({
     setBefore(undefined); setAfter(undefined);
     api.logsContext({
       ts: pivot.timestamp,
-      service: pivot.serviceName || undefined,
+      service: scopeService ? (pivot.serviceName || undefined) : undefined,
       env: env || undefined,
-      n: 50,
+      n,
     })
       .then(r => {
         if (cancelled) return;
@@ -67,7 +79,7 @@ export function LogContextModal({
         setBefore(null); setAfter(null);
       });
     return () => { cancelled = true; };
-  }, [pivot, env]);
+  }, [pivot, env, n, scopeService]);
 
   // Unified chronological list with pivot inserted between the two
   // halves. Both halves arrive sorted (before DESC, after ASC) so
@@ -97,9 +109,9 @@ export function LogContextModal({
       size="lg"
       title={
         <span style={{ fontSize: 13 }}>
-          Context · ±50
+          Context · ±{n}
           <span style={{ color: 'var(--text3)', marginLeft: 8, fontSize: 11 }}>
-            {pivot.serviceName || '(no service)'} · {tsLong(pivot.timestamp)}
+            {scopeService ? (pivot.serviceName || '(no service)') : 'tüm servisler'} · {tsLong(pivot.timestamp)}
           </span>
         </span>
       }
@@ -112,11 +124,29 @@ export function LogContextModal({
       )}
       {rows && (
         <>
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
-            {fmtNum(before?.length ?? 0)} log{(before?.length ?? 0) === 1 ? '' : 's'} before
-            {' · '}
-            {fmtNum(after?.length ?? 0)} after
-            {' · '}30-min symmetric window, scoped to same service
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+            fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
+            <span>
+              {fmtNum(before?.length ?? 0)} log{(before?.length ?? 0) === 1 ? '' : 's'} before
+              {' · '}
+              {fmtNum(after?.length ?? 0)} after
+              {' · '}30 dk simetrik pencere
+            </span>
+            {/* v0.9.1218 — artımlı pencere + kapsam anahtarı. */}
+            <Button variant="secondary" size="sm" disabled={n >= 200}
+              onClick={() => setN(v => Math.min(200, v + 50))}
+              title={n >= 200 ? 'Sunucu tavanı ±200' : 'Pencereyi ±50 büyüt (tavan ±200)'}>
+              ±50 daha
+            </Button>
+            {pivot.serviceName && (
+              <Button variant="secondary" size="sm"
+                onClick={() => setScopeService(v => !v)}
+                title={scopeService
+                  ? 'Servis filtresini bırak — aynı anda TÜM servislerin satırları (kaskad okuma)'
+                  : `Yalnız ${pivot.serviceName} satırlarına dön`}>
+                {scopeService ? '⇲ Tüm servisler' : `⇱ Yalnız ${pivot.serviceName}`}
+              </Button>
+            )}
           </div>
           <div style={{
             border: '1px solid var(--border)', borderRadius: 6,

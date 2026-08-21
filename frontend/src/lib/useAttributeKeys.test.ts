@@ -63,7 +63,9 @@ describe('keşif TEK kaynaktan', () => {
     // kılıyordu, yani düzeltilmiş bir kusuru geri isteyecekti.
     // v0.9.969 (Ö15) — pencere artık nesne (since | fromNs/toNs); argüman
     // adı attrSince → attrWindow. Kapı yine "pencere GEÇİLİYOR mu" diyor.
-    expect(src).toMatch(/useAttributeKeys\(value, attrWindow\)/);
+    // v0.9.1200 — üçüncü argüman enabled: metrik-kaynak satırlar span
+    // taramasını atlar (anahtarlar metricAttrKeys'ten). Kapının özü aynı.
+    expect(src).toMatch(/useAttributeKeys\(value, attrWindow, !metricMode\)/);
     // Kendi fetch'ini geri koyan bir değişiklik iki listeyi ayırırdı.
     expect(src.includes('api.attributeKeys(')).toBe(false);
   });

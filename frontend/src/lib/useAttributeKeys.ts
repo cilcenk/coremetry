@@ -73,6 +73,10 @@ export function scopedKey(r: { scope: string; key: string }): string {
 export function useAttributeKeys(
   filters?: FilterExpr[],
   window_: AttrKeyWindow = { since: '1h' },
+  // v0.9.1200 — metrik-kaynak filtre satırları span attr taramasını hiç
+  // istemez (anahtarlar metrik etiketlerinden gelir); enabled=false keşfi
+  // atlar, statik liste döner ve çağıran onu zaten yok sayar.
+  enabled = true,
 ): {
   keys: string[];
   observed: ObservedKey[];
@@ -91,6 +95,7 @@ export function useAttributeKeys(
   // yokluğuydu: iki istek uçuştayken GEÇ dönen ESKİ yanıt yeniyi ezebiliyor,
   // yani operatör filtresini daralttıkça daha ESKİ bir liste görebiliyordu.
   useEffect(() => {
+    if (!enabled) { setObserved([]); return; }
     let cancelled = false;
     const t = window.setTimeout(() => {
       const parsed = JSON.parse(sig) as FilterExpr[];
@@ -106,7 +111,7 @@ export function useAttributeKeys(
         .catch(() => { if (!cancelled) setObserved([]); });
     }, 200);
     return () => { cancelled = true; window.clearTimeout(t); };
-  }, [sig, winSig]);
+  }, [sig, winSig, enabled]);
 
   const keys = useMemo(() => mergeKeys(observed), [observed]);
   return { keys, observed };

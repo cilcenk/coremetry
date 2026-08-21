@@ -19,13 +19,37 @@ const NEEDS_VALUE: Record<FilterOp, boolean> = {
   'EXISTS': false, 'NOT EXISTS': false,
 };
 
-export function FilterBuilder({ value, onChange, suggestedValues }: {
+export function FilterBuilder({ value, onChange, suggestedValues, metricName, metricService }: {
   value: FilterExpr[];
   onChange: (next: FilterExpr[]) => void;
   /** Optional value-suggestions per key (e.g. service names). */
   suggestedValues?: Record<string, string[]>;
+  /**
+   * v0.9.1200 — metrik-kaynak modu. Verilince anahtar/değer önerileri span
+   * attribute TARAMASINDAN değil, o metrikte fiilen GÖRÜLMÜŞ etiketlerden
+   * gelir (metricAttrKeys/metricLabels — ikisi de metricsource seam'inde,
+   * yani VM backend'inde VM'in /api/v1/labels'ına gider). Span anahtarı
+   * (`http.route` gibi noktalı) VM'de etiket olarak var olmayabilir ve
+   * sessizce hiç eşleşmezdi — önerinin kaynağı sorgunun kaynağıyla aynı
+   * olmak zorunda.
+   */
+  metricName?: string;
+  metricService?: string;
 }) {
   const [draft, setDraft] = useState<FilterExpr | null>(null);
+  const metricMode = !!metricName?.trim();
+
+  // Metrik modunda anahtarlar metrikte görülmüş etiketler. Sunucu 60 sn
+  // cache'li; fetch metrik/servis değişince tazelenir.
+  const [metricKeys, setMetricKeys] = useState<string[]>([]);
+  useEffect(() => {
+    if (!metricMode) { setMetricKeys([]); return; }
+    let cancelled = false;
+    api.metricAttrKeys(metricName!.trim(), metricService ?? '')
+      .then(keys => { if (!cancelled) setMetricKeys(keys ?? []); })
+      .catch(() => { if (!cancelled) setMetricKeys([]); });
+    return () => { cancelled = true; };
+  }, [metricMode, metricName, metricService]);
 
   // v0.9.933 — keşif `useAttributeKeys`e taşındı: /traces'in aggregate
   // "group by attribute" kutusu da AYNI listeyi kullanabilsin diye (Ö14).
@@ -45,10 +69,12 @@ export function FilterBuilder({ value, onChange, suggestedValues }: {
   // cache anahtarını her dokunuşta ıskalatırdı (v0.8.270).
   const [keyRange] = useUrlRange();
   const attrWindow = useMemo(() => attrKeyWindowParams(keyRange), [keyRange]);
-  const { keys: allKeys, observed: observedKeys } = useAttributeKeys(value, attrWindow);
+  const { keys: spanKeys, observed: observedKeys } = useAttributeKeys(value, attrWindow, !metricMode);
+  const allKeys = metricMode ? metricKeys : spanKeys;
   // Top-5 hint surfaced under the picker so the operator sees
   // "what's heavy right now" without scrolling the dropdown.
-  const topHints = observedKeys.slice(0, 5);
+  // (Metrik etiket ucu sayı taşımaz — metrik modunda ipucu satırı yok.)
+  const topHints = metricMode ? [] : observedKeys.slice(0, 5);
 
   const addOrUpdate = (next: FilterExpr) => {
     if (!next.k.trim()) return;
@@ -94,13 +120,14 @@ export function FilterBuilder({ value, onChange, suggestedValues }: {
           suggestedValues={suggestedValues}
           keyOptions={allKeys}
           topHints={topHints}
+          metricName={metricMode ? metricName!.trim() : undefined}
         />
       )}
     </div>
   );
 }
 
-function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions, topHints }: {
+function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions, topHints, metricName }: {
   draft: FilterExpr;
   onSave: (f: FilterExpr) => void;
   onCancel: () => void;
@@ -110,6 +137,8 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions, top
   // one-click hint row above the picker so the operator doesn't
   // have to scroll the dropdown to find what's heavy.
   topHints: { key: string; count: number }[];
+  // v0.9.1200 — verilince değer autocomplete'i metricLabels'tan.
+  metricName?: string;
 }) {
   const [local, setLocal] = useState<FilterExpr>(draft);
   // v0.8.x (trace-query gap-1) — bind value autocomplete to the page's active
@@ -153,16 +182,24 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions, top
     let cancelled = false;
     setLiveLoading(true);
     const handle = setTimeout(() => {
-      api.attributeValues(k, '1h', 200, typedValue || undefined, rangeNs)
-        .then(rows => {
-          if (cancelled) return;
-          setLiveValues((rows ?? []).map(r => r.value));
-        })
+      // v0.9.1200 — metrik modunda değerler metriğin ETİKET uzayından
+      // (metricLabels; VM'de /api/v1/label/<k>/values). Uçta substring
+      // paramı yok (tavan 200) — daraltma istemcide.
+      const fetchValues: Promise<string[]> = metricName
+        ? api.metricLabels(metricName, k).then(vals => {
+            const t = typedValue.toLowerCase();
+            const all = vals ?? [];
+            return t ? all.filter(v => v.toLowerCase().includes(t)) : all;
+          })
+        : api.attributeValues(k, '1h', 200, typedValue || undefined, rangeNs)
+            .then(rows => (rows ?? []).map(r => r.value));
+      fetchValues
+        .then(vals => { if (!cancelled) setLiveValues(vals); })
         .catch(() => { if (!cancelled) setLiveValues([]); })
         .finally(() => { if (!cancelled) setLiveLoading(false); });
     }, 200);
     return () => { cancelled = true; clearTimeout(handle); };
-  }, [local.k, typedValue, rangeNs]);
+  }, [local.k, typedValue, rangeNs, metricName]);
 
   // Combine: parent-provided suggestions first (services /
   // operations tend to be richer than the 1h fast-cache),

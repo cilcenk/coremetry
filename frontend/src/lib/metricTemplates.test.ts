@@ -20,7 +20,10 @@ describe('classifyMetric — OTel type fallback', () => {
   // The vocabulary the backend ACTUALLY writes. A name here that stops
   // resolving means the ingest and the frontend have drifted apart again.
   const cases: Array<[string, string]> = [
-    ['sum', 'sum'],
+    // v0.9.1201 — sum→rate: FE agg seti artık rate sunuyor ve kümülatif
+    // counter'ın varsayılanı hız (v0.9.271 sum'ı "en iyi mevcut" diye
+    // seçmişti; VM'de bare sum(sel) tırmanan kümülatifi çiziyordu).
+    ['sum', 'rate'],
     ['gauge', 'last'],
     ['histogram', 'p99'],
     ['exp_histogram', 'p99'],
@@ -31,8 +34,13 @@ describe('classifyMetric — OTel type fallback', () => {
     expect(classifyMetric(m('zz.unmatched.metric', type))?.agg).toBe(want);
   });
 
-  it('sum no longer falls through to avg — this was the 69.3% case', () => {
-    expect(classifyMetric(m('demo.auth.logged_in', 'sum'))?.agg).toBe('sum');
+  it('sum avg\'a DA sum\'a DA düşmez — hız çizer (v0.9.271 → v0.9.1201)', () => {
+    expect(classifyMetric(m('demo.auth.logged_in', 'sum'))?.agg).toBe('rate');
+  });
+
+  it('counter ŞABLONLARI da rate — Error/Request counter (v0.9.1201)', () => {
+    expect(classifyMetric(m('demo.payment.errors', 'sum'))?.agg).toBe('rate');
+    expect(classifyMetric(m('http_server_requests_total', 'sum'))?.agg).toBe('rate');
   });
 
   it('the ingest vocabulary is covered; unknown words still degrade to avg', () => {
@@ -79,7 +87,8 @@ describe('classifyMetric — runtime levels must not be summed', () => {
   it('a genuine counter that merely starts with process. is NOT caught', () => {
     // The rule is deliberately anchored on the runtime-level segments rather
     // than the whole process.* namespace, so it cannot swallow real counters.
-    expect(classifyMetric(m('process.requests.total', 'sum'))?.agg).toBe('sum');
+    // (v0.9.1201: counter fallback sum→rate; testin özü "last DEĞİL".)
+    expect(classifyMetric(m('process.requests.total', 'sum'))?.agg).toBe('rate');
   });
 });
 

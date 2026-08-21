@@ -43,13 +43,15 @@
 //     kapıdadır; buradaki alan tek gerçek kaynak olduğu için MCP
 //     dispatch'i ve in-app sohbet spec listesi ayrışamaz.
 //
-// Tool catalogue (32 tools; sayım v0.9.1050'de düzeltildi — blok
+// Tool catalogue (33 tools; sayım v0.9.1050'de düzeltildi — blok
 // v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu;
-// v0.9.1141'ta beş keşif tool'uyla 19 → 24; v0.9.1142'de
+// v0.9.1227'de get_operation_health ile 33; v0.9.1141'ta beş keşif
+// tool'uyla 19 → 24; v0.9.1142'de
 // find_trace_by_request_id ile 25; v0.9.1146'da üç analiz tool'uyla 28;
 // v0.9.1147'de dört guided-parite tool'uyla 32):
 //   - list_services
 //   - get_service_health
+//   - get_operation_health (v0.9.1227 — endpoint-bazlı RED, spanmetrics_1m)
 //   - list_problems
 //   - get_problem_root_cause (v0.9.160)
 //   - list_anomalies
@@ -200,6 +202,11 @@ func ToolList(d Deps) []mcp.Tool {
 	return []mcp.Tool{
 		listServicesTool(d),
 		getServiceHealthTool(d),
+		// v0.9.1227 (CoSRE denetimi) — servis-seviyesi RED'in hemen
+		// ardındaki İÇERİ kazı: "bu servisin HANGİ endpoint'i?". Bugüne
+		// dek katalogda sayı taşıyan endpoint okuması yoktu
+		// (list_operations bilinçli ad kataloğu).
+		getOperationHealthTool(d),
 		// v0.9.1147 (Faz 3.4) — servis RED'inin hemen ardındaki ALTYAPI
 		// sorusu: "trafik tamam, pod'lar ne durumda". Guided'da zaten
 		// service_health'in komşusuydu (aynı soru dizisi).

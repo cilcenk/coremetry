@@ -1298,7 +1298,7 @@ function LogsInner() {
         anchor={peekTraceId ? { kind: 'trace', traceId: peekTraceId } : null}
         onClose={() => setPeekTraceId(null)} />
       <LogContextModal pivot={contextPivot}
-        highlightTerms={highlightTerms}
+        highlightTerms={highlightTerms} search={compiledSearch || undefined}
         onClose={() => setContextPivot(null)}
         onTracePeek={tid => { setContextPivot(null); setPeekTraceId(tid); }} />
     </>

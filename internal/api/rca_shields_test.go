@@ -32,7 +32,7 @@ func testCatalog() rcaEvidenceCatalog {
 // SALDIRI 1: negatif kanıtı kök nedene dayanak göstermek.
 func TestShieldRejectsNegativeEvidenceAsSupport(t *testing.T) {
 	cat := testCatalog()
-	negs := cat.negativeIDs()
+	negs := cat.NegativeIDs()
 	if len(negs) == 0 {
 		t.Fatal("test kataloğunda negatif kanıt yok")
 	}
@@ -52,7 +52,7 @@ func TestShieldRejectsNegativeEvidenceAsSupport(t *testing.T) {
 // Aynı negatif kanıt ÇÜRÜTMEDE geçerli olmalı — asimetri kasıtlı.
 func TestShieldAcceptsNegativeEvidenceAsRefutation(t *testing.T) {
 	cat := testCatalog()
-	negs := cat.negativeIDs()
+	negs := cat.NegativeIDs()
 	var sh rcaShieldReport
 	got := filterRefutationIDs(cat, negs[:1], &sh)
 	if len(got) != 1 {

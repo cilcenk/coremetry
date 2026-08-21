@@ -35,7 +35,7 @@ func verdictFixture() (*chstore.RootCauseHypothesis, rcaEvidenceCatalog) {
 // SALDIRI: negatif kanıtla kök neden iddia etmek.
 func TestVerdictDropsNegativeEvidenceSupport(t *testing.T) {
 	h, cat := verdictFixture()
-	neg := cat.negativeIDs()[0]
+	neg := cat.NegativeIDs()[0]
 
 	mv := rcaModelVerdict{
 		Verdict: "root_cause_identified",
@@ -69,7 +69,7 @@ func TestVerdictDropsNegativeEvidenceSupport(t *testing.T) {
 // SALDIRI: aynı kanıtla sahte eleme yazıp güven tavanını atlamak.
 func TestVerdictRejectsSelfRefutation(t *testing.T) {
 	h, cat := verdictFixture()
-	pos := cat.positiveIDs()[0]
+	pos := cat.PositiveIDs()[0]
 
 	mv := rcaModelVerdict{
 		Verdict:   "root_cause_identified",
@@ -97,8 +97,8 @@ func TestVerdictRejectsSelfRefutation(t *testing.T) {
 // Geçerli eleme tavanı kaldırmalı — kalkan doğru davranışı da ödüllendirmeli.
 func TestVerdictValidRefutationLiftsCap(t *testing.T) {
 	h, cat := verdictFixture()
-	ids := cat.positiveIDs()
-	neg := cat.negativeIDs()[0]
+	ids := cat.PositiveIDs()
+	neg := cat.NegativeIDs()[0]
 
 	mv := rcaModelVerdict{
 		Verdict:   "root_cause_identified",
@@ -126,7 +126,7 @@ func TestVerdictValidRefutationLiftsCap(t *testing.T) {
 // SALDIRI: enum'dan geçen varlık + serbest metinde uydurma servis.
 func TestVerdictScansFreeTextEntities(t *testing.T) {
 	h, cat := verdictFixture()
-	pos := cat.positiveIDs()[0]
+	pos := cat.PositiveIDs()[0]
 
 	mv := rcaModelVerdict{
 		Verdict:   "probable_cause",

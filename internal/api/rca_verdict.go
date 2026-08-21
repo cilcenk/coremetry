@@ -358,7 +358,7 @@ func applyRCAShieldsPure(h *chstore.RootCauseHypothesis,
 	// Atıf yapılan kanıtların SUNUCU metni — model metni değil.
 	seen := map[string]bool{}
 	for _, id := range mv.RootCause.Evidence {
-		if ref, ok := cat.lookup(id); ok && !seen[id] {
+		if ref, ok := cat.Lookup(id); ok && !seen[id] {
 			seen[id] = true
 			out.Evidence = append(out.Evidence, ref)
 		}

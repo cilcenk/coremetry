@@ -60,7 +60,7 @@ func filterEvidenceIDs(cat rcaEvidenceCatalog, ids []string, sh *rcaShieldReport
 		if id == "" {
 			continue
 		}
-		ref, ok := cat.lookup(id)
+		ref, ok := cat.Lookup(id)
 		if !ok {
 			sh.RejectedEvidence = append(sh.RejectedEvidence, id)
 			sh.note("kanıt %s katalogda yok — iddia dayanaksız", id)
@@ -86,7 +86,7 @@ func filterRefutationIDs(cat rcaEvidenceCatalog, ids []string, sh *rcaShieldRepo
 		if id == "" {
 			continue
 		}
-		if _, ok := cat.lookup(id); !ok {
+		if _, ok := cat.Lookup(id); !ok {
 			sh.RejectedEvidence = append(sh.RejectedEvidence, id)
 			sh.note("çürütme kanıtı %s katalogda yok", id)
 			continue

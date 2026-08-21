@@ -40,11 +40,11 @@ func TestBuildRCAEvidenceCatalogSeparatesNegatives(t *testing.T) {
 	cat := buildRCAEvidenceCatalog(h)
 
 	// Pozitifler: baş şüpheli + 1 diğer aday + 1 bulunan sinyal.
-	if got := len(cat.positiveIDs()); got != 3 {
-		t.Errorf("pozitif kanıt sayısı %d, beklenen 3 — %v", got, cat.positiveIDs())
+	if got := len(cat.PositiveIDs()); got != 3 {
+		t.Errorf("pozitif kanıt sayısı %d, beklenen 3 — %v", got, cat.PositiveIDs())
 	}
 	// Negatifler: iki bulunamayan sinyal.
-	negs := cat.negativeIDs()
+	negs := cat.NegativeIDs()
 	if len(negs) != 2 {
 		t.Fatalf("negatif kanıt sayısı %d, beklenen 2 — %v", len(negs), negs)
 	}
@@ -54,7 +54,7 @@ func TestBuildRCAEvidenceCatalogSeparatesNegatives(t *testing.T) {
 		if !strings.HasPrefix(id, "N") {
 			t.Errorf("bulunamayan sinyal %q E uzayında — kök nedene dayanak yapılabilir hâle gelir", id)
 		}
-		ref, ok := cat.lookup(id)
+		ref, ok := cat.Lookup(id)
 		if !ok {
 			t.Fatalf("%s katalogda bulunamadı", id)
 		}
@@ -122,7 +122,7 @@ func TestRCACatalogNilHypothesis(t *testing.T) {
 	if len(cat.Refs) != 0 {
 		t.Errorf("nil hipotezde %d kanıt üretilmiş", len(cat.Refs))
 	}
-	if _, ok := cat.lookup("E1"); ok {
+	if _, ok := cat.Lookup("E1"); ok {
 		t.Error("boş katalogda E1 bulundu")
 	}
 }

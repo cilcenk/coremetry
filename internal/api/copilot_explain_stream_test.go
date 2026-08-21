@@ -353,6 +353,10 @@ var explainStreamDeferred = map[string]string{
 	"copilotExplainSLO":         "bağımsız küçük panel — Faz 1.5 takibi",
 	"copilotExplainSlowQuery":   "bağımsız küçük panel — Faz 1.5 takibi",
 	"copilotSuggestServiceTags": "JSON kipi — prose değil",
+	// Faz 5.4 — çıktı chat balonuna değil postmortem EDİTÖRÜNE (textarea
+	// taslağı) düşer; parça parça akıtmak düzenleme imlecini bozar,
+	// operatör zaten tam taslağı bekleyip düzenler. Bilinçli buffered.
+	"draftPostmortem": "taslak textarea'ya tek parça düşer — akış editörü bozar",
 }
 
 var explainRouteHandlerRE = regexp.MustCompile(`s\.([A-Za-z0-9_]+)\)*\s*\)\s*$`)

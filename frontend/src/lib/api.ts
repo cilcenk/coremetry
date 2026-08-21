@@ -1767,6 +1767,13 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ exchangeId }),
     }),
+  // v0.9.1197 (Faz 5.4) — kayıtlı postmortem'i KB'ye indeksle. İçeriği
+  // sunucu incidents satırından okur; buradan yalnız kimlik gider.
+  ragIngestPostmortem: (incidentId: string) =>
+    request<{ docId: string; chunks: number }>('/api/rag/postmortem', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ incidentId }),
+    }),
   deleteRagDocument: (id: string) =>
     request<{ ok: boolean }>(`/api/rag/documents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
@@ -1874,6 +1881,12 @@ export const api = {
   copilotExplainIncident: (id: string, opts?: ExplainStreamOpts) =>
     explainCall<{ explanation: string; exchangeId?: string }>(
       `/api/copilot/explain-incident/${id}`, { method: 'POST' }, opts),
+  // v0.9.1197 (Faz 5.4) — incident kanıtından postmortem taslağı; taslak
+  // editöre düşer, kaydeden yine updateIncident. Bilinçli buffered (akış
+  // textarea imlecini bozar — copilot_explain_stream_test.go gerekçesi).
+  draftPostmortem: (id: string) =>
+    request<{ draft: string; exchangeId?: string }>(
+      `/api/copilot/draft-postmortem/${encodeURIComponent(id)}`, { method: 'POST' }),
   copilotExplainAnomaly: (id: string, opts?: ExplainStreamOpts) =>
     explainCall<{ explanation: string; exchangeId?: string }>(
       `/api/copilot/explain-anomaly/${id}`, { method: 'POST' }, opts),

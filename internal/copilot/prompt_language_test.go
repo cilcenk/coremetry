@@ -75,6 +75,7 @@ func promptRegistry() map[string]promptClass {
 		"ShiftSummary":    classTurkishNative,
 		"AlertNoise":      classTurkishNative,
 		"LogPatterns":     classTurkishNative,
+		"Postmortem":      classTurkishNative, // Faz 5.4 — markdown taslak, Türkçe talimat
 		// ── Makine-parse edilen çıktı
 		"NLToQuery":       classStructured,
 		"CHQueryOptimize": classStructured,
@@ -99,7 +100,8 @@ func promptTexts() map[string]string {
 		"RCAVerdict": SystemPromptRCAVerdict(), "ServiceAnalysis": SystemPromptServiceAnalysis(),
 		"RAGChat": SystemPromptRAGChat(), "ShiftSummary": SystemPromptShiftSummary(),
 		"AlertNoise": SystemPromptAlertNoise(), "LogPatterns": SystemPromptLogPatterns(),
-		"NLToQuery": SystemPromptNLToQuery(), "CHQueryOptimize": SystemPromptCHQueryOptimize(),
+		"Postmortem": SystemPromptPostmortem(),
+		"NLToQuery":  SystemPromptNLToQuery(), "CHQueryOptimize": SystemPromptCHQueryOptimize(),
 		"ServiceTags": SystemPromptServiceTags(),
 	}
 }

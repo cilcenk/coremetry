@@ -216,6 +216,18 @@ func buildRCARivalOptions(cat rcaEvidenceCatalog, topSuspect string, candidates 
 // yazıp, zincirde ve aksiyonda HİÇ var olmayan bir servisi anlatabilir.
 func checkRCAEntities(cat rcaEvidenceCatalog, texts []string, sh *rcaShieldReport) {
 	known := lowerKnownSet(rcaAllowedEntities(cat)...)
+	// v0.9.1203 (Faz 6.1) — katalogda GÖSTERİLEN metinlerin jetonları da
+	// bilinen kümeye girer (v0.9.598 addShownTokens emsali, aynı sınıf):
+	// yeni aileler tireli değerler basıyor (BubbleUp "pod=api-gw-7f",
+	// blast çağıran adları) ve modelin bize VERDİĞİMİZ değeri
+	// alıntılaması uydurma değildir — eski davranışta K3 doğru cevabı
+	// şüpheli gösterirdi. Beyaz listeyi (root_cause.entity enum'unu)
+	// GENİŞLETMEZ; yalnız serbest-metin taramasını dürüstleştirir.
+	shown := make([]string, 0, len(cat.Refs))
+	for _, r := range cat.Refs {
+		shown = append(shown, r.Text)
+	}
+	addShownTokens(known, shown...)
 	unknown := scanUnknownEntities(known, texts...)
 	if len(unknown) == 0 {
 		return

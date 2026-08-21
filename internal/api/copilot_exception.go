@@ -39,7 +39,13 @@ func (s *Server) copilotExplainException(w http.ResponseWriter, r *http.Request)
 	var cc devops.CodeContext
 	run := s.explainPrompt(r, copilot.SystemPromptException(), in.User)
 	if opts.IncludeCode {
-		cc = s.buildCodeContext(r.Context(), g.Service, in.Stack)
+		// v0.9.1225 — stack log-fallback'ten geldiyse depo çözümü logu
+		// atan servise gider (bsa- önek deseni servis adından türetilir).
+		codeSvc := g.Service
+		if in.StackService != "" {
+			codeSvc = in.StackService
+		}
+		cc = s.buildCodeContext(r.Context(), codeSvc, in.Stack)
 		run = explainPromptBuffered(func() (string, error) {
 			return s.copilotExplainCode(r,
 				copilot.SystemPromptException(), copilot.SystemPromptExceptionWithCode(), in.User, cc)

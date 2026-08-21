@@ -120,3 +120,35 @@ func TestTruncRunes(t *testing.T) {
 		t.Errorf("kısa string dokunulmamalı")
 	}
 }
+
+// v0.9.1225 — kod-çekici stack istihkakı: (1) HAM stack (1800-kırpık
+// DEĞİL; derin JBoss stack'lerinde Caused-by uygulama frame'leri kırpığın
+// altında kalıp pencereleme hiç isabet etmiyordu), (2) örnekler stack
+// taşımıyorsa log-fallback + logu atan servisin override'ı (v0.9.1182'nin
+// exception yüzeyindeki eksik yarısı).
+func TestPickExceptionStack(t *testing.T) {
+	deep := strings.Repeat("at com.bsa.App.run(App.java:10)\n", 100) // >1800 rune
+	fp, raw, svc := pickExceptionStack([]string{"", deep}, "log-stack", "bsa-log-svc")
+	if raw != deep {
+		t.Fatalf("örnek stack HAM taşınmalı (len=%d), kırpık geldi (len=%d)", len(deep), len(raw))
+	}
+	if fp != truncRunes(deep, 1800) {
+		t.Fatalf("prompt kopyası truncRunes(.,1800) ile bayt-bayt aynı olmalı (User paritesi)")
+	}
+	if svc != "" {
+		t.Fatalf("örnekten gelen stack'te servis override olmamalı: %q", svc)
+	}
+
+	fp, raw, svc = pickExceptionStack([]string{"", ""}, "log-stack", "bsa-log-svc")
+	if raw != "log-stack" || svc != "bsa-log-svc" {
+		t.Fatalf("log-fallback beklenirdi: raw=%q svc=%q", raw, svc)
+	}
+	if fp != "" {
+		t.Fatalf("fallback'te prompt stack'i boş kalmalı (bayt-parite): %q", fp)
+	}
+
+	fp, raw, svc = pickExceptionStack(nil, "", "")
+	if fp != "" || raw != "" || svc != "" {
+		t.Fatal("hiç stack yokken üçü de boş dönmeli")
+	}
+}

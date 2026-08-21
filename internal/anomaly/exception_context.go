@@ -24,6 +24,26 @@ import (
 // (PickDeploysAroundStart) tablo-testli — exception_context_test.go.
 
 // ExceptionExplainInput — kurulan girdi + deterministik kanıt.
+// pickExceptionStack — v0.9.1225 saf çekirdek: prompt kopyası (1800
+// kırpık, User bayt-parite) ile kod-çekici istihkakı (HAM) ayrımı +
+// log-fallback kararı. Örneklerden ilk dolu stack kazanır (ham döner —
+// "kesik bir satır konumlandırılamaz", v0.9.831 gerekçesi); hiçbiri
+// yoksa loglardan yakalanan stack ve onu atan servis döner (v0.9.1182'nin
+// exception yüzeyindeki eksik yarısı — prompt logdaki stack'i gösterip
+// kod çekici "stacktrace yok" diyordu). Fallback'te forPrompt boş kalır:
+// prompt'un stack bölümü eskiden de boştu, bayt-parite korunur.
+func pickExceptionStack(sampleStacks []string, logStack, logStackSvc string) (forPrompt, raw, svc string) {
+	for _, st := range sampleStacks {
+		if st != "" {
+			return truncRunes(st, 1800), st, ""
+		}
+	}
+	if logStack != "" {
+		return "", logStack, logStackSvc
+	}
+	return "", "", ""
+}
+
 type ExceptionExplainInput struct {
 	User     string   // narration user prompt'u
 	EvTraces []string // kanıt trace id'leri (örnek tablosu kutulaması)
@@ -41,8 +61,13 @@ type ExceptionExplainInput struct {
 	// Yeniden okumak yerine taşınıyor: örnek seçimi (ilk stack'li
 	// örnek) burada yapılıyor ve iki yerde tekrarlanırsa model bir
 	// stack'i, kod çekici BAŞKA bir stack'i görebilir — sessizce
-	// yanlış dosya. User bayt-bayt eskisidir.
+	// yanlış dosya. User bayt-bayt eskisidir. v0.9.1225'ten beri HAM
+	// (kırpıksız) taşınır — prompt kendi 1800'lük kopyasını ayrı alır.
 	Stack string
+	// StackService — Stack log-fallback'ten geldiyse logu atan servis
+	// (v0.9.1225): depo çözümü grubun servisi yerine buna gitmeli.
+	// Boşsa grup servisi geçerli.
+	StackService string
 
 	// ── v0.9.1129 (AI Faz 2.1) — insight kartının YAPISAL yarısı ──
 	//
@@ -125,6 +150,9 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 		StatusMsg  string  `json:"statusMsg,omitempty"`
 	}
 	var traceBlock, logsBlock string
+	// v0.9.1225 — kod çekicinin log-fallback istihkakı (aşağıdaki logs
+	// döngüsünde dolar; yalnız örnekler stack taşımıyorsa kullanılır).
+	var logStack, logStackSvc string
 	var evTraces, evSpans []string
 	traceID := ""
 	var traceMinT, traceMaxT int64
@@ -219,6 +247,14 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 				// bırakmak, aynı bug'ın bilinen bir kopyasını bilerek yerinde
 				// bırakmak olurdu.
 				stackText, stackFromBody := stackparse.FromLog(lg.Attributes, lg.Body)
+				// v0.9.1225 — kardeş yolun (explain_trace_input.go rawStack/
+				// stackService) eksik yarısı: span-örnekleri stack taşımıyorsa
+				// kod çekicinin istihkakı LOGLARDAN gelir. Servis de birlikte
+				// taşınır — logu atan servis g.Service'ten farklı olabilir ve
+				// bsa- depo çözümü yanlış depoya gitmesin.
+				if logStack == "" && stackText != "" {
+					logStack, logStackSvc = stackText, lg.ServiceName
+				}
 				bodyForPrompt := lg.Body
 				if stackFromBody {
 					bodyForPrompt = stackparse.MessageHead(lg.Body)
@@ -253,23 +289,28 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 		}
 	}
 
-	stack := ""
+	// v0.9.1225 — prompt kopyası ile kod-çekici istihkakı AYRILDI. User
+	// bayt-bayt eski (1800 rune'luk kırpık); Stack ise HAM taşınır —
+	// kardeş yol explain_trace_input.go v0.9.831'de aynı gerekçeyle
+	// ("kesik bir satır konumlandırılamaz") ham taşıyordu, burası kırpığı
+	// veriyordu: derin JBoss stack'lerinde Caused-by uygulama frame'leri
+	// 1800'ün altında kalıp pencereleme hiç isabet etmiyordu.
+	sampleStacks := make([]string, 0, len(samples))
 	for _, sm := range samples {
-		if sm.Stacktrace != "" {
-			stack = truncRunes(sm.Stacktrace, 1800)
-			break
-		}
+		sampleStacks = append(sampleStacks, sm.Stacktrace)
 	}
+	stackForPrompt, stackRaw, stackSvc := pickExceptionStack(sampleStacks, logStack, logStackSvc)
 
 	return ExceptionExplainInput{
-		User:      assembleExceptionPrompt(g, trend, stack, traceBlock, logsBlock, deployBlock),
-		EvTraces:  evTraces,
-		EvSpans:   evSpans,
-		LogsBlock: logsBlock,
-		Stack:     stack,
-		TraceID:   traceID,
-		Trend:     trendRef,
-		Deploys:   nearby,
+		User:         assembleExceptionPrompt(g, trend, stackForPrompt, traceBlock, logsBlock, deployBlock),
+		EvTraces:     evTraces,
+		EvSpans:      evSpans,
+		LogsBlock:    logsBlock,
+		Stack:        stackRaw,
+		StackService: stackSvc,
+		TraceID:      traceID,
+		Trend:        trendRef,
+		Deploys:      nearby,
 	}
 }
 

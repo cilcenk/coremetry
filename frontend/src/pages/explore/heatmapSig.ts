@@ -36,6 +36,20 @@ export function heatmapQuerySig(
   // effectiveFilters ZATEN kapsam pinini katlıyor (isteğe giden değerin
   // aynısı) — burada ikinci bir türetme yazmıyoruz.
   const filters = effectiveFilters(a);
+  // v0.9.1202 — metrik-kaynak A: istek /api/metrics/histogram'a gidiyor
+  // ve alanları FARKLI (metrik adı + servis kapsamı; dsl İSTEĞE GİRMİYOR,
+  // o yüzden imzada da yok — dsl düzenlemek metrik ısı haritasını
+  // yeniden tetiklemez). Kural aynı: imza = isteğe giden alanlar.
+  if (a.source === 'metric') {
+    return [
+      'viz=heatmap', 'src=metric',
+      `m=${a.metric}`,
+      `svc=${a.scope}`,
+      `f=${JSON.stringify(filters)}`,
+      `w=${fromNs}-${toNs}`,
+      `b=${buckets}`,
+    ].join('|');
+  }
   return [
     'viz=heatmap',
     `f=${JSON.stringify(filters)}`,

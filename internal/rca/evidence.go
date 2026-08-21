@@ -20,7 +20,7 @@
 //
 // Katalog kurulurken ayrım VERİDEN yapılır (CheckedSignal.Found),
 // modelin beyanından değil.
-package api
+package rca
 
 import (
 	"fmt"
@@ -30,18 +30,18 @@ import (
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
 
-// rcaEvidenceKind — kimlik uzayı.
-type rcaEvidenceKind string
+// EvidenceKind — kimlik uzayı.
+type EvidenceKind string
 
 const (
-	rcaPositive rcaEvidenceKind = "E"
-	rcaNegative rcaEvidenceKind = "N"
+	Positive EvidenceKind = "E"
+	Negative EvidenceKind = "N"
 )
 
-// rcaEvidenceRef — katalogdaki tek kanıt satırı.
-type rcaEvidenceRef struct {
-	ID   string          `json:"id"`   // E3 / N1
-	Kind rcaEvidenceKind `json:"kind"` // E | N
+// EvidenceRef — katalogdaki tek kanıt satırı.
+type EvidenceRef struct {
+	ID   string       `json:"id"`   // E3 / N1
+	Kind EvidenceKind `json:"kind"` // E | N
 	// Entity — kanıtın AİT OLDUĞU varlık; boş olabilir (deploy gibi
 	// servise bağlı olmayan sinyaller). K3 beyaz listesini besler.
 	Entity string `json:"entity,omitempty"`
@@ -50,27 +50,27 @@ type rcaEvidenceRef struct {
 	Text string `json:"text"`
 }
 
-// rcaEvidenceCatalog — bir ankor için kurulmuş tam katalog.
-type rcaEvidenceCatalog struct {
-	Refs []rcaEvidenceRef `json:"refs"`
+// EvidenceCatalog — bir ankor için kurulmuş tam katalog.
+type EvidenceCatalog struct {
+	Refs []EvidenceRef `json:"refs"`
 	// byID — hızlı doğrulama için indeks (K2).
-	byID map[string]rcaEvidenceRef
+	byID map[string]EvidenceRef
 	// Entities — katalogdan türeyen varlık beyaz listesi (K3).
 	// Burada olan bir ad, modelin uydurmadığı anlamına gelir.
 	Entities map[string]bool `json:"-"`
 }
 
 // lookup — kimlikten kanıt. ok=false ⇒ katalogda YOK (uydurulmuş).
-func (c rcaEvidenceCatalog) lookup(id string) (rcaEvidenceRef, bool) {
+func (c EvidenceCatalog) Lookup(id string) (EvidenceRef, bool) {
 	r, ok := c.byID[strings.TrimSpace(id)]
 	return r, ok
 }
 
-// positiveIDs / negativeIDs — prompt'a basılacak kimlik listeleri.
-func (c rcaEvidenceCatalog) positiveIDs() []string { return c.idsOfKind(rcaPositive) }
-func (c rcaEvidenceCatalog) negativeIDs() []string { return c.idsOfKind(rcaNegative) }
+// PositiveIDs / NegativeIDs — prompt'a basılacak kimlik listeleri.
+func (c EvidenceCatalog) PositiveIDs() []string { return c.idsOfKind(Positive) }
+func (c EvidenceCatalog) NegativeIDs() []string { return c.idsOfKind(Negative) }
 
-func (c rcaEvidenceCatalog) idsOfKind(k rcaEvidenceKind) []string {
+func (c EvidenceCatalog) idsOfKind(k EvidenceKind) []string {
 	out := []string{}
 	for _, r := range c.Refs {
 		if r.Kind == k {
@@ -80,7 +80,7 @@ func (c rcaEvidenceCatalog) idsOfKind(k rcaEvidenceKind) []string {
 	return out
 }
 
-// buildRCAEvidenceCatalog — hipotezden katalog kurar.
+// BuildEvidenceCatalog — hipotezden katalog kurar.
 //
 // SAF: hiçbir IO yok, tamamen tablo-testlenebilir. Bu bilinçli — kanıt
 // ayrımı bu tasarımın tek en kritik parçası ve test edilemeyen bir
@@ -89,9 +89,9 @@ func (c rcaEvidenceCatalog) idsOfKind(k rcaEvidenceKind) []string {
 // Sıra deterministik: aynı hipotez her çağrıda AYNI kimlikleri üretir.
 // Aksi hâlde bir kimlik iki çağrı arasında başka bir kanıta kayar ve
 // önbelleğe alınmış bir verdict sessizce yanlış kanıta atıf yapar.
-func buildRCAEvidenceCatalog(h *chstore.RootCauseHypothesis) rcaEvidenceCatalog {
-	cat := rcaEvidenceCatalog{
-		byID:     map[string]rcaEvidenceRef{},
+func BuildEvidenceCatalog(h *chstore.RootCauseHypothesis) EvidenceCatalog {
+	cat := EvidenceCatalog{
+		byID:     map[string]EvidenceRef{},
 		Entities: map[string]bool{},
 	}
 	if h == nil {
@@ -101,7 +101,7 @@ func buildRCAEvidenceCatalog(h *chstore.RootCauseHypothesis) rcaEvidenceCatalog 
 	posN, negN := 0, 0
 	addPos := func(entity, text string) {
 		posN++
-		ref := rcaEvidenceRef{ID: fmt.Sprintf("E%d", posN), Kind: rcaPositive, Entity: entity, Text: text}
+		ref := EvidenceRef{ID: fmt.Sprintf("E%d", posN), Kind: Positive, Entity: entity, Text: text}
 		cat.Refs = append(cat.Refs, ref)
 		cat.byID[ref.ID] = ref
 		if entity != "" {
@@ -110,7 +110,7 @@ func buildRCAEvidenceCatalog(h *chstore.RootCauseHypothesis) rcaEvidenceCatalog 
 	}
 	addNeg := func(entity, text string) {
 		negN++
-		ref := rcaEvidenceRef{ID: fmt.Sprintf("N%d", negN), Kind: rcaNegative, Entity: entity, Text: text}
+		ref := EvidenceRef{ID: fmt.Sprintf("N%d", negN), Kind: Negative, Entity: entity, Text: text}
 		cat.Refs = append(cat.Refs, ref)
 		cat.byID[ref.ID] = ref
 		// NEGATİF kanıt varlık beyaz listesini BESLEMEZ. "Şu serviste
@@ -199,18 +199,18 @@ func buildRCAEvidenceCatalog(h *chstore.RootCauseHypothesis) rcaEvidenceCatalog 
 	return cat
 }
 
-// renderRCAEvidenceCatalog — kataloğu prompt'a basar.
+// RenderEvidenceCatalog — kataloğu prompt'a basar.
 //
 // İki bölüm AYRI başlıklar altında ve negatif bölüm ne için
 // kullanılabileceğini AÇIKÇA söyler. Küçük modelde kuralı uzakta bir
 // yerde bir kez söylemek yetmiyor; kısıtı verinin yanına yazmak
 // gerekiyor.
-func renderRCAEvidenceCatalog(c rcaEvidenceCatalog) string {
+func RenderEvidenceCatalog(c EvidenceCatalog) string {
 	var b strings.Builder
-	pos := []rcaEvidenceRef{}
-	neg := []rcaEvidenceRef{}
+	pos := []EvidenceRef{}
+	neg := []EvidenceRef{}
 	for _, r := range c.Refs {
-		if r.Kind == rcaNegative {
+		if r.Kind == Negative {
 			neg = append(neg, r)
 		} else {
 			pos = append(pos, r)
@@ -236,12 +236,12 @@ func renderRCAEvidenceCatalog(c rcaEvidenceCatalog) string {
 	return b.String()
 }
 
-// rcaAllowedEntities — K3 beyaz listesi, sıralı.
+// AllowedEntities — K3 beyaz listesi, sıralı.
 //
 // Katalogdaki pozitif varlıklar + ankor servisi. Sıralı çünkü şema
 // enum'una gidiyor ve rastgele sıra istek gövdesini gereksiz
 // değiştirirdi (copilot_schemas.go'daki sortedKeys ile aynı gerekçe).
-func rcaAllowedEntities(c rcaEvidenceCatalog) []string {
+func AllowedEntities(c EvidenceCatalog) []string {
 	out := make([]string, 0, len(c.Entities))
 	for e := range c.Entities {
 		out = append(out, e)

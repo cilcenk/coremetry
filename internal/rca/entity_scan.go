@@ -17,7 +17,7 @@
 // ki iki yüzey aynı kuralı paylaşsın — ikinci bir kopya yazmak,
 // birinin diğerinden sessizce ayrışması demekti (bu oturumda tam bu
 // sınıftan üç hata çıktı: v0.9.552/553/554).
-package api
+package rca
 
 import (
 	"regexp"
@@ -38,12 +38,12 @@ var nonServiceHyphenated = map[string]bool{
 	"baseline-window": true, "trace-id": true, "span-id": true,
 }
 
-// scanUnknownEntities — verilen metinlerde, bilinen küme DIŞINDA kalan
+// ScanUnknownEntities — verilen metinlerde, bilinen küme DIŞINDA kalan
 // servis-biçimli adları döndürür. Sıra: ilk görülme (deterministik).
 //
 // `known` anahtarları küçük harfe indirgenmiş olmalı; çağıran
-// lowerKnownSet ile kurar.
-func scanUnknownEntities(known map[string]bool, texts ...string) []string {
+// LowerKnownSet ile kurar.
+func ScanUnknownEntities(known map[string]bool, texts ...string) []string {
 	seen := map[string]bool{}
 	var unknown []string
 	for _, text := range texts {
@@ -58,10 +58,10 @@ func scanUnknownEntities(known map[string]bool, texts ...string) []string {
 	return unknown
 }
 
-// lowerKnownSet — bilinen adlardan küçük-harfli küme. Boş değerler
+// LowerKnownSet — bilinen adlardan küçük-harfli küme. Boş değerler
 // atlanır: boş bir anahtar her metni "bilinen" yapmaz ama kümeyi
 // gereksiz kirletir.
-func lowerKnownSet(names ...string) map[string]bool {
+func LowerKnownSet(names ...string) map[string]bool {
 	known := map[string]bool{}
 	for _, n := range names {
 		if n = strings.TrimSpace(n); n != "" {
@@ -71,7 +71,7 @@ func lowerKnownSet(names ...string) map[string]bool {
 	return known
 }
 
-// addShownTokens — modele GÖSTERİLEN bir metindeki servis-biçimli
+// AddShownTokens — modele GÖSTERİLEN bir metindeki servis-biçimli
 // jetonları bilinen kümeye ekler (v0.9.598).
 //
 // İlke basit ve kalkanın kendi tanımından çıkıyor: kalkan "çıktıda
@@ -91,7 +91,7 @@ func lowerKnownSet(names ...string) map[string]bool {
 // tarayıcının sorduğu biçimde cevap veriliyor. Ham metni tek anahtar
 // olarak eklemek YETMEZDİ: tarayıcı jeton düzeyinde eşleşiyor ve bir
 // request_id'nin ("8f3c-4a2b") içinden ayrı bir jeton çıkarabiliyor.
-func addShownTokens(known map[string]bool, texts ...string) {
+func AddShownTokens(known map[string]bool, texts ...string) {
 	for _, text := range texts {
 		low := strings.ToLower(text)
 		if low != "" {

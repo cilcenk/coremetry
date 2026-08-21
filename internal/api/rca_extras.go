@@ -25,36 +25,12 @@ package api
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/rca"
 )
-
-const (
-	// rcaExtrasWindow — kanıt penceresi: ankorun AÇILIŞINI izleyen dilim
-	// (correlate.go'nun 600 sn varsayılanıyla aynı; ≥300 sn olduğu için
-	// correlations her zaman MV yolunda).
-	rcaExtrasWindow = 10 * time.Minute
-	// rcaExtrasCorrCap / rcaExtrasBubbleCap / rcaExtrasBlastWorst —
-	// plandaki "ilk 3" kapları. Sabitler ID determinizminin parçası.
-	rcaExtrasCorrCap    = 3
-	rcaExtrasBubbleCap  = 3
-	rcaExtrasBlastWorst = 3
-	// rcaBubbleUpTimeout — ham-spans kıyası verdict kurulumunu
-	// süresiz bekletemez; süre dolarsa aile atlanır.
-	rcaBubbleUpTimeout = 8 * time.Second
-)
-
-// rcaCatalogExtras — katalog genişlemesinin girdileri. Sıfır değeri
-// "hiçbiri toplanamadı" demek ve katalog bugünkü hâliyle kurulur.
-type rcaCatalogExtras struct {
-	Blast        *chstore.BlastRadius
-	Correlations []chstore.ChangedService
-	BubbleUp     *chstore.BubbleUpResult
-}
 
 // gatherRCACatalogExtras — üç kaynağı paralel, soft-fail toplar.
 // anchorStartNs=0 (ankor satırı çözülememiş) ⇒ pencere kurulamaz,
@@ -65,7 +41,7 @@ func (s *Server) gatherRCACatalogExtras(ctx context.Context, h *chstore.RootCaus
 		return out
 	}
 	from := time.Unix(0, anchorStartNs)
-	to := from.Add(rcaExtrasWindow)
+	to := from.Add(rca.ExtrasWindow)
 
 	var wg sync.WaitGroup
 	wg.Add(3)
@@ -77,13 +53,13 @@ func (s *Server) gatherRCACatalogExtras(ctx context.Context, h *chstore.RootCaus
 	}()
 	go func() {
 		defer wg.Done()
-		if cs, err := s.store.GetCorrelatedChangesMV(ctx, from, int(rcaExtrasWindow.Seconds()), int(4*rcaExtrasWindow.Seconds())); err == nil {
+		if cs, err := s.store.GetCorrelatedChangesMV(ctx, from, int(rca.ExtrasWindow.Seconds()), int(4*rca.ExtrasWindow.Seconds())); err == nil {
 			out.Correlations = cs
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		bctx, cancel := context.WithTimeout(ctx, rcaBubbleUpTimeout)
+		bctx, cancel := context.WithTimeout(ctx, rca.BubbleUpTimeout)
 		defer cancel()
 		baseline := []chstore.FilterExpr{{Key: "service.name", Op: "=", Values: []string{h.Service}}}
 		selection := []chstore.FilterExpr{
@@ -96,90 +72,4 @@ func (s *Server) gatherRCACatalogExtras(ctx context.Context, h *chstore.RootCaus
 	}()
 	wg.Wait()
 	return out
-}
-
-// buildRCAEvidenceCatalogExt — taban kataloğu kurar, üç yeni aileyi
-// SONUNA ekler. Taban builder'a dokunulmaz: mevcut E/N kimlikleri
-// bayt-bayt aynı kalır (10 dk cache'li verdict'in kimlik-kararlılık
-// sözleşmesi, rca_evidence.go:89-91) — yeni aileler sayaçları taban
-// kataloğun kaldığı yerden devralır.
-func buildRCAEvidenceCatalogExt(h *chstore.RootCauseHypothesis, extras rcaCatalogExtras) rcaEvidenceCatalog {
-	cat := buildRCAEvidenceCatalog(h)
-	posN := len(cat.positiveIDs())
-	addPos := func(entity, text string) {
-		posN++
-		ref := rcaEvidenceRef{ID: fmt.Sprintf("E%d", posN), Kind: rcaPositive, Entity: entity, Text: text}
-		cat.Refs = append(cat.Refs, ref)
-		cat.byID[ref.ID] = ref
-		if entity != "" {
-			cat.Entities[entity] = true
-		}
-	}
-	anchor := ""
-	if h != nil {
-		anchor = h.Service
-	}
-
-	// ── 5. Etki alanı (BlastRadius) — tek satır, MAĞDURLAR ────────────
-	if b := extras.Blast; b != nil && b.TotalCallers > 0 {
-		worst := make([]string, 0, rcaExtrasBlastWorst)
-		for i, c := range b.Callers {
-			if i >= rcaExtrasBlastWorst {
-				break
-			}
-			t := fmt.Sprintf("%s (hata %%%.1f", c.Service, c.ErrorRate)
-			if c.HasOpenProblem {
-				t += ", açık problemi var"
-			}
-			t += ")"
-			worst = append(worst, t)
-		}
-		txt := fmt.Sprintf("etki alanı: %d çağıran servis", b.TotalCallers)
-		if b.CascadingCallers > 0 {
-			txt += fmt.Sprintf(" (%d'sinde kaskad problem)", b.CascadingCallers)
-		}
-		if len(worst) > 0 {
-			txt += " — öne çıkanlar: " + strings.Join(worst, ", ")
-		}
-		txt += ". Bunlar ETKİLENENLERDİR; etki alanı genişliği ciddiyeti gösterir, çağıranlar kök neden adayı değildir."
-		addPos("", txt)
-	}
-
-	// ── 6. Aynı pencerede kötüleşen komşular (Correlations) ───────────
-	// Olası nedenler: entity dolu → beyaz liste (ve şema enum'u) genişler.
-	added := 0
-	for _, cs := range extras.Correlations {
-		if cs.Service == "" || cs.Service == anchor {
-			continue
-		}
-		if added >= rcaExtrasCorrCap {
-			break
-		}
-		added++
-		addPos(cs.Service, fmt.Sprintf(
-			"aynı pencerede kötüleşen komşu: %s (p99 Δ%+.0f%%, hata Δ%+.1f%%, istek Δ%+.0f%%)",
-			cs.Service, cs.P99DeltaPct, cs.ErrDeltaPct, cs.RateDeltaPct))
-	}
-
-	// ── 7. Hatalarda ayrışan boyutlar (BubbleUp) ──────────────────────
-	// Boyut değerleri servis değildir → entity boş; tireli değerler
-	// gösterilen-jeton yoluyla K3'te meşrulaşır (checkRCAEntities).
-	if bu := extras.BubbleUp; bu != nil && bu.SelectionTotal > 0 {
-		n := 0
-		for _, attr := range bu.Attributes {
-			if n >= rcaExtrasBubbleCap || len(attr.Values) == 0 {
-				break
-			}
-			v := attr.Values[0]
-			if v.Score <= 0 {
-				continue // hatalarda AYRIŞMAYAN boyut kanıt değildir
-			}
-			n++
-			addPos("", fmt.Sprintf(
-				"hatalarda ayrışan boyut: %s=%s (hatalı kümede %%%.0f, tabanda %%%.0f)",
-				attr.Key, v.Value, v.SelectionPct, v.BaselinePct))
-		}
-	}
-
-	return cat
 }

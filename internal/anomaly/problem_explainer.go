@@ -190,6 +190,12 @@ func (e *ProblemExplainer) run(ctx context.Context) {
 		if strings.TrimSpace(summary) == "" {
 			continue
 		}
+		// v0.9.1208 (Faz 6.3b) — çıktı KALKANI: verdict yolunun K3'üyle
+		// AYNI makine (internal/rca). Modele GÖSTERİLMEMİŞ servis-biçimli
+		// bir ad anlatıda geçiyorsa satır dürüstçe işaretlenir — auto
+		// özet listede kimsenin sorgulamadan okuduğu metin, uydurma bir
+		// servis adı orada kalkansız yaşayamaz (plan kabulü).
+		summary = shieldNarrative(summary, buildProblemPrompt(p, bundle, hyp), p.Service, hyp)
 		if err := e.store.UpsertProblemAISummary(ctx, p.ID, summary); err != nil {
 			log.Printf("[problem-explainer] write %s: %v", p.ID, err)
 			continue

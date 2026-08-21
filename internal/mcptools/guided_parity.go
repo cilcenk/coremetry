@@ -310,7 +310,8 @@ type getDBHealthArgs struct {
 
 func getDBHealthTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "get_db_health",
+		Name:             "get_db_health",
+		ShortDescription: "Hangi VERİTABANI yavaş/hatalı — filo geneli (db.system, instance, database) RED kırılımı. Servis filtresi YOK; gecikme İSTEMCİ tarafında ölçülür (havuz beklemesi dahil).",
 		Description: "Answer 'which DATABASE is slow / erroring' — the fleet-wide database breakdown from the 5-minute pre-aggregate: one row per " +
 			"(db.system, instance, database) with calls, errors, error rate, avg and p50/p95/p99 latency, busiest first, plus a slowest_by_p95 shortcut. " +
 			"This is the client-side view: latency is measured on the CALLING service's span, so it includes network and connection-pool wait, not just " +
@@ -554,7 +555,8 @@ type getMessagingHealthArgs struct {
 
 func getMessagingHealthTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "get_messaging_health",
+		Name:             "get_messaging_health",
+		ShortDescription: "Kuyruk/topic tarafı — (sistem, cluster, destination) RED + producer/consumer ayrımı. Filo geneli. CONSUMER LAG ÖLÇÜLMÜYOR; asla lag değeri verme.",
 		Description: "Answer 'how is the QUEUE/TOPIC side doing' — the fleet-wide messaging breakdown from the 5-minute pre-aggregate: one row per " +
 			"(messaging.system, cluster, destination) with calls, errors, error rate, avg/p50/p95/p99, plus the producer/consumer split " +
 			"(produce_calls / consume_calls and their separate p95s) and the busiest calling services. " +
@@ -892,7 +894,8 @@ type getPodHealthArgs struct {
 
 func getPodHealthTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "get_pod_health",
+		Name:             "get_pod_health",
+		ShortDescription: "Pod/JVM durumu (OTel runtime): `service` ile o servisin pod envanteri + heap doluluğu, service'siz filo geneli heap sıralaması. Restart sayısı ve pod fazı YOK.",
 		Description: "Answer 'how are the PODS / the JVM doing' from OTel runtime metrics (no kube-state-metrics needed). TWO MODES: " +
 			"with `service` you get that service's pod inventory (per pod: up flag, CPU %, memory, last-seen) PLUS its JVM heap saturation; " +
 			"without `service` you get the fleet-wide heap-saturation ranking, fullest first. " +
@@ -1150,7 +1153,8 @@ type listProblemWindowEventsArgs struct {
 
 func listProblemWindowEventsTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "list_problem_window_events",
+		Name:             "list_problem_window_events",
+		ShortDescription: "Pencerede AÇILAN ve ÇÖZÜLEN tüm Problem'ler (vardiya devri sorusu). list_problems yalnız ŞU ANKİ açık kümeyi verir — gece patlayıp kapanan olay orada görünmez.",
 		Description: "Answer 'what HAPPENED in this window' — every Problem that opened OR resolved inside it, RESOLVED ONES INCLUDED, with " +
 			"opened/resolved/still_open counters. This is the shift-handover question ('what happened overnight'), and it is the tool list_problems " +
 			"cannot answer: list_problems shows the CURRENT set (status=open by default), so an incident that fired at 02:00 and cleared at 02:40 is " +

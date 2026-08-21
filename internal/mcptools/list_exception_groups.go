@@ -26,7 +26,8 @@ type listExceptionGroupsArgs struct {
 
 func listExceptionGroupsTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "list_exception_groups",
+		Name:             "list_exception_groups",
+		ShortDescription: "Pencerede aktif, parmak izine gruplu istisnalar (tip, mesaj, servis, tekrar sayısı, ilk/son görülme, triyaj). 'X servisinde hangi hatalar patlıyor'.",
 		Description: "List fingerprint-grouped exceptions active in the window " +
 			"(type, message, service, occurrences, first/last seen, triage state) — the same read the Exceptions page uses. " +
 			"Use this to answer 'which errors are firing in service X' before constructing log searches; " +

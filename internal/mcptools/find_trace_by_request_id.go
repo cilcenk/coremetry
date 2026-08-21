@@ -109,7 +109,8 @@ type findTraceByRequestIDArgs struct {
 
 func findTraceByRequestIDTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "find_trace_by_request_id",
+		Name:             "find_trace_by_request_id",
+		ShortDescription: "Kurumsal YAPILANDIRILMIŞ istek numarası → trace id; pencere kimliğin kendi damgasından gelir (bu yüzden range_s yok). Logda arar. found=false iken hiçbir şey uydurma.",
 		Description: "Resolve a STRUCTURED enterprise request id — the fixed-width string the operator's own systems stamp on every request — " +
 			"to the trace that served it. This is the pasted-id entry point for ids that are NOT trace/span ids: the layout is " +
 			"[function code 7][channel 6][sub-code 4][customer no 10][date YYYYMMDD][time HHMMSSsss][sequence digits], e.g. the synthetic " +

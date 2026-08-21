@@ -43,6 +43,20 @@
 //     kapıdadır; buradaki alan tek gerçek kaynak olduğu için MCP
 //     dispatch'i ve in-app sohbet spec listesi ayrışamaz.
 //
+//   - Kompakt görünüm (v0.9.1230): her tool AYRICA bir
+//     mcp.Tool.ShortDescription taşır — 2-3 cümlelik TÜRKÇE sözleşme.
+//     Aynı kayıt defterinin iki tüketicisinin bağlam bütçesi zıt: dış
+//     MCP istemcisi kataloğu bir kez okur (tam İngilizce metni görür,
+//     tools/list DEĞİŞMEDİ), in-app sohbetteki gemma4 ise onu HER TUR
+//     yeniden yutuyordu — ölçüm: 33 tool = 24.268 B açıklama +
+//     17.672 B şema, döngü 5 tura kadar. Sohbet yolu artık
+//     ChatDescription()'ı okur (kompakt toplam 5.671 B).
+//     YENİ TOOL EKLERKEN: kompakt metni de yaz — ikisi aynı literal'de
+//     yan yana durur ve short_desc_test.go boş bırakılmasına izin
+//     vermez. Şemalar bilinçli olarak KISALTILMAZ: arg adı/varsayılanı
+//     doğru çağrının koşulu, orada kazanılan bayt yanlış argümanla
+//     harcanan bir tura değmez.
+//
 // Tool catalogue (33 tools; sayım v0.9.1050'de düzeltildi — blok
 // v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu;
 // v0.9.1227'de get_operation_health ile 33; v0.9.1141'ta beş keşif
@@ -464,8 +478,9 @@ type listServicesArgs struct {
 
 func listServicesTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name:        "list_services",
-		Description: "List Coremetry services with their current RPS, error rate, and p99 latency. Reads the 5-minute pre-aggregate so it's cheap to call repeatedly. Use this as the entry point when investigating an incident: 'which services are unhealthy right now?'. Pass env to scope the numbers to one deployment environment.",
+		Name:             "list_services",
+		ShortDescription: "Servisleri canlı RED'iyle listele (rps, hata oranı, p99). Olay araştırmasının giriş noktası: 'şu an hangi servis sağlıksız'. env ile tek ortama daralt.",
+		Description:      "List Coremetry services with their current RPS, error rate, and p99 latency. Reads the 5-minute pre-aggregate so it's cheap to call repeatedly. Use this as the entry point when investigating an incident: 'which services are unhealthy right now?'. Pass env to scope the numbers to one deployment environment.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -528,8 +543,9 @@ type getProblemRootCauseArgs struct {
 
 func getProblemRootCauseTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name:        "get_problem_root_cause",
-		Description: "Return Coremetry's synthesized root-cause hypothesis for a Problem: the #1 suspect service, a confidence score (0-1, honestly low when evidence is thin), the full ranked list of candidate causes (each with a blended score and the topology hop-path from the anchor), and the recent deploy the correlator weighted (if any). This is the SAME correlation intelligence the UI shows on the problem row — call it after list_problems to answer 'what caused problem X?' without manually cross-referencing deploys, error spikes, and downstream timeouts. Read-only and cheap (one pre-computed lookup). Returns computed=false when the worker has not synthesized a hypothesis for this problem yet.\n\nWhen the anchor was a P1, the result also carries the INVESTIGATION: `checked` lists every signal family the worker actually inspected (pods/saturation, logs, exceptions, business dimensions) with found=true/false, and `business` breaks the failure down by channel/function code. CRITICAL: never cite a signal whose checked entry says found=false as a cause — it was looked at and nothing was there. If every entry is found=false, say the evidence is insufficient instead of naming a cause.",
+		Name:             "get_problem_root_cause",
+		ShortDescription: "Bir Problem'in sentezlenmiş kök-neden hipotezi: baş şüpheli, güven skoru, aday sıralaması, ilgili deploy. checked'de found=false olan sinyali ASLA sebep gösterme.",
+		Description:      "Return Coremetry's synthesized root-cause hypothesis for a Problem: the #1 suspect service, a confidence score (0-1, honestly low when evidence is thin), the full ranked list of candidate causes (each with a blended score and the topology hop-path from the anchor), and the recent deploy the correlator weighted (if any). This is the SAME correlation intelligence the UI shows on the problem row — call it after list_problems to answer 'what caused problem X?' without manually cross-referencing deploys, error spikes, and downstream timeouts. Read-only and cheap (one pre-computed lookup). Returns computed=false when the worker has not synthesized a hypothesis for this problem yet.\n\nWhen the anchor was a P1, the result also carries the INVESTIGATION: `checked` lists every signal family the worker actually inspected (pods/saturation, logs, exceptions, business dimensions) with found=true/false, and `business` breaks the failure down by channel/function code. CRITICAL: never cite a signal whose checked entry says found=false as a cause — it was looked at and nothing was there. If every entry is found=false, say the evidence is insufficient instead of naming a cause.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -627,8 +643,9 @@ type getServiceHealthArgs struct {
 
 func getServiceHealthTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name:        "get_service_health",
-		Description: "Get RED metrics (rate, errors, duration p99) + open problem count for one service over a window. Use after list_services to drill into a specific service's recent health. Pass env to scope both to one deployment environment.",
+		Name:             "get_service_health",
+		ShortDescription: "TEK servisin RED'i + açık problem sayısı, verilen pencerede. list_services'ten sonraki kazı adımı. env ile tek ortama daralt.",
+		Description:      "Get RED metrics (rate, errors, duration p99) + open problem count for one service over a window. Use after list_services to drill into a specific service's recent health. Pass env to scope both to one deployment environment.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -702,8 +719,9 @@ type listProblemsArgs struct {
 
 func listProblemsTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name:        "list_problems",
-		Description: "List Coremetry Problems (alerts that fired). Default filters to status=open. Use priority=P1 for the most urgent. Each problem has rule_id + service + severity + first_seen + a priority reason explaining why it's at its current P1/P2/P3 tier. When Coremetry's deterministic correlation engine has synthesized a root-cause verdict for a problem, the row also carries rootCause {topSuspect, topScore, confidence} — treat it as the primary root-cause signal instead of guessing. Pass env to narrow to one deployment environment (service-scoped: problems of services that ran in that env).",
+		Name:             "list_problems",
+		ShortDescription: "Problem'leri (patlamış alarmlar) listele; varsayılan status=open, priority=P1 en acil. Satır rootCause taşıyorsa birincil kök-neden sinyali odur, tahmin etme.",
+		Description:      "List Coremetry Problems (alerts that fired). Default filters to status=open. Use priority=P1 for the most urgent. Each problem has rule_id + service + severity + first_seen + a priority reason explaining why it's at its current P1/P2/P3 tier. When Coremetry's deterministic correlation engine has synthesized a root-cause verdict for a problem, the row also carries rootCause {topSuspect, topScore, confidence} — treat it as the primary root-cause signal instead of guessing. Pass env to narrow to one deployment environment (service-scoped: problems of services that ran in that env).",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -804,8 +822,9 @@ type listAnomaliesArgs struct {
 
 func listAnomaliesTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name:        "list_anomalies",
-		Description: "List recent anomaly events (log-pattern + trace-op + ML detectors). Anomalies are 'something changed against baseline' notices — not hard alerts. Use this when investigating a service whose RED metrics look normal but the operator suspects a behavior shift. NOTE: the service filter is APPROXIMATE — a wider fleet slice is fetched and post-filtered, so an empty result for one service means 'none in the fetched slice', not a proven zero; do not state 'this service has no anomalies' as certain.",
+		Name:             "list_anomalies",
+		ShortDescription: "Son anomali olayları — 'baseline'a göre bir şey değişti' bildirimleri, sert alarm değil. Servis filtresi YAKLAŞIK: boş sonuç 'bu serviste yok' demek DEĞİLDİR.",
+		Description:      "List recent anomaly events (log-pattern + trace-op + ML detectors). Anomalies are 'something changed against baseline' notices — not hard alerts. Use this when investigating a service whose RED metrics look normal but the operator suspects a behavior shift. NOTE: the service filter is APPROXIMATE — a wider fleet slice is fetched and post-filtered, so an empty result for one service means 'none in the fetched slice', not a proven zero; do not state 'this service has no anomalies' as certain.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -874,8 +893,9 @@ type searchLogsArgs struct {
 
 func searchLogsTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name:        "search_logs",
-		Description: "Full-text + structured search across logs. Routes to whichever backend Coremetry is configured for (ClickHouse or Elasticsearch). Use trace_id to pull every log line belonging to one trace. Use severity_min=17 for errors only (OTel severity number; 17=ERROR, 21=FATAL). HONESTY ENVELOPE: the response may carry partial=true (soft timeout / failed shards — rows are a SUBSET of the true answer), shardsFailed>0, totalIsLowerBound=true (total is 'at least', not exact) and envUnapplied=true (an env filter was requested but could not be applied — results are env-UNFILTERED). Never present a partial or env-unfiltered result as complete/narrowed; say so.",
+		Name:             "search_logs",
+		ShortDescription: "Loglarda tam metin + yapısal arama (CH ya da ES). trace_id ile bir trace'in tüm satırları, severity_min=17 yalnız hatalar. partial / envUnapplied bayraklarını cevaba taşı.",
+		Description:      "Full-text + structured search across logs. Routes to whichever backend Coremetry is configured for (ClickHouse or Elasticsearch). Use trace_id to pull every log line belonging to one trace. Use severity_min=17 for errors only (OTel severity number; 17=ERROR, 21=FATAL). HONESTY ENVELOPE: the response may carry partial=true (soft timeout / failed shards — rows are a SUBSET of the true answer), shardsFailed>0, totalIsLowerBound=true (total is 'at least', not exact) and envUnapplied=true (an env filter was requested but could not be applied — results are env-UNFILTERED). Never present a partial or env-unfiltered result as complete/narrowed; say so.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -981,8 +1001,9 @@ func traceBodyPayload(traceID string, spans []chstore.SpanRow) map[string]any {
 
 func getTraceTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name:        "get_trace",
-		Description: "Fetch the spans of one trace ID as a waterfall: service, operation, duration, error status, parent_span_id. Use after search_logs surfaces a trace ID, or directly from a problem's correlated traces. Bounded: at most 200 spans are returned — all ERROR spans are kept first, then the slowest ones; when the trace is larger, truncated=true and total_span_count carries the real size, so never claim to have seen the whole trace while truncated is true.",
+		Name:             "get_trace",
+		ShortDescription: "Bir trace ID'sinin span şelalesi (servis, operasyon, süre, hata, parent_span_id). En çok 200 span; truncated=true iken 'tüm trace'i gördüm' deme.",
+		Description:      "Fetch the spans of one trace ID as a waterfall: service, operation, duration, error status, parent_span_id. Use after search_logs surfaces a trace ID, or directly from a problem's correlated traces. Bounded: at most 200 spans are returned — all ERROR spans are kept first, then the slowest ones; when the trace is larger, truncated=true and total_span_count carries the real size, so never claim to have seen the whole trace while truncated is true.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -1020,8 +1041,9 @@ type queryMetricArgs struct {
 
 func queryMetricTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name:        "query_metric",
-		Description: "Run a time-bucketed query against ingested OTel metrics. Returns one or more series of {time, value} points. Use aggregation='p99' for latency histograms, 'sum' for counters, 'avg' for gauges. Pair with the OTel semantic conventions (e.g. http.server.request.duration → p99 / ms).",
+		Name:             "query_metric",
+		ShortDescription: "Ingest edilmiş OTel metriklerinde zaman kovalı sorgu → {time, value} serileri. p99 gecikme histogramı, sum sayaç, avg gauge için.",
+		Description:      "Run a time-bucketed query against ingested OTel metrics. Returns one or more series of {time, value} points. Use aggregation='p99' for latency histograms, 'sum' for counters, 'avg' for gauges. Pair with the OTel semantic conventions (e.g. http.server.request.duration → p99 / ms).",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -1145,8 +1167,9 @@ func normalizeRenderChart(a renderChartArgs) (norm renderChartArgs, errMsg strin
 
 func renderChartTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name:        "render_chart",
-		Description: "Show the operator a LIVE chart of one RED metric (request rate, error rate, or a latency percentile) for a service, optionally narrowed to one operation. Call this when the operator asks to SEE a graph ('grafiğini göster', 'çiz', 'plot the error rate') or when a visual trend answers better than numbers. The server validates the service name and acknowledges; the chat UI then draws the chart from live telemetry — do NOT describe the data points or draw ASCII charts yourself. Cheap: one service-name lookup, no span scan. Outside the in-app chat (plain MCP clients) it returns the validated chart spec without rendering.",
+		Name:             "render_chart",
+		ShortDescription: "Operatöre CANLI grafik göster (istek hızı / hata oranı / gecikme yüzdeliği), servis + isteğe bağlı operasyon. 'Grafiğini göster' dendiğinde çağır; veri noktalarını sen anlatma.",
+		Description:      "Show the operator a LIVE chart of one RED metric (request rate, error rate, or a latency percentile) for a service, optionally narrowed to one operation. Call this when the operator asks to SEE a graph ('grafiğini göster', 'çiz', 'plot the error rate') or when a visual trend answers better than numbers. The server validates the service name and acknowledges; the chat UI then draws the chart from live telemetry — do NOT describe the data points or draw ASCII charts yourself. Cheap: one service-name lookup, no span scan. Outside the in-app chat (plain MCP clients) it returns the validated chart spec without rendering.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

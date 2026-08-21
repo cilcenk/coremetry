@@ -197,7 +197,8 @@ type listOperationsArgs struct {
 
 func listOperationsTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "list_operations",
+		Name:             "list_operations",
+		ShortDescription: "Bir servisin ürettiği operasyon (OTel span) adları KATALOĞU. render_chart'a `operation` vermeden önce çağır. Sayı YOK (onun için get_operation_health) ve zaman penceresi yok.",
 		Description: "List the operation names (OTel span names — 'GET /orders/:id', 'SELECT orders', 'consume orders.created') " +
 			"a service actually emits, optionally narrowed by a substring pattern. " +
 			"ALWAYS use this before passing `operation` to render_chart, and whenever the operator asks 'which endpoints does X expose' — " +
@@ -258,7 +259,8 @@ type listEnvironmentsArgs struct {
 
 func listEnvironmentsTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "list_environments",
+		Name:             "list_environments",
+		ShortDescription: "Telemetri üreten deploy ortamlarını (deploy_env) listele. `env` arg'ını list_services / get_service_health / list_problems'e vermeden ÖNCE çağır; uydurma ad sessizce boş döndürür.",
 		Description: "List the deployment environments (spans' deploy_env — 'int', 'uat', 'prep', 'prod' style values) that are actually " +
 			"emitting telemetry, busiest first. Use this BEFORE passing `env` to list_services, get_service_health or list_problems — " +
 			"an invented env name silently narrows those reads to nothing. " +
@@ -310,7 +312,8 @@ type listClustersArgs struct {
 
 func listClustersTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "list_clusters",
+		Name:             "list_clusters",
+		ShortDescription: "Telemetride görülen k8s/OpenShift cluster adları. search_logs'a `cluster` vermeden önce çağır — tahmin edilen ad sessizce sıfır log döndürür. Pencere bilinçli 1 saat.",
 		Description: "List the k8s / OpenShift cluster names observed in telemetry. Use this before passing `cluster` to search_logs, " +
 			"and to answer 'which clusters are we running in' — a guessed cluster name silently returns zero logs. " +
 			"Enumeration is deliberately bounded to the most recent HOUR even if you ask for more (the cluster set is infra-stable, and a wider " +
@@ -393,7 +396,8 @@ type listDeploysArgs struct {
 
 func listDeploysTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "list_deploys",
+		Name:             "list_deploys",
+		ShortDescription: "Son deploy'lar: servis, sürüm, ilk görülme (ISO + unix ns), span sayısı, impact_ready. 'Dün gece ne çıktı' + get_deploy_diff'e verilecek sürümü BURADAN al. Etki hesaplamaz.",
 		Description: "List recent deployments — per row: service, version, first-seen time (ISO + unix ns to copy verbatim), how many spans that " +
 			"version produced, and impact_ready. Fleet-wide by default; pass service to get one service's rollout history. " +
 			"This is how you answer 'what shipped last night / what changed recently' and how you FIND the version string to hand get_deploy_diff " +
@@ -520,7 +524,8 @@ type findTraceBySpanArgs struct {
 
 func findTraceBySpanTool(d Deps) mcp.Tool {
 	return mcp.Tool{
-		Name: "find_trace_by_span",
+		Name:             "find_trace_by_span",
+		ShortDescription: "Yapıştırılan çıplak 16-hex SPAN id → trace id. Katalogdaki başka hiçbir tool span id'siyle çalışmaz; önce çöz, sonra kaz. found=false iken trace id UYDURMA.",
 		Description: "Resolve a bare SPAN id (16 hex chars) to the trace id that contains it. This is the pasted-id entry point: when the operator " +
 			"hands you a span id — from a log line, an exemplar, an error report — nothing else in the catalogue can use it, because get_trace, " +
 			"get_logs_for_trace and get_exemplar_traces all key on the TRACE id. Resolve first, then drill. " +

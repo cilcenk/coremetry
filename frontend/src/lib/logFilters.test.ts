@@ -175,3 +175,39 @@ describe('exists filtresi', () => {
     ]);
   });
 });
+
+// ── v0.9.1219 (dilim 1) — is-one-of + pill edit modeli ──────────────
+import { replaceFilterAt } from './logFilters';
+
+describe('is-one-of + edit', () => {
+  it('compile: key:("a" OR "b") + NOT hâli', () => {
+    const fs = [
+      { key: 'level', value: '', negated: false, disabled: false, values: ['error', 'fatal'] },
+      { key: 'svc', value: '', negated: true, disabled: false, values: ['a', 'b'] },
+    ];
+    expect(compileSearch(fs, '')).toBe('level:("error" OR "fatal") AND NOT svc:("a" OR "b")');
+  });
+
+  it('tek elemanlı values düz eşitliğe düşer', () => {
+    const fs = [{ key: 'k', value: '', negated: false, disabled: false, values: ['x'] }];
+    expect(compileSearch(fs, '')).toBe('k:"x"');
+  });
+
+  it('URL gidiş-dönüşü: 6. eleman yalnız çok-değerde; eski biçimler aynen', () => {
+    const fs = [{ key: 'level', value: '', negated: false, disabled: false, values: ['e', 'f'] }];
+    const enc = encodeFiltersParam(fs);
+    expect(enc).toBe('[["level","",0,0,0,["e","f"]]]');
+    expect(parseFiltersParam(enc)).toEqual(fs);
+    expect(parseFiltersParam('[["a","x",0,0]]')).toEqual([
+      { key: 'a', value: 'x', negated: false, disabled: false },
+    ]);
+  });
+
+  it('replaceFilterAt: yerinde değişim; boş anahtar düşürür; aralık dışı no-op', () => {
+    const fs = [{ key: 'a', value: '1', negated: false, disabled: false }];
+    const next = { key: 'b', value: '2', negated: true, disabled: false };
+    expect(replaceFilterAt(fs, 0, next)).toEqual([next]);
+    expect(replaceFilterAt(fs, 0, { ...next, key: ' ' })).toEqual([]);
+    expect(replaceFilterAt(fs, 5, next)).toEqual(fs);
+  });
+});

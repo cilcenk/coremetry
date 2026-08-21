@@ -14,6 +14,9 @@ export interface LogFilter {
   value: string;
   negated: boolean;   // NOT key:value
   disabled: boolean;  // kept in the bar but excluded from the query
+  // v0.9.1219 (dilim 1) — is-one-of: value yerine values (≥2 değer),
+  // `key:("a" OR "b")` olarak derlenir; negated "hiçbiri" demek.
+  values?: string[];
   // v0.9.1217 (Kibana paritesi, dilim 5) — varlık filtresi: değer değil
   // alanın KENDİSİ aranıyor (`_exists_:key`). value boş kalır; negated
   // "alan YOK" anlamına gelir. NOT: ES query_string'te birebir çalışır;
@@ -40,9 +43,14 @@ export function phraseQuote(s: string): string {
 export function compileSearch(filters: LogFilter[], query: string): string {
   const parts = filters
     .filter(f => !f.disabled)
-    .map(f => f.exists
-      ? `${f.negated ? 'NOT ' : ''}_exists_:${f.key}`
-      : `${f.negated ? 'NOT ' : ''}${f.key}:${phraseQuote(f.value)}`);
+    .map(f => {
+      const neg = f.negated ? 'NOT ' : '';
+      if (f.exists) return `${neg}_exists_:${f.key}`;
+      if (f.values && f.values.length > 1) {
+        return `${neg}${f.key}:(${f.values.map(phraseQuote).join(' OR ')})`;
+      }
+      return `${neg}${f.key}:${phraseQuote(f.values?.[0] ?? f.value)}`;
+    });
   const q = query.trim();
   if (q) parts.push(parts.length > 0 && /\bOR\b/i.test(q) ? `(${q})` : q);
   return parts.join(' AND ');
@@ -81,9 +89,13 @@ export function encodeFiltersParam(filters: LogFilter[]): string {
   if (filters.length === 0) return '';
   // v0.9.1217 — 5. eleman exists bayrağı; 0 iken hiç yazılmaz ki eski
   // linkler/kayıtlı görünümler bayt-bayt aynı kalsın.
-  return JSON.stringify(filters.map(f => (f.exists
-    ? [f.key, f.value, f.negated ? 1 : 0, f.disabled ? 1 : 0, 1]
-    : [f.key, f.value, f.negated ? 1 : 0, f.disabled ? 1 : 0])));
+  // 6. eleman values dizisi (yalnız is-one-of'ta) — eski biçim aynen.
+  return JSON.stringify(filters.map(f => {
+    const base: unknown[] = [f.key, f.value, f.negated ? 1 : 0, f.disabled ? 1 : 0];
+    if (f.exists) return [...base, 1];
+    if (f.values && f.values.length > 1) return [...base, 0, f.values];
+    return base;
+  }));
 }
 
 // extractHighlightTerms — the free-text query's bare terms and
@@ -163,10 +175,22 @@ export function parseFiltersParam(raw: string | null | undefined): LogFilter[] {
     const out: LogFilter[] = [];
     for (const e of arr) {
       if (!Array.isArray(e) || typeof e[0] !== 'string' || typeof e[1] !== 'string') continue;
-      out.push({ key: e[0], value: e[1], negated: !!e[2], disabled: !!e[3], ...(e[4] ? { exists: true } : {}) });
+      out.push({
+        key: e[0], value: e[1], negated: !!e[2], disabled: !!e[3],
+        ...(e[4] ? { exists: true } : {}),
+        ...(Array.isArray(e[5]) && e[5].length > 1 ? { values: e[5].map(String) } : {}),
+      });
     }
     return out;
   } catch {
     return [];
   }
+}
+
+// replaceFilterAt — pill EDIT popover'ının commit'i (v0.9.1219): i.
+// pill'i yenisiyle değiştirir; boş anahtar pill'i düşürür. SAF.
+export function replaceFilterAt(filters: LogFilter[], i: number, next: LogFilter): LogFilter[] {
+  if (i < 0 || i >= filters.length) return filters;
+  if (!next.key.trim()) return filters.filter((_, j) => j !== i);
+  return filters.map((f, j) => (j === i ? next : f));
 }

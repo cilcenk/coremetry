@@ -15,6 +15,7 @@ import { CopyButton } from '@/components/CopyButton';
 import { LogTable, DEFAULT_LOG_COLUMNS } from '@/components/LogTable';
 import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer';
 import { LogContextModal } from '@/components/LogContextModal';
+import { LogPillEditor } from '@/components/LogPillEditor';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogFieldsPanel } from '@/components/LogFieldsPanel';
 import { Button } from '@/components/ui/Button';
@@ -36,7 +37,7 @@ import { accumulatePage, narrowLoaded } from '@/lib/logAccumulate';
 import { logsToCSV, logsToNDJSON, downloadText, exportFilename } from '@/lib/logsExport';
 import {
   compileSearch, toggleFilter, encodeFiltersParam, parseFiltersParam,
-  extractHighlightTerms, toggleExistsFilter,
+  extractHighlightTerms, toggleExistsFilter, replaceFilterAt,
 } from '@/lib/logFilters';
 import type { LogFilter } from '@/lib/logFilters';
 import { logsUrlSig, writeLogsParams, readLogsParams } from '@/lib/logsUrl';
@@ -569,6 +570,8 @@ function LogsInner() {
     writeUrl(filter, next);
   };
   const negatePill  = (i: number) => applyPills(filters.map((f, j) => (j === i ? { ...f, negated: !f.negated } : f)));
+  // v0.9.1219 (dilim 1) — pill EDIT popover'ı: hangi pill düzenleniyor.
+  const [editPill, setEditPill] = useState<number | null>(null);
   const disablePill = (i: number) => applyPills(filters.map((f, j) => (j === i ? { ...f, disabled: !f.disabled } : f)));
   const removePill  = (i: number) => applyPills(filters.filter((_, j) => j !== i));
 
@@ -875,20 +878,36 @@ function LogsInner() {
             {filters.map((f, i) => {
               const tone = f.negated ? 'var(--err)' : 'var(--accent2)';
               return (
-                <span key={`${f.exists ? 'E' : 'V'}\u0000${f.key}\u0000${f.value}`} style={{
+                <span key={`${f.exists ? 'E' : 'V'}\u0000${f.key}\u0000${f.value}\u0000${(f.values ?? []).join(',')}`} style={{
+                  position: 'relative',
                   display: 'inline-flex', alignItems: 'center', gap: 5,
                   padding: '3px 6px 3px 9px', borderRadius: 4, fontSize: 11.5,
                   border: `1px solid ${f.negated ? 'var(--err)' : 'var(--border)'}`,
                   background: f.negated ? 'transparent' : 'var(--accent-soft)',
                   opacity: f.disabled ? 0.5 : 1,
                 }}>
-                  <span style={{
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                    color: tone,
-                    textDecoration: f.disabled ? 'line-through' : 'none',
-                  }}>
-                    {f.negated && <b>NOT </b>}{f.exists ? <>∃ {f.key}</> : <>{f.key}: {f.value}</>}
+                  {/* v0.9.1219 — metne tıkla = yerinde düzenle (Kibana
+                      edit-filter). Silip yeniden ekleme devri kapandı. */}
+                  <span role="button" tabIndex={0}
+                    onClick={() => setEditPill(editPill === i ? null : i)}
+                    onKeyDown={e => { if (e.key === 'Enter') setEditPill(editPill === i ? null : i); }}
+                    title="Düzenle — alan/operatör/değer"
+                    style={{
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                      color: tone, cursor: 'pointer',
+                      textDecoration: f.disabled ? 'line-through' : 'none',
+                    }}>
+                    {f.negated && <b>NOT </b>}
+                    {f.exists ? <>∃ {f.key}</>
+                      : f.values && f.values.length > 1
+                        ? <>{f.key} ∈ ({f.values.join(', ')})</>
+                        : <>{f.key}: {f.value}</>}
                   </span>
+                  {editPill === i && (
+                    <LogPillEditor filter={f} since={autocompleteSince}
+                      onApply={next => { setEditPill(null); applyPills(replaceFilterAt(filters, i, next)); }}
+                      onCancel={() => setEditPill(null)} />
+                  )}
                   <Button variant="ghost" size="sm" className={f.negated ? 'is-err' : undefined}
                     onClick={() => negatePill(i)}
                     title={f.negated ? 'Include (drop the NOT)' : 'Negate — exclude matching logs'}>≠</Button>

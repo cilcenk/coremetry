@@ -1193,10 +1193,10 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// tek sinyal.
 	if ctxTrace != "" && hasDemonstrativeTrace(norm) {
 		route = guidedRoute{Intent: guidedTraceByID, TraceID: ctxTrace}
-		emit("step", map[string]string{"tool": "bağlam: ekrandaki trace (" + ctxTrace + ")"})
+		emitGuidedContextStep(emit, "bağlam: ekrandaki trace ("+ctxTrace+")")
 	} else if route.Intent == guidedNone && ctxTrace != "" && tokenHasPrefix(guidedTokens(norm), "trace") {
 		route = guidedRoute{Intent: guidedTraceByID, TraceID: ctxTrace}
-		emit("step", map[string]string{"tool": "bağlam: ekrandaki trace (" + ctxTrace + ")"})
+		emitGuidedContextStep(emit, "bağlam: ekrandaki trace ("+ctxTrace+")")
 	}
 	// v0.9.529 — soru AÇIK bir pencere taşımıyorsa ekrandaki aralığı
 	// kullan. Sabit 30dk, operatör 6 saatlik pencereye bakarken "hata
@@ -1217,7 +1217,7 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 			if route.Service != "" {
 				scope = route.Service
 			}
-			emit("step", map[string]string{"tool": "bağlam: " + scope + " (önceki sorudan)"})
+			emitGuidedContextStep(emit, "bağlam: "+scope+" (önceki sorudan)")
 		}
 	}
 	if route.Intent == guidedNone {
@@ -1434,8 +1434,47 @@ func (s *Server) guidedTeamNames(ctx context.Context) []string {
 	return names
 }
 
-func emitGuidedStep(emit func(string, any), tool, args string) {
-	emit("step", map[string]string{"tool": tool, "args": args})
+// emitGuidedStep — guided kanıt paketinin ⚙ çipi. v0.9.1229'dan beri
+// çipin KİMLİĞİNİ döndürür; çağıran o kimlikle eşli kanıtı
+// (emitGuidedStepResult) yayınlar. Kimlik üretimi chat_step_ids.go'da,
+// tek sayaçta.
+func emitGuidedStep(emit func(string, any), tool, args string) int {
+	return emitStepChip(emit, tool, args)
+}
+
+// emitGuidedStepResult — adımın KANITI (v0.9.1229).
+//
+// `segment` o adımın OKUDUĞU verinin metnidir: ya prompt'a giren
+// bloğun ta kendisi, ya da okumanın kendi çıktısı (ör. takım→servis
+// çözümlemesinin ad listesi). Model tarafından yazılmış bir özet ASLA
+// değil — özetlenmiş kanıt kanıt değildir; operatörün sınayacağı şey
+// modelin okuduğu şey olmalı.
+//
+// Birkaç okuma TEK bloğa akıyorsa (ör. pod envanteri + heap tek ortak
+// katman çağrısında) blok her iki çipe de verilir: yarısını uydurmak
+// ya da çipi ölü bırakmak, aynı bloğu iki kez göstermekten kötü.
+func emitGuidedStepResult(emit func(string, any), i int, tool, segment string, err error) {
+	emitStepEvidence(emit, i, tool, segment, err)
+}
+
+// emitGuidedContextStep — kanıt okuması OLMAYAN bağlam çipi ("bağlam:
+// ekrandaki trace (…)"). Kimlik alır (çip şeridi ile detay dizisi
+// hizada kalsın) ama eşli kanıt YAYINLAMAZ: okunan bir şey yok, yani
+// çip düz etiket olarak kalır — doğrusu da bu.
+func emitGuidedContextStep(emit func(string, any), label string) {
+	_ = emitStepChip(emit, label, "")
+}
+
+// guidedStepSegment — b'ye adım açıldığından beri YAZILAN metin.
+// strings.Builder.String() kopya üretmez, yani bu dilim ucuzdur.
+// Kanıt bloğunu satır satır b'ye yazan bundle'lar (vardiya özeti,
+// servis/operasyon sağlığı) adımın payını böyle ölçüyor.
+func guidedStepSegment(b *strings.Builder, at int) string {
+	s := b.String()
+	if at < 0 || at > len(s) {
+		return ""
+	}
+	return s[at:]
 }
 
 // withEnvArg appends the applied env to a step-event args echo so the
@@ -1506,29 +1545,42 @@ func (s *Server) guidedRootCauseBundle(ctx context.Context, emit func(string, an
 	var b strings.Builder
 	fmt.Fprintf(&b, "SORU ŞEKLİ: nedensellik — %q servisinde NE OLDU değil NEDEN OLDU sorusu.\n\n", service)
 
-	emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`","status":"open"}`, env))
+	nProb := emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`","status":"open"}`, env))
 	probs, perr := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 10))
 	if perr == nil && len(probs) > 0 {
 		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
-		emitGuidedStep(emit, "root_cause_hypotheses", "")
+		// v0.9.1229 — okumanın kanıtı hipotez EKLENMEDEN önceki bloktur;
+		// sıradaki çip aynı listeyi hipotezle gösteriyor, yani
+		// zenginleştirmenin NE KATTIĞI operatörde görünür oluyor.
+		emitGuidedStepResult(emit, nProb, "list_problems",
+			renderProblemsEvidenceTR(probs, service, env, time.Now()), nil)
+		nRC := emitGuidedStep(emit, "root_cause_hypotheses", "")
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
-		b.WriteString(renderProblemsEvidenceTR(probs, service, env, time.Now()))
+		blk := renderProblemsEvidenceTR(probs, service, env, time.Now())
+		emitGuidedStepResult(emit, nRC, "root_cause_hypotheses", blk, nil)
+		b.WriteString(blk)
 	} else {
-		b.WriteString("Bu serviste AÇIK PROBLEM YOK — dolayısıyla kayıtlı bir kök-neden hipotezi de yok. " +
-			"Aşağıdaki değişim verisiyle cevap ver ve hipotez olmadığını AÇIKÇA söyle; sebep uydurma.\n\n")
+		none := "Bu serviste AÇIK PROBLEM YOK — dolayısıyla kayıtlı bir kök-neden hipotezi de yok. " +
+			"Aşağıdaki değişim verisiyle cevap ver ve hipotez olmadığını AÇIKÇA söyle; sebep uydurma.\n\n"
+		emitGuidedStepResult(emit, nProb, "list_problems", none, perr)
+		b.WriteString(none)
 	}
 
-	emitGuidedStep(emit, "service_context", `{"service":"`+service+`"}`)
+	nCtx := emitGuidedStep(emit, "service_context", `{"service":"`+service+`"}`)
 	cx := s.buildServiceContext(ctx, service, from, to)
+	atCtx := b.Len()
 	b.WriteString(renderServiceSnapshot(cx))
 	if cx.Current.Spans == 0 {
 		b.WriteString("Bu pencerede span verisi yok — değişim de okunamıyor.\n")
 	}
+	emitGuidedStepResult(emit, nCtx, "service_context", guidedStepSegment(&b, atCtx), nil)
 
 	// Deploy: "neden bozuldu" sorusunun en sık cevabı. Ayrı bir adım
 	// olarak emit ediliyor ki operatör hangi kanıtın çekildiğini görsün.
-	emitGuidedStep(emit, "recent_deploys", `{"service":"`+service+`"}`)
-	if dep, _, derr := s.guidedDeployBundle(ctx, func(string, any) {}, service, env, rangeS); derr == nil && strings.TrimSpace(dep) != "" {
+	nDep := emitGuidedStep(emit, "recent_deploys", `{"service":"`+service+`"}`)
+	dep, _, derr := s.guidedDeployBundle(ctx, func(string, any) {}, service, env, rangeS)
+	emitGuidedStepResult(emit, nDep, "recent_deploys", dep, derr)
+	if derr == nil && strings.TrimSpace(dep) != "" {
 		b.WriteString("\n")
 		b.WriteString(dep)
 	}
@@ -1545,15 +1597,20 @@ func (s *Server) guidedRootCauseBundle(ctx context.Context, emit func(string, an
 }
 
 func (s *Server) guidedProblemsBundle(ctx context.Context, emit func(string, any), service, env string) (string, string, error) {
-	emitGuidedStep(emit, "list_problems", withEnvArg(`{"status":"open"}`, env))
+	nProb := emitGuidedStep(emit, "list_problems", withEnvArg(`{"status":"open"}`, env))
 	probs, err := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 50))
 	if err != nil {
+		emitGuidedStepResult(emit, nProb, "list_problems", "", err)
 		return "", "", err
 	}
 	probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
-	emitGuidedStep(emit, "root_cause_hypotheses", "")
+	// v0.9.1229 — çipin kanıtı: hipotez eklenmeden ÖNCEKİ liste.
+	emitGuidedStepResult(emit, nProb, "list_problems",
+		renderProblemsEvidenceTR(probs, service, env, time.Now()), nil)
+	nRC := emitGuidedStep(emit, "root_cause_hypotheses", "")
 	probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
 	evidence := renderProblemsEvidenceTR(probs, service, env, time.Now())
+	emitGuidedStepResult(emit, nRC, "root_cause_hypotheses", evidence, nil)
 	src := "açık problemler + triage önceliği + kök-neden hipotezleri (canlı)"
 	if env != "" {
 		evidence += fmt.Sprintf("Not: problem kayıtları ortam boyutu taşımaz — %q filtresi servis üyeliğiyle uygulandı (bu ortamda koşan servislerin problemleri + global kurallar).\n", env)
@@ -1570,26 +1627,32 @@ func (s *Server) guidedProblemsBundle(ctx context.Context, emit func(string, any
 // sub-read and prepends an honest one-liner so the model attributes
 // the RED numbers correctly instead of claiming they're env-scoped.
 func (s *Server) guidedServiceHealthBundle(ctx context.Context, emit func(string, any), service, env string, from, to time.Time, rangeS int64) (string, string, error) {
-	emitGuidedStep(emit, "service_context", `{"service":"`+service+`"}`)
+	nCtx := emitGuidedStep(emit, "service_context", `{"service":"`+service+`"}`)
 	cx := s.buildServiceContext(ctx, service, from, to)
 	var b strings.Builder
 	if env != "" {
 		fmt.Fprintf(&b, "Not: RED değerleri tüm ortamların toplamı (servis bağlamı ortam kırılımı yapmıyor); açık problemler %q ortamına daraltıldı.\n", env)
 	}
+	atSnap := b.Len()
 	b.WriteString(renderServiceSnapshot(cx))
 	if cx.Current.Spans == 0 {
 		b.WriteString("Bu pencerede span verisi yok.\n")
 	}
-	emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`"}`, env))
+	emitGuidedStepResult(emit, nCtx, "service_context", guidedStepSegment(&b, atSnap), nil)
+	nProb := emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`"}`, env))
 	probs, perr := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 10))
 	if perr == nil {
 		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
+		atProb := b.Len()
 		if len(probs) == 0 {
 			b.WriteString("Açık problem yok.\n")
 		} else {
 			b.WriteString(renderProblemsEvidenceTR(probs, service, env, time.Now()))
 		}
+		emitGuidedStepResult(emit, nProb, "list_problems", guidedStepSegment(&b, atProb), nil)
+	} else {
+		emitGuidedStepResult(emit, nProb, "list_problems", "", perr)
 	}
 	// v0.9.183 — CoSRE grafik: yanıta yapılandırılmış bir ```chart``` bloğu
 	// ekle; frontend (CosreChart) bunu mevcut uPlot motoruyla GERÇEK
@@ -1615,30 +1678,37 @@ func (s *Server) guidedServiceHealthBundle(ctx context.Context, emit func(string
 // service-level (no operation-scoped Problem row exists) and the
 // evidence says so.
 func (s *Server) guidedOperationHealthBundle(ctx context.Context, emit func(string, any), service, operation, env string, from, to time.Time, rangeS int64) (string, string, error) {
+	nCtx := 0
 	if argsB, merr := json.Marshal(map[string]string{"service": service, "operation": operation}); merr == nil {
-		emitGuidedStep(emit, "operation_context", string(argsB))
+		nCtx = emitGuidedStep(emit, "operation_context", string(argsB))
 	}
 	cx := s.buildOperationContext(ctx, service, operation, from, to)
 	var b strings.Builder
 	if env != "" {
 		fmt.Fprintf(&b, "Not: RED tüm ortamların toplamı; açık problemler %q ortamına daraltıldı.\n", env)
 	}
+	atSnap := b.Len()
 	b.WriteString(renderOperationSnapshot(cx))
 	if cx.Current.Spans == 0 {
 		b.WriteString("Bu pencerede bu operasyon için span verisi yok.\n")
 	}
+	emitGuidedStepResult(emit, nCtx, "operation_context", guidedStepSegment(&b, atSnap), nil)
 
-	emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`"}`, env))
+	nProb := emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`"}`, env))
 	probs, perr := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 10))
 	if perr == nil {
 		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
+		atProb := b.Len()
 		if len(probs) == 0 {
 			b.WriteString("Servis düzeyinde açık problem yok.\n")
 		} else {
 			b.WriteString("Servis düzeyinde açık problemler (operasyon-özel değil):\n")
 			b.WriteString(renderProblemsEvidenceTR(probs, service, env, time.Now()))
 		}
+		emitGuidedStepResult(emit, nProb, "list_problems", guidedStepSegment(&b, atProb), nil)
+	} else {
+		emitGuidedStepResult(emit, nProb, "list_problems", "", perr)
 	}
 
 	// v0.9.184 — operasyon-scoped canlı grafik: error_rate headline.
@@ -1704,23 +1774,29 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 		return s.guidedAskTeamEvidence(ctx, route,
 			"Oturum kimliği yok (auth kapalı ya da token kullanıcıya bağlı değil), bu yüzden kullanıcının takımını KENDİM okuyamıyorum.\n")
 	}
-	emitGuidedStep(emit, "resolve_user_team", "")
+	nTeam := emitGuidedStep(emit, "resolve_user_team", "")
 	u, uerr := s.store.GetUserByID(ctx, meta.UserID)
 	if uerr != nil || u == nil {
-		return "", "", fmt.Errorf("user lookup: %w", uerr)
+		err := fmt.Errorf("user lookup: %w", uerr)
+		emitGuidedStepResult(emit, nTeam, "resolve_user_team", "", err)
+		return "", "", err
 	}
 	if u.Team == "" {
-		return s.guidedAskTeamEvidence(ctx, route,
+		ev, src, aerr := s.guidedAskTeamEvidence(ctx, route,
 			fmt.Sprintf("Kullanıcının (%s) hesabına takım atanmamış (admin Settings → Users → Team alanı bunu kalıcı çözer).\n", u.Email))
+		emitGuidedStepResult(emit, nTeam, "resolve_user_team", ev, aerr)
+		return ev, src, aerr
 	}
 	mds, merr := s.store.ListServiceMetadata(ctx)
 	if merr != nil {
+		emitGuidedStepResult(emit, nTeam, "resolve_user_team", "", merr)
 		return "", "", merr
 	}
 	svcs := servicesForUserTeam(s.teamAliasesCtx(ctx), mds, u.Team)
 	if len(svcs) == 0 {
-		return fmt.Sprintf("%q takımı hiçbir serviste ownerTeam/sreTeam olarak geçmiyor (Service Catalog). Kullanıcıya söyle: katalogda takım ataması yapılmalı.\n", u.Team),
-			fmt.Sprintf("servis kataloğu (takım: %s)", u.Team), nil
+		ev := fmt.Sprintf("%q takımı hiçbir serviste ownerTeam/sreTeam olarak geçmiyor (Service Catalog). Kullanıcıya söyle: katalogda takım ataması yapılmalı.\n", u.Team)
+		emitGuidedStepResult(emit, nTeam, "resolve_user_team", ev, nil)
+		return ev, fmt.Sprintf("servis kataloğu (takım: %s)", u.Team), nil
 	}
 	trimmed := 0
 	if len(svcs) > maxTeamServices {
@@ -1734,22 +1810,32 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 	if trimmed > 0 {
 		header += fmt.Sprintf("Not: ilk %d servis okundu, %d servis dışarıda kaldı.\n", maxTeamServices, trimmed)
 	}
+	// v0.9.1229 — çözümün kanıtı: takım satırı + ÇÖZÜLEN servis adları.
+	// Adlar prompt'a liste olarak girmiyor ama okumanın çıktısı tam olarak
+	// bu; "hangi servisleri benim saydı" operatörün ilk sorusu.
+	emitGuidedStepResult(emit, nTeam, "resolve_user_team",
+		header+"Çözülen servisler:\n- "+strings.Join(svcs, "\n- ")+"\n", nil)
 	if mode == "problems" {
-		emitGuidedStep(emit, "list_problems", fmt.Sprintf(`{"status":"open","teamServices":%d}`, len(svcs)))
+		nProb := emitGuidedStep(emit, "list_problems", fmt.Sprintf(`{"status":"open","teamServices":%d}`, len(svcs)))
 		probs, perr := s.store.ListProblems(ctx, chstore.ProblemFilter{Status: "open", Services: svcs, Env: env, Limit: 50})
 		if perr != nil {
+			emitGuidedStepResult(emit, nProb, "list_problems", "", perr)
 			return "", "", perr
 		}
 		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
-		emitGuidedStep(emit, "root_cause_hypotheses", "")
+		emitGuidedStepResult(emit, nProb, "list_problems",
+			renderProblemsEvidenceTR(probs, "", env, time.Now()), nil)
+		nRC := emitGuidedStep(emit, "root_cause_hypotheses", "")
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
 		var b strings.Builder
 		b.WriteString(header)
+		atProb := b.Len()
 		if len(probs) == 0 {
 			fmt.Fprintf(&b, "Takımın servislerinde açık problem yok.\n")
 		} else {
 			b.WriteString(renderProblemsEvidenceTR(probs, "", env, time.Now()))
 		}
+		emitGuidedStepResult(emit, nRC, "root_cause_hypotheses", guidedStepSegment(&b, atProb), nil)
 		src := fmt.Sprintf("takım: %s (%d servis) — açık problemler + triage önceliği + kök-neden hipotezleri", u.Team, len(svcs)+trimmed)
 		return b.String(), src, nil
 	}
@@ -1764,15 +1850,17 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 		// servislerini IN ile tarıyor — servis başına ayrı çağrı,
 		// takım büyüdükçe doğrusal büyüyen bir JSON-kazıma yükü
 		// olurdu.
-		emitGuidedStep(emit, "list_exceptions", fmt.Sprintf(`{"teamServices":%d}`, len(svcs)))
+		nEx := emitGuidedStep(emit, "list_exceptions", fmt.Sprintf(`{"teamServices":%d}`, len(svcs)))
 		exs, eerr := s.store.GetExceptions(ctx, chstore.ExceptionFilter{
 			Services: svcs, GroupBy: "type-service", From: from, To: to, Limit: 30,
 		})
 		if eerr != nil {
+			emitGuidedStepResult(emit, nEx, "list_exceptions", "", eerr)
 			return "", "", eerr
 		}
 		var b strings.Builder
 		b.WriteString(header)
+		atEx := b.Len()
 		if len(exs) == 0 {
 			b.WriteString("Takımın servislerinde bu pencerede exception yok.\n")
 		} else {
@@ -1789,6 +1877,7 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 				b.WriteString("\n")
 			}
 		}
+		emitGuidedStepResult(emit, nEx, "list_exceptions", guidedStepSegment(&b, atEx), nil)
 		src := fmt.Sprintf("takım: %s (%d servis) — exception grupları", u.Team, len(svcs)+trimmed)
 		return b.String(), src, nil
 	}
@@ -1917,25 +2006,32 @@ func (s *Server) guidedTeamServicesBundle(ctx context.Context, emit func(string,
 	if team == "" {
 		return "", "", errors.New("team_services: takım adı boş")
 	}
-	emitGuidedStep(emit, "resolve_team_services", `{"team":`+jsonStr(team)+`}`)
+	nResolve := emitGuidedStep(emit, "resolve_team_services", `{"team":`+jsonStr(team)+`}`)
 	mds, merr := s.store.ListServiceMetadata(ctx)
 	if merr != nil {
+		emitGuidedStepResult(emit, nResolve, "resolve_team_services", "", merr)
 		return "", "", merr
 	}
 	svcs := servicesForUserTeam(s.teamAliasesCtx(ctx), mds, team)
 	if len(svcs) == 0 {
-		return fmt.Sprintf("%q takımı hiçbir serviste ownerTeam/sreTeam olarak geçmiyor (Service Catalog). "+
-			"Kullanıcıya söyle: katalogda takım ataması yapılmalı ya da başka bir takım adı denemeli.\n", team),
-			fmt.Sprintf("servis kataloğu (takım: %s)", team), nil
+		ev := fmt.Sprintf("%q takımı hiçbir serviste ownerTeam/sreTeam olarak geçmiyor (Service Catalog). "+
+			"Kullanıcıya söyle: katalogda takım ataması yapılmalı ya da başka bir takım adı denemeli.\n", team)
+		emitGuidedStepResult(emit, nResolve, "resolve_team_services", ev, nil)
+		return ev, fmt.Sprintf("servis kataloğu (takım: %s)", team), nil
 	}
 	trimmed := 0
 	if len(svcs) > maxTeamServices {
 		trimmed = len(svcs) - maxTeamServices
 		svcs = svcs[:maxTeamServices]
 	}
-	emitGuidedStep(emit, "team_services_red", fmt.Sprintf(`{"team":%s,"services":%d}`, jsonStr(team), len(svcs)))
+	// Çözümün kanıtı, RED okumasından ÖNCE: hangi servisler bu takım
+	// sayıldı? (v0.9.1229 — katalog eşleşmesi okumanın kendi çıktısı.)
+	emitGuidedStepResult(emit, nResolve, "resolve_team_services",
+		fmt.Sprintf("%q takımına eşleşen servisler (%d):\n- %s\n", team, len(svcs), strings.Join(svcs, "\n- ")), nil)
+	nRED := emitGuidedStep(emit, "team_services_red", fmt.Sprintf(`{"team":%s,"services":%d}`, jsonStr(team), len(svcs)))
 	rows, err := s.store.GetServicesAggFilteredIn(ctx, from, to, "", svcs, "", "", len(svcs), 0)
 	if err != nil {
+		emitGuidedStepResult(emit, nRED, "team_services_red", "", err)
 		return "", "", err
 	}
 	sortServicesByErrorRate(rows)
@@ -1961,7 +2057,9 @@ func (s *Server) guidedTeamServicesBundle(ctx context.Context, emit func(string,
 	}
 	route.TeamServices = names
 	b := strings.Builder{}
-	b.WriteString(renderTeamServicesEvidenceTR(team, rows, len(svcs), trimmed, rangeS, route.Env))
+	redBlk := renderTeamServicesEvidenceTR(team, rows, len(svcs), trimmed, rangeS, route.Env)
+	emitGuidedStepResult(emit, nRED, "team_services_red", redBlk, nil)
+	b.WriteString(redBlk)
 	// En kötü servisin canlı error_rate kartı (aile bundle'ının emsali).
 	if len(rows) > 0 && rows[0].ErrorCount > 0 {
 		b.WriteString(chartFence(guidedChartSpec{
@@ -1991,11 +2089,13 @@ func jsonStr(s string) string {
 // can answer "hangisinde" directly; the worst service gets a live
 // error_rate chart.
 func (s *Server) guidedFamilyHealthBundle(ctx context.Context, emit func(string, any), family []string, env string, from, to time.Time, rangeS int64) (string, string, error) {
+	nFam := 0
 	if argsB, merr := json.Marshal(map[string]any{"services": family}); merr == nil {
-		emitGuidedStep(emit, "family_context", string(argsB))
+		nFam = emitGuidedStep(emit, "family_context", string(argsB))
 	}
 	rows, err := s.store.GetServicesAggFilteredIn(ctx, from, to, "", family, "", "", len(family), 0)
 	if err != nil {
+		emitGuidedStepResult(emit, nFam, "family_context", "", err)
 		return "", "", err
 	}
 	// Most-broken first: errors desc, then error-rate, then traffic.
@@ -2031,6 +2131,9 @@ func (s *Server) guidedFamilyHealthBundle(ctx context.Context, emit func(string,
 	if len(rows) == 0 {
 		b.WriteString("Bu pencerede ailenin hiçbir servisinden span verisi yok.\n")
 	}
+	// v0.9.1229 — kanıt, grafik bloğundan ÖNCEKİ metin: ```chart``` fence'i
+	// okumanın çıktısı değil, ondan türetilmiş bir görselleştirme talimatı.
+	emitGuidedStepResult(emit, nFam, "family_context", b.String(), nil)
 	// Worst-offender chart: the family question is about errors, so the
 	// top row (errors-ranked) gets the live error_rate card.
 	if len(rows) > 0 && rows[0].ErrorCount > 0 {
@@ -2184,16 +2287,19 @@ func (s *Server) guidedOperationNames(ctx context.Context, service string) []str
 // TraceFilter.Env — the direct deploy_env conjunct; a non-empty env
 // takes the raw-fallback path exactly like the /traces ?env= pick.
 func (s *Server) guidedSlowTracesBundle(ctx context.Context, emit func(string, any), service, env string, from, to time.Time, rangeS int64) (string, string, error) {
-	emitGuidedStep(emit, "slow_traces", withEnvArg(`{"service":"`+service+`","sort":"duration"}`, env))
+	nSlow := emitGuidedStep(emit, "slow_traces", withEnvArg(`{"service":"`+service+`","sort":"duration"}`, env))
 	rows, _, _, err := s.store.GetTraces(ctx, guidedTraceFilter(service, env, from, to))
 	if err != nil {
+		emitGuidedStepResult(emit, nSlow, "slow_traces", "", err)
 		return "", "", err
 	}
 	src := fmt.Sprintf("duration'a göre sıralı trace listesi (son %s)", fmtAgoTR(rangeS))
 	if env != "" {
 		src += fmt.Sprintf(", ortam: %s", env)
 	}
-	return renderSlowTracesEvidenceTR(rows, service, env, rangeS), src, nil
+	ev := renderSlowTracesEvidenceTR(rows, service, env, rangeS)
+	emitGuidedStepResult(emit, nSlow, "slow_traces", ev, nil)
+	return ev, src, nil
 }
 
 // guidedTraceBundle — v0.9.537. Yapıştırılan/bağlamdan gelen trace
@@ -2205,18 +2311,23 @@ func (s *Server) guidedSlowTracesBundle(ctx context.Context, emit func(string, a
 // düşerse operatör yine cevapsız kalırdı; model "bulunamadı + olası
 // nedenler" kanıtını anlatır (guided prompt uydurmayı yasaklar).
 func (s *Server) guidedTraceBundle(ctx context.Context, emit func(string, any), traceID string) (string, string, error) {
-	emitGuidedStep(emit, "trace", `{"id":"`+traceID+`"}`)
+	nTrace := emitGuidedStep(emit, "trace", `{"id":"`+traceID+`"}`)
 	in, err := s.buildTraceExplainInput(ctx, traceID)
 	if errors.Is(err, errExplainTraceNotFound) {
 		ev := fmt.Sprintf("Trace %s Coremetry deposunda BULUNAMADI.\n"+
 			"Olası nedenler: ID eksik/yanlış kopyalandı, trace retention "+
 			"penceresinin dışında kaldı, ya da bu ortam yerine başka bir "+
 			"ortamda üretildi. Kullanıcıya bunu söyle; span/istatistik UYDURMA.", traceID)
+		// Bulunamamak HATA DEĞİL kanıttır (ok=true): çipin arkasında
+		// aranan kimlik ve neden bulunamamış olabileceği duruyor.
+		emitGuidedStepResult(emit, nTrace, "trace", ev, nil)
 		return ev, "trace araması (bulunamadı)", nil
 	}
 	if err != nil {
+		emitGuidedStepResult(emit, nTrace, "trace", "", err)
 		return "", "", err
 	}
+	emitGuidedStepResult(emit, nTrace, "trace", in.User, nil)
 	return in.User, fmt.Sprintf("trace %s — span kanıtı + ilişkili loglar", traceID), nil
 }
 
@@ -2232,9 +2343,10 @@ func (s *Server) guidedTraceBundle(ctx context.Context, emit func(string, any), 
 // indeks yok, arama zaman-sınırlı bir tarama. Sınırsız pencere
 // prod'da pahalıya kaçardı.
 func (s *Server) guidedSpanBundle(ctx context.Context, emit func(string, any), spanID string, from, to time.Time) (string, string, error) {
-	emitGuidedStep(emit, "span", `{"id":"`+spanID+`"}`)
+	nSpan := emitGuidedStep(emit, "span", `{"id":"`+spanID+`"}`)
 	traceID, err := s.store.FindTraceIDBySpan(ctx, spanID, from, to)
 	if err != nil {
+		emitGuidedStepResult(emit, nSpan, "span", "", err)
 		return "", "", err
 	}
 	if traceID == "" {
@@ -2245,20 +2357,24 @@ func (s *Server) guidedSpanBundle(ctx context.Context, emit func(string, any), s
 			"aralığının dışında (aralığı genişletmeyi öner), ya da retention "+
 			"penceresinin dışına düştü. Kullanıcıya bunu söyle; span/istatistik "+
 			"UYDURMA.", spanID)
+		emitGuidedStepResult(emit, nSpan, "span", ev, nil)
 		return ev, "span araması (bulunamadı)", nil
 	}
 	in, terr := s.buildTraceExplainInput(ctx, traceID)
 	if errors.Is(terr, errExplainTraceNotFound) {
 		ev := fmt.Sprintf("Span %s trace %s'e ait ama trace'in span'leri okunamadı "+
 			"(retention ya da kısmi yazım). Kullanıcıya bunu söyle; UYDURMA.", spanID, traceID)
+		emitGuidedStepResult(emit, nSpan, "span", ev, nil)
 		return ev, "span → trace (span'ler okunamadı)", nil
 	}
 	if terr != nil {
+		emitGuidedStepResult(emit, nSpan, "span", "", terr)
 		return "", "", terr
 	}
 	// Hangi span'in sorulduğu anlatımın ÖNÜNE yazılıyor: model
 	// waterfall içinde onu işaret edebilsin.
 	ev := fmt.Sprintf("SORULAN SPAN: %s (trace %s içinde)\n\n%s", spanID, traceID, in.User)
+	emitGuidedStepResult(emit, nSpan, "span", ev, nil)
 	return ev, fmt.Sprintf("span %s → trace %s kanıtı", spanID, traceID), nil
 }
 
@@ -2294,13 +2410,9 @@ func (s *Server) guidedRequestIDBundle(ctx context.Context, emit func(string, an
 	route.ReqWindowFromMs = from.UnixMilli()
 	route.ReqWindowToMs = to.UnixMilli()
 
-	emitGuidedStep(emit, "parse_request_id", fmt.Sprintf(`{"time":%q,"tz":%q}`, reqid.FmtLocal(id.TS), id.TS.Location().String()))
-	emitGuidedStep(emit, "search_logs", fmt.Sprintf(`{"request_id":%q,"from":%q,"to":%q}`,
+	nParse := emitGuidedStep(emit, "parse_request_id", fmt.Sprintf(`{"time":%q,"tz":%q}`, reqid.FmtLocal(id.TS), id.TS.Location().String()))
+	nSearch := emitGuidedStep(emit, "search_logs", fmt.Sprintf(`{"request_id":%q,"from":%q,"to":%q}`,
 		id.Raw, reqid.FmtLocal(from), reqid.FmtLocal(to)))
-	res, err := reqid.Resolve(ctx, s.logs, id)
-	if err != nil {
-		return "", "", err
-	}
 
 	backend := "log"
 	if s.logs != nil {
@@ -2308,18 +2420,29 @@ func (s *Server) guidedRequestIDBundle(ctx context.Context, emit func(string, an
 	}
 	// Kimliğin kendisi kanıtın BAŞINDA: model hangi işlemi anlattığını
 	// (kanal, müşteri, saat) söyleyebilsin.
+	//
+	// v0.9.1229 — bu blok AYRIŞTIRMA adımının kanıtı, o yüzden log
+	// aramasından ÖNCE kuruluyor: arama düşse bile operatör kimlikten
+	// nelerin okunduğunu (ve hangi pencerenin tarandığını) görebilmeli.
 	head := fmt.Sprintf("SORULAN REQUEST ID: %s\n"+
 		"Kimlikten okunan: işlem zamanı %s · fonksiyon %s · kanal %s · alt kod %s · müşteri no %s\n"+
 		"Aranan pencere: %s → %s (kimliğin damgası ±10dk), aranan yer: LOG kayıtları (%s backend).\n",
 		id.Raw, reqid.FmtLocal(id.TS), id.FuncCode, id.Channel, id.SubCode, id.CustomerNo,
 		reqid.FmtLocal(from), reqid.FmtLocal(to), backend)
+	emitGuidedStepResult(emit, nParse, "parse_request_id", head, nil)
+
+	res, err := reqid.Resolve(ctx, s.logs, id)
+	if err != nil {
+		emitGuidedStepResult(emit, nSearch, "search_logs", "", err)
+		return "", "", err
+	}
 	if res.Partial {
 		head += "UYARI: log backend'i KISMİ cevap döndürdü (soft timeout / eksik shard) — " +
 			"aşağıdaki sonuç gerçek cevabın alt kümesi olabilir.\n"
 	}
 
 	if res.TraceID == "" {
-		ev := head + fmt.Sprintf(
+		body := fmt.Sprintf(
 			"\nBu pencerede bu kimliği taşıyan, trace bağlamı olan bir log kaydı BULUNAMADI "+
 				"(eşleşen log satırı: %d).\n"+
 				"Olası nedenler: kimlik eksik/yanlış kopyalandı; kimliği loglayan bileşen trace "+
@@ -2327,7 +2450,8 @@ func (s *Server) guidedRequestIDBundle(ctx context.Context, emit func(string, an
 				"araması gövdeyi tarar); ya da kayıtlar retention penceresinin dışına düştü.\n"+
 				"Kullanıcıya BUNU ve aranan pencereyi söyle; trace/span/süre UYDURMA. "+
 				"Varsa dış log köprüsü linkini kullanmasını öner.", res.MatchedLogs)
-		return ev, fmt.Sprintf("request_id → log araması (%s → %s, bulunamadı)",
+		emitGuidedStepResult(emit, nSearch, "search_logs", body, nil)
+		return head + body, fmt.Sprintf("request_id → log araması (%s → %s, bulunamadı)",
 			reqid.FmtLocal(from), reqid.FmtLocal(to)), nil
 	}
 
@@ -2338,22 +2462,30 @@ func (s *Server) guidedRequestIDBundle(ctx context.Context, emit func(string, an
 	route.Service = res.Service
 	in, terr := s.buildTraceExplainInput(ctx, res.TraceID)
 	if errors.Is(terr, errExplainTraceNotFound) {
-		ev := head + fmt.Sprintf("\nKimlik trace %s ile eşleşti (log servisi: %s) ama trace'in "+
+		body := fmt.Sprintf("\nKimlik trace %s ile eşleşti (log servisi: %s) ama trace'in "+
 			"span'leri okunamadı (retention ya da kısmi yazım). Kullanıcıya bunu söyle; UYDURMA.",
 			res.TraceID, res.Service)
-		return ev, "request_id → trace (span'ler okunamadı)", nil
+		emitGuidedStepResult(emit, nSearch, "search_logs", body, nil)
+		return head + body, "request_id → trace (span'ler okunamadı)", nil
 	}
 	if terr != nil {
+		emitGuidedStepResult(emit, nSearch, "search_logs", "", terr)
 		return "", "", terr
 	}
-	ev := head + fmt.Sprintf("\nEşleşen log kaydı: servis %s · trace %s · span %s (eşleşen satır: %d).\n",
+	match := fmt.Sprintf("\nEşleşen log kaydı: servis %s · trace %s · span %s (eşleşen satır: %d).\n",
 		res.Service, res.TraceID, res.SpanID, res.MatchedLogs)
+	ev := head + match
 	if res.DistinctTraces > 1 {
 		// Aynı kimlik yeniden deneme / asenkron devam yüzünden birden çok
 		// trace'e dokunmuş olabilir; tek trace gibi anlatmak yanlış olurdu.
-		ev += fmt.Sprintf("NOT: bu pencerede kimliği taşıyan %d FARKLI trace var; "+
+		note := fmt.Sprintf("NOT: bu pencerede kimliği taşıyan %d FARKLI trace var; "+
 			"aşağıdaki en yenisi. Bunu söyle.\n", res.DistinctTraces)
+		match += note
+		ev += note
 	}
+	// Arama adımının kanıtı EŞLEŞMEnin kendisi; altındaki trace paketi
+	// ayrı bir okumadan geliyor (kendi çipi yok, kanıtı da burada değil).
+	emitGuidedStepResult(emit, nSearch, "search_logs", match, nil)
 	ev += "\n" + in.User
 	return ev, fmt.Sprintf("request_id → log araması → trace %s kanıtı", res.TraceID), nil
 }
@@ -2382,11 +2514,12 @@ func (s *Server) guidedDeployBundle(ctx context.Context, emit func(string, any),
 		lookback = 6 * time.Hour
 	}
 	var refs []guidedDeployRef
-	emitGuidedStep(emit, "recent_deploys", `{"service":"`+service+`"}`)
+	nRecent := emitGuidedStep(emit, "recent_deploys", `{"service":"`+service+`"}`)
 	if service != "" {
 		now := time.Now()
 		deps, err := s.store.GetServiceDeploys(ctx, service, now.Add(-lookback), now)
 		if err != nil {
+			emitGuidedStepResult(emit, nRecent, "recent_deploys", "", err)
 			return "", "", err
 		}
 		for _, d := range deps {
@@ -2395,6 +2528,7 @@ func (s *Server) guidedDeployBundle(ctx context.Context, emit func(string, any),
 	} else {
 		deps, err := s.store.GetRecentDeploys(ctx, lookback, 10)
 		if err != nil {
+			emitGuidedStepResult(emit, nRecent, "recent_deploys", "", err)
 			return "", "", err
 		}
 		for _, d := range deps {
@@ -2406,15 +2540,23 @@ func (s *Server) guidedDeployBundle(ctx context.Context, emit func(string, any),
 	if len(refs) > 5 {
 		refs = refs[:5]
 	}
+	// v0.9.1229 — işaretçi okumasının kanıtı: etki HESAPLANMADAN önceki
+	// liste, aynı renderer'la. Her etki adımı kendi satırını ayrıca
+	// gösteriyor, yani hangi çipin ne getirdiği ayrışıyor.
+	emitGuidedStepResult(emit, nRecent, "recent_deploys",
+		renderDeployEvidenceTR(refs, nil, lookback, time.Now()), nil)
 	impacts := make([]*chstore.DeployImpact, len(refs))
 	for i, ref := range refs {
 		if i >= 3 {
 			break
 		}
-		emitGuidedStep(emit, "deploy_impact", `{"service":"`+ref.Service+`","version":"`+ref.Version+`"}`)
-		if imp, ierr := s.store.ComputeDeployImpact(ctx, ref.Service, ref.Version, ref.TimeNs, 600); ierr == nil {
+		nImp := emitGuidedStep(emit, "deploy_impact", `{"service":"`+ref.Service+`","version":"`+ref.Version+`"}`)
+		imp, ierr := s.store.ComputeDeployImpact(ctx, ref.Service, ref.Version, ref.TimeNs, 600)
+		if ierr == nil {
 			impacts[i] = imp
 		}
+		emitGuidedStepResult(emit, nImp, "deploy_impact",
+			renderDeployEvidenceTR(refs[i:i+1], impacts[i:i+1], lookback, time.Now()), ierr)
 	}
 	src := "deploy işaretçileri + öncesi/sonrası RED etkisi (±10dk pencere)"
 	if env != "" {
@@ -2432,16 +2574,17 @@ func (s *Server) guidedDeployBundle(ctx context.Context, emit func(string, any),
 // answered honestly via guidedEnvlessNoteTR instead of silently
 // ignored; the step echo omits env because the filter was not applied.
 func (s *Server) guidedLogErrorsBundle(ctx context.Context, emit func(string, any), service, env string, from, to time.Time, rangeS int64) (string, string, error) {
-	emitGuidedStep(emit, "log_severity_histogram", `{"service":"`+service+`"}`)
+	nHist := emitGuidedStep(emit, "log_severity_histogram", `{"service":"`+service+`"}`)
 	bucketSec := int(rangeS / 30)
 	if bucketSec < 60 {
 		bucketSec = 60
 	}
 	series, err := s.logs.Histogram(ctx, logstore.Filter{Service: service, From: from, To: to}, bucketSec, "severity")
 	if err != nil {
+		emitGuidedStepResult(emit, nHist, "log_severity_histogram", "", err)
 		return "", "", err
 	}
-	emitGuidedStep(emit, "log_patterns", "")
+	nPat := emitGuidedStep(emit, "log_patterns", "")
 	pats, perr := anomaly.DetectLogPatterns(ctx, s.logs, snapAnomalyWindow(time.Duration(rangeS)*time.Second))
 	if perr != nil {
 		pats = nil // patterns are additive evidence — soft-fail
@@ -2470,8 +2613,15 @@ func (s *Server) guidedLogErrorsBundle(ctx context.Context, emit func(string, an
 	if env != "" {
 		src += "; ortam filtresi uygulanamadı (log verisi ortam boyutu taşımıyor)"
 	}
-	return guidedEnvlessNoteTR("log verisi", env) +
-		renderLogErrorsEvidenceTR(series, pats, service, rangeS), src, nil
+	ev := guidedEnvlessNoteTR("log verisi", env) +
+		renderLogErrorsEvidenceTR(series, pats, service, rangeS)
+	// v0.9.1229 — iki okuma TEK bloğa akıyor (renderer severity dağılımını
+	// ve pattern eşleşmelerini birlikte kuruyor), o yüzden blok iki çipe de
+	// veriliyor: yarısını uydurmaktansa aynı kanıtı iki kez göstermek.
+	// Pattern okuması yumuşak-düşer (pats=nil) — çip bunu ok=false ile SÖYLER.
+	emitGuidedStepResult(emit, nHist, "log_severity_histogram", ev, nil)
+	emitGuidedStepResult(emit, nPat, "log_patterns", ev, perr)
+	return ev, src, nil
 }
 
 // ─── Evidence renderers (pure, table-tested) ────────────────────────

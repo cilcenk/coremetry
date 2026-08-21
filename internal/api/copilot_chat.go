@@ -148,6 +148,12 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
 		flusher.Flush()
 	}
+	// v0.9.1229 — ⚙ çip kimliği TEK sayaçtan (chat_step_ids.go). Bir
+	// istekte birden çok yol adım yayınlayabiliyor (guided bağlam çipini
+	// basıp rotayı devredebilir, sonra çekmece ya da serbest döngü
+	// çalışır); ayrı sayaçlar aynı `i`yi iki kez üretir ve frontend
+	// kanıtı `i` ile eşlediği için YANLIŞ çipe yapıştırırdı.
+	emit = withStepIDs(emit)
 
 	// Attribution: tag ctx so RecordUsage attributes the exchange to
 	// the "chat" surface on the /ai page.
@@ -260,7 +266,9 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	var finalText string
 	// v0.9.1181 (Faz 4.3) — ⚙ çipi ile onun "veriyi göster" bloğunu eşleyen
 	// sayaç. İstek boyunca tekil olmalı: çipler tur döngüsü boyunca birikiyor,
-	// tur-içi indeks ikinci turda çakışırdı.
+	// tur-içi indeks ikinci turda çakışırdı. v0.9.1229 — sayının kendisi
+	// artık emit sarmalayıcısında; burada yalnız SON çipin kimliği tutulur
+	// (eşli step-result için).
 	stepN := 0
 	// v0.9.1228 — döngü boyunca biriken ürün köprüleri (toolCallLink):
 	// cevap çipi olarak yayınlanır; request-ID linkleriyle birleşir.
@@ -307,8 +315,9 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			// sonra ayrı bir olayla; ikisini bu sayı eşler. Tur içindeki
 			// indeks YETMEZ, çünkü çipler turlar boyunca birikiyor —
 			// sayaç istek boyunca tekil.
-			stepN++
-			emit("step", map[string]any{"i": stepN, "tool": tc.Name, "args": string(tc.Input)})
+			// v0.9.1229 — kimliği sarmalayıcı veriyor (emitStepChip);
+			// döngünün kendi sayacı guided'ın çipleriyle çakışabiliyordu.
+			stepN = emitStepChip(emit, tc.Name, string(tc.Input))
 			h, found := byName[tc.Name]
 			if !found {
 				msg := fmt.Sprintf("unknown tool %q", tc.Name)

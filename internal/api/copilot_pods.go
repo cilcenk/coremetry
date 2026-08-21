@@ -39,12 +39,13 @@ const (
 )
 
 func (s *Server) guidedPodHealthBundle(ctx context.Context, emit func(string, any), service string, from, to time.Time) (string, string, error) {
-	emitGuidedStep(emit, "jvm_heap_usage", "")
+	nHeap := emitGuidedStep(emit, "jvm_heap_usage", "")
+	nInst := 0
 	heapRows := guidedPodRows
 	if service == "" {
 		heapRows = guidedFleetHeapRows
 	} else {
-		emitGuidedStep(emit, "service_instances", `{"service":`+jsonStr(service)+`}`)
+		nInst = emitGuidedStep(emit, "service_instances", `{"service":`+jsonStr(service)+`}`)
 	}
 	// Pencere BÖLÜNMÜŞ ve bu ortak katmanda sabit: heap DAİMA canlı 10 dk
 	// (chstore.RuntimePodWindow — sustained ortalama, v0.9.1053), envanter
@@ -52,9 +53,17 @@ func (s *Server) guidedPodHealthBundle(ctx context.Context, emit func(string, an
 	// tek başına cevap sayılır (HeapUnavailable) — eski davranış.
 	data, err := mcptools.ReadPodHealth(ctx, s.mcpDeps(), service, from, to, guidedPodRows, heapRows)
 	if err != nil {
+		emitGuidedStepResult(emit, nHeap, "jvm_heap_usage", "", err)
+		emitGuidedStepResult(emit, nInst, "service_instances", "", err)
 		return "", "", err
 	}
-	return renderPodHealthEvidenceTR(data)
+	ev, src, rerr := renderPodHealthEvidenceTR(data)
+	// v0.9.1229 — envanter ve heap TEK ortak katman çağrısından geliyor ve
+	// tek bloğa render ediliyor; blok iki çipe de veriliyor (servis modunda
+	// ikinci çip var, filo modunda nInst=0 ve kanıt sessizce düşer).
+	emitGuidedStepResult(emit, nHeap, "jvm_heap_usage", ev, rerr)
+	emitGuidedStepResult(emit, nInst, "service_instances", ev, rerr)
+	return ev, src, rerr
 }
 
 // renderPodHealthEvidenceTR — SAF (veri → metin). İki mod tek yerde:

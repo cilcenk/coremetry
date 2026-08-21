@@ -14,6 +14,13 @@ export interface LogFilter {
   value: string;
   negated: boolean;   // NOT key:value
   disabled: boolean;  // kept in the bar but excluded from the query
+  // v0.9.1217 (Kibana paritesi, dilim 5) — varlık filtresi: değer değil
+  // alanın KENDİSİ aranıyor (`_exists_:key`). value boş kalır; negated
+  // "alan YOK" anlamına gelir. NOT: ES query_string'te birebir çalışır;
+  // CH lokal backend'i field:value semantiği taşımadığından (LIKE
+  // substring) mevcut alan-pill'leriyle AYNI sınıfta düşer — yeni
+  // ayrışma değil (docs/plans/kibana-logs-parity-2026-08-21.md).
+  exists?: boolean;
 }
 
 // Always wrap values in double quotes — Lucene treats many
@@ -33,7 +40,9 @@ export function phraseQuote(s: string): string {
 export function compileSearch(filters: LogFilter[], query: string): string {
   const parts = filters
     .filter(f => !f.disabled)
-    .map(f => `${f.negated ? 'NOT ' : ''}${f.key}:${phraseQuote(f.value)}`);
+    .map(f => f.exists
+      ? `${f.negated ? 'NOT ' : ''}_exists_:${f.key}`
+      : `${f.negated ? 'NOT ' : ''}${f.key}:${phraseQuote(f.value)}`);
   const q = query.trim();
   if (q) parts.push(parts.length > 0 && /\bOR\b/i.test(q) ? `(${q})` : q);
   return parts.join(' AND ');
@@ -47,8 +56,20 @@ export function compileSearch(filters: LogFilter[], query: string): string {
 export function toggleFilter(
   filters: LogFilter[], key: string, value: string, negated: boolean,
 ): LogFilter[] {
-  const idx = filters.findIndex(f => f.key === key && f.value === value);
+  const idx = filters.findIndex(f => !f.exists && f.key === key && f.value === value);
   if (idx === -1) return [...filters, { key, value, negated, disabled: false }];
+  if (filters[idx].negated === negated) return filters.filter((_, i) => i !== idx);
+  return filters.map((f, i) => (i === idx ? { ...f, negated, disabled: false } : f));
+}
+
+// toggleExistsFilter — varlık pill'inin toggle'ı; kimlik = key + exists
+// (değer pill'lerinden ayrı uzay: `k:"v"` ile `_exists_:k` birlikte
+// yaşayabilir). Polarite semantiği toggleFilter ile aynı.
+export function toggleExistsFilter(
+  filters: LogFilter[], key: string, negated: boolean,
+): LogFilter[] {
+  const idx = filters.findIndex(f => f.exists && f.key === key);
+  if (idx === -1) return [...filters, { key, value: '', negated, disabled: false, exists: true }];
   if (filters[idx].negated === negated) return filters.filter((_, i) => i !== idx);
   return filters.map((f, i) => (i === idx ? { ...f, negated, disabled: false } : f));
 }
@@ -58,7 +79,11 @@ export function toggleFilter(
 // SavedViewsBar (both persist the raw query string).
 export function encodeFiltersParam(filters: LogFilter[]): string {
   if (filters.length === 0) return '';
-  return JSON.stringify(filters.map(f => [f.key, f.value, f.negated ? 1 : 0, f.disabled ? 1 : 0]));
+  // v0.9.1217 — 5. eleman exists bayrağı; 0 iken hiç yazılmaz ki eski
+  // linkler/kayıtlı görünümler bayt-bayt aynı kalsın.
+  return JSON.stringify(filters.map(f => (f.exists
+    ? [f.key, f.value, f.negated ? 1 : 0, f.disabled ? 1 : 0, 1]
+    : [f.key, f.value, f.negated ? 1 : 0, f.disabled ? 1 : 0])));
 }
 
 // extractHighlightTerms — the free-text query's bare terms and
@@ -138,7 +163,7 @@ export function parseFiltersParam(raw: string | null | undefined): LogFilter[] {
     const out: LogFilter[] = [];
     for (const e of arr) {
       if (!Array.isArray(e) || typeof e[0] !== 'string' || typeof e[1] !== 'string') continue;
-      out.push({ key: e[0], value: e[1], negated: !!e[2], disabled: !!e[3] });
+      out.push({ key: e[0], value: e[1], negated: !!e[2], disabled: !!e[3], ...(e[4] ? { exists: true } : {}) });
     }
     return out;
   } catch {

@@ -141,7 +141,7 @@ func (s *Store) ListNegativeFeedbackCalls(ctx context.Context, from, to time.Tim
 	rows, err := s.conn.Query(ctx, `
 		SELECT f.surface, toUnixTimestamp64Nano(f.created_at), f.user_email,
 		       c.prompt_sample, c.response_sample, f.comment
-		FROM ai_feedback FINAL AS f
+		FROM ai_feedback AS f FINAL
 		LEFT JOIN ai_calls AS c ON c.exchange_id = f.exchange_id
 		WHERE f.verdict = -1 AND f.created_at >= ? AND f.created_at <= ?
 		ORDER BY f.created_at DESC

@@ -124,7 +124,6 @@ func (s *Server) registerAIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST   /api/copilot/compare-traces", s.requireCopilot(s.copilotCompareTraces))
 	mux.HandleFunc("POST   /api/copilot/deploy-impact", s.requireCopilot(s.copilotDeployImpact))
 	mux.HandleFunc("POST   /api/copilot/explain-slo/{id}", s.requireCopilot(s.copilotExplainSLO))
-	mux.HandleFunc("POST   /api/copilot/explain-slow-query", s.requireCopilot(s.copilotExplainSlowQuery))
 	// v0.9.414 (operatör istegi) — exception grubu kök-sebep: örnek
 	// trace + trace logları + deploy penceresi otomatik prefetch'lenir,
 	// kanıt trace/span'leri deterministik döner (copilot_exception.go).

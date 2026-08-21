@@ -3573,48 +3573,6 @@ export interface EndpointSplitValue {
   p99Ms: number;
 }
 
-// Span-metrics-derived per-service RED rollup. Source: the
-// spanmetrics processor (or compatible Grafana Alloy /
-// otelcol pipeline) emits a calls counter + duration
-// histogram; the backend aggregates per service_name within
-// the window. Surfaced on /span-metrics so operators with a
-// pre-existing metric pipeline don't need to wait for the
-// span-derived MV.
-export interface SpanMetricServiceRow {
-  service: string;
-  calls: number;
-  errors: number;
-  errorRate: number;
-  avgMs?: number;
-  maxMs?: number;
-  // v0.5.358 — bucket-derived quantile estimates. The OTLP
-  // ingest preserves the explicit bucket bounds + per-bucket
-  // counts so the backend can sumForEach across data points
-  // and interpolate. Empty when the histogram data point
-  // didn't carry bucket arrays (rare; some SDKs send only
-  // count/sum/max).
-  p50Ms?: number;
-  p99Ms?: number;
-  // Call-rate sparkline across the window (variable length —
-  // derive the axis from the array). Used by the Span Metrics
-  // table to render an inline mini-chart per row so the operator
-  // sees the shape of traffic without opening the full /metrics
-  // chart.
-  sparkline?: number[];
-  callsMetric?: string;
-  durationMetric?: string;
-}
-
-export interface SpanMetricsServicesResponse {
-  rows: SpanMetricServiceRow[] | null;
-  callsMetric: string;
-  durationMetric: string;
-  // v0.5.355 — top-N cap surfaced so the UI can render a
-  // "showing top N of M services" hint without re-querying
-  // for the full count. truncated = the response hit the cap.
-  top?: number;
-  truncated?: boolean;
-}
 
 // One node in the multi-trace path-aggregated structure tree
 // returned by GET /api/services/{name}/structure. Each node

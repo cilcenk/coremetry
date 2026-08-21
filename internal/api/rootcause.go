@@ -522,7 +522,7 @@ func (s *Server) rootCauseExplainProse(w http.ResponseWriter, r *http.Request, a
 	// changes and we never serve prose for a stale ranking. Copilot calls are
 	// expensive — a 10m TTL lets concurrent triage clicks share one trip while
 	// the version guarantees freshness on re-rank.
-	key := fmt.Sprintf("rootcause-explain:%s:%s:%d", anchorKind, id, h.Version)
+	key := rootcauseExplainCacheKey(anchorKind, id, h.Version)
 	// v0.9.557 — kimlik closure DIŞINDA yakalanır.
 	//
 	// Öncesi: closure `s.copilotExplain(r, ...)` çağırıyordu, yani

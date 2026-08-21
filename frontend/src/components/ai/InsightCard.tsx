@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from '@/components/Spinner';
 import { RenderedMarkdown } from '@/components/Markdown';
 import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
+import { RCAVerdictPanel } from '@/components/RCAVerdictPanel';
 import {
   insightHasEvidence, insightHrefInternal, insightQuestion, insightTone,
 } from '@/lib/insightCard';
@@ -215,6 +216,19 @@ export function InsightCard({ kind, id, windowSec, onClose }: {
           ))}
         </div>
       </section>
+
+      {/* v0.9.1207 (Faz 6.3) — hazır verdict varsa kanıt-ID'li anlatı
+          kartta. exchangeId BİLEREK verilmiyor: oy affordance'ı kartın
+          footer'ında zaten var, panelin kendi oyu ikinci ray olurdu;
+          verdict'in kendi oyu ✨ Explain yolunda (RootCauseRibbon). */}
+      {base.verdict && (
+        <section>
+          <div style={headStyle}>
+            <span>Kök neden hakemi — önceden üretilmiş, kalkanlı</span>
+          </div>
+          <RCAVerdictPanel v={base.verdict} />
+        </section>
+      )}
 
       <section>
         <div style={headStyle}>

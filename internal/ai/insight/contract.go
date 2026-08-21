@@ -28,6 +28,7 @@
 package insight
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -232,6 +233,14 @@ type Response struct {
 	// Yalnız Active() iken dolu; baseURL/apiKey ASLA (v0.9.1037 çipi
 	// ile aynı dar sözleşme).
 	Model string `json:"model,omitempty"`
+
+	// Verdict — v0.9.1207 (Faz 6.3): ÖNCEDEN üretilmiş, kalkanlı RCA
+	// verdict'inin ham gövdesi (api.RCAVerdict şekli; bu paket şekle
+	// bilinçli kör — stdlib-only kalır). YALNIZ rootcause-explain
+	// önbelleğinde hazır bir verdict varsa dolar; insight kartı LLM
+	// ATEŞLEMEZ (A2 kararı: collapsed pasif, açılış deterministik).
+	// Deterministik yarının parçası — `signals` çerçevesinde taşınır.
+	Verdict json.RawMessage `json:"verdict,omitempty"`
 }
 
 // Normalize — nil dilimleri boş dilime çevirir. Çerçeve/gövde yazan

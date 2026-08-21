@@ -4583,6 +4583,12 @@ export interface InsightResponse {
   /** Deterministik yarının kırpıldığı işareti (çipler tavana takıldı). */
   truncated?: boolean;
   model?: string;
+  /**
+   * v0.9.1207 (Faz 6.3) — ÖNCEDEN üretilmiş, kalkanlı RCA verdict'i.
+   * Yalnız rootcause-explain önbelleğinde hazırsa dolar; kart LLM
+   * ateşlemez (A2). Kanıt-ID'li anlatı RCAVerdictPanel ile çizilir.
+   */
+  verdict?: RCAVerdict;
 }
 
 // RAG doküman katalog satırı + config görünümü (v0.8.438).

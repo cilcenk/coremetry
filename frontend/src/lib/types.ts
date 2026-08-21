@@ -4301,6 +4301,8 @@ export interface Deploy {
   version: string;
   timeUnixNs: number;
   spanCount: number;
+  // v0.9.1204 — bkz. RecentDeployEntry.source.
+  source?: string;
 }
 
 // ChartAnnotation (v0.8.284, A7) — one operator-event marker rendered as a
@@ -4680,6 +4682,9 @@ export interface RecentDeployEntry {
   spanCount: number;
   // v0.9.436 — en yeni N deploy için önce/sonra RED deltası (opsiyonel).
   impact?: DeployImpact;
+  // v0.9.1204 — kaydın kaynağı: yok = span çıkarımı, 'event' =
+  // operatör/pipeline kaydı (events kind='deploy').
+  source?: string;
 }
 export interface FleetRollout extends Rollout { service: string }
 export interface DeploysHistoryResponse {

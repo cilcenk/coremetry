@@ -116,3 +116,54 @@ describe('heatmapQuerySig — kenar durumlar', () => {
     expect(sig(none, FROM, TO + 60e9)).toBe('viz=heatmap|none');
   });
 });
+
+// v0.9.1202 — metrik-kaynak A: istek /api/metrics/histogram'a gidiyor,
+// alanlar farklı (metrik adı + servis kapsamı; dsl İSTEĞE GİRMİYOR).
+// Kural aynen: imza = isteğe giden alanlar, iki yönde de.
+describe('heatmapQuerySig — metrik-kaynak dalı (v0.9.1202)', () => {
+  const metricHeat = (mut: (s: BuilderState) => BuilderState = s => s): BuilderState =>
+    mut({
+      ...defaultBuilderState(), viz: 'heatmap',
+      queries: [{ ...blankQuery('A', 'metric'), metric: 'http.server.duration' }],
+    });
+
+  it('span imzasından ayrışır (src=metric)', () => {
+    expect(sig(metricHeat())).toContain('src=metric');
+    expect(sig(heat())).not.toContain('src=metric');
+  });
+
+  it('DEĞİŞMELİ: metrik adı', () => {
+    const other = metricHeat(s => ({
+      ...s, queries: s.queries.map(q => ({ ...q, metric: 'db.client.duration' })),
+    }));
+    expect(sig(other)).not.toBe(sig(metricHeat()));
+  });
+
+  it('DEĞİŞMELİ: servis kapsamı', () => {
+    const scoped = metricHeat(s => ({
+      ...s, queries: s.queries.map(q => ({ ...q, scope: 'checkout' })),
+    }));
+    expect(sig(scoped)).not.toBe(sig(metricHeat()));
+  });
+
+  it('DEĞİŞMELİ: filtre çipi', () => {
+    const withChip = metricHeat(s => ({
+      ...s, queries: s.queries.map(q => ({ ...q, filters: [{ k: 'http.route', op: '=' as const, v: ['/pay'] }] })),
+    }));
+    expect(sig(withChip)).not.toBe(sig(metricHeat()));
+  });
+
+  it('DEĞİŞMEMELİ: dsl metrik isteğine girmiyor', () => {
+    const withDsl = metricHeat(s => ({
+      ...s, queries: s.queries.map(q => ({ ...q, dsl: "status = 'ERROR'" })),
+    }));
+    expect(sig(withDsl)).toBe(sig(metricHeat()));
+  });
+
+  it('DEĞİŞMEMELİ: agg görüntü işi, isteğe girmiyor', () => {
+    const otherAgg = metricHeat(s => ({
+      ...s, queries: s.queries.map(q => ({ ...q, agg: 'p99' })),
+    }));
+    expect(sig(otherAgg)).toBe(sig(metricHeat()));
+  });
+});

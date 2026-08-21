@@ -55,6 +55,7 @@ import { exploreSourceHref, type SourceTarget } from './explore/sourceHref';
 import { SummaryViz } from './explore/SummaryViz';
 import { RowsCappedNote } from './explore/RowsCappedNote';
 import { heatmapQuerySig } from './explore/heatmapSig';
+import { histogramResultToHeatmap } from '@/components/dashboard/histogramHeatmap';
 import { QueryRow } from './explore/QueryRow';
 import { FormulaRow } from './explore/FormulaRow';
 import { VizRail } from './explore/VizRail';
@@ -242,6 +243,9 @@ function ExploreInner({ onSelfWrite }: {
 
   const [services, setServices] = useState<string[]>([]);
   const [heatmap, setHeatmap] = useState<Heatmap | null | undefined>(undefined);
+  // v0.9.1202 — metrik-histogram ısı haritasının "neden boş" notu (VM
+  // Faz 2 note alanı: "_bucket serisi bulunamadı — histogram olmayabilir").
+  const [heatmapNote, setHeatmapNote] = useState<string | null>(null);
   // busy — veri EKRANDA kalırken süren okuma (v0.9.939, C2 keep-previous).
   // `undefined` ilk yükleme, `busy` yenileme; ikisi ayrı sorular ve tek
   // bayrakla anlatılamaz.
@@ -477,6 +481,30 @@ function ExploreInner({ onSelfWrite }: {
     const g = raceGuard();
     const fs = effectiveFilters(a);
     const { from, to } = exploreRange;
+    // v0.9.1202 — metrik-kaynak sorgu A: ısı haritası ham span taraması
+    // değil, metriğin KENDİ explicit-histogram kovaları
+    // (/api/metrics/histogram — metricsource seam'i, VM Faz 2'den beri
+    // sunucuda hazırdı ama Explore'dan erişilemiyordu). Dönüştürücü
+    // panolarınkiyle AYNI (histogramResultToHeatmap) — iki yüzey tek
+    // le-düzeni yorumu taşır.
+    if (a.source === 'metric') {
+      if (!a.metric) { setHeatmap(null); setBusy(false); return g.cancel; }
+      const stepS = Math.max(1, Math.round((to - from) / 1e9 / heatmapBuckets));
+      api.metricHistogram({
+        name: a.metric, service: a.scope || undefined,
+        filters: fs.length ? JSON.stringify(fs) : undefined,
+        from, to, step: stepS,
+      })
+        .then(h => {
+          if (!g.ok()) return;
+          setHeatmap(h ? histogramResultToHeatmap(h, a.unit) : null);
+          setHeatmapNote(h?.note ?? null);
+          setBusy(false);
+        })
+        .catch(() => { if (!g.ok()) return; setHeatmap(null); setHeatmapNote(null); setBusy(false); });
+      return g.cancel;
+    }
+    setHeatmapNote(null);
     api.spanHeatmap({
       filters: fs.length ? JSON.stringify(fs) : undefined,
       dsl: a.dsl.trim() || undefined,
@@ -1130,31 +1158,46 @@ name ~ checkout`}
             {heatmap === undefined && <Spinner />}
             {heatmap === null && (
               <Empty icon="◎" title="No data for this query">
-                Try a wider time range or fewer filters.
+                {heatmapNote ?? 'Try a wider time range or fewer filters.'}
               </Empty>
             )}
             {heatmap && heatmap.maxCount === 0 && (
-              <Empty icon="◎" title="No spans matched in this window" />
+              // v0.9.1202 — metrik-histogram yolunda sunucunun "neden boş"
+              // notu varsa varsayılan cümlenin yerine geçer (VM: "_bucket
+              // serisi bulunamadı — histogram olmayabilir").
+              <Empty icon="◎" title={heatmapNote ? 'Bu pencerede örnek yok' : 'No spans matched in this window'}>
+                {heatmapNote ?? undefined}
+              </Empty>
             )}
-            {heatmap && heatmap.maxCount > 0 && (
+            {heatmap && heatmap.maxCount > 0 && (() => {
+              // Jest kapısı: hücre tıkı (örnek trace) ve kutu seçimi
+              // (BubbleUp) SPAN yüzeyinin kavramları. Metrik histogramında
+              // hücre bir örnekleme kovasıdır — "2-4 ms'lik trace'ler"
+              // modali yanlış modal olurdu (pano panelinin v0.9.947 kapısı
+              // ile aynı gerekçe).
+              const aQ = debounced.queries.find(produces);
+              const isMetricHeat = aQ?.source === 'metric';
+              const noun = heatmap.countNoun ?? 'spans';
+              return (
               <div style={{
                 background: 'var(--bg1)', border: '1px solid var(--border)',
                 borderRadius: 8, padding: 14,
               }}>
                 <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 8 }}>
-                  Latency density · sorgu A filtreleri · {heatmap.times.length} time buckets ×
-                  {' '}{heatmap.durationBins.length} log-scale latency bins
-                  · peak cell {heatmap.maxCount.toLocaleString()} spans
+                  {isMetricHeat ? 'Histogram density' : 'Latency density'} · sorgu A filtreleri · {heatmap.times.length} time buckets ×
+                  {' '}{heatmap.durationBins.length} {isMetricHeat ? 'bucket bins' : 'log-scale latency bins'}
+                  · peak cell {heatmap.maxCount.toLocaleString()} {noun}
                 </div>
                 <LatencyHeatmap data={heatmap}
-                  onCellClick={(cell) => setCellExemplar({
+                  onCellClick={isMetricHeat ? undefined : (cell) => setCellExemplar({
                     timeNs: cell.timeNs,
                     lowDurMs: cell.lowDurMs,
                     highDurMs: cell.highDurMs,
                     count: cell.count,
                     exemplarTraceId: cell.exemplarTraceId,
                   })}
-                  onBoxSelect={setBoxSel} />
+                  onBoxSelect={isMetricHeat ? undefined : setBoxSel} />
+                {!isMetricHeat && (
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: 10,
                   fontSize: 10, color: 'var(--text3)', marginTop: 6,
@@ -1166,7 +1209,8 @@ name ~ checkout`}
                     Hatalarda ne farklı?
                   </Button>
                 </div>
-                {errDiff && (() => {
+                )}
+                {!isMetricHeat && errDiff && (() => {
                   const a = debounced.queries.find(produces);
                   const baseline = a ? effectiveFilters(a) : [];
                   const baselineDsl = a && a.dsl.trim() ? a.dsl : undefined;
@@ -1245,7 +1289,8 @@ name ~ checkout`}
                   );
                 })()}
               </div>
-            )}
+              );
+            })()}
           </>
         )}
 

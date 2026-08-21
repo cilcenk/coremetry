@@ -197,3 +197,65 @@ func TestCodeLineFrom(t *testing.T) {
 		t.Errorf("uzun satır kırpılmalı ve kırpıldığı belli olmalı, got len=%d", len(got))
 	}
 }
+
+// ── v0.9.1206 (Faz 6.2) — render guard'ları + Runtime branşı ─────────
+
+// Limit==0 heap satırı +Inf basmamalı (girdi SAKLANAN JSON — eski
+// yazıcının bıraktığı satır render'da patlamamalı), GC örnekleri
+// tavansız da yaşamalı (JVMGCPodPause Limit doldurmaz; eski koşulsuz
+// filtre GC'nin tamamını eliyor, render dalını ölü koda çeviriyordu).
+func TestRenderDeepEvidenceLimitZeroGuard(t *testing.T) {
+	var sb strings.Builder
+	renderDeepEvidence(&sb, chstore.DeepEvidence{
+		Checked: []chstore.CheckedSignal{{Family: "saturation", Found: true}},
+		Heap: []chstore.CapacitySample{
+			{Subkey: "pod-a", Usage: 82, Limit: 100},
+			{Subkey: "pod-b", Usage: 3.2e8, Limit: 0}, // tavansız — %'ye bölünemez
+		},
+		GCPause: []chstore.CapacitySample{{Subkey: "pod-a", Usage: 1850, Limit: 0}},
+	})
+	out := sb.String()
+	if strings.Contains(out, "Inf") || strings.Contains(out, "NaN") {
+		t.Fatalf("tavansız heap satırı çöp üretti:\n%s", out)
+	}
+	for _, want := range []string{"pod-a: heap %82", "pod-b: heap 3.2e+08 (tavan bilinmiyor)", "GC duraklama 1850"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render %q içermeli:\n%s", want, out)
+		}
+	}
+}
+
+func TestSamplesForServiceGCKeepsLimitless(t *testing.T) {
+	in := []chstore.CapacitySample{
+		{Instance: "svc", Subkey: "pod-a", Usage: 1850, Limit: 0},
+		{Instance: "other", Subkey: "pod-x", Usage: 5, Limit: 0},
+	}
+	if got := samplesForService(in, "svc", false); len(got) != 1 || got[0].Subkey != "pod-a" {
+		t.Fatalf("tavansız GC örneği yaşamalıydı: %+v", got)
+	}
+	if got := samplesForService(in, "svc", true); len(got) != 0 {
+		t.Fatalf("requireLimit=true tavansızı elemeli: %+v", got)
+	}
+}
+
+func TestRenderDeepEvidenceRuntime(t *testing.T) {
+	var sb strings.Builder
+	renderDeepEvidence(&sb, chstore.DeepEvidence{
+		Checked: []chstore.CheckedSignal{{Family: "runtime", Found: true}},
+		Runtime: &chstore.ServiceRuntime{Language: "java", RuntimeVersion: "21.0.1+12", Host: "app-01", OS: "linux"},
+	})
+	if !strings.Contains(sb.String(), "Çalışma zamanı: java 21.0.1+12, host app-01, os linux") {
+		t.Fatalf("runtime satırı yok:\n%s", sb.String())
+	}
+
+	// GetServiceRuntime satır yokken boş-alanlı non-nil döner — satır
+	// hiç basılmamalı (boş "Çalışma zamanı:" başlığı model için gürültü).
+	var sb2 strings.Builder
+	renderDeepEvidence(&sb2, chstore.DeepEvidence{
+		Checked: []chstore.CheckedSignal{{Family: "runtime", Found: false}},
+		Runtime: &chstore.ServiceRuntime{Service: "svc"},
+	})
+	if strings.Contains(sb2.String(), "Çalışma zamanı") {
+		t.Fatalf("boş runtime satır basmamalı:\n%s", sb2.String())
+	}
+}

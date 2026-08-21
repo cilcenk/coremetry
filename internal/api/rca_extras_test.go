@@ -147,3 +147,33 @@ func TestK3AllowsShownCatalogTokens(t *testing.T) {
 		t.Fatal("uydurulan tireli ad yakalanmalıydı — K3 gevşemiş")
 	}
 }
+
+// v0.9.1206 (Faz 6.2) — deploy E satırı Impact varken YAPISAL önce/sonra
+// RED taşır; yokken eski cümle bayt-bayt (ID konumu iki durumda da aynı).
+func TestCatalogDeployImpactStructural(t *testing.T) {
+	h := extTestHypothesis()
+	h.RecentDeploy = &chstore.RecentDeploy{Version: "rel-42", AgeSeconds: 180}
+	plain := buildRCAEvidenceCatalog(h)
+	plainTxt := renderRCAEvidenceCatalog(plain)
+	if !strings.Contains(plainTxt, "deploy: rel-42 sürümü, problem açılmadan 180 sn önce") ||
+		strings.Contains(plainTxt, "etki (±") {
+		t.Fatalf("Impact'siz deploy satırı eski cümle olmalı:\n%s", plainTxt)
+	}
+
+	h.RecentDeploy.Impact = &chstore.DeployImpact{
+		WindowSec:   600,
+		Before:      chstore.DeployImpactStats{P99Ms: 210, ErrorRate: 0.004, RPS: 42.1},
+		After:       chstore.DeployImpactStats{P99Ms: 890, ErrorRate: 0.061, RPS: 40.9},
+		P99DeltaPct: 323.8,
+	}
+	rich := buildRCAEvidenceCatalog(h)
+	richTxt := renderRCAEvidenceCatalog(rich)
+	if !strings.Contains(richTxt,
+		"etki (±10dk): p99 210→890ms (+324%), hata %0.40→%6.10, rps 42.1→40.9") {
+		t.Fatalf("yapısal etki satırı yok/yanlış:\n%s", richTxt)
+	}
+	// Aynı aile, aynı ID konumu: Impact eklemek kimlikleri KAYDIRMAZ.
+	if len(rich.Refs) != len(plain.Refs) {
+		t.Fatalf("Impact satır SAYISINI değiştirdi: %d != %d", len(rich.Refs), len(plain.Refs))
+	}
+}

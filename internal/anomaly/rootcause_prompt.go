@@ -62,6 +62,16 @@ func HypothesisPromptBlockTR(h *chstore.RootCauseHypothesis) string {
 	if h.RecentDeploy != nil {
 		fmt.Fprintf(&sb, "- Deploy korelasyonu: %s, problem açılmadan %s önce\n",
 			h.RecentDeploy.Version, fmtAgeTR(h.RecentDeploy.AgeSeconds))
+		// v0.9.1206 (Faz 6.2) — yapısal önce/sonra RED. Impact hipotezde
+		// v0.9.1059'dan beri saklıydı ama bu blok yalnız sürüm+yaş
+		// basıyordu; ölçüm tek cümlelik Reason'ın içinde kayboluyordu.
+		if imp := h.RecentDeploy.Impact; imp != nil {
+			fmt.Fprintf(&sb, "  Deploy etkisi (±%ddk): p99 %.0f→%.0fms (%+.0f%%), hata %%%.2f→%%%.2f, rps %.1f→%.1f\n",
+				imp.WindowSec/60,
+				imp.Before.P99Ms, imp.After.P99Ms, imp.P99DeltaPct,
+				imp.Before.ErrorRate*100, imp.After.ErrorRate*100,
+				imp.Before.RPS, imp.After.RPS)
+		}
 	}
 
 	// Remaining ranked candidates, capped — enough for the model to mention

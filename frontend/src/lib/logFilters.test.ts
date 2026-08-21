@@ -211,3 +211,44 @@ describe('is-one-of + edit', () => {
     expect(replaceFilterAt(fs, 5, next)).toEqual(fs);
   });
 });
+
+// v0.9.1222 — aralık operatörü (Kibana parite artığı): `key:>=v` / `key:<=v`.
+describe('range op (gte/lte)', () => {
+  const gte = (key: string, value: string): LogFilter =>
+    ({ key, value, negated: false, disabled: false, op: 'gte' });
+
+  it('compiles gte/lte with quoted value (ES coerces numerics)', () => {
+    expect(compileSearch([gte('duration_ms', '250')], ''))
+      .toBe('duration_ms:>="250"');
+    expect(compileSearch([{ key: 'ts', value: '2026-08-01', negated: false, disabled: false, op: 'lte' }], ''))
+      .toBe('ts:<="2026-08-01"');
+  });
+
+  it('negated-from-URL still compiles (editor never sets it)', () => {
+    expect(compileSearch([{ ...gte('n', '5'), negated: true }], ''))
+      .toBe('NOT n:>="5"');
+  });
+
+  it('URL roundtrip: 7th tuple element only for range pills', () => {
+    const pills: LogFilter[] = [
+      { key: 'a', value: 'x', negated: false, disabled: false },
+      gte('lat', '100'),
+    ];
+    const enc = encodeFiltersParam(pills);
+    expect(enc).toContain('"gte"');
+    expect(JSON.parse(enc)[0]).toHaveLength(4); // eşitlik pill'i eski biçim
+    expect(parseFiltersParam(enc)).toEqual(pills);
+  });
+
+  it('toggleFilter never flips a range pill sharing key+value', () => {
+    const start = [gte('n', '5')];
+    const after = toggleFilter(start, 'n', '5', false);
+    expect(after).toHaveLength(2); // yeni eşitlik pill'i eklendi, aralık duruyor
+    expect(after[0].op).toBe('gte');
+    expect(after[1].op).toBeUndefined();
+  });
+
+  it('disabled range pill is excluded from compile', () => {
+    expect(compileSearch([{ ...gte('n', '5'), disabled: true }], 'x')).toBe('x');
+  });
+});

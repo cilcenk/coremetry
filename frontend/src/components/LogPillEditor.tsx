@@ -15,10 +15,12 @@ import { api } from '@/lib/api';
 import { useEscLayer } from '@/lib/escLayer';
 import type { LogFilter } from '@/lib/logFilters';
 
-type PillOp = 'is' | 'is_not' | 'exists' | 'not_exists' | 'one_of' | 'not_one_of';
+type PillOp = 'is' | 'is_not' | 'exists' | 'not_exists' | 'one_of' | 'not_one_of'
+  | 'gte' | 'lte';
 
 function opOf(f: LogFilter): PillOp {
   if (f.exists) return f.negated ? 'not_exists' : 'exists';
+  if (f.op) return f.op;
   if (f.values && f.values.length > 1) return f.negated ? 'not_one_of' : 'one_of';
   return f.negated ? 'is_not' : 'is';
 }
@@ -26,6 +28,9 @@ function opOf(f: LogFilter): PillOp {
 const OP_LABELS: Record<PillOp, string> = {
   is: 'is', is_not: 'is not', exists: 'exists', not_exists: 'not exists',
   one_of: 'is one of', not_one_of: 'is not one of',
+  // v0.9.1222 — tek sınır; "between" = gte + lte iki pill. Negasyon yok:
+  // NOT >= demek isteyen <= seçer.
+  gte: '≥ (en az)', lte: '≤ (en çok)',
 };
 
 export function LogPillEditor({ filter, since, onApply, onCancel }: {
@@ -51,7 +56,7 @@ export function LogPillEditor({ filter, since, onApply, onCancel }: {
     return () => document.removeEventListener('mousedown', onDown);
   }, [onCancel]);
 
-  const needsValue = op === 'is' || op === 'is_not' || op === 'one_of' || op === 'not_one_of';
+  const needsValue = op !== 'exists' && op !== 'not_exists';
 
   // Değer önerileri — alan doluyken, 200 ms debounce, tek uç.
   useEffect(() => {
@@ -71,6 +76,10 @@ export function LogPillEditor({ filter, since, onApply, onCancel }: {
     const negated = op === 'is_not' || op === 'not_exists' || op === 'not_one_of';
     if (op === 'exists' || op === 'not_exists') {
       onApply({ key: k, value: '', negated, disabled: filter.disabled, exists: true });
+      return;
+    }
+    if (op === 'gte' || op === 'lte') {
+      onApply({ key: k, value: val.trim(), negated: false, disabled: filter.disabled, op });
       return;
     }
     const parts = val.split(',').map(v => v.trim()).filter(Boolean);

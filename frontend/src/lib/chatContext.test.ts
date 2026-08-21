@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { contextStarter } from './chatContext';
+import { contextStarter, serviceFromRoute } from './chatContext';
 
 // v0.9.653 — operatör: "Ekranda bir trace açıksa CoSRE 'bu trace'i
 // açıklamamı ister misin' diye sorsun, chati açınca."
@@ -51,5 +51,22 @@ describe('saflık', () => {
     const a = contextStarter('/trace', `?id=${ID}`);
     const b = contextStarter('/trace', `?id=${ID}`);
     expect(a).toEqual(b);
+  });
+});
+
+// v0.9.1226 — servis bağlam devri artık yalnız /service|/pod değil.
+describe('serviceFromRoute', () => {
+  it('reads ?name= (then ?service=) on /service', () => {
+    expect(serviceFromRoute('/service', '?name=bsa-x&service=y')).toBe('bsa-x');
+    expect(serviceFromRoute('/service/backtrace', '?service=y')).toBe('y');
+  });
+  it('reads ?service= on every service-carrying list route', () => {
+    for (const p of ['/traces', '/endpoints', '/logs', '/inbox', '/deploys', '/metrics', '/explore', '/clusters', '/profiling']) {
+      expect(serviceFromRoute(p, '?service=bsa-pay')).toBe('bsa-pay');
+    }
+  });
+  it('stays blind on non-service routes and without the param', () => {
+    expect(serviceFromRoute('/problems', '?service=x')).toBe('');
+    expect(serviceFromRoute('/traces', '?range=1h')).toBe('');
   });
 });

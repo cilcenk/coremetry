@@ -27,6 +27,27 @@ export type ChatContextStarter = { chip: string; question: string };
  * satır — ama eklemeden önce o özne için sorunun ANLAMLI olduğu
  * doğrulanmalı; "Bu sayfayı açıkla" gibi boş bir soru öneriden kötüdür.
  */
+// v0.9.1226 — chat'in varsayılan servis kapsamı: hangi rotada hangi
+// paramdan okunacağı TEK yerde. /service kendi ?name='ini kullanır;
+// ?service= URL-durumu taşıyan liste sayfaları da (Traces/Endpoints/
+// Logs/Inbox/Deploys/Metrics/Explore/Clusters/Profiling) bağlamı
+// devretsin — bugüne dek chat bu rotalarda kör açılıyordu (denetim
+// bulgusu: sunucu tarafı ctxService + kapsam bandı zaten hazırdı,
+// değer hiç gelmiyordu). SAF — vitest'i chatContext.test.ts'te.
+const SERVICE_PARAM_ROUTES = new Set([
+  '/traces', '/endpoints', '/logs', '/inbox', '/deploys',
+  '/metrics', '/explore', '/clusters', '/profiling',
+]);
+export function serviceFromRoute(pathname: string, search: string): string {
+  const sp = new URLSearchParams(search);
+  if (pathname === '/service' || pathname === '/service/backtrace') {
+    return sp.get('name') || sp.get('service') || '';
+  }
+  if (pathname === '/pod') return sp.get('service') || '';
+  if (SERVICE_PARAM_ROUTES.has(pathname)) return sp.get('service') || '';
+  return '';
+}
+
 export function contextStarter(pathname: string, search: string): ChatContextStarter | null {
   if (pathname !== '/trace') return null;
   const id = new URLSearchParams(search).get('id')?.trim() ?? '';

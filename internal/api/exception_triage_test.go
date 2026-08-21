@@ -61,10 +61,13 @@ func TestExceptionPriorityDefaultLadder(t *testing.T) {
 		// beklediği buydu ("P1 ya da P2'ydi bence doğru").
 		{"v0.9.699 vakası — 66dk", 101132, 2*time.Minute + 58*time.Second, 66 * time.Minute, "P1"},
 		{"pencerenin hemen içi — 3sa59dk", 1575, 7 * time.Minute, 3*time.Hour + 59*time.Minute, "P1"},
-		// Pencere kapandı ama gün kapanmadı: P2, uçurum yok.
-		{"5sa — aciliyet düştü, gün sürüyor", 1575, 7 * time.Minute, 5 * time.Hour, "P2"},
-		{"23sa — hâlâ bugün", 1575, 7 * time.Minute, 23 * time.Hour, "P2"},
-		{"25sa — sırası gelince", 1575, 7 * time.Minute, 25 * time.Hour, "P3"},
+		// v0.9.1205 (operatör direktifi, sınıfın 5. bildirimi): P1'i hak
+		// etmiş patlama, akışı bitse de ele alınana dek P1 KALIR — zaman
+		// aşımıyla P2/P3'e İNMEZ. Eski beklentiler (5sa→P2, 25sa→P3)
+		// tam da operatörün şikâyet ettiği gömülmeydi.
+		{"5sa — bitti ama P1 kalır", 1575, 7 * time.Minute, 5 * time.Hour, "P1"},
+		{"23sa — bitti ama P1 kalır", 1575, 7 * time.Minute, 23 * time.Hour, "P1"},
+		{"25sa — bitti ama P1 kalır", 1575, 7 * time.Minute, 25 * time.Hour, "P1"},
 
 		// ── PATLAMA-DEĞİL DALI ──────────────────────────────────────
 		// Operatörün 2. satırı: 191 olay = patlama tabanının (1000)
@@ -137,24 +140,29 @@ func TestExceptionReasonTellsTheRealWindow(t *testing.T) {
 
 // Pencereler GERÇEKTEN ayardan geliyor mu — dördüncü vaka bir sürüm
 // değil bir ayar değişikliği olsun diye.
+//
+// v0.9.1205 — patlama dalı artık pencereden BAĞIMSIZ P1 (direktif);
+// pencerenin ayardan aktığını P1-altı basamak (fresh && ≥100 → P2)
+// üzerinden doğruluyoruz: 191 olaylık, patlamayan grup.
 func TestExceptionPriorityHonorsConfiguredWindows(t *testing.T) {
-	g := exGroup(1575, 7*time.Minute, 6*time.Hour)
+	g := exGroup(191, 3*time.Hour, 5*time.Hour)
 
-	// Varsayılan 4sa pencerede 6 saatlik yaş P1 DEĞİL.
-	if got, _ := exceptionPriorityAt(g, chstore.DefaultExceptionTriage(), time.Now()); got != "P2" {
-		t.Fatalf("varsayılan pencerede 6sa yaş P2 olmalı, alınan %s", got)
+	// Varsayılan 4sa pencerede 5 saatlik yaş P2 kapısının DIŞINDA.
+	if got, _ := exceptionPriorityAt(g, chstore.DefaultExceptionTriage(), time.Now()); got != "P3" {
+		t.Fatalf("varsayılan pencerede 5sa yaş P3 olmalı, alınan %s", got)
 	}
-	// Operatör 12 saate açarsa AYNI satır P1 olur.
+	// Operatör 12 saate açarsa AYNI satır P2 olur.
 	wide := chstore.ExceptionTriageConfig{P1FreshHours: 12, P2SameDayHours: 24, StaleResolveHours: 24}
-	if got, _ := exceptionPriorityAt(g, wide, time.Now()); got != "P1" {
-		t.Fatalf("12sa pencerede 6sa yaş P1 olmalı, alınan %s", got)
+	if got, _ := exceptionPriorityAt(g, wide, time.Now()); got != "P2" {
+		t.Fatalf("12sa pencerede 5sa yaş P2 olmalı, alınan %s", got)
 	}
-	// Operatör 1 saate daraltırsa v0.9.698 davranışına döner — vida
-	// iki yöne de çalışmalı, yoksa vida değil.
+	// Operatör 1 saate daraltırsa P2 kapısı da daralır — vida iki yöne
+	// de çalışmalı, yoksa vida değil. (v0.9.1205: patlama artık pencere
+	// dinlemez; daraltma testi de P1-altı basamakta.)
 	narrow := chstore.ExceptionTriageConfig{P1FreshHours: 1, P2SameDayHours: 24, StaleResolveHours: 24}
-	recent := exGroup(1575, 7*time.Minute, 90*time.Minute)
-	if got, _ := exceptionPriorityAt(recent, narrow, time.Now()); got != "P2" {
-		t.Fatalf("1sa pencerede 90dk yaş P2 olmalı, alınan %s", got)
+	recent := exGroup(191, 3*time.Hour, 90*time.Minute)
+	if got, _ := exceptionPriorityAt(recent, narrow, time.Now()); got != "P3" {
+		t.Fatalf("1sa pencerede 90dk yaş P2 kapısının dışında (P3) olmalı, alınan %s", got)
 	}
 }
 

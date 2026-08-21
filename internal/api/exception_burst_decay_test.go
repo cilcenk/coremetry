@@ -59,10 +59,14 @@ func TestBurstDecaysByStepNotCliff(t *testing.T) {
 		// P3 olmaması pinin özü; basamak yükseldi, kalkmadı.
 		{"66 dk — operatörün gördüğü an", 66 * time.Minute, "P1"},
 		{"3sa 59dk — P1 penceresinin son ucu", 3*time.Hour + 59*time.Minute, "P1"},
-		// Pencere kapandı, gün kapanmadı: uçurum değil basamak.
-		{"5 sa — aciliyet düştü", 5 * time.Hour, "P2"},
-		{"23 sa — hâlâ bugün", 23 * time.Hour, "P2"},
-		{"25 sa — artık sırası gelince", 25 * time.Hour, "P3"},
+		// v0.9.1205 (operatör direktifi, sınıfın 5. bildirimi) — basamak
+		// fikri de yetmedi: P1'i hak etmiş patlama ele alınana dek P1
+		// KALIR, yaş yalnız gerekçe cümlesine girer ("· N önce bitti").
+		// Eski beklentiler (5sa→P2, 25sa→P3) operatörün dört kez
+		// şikâyet ettiği gömülmenin kendisiydi.
+		{"5 sa — bitti ama P1 kalır", 5 * time.Hour, "P1"},
+		{"23 sa — bitti ama P1 kalır", 23 * time.Hour, "P1"},
+		{"25 sa — bitti ama P1 kalır", 25 * time.Hour, "P1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -136,11 +136,12 @@ func TestRegressedDoesNotShadowBurst(t *testing.T) {
 	}
 }
 
-// Bayat bir patlama P1 OLMAMALI: bir hafta önce patlayıp susmuş grup
-// oncall'ı şimdi ilgilendirmiyor. Tazelik kapısı duruyor — v0.9.775'te
-// varsayılanı 4 saat, ama bir kapı olmaya devam ediyor. Bu vaka (6 sa)
-// bilerek pencerenin dışında seçildi.
-func TestStaleBurstIsNotP1(t *testing.T) {
+// v0.9.1205 — bu testin ESKİ hâli tam tersini pinliyordu ("bayat
+// patlama P1 olmamalı") ve o felsefe operatörce REDDEDİLDİ (sınıfın 5.
+// bildirimi): P1'i hak etmiş patlama, susmuş olsa da ele alınana
+// (resolve/ignore) dek P1 kalır — kuyruktan düşürmenin yolu zaman
+// değil, operatör aksiyonu. Gerekçe bittiğini dürüstçe söyler.
+func TestStaleBurstStaysP1(t *testing.T) {
 	now := time.Now()
 	last := now.Add(-6 * time.Hour)
 	g := chstore.ExceptionGroup{
@@ -149,8 +150,12 @@ func TestStaleBurstIsNotP1(t *testing.T) {
 		LastSeen:    last.UnixNano(),
 		Occurrences: 11260,
 	}
-	if prio, reason := exceptionPriority(g); prio == "P1" {
-		t.Fatalf("6 saat önce susmuş patlama P1 olmamalı (%s)", reason)
+	prio, reason := exceptionPriority(g)
+	if prio != "P1" {
+		t.Fatalf("susmuş patlama P1 kalmalı (v0.9.1205 direktifi), alınan %s (%s)", prio, reason)
+	}
+	if !strings.Contains(reason, "önce bitti") {
+		t.Fatalf("gerekçe bittiğini söylemeli: %q", reason)
 	}
 }
 
@@ -227,13 +232,13 @@ func TestExceptionPriorityReportedRow20260820(t *testing.T) {
 		t.Fatalf("patlama tanınmadı: %.1f/dk, kapı %.0f/dk",
 			exceptionBurstRate(g.Occurrences, g.FirstSeen, g.LastSeen), cfg.BurstMinRate)
 	}
-	// Yaş 8sa16dk: P1 penceresinin (4sa) DIŞINDA ama P2'nin (24sa) içinde.
-	// Yani doğru cevap P2 — "bugün". P1 istenirse P1FreshHours vidası var;
-	// bitmiş bir patlamayı "şimdi" saymak merdivenin kendi felsefesine
-	// aykırı olurdu (v0.9.699: şiddet OLGU, tazelik ERİŞİM aciliyeti).
-	if prio != "P2" {
-		t.Errorf("öncelik %s, beklenen P2 (yaş 8sa16dk, P1 penceresi %v, P2 %v)",
-			prio, cfg.P1Window(), cfg.P2Window())
+	// v0.9.1205 (operatör direktifi, sınıfın 5. bildirimi) — eski
+	// beklenti P2 idi ve gerekçesi "bitmiş patlamayı 'şimdi' saymak
+	// merdivenin felsefesine aykırı" diyordu. Operatör o felsefeyi
+	// P1 için REDDETTİ: patlama şiddetinde bir olay, akışı bitse de
+	// ele alınana dek P1 kalır. Yaş yalnız gerekçe cümlesine girer.
+	if prio != "P1" {
+		t.Errorf("öncelik %s, beklenen P1 (patlama bitmiş olsa da düşmez — v0.9.1205)", prio)
 	}
 	// Gerekçe patlamanın GERÇEK büyüklüğünü taşımalı, "steady" DEMEMELİ.
 	if strings.Contains(reason, "steady") {
@@ -266,14 +271,22 @@ func TestExceptionReasonNeverLiesAboutSteady(t *testing.T) {
 	age := 30 * time.Hour
 
 	t.Run("kapının hemen altı steady DEMEZ", func(t *testing.T) {
-		// 900 olay / 10dk = 90/dk → kapı 100'ün altında ama yarısının üstünde.
+		// 900 olay / 10dk = 90/dk → patlama kapısı 100'ün altında ama
+		// yarısının üstünde (yoğun) ve hacim eşiğinin (500) üstünde.
+		// v0.9.1205: böyle bir grup P1'i hak etmiştir ve akışı bitse de
+		// P1 kalır — eski beklenti (P3 + eşik-vida cümlesi) direktifle
+		// terfi etti; vida cümlesi artık yalnız hacim eşiğinin altında
+		// kalan gruplarda görülür.
 		g := mk(900, 10*time.Minute)
-		_, reason := exceptionPriorityAt(g, cfg, time.Unix(0, g.LastSeen).Add(age))
+		prio, reason := exceptionPriorityAt(g, cfg, time.Unix(0, g.LastSeen).Add(age))
+		if prio != "P1" {
+			t.Errorf("yoğun+hacimli bitmiş grup P1 kalmalı, alınan %s (%q)", prio, reason)
+		}
 		if strings.Contains(reason, "steady") {
 			t.Errorf("90/dk için 'steady' yalan: %q", reason)
 		}
-		if !strings.Contains(reason, "eşiği") {
-			t.Errorf("gerekçe eşiği söylemeli ki operatör vidayı görsün: %q", reason)
+		if !strings.Contains(reason, "900") || !strings.Contains(reason, "stopped") {
+			t.Errorf("gerekçe hacmi ve bittiğini söylemeli: %q", reason)
 		}
 	})
 

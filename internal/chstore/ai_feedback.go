@@ -191,3 +191,84 @@ func (s *Store) AIFeedbackCommentByExchange(ctx context.Context, exchangeID stri
 	}
 	return "", rows.Err()
 }
+
+// ── KB terfi kuyruğu (v0.9.1195, AI Faz 5.2) ───────────────────────────
+
+// KBCandidate — 👍 almış, henüz KB'ye alınmamış bir cevap adayı.
+type KBCandidate struct {
+	ExchangeID string `json:"exchangeId"`
+	Surface    string `json:"surface"`
+	CreatedAt  int64  `json:"createdAt"` // unix ns
+	UserEmail  string `json:"userEmail,omitempty"`
+	Prompt     string `json:"prompt"`
+	Response   string `json:"response"`
+}
+
+// ListKBCandidates — pencere içindeki verdict=1 feedback'ler, ai_calls
+// örnekleriyle; ZATEN terfi etmiş olanlar DIŞARIDA (v0.9.1195).
+//
+// Terfi işareti ayrı bir tablo DEĞİL (invariant #5'in ruhu): terfi eden
+// cevap rag_chunks'a source='curated', source_ref=exchange_id olarak
+// yazılıyor — varlığı işaretin kendisi. NOT IN alt sorgusu GLOBAL
+// (make audit CHECK 5: dağıtıkta GLOBAL'siz IN alt sorguyu her shard'da
+// ayrı koşar ve sessizce yanlış eler).
+//
+// response_sample boş satırlar elenir: gövdesi olmayan bir cevabı KB'ye
+// almak boş chunk üretirdi. Negatif ikizle (ListNegativeFeedbackCalls)
+// aynı maliyet sınıfı: iki küçük state tablosu, admin paneli okuması.
+func (s *Store) ListKBCandidates(ctx context.Context, from, to time.Time, limit int) ([]KBCandidate, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT f.exchange_id, f.surface, toUnixTimestamp64Nano(f.created_at), f.user_email,
+		       c.prompt_sample, c.response_sample
+		FROM ai_feedback AS f FINAL
+		LEFT JOIN ai_calls AS c ON c.exchange_id = f.exchange_id
+		WHERE f.verdict = 1 AND f.created_at >= ? AND f.created_at <= ?
+		  AND c.response_sample != ''
+		  AND f.exchange_id GLOBAL NOT IN (
+		      SELECT source_ref FROM rag_chunks FINAL
+		      WHERE source = 'curated' AND source_ref != '')
+		ORDER BY f.created_at DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 10`, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []KBCandidate
+	for rows.Next() {
+		var r KBCandidate
+		if err := rows.Scan(&r.ExchangeID, &r.Surface, &r.CreatedAt, &r.UserEmail, &r.Prompt, &r.Response); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// AICallSampleByExchange — terfi anında adayın TAM örneği (surface +
+// prompt + response). Liste bayat olabilir; terfi eden içerik her zaman
+// KAYNAKTAN okunur, listedeki kopyadan değil.
+func (s *Store) AICallSampleByExchange(ctx context.Context, exchangeID string) (surface, prompt, response string, err error) {
+	if exchangeID == "" {
+		return "", "", "", nil
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT surface, prompt_sample, response_sample FROM ai_calls
+		WHERE exchange_id = ?
+		ORDER BY created_at DESC
+		LIMIT 1
+		SETTINGS max_execution_time = 5`, exchangeID)
+	if err != nil {
+		return "", "", "", err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		if err := rows.Scan(&surface, &prompt, &response); err != nil {
+			return "", "", "", err
+		}
+	}
+	return surface, prompt, response, rows.Err()
+}

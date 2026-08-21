@@ -938,6 +938,7 @@ function LogsInner() {
                     }}>
                     {f.negated && <b>NOT </b>}
                     {f.exists ? <>∃ {f.key}</>
+                      : f.op ? <>{f.key} {f.op === 'gte' ? '≥' : '≤'} {f.value}</>
                       : f.values && f.values.length > 1
                         ? <>{f.key} ∈ ({f.values.join(', ')})</>
                         : <>{f.key}: {f.value}</>}

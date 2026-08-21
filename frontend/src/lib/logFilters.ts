@@ -24,6 +24,11 @@ export interface LogFilter {
   // substring) mevcut alan-pill'leriyle AYNI sınıfta düşer — yeni
   // ayrışma değil (docs/plans/kibana-logs-parity-2026-08-21.md).
   exists?: boolean;
+  // v0.9.1222 — aralık operatörü: `key:>=v` / `key:<=v` (Lucene range).
+  // Tek sınır; "between" = iki pill (gte+lte), Kibana'nın is-between'inin
+  // dürüst karşılığı. Negasyon editörde sunulmaz (NOT >= yerine <= kullan)
+  // ama compile URL'den gelen negated'ı yine de sayar.
+  op?: 'gte' | 'lte';
 }
 
 // Always wrap values in double quotes — Lucene treats many
@@ -46,6 +51,12 @@ export function compileSearch(filters: LogFilter[], query: string): string {
     .map(f => {
       const neg = f.negated ? 'NOT ' : '';
       if (f.exists) return `${neg}_exists_:${f.key}`;
+      if (f.op) {
+        // Tırnaklı değer ES range sözdiziminde geçerli (`key:>="v"`) ve
+        // sayısal alanlarda coerce edilir; phraseQuote boşluk/özel
+        // karakterli değerleri de güvene alır.
+        return `${neg}${f.key}:${f.op === 'gte' ? '>=' : '<='}${phraseQuote(f.value)}`;
+      }
       if (f.values && f.values.length > 1) {
         return `${neg}${f.key}:(${f.values.map(phraseQuote).join(' OR ')})`;
       }
@@ -64,7 +75,9 @@ export function compileSearch(filters: LogFilter[], query: string): string {
 export function toggleFilter(
   filters: LogFilter[], key: string, value: string, negated: boolean,
 ): LogFilter[] {
-  const idx = filters.findIndex(f => !f.exists && f.key === key && f.value === value);
+  // v0.9.1222 — aralık pill'leri eşitlik kimlik-uzayının DIŞINDA: aynı
+  // key+value'lu bir ⊕ tıkı `key:>=v` pill'ini flip'lememeli.
+  const idx = filters.findIndex(f => !f.exists && !f.op && f.key === key && f.value === value);
   if (idx === -1) return [...filters, { key, value, negated, disabled: false }];
   if (filters[idx].negated === negated) return filters.filter((_, i) => i !== idx);
   return filters.map((f, i) => (i === idx ? { ...f, negated, disabled: false } : f));
@@ -90,10 +103,13 @@ export function encodeFiltersParam(filters: LogFilter[]): string {
   // v0.9.1217 — 5. eleman exists bayrağı; 0 iken hiç yazılmaz ki eski
   // linkler/kayıtlı görünümler bayt-bayt aynı kalsın.
   // 6. eleman values dizisi (yalnız is-one-of'ta) — eski biçim aynen.
+  // 7. eleman aralık operatörü ('gte'|'lte', v0.9.1222) — yalnız aralık
+  // pill'inde yazılır; eski biçimler bayt-bayt aynı kalır.
   return JSON.stringify(filters.map(f => {
     const base: unknown[] = [f.key, f.value, f.negated ? 1 : 0, f.disabled ? 1 : 0];
     if (f.exists) return [...base, 1];
     if (f.values && f.values.length > 1) return [...base, 0, f.values];
+    if (f.op) return [...base, 0, 0, f.op];
     return base;
   }));
 }
@@ -179,6 +195,7 @@ export function parseFiltersParam(raw: string | null | undefined): LogFilter[] {
         key: e[0], value: e[1], negated: !!e[2], disabled: !!e[3],
         ...(e[4] ? { exists: true } : {}),
         ...(Array.isArray(e[5]) && e[5].length > 1 ? { values: e[5].map(String) } : {}),
+        ...(e[6] === 'gte' || e[6] === 'lte' ? { op: e[6] } : {}),
       });
     }
     return out;

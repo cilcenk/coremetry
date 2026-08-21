@@ -139,3 +139,23 @@ export function applyFieldName(
   const inserted = `${field}:`;
   return { text: before + inserted + after, cursor: before.length + inserted.length };
 }
+
+/**
+ * KQL_OPERATORS + mergeOperatorSuggestions — v0.9.1216 (dilim 4).
+ *
+ * query_string'de boolean operatörler YALNIZ BÜYÜK HARF tanınır:
+ * küçük harfle yazılan `and` sessizce sıradan bir arama terimi olur ve
+ * sorgu "çalışır ama yanlış" sınıfına düşer — bu yüzden tamamlama
+ * gerçek bir düzeltmedir, süs değil. Operatörler alan-adı listesinin
+ * BAŞINA girer (önek büyük/küçük harf duyarsız eşleşince), böylece
+ * ayrı bir öneri kaynağı/klavye yolu doğmaz.
+ */
+export const KQL_OPERATORS = ['AND', 'OR', 'NOT'] as const;
+
+export function mergeOperatorSuggestions(ranked: string[], prefix: string): string[] {
+  const p = prefix.toLowerCase();
+  if (!p) return ranked;
+  const ops = KQL_OPERATORS.filter(op => op.toLowerCase().startsWith(p));
+  if (ops.length === 0) return ranked;
+  return [...ops, ...ranked.filter(f => !(KQL_OPERATORS as readonly string[]).includes(f))];
+}

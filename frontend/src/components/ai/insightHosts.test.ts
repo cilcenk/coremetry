@@ -253,8 +253,9 @@ describe('yavaş sorgu — satır yuvası + satır-içi explain SÖKÜMÜ (SlowQ
   });
 
   it('istemci metodu da sökülmüş (yörüngesiz kod bırakılmadı)', () => {
-    // Uç (POST /api/copilot/explain-slow-query) SUNUCUDA duruyor ve
-    // prompt'u kart kullanıyor; frontend tüketicisi ise yok.
+    // v0.9.1209 — uç (POST /api/copilot/explain-slow-query) SUNUCUDAN DA
+    // söküldü (72 gün sıfır-çağrı); SystemPromptSlowQuery yaşıyor, insight
+    // kartı kullanıyor. Bu pin istemci tarafını korumaya devam ediyor.
     const api = read('lib/api.ts');
     expect(api, 'api.copilotExplainSlowQuery hâlâ tanımlı')
       .not.toMatch(/copilotExplainSlowQuery:/);

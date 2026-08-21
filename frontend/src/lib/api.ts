@@ -6,7 +6,7 @@ import type {
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
   MetricQueryResult,
   MetricResolveResult,
-  SpanMetricsServicesResponse, EndpointRow, EndpointsListResponse, EndpointDetail, EndpointSplitResponse, EndpointDownstream, EndpointCallersResponse, ServiceAttrsResponse,
+  EndpointRow, EndpointsListResponse, EndpointDetail, EndpointSplitResponse, EndpointDownstream, EndpointCallersResponse, ServiceAttrsResponse,
   AlertRule, Problem, EvaluatorHealth, WatcherImportResult, WatcherSummaryEntry, WatcherHistory,
   Runbook, RunbookExecution,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
@@ -2383,16 +2383,8 @@ export const api = {
       (opts?.top ? `&top=${opts.top}` : '') +
       (opts?.samples ? `&samples=${opts.samples}` : ''),
     ),
-  spanmetricsServices: (from: number, to: number, opts?: { top?: number; spark?: boolean }) => {
-    const params = new URLSearchParams();
-    params.set('from', String(from));
-    params.set('to', String(to));
-    if (opts?.top != null) params.set('top', String(opts.top));
-    // ?spark=0 disables the sparkline aggregation server-side
-    // — the cheapest possible load at high service cardinality.
-    if (opts?.spark === false) params.set('spark', '0');
-    return get<SpanMetricsServicesResponse>(`/api/spanmetrics/services?${params.toString()}`);
-  },
+  // spanmetricsServices SİLİNDİ — v0.9.1209: sıfır sayfa tüketicisi
+  // (eski /metrics doorway kalıntısı); sunucu ucu da kaldırıldı, shim yok.
   // v0.9.1191 — Distributed spool runbook'u (admin). GET taze durumu
   // okur (cache YOK — "flush işe yaradı mı" bakışı bayat kopyayla
   // yalanlanamaz); iki POST adlandırılmış SYSTEM eylemidir, serbest SQL

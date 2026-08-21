@@ -3271,8 +3271,8 @@ func (s *Store) migrate(ctx context.Context) error {
 		// them separate lets each MV use the smallest possible
 		// aggregate states.
 		//
-		// Trigger filter (in the WHERE) covers the four naming
-		// conventions pickSpanMetricNames recognises: the
+		// Trigger filter (in the WHERE) covers the four spanmetrics
+		// naming conventions across processor versions: the
 		// fully-qualified dotted form, the underscored form,
 		// the bare "spanmetrics.*" form, and the bare
 		// "calls" / "duration". metric is LowCardinality so

@@ -352,7 +352,8 @@ var explainStreamDeferred = map[string]string{
 	"copilotCompareTraces":      "bağımsız küçük panel — Faz 1.5 takibi",
 	"copilotDeployImpact":       "bağımsız küçük panel — Faz 1.5 takibi",
 	"copilotExplainSLO":         "bağımsız küçük panel — Faz 1.5 takibi",
-	"copilotExplainSlowQuery":   "bağımsız küçük panel — Faz 1.5 takibi",
+	// copilotExplainSlowQuery SİLİNDİ — v0.9.1209: FE tüketicisi v0.9.1137'de
+	// insight kartına devredilmişti, uç 72 gün sıfır-çağrılı yaşadı.
 	"copilotSuggestServiceTags": "JSON kipi — prose değil",
 	// Faz 5.4 — çıktı chat balonuna değil postmortem EDİTÖRÜNE (textarea
 	// taslağı) düşer; parça parça akıtmak düzenleme imlecini bozar,

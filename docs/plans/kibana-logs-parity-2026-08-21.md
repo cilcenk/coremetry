@@ -16,13 +16,13 @@ Taranan: `frontend/src/pages/Logs.tsx` (1250), `components/{KqlSearchInput,LogFi
 
 | Kibana bileşeni | Durum | Kanıt (file:line) | Boşluk | Değer | Efor |
 |---|---|---|---|---|---|
-| KQL çubuğu + saha-farkında autocomplete | **VAR** (kısmi gramer) | `KqlSearchInput.tsx:88-118` token parse; `:204` değer önerisi (`api.logsFieldValues` → ES `_terms_enum`, `since`-sınırlı v0.9.291, 30s sunucu cache, 180ms debounce); `:224-234` alan-adı tamamlama + otomatik `:` (v0.9.955, sıfır ek ES turu); `:355-360` kırpık-katalog dürüstlüğü | AND/OR/NOT operatör önerisi yok; yalnız en sağdaki token; gönderim ÖNCESİ sözdizimi doğrulaması yok (hata sonradan `Logs.tsx:1039-1066` "Query failed") | 3 | S |
-| Alan paneli top-values %li + tıkla-filtrele | **VAR** | `LogFieldsPanel.tsx:39-104` accordion top-5 + % bar + ⊕/⊖; fetch YALNIZ expand'de, staleTime 60s = sunucu TTL (`:19-21` sözleşme); `:109-120` Popular fields; `:272-277` "first N of M" | Kapsama yüzdesi ("alan dokümanların %X'inde var") yok; panelden **exists** filtresi yok; top-5 sabit | 3 | S |
-| Sürükle-zoom histogram | **VAR** | `LogsHistogram.tsx:136-150` TimeChart `onBrush` + çift-tık geri; `Logs.tsx:1028-1030` → `usePageZoomRange` (`:132`); brush/sparse-bucket bug'ı v0.9.218'de çözülmüş | **Breakdown seçici yok** — kırılım severity'e sabit (total/warn/error + oran çizgisi); Kibana 8 keyfi alanla kırar (service, namespace…) | 4 | M |
-| Genişleyen doküman satırı JSON/tablo | **VAR** | `LogTable.tsx:347` `docTab` state; `:479-546` Table sekmesi (prettyMaybe gövde `:111-121` + attr kv-table + Resource details); `:547-566` JSON sekmesi tam kayıt + kopya | Doc-viewer'dan alan→**sütun ekle** yok (KvRow `:63-102` yalnız ⊕/⊖); tek-doküman kalıcı linki yok | 2 | XS |
-| Surrounding documents | **VAR** (kısmi) | `LogContextModal.tsx:27-171` ±50, pivot vurgusu, trace-peek; `api.ts:1033-1042` `logsContext` | N **sabit** (büyütme yok); yalnız servis kapsamı — pod/namespace/filtre-koruma anahtarı yok; sorgu terimleri context satırlarında vurgulanmıyor | 4 | S-M |
-| Filtre pill'leri düzenle/negatifle/devre-dışı | **KISMİ** | `Logs.tsx:870-908` pill barı (≠/◐/×/Clear all); `logFilters.ts:12-54` model+toggle; `:59-62` `?filters=` URL'de → Share+SavedViews taşır | **EDIT yok** (değer/operatör değişimi = sil+yeniden ekle); yalnız eşitlik — exists / is-one-of / aralık operatörü yok | 4 | M |
-| Vurgulama | **KISMİ** | `logFilters.ts:72-131` istemci-tarafı term çıkarımı + 4KB scan cap; `LogTable.tsx:393-395` `<mark>` | Yalnız message hücresi — genişletilmiş doküman + context modalında vurgu yok. (ES highlight API'siz olması KASITLI spec — koru) | 2 | XS |
+| KQL çubuğu + saha-farkında autocomplete | **VAR** | `KqlSearchInput.tsx:88-118` token parse; `:204` değer önerisi (`api.logsFieldValues` → ES `_terms_enum`, `since`-sınırlı v0.9.291, 30s sunucu cache, 180ms debounce); `:224-234` alan-adı tamamlama + otomatik `:` (v0.9.955, sıfır ek ES turu); `:355-360` kırpık-katalog dürüstlüğü | ~~AND/OR/NOT önerisi~~ + ~~gönderim öncesi doğrulama~~ → **v0.9.1216** (kqlLint Enter kapısı + operatör tamamlama). KALAN (bilinçli, değer/efor altı): imleç-ortası tamamlama — yalnız en sağdaki token tamamlanır | — | — |
+| Alan paneli top-values %li + tıkla-filtrele | **VAR** | `LogFieldsPanel.tsx:39-104` accordion top-5 + % bar + ⊕/⊖; fetch YALNIZ expand'de, staleTime 60s = sunucu TTL (`:19-21` sözleşme); `:109-120` Popular fields; `:272-277` "first N of M" | ~~Kapsama yüzdesi~~ + ~~exists filtresi~~ → **v0.9.1217** (sıfır ek sorgu — FieldStats.Total zaten exists sayısı; ⊕∃/⊖∃). KALAN (bilinçli): top-5 sabit — "daha fazla" genişletmesi yok | — | — |
+| Sürükle-zoom histogram | **VAR** | `LogsHistogram.tsx` TimeChart `onBrush` + çift-tık geri; `usePageZoomRange`; brush/sparse-bucket bug'ı v0.9.218'de çözülmüş | ~~Breakdown seçici~~ → **v0.9.1220** (seviye\|servis, top-5+"diğer", ES OTHER/CH LIMIT dürüstlüğü). KALAN (takip dilimi): namespace/cluster ekseni — ES `histogramGroupField` + CH whitelist alan haritası ister, sessiz `_total` düşüşü olmasın diye seçenek hiç sunulmadı | — | — |
+| Genişleyen doküman satırı JSON/tablo | **VAR** | `LogTable.tsx` Table sekmesi (prettyMaybe gövde + attr kv-table + Resource details); JSON sekmesi tam kayıt + kopya | ~~Alan→sütun ekle~~ → **v0.9.1215** (KvRow ▤/▣ üçüncü ikonu). KALAN (bilinçli): tek-doküman kalıcı linki — by-id uç + `?doc=` gerektirir | — | — |
+| Surrounding documents | **VAR** | `LogContextModal.tsx` ±50, pivot vurgusu, trace-peek; `api.ts` `logsContext` | ~~N sabit~~ → **v0.9.1218** (+50 artımlı, tavan 200 = mevcut sunucu sınırı); ~~yalnız servis kapsamı~~ → kısmen 1218 ("⇲ Tüm servisler" anahtarı); ~~vurgu yok~~ → **v0.9.1215**. KALAN (takip dilimi): pod/namespace kapsamı — `logstore.Filter.Pod` + iki backend clause ister; filtre-koruma anahtarı (bilinçli) | — | — |
+| Filtre pill'leri düzenle/negatifle/devre-dışı | **VAR** | `Logs.tsx` pill barı (≠/◐/×/Clear all); `logFilters.ts` model+toggle; `?filters=` URL'de → Share+SavedViews taşır | ~~EDIT~~ → **v0.9.1219** (popover: alan/operatör/değer); ~~exists~~ → 1217; ~~is-one-of~~ → 1219 (`key:("a" OR "b")`, URL 6. tuple geriye-uyumlu). KALAN (bilinçli): sayısal aralık operatörü (>= / <=) — phraseQuote'suz ayrı derleme dalı ister, her-birim-testli | — | — |
+| Vurgulama | **VAR** | `logFilters.ts` istemci-tarafı term çıkarımı + 4KB scan cap; `LogTable.tsx` `<mark>` | ~~Genişletilmiş doküman + context modalı~~ → **v0.9.1215**. (ES highlight API'siz olması KASITLI spec — korundu) | — | — |
 | Canlı takip | **VAR** (Kibana'yı aşar) | `Logs.tsx:434-479` SSE `/api/logs/stream`, LIVE_CAP 1000, dedup, `gap` olayı, `document.hidden` kapat/aç + `since` yakalama | — | — | — |
 | Kayıtlı arama + sütun seti | **VAR** | `SavedViewsBar.tsx:35-90` kişisel+paylaşımlı, modified rozeti, 1-9 kısayol; `Logs.tsx:191-204` sütunlar localStorage + `?cols=` (varsayılansa yazılmaz); saved view tüm QS'i (filters+cols+severity+asc) saklar | — | — | — |
 
@@ -42,6 +42,28 @@ Parite ÜSTÜ mevcutlar: dürüstlük zarfı (partial/timed_out `Logs.tsx:854-86
   histogramın onSeries'inden, 'sev-volume' sorgusu yalnız seviye tabanı
   veya servis kırılımı aktifken — /logs açılışında 1 ES _search eksik).
 - **TÜM 6 DİLİM GEMİDE** (v0.9.1215-1220).
+
+## Kapanış durumu (2026-08-22)
+
+**Teknik kapsam KAPALI:** matristeki her boşluk ya sürümüyle
+damgalandı ya da açıkça bilinçli kesim / takip dilimi olarak
+gerekçelendirildi (yukarıdaki Boşluk sütunu artık son durumu söylüyor).
+Değer/efor çizgisinin altında bırakılan 7 kalem: imleç-ortası KQL
+tamamlama · alan panelinde top-5 sabiti · tek-doküman kalıcı linki ·
+context filtre-koruma anahtarı · sayısal aralık pill operatörü ·
+pod/namespace context kapsamı (takip) · kırılımda namespace/cluster
+ekseni (takip). Hiçbiri sessiz düşmüyor — hepsi ya UI'da hiç vaat
+edilmiyor ya dürüst notla sınırlanıyor.
+
+**Öznel kabul AÇIK:** "Kibana kadar iyi" hükmü operatörün. Elde
+doğrulama listesi (lokal v0.9.1220, http://localhost:8090/logs):
+1. Pill'e tıkla → EDIT popover (operatör değiştir, is-one-of dene).
+2. Histogram başlığı → kırılım: servis (top-5 + diğer, lejant).
+3. Alan paneli → kapsama %si + ⊕∃ exists.
+4. Bozuk KQL yaz + Enter → sorgu ES'e gitmeden uyarı.
+5. Satır genişlet → alan yanı ▤ ile sütuna ekle; vurgunun gövdede
+   ve ±bağlam modalında sürdüğünü gör.
+6. Bağlam modalı → +50 büyüt, "⇲ Tüm servisler".
 
 ## Önerilen 6 dilim (değer/efor sırasıyla)
 

@@ -1006,6 +1006,10 @@ func main() {
 		log.Printf("[vmetrics] load persisted config: %v", err)
 	}
 	go vmSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	// v0.9.1213 — JVM GC alarmlarının VM dönüşü: evaluator GC çiftini
+	// YALNIZ vmetrics yapılandırılmışken, VM'den okuyarak değerlendirir
+	// (SetLogs geç-bağlama emsali; runtime_vm.go başlığı).
+	evalr.SetVMetrics(vmSvc)
 	if vmSvc.Configured() {
 		v := vmSvc.Snapshot()
 		log.Printf("[vmetrics] metric read backend enabled (baseUrl=%s authType=%s) — "+

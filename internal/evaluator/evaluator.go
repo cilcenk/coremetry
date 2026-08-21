@@ -20,13 +20,17 @@ import (
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/notify"
+	"github.com/cilcenk/coremetry/internal/vmetrics"
 )
 
 const lockKey = "coremetry:lock:evaluator"
 
 type Evaluator struct {
-	store    *chstore.Store
-	logs     logstore.Store // v0.5.242 — drives the saved-search log alert path
+	store *chstore.Store
+	logs  logstore.Store // v0.5.242 — drives the saved-search log alert path
+	// vmetrics — v0.9.1213: JVM GC alarmlarının VM dönüşü. nil = VM
+	// kurulmamış, GC değerlendirmesi emekli kalır (runtime_vm.go).
+	vmetrics *vmetrics.Service
 	interval time.Duration
 	lock     cache.Lock
 	leader   *cache.LeaderHolder // v0.5.429
@@ -132,6 +136,12 @@ func New(store *chstore.Store, interval time.Duration, lock cache.Lock, notifier
 // backend — keeps the New() constructor lean + avoids
 // reordering boot-time wiring around the evaluator.
 func (e *Evaluator) SetLogs(logs logstore.Store) { e.logs = logs }
+
+// SetVMetrics — v0.9.1213 (JVM GC alarmlarının VM dönüşü). SetLogs
+// emsali: boot sıralamasını bozmadan geç bağlanır. nil kalabilir
+// (vmetrics kurulmadıysa) — runtime GC değerlendirmesi o durumda
+// v0.9.1075 emekliliğinde kalır.
+func (e *Evaluator) SetVMetrics(vm *vmetrics.Service) { e.vmetrics = vm }
 
 // Start runs the evaluation loop until ctx is cancelled. Built-in rules
 // are seeded by every replica — that's safe (UpsertAlertRule is idempotent

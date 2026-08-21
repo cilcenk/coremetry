@@ -9,7 +9,7 @@ import { useOpenCriticalCount, useProblems } from '@/lib/queries';
 import { useAuth } from '@/components/AuthProvider';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs, tsRel } from '@/lib/utils';
-import { contextStarter } from '@/lib/chatContext';
+import { contextStarter, serviceFromRoute } from '@/lib/chatContext';
 import { Empty, Spinner } from './Spinner';
 import { ChatBubble } from './ai/ChatBubble';
 import { useChatThread } from './ai/useChatThread';
@@ -112,13 +112,12 @@ export function CopilotChat() {
   const ctxStarter = useMemo(
     () => contextStarter(loc.pathname, loc.search),
     [loc.pathname, loc.search]);
-  const currentService = useMemo(() => {
-    if (loc.pathname === '/service' || loc.pathname === '/service/backtrace') {
-      return sp.get('name') || sp.get('service') || '';
-    }
-    if (loc.pathname === '/pod') return sp.get('service') || '';
-    return '';
-  }, [loc.pathname, sp]);
+  // v0.9.1226 — saf çözümleyiciye taşındı (chatContext.serviceFromRoute):
+  // yalnız /service|/pod değil, ?service= taşıyan tüm liste rotaları
+  // bağlamı devrediyor; kapsam bandı + guided ctxService bedavaya doldu.
+  const currentService = useMemo(
+    () => serviceFromRoute(loc.pathname, loc.search),
+    [loc.pathname, loc.search]);
   // v0.9.537 (operatör raporu: "ekrandaki trace'i anlamıyor") — trace
   // sayfasındayken adresteki ID bağlam olarak gider; "bu trace neden
   // yavaş" sunucuda guidedTraceByID'ye oturur. Mesaja yapıştırılan

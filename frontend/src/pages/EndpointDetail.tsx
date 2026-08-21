@@ -170,13 +170,19 @@ export default function EndpointDetailPage() {
               {env && `env=${env}`}{env && cluster && ' · '}{cluster && `cluster=${cluster}`}
             </span>
           )}
-          <span style={{ marginLeft: 'auto', display: 'flex', gap: 12, fontSize: 12 }}>
-            <Link to={tracesLink(refObj, range, env, cluster)}>Traces →</Link>
-            <Link to={exploreLink(refObj, range, 'p99', env, cluster)}
+          {/* v0.9.1210 (operatör bildirimi) — pivotlar düz link değil
+              bağlantı-düğme: "çok belli olmuyordu". a.sec = button.sec
+              anatomisi (globals.css). */}
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, fontSize: 12 }}>
+            <Link className="sec" style={{ fontSize: 12, padding: '3px 10px' }}
+              to={tracesLink(refObj, range, env, cluster)}>Traces →</Link>
+            <Link className="sec" style={{ fontSize: 12, padding: '3px 10px' }}
+              to={exploreLink(refObj, range, 'p99', env, cluster)}
               title="Open this route's p99 in Explore — charted from the metric rollups, where you can add dimensions or compare against another query.">
               Explore →
             </Link>
-            <Link to={serviceHref(refObj.service, { range, env })}>Service →</Link>
+            <Link className="sec" style={{ fontSize: 12, padding: '3px 10px' }}
+              to={serviceHref(refObj.service, { range, env })}>Service →</Link>
           </span>
         </div>
 

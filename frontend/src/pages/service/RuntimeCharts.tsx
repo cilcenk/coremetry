@@ -40,6 +40,11 @@ import { smoothPoints } from './runtimeSmooth';
 
 const MB = 1 / (1024 * 1024);
 const HEAP: FilterExpr[] = [{ k: 'jvm.memory.type', op: '=', v: ['heap'] }];
+// v0.9.1271 (Dynatrace-parite #2) — non-heap: Metaspace/CodeCache/
+// compressed-class. JBoss'un klasik classloader-leak'i HEAP kartında
+// GÖRÜNMEZ (heap sağlıklıyken Metaspace şişer, sonuç OOM:Metaspace);
+// Dynatrace bu kartı varsayılan gösterir. Semconv değeri 'non_heap'.
+const NONHEAP: FilterExpr[] = [{ k: 'jvm.memory.type', op: '=', v: ['non_heap'] }];
 
 interface LineSpec {
   metric: string;
@@ -89,6 +94,13 @@ const FAMILY_CARDS: Record<string, CardSpec[]> = {
       // limit tüm pod'larda aynı JVM ayarı — tek kesikli referans çizgisi;
       // pod çizgisi limite yaklaşınca "doldu" gözle okunur.
       { metric: 'jvm.memory.limit', label: 'limit', color: 'var(--err)', filters: HEAP, scale: MB, ref: true },
+    ] },
+    { key: 'nonheap', title: 'JVM non-heap (by pod)', unit: ' MB', lines: [
+      { metric: 'jvm.memory.used', label: 'used', color: 'var(--purple)', filters: NONHEAP,
+        scale: MB, groupBy: POD_GROUP, fanout: true, labelOf: podLineLabel },
+      // Metaspace limiti çoğu kurulumda ayarsız (-1 → seri yok) — çizgi
+      // o zaman hiç gelmez; MaxMetaspaceSize verilen kurulumda referans.
+      { metric: 'jvm.memory.limit', label: 'limit', color: 'var(--err)', filters: NONHEAP, scale: MB, ref: true },
     ] },
     { key: 'gc', title: 'GC pause by pod (avg)', unit: ' ms', mode: 'line', lines: [
       { metric: 'jvm.gc.duration', label: 'gc', color: 'var(--warn)',

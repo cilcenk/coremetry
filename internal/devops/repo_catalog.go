@@ -280,7 +280,7 @@ func (s *Service) repoNames(ctx context.Context, cli *http.Client, cfg Settings)
 		return names, nil
 	}
 	var firstErr error
-	for _, ver := range apiVersionCandidates(cfg) {
+	for _, ver := range s.apiVersionCandidates(cfg) {
 		body, err := doGetCapped(ctx, cli, reposURL(cfg)+"?api-version="+ver, cfg, repoListBodyCap)
 		if err != nil {
 			if firstErr == nil {

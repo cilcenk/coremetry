@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { assignFocusColumns } from './FocusedNeighborhood';
-import type { GraphEdge } from '@/lib/types';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { assignFocusColumns, externalPinHost } from './FocusedNeighborhood';
+import type { GraphEdge, GraphNode } from '@/lib/types';
 
 // v0.8.39 — Operator-reported: the focused topology graph "won't branch" at
 // 2 hops — every node piled into ONE vertical column instead of fanning out
@@ -118,5 +120,70 @@ describe('capPerSide', () => {
     const r = capPerSide([...col.keys()], id => col.get(id) ?? 0, 3, 'focus');
     expect(r.keep).toContain('near');
     expect(r.keep).not.toContain('far');
+  });
+});
+
+// ── v0.9.1255 — pin'li dış düğümün yol kırılımı fetch KAPISI ──────────
+//
+// Operator-reported: dış düğümde host değil hangi UÇ olduğu anlamlı. Pin
+// kartı artık /api/external/host çağırıyor — ve o ucun yol yarısı HAM
+// spans okuması. Kapı bu yüzden düğüm TÜRÜNDE: servis / db / queue
+// düğümü pin'lendiğinde istek ATILMAMALI. Atılsaydı her pin bir ham
+// tarama tetiklerdi ve dönen cevap da boş olurdu (sunucu tarafındaki
+// GLOBAL NOT IN enstrümante servisleri zaten eliyor) — bedeli ödeyip
+// cevapsızlık almak.
+describe('externalPinHost — pin kartı fetch kapısı', () => {
+  const node = (over: Partial<GraphNode>): GraphNode => ({
+    id: 'x', name: 'x', kind: 'service',
+    calls: 0, errors: 0, errorRate: 0, rate: 0, ...over,
+  });
+
+  it('dış düğüm host üretir', () => {
+    expect(externalPinHost(node({ id: 'ext:esbprod.example.internal', name: 'esbprod.example.internal', kind: 'external' })))
+      .toBe('esbprod.example.internal');
+  });
+
+  it('SERVİS düğümü pin\'lenince istek atılmaz (asıl regresyon)', () => {
+    expect(externalPinHost(node({ id: 'payments', name: 'payments', kind: 'service' }))).toBeNull();
+  });
+
+  it('db / queue / internal düğümleri de istek atmaz', () => {
+    for (const kind of ['database', 'queue', 'internal'] as GraphNode['kind'][]) {
+      expect(externalPinHost(node({ id: `db:oracle@o`, name: 'oracle@o', kind }))).toBeNull();
+    }
+  });
+
+  it('pin YOKSA (hover) istek atılmaz — hover davranışı değişmedi', () => {
+    expect(externalPinHost(null)).toBeNull();
+    expect(externalPinHost(undefined)).toBeNull();
+  });
+
+  it('adı boş gelen dış düğümde id ön eki soyulur', () => {
+    expect(externalPinHost(node({ id: 'ext:api.stripe.com', name: '', kind: 'external' })))
+      .toBe('api.stripe.com');
+  });
+});
+
+// Kapının GERÇEKTEN sorguya bağlı olduğunu pinler. Saf fonksiyonun
+// doğru cevap vermesi, bileşenin o cevabı KULLANDIĞINI kanıtlamaz —
+// `enabled` satırı düşerse useQuery her pin'de koşardı ve yukarıdaki
+// beş test yine yeşil kalırdı.
+describe('externalPinHost bağlantısı', () => {
+  const src = readFileSync(
+    fileURLToPath(new URL('./FocusedNeighborhood.tsx', import.meta.url)), 'utf8');
+
+  it('kapı pinnedNode üstünden kuruluyor (hoverNode DEĞİL)', () => {
+    expect(src).toContain('const extHost = externalPinHost(pinnedNode)');
+  });
+
+  it('useQuery kapıya bağlı', () => {
+    expect(src).toContain('enabled: !!extHost');
+  });
+
+  it('staleTime sunucu TTL\'ine eşit veya üstünde (30s)', () => {
+    const q = src.slice(src.indexOf('const extDetail = useQuery'));
+    const m = /staleTime:\s*([\d_]+)/.exec(q);
+    expect(m).not.toBeNull();
+    expect(Number(m![1].replace(/_/g, ''))).toBeGreaterThanOrEqual(30_000);
   });
 });

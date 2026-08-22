@@ -198,6 +198,40 @@ else
     printf "${GRN}✓ clean${NC}\n"
 fi
 
+# ─── CHECK 5b: non-GLOBAL JOIN over Distributed (v0.9.1285) ──
+# The JOIN twin of CHECK 5, and the gap that let Repeats ship
+# dead: `LEFT JOIN spans s ON s.trace_id = d.trace_id` against a
+# Distributed table is the same shard-local trap as a bare IN
+# subquery — `spans` shards on rand(), so one trace's spans are
+# scattered and each shard joins only its own slice. CHECK 5 only
+# ever grepped `IN (SELECT`, so five sites (repeats, backtrace,
+# three in topology) sat unflagged for months.
+#
+# Correct shape is BOTH halves: a GLOBAL prefix *and* the time
+# bound inside the joined subquery's WHERE. A bare
+# `GLOBAL JOIN <distributed table>` ships the whole table to the
+# initiator, and a bound in the ON clause never prunes (measured
+# v0.9.1285: 22.69M rows / 20.5s vs 75.65K rows / 0.056s). Because
+# the correct form has the table name on its own line inside the
+# subquery, matching `JOIN <telemetry table>` on ONE line catches
+# exactly the wrong shape.
+#
+# Comment lines are skipped — the incident notes in repeats.go /
+# repo.go quote the anti-pattern by name.
+hr
+echo "CHECK 5b — JOIN spans/metric_points/logs without GLOBAL prefix"
+hits=$(grep -rnE '(LEFT|INNER|ANY|SEMI|ANTI|CROSS|FULL|OUTER|ASOF)?[[:space:]]*JOIN[[:space:]]+(spans|metric_points|logs)\b' \
+        internal/chstore internal/api 2>/dev/null \
+    | grep -v _test.go \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|--|\*)' \
+    | grep -v 'GLOBAL' \
+    | filter_ignored || true)
+if [ -n "$hits" ]; then
+    while IFS= read -r line; do crit "$line"; done <<< "$hits"
+else
+    printf "${GRN}✓ clean${NC}\n"
+fi
+
 # ─── CHECK 6: FROM spans without LIMIT or settings ──────────
 # Heuristic: any `FROM spans` literal should have `LIMIT` OR
 # `max_execution_time` within ±10 lines of the same string

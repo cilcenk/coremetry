@@ -96,31 +96,7 @@ func (s *Store) QueryRepeatedSpans(ctx context.Context, f RepeatedSpanFilter) ([
 	// would force two scanner paths.
 	keysArrayLiteral := "[" + strings.Join(keyExprs, ", ") + "]"
 
-	// The inner query does the per-(trace_id, group-by) count;
-	// the outer ANY LEFT JOIN looks up the trace's root span
-	// service + name + earliest time, indexed via (service_name,
-	// time) primary key on spans. Two passes but bounded — the
-	// outer LIMIT 200 caps the join's right side at 200 rows.
-	q := `
-		WITH dup_traces AS (
-			SELECT trace_id,
-			       ` + keysArrayLiteral + ` AS group_values,
-			       count()                      AS cnt,
-			       sum(duration) / 1e6          AS total_ms,
-			       min(time)                    AS earliest
-			FROM spans ` + wc.sql() + `
-			GROUP BY trace_id, group_values
-			HAVING cnt >= ?
-			ORDER BY cnt DESC
-			LIMIT ?
-		)
-		SELECT d.trace_id, d.group_values, d.cnt, d.total_ms, toUnixTimestamp64Nano(d.earliest),
-		       any(s.service_name), any(if(s.parent_id = '', s.name, ''))
-		FROM dup_traces d
-		LEFT JOIN spans s ON s.trace_id = d.trace_id AND s.time >= ? AND s.time <= ?
-		GROUP BY d.trace_id, d.group_values, d.cnt, d.total_ms, d.earliest
-		ORDER BY d.cnt DESC
-		SETTINGS max_execution_time = 20`
+	q := repeatedSpansSQL(keysArrayLiteral, wc.sql())
 
 	args := append([]any{}, wc.args...)
 	args = append(args, keyArgs...)
@@ -142,4 +118,68 @@ func (s *Store) QueryRepeatedSpans(ctx context.Context, f RepeatedSpanFilter) ([
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// repeatedSpansSQL builds the N+1 finder's two-pass query. Pure so
+// the shape can be pinned by a test (repeats_join_test.go) —
+// v0.9.1285 shipped the extraction precisely because the join shape
+// below is the part that regressed and a text pin over the whole
+// file would not have proved the builder emits it.
+//
+// `keysArrayLiteral` is the Array(String) group-key projection and
+// `whereSQL` is the already-rendered inner WHERE (time bounds +
+// operator filters). Both arrive with their `?` placeholders in
+// place; the caller binds in TEXT order, so the placeholder
+// positions here are load-bearing — the two trailing `?` in the
+// joined subquery stand where the old ON-clause bounds stood.
+//
+// v0.9.1285 — two distributed-cluster defects lived on this join,
+// and between them the whole Explore "Repeats" mode returned HTTP
+// 500 on every window against an external Distributed ClickHouse:
+//
+//  1. UNBOUNDED RIGHT SIDE. The bounds used to sit in the JOIN ON
+//     clause (`... AND s.time >= ? AND s.time <= ?`). ON-clause
+//     predicates on the right table are join conditions, not scan
+//     filters — ClickHouse cannot use them for partition or
+//     primary-key pruning, so the right side was a full scan of the
+//     ENTIRE spans table to answer a 10-minute question. Measured
+//     on the local 2-shard cluster: 22.69M rows / 1.58 GiB / 20.5s,
+//     which hit the max_execution_time ceiling and 500'd, versus
+//     75.65K rows / 11.34 MiB / 0.056s median once the bound moved
+//     INTO a subquery. The bound belongs in a subquery WHERE, never
+//     in ON.
+//
+//  2. NO GLOBAL. `spans` is Distributed with a rand() sharding key,
+//     so one trace's spans scatter across every shard. A non-GLOBAL
+//     join re-runs the right side shard-locally and each shard sees
+//     only its own slice, so the resolved service / root-op comes
+//     from a partial trace. GLOBAL is the JOIN twin of the house
+//     GLOBAL IN rule (v0.5.427); on a single-node install the two
+//     forms are semantically identical.
+func repeatedSpansSQL(keysArrayLiteral, whereSQL string) string {
+	return `
+		WITH dup_traces AS (
+			SELECT trace_id,
+			       ` + keysArrayLiteral + ` AS group_values,
+			       count()                      AS cnt,
+			       sum(duration) / 1e6          AS total_ms,
+			       min(time)                    AS earliest
+			FROM spans ` + whereSQL + `
+			GROUP BY trace_id, group_values
+			HAVING cnt >= ?
+			ORDER BY cnt DESC
+			LIMIT ?
+		)
+		SELECT d.trace_id, d.group_values, d.cnt, d.total_ms, toUnixTimestamp64Nano(d.earliest),
+		       any(s.service_name), any(if(s.parent_id = '', s.name, ''))
+		FROM dup_traces d
+		GLOBAL LEFT JOIN (
+			SELECT trace_id, service_name, parent_id, name
+			FROM spans
+			WHERE time >= ? AND time <= ?
+		) AS s ON s.trace_id = d.trace_id
+		GROUP BY d.trace_id, d.group_values, d.cnt, d.total_ms, d.earliest
+		ORDER BY d.cnt DESC
+		SETTINGS max_execution_time = 20,
+		         distributed_product_mode = 'global'`
 }

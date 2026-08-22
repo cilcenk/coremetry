@@ -36,10 +36,13 @@ func (s *Store) GetTopologyEdges(ctx context.Context, from, to time.Time, limit 
 			c.name         AS child_op,
 			count() AS calls
 		FROM spans AS c
-		INNER JOIN spans AS p
+		GLOBAL INNER JOIN (
+			SELECT trace_id, span_id, service_name, name
+			FROM spans
+			WHERE time >= ? AND time <= ?
+		) AS p
 			ON p.trace_id = c.trace_id AND p.span_id = c.parent_id
 		WHERE c.time >= ? AND c.time <= ?
-		  AND p.time >= ? AND p.time <= ?
 		  AND c.parent_id != ''
 		  AND `+topoNoiseExcludeSQL("c.name")+`
 		GROUP BY parent_service, parent_op, child_service, child_op
@@ -176,9 +179,12 @@ func (s *Store) GetRootFlows(ctx context.Context, from, to time.Time, limit int)
 			uniqExact(rt.trace_id) AS trace_count,
 			groupUniqArrayArray(50)(arrayDistinct([sp.service_name])) AS services
 		FROM root_traces AS rt
-		INNER JOIN spans AS sp
+		GLOBAL INNER JOIN (
+			SELECT trace_id, service_name
+			FROM spans
+			WHERE time >= ? AND time <= ?
+		) AS sp
 			ON sp.trace_id = rt.trace_id
-		WHERE sp.time >= ? AND sp.time <= ?
 		GROUP BY rt.root_service, rt.root_op
 		ORDER BY trace_count DESC
 		LIMIT ?
@@ -1445,10 +1451,13 @@ func (s *Store) GetServiceTopologyEdges(ctx context.Context, from, to time.Time,
 			uniqExact(label) AS distinct_labels,
 			count()        AS calls
 		FROM spans AS c
-		INNER JOIN spans AS p
+		GLOBAL INNER JOIN (
+			SELECT trace_id, span_id, service_name
+			FROM spans
+			WHERE time >= ? AND time <= ?
+		) AS p
 			ON p.trace_id = c.trace_id AND p.span_id = c.parent_id
 		WHERE c.time >= ? AND c.time <= ?
-		  AND p.time >= ? AND p.time <= ?
 		  AND c.parent_id != ''
 		  AND p.service_name != c.service_name
 		GROUP BY parent_service, child_service, protocol

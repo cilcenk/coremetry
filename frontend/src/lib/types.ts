@@ -1334,6 +1334,12 @@ export interface ClusterPodRow {
   // v0.9.371 — restart SERİSİ yok (KSM yok / 1000-seri parse tavanı):
   // 0 değil BİLİNMİYOR; UI '—' çizer. restarts artık gerçek 0'da da gelir.
   restartsUnknown?: boolean;
+  // v0.9.1276 (Dynatrace-parite #5) — son sonlanma sebebi
+  // (kube_pod_container_status_last_terminated_reason), restart
+  // hücresinin yanında rozet. Absent = hiç sonlanmamış YA DA KSM
+  // yok — restartsUnknown'dan BAĞIMSIZ best-effort. Çok container'lı
+  // pod'da sunucu en kötü sebebi seçer (worseTermReason).
+  lastTermReason?: string;
 }
 // v0.9.3 — multi-pod trend serisi (top-10, sunucu keser).
 export interface ClusterPodSeriesTrend {

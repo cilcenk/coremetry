@@ -215,6 +215,21 @@ func podRestartsQuery(nsFilter string) string {
 		nsMatcher(nsFilter))
 }
 
+// Pod son-sonlanma sebebi (v0.9.1276, Dynatrace-parite #5): restart
+// SAYISI vardı ama SEBEBİ yoktu — OOMKilled'ı operatör yalnız
+// kubectl'de görüyordu. KSM (ns,pod,container,reason) etiketli seri
+// basar; container ekseni satırda toplanır (worseTermReason).
+//
+// `== 1` ŞART: kube-state-metrics son sebep DIŞINDAKİ reason
+// serilerini de 0 DEĞERLE basar (aynı container için Completed=0,
+// OOMKilled=1 gibi). Filtresiz okumak 0'lı bir seriyi "sebep" sanıp
+// yanlış rozet bastırır.
+func podLastTermQuery(nsFilter string) string {
+	return fmt.Sprintf(
+		`max by (namespace, pod, reason) (kube_pod_container_status_last_terminated_reason{pod!=""%s} == 1)`,
+		nsMatcher(nsFilter))
+}
+
 // Node rolü (heatmap dot + Nodes tab): kube_node_role → (node,role).
 const nodeRoleQuery = `kube_node_role`
 
@@ -493,10 +508,12 @@ func jmxDiscoveryQuery(namespace, deploy string) string {
 // seri adının okunacağı label listesi (v0.9.145/146). jboss_ datasource
 // metrikleri HER ZAMAN data_source taşır (operatör: bir projede 5-10+
 // datasource); toggle POD boyutunu EKLER:
-//   jboss + off (By datasource) → by (data_source)       ad = data_source
-//   jboss + on  (By pod)        → by (pod, data_source)   ad = "data_source · pod"
-//   jvm   + off (Total)         → sum()                   ad = ""
-//   jvm   + on  (By pod)        → by (pod)                ad = pod
+//
+//	jboss + off (By datasource) → by (data_source)       ad = data_source
+//	jboss + on  (By pod)        → by (pod, data_source)   ad = "data_source · pod"
+//	jvm   + off (Total)         → sum()                   ad = ""
+//	jvm   + on  (By pod)        → by (pod)                ad = pod
+//
 // byClause boş = total (sum). nameLabels boş = tek toplam seri.
 func jmxGrouping(metric string, byPod bool) (byClause string, nameLabels []string) {
 	if strings.HasPrefix(metric, "jboss_") {

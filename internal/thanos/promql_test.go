@@ -288,11 +288,11 @@ func TestPodMatcher(t *testing.T) {
 func TestPodQueriesCarryPodRe(t *testing.T) {
 	const re = `(svc)-.*`
 	for name, q := range map[string]string{
-		"cpu":  podCPUQuery("", re),
-		"mem":  podMemQuery("", re),
-		"lim":  podLimitQuery("cpu", "", re),
-		"req":  podRequestQuery("memory", "", re),
-		"net":  podNetQuery("receive", "", re),
+		"cpu": podCPUQuery("", re),
+		"mem": podMemQuery("", re),
+		"lim": podLimitQuery("cpu", "", re),
+		"req": podRequestQuery("memory", "", re),
+		"net": podNetQuery("receive", "", re),
 	} {
 		if !strings.Contains(q, `pod=~"(svc)-.*"`) {
 			t.Errorf("%s sorgusu podRe taşımıyor: %s", name, q)
@@ -345,5 +345,42 @@ func TestDeployTrendQueryNetwork(t *testing.T) {
 	cpu := deployTrendQuery("ns", "dep", "cpu", false)
 	if !strings.Contains(cpu, `container!=""`) {
 		t.Errorf("CPU dalı container filtresini kaybetmiş:\n%s", cpu)
+	}
+}
+
+// v0.9.1276 (Dynatrace-parite #5) — son-sonlanma sorgusu. İki
+// sözleşme kilitli:
+//  1. `== 1` filtresi — KSM son sebep DIŞINDAKİ reason serilerini de
+//     0 DEĞERLE basar; filtre düşerse 0'lı seri "sebep" sanılır ve
+//     yanlış rozet basılır (örn. OOMKilled=1 varken Completed=0).
+//  2. reason etiketi gruplamada — düşerse sebep adı kaybolur ve
+//     birleştirme yapacak bir şey kalmaz.
+func TestPodLastTermQuery(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		query    string
+		wantSubs []string
+	}{
+		{"ns filtresiz", podLastTermQuery(""), []string{
+			`max by (namespace, pod, reason)`,
+			`kube_pod_container_status_last_terminated_reason{pod!=""}`,
+			`== 1`,
+		}},
+		{"ns filtreli", podLastTermQuery("^app-"), []string{
+			`kube_pod_container_status_last_terminated_reason{pod!="",namespace=~"^app-"}`,
+			`== 1`,
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			for _, sub := range c.wantSubs {
+				if !strings.Contains(c.query, sub) {
+					t.Fatalf("query %q missing %q", c.query, sub)
+				}
+			}
+		})
+	}
+	// Restart sayacıyla karıştırılmamalı — ayrı metrik, ayrı eksen.
+	if strings.Contains(podLastTermQuery(""), "restarts_total") {
+		t.Fatal("son-sonlanma sorgusu restart sayacına dokunmamalı")
 	}
 }

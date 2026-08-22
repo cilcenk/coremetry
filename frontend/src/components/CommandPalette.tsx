@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEscLayer } from '@/lib/escLayer';
+import { scorePaletteEntry } from '@/lib/paletteScore';
+import { useT } from '@/lib/i18n';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { navHref } from '@/lib/navHref';
 import { serviceHref } from '@/lib/serviceHref';
@@ -33,6 +35,11 @@ import { Button, LinkButton } from '@/components/ui';
 type Result = {
   kind: 'page' | 'service' | 'trace' | 'action' | 'endpoint';
   label: string;
+  // v0.9.1270 (B5#1) — sayfa adı sidebar'la TEK kaynaktan: navKey
+  // varsa etiket t(navKey) ile çözülür (i18n + TR paritesi bedava);
+  // aliases eski/alternatif adları aranabilir tutar (paletteScore).
+  navKey?: string;
+  aliases?: string[];
   hint?: string;
   // navigate target — set for page/service/trace; absent for actions
   // (selecting an action enters param-prompt mode, doesn't navigate).
@@ -52,30 +59,30 @@ type Result = {
 // yüzeyi burasıdır.
 const PAGES: Result[] = [
   // Triage
-  { kind: 'page', label: 'Inbox',       hint: 'Unified triage queue', to: '/inbox' },
-  { kind: 'page', label: 'Incidents',   hint: 'Manual incident log', to: '/incidents' },
-  { kind: 'page', label: 'Problems',    hint: 'Open alert + exception inbox', to: '/problems' },
-  { kind: 'page', label: 'Anomalies',   hint: 'Log + trace anomaly streams', to: '/anomalies' },
+  { kind: 'page', label: 'Inbox',       navKey: 'nav.inbox', aliases: ['inbox'], hint: 'Unified triage queue', to: '/inbox' },
+  { kind: 'page', label: 'Incidents',   navKey: 'nav.incidents', hint: 'Manual incident log', to: '/incidents' },
+  { kind: 'page', label: 'Problems',    navKey: 'nav.problems', aliases: ['problems'], hint: 'Open alert + exception inbox', to: '/problems' },
+  { kind: 'page', label: 'Anomalies',   navKey: 'nav.anomalies', hint: 'Log + trace anomaly streams', to: '/anomalies' },
   // Services
-  { kind: 'page', label: 'Services',    hint: 'Per-service RED + latency', to: '/services' },
-  { kind: 'page', label: 'Endpoints',   hint: 'Per-route RED', to: '/endpoints' },
-  { kind: 'page', label: 'Service Map', hint: 'Topology / flows', to: '/service-map' },
-  { kind: 'page', label: 'Databases',   hint: 'DBM-style query catalog', to: '/databases' },
-  { kind: 'page', label: 'Messaging',   hint: 'Kafka / RabbitMQ / SQS', to: '/messaging' },
-  { kind: 'page', label: 'External',    hint: 'Third-party dependencies', to: '/external' },
-  { kind: 'page', label: 'Hosts',       hint: 'Infrastructure inventory', to: '/hosts' },
+  { kind: 'page', label: 'Services',    navKey: 'nav.services', hint: 'Per-service RED + latency', to: '/services' },
+  { kind: 'page', label: 'Endpoints',   navKey: 'nav.endpoints', hint: 'Per-route RED', to: '/endpoints' },
+  { kind: 'page', label: 'Service Map', navKey: 'nav.topology', aliases: ['service map', 'topology'], hint: 'Topology / flows', to: '/service-map' },
+  { kind: 'page', label: 'Databases',   navKey: 'nav.databases', hint: 'DBM-style query catalog', to: '/databases' },
+  { kind: 'page', label: 'Messaging',   navKey: 'nav.messaging', hint: 'Kafka / RabbitMQ / SQS', to: '/messaging' },
+  { kind: 'page', label: 'External',    navKey: 'nav.external', hint: 'Third-party dependencies', to: '/external' },
+  { kind: 'page', label: 'Hosts',       navKey: 'nav.hosts', hint: 'Infrastructure inventory', to: '/hosts' },
   // Signals
-  { kind: 'page', label: 'Traces',      hint: 'Search raw traces', to: '/traces' },
-  { kind: 'page', label: 'Metrics',     hint: 'Time-series explorer', to: '/metrics' },
-  { kind: 'page', label: 'Logs',        hint: 'Elasticsearch logs', to: '/logs' },
-  { kind: 'page', label: 'Profiling',   hint: 'Continuous profiling', to: '/profiling' },
+  { kind: 'page', label: 'Traces',      navKey: 'nav.traces', hint: 'Search raw traces', to: '/traces' },
+  { kind: 'page', label: 'Metrics',     navKey: 'nav.metrics', hint: 'Time-series explorer', to: '/metrics' },
+  { kind: 'page', label: 'Logs',        navKey: 'nav.logs', hint: 'Elasticsearch logs', to: '/logs' },
+  { kind: 'page', label: 'Profiling',   navKey: 'nav.profiling', hint: 'Continuous profiling', to: '/profiling' },
   { kind: 'page', label: 'Trace compare', hint: 'Diff two traces', to: '/trace/compare' },
   // Workspaces
-  { kind: 'page', label: 'Explore',     hint: 'Cross-signal ad-hoc query', to: '/explore' },
-  { kind: 'page', label: 'Runbooks',    hint: 'Operational procedures', to: '/runbooks' },
-  { kind: 'page', label: 'Dashboards',  hint: 'Operator-curated', to: '/dashboards' },
+  { kind: 'page', label: 'Explore',     navKey: 'nav.explore', hint: 'Cross-signal ad-hoc query', to: '/explore' },
+  { kind: 'page', label: 'Runbooks',    navKey: 'nav.runbooks', hint: 'Operational procedures', to: '/runbooks' },
+  { kind: 'page', label: 'Dashboards',  navKey: 'nav.dashboards', hint: 'Operator-curated', to: '/dashboards' },
   // Alerting
-  { kind: 'page', label: 'Alerts',      hint: 'Alert rules + noisy report', to: '/alerts' },
+  { kind: 'page', label: 'Alerts',      navKey: 'nav.alerts', hint: 'Alert rules + noisy report', to: '/alerts' },
   { kind: 'page', label: 'SLOs',        hint: 'Service level objectives', to: '/slos' },
   { kind: 'page', label: 'Monitors',    hint: 'Synthetic probes', to: '/monitors' },
   { kind: 'page', label: 'Events',      hint: 'Deploy / config markers', to: '/events' },
@@ -91,8 +98,8 @@ const PAGES: Result[] = [
   // kalır — keşif yüzeyi burasıdır" diyordu; üçü de o kuralın kapsamına
   // giriyordu ama listeye hiç girmemişti. Kural doğruydu, uygulaması
   // eksikti.
-  { kind: 'page', label: 'Deploys',     hint: 'Deploy history + change events', to: '/deploys' },
-  { kind: 'page', label: 'Clusters',    hint: 'Kubernetes / OpenShift inventory', to: '/clusters' },
+  { kind: 'page', label: 'Deploys',     navKey: 'nav.deploys', hint: 'Deploy history + change events', to: '/deploys' },
+  { kind: 'page', label: 'Clusters',    navKey: 'nav.clusters', hint: 'Kubernetes / OpenShift inventory', to: '/clusters' },
   { kind: 'page', label: 'Watchers',    hint: 'Log pattern watchers', to: '/watchers' },
   // System (v0.8.9 — /admin/* → /system/:tab)
   { kind: 'page', label: 'System · Overview',      hint: 'Internal CH + cache stats', to: '/system/stats' },
@@ -105,7 +112,7 @@ const PAGES: Result[] = [
   { kind: 'page', label: 'System · SQL',           hint: 'Raw CH query console', to: '/system/sql' },
   { kind: 'page', label: 'System · Query',         hint: 'Query console', to: '/system/query' },
   { kind: 'page', label: 'System · Status page',   hint: 'Components + subscribers', to: '/system/status-page' },
-  { kind: 'page', label: 'AI observability', hint: 'CoSRE usage + cost', to: '/ai' },
+  { kind: 'page', label: 'AI observability', navKey: 'nav.ai', aliases: ['cosre', 'ai observability'], hint: 'CoSRE usage + cost', to: '/ai' },
   // Meta
   { kind: 'page', label: 'Settings',    hint: 'AI / SMTP / retention / theme', to: '/settings' },
   { kind: 'page', label: 'Users',       hint: 'Role + team management', to: '/users' },
@@ -141,6 +148,7 @@ function subscribeOpenPalette(fn: PaletteOpener): () => void {
 
 export function CommandPalette() {
   const navigate = useNavigate();
+  const t = useT();
   // v0.9.855 — pivot href'leri operatörün BAKTIĞI pencereyi taşısın diye
   // sayfanın aralığı (useUrlRange önceliğiyle) buradan çözülür.
   const { search: locationSearch } = useLocation();
@@ -346,32 +354,24 @@ export function CommandPalette() {
   // fuzzy. Exact matches sort to the top. Hand-rolled rather than
   // pulling in fuzzysort — at this catalog size the diff is in
   // microseconds and the bundle stays lean.
+  // v0.9.1270 (B5#1) — sayfa adları sidebar'la TEK kaynaktan: navKey'li
+  // girişlerin etiketi t(navKey). Sidebar "Problems" derken paletin
+  // "Inbox" demesi bitti; TR kataloğu da bedavaya geldi. Alias'lar eski
+  // adları aranabilir tutar (skor saf çekirdekte: lib/paletteScore).
+  const localizedPages = useMemo(
+    () => PAGES.map(pg => (pg.navKey ? { ...pg, label: t(pg.navKey) } : pg)),
+    [t]);
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const all = [...PAGES, ...services];
+    const all = [...localizedPages, ...services];
     let scored: Result[];
     if (!q) {
       // empty query → pivot rotation (pinned ★ + recent services) first,
       // then the page catalog (v0.7.89).
-      scored = [...pivotSvcs, ...PAGES];
+      scored = [...pivotSvcs, ...localizedPages];
     } else {
       scored = all
-        .map(r => {
-          const lbl = r.label.toLowerCase();
-          let score = 0;
-          if (lbl === q) score = 1000;
-          else if (lbl.startsWith(q)) score = 500;
-          else if (lbl.includes(q)) score = 200;
-          else {
-            // letters-in-order fuzzy
-            let qi = 0;
-            for (let i = 0; i < lbl.length && qi < q.length; i++) {
-              if (lbl[i] === q[qi]) qi++;
-            }
-            if (qi === q.length) score = 50;
-          }
-          return { ...r, score };
-        })
+        .map(r => ({ ...r, score: scorePaletteEntry(q, r.label, r.aliases) }))
         .filter(r => r.score && r.score > 0)
         .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
         .slice(0, 50);
@@ -406,7 +406,7 @@ export function CommandPalette() {
       scored = [...scored, ...endpoints];
     }
     return scored;
-  }, [query, services, endpoints, pivotSvcs, user?.role]);
+  }, [query, services, endpoints, pivotSvcs, user?.role, localizedPages]);
 
   // Reset cursor when results shrink/grow — otherwise the cursor
   // can point past the last row and Enter does nothing.

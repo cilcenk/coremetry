@@ -218,6 +218,32 @@ type metricSource interface {
 	// worse than no unit: it labels an axis with a confidence nothing earned.
 	MetricUnit(ctx context.Context, metric, service string) string
 
+	// LatencyMetricName translates the name the THROUGHPUT mapper resolved into
+	// the name a VALUE read (avg / latency) must use (v0.9.1274,
+	// operator-reported).
+	//
+	// The two questions have different right answers on the SAME metric, which
+	// is what the bug was: a histogram's throughput is `rate(<f>_count)`, so the
+	// mapper legitimately resolves `…_seconds_count` on a VM install — and the
+	// service Overview then carried that resolved name into its two `agg=avg`
+	// panels. There, an explicit `_count` name is read as a deliberate operator
+	// pick (mayHaveHistogramParts' documented refusal), so the query became a
+	// raw `avg()` over a CUMULATIVE COUNTER, formatted as seconds because the
+	// name says `_seconds`. The operator's axis read "14.2 weeks".
+	//
+	// PURE and synchronous — no ctx, no error. It is a naming rule, not a probe:
+	// asking the store "which family does this part belong to" would add a round
+	// trip to answer something the suffix already states, and the existence-is-
+	// not-liveness trap (names.go) says a probe here could lock onto a stale
+	// family anyway. Composition stays the DATA's job: the trimmed family name
+	// is what re-opens buildPromQL's `or` arms, which self-select.
+	//
+	// ClickHouse returns the name UNCHANGED, and that is a decision rather than
+	// a stub: the CH avg path reads a histogram row's own sum/count COLUMNS, so
+	// there is no part-suffix to strip and no behaviour to change. This release
+	// must be invisible on a ClickHouse install.
+	LatencyMetricName(name string) string
+
 	// MetricPresentKeys answers "does this metric carry this identity key at
 	// all" — the diagnostic that separates a mis-configured collector from a
 	// mismatched value (v0.9.682).
@@ -351,6 +377,20 @@ func (c chMetricSource) QueryMetricCountRate(ctx context.Context, f chstore.Metr
 func (c chMetricSource) MetricUnit(ctx context.Context, metric, service string) string {
 	return c.store.MetricUnit(ctx, metric, service)
 }
+
+// LatencyMetricName — IDENTITY on ClickHouse, on purpose (v0.9.1274).
+//
+// No chstore twin to delegate to, because ClickHouse has no question to answer
+// here: a histogram lands as ONE metric_points row carrying `sum` and `count`
+// COLUMNS, so `QueryMetric(agg=avg)` computes sum/count off the row the caller
+// already named. There is no `…_count` SERIES to be resolved onto and therefore
+// nothing to trim.
+//
+// Spelled as a method with a named return rather than left to an embedded
+// default so the CH half of this release is a written decision — and so the
+// delegation-parity test can pin that this release changed nothing a
+// ClickHouse install sees.
+func (chMetricSource) LatencyMetricName(name string) string { return name }
 
 func (c chMetricSource) MetricPresentKeys(ctx context.Context, metric string, keys []string, since time.Duration) []string {
 	return c.store.MetricPresentKeys(ctx, metric, keys, since)
@@ -512,6 +552,14 @@ func (v vmMetricSource) QueryMetricCountRate(ctx context.Context, f chstore.Metr
 
 func (v vmMetricSource) MetricUnit(ctx context.Context, metric, service string) string {
 	return v.svc.MetricUnit(ctx, metric, service)
+}
+
+// LatencyMetricName — the half that DOES something (v0.9.1274). Delegation,
+// like every method here; the rule and its argument live in
+// vmetrics.latencyFamilyName, next to the mayHaveHistogramParts gate it exists
+// to re-open.
+func (v vmMetricSource) LatencyMetricName(name string) string {
+	return v.svc.LatencyMetricName(name)
 }
 
 func (v vmMetricSource) MetricPresentKeys(ctx context.Context, metric string, keys []string, since time.Duration) []string {

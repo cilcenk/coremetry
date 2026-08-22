@@ -440,7 +440,17 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   //
   // Metrik ADI hardcode DEĞİL: throughput ucunun keşfettiği ad kullanılır
   // (prod'da http.server.request.duration, lokalde http.server.duration).
-  const metricName = metricTputQ.data?.metric ?? '';
+  //
+  // v0.9.1274 (operatör-bildirimi) — ama `metric` DEĞİL, `rtMetric`. Throughput
+  // ucu THROUGHPUT için seri çözüyor ve VictoriaMetrics kurulumunda bu meşru
+  // olarak `…_seconds_count` oluyor (histogramın hızı `rate(_count)`). Aşağıdaki
+  // İKİ panel ise DEĞER okuyor (agg='avg'): aynı adı taşımak kümülatif bir
+  // sayacın ham ortalamasını çizdi ve `_seconds` yüzünden eksen "14.2 weeks"
+  // dedi. Uç artık iki adı ayrı veriyor; burası aile adını okur.
+  //
+  // `||`, `??` DEĞİL: alan eski cache gövdelerinde YOK ve boş string de eski
+  // alana düşmeli — `??` boş stringi geçerli sayıp paneli adsız bırakırdı.
+  const metricName = metricTputQ.data?.rtMetric || metricTputQ.data?.metric || '';
   // Adım: Explore paritesi (stepForWidth). Genişlik kaynağı kardeş RED
   // panelleriyle AYNI (redMdp = quantizeWidth(içerik/3)/2 nokta), yani
   // px ≈ redMdp×2 — deterministik, rung'a snap'li, cache-key kardinalitesi
@@ -743,7 +753,11 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 // v0.9.774 — başlıkta AGG YAZILI. Panel P50/P95/P99
                 // çizdiğini iddia ediyordu ve boş geliyordu; artık ne
                 // çizdiğini söylüyor: route kırılımlı ORTALAMA.
-                title={`Response time · avg (by route)${metricName ? ` — ${metricName}` : ''}`}
+                // v0.9.1274 (operatör): METRİK ADI BAŞLIKTA YAZMAZ. Ad zaten
+                // ⋯ → "Sorguyu göster" metninde ve boş-durum ipucunda duruyor,
+                // yani keşfedilebilirlik kaybolmuyor — başlık ise panelin NE
+                // çizdiğini söylemeli, hangi seriden okuduğunu değil.
+                title="Response time · avg (by route)"
                 // storageKey AYNEN: kullanıcının lejant/görünürlük tercihi
                 // panel yeniden bağlandı diye sıfırlanmasın.
                 // v0.9.794 (operatör bulgusu) — tık hedefi panelin ÇİZDİĞİ
@@ -807,7 +821,11 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                paneli 3. slota ("Throughput / Failure rate") geçti. */
             <Suspense key="tput-metric-v2-main" fallback={<Spinner />}>
               <CorePanelMultiLazy
-                title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
+                // v0.9.1274 — ad başlıktan çıktı (kardeş RT paneliyle aynı
+                // karar). Çözülen seri ⋯ → "Sorguyu göster" metninde: orada
+                // instrument ve eşleşme etiketiyle BİRLİKTE duruyor, yani
+                // tanılama için daha iyi bir yer.
+                title="Throughput · metrik"
                 menuExtra={doorway}
                 storageKey="ov-throughput-metric-v2"
                 loading={metricTputQ.isLoading}

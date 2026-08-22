@@ -444,6 +444,70 @@ func mayHaveHistogramParts(name string) bool {
 		[]string{counterSuffix, bucketSuffix, histogramSumSuffix, histogramCountSuffix})
 }
 
+// ── Latency-family name (v0.9.1274) ─────────────────────────────────────────
+//
+// OPERATÖR-BİLDİRİMİ, prod. Service Overview'ın "Response time · avg (by
+// route)" paneli ve Response time KAROSU eksende "14.2 weeks" / "17.6 hours"
+// gösteriyordu. Panelin kendi sorgu metni suçu itiraf ediyordu:
+// `avg(http_server_request_duration_seconds_count) by (http.route)`.
+//
+// ZİNCİR, ve her halkası kendi başına doğruydu:
+//
+//   - throughput ucu varsayılan ada göre bir seri ÇÖZER, ve VM kurulumunda
+//     çözdüğü ad `…_seconds_count` oldu. Throughput için bu DOĞRU cevap:
+//     histogramın hızı `rate(_count)`, ve uç onu rate'liyor.
+//   - Overview aynı adı RT panellerine de taşıyordu (tek "çözülmüş metrik"
+//     alanı vardı), bu kez `agg=avg` ile.
+//   - buildPromQL'in avg dalı `mayHaveHistogramParts` false görünce
+//     "operatör `_count` serisini BİLİNÇLİ seçti" diye okur ve tek kollu ham
+//     `avg(…)` üretir — bu, mayHaveHistogramParts'ın belgelenmiş ve doğru
+//     reddi (bucketMetricName'in reddiyle aynı).
+//
+// Sonuç: kümülatif bir SAYACIN ortalaması (≈8,5M), `_seconds` soneki yüzünden
+// saniye diye biçimlendi. Sayı da eksen de "makul" göründü — v0.6.36'nın
+// birim-karışımı sınıfının bir başka yüzü.
+//
+// ÇÖZÜM ADIN KENDİSİNDE, sorgu üreticisinde değil. promql.go'ya dokunmak
+// (avg dalını `_count` adında da or-bileşimine zorlamak) operatörün BİLİNÇLİ
+// `_count` seçimini de ezerdi. Onun yerine okuma yolu, DEĞER okuyacağı adı
+// sorar: `_count` / `_sum` / `_bucket` bir ailenin PARÇASIDIR, aile adı ise
+// soneksiz olanıdır. Aile adı verilince buildPromQL zaten v0.9.1160'ın doğru
+// ifadesini üretir — `avg(base) or (sum(rate(_sum))/sum(rate(_count)))` — ve
+// VM'de taban seri olmadığı için sol kol susar, sağ kol gözlem-ağırlıklı
+// ortalamayı çizer.
+//
+// KARARLAR:
+//
+//   - HAM ad üzerinden çalışır, promMetricName'den geçirilmiş hâl üzerinden
+//     değil. `queue.message.count` gibi noktalı bir OTel adı sanitize edilince
+//     `_count` ile biter ve masum bir gauge ailesinin adını kırpardık; ham adda
+//     `.count` ile bittiği için dokunulmaz. Yazımı çözmek zaten aşağıdaki
+//     aday makinesinin işi.
+//   - `_total` DEĞİŞMEZ: monotonik bir toplamın histogram kardeşi yoktur, ve
+//     `http_requests_total` → `http_requests` var olmayan bir seriye işaret
+//     ederdi.
+//   - KIRPILMIŞ TABAN mayHaveHistogramParts'ı geçmek ZORUNDA. Geçmiyorsa
+//     (`x_sum_count` → `x_sum`, ya da tek başına `_count` → boş) kırpma ismi
+//     DEĞİŞTİRİR ama or-bileşimini açmaz — yani hiçbir şeyi düzeltmeden
+//     sorulan adı bozardık. O durumda ad aynen döner.
+func latencyFamilyName(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return name
+	}
+	for _, part := range []string{histogramCountSuffix, histogramSumSuffix, bucketSuffix} {
+		if !strings.HasSuffix(trimmed, part) {
+			continue
+		}
+		base := strings.TrimSuffix(trimmed, part)
+		if base == "" || !mayHaveHistogramParts(base) {
+			return name
+		}
+		return base
+	}
+	return name
+}
+
 // withCountSiblings appends the `_count` derivative of each candidate — the
 // UNION form, used by LABEL DISCOVERY only.
 //

@@ -201,7 +201,15 @@ func (s *Service) ResolveDryRun(ctx context.Context, service string, pin PinRead
 		return out
 	}
 	out.FileCount = len(ch.paths)
-	out.add(DryRunStepTree, "Depo ağacı", true, strconv.Itoa(len(ch.paths))+" dosya")
+	// v0.9.1269 — kesik ağaç "N dosya" diye TAM gibi rapor edilmez.
+	// Teşhis aracının en pahalı hatası, gerçekte olmayan bir bütünlüğü
+	// doğrulamaktır: 60.000'de duran bir listeyi olduğu gibi göstermek,
+	// operatörün "demek depo bu kadar" diye kapatması demekti.
+	detail := strconv.Itoa(len(ch.paths)) + " dosya"
+	if ch.capped {
+		detail += " (liste kesildi — depo tavana dayanıyor, kod aramasında kapsamlı geri-deneme devreye girer)"
+	}
+	out.add(DryRunStepTree, "Depo ağacı", true, detail)
 	return out
 }
 

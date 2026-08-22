@@ -315,8 +315,14 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	// v0.9.1237 — aday listesi GENİŞ (10), tavan çıktıda (3 pencere).
 	targets := stackparse.AppFrames(frames, codeCandidateLimit)
 	if len(targets) == 0 {
+		// v0.9.1264 (denetim [3/XS]) — tek cümle ÜÇ farklı vazgeçişi
+		// katıyordu ve üçünün operatör aksiyonu farklı: (a) hiç frame
+		// çözülemedi → stack Java kalıbında değil; (b) frame'ler var ama
+		// hepsi çerçeve/JDK → uygulama kodu enstrümante değil ya da
+		// paket önekleri app sayılmıyor; (c) uygulama frame'i var ama
+		// dosya/satır taşımıyor → debug bilgisi olmadan derlenmiş.
 		class = CodeNoStack
-		return CodeContext{Repo: repo, Reason: "stack'te dosya+satır taşıyan uygulama frame'i yok"}
+		return CodeContext{Repo: repo, Reason: frameGiveUpReason(frames)}
 	}
 
 	cli := s.clientFor(cfg.InsecureSkipVerify)
@@ -1382,4 +1388,24 @@ func MaskCodeInPrompt(full, block, summary string) string {
 		return full
 	}
 	return strings.Replace(full, block, summary, 1)
+}
+
+
+// frameGiveUpReason — v0.9.1264: AppFrames boş dönünce HANGİ sebepten
+// boş döndüğünü söyler. SAF, tablo-testli. Üç sınıf üç ayrı aksiyon
+// gerektirir; tek cümle üçünü de "stack işe yaramaz"a indiriyordu.
+func frameGiveUpReason(frames []stackparse.Frame) string {
+	if len(frames) == 0 {
+		return "stacktrace çözümlenemedi — Java stack kalıbı bulunamadı"
+	}
+	app := 0
+	for _, f := range frames {
+		if f.IsApp {
+			app++
+		}
+	}
+	if app == 0 {
+		return "stack yalnız çerçeve/JDK frame'leri taşıyor — uygulama kodu görünmüyor"
+	}
+	return "uygulama frame'leri dosya/satır taşımıyor (debug bilgisi olmadan derlenmiş olabilir)"
 }

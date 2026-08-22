@@ -29,6 +29,7 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	rows, total, next, err := s.store.GetLogs(ctx, chstore.LogFilter{
 		Service:     f.Service,
 		Env:         f.Env, // v0.8.400 — env-separation Phase 4
+		Pod:         f.Pod, // v0.9.1249 — bağlam pod kapsamı
 		Search:      f.Search,
 		From:        f.From,
 		To:          f.To,
@@ -131,6 +132,20 @@ const chLogsClusterExpr = `coalesce(
 			nullIf(res_values[indexOf(res_keys, 'cluster')], ''),
 			'')`
 
+// chLogsPodExpr — v0.9.1249, pod derivation for the logs table, same
+// res-array coalesce shape as the cluster expression above. Canonical
+// semconv key first, then the pipeline spellings. NO `resource_attributes.`
+// prefixed leg: that path exists only as an ES DOCUMENT path, never as an
+// OTLP resource key, so it would be dead SQL here. MUST stay semantically
+// identical to chstore's logsPodChainSQL — GetLogs (the /logs list + the
+// Context halves) and Histogram/FieldStats filter the same rows.
+const chLogsPodExpr = `coalesce(
+			nullIf(res_values[indexOf(res_keys, 'k8s.pod.name')], ''),
+			nullIf(res_values[indexOf(res_keys, 'kubernetes.pod_name')], ''),
+			nullIf(res_values[indexOf(res_keys, 'kubernetes.pod.name')], ''),
+			nullIf(res_values[indexOf(res_keys, 'pod_name')], ''),
+			'')`
+
 // chLogsAttrLookupExpr — FieldStats' "any attribute path" value
 // expression: span attribute first, then resource attribute (same
 // precedence the old map version declared). Two positional args (the
@@ -206,6 +221,12 @@ func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 		// block above).
 		wc += " AND " + chLogsClusterExpr + " = ?"
 		args = append(args, f.Cluster)
+	}
+	if f.Pod != "" {
+		// v0.9.1249 — pod kapsamı. Filter alanı bir metotta uygulanıp
+		// diğerinde yok sayılamaz (sessiz no-op sınıfı).
+		wc += " AND " + chLogsPodExpr + " = ?"
+		args = append(args, f.Pod)
 	}
 	if f.Env != "" {
 		// v0.8.400 — env-separation Phase 4: the global ?env= filter.
@@ -521,6 +542,11 @@ func (s *CHStore) FieldStats(ctx context.Context, f Filter, field string, limit 
 		// v0.8.400 — res-array lookup (map-access fix, const block above).
 		wc += " AND " + chLogsClusterExpr + " = ?"
 		args = append(args, f.Cluster)
+	}
+	if f.Pod != "" {
+		// v0.9.1249 — pod kapsamı (bkz. Histogram'daki aynı conjunct).
+		wc += " AND " + chLogsPodExpr + " = ?"
+		args = append(args, f.Pod)
 	}
 	if f.Env != "" {
 		// v0.8.400 — env-separation Phase 4.

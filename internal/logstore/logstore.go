@@ -36,6 +36,18 @@ const logsTailMax = LogsTailMax
 type Filter struct {
 	Service string
 	Cluster string // v0.5.471 — k8s/openshift cluster name; empty = any
+	// Pod (v0.9.1249 — Kibana-parite artığı) — k8s pod identity, empty
+	// = any. Born for the /logs Context modal: on a crowded service the
+	// ±window around a pivot fills with OTHER pods' lines, so the
+	// neighbourhood of a single pod's story reads as a multi-pod mix
+	// (Kibana does this with a pod field filter because its index is
+	// one). Structural clause in BOTH backends — ES: bool.should over
+	// esPodFields × exactTermsBothShapes; CH: the chLogsPodExpr /
+	// logsPodChainSQL res-array coalesce. Honoured by every method that
+	// takes a Filter (Search/Histogram/FieldStats), because a Filter
+	// field that one method applies and another ignores is this repo's
+	// recurring silent-no-op bug class.
+	Pod string
 	// Env (v0.8.400 — env-separation Phase 4) — the global ?env=
 	// deployment-environment filter. CH backend: bounded res-array
 	// lookup over BOTH semconv spellings (deployment.environment.name

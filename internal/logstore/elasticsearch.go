@@ -2376,6 +2376,22 @@ func exactTermsBothShapes(field, value string) []any {
 	}
 }
 
+// esPodFields — the candidate document paths a k8s pod name lands on,
+// operator's REAL prod shape first (OpenShift cluster-logging writes the
+// top-level snake_case `kubernetes.pod_name`; the OTel-through-ES path
+// writes the resource-prefixed key). Same list, same order, as the
+// frontend's POD_FIELDS (lib/logPod.ts) which EXTRACTS the pivot pod
+// from a log row: the value we display must be a value this filter can
+// find (v0.8.265 class), so the two lists are one contract in two
+// languages — pinned by logPod.test.ts reading this var.
+var esPodFields = []string{
+	"kubernetes.pod_name",
+	"k8s.pod.name",
+	"kubernetes.pod.name",
+	"resource_attributes.k8s.pod.name",
+	"pod_name",
+}
+
 func (s *ESStore) buildQuery(f Filter) map[string]any {
 	must := []any{}
 
@@ -2585,6 +2601,26 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		must = append(must, map[string]any{
 			"bool": map[string]any{
 				"should":               clShould,
+				"minimum_should_match": 1,
+			},
+		})
+	}
+	// v0.9.1249 — pod filter (Kibana-parite artığı; /logs Context'in
+	// "yalnız bu pod" kapsamı). Cluster'ın ÜSTÜNDEKİ deseni birebir
+	// izler: aday alanların her biri exactTermsBothShapes ile (hem
+	// `.keyword` alt-alanı hem exists-guard'lı çıplak alan), hepsi tek
+	// bool.should altında. Alan listesi FE'deki POD_FIELDS'in aynası
+	// (lib/logPod.ts) — gösterilen pod adı FİLTREYLE bulunamıyorsa
+	// v0.8.265 sınıfı bir yalan olur. Eksik alanlı indekste zararsız:
+	// should dalı eşleşmez, sorgu patlamaz.
+	if f.Pod != "" {
+		podShould := make([]any, 0, len(esPodFields)*2)
+		for _, fld := range esPodFields {
+			podShould = append(podShould, exactTermsBothShapes(fld, f.Pod)...)
+		}
+		must = append(must, map[string]any{
+			"bool": map[string]any{
+				"should":               podShould,
 				"minimum_should_match": 1,
 			},
 		})

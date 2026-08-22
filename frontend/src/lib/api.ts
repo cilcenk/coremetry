@@ -1035,7 +1035,9 @@ export const api = {
   // Datadog Context tab equivalent. Two parallel server-side
   // searches (before / after); 30-min symmetric window, capped
   // at n=200 per side.
-  logsContext: (params: { ts: number; service?: string; env?: string; n?: number; search?: string }) =>
+  // v0.9.1249 — pod: bağlamı tek podun satırlarına daraltır (boş =
+  // tüm podlar). Sunucu hem ES hem CH tarafında yapısal clause uygular.
+  logsContext: (params: { ts: number; service?: string; env?: string; pod?: string; n?: number; search?: string }) =>
     get<{
       pivotTs: number; service: string;
       before: import('./types').LogRow[];

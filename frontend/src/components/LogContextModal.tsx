@@ -6,6 +6,7 @@ import { fmtNum, tsLong } from '@/lib/utils';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import type { LogRow } from '@/lib/types';
 import { highlightSegments } from '@/lib/logFilters';
+import { podOfLog } from '@/lib/logPod';
 
 // LogContextModal — v0.5.402. Datadog "Context" tab for /logs.
 // Operator clicks "≡ ±50" on an expanded log row → this modal
@@ -49,6 +50,13 @@ export function LogContextModal({
   // yazdı") Kibana'nın tek-index görünümünün karşılığı.
   const [n, setN] = useState(50);
   const [scopeService, setScopeService] = useState(true);
+  // v0.9.1249 (Kibana paritesi) — POD kapsamı. Kalabalık bir serviste
+  // ±pencere BAŞKA podların satırlarıyla dolar; incelenen olay tek
+  // podun hikâyesiyken komşuluk çok-pod karışımı olur. Varsayılan
+  // KAPALI (bağlam = geniş komşuluk, servis kapsamıyla aynı ruh);
+  // operatör tek tıkla daraltır. Pivotun podu ÇIKARILAMAZSA düğme
+  // hiç çizilmez — kapsayamayacağımız kapsamı vaat etmeyiz.
+  const [scopePod, setScopePod] = useState(false);
   // v0.9.1224 — varsayılan KAPALI: bağlam normalde süzgeçsiz komşuluk
   // (Kibana varsayılanı da bu); operatör isterse aktif sorguyu taşır.
   const [keepQuery, setKeepQuery] = useState(false);
@@ -58,9 +66,13 @@ export function LogContextModal({
   // other envs' lines.
   const [env] = useUrlEnv();
 
+  // Pivotun pod kimliği — paylaşılan saf çıkarım (lib/logPod.ts); alan
+  // adı varyantları backend'in esPodFields listesinin aynası.
+  const pivotPod = useMemo(() => podOfLog(pivot), [pivot]);
+
   // Pivot değişince pencere/kapsam sıfırlanır — önceki kaydın
   // büyütülmüş penceresi yeni kayda taşınmaz.
-  useEffect(() => { setN(50); setScopeService(true); setKeepQuery(false); }, [pivot?.id]);
+  useEffect(() => { setN(50); setScopeService(true); setKeepQuery(false); setScopePod(false); }, [pivot?.id]);
 
   useEffect(() => {
     if (!pivot) {
@@ -73,6 +85,7 @@ export function LogContextModal({
       ts: pivot.timestamp,
       service: scopeService ? (pivot.serviceName || undefined) : undefined,
       env: env || undefined,
+      pod: scopePod && pivotPod ? pivotPod : undefined,
       n,
       search: keepQuery && search ? search : undefined,
     })
@@ -86,7 +99,7 @@ export function LogContextModal({
         setBefore(null); setAfter(null);
       });
     return () => { cancelled = true; };
-  }, [pivot, env, n, scopeService, keepQuery, search]);
+  }, [pivot, env, n, scopeService, keepQuery, search, scopePod, pivotPod]);
 
   // Unified chronological list with pivot inserted between the two
   // halves. Both halves arrive sorted (before DESC, after ASC) so
@@ -118,7 +131,8 @@ export function LogContextModal({
         <span style={{ fontSize: 13 }}>
           Context · ±{n}
           <span style={{ color: 'var(--text3)', marginLeft: 8, fontSize: 11 }}>
-            {scopeService ? (pivot.serviceName || '(no service)') : 'tüm servisler'} · {tsLong(pivot.timestamp)}
+            {scopeService ? (pivot.serviceName || '(no service)') : 'tüm servisler'}
+            {scopePod && pivotPod ? ` · ${pivotPod}` : ''} · {tsLong(pivot.timestamp)}
           </span>
         </span>
       }
@@ -152,6 +166,18 @@ export function LogContextModal({
                   ? 'Servis filtresini bırak — aynı anda TÜM servislerin satırları (kaskad okuma)'
                   : `Yalnız ${pivot.serviceName} satırlarına dön`}>
                 {scopeService ? '⇲ Tüm servisler' : `⇱ Yalnız ${pivot.serviceName}`}
+              </Button>
+            )}
+            {/* v0.9.1249 — pod kapsamı. Pivotun podu çıkarılamıyorsa
+                düğme HİÇ çizilmez: uygulayamayacağımız bir kapsamı
+                sunmak, boş sonuçtan beter bir yalandır. */}
+            {!!pivotPod && (
+              <Button variant="secondary" size="sm"
+                onClick={() => setScopePod(v => !v)}
+                title={scopePod
+                  ? 'Pod filtresini bırak — pencerenin TÜM podları'
+                  : `Yalnız ${pivotPod} podunun satırları (kalabalık serviste komşuluk çok-pod karışımıdır)`}>
+                {scopePod ? '⌖ pod kapsamı AÇIK' : '⌖ Yalnız bu pod'}
               </Button>
             )}
             {/* v0.9.1224 — filtre-koruma: yalnız sayfada aktif sorgu VARSA

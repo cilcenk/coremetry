@@ -669,7 +669,7 @@ func (h huntOutcome) note(kept, total int, cutoff string) string {
 func (s *Service) resolveBranch(ctx context.Context, cli *http.Client, cfg Settings, repo string) (string, string, error) {
 	order := s.ResolveConfig().BranchOrder
 	var firstErr error
-	for _, ver := range apiVersionCandidates(cfg) {
+	for _, ver := range s.apiVersionCandidates(cfg) {
 		u := repoURL(cfg, repo) + "/refs?filter=heads&api-version=" + ver
 		body, err := doGet(ctx, cli, u, cfg)
 		if err != nil {
@@ -846,9 +846,33 @@ func repoURL(cfg Settings, repo string) string {
 // Canlı yapılandırmada bir tespit varsa o BAŞA gelir: ayar sayfasında
 // zaten çalıştığı görülmüş sürümü ikinci sıraya koymak her kod
 // çekmesine bir reddedilmiş istek eklerdi.
-func apiVersionCandidates(cfg Settings) []string {
+//
+// v0.9.1263 — yorum v0.9.829'dan beri bunu VAADEDİYORDU ama fonksiyon
+// receiver'sızdı ve tespiti (s.detVersion) hiç okumuyordu: auto
+// flavor'da her kod çekmesi bir mahkûm istekle başlıyordu (denetim
+// [2/XS]: "yorum ile kod çelişiyor"). Artık Service methodu; tespit
+// kilit altında okunur ve listenin başına alınır. detVersion boşsa
+// davranış bayt-bayt eski (saf çekirdek apiVersionOrder testli).
+func (s *Service) apiVersionCandidates(cfg Settings) []string {
+	det := ""
+	if s != nil {
+		s.mu.RLock()
+		if s.cfg.BaseURL == cfg.BaseURL && s.cfg.Collection == cfg.Collection {
+			det = s.detVersion
+		}
+		s.mu.RUnlock()
+	}
+	return apiVersionOrder(cfg, det)
+}
+
+// apiVersionOrder — saf çekirdek: aday sıralama + tespit öne alma.
+func apiVersionOrder(cfg Settings, detected string) []string {
 	var out []string
 	seen := map[string]bool{}
+	if detected != "" {
+		seen[detected] = true
+		out = append(out, detected)
+	}
 	for _, f := range candidateFlavors(cfg) {
 		v := apiVersionFor(f)
 		if v == "" || seen[v] {

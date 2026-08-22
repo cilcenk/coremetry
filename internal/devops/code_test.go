@@ -1422,3 +1422,36 @@ func TestFetchCodeDeadlineBlamesNobodyWhenCallerCancels(t *testing.T) {
 		}
 	})
 }
+
+// v0.9.1263 — tespit-önce api-version sırası (denetim [2/XS]: yorum
+// v0.9.829'dan beri vaadediyordu, kod okumuyordu).
+func TestAPIVersionOrderDetectionFirst(t *testing.T) {
+	cfg := Settings{Flavor: "auto"}
+	base := apiVersionOrder(cfg, "")
+	if len(base) < 2 {
+		t.Skipf("auto flavor tek sürüm üretiyor (%v) — sıralama testi anlamsız", base)
+	}
+	// Tespit listedeki İKİNCİ sürümse başa gelmeli, tekrarsız.
+	det := base[1]
+	got := apiVersionOrder(cfg, det)
+	if got[0] != det {
+		t.Fatalf("tespit başa gelmedi: %v (det=%s)", got, det)
+	}
+	seen := map[string]bool{}
+	for _, v := range got {
+		if seen[v] {
+			t.Fatalf("tekrar var: %v", got)
+		}
+		seen[v] = true
+	}
+	if len(got) != len(base) {
+		t.Fatalf("uzunluk değişti: %d → %d", len(base), len(got))
+	}
+	// Tespit boşken bayt-bayt eski davranış.
+	again := apiVersionOrder(cfg, "")
+	for i := range base {
+		if base[i] != again[i] {
+			t.Fatalf("tespitsiz sıra deterministik değil: %v vs %v", base, again)
+		}
+	}
+}

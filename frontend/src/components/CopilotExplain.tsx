@@ -8,6 +8,7 @@ import { useCopilotEnabled } from '@/components/ai/useCopilotEnabled';
 import { aiSubjectQuestion } from '@/components/ai/drawerChat';
 import type { AIKind } from '@/lib/aiSubject';
 import type { AICodeContext } from '@/lib/types';
+import { readIncludeCodePref, writeIncludeCodePref } from '@/lib/aiCodePref';
 import { IconSparkles } from './icons';
 import { RenderedMarkdown } from '@/components/Markdown';
 import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
@@ -91,8 +92,20 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   // her Explain tıkında ödenecek bir maliyet değil. İşaretlemek
   // isteği YENİDEN çalıştırır — kutuyu işaretleyip ekranda eski
   // cevabı bırakmak, olmayan bir kod analizini varmış gibi gösterir.
+  //
+  // v0.9.1238 — tercih artık HATIRLANIYOR (lib/aiCodePref). Çekmece her
+  // özne için yeni bir mount kuruyor (AIDrawer `key`), yani kutu her
+  // açılışta sıfırlanıyordu ve auto-koşu İLK turu her seferinde kodsuz
+  // atıyordu; kutuyu yeniden işaretleyen operatör aynı soruya İKİNCİ bir
+  // yerel LLM turu ödüyordu. İlk kullanım varsayılanı KAPALI kalır —
+  // hatırlamak, yukarıdaki maliyet kararını çevirmek değil.
+  //
+  // Tohum `useState`'in TEMBEL biçiminde: ilk render zaten doğru değerle
+  // gelmeli, çünkü auto-koşu efekti mount'ta çalışır. Sonradan bir
+  // useEffect ile düzeltmek, kodsuz isteğin çoktan yola çıkmış olması
+  // demekti (düzeltmeye çalıştığımız hatanın ta kendisi).
   const codeCapable = kind === 'exception' || kind === 'trace';
-  const [includeCode, setIncludeCode] = useState(false);
+  const [includeCode, setIncludeCode] = useState(() => readIncludeCodePref(codeCapable));
   const [code, setCode] = useState<AICodeContext | null>(null);
 
   // applyText — cevabı hem panele yaz hem üst bileşene duyur (v0.9.479).
@@ -238,6 +251,9 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
           onClick={() => {
             const next = !includeCode;
             setIncludeCode(next);
+            // v0.9.1238 — seçim kalıcı: bir sonraki çekmece açılışı bu
+            // değerle AÇILIR ve auto-koşu ilk turu doğru modda atar.
+            writeIncludeCodePref(next);
             // Kutuyu değiştirmek isteği YENİDEN çalıştırır — aksi
             // halde ekrandaki cevap kutunun durumuyla çelişirdi.
             if (text !== null || error !== null || auto) void run(next);

@@ -55,8 +55,23 @@ pod/namespace context kapsamı (takip) · kırılımda namespace/cluster
 ekseni (takip). Hiçbiri sessiz düşmüyor — hepsi ya UI'da hiç vaat
 edilmiyor ya dürüst notla sınırlanıyor.
 
+## Çizgi-altı artıkların kapanışı (2026-08-22/23 damgası)
+
+Kapanış bölümündeki 7 kalemin dördü SONRADAN kapandı, biri bayat çıktı:
+- ~~Sayısal aralık pill operatörü~~ → **v0.9.1222** (≥/≤, URL 7. tuple).
+- ~~Alan paneli top-5 sabiti~~ → **v0.9.1223** ("daha fazla (20)",
+  yalnız iki basamak, cache-key'de).
+- ~~Context filtre-koruma anahtarı~~ → **v0.9.1224** ("⧩ sorguyu koru").
+- ~~İmleç-ortası KQL tamamlama~~ → **ZATEN VARDI** (v0.9.955'ten beri):
+  `detectFieldToken(text, cursor)` imleçten geri yürür
+  (KqlSearchInput.tsx:89-119), `insertValue` valueStart/valueEnd
+  dilimleriyle ORTADAN değiştirir + imleci geri koyar (:248-260).
+  Matristeki boşluk metni bayattı — kod değil damga eksikti.
+KALAN 3 (kuyrukta, operatör seçimli): tek-doküman kalıcı linki ·
+pod/namespace bağlam kapsamı · kırılımda namespace/cluster ekseni.
+
 **Öznel kabul AÇIK:** "Kibana kadar iyi" hükmü operatörün. Elde
-doğrulama listesi (lokal v0.9.1220, http://localhost:8090/logs):
+doğrulama listesi (lokal v0.9.1220+, http://localhost:8090/logs):
 1. Pill'e tıkla → EDIT popover (operatör değiştir, is-one-of dene).
 2. Histogram başlığı → kırılım: servis (top-5 + diğer, lejant).
 3. Alan paneli → kapsama %si + ⊕∃ exists.

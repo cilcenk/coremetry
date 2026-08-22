@@ -150,12 +150,41 @@ bulgusunun dispozisyonu:
   "Kodu da incele" (kök-neden penceresi + Reason), Settings'te
   dry-run, /admin/stats'ta CoSRE bloğu.
 
+## Kapanış sonrası operatör istekleri
+
+- ✅ v0.9.1246 — "Takımımın exceptionları → takım filtreli exceptions"
+  (operatör isteği): /api/inbox?team= sunucuda 1244 seam'inden çözülür,
+  semantik BİRLİK (owner ∪ SRE — canlı kanıt: sre-only takımda team=13
+  satır, ownerTeam=0); guided my_exceptions + team_services cevapları
+  /inbox?kind=exception&team=<kanonik-ad> köprüsü taşır (kimlik
+  sunucuda, URL paylaşılabilir); SY/UG direktifi aynı sürümde (taban
+  3→2, fold-eşleşme zaten vardı, çipler katalog yazımıyla); cache
+  anahtarı NormTeamName'li. 14/14 mutasyon (2 gerçek kapsama deliği
+  test kazandı). Dürüst boşluk: chat köprüsü canlıda doğrulanamadı —
+  lokal guided hiç koşmuyor (copilot mock uçta; operatör gemma girince
+  doğal doğrulanır).
+
 ## Bilinçli açık kalanlar (2026-08-22 gecesi)
 
-- **Router-ıska tek-tur intent-seçimi [4/M]** — OPERATÖR KARARI İSTER:
-  küçük-model doktrini (prefetch+narrate > tool-loop) ile üçüncü bir
-  yol (tek şemalı seçim turu) arasında davranış değişikliği; gemma4
-  üzerinde ölçmeden gemiye alınmaz.
+- **Router-ıska tek-tur intent-seçimi [4/M]** — OPERATÖR KARARI İSTER.
+  KARAR BRİFİNGİ (2026-08-23):
+  * Bugün: guided router regex/token eşleşmesiyle rotalar; ıskalayan
+    soru 5-turlu serbest tool döngüsüne düşer — küçük modelde en
+    pahalı ve en kırılgan yol (tur başına katalog + geçmiş).
+  * Öneri: ıskada ÖNCE tek, şemalı "intent seç" çağrısı (JSON enum:
+    mevcut guided intent listesi + 'serbest'); model intent seçerse
+    guided bundle'ı koşar (ucuz, deterministik), 'serbest' derse
+    bugünkü döngü. Tur tavanı 5→(1+gerekirse döngü).
+  * Risk: gemma4 şemalı enum seçiminde tutarsızsa yanlış-intent
+    cevapları "emin ama alakasız" olur (döngü en azından veriye
+    bakıyor). Bu yüzden ölçüm ŞART.
+  * Ölçüm planı (yarım günün içinde): 30 gerçek ıska sorusu (ai_calls
+    kayıtlarından, router-miss etiketli) → offline iki kol (mevcut
+    döngü vs intent-seç) → isabet, tur sayısı, token, süre; eşik:
+    intent-seç isabette ≥ döngü VE token ≤ %40'ı değilse GEMİYE
+    ALINMAZ. Rollback: tek bayrak (settings blob), sessiz fallback
+    yok — seçim yolu ayrı ai_calls surface etiketi taşır.
+  * Onay verirsen: ölçüm koşusu + rapor ayrı, gemi kararı rapora.
 - Değer-3 kuyruğu (chat): env handoff · konuşma deep-link (?conversation=) ·
   /trace dışı bağlam çipleri · yüzey-başına temperature · final cevap
   stream'i. Değer-2/3 kuyruğu (kod-bağlamı): monorepo duvarları [3/M] ·

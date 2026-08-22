@@ -28,7 +28,18 @@ func TestInboxTeamFilterReachesEverySource(t *testing.T) {
 
 	for _, want := range []struct{ name, frag string }{
 		// One catalog read, hoisted — it used to be fetched twice.
-		{"allowlist resolution", "teamServices = servicesForTeam(s.teamAliasesCtx(ctx), mdMap, ownerTeam, sreTeam)"},
+		{"allowlist resolution", "teamServices = servicesForTeam(ta, mdMap, ownerTeam, sreTeam)"},
+		// v0.9.1246 — the single-axis ?team= filter (owner ∪ SRE) resolves
+		// through the SAME allowlist, so it reaches every source query for
+		// free. Two things are pinned here, both load-bearing:
+		//   - servicesForUserTeam: the UNION resolution shared with guided
+		//     chat + get_team_services (mcptools.TeamServiceNames). A local
+		//     re-implementation would let the chat answer count one set and
+		//     the linked page show another.
+		//   - intersectServices: ?team= must COMPOSE with owner/sre rather
+		//     than overwrite them; overwriting would silently WIDEN a page
+		//     the operator had already narrowed.
+		{"team axis (union) resolution", "teamServices = intersectServices(teamServices, servicesForUserTeam(ta, mdMap, team))"},
 		{"problems", "Services: teamServices,\n\t\t\t\tLimit:    srcLimit,"},
 		{"exceptions (above floor)", "MinOccurrences: minOcc,\n\t\t\t\tServices:       teamServices,"},
 		{"exceptions (below floor)", "MaxOccurrences: minOcc,\n\t\t\t\t\tServices:       teamServices,"},
@@ -56,8 +67,19 @@ func TestInboxTeamFilterReachesEverySource(t *testing.T) {
 	// The Go-side pass stays as the second guard (catalog blip → SQL narrow
 	// skipped → old behaviour), same posture as v0.9.342. It must not be the
 	// ONLY place the filter applies, but it must still exist.
-	if !strings.Contains(src, `if ownerTeam != "" || sreTeam != "" {`) {
+	// v0.9.1246 — the pin now names the THREE-axis condition. The old pin
+	// (`if ownerTeam != "" || sreTeam != "" {`) still matched a line inside
+	// the SQL-narrow block after this change, i.e. it would have gone green
+	// while guarding nothing: a pin that can be satisfied by a DIFFERENT
+	// construct has stopped measuring its own fear.
+	if !strings.Contains(src, `if ownerTeam != "" || sreTeam != "" || team != "" {`) {
 		t.Error("the Go-side team pass was removed — a catalog error would now disable the filter entirely instead of degrading")
+	}
+	// The union predicate is the row-level half of ?team=; without it the Go
+	// pass would drop every row when only ?team= is set (neither owner nor
+	// sre matches), turning a catalog blip into an empty page.
+	if !strings.Contains(src, "inboxTeamKeepsRow(ta, it.OwnerTeam, it.SRETeam, team)") {
+		t.Error("the Go-side ?team= predicate is missing — the row-level pass and the SQL narrow must apply the SAME union rule")
 	}
 }
 

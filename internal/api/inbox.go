@@ -140,6 +140,25 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	search := strings.TrimSpace(q.Get("q"))
 	ownerTeam := strings.TrimSpace(q.Get("ownerTeam"))
 	sreTeam := strings.TrimSpace(q.Get("sreTeam"))
+	// v0.9.1246 (operatör: "takımımın exception'ları dediğinde o takım
+	// filtreli exceptions açabilir") — TEK EKSENLİ takım süzgeci:
+	// ownerTeam VEYA sreTeam eşleşmesi, yani "bu takımın dokunduğu
+	// servisler". owner/sre eksenlerinden FARKLI ve bilerek:
+	//
+	//   ?owner=X&sre=X  → owner X VE sre X (AND — iki ayrı süzgeç)
+	//   ?team=X         → owner X VEYA sre X (BİRLEŞİM)
+	//
+	// Sohbetin "takımımın exception'ları" cevabı birleşim üzerinden
+	// sayıyor (servicesForUserTeam → mcptools.TeamServiceNames), yani
+	// köprü ?owner= yazsaydı link, cevabın SAYDIĞINDAN dar bir sayfa
+	// açardı: SRE'si o takım olan servislerin satırları sessizce
+	// düşerdi ("fallback kapsamı taşımalı" sınıfı — cevaptaki sayı ile
+	// açılan sayfa aynı kümeyi göstermeli).
+	//
+	// Çözümleme TEK KAYNAKTAN: servicesForUserTeam guided'ın ve
+	// get_team_services'in kullandığı aynı saf fonksiyona delege ediyor
+	// (v0.9.1244 seam'i). İkinci bir uygulama = v0.9.553 sapma sınıfı.
+	team := strings.TrimSpace(q.Get("team"))
 	// v0.8.387 — global ?env= picker, service-scoped semantics shared
 	// with /problems (envKeepsRow): keep rows whose service ran in the
 	// env in the last hour, plus service-less (global) rows. Applied
@@ -214,7 +233,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// with the total). Without the bump a pre-upgrade array could still be
 	// sitting under this key and would deserialize into the new shape as an
 	// empty page.
-	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir, minOcc, kinds, prios) + ":since=" + since
+	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, team, env, limit, sortID, sortDir, minOcc, kinds, prios) + ":since=" + since
 	// v0.9.228 — 10s → 15s. v0.9.220 gave the inbox list a 30s poll; at a 10s
 	// TTL the SWR window is ttl×staleFactor = 30s and the Redis entry expires
 	// at 30s too, so each poll arrived at age = 30s + previous latency —
@@ -233,6 +252,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// by a key the truncation did not use returns the top of the SLICE, not
 	// the top of the queue.
 	narrowed := service != "" || search != "" || env != "" || ownerTeam != "" || sreTeam != "" ||
+		team != "" ||
 		sortID != inboxSortDefault || sortDir != "desc" ||
 		len(kinds) < len(inboxKindsAll) || len(prios) < len(inboxPriosAll)
 	srcLimit := inboxSourceLimit(limit, narrowed)
@@ -258,8 +278,20 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// must not blank the page.
 		mdMap, mdErr := s.store.ListServiceMetadata(ctx)
 		var teamServices []string // nil = no team constraint
-		if (ownerTeam != "" || sreTeam != "") && mdErr == nil {
-			teamServices = servicesForTeam(s.teamAliasesCtx(ctx), mdMap, ownerTeam, sreTeam)
+		if (ownerTeam != "" || sreTeam != "" || team != "") && mdErr == nil {
+			ta := s.teamAliasesCtx(ctx)
+			if ownerTeam != "" || sreTeam != "" {
+				teamServices = servicesForTeam(ta, mdMap, ownerTeam, sreTeam)
+			}
+			if team != "" {
+				// KESİŞİM: iki eksen birden seçiliyse cevap "bu takımın
+				// dokunduğu servisler İÇİNDE owner'ı X olanlar" olmalı —
+				// biri diğerini ezmemeli (exception-groups'un env×takım
+				// kesişimiyle aynı sözleşme). intersectServices nil'i
+				// "bu eksenden kısıt yok" sayar, yani tek eksenli çağrı
+				// da bu satırdan geçebilir.
+				teamServices = intersectServices(teamServices, servicesForUserTeam(ta, mdMap, team))
+			}
 		}
 		// A team that resolves to no services means an EMPTY page, and the
 		// sources must not even be asked: the exception filter's Services
@@ -616,7 +648,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// for unattributed rows works), and ignores case so URL
 		// pastes between dashboards / chat don't surface a
 		// false-negative on a mismatched capitalisation.
-		if ownerTeam != "" || sreTeam != "" {
+		if ownerTeam != "" || sreTeam != "" || team != "" {
 			ta := s.teamAliasesCtx(ctx)
 			filtered := items[:0]
 			for _, it := range items {
@@ -624,6 +656,13 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				if sreTeam != "" && !ta.TeamEqual(it.SRETeam, sreTeam) {
+					continue
+				}
+				// v0.9.1246 — tek eksenli takım süzgeci: owner VEYA SRE.
+				// Yazım/harf kasası ta.TeamEqual'da katlanıyor ("sy" =
+				// "SY"), yani sohbetten gelen link ile kataloğun yazımı
+				// ayrı olabilir.
+				if !inboxTeamKeepsRow(ta, it.OwnerTeam, it.SRETeam, team) {
 					continue
 				}
 				filtered = append(filtered, it)
@@ -851,7 +890,19 @@ func inboxSourceLimit(limit int, narrowed bool) int {
 // request — the v0.5.187 cross-poisoning shape, with a search box as
 // the vector. The `:v2:` prefix marks the v0.9.221 response-shape
 // change (bare array → object with the total).
-func inboxListKey(status, service, search, ownerTeam, sreTeam, env string, limit int, sortID, sortDir string, minOcc uint64, kinds, prios []string) string {
+// v0.9.1246 — `team` (tek eksenli owner∪sre süzgeci) anahtara KATLANMIŞ
+// hâliyle girer (chstore.NormTeamName): operatör "SY", sohbet köprüsü
+// "sy" yazabilir ve ikisi AYNI satırları döndürür — iki ayrı cache
+// girdisi olsalardı 15sn'lik TTL içinde aynı görünüm iki farklı yaşta
+// veri gösterirdi.
+//
+// Neden ALIAS çözümü (CanonTeam) değil de yalnız katlama: alias tablosu
+// bir CH point-read'idir (GetTeamAliases → system_settings FINAL) ve
+// anahtar serveCached'in DIŞINDA kuruluyor, yani her cache İSABETİ de
+// o okumayı öderdi. Katlama saf ve I/O'suz. Bedeli: aynı takımın iki
+// alias yazımı iki girdi üretir — içerikleri AYNI olduğu için bu bir
+// çapraz-zehirlenme (v0.5.187) değil, yalnız ufak bir tekrar.
+func inboxListKey(status, service, search, ownerTeam, sreTeam, team, env string, limit int, sortID, sortDir string, minOcc uint64, kinds, prios []string) string {
 	// v0.9.330 — the facets join the key. They now decide WHICH rows come
 	// back, not just which of the returned ones render, so two operators on
 	// different facets sharing one cached page would be the v0.5.187
@@ -859,8 +910,8 @@ func inboxListKey(status, service, search, ownerTeam, sreTeam, env string, limit
 	// length-based digest is the exact bug that release fixed.
 	// :v6: — v0.9.487 forceNonExceptionP3 satır önceliklerini değiştirdi;
 	// eski cache'lenmiş sayfa yeni sözleşmeymiş gibi servis edilemez.
-	return fmt.Sprintf("inbox:v6:status=%s:svc=%s:q=%s:owner=%s:sre=%s:env=%s:limit=%d:sort=%s:dir=%s:minOcc=%d:kind=%s:prio=%s",
-		status, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir, minOcc,
+	return fmt.Sprintf("inbox:v6:status=%s:svc=%s:q=%s:owner=%s:sre=%s:team=%s:env=%s:limit=%d:sort=%s:dir=%s:minOcc=%d:kind=%s:prio=%s",
+		status, service, search, ownerTeam, sreTeam, chstore.NormTeamName(team), env, limit, sortID, sortDir, minOcc,
 		strings.Join(sortedCopyOf(kinds), "+"), strings.Join(sortedCopyOf(prios), "+"))
 }
 

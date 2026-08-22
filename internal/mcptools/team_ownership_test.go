@@ -254,6 +254,41 @@ func TestTeamServiceNamesUnion(t *testing.T) {
 	}
 }
 
+// TeamDisplayName (v0.9.1246) — KANONİK YAZIM. Sohbetin ürettiği derin
+// link URL'e bir takım adı yazıyor ve o ad operatöre ÇİP olarak geri
+// görünüyor; users tablosundaki ya da kullanıcının yazdığı yazım
+// katalogunkinden farklı olabilir. Eşleşme zaten katlamalı, yani bu
+// tamamen operatörün GÖRDÜĞÜ metnin doğruluğu meselesi — "sy" yazan bir
+// çip, katalogda "SY" olan takımı başka bir takım gibi gösterir.
+//
+// 2 HARFLİK KODLAR (operatör: gerçek takımlar "SY"/"UG"): tabloda
+// birinci sınıf vaka, çünkü uzunluk varsayımı hiçbir katmanda olmamalı.
+func TestTeamDisplayName(t *testing.T) {
+	mds := map[string]chstore.ServiceMetadata{
+		"checkout": {OwnerTeam: "SY"},
+		"ledger":   {SRETeam: "UG"},
+		"search":   {OwnerTeam: "Ödeme Takımı"},
+	}
+	ta := chstore.TeamAliases{Aliases: map[string]string{"SY-Dijital": "SY"}}
+	cases := []struct{ name, in, want string }{
+		{"2 harflik kod — küçük harf girdi", "sy", "SY"},
+		{"2 harflik kod — aynen", "SY", "SY"},
+		{"2 harflik kod — SRE tarafından", "ug", "UG"},
+		{"boşluklu girdi kırpılır", "  sy  ", "SY"},
+		{"Türkçe katlama", "ödeme takimi", "Ödeme Takımı"},
+		{"alias hedefin yazımına iner", "SY-Dijital", "SY"},
+		{"katalogda yoksa girdi korunur (uydurma yok)", "Yok", "Yok"},
+		{"boş girdi boş döner", "   ", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := TeamDisplayName(ta, mds, c.in); got != c.want {
+				t.Errorf("TeamDisplayName(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
 // SIRALAMA SÖZLEŞMESİ (operatörün cümlesi): hata oranı azalan, eşitlikte
 // hata sayısı azalan, sonra ad. Aile bundle'ının SAYI-birincil sırasıyla
 // karıştırılmamalı.

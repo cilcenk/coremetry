@@ -36,6 +36,12 @@ export function useInbox(filter: {
   status?: 'open' | 'all' | 'ignored'; service?: string;
   q?: string; // v0.9.251 — free-text search (service + title + source)
   ownerTeam?: string; sreTeam?: string;
+  // v0.9.1246 — tek eksenli takım süzgeci (owner VEYA SRE). ownerTeam/
+  // sreTeam ikilisi KESİŞİM, bu BİRLEŞİM: sohbetin "takımımın
+  // exception'ları" cevabı da birleşim üzerinden sayıyor, link o yüzden
+  // bu paramı yazıyor. Anahtarın parçası (filter nesnesi anahtarın
+  // kendisi) — filtreli ve filtresiz sayfa aynı girdiyi paylaşamaz.
+  team?: string;
   env?: string; // v0.8.387 — global picker, service-scoped (matches /problems)
   limit?: number;
   sort?: string; dir?: 'asc' | 'desc'; // v0.9.319 — server-side ranking

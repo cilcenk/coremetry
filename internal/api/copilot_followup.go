@@ -220,6 +220,31 @@ type guidedAnswerLink struct {
 	Href  string `json:"href"`
 }
 
+// inboxTeamExceptionsLink (v0.9.1246) — takım-filtreli exception kuyruğu
+// çipi. ok=false → takım çözülmedi, çip YOK (yanlış kapsamlı bir link
+// linksizlikten kötüdür).
+//
+// K4 ÖLÜ-PARAM DENETİMİ (v0.9.1130 sınıfı) — her iki param da hedefte
+// GERÇEKTEN okunuyor ve bu sıra bilinçli: sayfa okuması ÖNCE geldi
+// (v0.9.1246'nın ilk yarısı), köprü sonra.
+//
+//	kind=exception → Inbox.tsx searchParams.get('kind'), KIND_ALL içinde
+//	team=<ad>      → Inbox.tsx readInboxTeam (lib/inboxUrl.ts,
+//	                 INBOX_TEAM_PARAM) → useInbox({team}) → /api/inbox
+//
+// Ad KATALOG yazımıyla gider (mcptools.TeamDisplayName): sunucu tarafı
+// zaten katlamalı eşleştiriyor ("sy" = "SY"), ama URL operatöre çip
+// olarak görünüyor ve orada kataloğun yazımı doğru olan.
+func inboxTeamExceptionsLink(team string) (guidedAnswerLink, bool) {
+	if strings.TrimSpace(team) == "" {
+		return guidedAnswerLink{}, false
+	}
+	return guidedAnswerLink{
+		Label: team + " · Exceptions",
+		Href:  "/inbox?kind=exception&team=" + url.QueryEscape(team),
+	}, true
+}
+
 // guidedAnswerLinks (v0.9.419, CoSRE fikir #4) — cevabın konusuna giden
 // deterministik uygulama-içi linkler. LLM çıktısından DEĞİL rotadan
 // üretilir (gemma4'e link biçimletmeyiz); frontend çip olarak çizer ve
@@ -287,9 +312,27 @@ func guidedAnswerLinks(route guidedRoute) []guidedAnswerLink {
 				Label: worst + " · Overview", Href: "/service?name=" + url.QueryEscape(worst),
 			})
 		}
+		// v0.9.1246 — adı geçen takımın exception'larına köprü. "X
+		// takımının exception'ları" bu rotaya düşüyor (iyelik sinyali
+		// yoksa my_* dalları açılmaz), ve cevap RED metrikleri
+		// anlatırken operatörün asıl gideceği yer o takımın hata
+		// kuyruğuydu — link olmadan elle owner/SRE seçmesi gerekiyordu.
+		if l, ok := inboxTeamExceptionsLink(route.Team); ok {
+			links = append(links, l)
+		}
 		return links
 	case guidedMyExceptions:
 		// Exceptions sekmesi Inbox'ta tür süzgeciyle açılıyor.
+		//
+		// v0.9.1246 (operatör: "Takımımın exceptionları dediğinde o takım
+		// filtreli exceptions açabilir") — link artık TAKIMI da taşıyor.
+		// Eskiden cevap takımın exception'larını sayıyor, link ise TÜM
+		// filonun kuyruğunu açıyordu: operatör sayfada kendi takımını
+		// aramak zorundaydı ve iki sayı (cevaptaki ile sayfadaki)
+		// birbirini tutmuyordu.
+		if l, ok := inboxTeamExceptionsLink(route.Team); ok {
+			return []guidedAnswerLink{l}
+		}
 		return []guidedAnswerLink{{Label: "Exceptions", Href: "/inbox?kind=exception"}}
 	case guidedPodHealth:
 		if svc != "" {

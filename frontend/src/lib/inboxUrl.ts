@@ -22,6 +22,28 @@ export function decodeCsvSet(raw: string | null, allowed: readonly string[], dfl
   return out.length > 0 ? out : [...dflt];
 }
 
+// INBOX_TEAM_PARAM (v0.9.1246) — the single-axis team filter's param NAME,
+// written here once because two independent producers have to agree on it:
+// this page (reader) and the server-side chat bridge (guidedAnswerLinks,
+// copilot_followup.go) that emits /inbox?kind=exception&team=<team>. A link
+// that promises a narrowed view while the page reads a DIFFERENT param opens
+// the unfiltered queue instead — the K4 dead-param class (v0.9.1130).
+export const INBOX_TEAM_PARAM = 'team';
+
+// readInboxTeam — the ?team= facet as the page consumes it.
+//
+// NO LENGTH OR SHAPE ASSUMPTION (v0.9.1246, operator): real team names are
+// short codes like "SY" / "UG", so anything that required 3+ characters or a
+// particular casing would silently drop the operator's actual team. Case is
+// NOT normalised here on purpose — the server folds it (chstore.NormTeamName
+// via TeamEqual) and echoes the catalogue's own spelling into the chip, so
+// lowercasing client-side would only make the chip disagree with the catalogue.
+// Whitespace-only means "no filter" (a stray "?team=%20" must not narrow to a
+// team that cannot exist).
+export function readInboxTeam(sp: URLSearchParams): string {
+  return (sp.get(INBOX_TEAM_PARAM) ?? '').trim();
+}
+
 // encodeCsvSet serializes a selected set back to a canonical comma string in
 // `allowed` order (stable, so the URL doesn't churn on selection order).
 // Returns null when the selection equals the default — the caller then DELETES

@@ -38,6 +38,33 @@ func matchesTeamFilter(ta chstore.TeamAliases, rowOwner, rowSRE, wantOwner, want
 	return true
 }
 
+// inboxTeamKeepsRow — /inbox'ın TEK EKSENLİ takım süzgeci (v0.9.1246,
+// operatör: "takımımın exception'ları dediğinde o takım filtreli
+// exceptions açabilir"): satırın servisinde takım owner VEYA SRE olarak
+// geçiyorsa satır kalır.
+//
+// matchesTeamFilter'ın kardeşi ama BİRLEŞİM, o ise KESİŞİM:
+//
+//	?owner=X&sre=X → matchesTeamFilter → owner X VE sre X
+//	?team=X        → bu → owner X VEYA sre X
+//
+// Ayrı bir fonksiyon olmasının sebebi tam da bu: aynı gövdeye bayrak
+// eklemek iki semantiği tek satırın içinde saklardı ve "takım süzgeci
+// neden SRE satırlarını atlıyor" sorusu bir daha okunmadan cevaplanamazdı.
+// Birleşim yazımı sohbet cevabının saydığı kümeyle AYNI olmak zorunda
+// (servicesForUserTeam → mcptools.TeamServiceNames): köprünün açtığı
+// sayfa, cevabın saydığından dar olamaz.
+//
+// want == "" → daraltma yok (her satır kalır). Harf kasası/alias
+// TeamEqual'da katlanır; UZUNLUK VARSAYIMI YOK — "SY" gibi 2 harflik
+// takım kodları tam yurttaş.
+func inboxTeamKeepsRow(ta chstore.TeamAliases, rowOwner, rowSRE, want string) bool {
+	if want == "" {
+		return true
+	}
+	return ta.TeamEqual(rowOwner, want) || ta.TeamEqual(rowSRE, want)
+}
+
 // envKeepsRow reports whether a triage row — identified by its
 // service — survives the global env filter (v0.8.387, env-separation
 // Phase 3). Semantics mirror chstore.applyEnvServiceScope exactly, so

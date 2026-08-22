@@ -222,6 +222,35 @@ func TeamServiceNames(ta chstore.TeamAliases, mds map[string]chstore.ServiceMeta
 	return out
 }
 
+// TeamDisplayName — bir takım adının KATALOGDAKİ yazımı ("sy" → "SY").
+// Eşleşme yoksa girdinin kırpılmışı döner (uydurma yapmaz).
+//
+// v0.9.1246 (operatör: gerçek takım adları "SY"/"UG" gibi 2 harfli
+// KISA kodlar): sohbetten üretilen derin link URL'e bir takım adı
+// yazıyor ve o ad operatöre ÇİP olarak geri görünüyor. Kullanıcının
+// yazdığı ("sy") ya da users tablosundaki yazım katalogunkinden farklı
+// olabilir; eşleşme zaten katlamalı (TeamEqual) olduğu için ikisi de
+// AYNI satırları getirir, ama çipte "sy" yazması operatöre kataloğun
+// başka bir takımıymış gibi okunur. Kanonik yazımı TEK yerden seçiyoruz:
+// TeamCatalogue'un betterTeamDisplay'i (alias hedefi kazanır, eşitlikte
+// alfabetik) — ikinci bir "hangi yazım doğru" kuralı yazmak, iki yüzeyin
+// aynı takımı farklı adlandırması demekti.
+//
+// UZUNLUK VARSAYIMI YOK: 2 harflik ad da tam yurttaş (v0.9.1246).
+func TeamDisplayName(ta chstore.TeamAliases, mds map[string]chstore.ServiceMetadata, team string) string {
+	t := strings.TrimSpace(team)
+	if t == "" {
+		return ""
+	}
+	canon := ta.CanonTeam(t)
+	for _, e := range TeamCatalogue(ta, mds) {
+		if ta.CanonTeam(e.Team) == canon {
+			return e.Team
+		}
+	}
+	return t
+}
+
 // SortServicesByErrorRate — ORAN birincil, SAYI eşitlik bozucu, ad üçüncü.
 //
 // Operatörün açık istegi (v0.9.1134): "en çok hata alan / error rate

@@ -109,12 +109,54 @@ type treeEntry struct {
 	at    time.Time
 }
 
+// repoListEntry — cache'lenen proje depo listesi (v0.9.1236).
+type repoListEntry struct {
+	names []string
+	at    time.Time
+}
+
 // codeCache — Service'e iliştirilen ağaç cache'i. Ayrı mutex:
 // listeleme saniyeler sürebilir, bu sırada Snapshot()'ı bloklamak
 // ayar sayfasını dondururdu.
+//
+// v0.9.1236 — depo ADI listesi de burada duruyor (repo_catalog.go).
+// İkinci bir cache açmak yerine mevcut disipline yerleşiyor: aynı
+// mutex, aynı TTL ölçeği, aynı "tavana çarpınca en eskiyi at".
 type codeCache struct {
-	mu   sync.Mutex
-	tree map[string]treeEntry
+	mu    sync.Mutex
+	tree  map[string]treeEntry
+	repos map[string]repoListEntry
+}
+
+// getRepos / putRepos — depo adı listesi cache'i (v0.9.1236).
+func (c *codeCache) getRepos(key string) ([]string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.repos[key]
+	if !ok || time.Since(e.at) > repoListTTL {
+		return nil, false
+	}
+	return e.names, true
+}
+
+func (c *codeCache) putRepos(key string, names []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.repos == nil {
+		c.repos = map[string]repoListEntry{}
+	}
+	if len(c.repos) >= repoListMaxProjects {
+		oldestKey, oldestAt := "", time.Now()
+		for k, v := range c.repos {
+			if v.at.Before(oldestAt) {
+				oldestKey, oldestAt = k, v.at
+			}
+		}
+		if oldestKey != "" {
+			delete(c.repos, oldestKey)
+		}
+	}
+	c.repos[key] = repoListEntry{names: names, at: time.Now()}
 }
 
 func (c *codeCache) get(key string) ([]string, bool) {
@@ -193,14 +235,30 @@ func (s *Service) FetchCode(ctx context.Context, repo, projectHint string, frame
 
 	cli := s.clientFor(cfg.InsecureSkipVerify)
 	ver, branch, err := s.resolveBranch(ctx, cli, cfg, repo)
+	// note — düzeltme izi. Boş kalırsa hiçbir şey değişmedi demektir.
+	note := ""
 	if err != nil {
-		return CodeContext{Repo: repo, Reason: sanitize(err.Error(), cfg)}
+		// KAÇIŞ KAPISI (v0.9.1236). Konvansiyon küçük harf üretir,
+		// gerçek depo başka yazımda olabilir. Liste çağrısı YALNIZ
+		// burada: mutlu yol tek fazladan istek bile görmez.
+		if canon, near := s.recoverRepoName(ctx, cli, cfg, repo, err); canon != "" {
+			if ver2, branch2, err2 := s.resolveBranch(ctx, cli, cfg, canon); err2 == nil {
+				note = "depo adı sunucudan düzeltildi: " + repo + " → " + canon
+				repo, ver, branch, err = canon, ver2, branch2, nil
+				out.Repo = canon
+			}
+		} else if len(near) > 0 {
+			err = fmt.Errorf("%v (sunucudaki en yakın adlar: %s)", err, strings.Join(near, ", "))
+		}
+		if err != nil {
+			return CodeContext{Repo: repo, Reason: sanitize(err.Error(), cfg)}
+		}
 	}
 	out.Branch = branch
 
 	paths, err := s.repoTree(ctx, cli, cfg, ver, repo, branch)
 	if err != nil {
-		return CodeContext{Repo: repo, Branch: branch, Reason: sanitize(err.Error(), cfg)}
+		return CodeContext{Repo: repo, Branch: branch, Reason: withNote(note, sanitize(err.Error(), cfg))}
 	}
 	if len(paths) == 0 {
 		// v0.9.1183 — NE DENENDİĞİ yazılıyor. Proje artık türetilebiliyor
@@ -209,7 +267,7 @@ func (s *Service) FetchCode(ctx context.Context, repo, projectHint string, frame
 		// olası sebebi tam olarak yanlış proje/depo adıdır (ör. gerçek depo
 		// farklı harf yazımında). Katalogdaki Repository pini bunu ezer.
 		return CodeContext{Repo: repo, Branch: branch,
-			Reason: "depo ağacı boş döndü (proje " + cfg.Project + ", depo " + repo + ", branş " + branch + ")"}
+			Reason: withNote(note, "depo ağacı boş döndü (proje "+cfg.Project+", depo "+repo+", branş "+branch+")")}
 	}
 
 	var windows []CodeWindow
@@ -244,6 +302,11 @@ func (s *Service) FetchCode(ctx context.Context, repo, projectHint string, frame
 	case trimmed:
 		out.Reason = fmt.Sprintf("kod bütçesi (%d karakter) doldu — pencereler kısaltıldı", codeBudgetRunes)
 	}
+	// v0.9.1236 — düzeltme izi BAŞARILI çekmede de kalır. Kod geldi
+	// diye susmak, operatörün katalogdaki/konvansiyondaki yanlış adı
+	// hiç öğrenmemesi demek olurdu; ekrandaki "Kaynak: <depo>" satırı
+	// beklediğinden farklı bir ad gösterirken sebebi de söylemeli.
+	out.Reason = withNote(note, out.Reason)
 	return out
 }
 
@@ -409,13 +472,21 @@ func doGetText(ctx context.Context, cli *http.Client, rawURL string, cfg Setting
 	return string(body), nil
 }
 
-// repoURL — {base}/{collection}/{project}/_apis/git/repositories/{repo}
-func repoURL(cfg Settings, repo string) string {
+// reposURL — {base}/{collection}/{project}/_apis/git/repositories
+// (koleksiyon kapsamlı depo KÖKÜ). Hem ada göre çözüm hem de
+// v0.9.1236 kaçış kapısının listeleme çağrısı buradan türer; iki yer
+// aynı yolu ayrı ayrı kursaydı biri diğerinden sessizce ayrışırdı.
+func reposURL(cfg Settings) string {
 	u := collectionURL(cfg)
 	if p := strings.Trim(strings.TrimSpace(cfg.Project), "/"); p != "" {
 		u += "/" + url.PathEscape(p)
 	}
-	return u + "/_apis/git/repositories/" + url.PathEscape(strings.Trim(repo, "/"))
+	return u + "/_apis/git/repositories"
+}
+
+// repoURL — {base}/{collection}/{project}/_apis/git/repositories/{repo}
+func repoURL(cfg Settings, repo string) string {
+	return reposURL(cfg) + "/" + url.PathEscape(strings.Trim(repo, "/"))
 }
 
 // apiVersionCandidates — denenecek api-version'lar, tekrarsız.

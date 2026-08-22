@@ -1,8 +1,13 @@
 package chstore
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // TestMergeTeams pins the auto-derive ownership rule (v0.8.95 fill, v0.8.100
@@ -201,4 +206,85 @@ func TestDeploymentsFromPodCounts(t *testing.T) {
 	if got["tie-svc"] != "aaa" {
 		t.Errorf("eşitlikte alfabetik ilk seçilmeli (deterministik), got %q", got["tie-svc"])
 	}
+}
+
+// ── HATA ≠ BOŞ (v0.9.1236) ───────────────────────────────────────
+
+// fakeRow / fakeConn — driver.Row + QueryRow'u sahteleyen minimum yüzey.
+// driver.Conn GÖMÜLÜ: bu test yalnız QueryRow'u kullanıyor, başka bir
+// metoda düşerse nil panic'i testi patlatır (sessizce geçmez).
+type fakeRow struct{ err error }
+
+func (r fakeRow) Err() error                { return r.err }
+func (r fakeRow) Scan(dest ...any) error    { return r.err }
+func (r fakeRow) ScanStruct(dest any) error { return r.err }
+
+type fakeConn struct {
+	driver.Conn
+	row driver.Row
+}
+
+func (c fakeConn) QueryRow(ctx context.Context, query string, args ...any) driver.Row {
+	return c.row
+}
+
+// TestGetServiceMetadataStrictSeparatesErrorFromEmpty — v0.9.1236.
+//
+// Eskiden Scan'in HER hatası "henüz küratörlenmemiş" (nil, nil) diye
+// okunuyordu, yani geçici bir CH arızası ile "satır yok" ayırt
+// edilemiyordu. Bunun en pahalı sonucu AI kod bağlamındaydı: okunamayan
+// bir depo PİNİ sessizce konvansiyona düşüyor ve YANLIŞ DEPONUN kodu
+// kanıt diye gösterilebiliyordu (internal/api/copilot_code.go,
+// pinReadDecision).
+//
+// Bu test BAĞLANMAYI ölçüyor: saf karar fonksiyonunun testi, hata hiç
+// yukarı çıkmazsa yeşil kalır ve düzeltme kendini sessizce iptal eder.
+func TestGetServiceMetadataStrictSeparatesErrorFromEmpty(t *testing.T) {
+	ctx := context.Background()
+	transport := errors.New("read: i/o timeout")
+
+	cases := []struct {
+		name      string
+		scanErr   error
+		wantErr   bool
+		strictNil bool
+	}{
+		{name: "satır yok (sentinel)", scanErr: sql.ErrNoRows, strictNil: true},
+		{
+			name:      "satır yok (sürücü metni)",
+			scanErr:   errors.New("sql: no rows in result set"),
+			strictNil: true,
+		},
+		{name: "taşıma hatası", scanErr: transport, wantErr: true, strictNil: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Store{conn: fakeConn{row: fakeRow{err: tc.scanErr}}}
+
+			md, err := s.GetServiceMetadataStrict(ctx, "svc")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Strict err=%v, hata beklendi mi: %v", err, tc.wantErr)
+			}
+			if tc.strictNil && md != nil {
+				t.Fatalf("Strict md=%+v, nil beklenirdi", md)
+			}
+
+			// Yumuşak ikiz ESKİ SÖZLEŞMEDE kalır: onlarca çağıran
+			// (chip'ler, bildirim zenginleştirmesi) bu davranışa
+			// yaslanıyor ve orada bedeli yalnız boş bir alan.
+			md2, err2 := s.GetServiceMetadata(ctx, "svc")
+			if err2 != nil || md2 != nil {
+				t.Fatalf("yumuşak ikiz değişti: md=%+v err=%v", md2, err2)
+			}
+		})
+	}
+
+	t.Run("boş servis adı sunucuya hiç gitmez", func(t *testing.T) {
+		// conn nil: bir sorgu denenirse panic olur.
+		s := &Store{}
+		if md, err := s.GetServiceMetadataStrict(ctx, ""); md != nil || err != nil {
+			t.Fatalf("md=%+v err=%v", md, err)
+		}
+	})
 }

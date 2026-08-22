@@ -82,6 +82,29 @@ type ServiceMetadata struct {
 // pre-rename row only populated slack_channel we surface that
 // value so legacy curation doesn't disappear from the UI.
 func (s *Store) GetServiceMetadata(ctx context.Context, service string) (*ServiceMetadata, error) {
+	// Eski sözleşme AYNEN korunuyor: her okuma arızası "henüz
+	// küratörlenmemiş" gibi görünür. Onlarca çağıran bu davranışa
+	// yaslanıyor (chip'ler, bildirim zenginleştirmesi) ve orada bir
+	// CH hıçkırığının bedeli boş bir alan — kabul edilebilir.
+	m, err := s.GetServiceMetadataStrict(ctx, service)
+	if err != nil {
+		return nil, nil
+	}
+	return m, nil
+}
+
+// GetServiceMetadataStrict — GetServiceMetadata'nın HATA KORUYAN ikizi
+// (v0.9.1236).
+//
+// (nil, nil) YALNIZCA satır yokken döner; taşıma/timeout/SQL hatası
+// (nil, err) olarak yukarı çıkar. Neden ayrı bir kapı: kararın bedeli
+// çağırana göre değişiyor. Bir chip için "veri yok" ile "okuyamadım"
+// aynı şeydir; AI kod bağlamı için değildir — orada okunamayan bir
+// PIN, sessizce konvansiyona düşmek ve YANLIŞ DEPONUN kodunu kanıt
+// diye göstermek demektir (bkz. internal/api/copilot_code.go,
+// pinReadDecision). Bu ayrımı çağıranın yapabilmesi için hatanın
+// buradan çıkması gerekiyordu.
+func (s *Store) GetServiceMetadataStrict(ctx context.Context, service string) (*ServiceMetadata, error) {
 	if service == "" {
 		return nil, nil
 	}
@@ -103,8 +126,13 @@ func (s *Store) GetServiceMetadata(ctx context.Context, service string) (*Servic
 		&m.Namespace, &m.NamespaceAuto,
 		&m.Deployment, &m.DeploymentAuto, &m.UpdatedAt); err != nil {
 		// "no rows" → not yet curated; same handling pattern
-		// the rest of chstore uses.
-		return nil, nil
+		// the rest of chstore uses. Anything else is a REAL read
+		// failure and travels (v0.9.1236) — swallowing it here made a
+		// prod CH hiccup indistinguishable from an uncurated service.
+		if isNoRows(err) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	if m.ChatChannel == "" && legacySlack != "" {
 		m.ChatChannel = legacySlack

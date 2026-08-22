@@ -334,6 +334,17 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
                 {code.branch ? ` · ${code.branch}` : ''}
                 {code.source === 'pin' ? ' · katalog pini' : code.source === 'convention' ? ' · ad konvansiyonu' : ''}
               </div>
+              {/* v0.9.1236 — kod GELDİĞİNDE de bir not olabilir: depo adı
+                  sunucunun listesine bakılarak düzeltilmiş olabilir
+                  ("cashmanagement-cashflow → CashManagement.CashFlow") ya
+                  da bütçe dolduğu için pencereler kısalmış olabilir.
+                  Eskiden bu satır yalnız kod GELMEYİNCE çiziliyordu, yani
+                  başarılı ama DÜZELTİLMİŞ bir çekmede operatör yukarıdaki
+                  depo adının neden beklediğinden farklı olduğunu hiçbir
+                  yerden öğrenemiyordu. */}
+              {code.reason && (
+                <div style={{ color: 'var(--warn, var(--text3))' }}>{code.reason}</div>
+              )}
               {code.files.map(f => (
                 <div key={`${f.path}:${f.fromLine}`} style={{ fontFamily: 'var(--mono, monospace)' }}>
                   {f.path}:{f.fromLine}-{f.toLine}

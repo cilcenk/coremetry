@@ -1,10 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/parser"
+	"go/printer"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -472,4 +476,112 @@ func TestExplainCodeDropsCodeWhenHalvingCannotShrink(t *testing.T) {
 		t.Fatal("ikinci denemede kod hâlâ var — kırpılamayan kod bırakılmalıydı")
 	}
 	rec.wait(t, 2)
+}
+
+// ── katalog pini: HATA ≠ BOŞ (v0.9.1236) ─────────────────────────
+
+// TestPinReadDecision — üç hâl, üç farklı sonuç.
+//
+// Neden bu ayrım: bu tek adımda fail-open'ın YÖNÜ değişiyor. Operatör
+// bir depo pinlediyse, konvansiyonun VAR OLAN ama YANLIŞ bir depoya
+// çözüldüğünü zaten biliyor demektir. Pin okunamadığında konvansiyona
+// düşmek, tam da operatörün kapattığı hatayı geri açar ve BAŞKA bir
+// uygulamanın kaynağını "kanıt" diye modele koyar. Eksik kanıt
+// kurtarılır, yanlış kanıt kurtarılamaz.
+func TestPinReadDecision(t *testing.T) {
+	cases := []struct {
+		name      string
+		repo      string
+		found     bool
+		err       error
+		wantPin   string
+		wantAbort bool
+	}{
+		{
+			name: "pin var", repo: "CashManagement.CashFlow", found: true,
+			wantPin: "CashManagement.CashFlow",
+		},
+		{
+			name: "pin var, boşluklu", repo: "  Payments.Core  ", found: true,
+			wantPin: "Payments.Core",
+		},
+		{
+			// Satır yok = servis henüz küratörlenmemiş. NORMAL hâl;
+			// konvansiyona düşmek doğru.
+			name: "satır yok → konvansiyon", found: false,
+		},
+		{
+			// Satır var ama repository boş: operatör diğer alanları
+			// doldurmuş, depoyu bilerek boş bırakmış.
+			name: "satır var, depo boş → konvansiyon", repo: "", found: true,
+		},
+		{
+			// ASIL DÜZELTME: geçici CH arızası artık "pin yok" gibi
+			// okunmuyor.
+			name: "okuma hatası → İPTAL", err: errors.New("read: i/o timeout"),
+			wantAbort: true,
+		},
+		{
+			name: "okuma hatası, satır da yok → İPTAL", found: false,
+			err: errors.New("dial tcp: connection refused"), wantAbort: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pin, abort := pinReadDecision(tc.repo, tc.found, tc.err)
+			if pin != tc.wantPin {
+				t.Fatalf("pin=%q, istenen %q", pin, tc.wantPin)
+			}
+			if (abort != "") != tc.wantAbort {
+				t.Fatalf("abort=%q, iptal beklendi mi: %v", abort, tc.wantAbort)
+			}
+			if tc.wantAbort {
+				// "katalog" DEĞİL: Türkçe ek ünsüz yumuşatıyor
+				// (katalog → kataloğu) ve önek assert'i tutmaz.
+				if !strings.Contains(abort, "okunamadı") {
+					t.Fatalf("iptal nedeni operatöre ne olduğunu söylemiyor: %q", abort)
+				}
+				// Hata METNİ taşınmamalı: bu dize ekrana ve AI
+				// yüzeyine gidiyor, CH hatası bağlantı dizesini
+				// (parola dahil) içerebilir.
+				if strings.Contains(abort, tc.err.Error()) {
+					t.Fatalf("ham hata metni operatöre taşındı: %q", abort)
+				}
+			}
+		})
+	}
+}
+
+// TestCodeContextUsesStrictMetadataRead — BAĞLANMA kapısı (v0.9.1236).
+//
+// pinReadDecision saf ve testli, ama tek başına hiçbir şey kanıtlamaz:
+// çağıran yumuşak GetServiceMetadata'ya geri dönerse `err` ASLA dolmaz,
+// saf test yemyeşil kalır ve düzeltme kendini sessizce iptal eder. Bu
+// kapı, kod bağlamı yolunun HATA KORUYAN kapıyı kullandığını pinler.
+//
+// Kaynak YORUMSUZ ayrıştırılıyor (go/parser, ParseComments YOK): bir
+// yorum satırında geçen "GetServiceMetadata(" kapıyı yanlışlıkla
+// patlatmamalı — yorum bir çağıran değildir.
+func TestCodeContextUsesStrictMetadataRead(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "copilot_code.go", nil, 0)
+	if err != nil {
+		t.Fatalf("copilot_code.go ayrıştırılamadı: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := printer.Fprint(&buf, fset, f); err != nil {
+		t.Fatalf("yazdırılamadı: %v", err)
+	}
+	src := buf.String()
+
+	if !strings.Contains(src, "GetServiceMetadataStrict(") {
+		t.Fatal("kod bağlamı yolu GetServiceMetadataStrict kullanmıyor — " +
+			"pin okuma hatası yeniden sessizce konvansiyona düşer")
+	}
+	// Önek çakışması tuzağı: "GetServiceMetadata" tek başına Strict'i de
+	// yakalar. Paranteziyle aranıyor ki yalnız YUMUŞAK çağrı eşleşsin.
+	if strings.Contains(src, "GetServiceMetadata(") {
+		t.Fatal("kod bağlamı yolunda yumuşak GetServiceMetadata çağrısı var — " +
+			"o kapı her okuma arızasını 'pin yok' diye okur")
+	}
 }

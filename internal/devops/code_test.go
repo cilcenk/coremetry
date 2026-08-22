@@ -274,8 +274,41 @@ type fakeTFS struct {
 	tree     []string
 	files    map[string]string
 	branches []string
+	// repos — sunucudaki KANONİK depo adları (v0.9.1236). Boşsa her ad
+	// kabul edilir; mevcut testler bu yüzden dokunulmadan geçiyor.
+	// Doluysa eşleşme BAYT BAYT: gerçek Azure DevOps ada göre çözümde
+	// harf farkını çoğu zaman tolere eder, ama testin işi toleransa
+	// yaslanmak değil kaçış kapısının gerçekten açıldığını görmek.
+	repos []string
 	// hits — uç başına istek sayısı (cache pini için).
 	hits map[string]int
+}
+
+// repoSegment — istek yolundaki depo adı. Liste ucunda "".
+func repoSegment(path string) string {
+	const marker = "/_apis/git/repositories"
+	i := strings.Index(path, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := strings.TrimPrefix(path[i+len(marker):], "/")
+	if j := strings.Index(rest, "/"); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest
+}
+
+// knownRepo — sunucu bu adı tanıyor mu?
+func (f *fakeTFS) knownRepo(name string) bool {
+	if len(f.repos) == 0 {
+		return true
+	}
+	for _, r := range f.repos {
+		if r == name {
+			return true
+		}
+	}
+	return false
 }
 
 func newFakeTFS(t *testing.T) *fakeTFS {
@@ -287,6 +320,14 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, q := r.URL.Path, r.URL.Query()
+		// v0.9.1236 — liste DENEMESİ en tepede sayılır, kimlik ve
+		// api-version muhafızlarından ÖNCE. Sayacı aşağıya, başarı
+		// dalına koymak testi kör ederdi: "kaçış kapısı hiç açılmadı"
+		// ile "açıldı ama sunucu 401 verdi" aynı sıfırı gösterirdi —
+		// oysa testin ölçtüğü şey tam olarak İSTEĞİN ÇIKIP ÇIKMADIĞI.
+		if strings.HasSuffix(p, "/_apis/git/repositories") {
+			f.hits["list"]++
+		}
 		// PAT sözleşmesi: Basic auth, kullanıcı adı boş, PAT şifrede.
 		if u, pw, ok := r.BasicAuth(); !ok || u != "" || pw == "" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -297,6 +338,25 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		// v0.9.1236 — depo LİSTESİ ucu ve bilinmeyen depo 404'ü.
+		if seg := repoSegment(p); seg == "" && strings.HasSuffix(p, "/_apis/git/repositories") {
+			var out struct {
+				Value []struct {
+					Name string `json:"name"`
+				} `json:"value"`
+			}
+			for _, r := range f.repos {
+				out.Value = append(out.Value, struct {
+					Name string `json:"name"`
+				}{r})
+			}
+			_ = json.NewEncoder(w).Encode(out)
+			return
+		} else if seg != "" && !f.knownRepo(seg) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"TF401019: repository does not exist"}`))
+			return
+		}
 		switch {
 		case strings.HasSuffix(p, "/refs"):
 			f.hits["refs"]++
@@ -578,5 +638,177 @@ func TestFetchCodeRespectsBranchOrderSetting(t *testing.T) {
 		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
 	if cc.Branch != "master" {
 		t.Fatalf("Branch=%q, ayardaki sıra (master önce) uygulanmadı", cc.Branch)
+	}
+}
+
+// --- v0.9.1236: depo çözümü sunucu listesine karşı ---------------
+
+// TestFetchCodeRecoversRepoNameFromServerList — SAHADAKİ VAKA.
+//
+// Konvansiyon küçük harf üretir ("cashmanagement-cashflow"), gerçek
+// depo "CashManagement.CashFlow" yazımındadır. Eskiden bu opak bir
+// "depo bulunamadı" ile biterdi ve tek çare servis başına elle pindi.
+func TestFetchCodeRecoversRepoNameFromServerList(t *testing.T) {
+	f := newFakeTFS(t)
+	const canonical = "CashManagement.CashFlow"
+	f.repos = []string{"Payments.Core", canonical, "identity"}
+	const path = "/src/main/java/com/example/cash/CashFlowService.java"
+	f.tree = []string{path}
+	f.files[path] = javaFile("com.example.cash", "CashFlowService", 200, 88)
+
+	svc := New()
+	svc.Configure(f.settings())
+	frames := stackparse.ParseJava(
+		"\tat com.example.cash.CashFlowService.post(CashFlowService.java:88)\n")
+
+	cc := svc.FetchCode(context.Background(), "cashmanagement-cashflow", "", frames)
+
+	if cc.Empty() {
+		t.Fatalf("kaçış kapısı açılmadı: %s", cc.Reason)
+	}
+	if cc.Repo != canonical {
+		t.Fatalf("Repo=%q, sunucunun kanonik adı (%q) beklenirdi", cc.Repo, canonical)
+	}
+	// Düzeltme İZİ: sessiz düzeltme, operatörün yanlış adı hiç
+	// öğrenmemesi demek olurdu.
+	if !strings.Contains(cc.Reason, "düzeltildi") ||
+		!strings.Contains(cc.Reason, "cashmanagement-cashflow") ||
+		!strings.Contains(cc.Reason, canonical) {
+		t.Fatalf("düzeltme izi Reason'da yok: %q", cc.Reason)
+	}
+	if f.hits["list"] != 1 {
+		t.Fatalf("liste %d kez çekildi, 1 beklenirdi", f.hits["list"])
+	}
+}
+
+// TestFetchCodeRepoListOnlyOnFailure — MUTLU YOL bir istek bile
+// fazladan görmemeli; liste yalnız 404'ten SONRA çekilir.
+func TestFetchCodeRepoListOnlyOnFailure(t *testing.T) {
+	f := newFakeTFS(t)
+	f.repos = []string{"core-service"}
+	const path = "/src/main/java/com/example/a/A.java"
+	f.tree = []string{path}
+	f.files[path] = javaFile("com.example.a", "A", 40, 12)
+
+	svc := New()
+	svc.Configure(f.settings())
+	frames := stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n")
+
+	cc := svc.FetchCode(context.Background(), "core-service", "", frames)
+	if cc.Empty() {
+		t.Fatalf("mutlu yol kırıldı: %s", cc.Reason)
+	}
+	if cc.Reason != "" {
+		t.Fatalf("mutlu yolda Reason dolu: %q", cc.Reason)
+	}
+	if f.hits["list"] != 0 {
+		t.Fatalf("mutlu yolda depo listesi çekildi (%d kez)", f.hits["list"])
+	}
+}
+
+// TestFetchCodeRepoListCached — ikinci başarısız çözüm yeni bir
+// listeleme yapmaz (10 dk cache, ağaç cache'iyle aynı disiplin).
+func TestFetchCodeRepoListCached(t *testing.T) {
+	f := newFakeTFS(t)
+	f.repos = []string{"Payments.Core"}
+	svc := New()
+	svc.Configure(f.settings())
+	frames := stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n")
+
+	_ = svc.FetchCode(context.Background(), "billing-gateway", "", frames)
+	first := f.hits["list"]
+	if first != 1 {
+		t.Fatalf("ilk çağrıda liste %d kez çekildi, 1 beklenirdi", first)
+	}
+	_ = svc.FetchCode(context.Background(), "another-missing", "", frames)
+	if f.hits["list"] != first {
+		t.Fatalf("liste yeniden çekildi (%d → %d) — cache tutmuyor", first, f.hits["list"])
+	}
+}
+
+// TestFetchCodeNoMatchListsNearestNames — eşleşme yoksa bugünkü hata
+// KORUNUR, üstüne 2-3 yakın ad eklenir. Tam liste DÖKÜLMEZ.
+func TestFetchCodeNoMatchListsNearestNames(t *testing.T) {
+	f := newFakeTFS(t)
+	f.repos = []string{
+		"cashflow-api", "cashflow-worker", "cashflow-batch", "cashflow-ui",
+		"payments-core", "identity",
+	}
+	svc := New()
+	svc.Configure(f.settings())
+	cc := svc.FetchCode(context.Background(), "cashflow", "",
+		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
+
+	if !cc.Empty() {
+		t.Fatal("eşleşmemeliydi")
+	}
+	if !strings.Contains(cc.Reason, "en yakın adlar") {
+		t.Fatalf("yakın adlar Reason'da yok: %q", cc.Reason)
+	}
+	if strings.Contains(cc.Reason, "identity") || strings.Contains(cc.Reason, "payments-core") {
+		t.Fatalf("alakasız adlar dökülmüş: %q", cc.Reason)
+	}
+	if n := strings.Count(cc.Reason, "cashflow-"); n > repoNearMax {
+		t.Fatalf("%d aday listelenmiş, tavan %d: %q", n, repoNearMax, cc.Reason)
+	}
+}
+
+// TestFetchCodeEscapeHatchSkipsOnAuthError — PAT arızasında liste hiç
+// denenmez: sebep ad değil kimlik, ve ikinci istek aynı duvara çarpardı.
+func TestFetchCodeEscapeHatchSkipsOnAuthError(t *testing.T) {
+	f := newFakeTFS(t)
+	f.repos = []string{"Payments.Core"}
+	cfg := f.settings()
+	cfg.PAT = "" // sahte sunucu 401 döner
+	svc := New()
+	svc.Configure(cfg)
+	cc := svc.FetchCode(context.Background(), "payments-core", "",
+		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
+
+	if !strings.Contains(cc.Reason, "http 401") {
+		t.Fatalf("Reason=%q, asıl teşhis (401) korunmalıydı", cc.Reason)
+	}
+	if f.hits["list"] != 0 {
+		t.Fatalf("kimlik hatasında liste çekildi (%d kez)", f.hits["list"])
+	}
+}
+
+// TestFetchCodeEscapeHatchSanitizesPAT — kaçış kapısının ürettiği
+// mesajlar da sır sızdırmaz (v0.9.829 sözleşmesi bu yolda da geçerli).
+func TestFetchCodeEscapeHatchSanitizesPAT(t *testing.T) {
+	f := newFakeTFS(t)
+	f.repos = []string{"sup3rsecret-named-repo"}
+	cfg := f.settings()
+	cfg.PAT = "sup3rsecret"
+	svc := New()
+	svc.Configure(cfg)
+	cc := svc.FetchCode(context.Background(), "sup3rsecret-missing", "",
+		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
+	if strings.Contains(cc.Reason, "sup3rsecret") {
+		t.Fatalf("PAT kaçış kapısı mesajına sızdı: %s", cc.Reason)
+	}
+}
+
+// TestFetchCodePicksCaseDifferentBranch — 'Release' yazımlı depo artık
+// varsayılan branşa DÜŞMEZ. Eski davranışta kod pencereleri yanlış
+// branştan (Master) kesiliyor, operatöre yanlış satırlar kanıt diye
+// gösteriliyordu.
+func TestFetchCodePicksCaseDifferentBranch(t *testing.T) {
+	f := newFakeTFS(t)
+	f.branches = []string{"refs/heads/Master", "refs/heads/Release"}
+	const path = "/src/main/java/com/example/a/A.java"
+	f.tree = []string{path}
+	f.files[path] = javaFile("com.example.a", "A", 40, 12)
+
+	svc := New()
+	svc.Configure(f.settings())
+	cc := svc.FetchCode(context.Background(), "core-service", "",
+		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
+	if cc.Branch != "Release" {
+		t.Fatalf("Branch=%q, sunucunun kanonik yazımı (Release) beklenirdi — reason=%q",
+			cc.Branch, cc.Reason)
+	}
+	if cc.Empty() {
+		t.Fatalf("kod çekilemedi: %s", cc.Reason)
 	}
 }

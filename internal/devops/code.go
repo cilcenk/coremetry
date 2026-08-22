@@ -273,15 +273,13 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	// aynısı). Önceden burası kesin bir duvardı ve kurulumun kendi
 	// adlandırma sözleşmesi zaten cevabı taşırken operatörden aynı bilgiyi
 	// ikinci kez istiyordu.
-	cfg.Project = strings.TrimSpace(cfg.Project)
-	if cfg.Project == "" {
-		cfg.Project = strings.TrimSpace(hint.Value)
-	}
-	if cfg.Project == "" {
+	project, _, dead := pickProject(cfg, hint)
+	if dead != "" {
 		// Depo ADIYLA çağırıyoruz; ada göre çözüm proje kapsamı ister.
 		class = CodeProjectDeadEnd
-		return CodeContext{Repo: repo, Reason: projectDeadEnd(hint)}
+		return CodeContext{Repo: repo, Reason: dead}
 	}
+	cfg.Project = project
 	// v0.9.1235 — AppFrames artık EN DERİN "Caused by" segmentinden dışa
 	// doğru seçiyor: üç pencerenin ilki kök nedenin fırlatıldığı satır,
 	// wrapper'ın yeniden-fırlatma satırları arta kalan bütçeye düşüyor.
@@ -293,52 +291,14 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	}
 
 	cli := s.clientFor(cfg.InsecureSkipVerify)
-	ver, branch, err := s.resolveBranch(ctx, cli, cfg, repo)
+	ch := s.resolveChain(ctx, parent, cli, cfg, repo)
+	repo, out.Repo, out.Branch = ch.repo, ch.repo, ch.branch
+	if ch.class != "" {
+		class = ch.class
+		return CodeContext{Repo: ch.repo, Branch: ch.branch, Reason: ch.reason}
+	}
 	// note — düzeltme izi. Boş kalırsa hiçbir şey değişmedi demektir.
-	note := ""
-	if err != nil {
-		// KAÇIŞ KAPISI (v0.9.1236). Konvansiyon küçük harf üretir,
-		// gerçek depo başka yazımda olabilir. Liste çağrısı YALNIZ
-		// burada: mutlu yol tek fazladan istek bile görmez.
-		if canon, near := s.recoverRepoName(ctx, cli, cfg, repo, err); canon != "" {
-			if ver2, branch2, err2 := s.resolveBranch(ctx, cli, cfg, canon); err2 == nil {
-				note = "depo adı sunucudan düzeltildi: " + repo + " → " + canon
-				repo, ver, branch, err = canon, ver2, branch2, nil
-				out.Repo = canon
-			}
-		} else if len(near) > 0 {
-			err = fmt.Errorf("%v (sunucudaki en yakın adlar: %s)", err, strings.Join(near, ", "))
-		}
-		if err != nil {
-			if deadlineHit(parent, ctx) {
-				class = CodeDeadline
-				return CodeContext{Repo: repo, Reason: withNote(note, deadlineReason(s.fetchDeadline()))}
-			}
-			class = CodeBackendError
-			return CodeContext{Repo: repo, Reason: sanitize(err.Error(), cfg)}
-		}
-	}
-	out.Branch = branch
-
-	paths, err := s.repoTree(ctx, cli, cfg, ver, repo, branch)
-	if err != nil {
-		if deadlineHit(parent, ctx) {
-			class = CodeDeadline
-			return CodeContext{Repo: repo, Branch: branch, Reason: withNote(note, deadlineReason(s.fetchDeadline()))}
-		}
-		class = CodeBackendError
-		return CodeContext{Repo: repo, Branch: branch, Reason: withNote(note, sanitize(err.Error(), cfg))}
-	}
-	if len(paths) == 0 {
-		// v0.9.1183 — NE DENENDİĞİ yazılıyor. Proje artık türetilebiliyor
-		// (bsa-… → BSA) ve türetme bir tahmin; "depo ağacı boş döndü"
-		// tek başına operatöre yanlış tahmini göstermez, oysa hatanın en
-		// olası sebebi tam olarak yanlış proje/depo adıdır (ör. gerçek depo
-		// farklı harf yazımında). Katalogdaki Repository pini bunu ezer.
-		class = CodeEmptyTree
-		return CodeContext{Repo: repo, Branch: branch,
-			Reason: withNote(note, "depo ağacı boş döndü (proje "+cfg.Project+", depo "+repo+", branş "+branch+")")}
-	}
+	note, ver, branch, paths := ch.note, ch.ver, ch.branch, ch.paths
 
 	hunt := huntWindows(ctx, targets,
 		huntLimits{windows: codeWindowLimit, lookups: codeLookupLimit, radius: codeWindowRadius},
@@ -397,6 +357,125 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	// beklediğinden farklı bir ad gösterirken sebebi de söylemeli.
 	out.Reason = withNote(note, out.Reason)
 	return out
+}
+
+// ProjectSourceSettings — projenin Ayarlar'daki açık alandan geldiğini
+// söyleyen kaynak etiketi (v0.9.1242). Öbür iki değer RepoSourcePin /
+// RepoSourceConvention; üçü birlikte "bu proje adı NEREDEN geldi"
+// sorusunun tüm cevap kümesi.
+const ProjectSourceSettings = "settings"
+
+// pickProject — yürürlükteki proje adı + KAYNAĞI; ikisi de boşsa
+// çıkmazın gerekçesi. SAF; tablo-testli (v0.9.1242'de FetchCode'un
+// gövdesinden çıkarıldı — davranış AYNEN korundu).
+//
+// Sıra pazarlıksız: Ayarlar'daki açık Project HER ZAMAN kazanır,
+// öneri (pin bileşeni / önek türetimi) yalnız o boşken kullanılır —
+// türetme bir tahmin, operatörün yazdığı ad bir karar.
+//
+// Kaynak etiketi v0.9.1242'de eklendi: dry-run ekranında "proje: BSA"
+// tek başına yetmiyor, operatörün asıl sorusu "bunu nereden buldun"
+// (Ayarlar mı, pin mi, önek mi) — üçünün düzeltmesi üç ayrı yerde.
+// FetchCode etiketi kullanmaz; ona yalnız adın kendisi lazım.
+func pickProject(cfg Settings, hint ProjectHint) (project, source, deadEnd string) {
+	if p := strings.TrimSpace(cfg.Project); p != "" {
+		return p, ProjectSourceSettings, ""
+	}
+	if p := strings.TrimSpace(hint.Value); p != "" {
+		return p, hint.Source, ""
+	}
+	return "", "", projectDeadEnd(hint)
+}
+
+// chainResult — AĞ zincirinin (branş + kaçış kapısı + ağaç) ürünü.
+//
+// class doluysa zincir ÇIKMAZA düştü ve reason onun gerekçesidir;
+// boşsa ver/branch/paths kullanılabilir.
+type chainResult struct {
+	ver    string
+	repo   string // sunucudan düzeltildiyse KANONİK ad
+	branch string
+	note   string // düzeltme izi ("" = düzeltme yok)
+	paths  []string
+	// at — zincirin DURDUĞU adım (chainStepBranch | chainStepTree).
+	// class boşken anlamsız. Dry-run hangi adımın kırmızı yanacağını
+	// buradan okur: durumdan ÇIKARMAK ("branch boşsa branş adımı
+	// patlamıştır") ilk yeniden yazımda sessizce kayardı.
+	at     string
+	class  CodeOutcome // "" = zincir tamamlandı
+	reason string
+}
+
+// Zincir adımlarının adları — dry-run ve testler bunları okur.
+const (
+	chainStepBranch = "branch"
+	chainStepTree   = "tree"
+)
+
+// resolveChain — depo adı → branş → ağaç. FetchCode'un ağ zinciri,
+// TEK yazımda (v0.9.1242).
+//
+// Neden ayrı: Ayarlar'daki "çözümü dene" (resolve_dryrun.go) TAM
+// OLARAK bu adımları koşmak zorunda. Kopya bir zincir yazmak, iki
+// gövdenin ilk düzeltmede ayrışması ve dry-run'ın gerçekte olmayan
+// bir davranışı "doğrulaması" demekti — bir teşhis aracının
+// yapabileceği en pahalı hata. Buradan sonrası (pencere avı) yalnız
+// FetchCode'a ait; dry-run zinciri burada BİTİRİR ve ağaçtaki dosya
+// SAYISINDAN başka bir şey okumaz.
+//
+// Sayaçlara dokunmaz: RecordCodeOutcome hâlâ YALNIZ FetchCode'un
+// defer'ında. Dry-run bu fonksiyonu çağırır, FetchCode'u değil —
+// isabet oranı yapay denemelerle şişmez/sönmez.
+func (s *Service) resolveChain(ctx, parent context.Context, cli *http.Client, cfg Settings, repo string) chainResult {
+	res := chainResult{repo: repo}
+	ver, branch, err := s.resolveBranch(ctx, cli, cfg, repo)
+	if err != nil {
+		// KAÇIŞ KAPISI (v0.9.1236). Konvansiyon küçük harf üretir,
+		// gerçek depo başka yazımda olabilir. Liste çağrısı YALNIZ
+		// burada: mutlu yol tek fazladan istek bile görmez.
+		if canon, near := s.recoverRepoName(ctx, cli, cfg, repo, err); canon != "" {
+			if ver2, branch2, err2 := s.resolveBranch(ctx, cli, cfg, canon); err2 == nil {
+				res.note = "depo adı sunucudan düzeltildi: " + repo + " → " + canon
+				res.repo, ver, branch, err = canon, ver2, branch2, nil
+			}
+		} else if len(near) > 0 {
+			err = fmt.Errorf("%v (sunucudaki en yakın adlar: %s)", err, strings.Join(near, ", "))
+		}
+		if err != nil {
+			res.at = chainStepBranch
+			if deadlineHit(parent, ctx) {
+				res.class, res.reason = CodeDeadline, withNote(res.note, deadlineReason(s.fetchDeadline()))
+				return res
+			}
+			res.class, res.reason = CodeBackendError, sanitize(err.Error(), cfg)
+			return res
+		}
+	}
+	res.ver, res.branch = ver, branch
+
+	paths, err := s.repoTree(ctx, cli, cfg, ver, res.repo, branch)
+	if err != nil {
+		res.at = chainStepTree
+		if deadlineHit(parent, ctx) {
+			res.class, res.reason = CodeDeadline, withNote(res.note, deadlineReason(s.fetchDeadline()))
+			return res
+		}
+		res.class, res.reason = CodeBackendError, withNote(res.note, sanitize(err.Error(), cfg))
+		return res
+	}
+	if len(paths) == 0 {
+		// v0.9.1183 — NE DENENDİĞİ yazılıyor. Proje artık türetilebiliyor
+		// (bsa-… → BSA) ve türetme bir tahmin; "depo ağacı boş döndü"
+		// tek başına operatöre yanlış tahmini göstermez, oysa hatanın en
+		// olası sebebi tam olarak yanlış proje/depo adıdır (ör. gerçek depo
+		// farklı harf yazımında). Katalogdaki Repository pini bunu ezer.
+		res.at, res.class = chainStepTree, CodeEmptyTree
+		res.reason = withNote(res.note,
+			"depo ağacı boş döndü (proje "+cfg.Project+", depo "+res.repo+", branş "+branch+")")
+		return res
+	}
+	res.paths = paths
+	return res
 }
 
 // fetchDeadline — yürürlükteki toplam süre tavanı.

@@ -1159,6 +1159,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET  /api/settings/devops", auth.RequireRole(auth.RoleAdmin, s.getDevOpsSettings))
 	mux.HandleFunc("PUT  /api/settings/devops", auth.RequireRole(auth.RoleAdmin, s.putDevOpsSettings))
 	mux.HandleFunc("POST /api/settings/devops/test", auth.RequireRole(auth.RoleAdmin, s.testDevOpsSettings))
+	// v0.9.1242 — servis → depo/branş/ağaç PROVASI. Salt teşhis:
+	// yazmaz (audit yok), cache'lenmez (operatör konvansiyonu
+	// düzenleyip hemen yeniden dener) ve FetchCode'a girmediği için
+	// v0.9.1241'in isabet-oranı sayaçlarına dokunmaz. Kapı, kardeş
+	// devops uçlarıyla aynı: kayıtlı PAT tüm koleksiyonu okur.
+	mux.HandleFunc("POST /api/devops/resolve-dryrun", auth.RequireRole(auth.RoleAdmin, s.devopsResolveDryRun))
 	mux.HandleFunc("GET  /api/settings/logstore", auth.RequireRole(auth.RoleAdmin, s.getLogstoreESSettings))
 	mux.HandleFunc("PUT  /api/settings/logstore", auth.RequireRole(auth.RoleAdmin, s.putLogstoreESSettings))
 	mux.HandleFunc("POST /api/settings/logstore/test", auth.RequireRole(auth.RoleAdmin, s.testLogstoreESSettings))

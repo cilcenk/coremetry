@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
-import { Button } from '@/components/ui';
+import { Badge, Button, Field } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useSettingsLoad, SettingsLoadError } from './shared';
-import type { DevOpsFlavor, DevOpsTestResult } from '@/lib/types';
+import type { DevOpsFlavor, DevOpsResolveDryRun, DevOpsTestResult } from '@/lib/types';
 
 // DevOpsTab — Azure DevOps Server / TFS bağlantısı (v0.9.829),
 // v0.9.830'da adlandırma konvansiyonu eklendi.
@@ -37,6 +37,12 @@ export function DevOpsTab() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [test, setTest] = useState<DevOpsTestResult | null>(null);
+  // v0.9.1242 — çözüm provası. AYRI busy bayrağı: kaydet/test ile aynı
+  // `busy`i paylaşsalardı bir prova, form butonlarını da kilitlerdi.
+  const [dryService, setDryService] = useState('');
+  const [dryBusy, setDryBusy] = useState(false);
+  const [dry, setDry] = useState<DevOpsResolveDryRun | null>(null);
+  const [dryErr, setDryErr] = useState('');
 
   const { loaded, error: loadErr, retry } = useSettingsLoad(
     () => api.getDevOpsSettings(),
@@ -78,6 +84,26 @@ export function DevOpsTab() {
         error: err instanceof Error ? err.message : 'Test başarısız' });
     } finally {
       setBusy(false);
+    }
+  };
+
+  // runDryRun — servis → depo/branş/ağaç provası (v0.9.1242).
+  //
+  // Sunucu başarısızlığı 200 + {ok:false, steps} olarak döner (test
+  // ucunun duruşu): "depo bulunamadı" operatörün sorusuna verilmiş
+  // BAŞARILI bir cevaptır. catch yalnız gerçek taşıma/yetki hataları
+  // için — o hâlde adım listesi yoktur, tek satır hata gösterilir.
+  const runDryRun = async (e: FormEvent) => {
+    e.preventDefault();
+    const svc = dryService.trim();
+    if (!svc) return;
+    setDryBusy(true); setDry(null); setDryErr('');
+    try {
+      setDry(await api.resolveDevOpsDryRun(svc));
+    } catch (err) {
+      setDryErr(err instanceof Error ? err.message : 'Çözüm denemesi başarısız');
+    } finally {
+      setDryBusy(false);
     }
   };
 
@@ -312,6 +338,84 @@ export function DevOpsTab() {
           Test kaydetmez — formdaki değerlerle dener. PAT alanı boşsa saklı
           token kullanılır.
         </div>
+      </form>
+
+      {/* v0.9.1242 — çözüm provası. Ayrı bir <form>: ayar formunun
+          İÇİNDE olsaydı servis adı kutusunda Enter'a basmak ayarları
+          kaydederdi. Zincir KAYITLI ayarlarla koşar, o yüzden de
+          burada — kaydetmeden denemek başka bir sorunun cevabı. */}
+      <form onSubmit={runDryRun} style={{
+        marginTop: 18, padding: 16, borderRadius: 8,
+        background: 'var(--bg2)', border: '1px solid var(--border)',
+      }}>
+        <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Çözümü dene</h3>
+        <p style={{ color: 'var(--text2)', fontSize: 12, marginBottom: 12 }}>
+          Bir servis adı yazın; <strong style={{ color: 'var(--text)' }}>aynı çözüm
+          zinciri</strong> (katalog pini → depo adı → proje → branş → depo ağacı)
+          AI’a hiç uğramadan koşar. Konvansiyonu denemek için artık gerçek bir
+          exception ve tam bir LLM turu gerekmiyor. Salt okuma: hiçbir şey
+          kaydedilmez, kod-çekme isabet sayaçları etkilenmez.
+        </p>
+        <Field label="Servis adı" value={dryService}
+          onChange={e => setDryService(e.target.value)}
+          placeholder="bsa-odeme-servisi-prod"
+          hint={configured
+            ? 'Kayıtlı ayarlarla denenir — kaydetmediğiniz değişiklikler hesaba katılmaz.'
+            : 'Önce sunucu adresini girip kaydedin.'} />
+        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+          <Button type="submit" variant="secondary"
+            disabled={!configured || !dryService.trim()} loading={dryBusy}>
+            Çözümü dene
+          </Button>
+        </div>
+
+        {dryBusy && <div style={{ marginTop: 12 }}><Spinner /></div>}
+
+        {!dryBusy && dryErr && (
+          <div style={{ marginTop: 12, fontSize: 12, color: 'var(--err)' }}>✗ {dryErr}</div>
+        )}
+
+        {!dryBusy && !dryErr && dry && (
+          <div style={{ marginTop: 12 }}>
+            {/* Özet satırı — adımlardan türer, çözülemeyen alan hiç yazılmaz. */}
+            <div style={{ fontSize: 12, marginBottom: 8, color: 'var(--text2)' }}>
+              <Badge tone={dry.ok ? 'success' : 'danger'}>
+                {dry.ok ? 'ÇÖZÜLDÜ' : 'ÇÖZÜLEMEDİ'}
+              </Badge>
+              <span style={{ marginLeft: 8 }}>
+                {dry.repo
+                  ? <>
+                      <strong style={{ color: 'var(--text)' }}>{dry.repo}</strong>
+                      {dry.branch ? ` @ ${dry.branch}` : ''}
+                      {dry.project ? ` · proje ${dry.project}` : ''}
+                      {dry.fileCount ? ` · ${dry.fileCount} dosya` : ''}
+                    </>
+                  : `“${dry.service}” için depo adı üretilemedi.`}
+              </span>
+            </div>
+            <ol style={{ listStyle: 'none', padding: 0, margin: 0,
+              display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {(dry.steps || []).map((st, i) => (
+                <li key={`${st.key}-${i}`}
+                  style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 12 }}>
+                  <Badge tone={st.ok ? 'success' : 'danger'}>{st.ok ? '✓' : '✗'}</Badge>
+                  <span style={{ minWidth: 110, color: 'var(--text2)' }}>{st.label}</span>
+                  {/* Uzun gerekçe (çıkmaz cümleleri üç kaynağı birden
+                      anlatıyor) kırpılmaz: kesilen bir teşhis, teşhis
+                      değildir. */}
+                  <span style={{ color: st.ok ? 'var(--text)' : 'var(--err)',
+                    wordBreak: 'break-word' }}>{st.detail}</span>
+                </li>
+              ))}
+            </ol>
+            {/* Zincir ilk kırmızıda durur; koşmamış adımlar listede YOK. */}
+            {!dry.ok && (
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>
+                Zincir ilk hatada durdu — sonraki adımlar hiç çalıştırılmadı.
+              </div>
+            )}
+          </div>
+        )}
       </form>
     </div>
   );

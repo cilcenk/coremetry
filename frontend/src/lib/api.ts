@@ -21,7 +21,7 @@ import type {
   AISettings, AISettingsInput,
   TempoSnapshot, TempoSettingsInput,
   VMSnapshot, VMSettingsInput, VMTestResult,
-  DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult,
+  DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult, DevOpsResolveDryRun,
   ThanosSnapshot, ThanosSettingsInput, ClusterPodsResponse, ClusterPodDetail,
   ClusterNodesResponse, ClusterSummary, ClusterNamespacesResponse,
   ClusterPodsTrendResponse, ClusterNetworkTrendResponse, ClusterDeploymentsResponse, ClusterResourceTrendResponse, ClusterAlertsResponse, ClusterDeployTrendResponse, ClusterJMXTrendResponse, ClusterJMXMetricsResponse,
@@ -1512,6 +1512,17 @@ export const api = {
     request<DevOpsTestResult>(`/api/settings/devops/test`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
+    }),
+  // v0.9.1242 — servis → depo/branş/ağaç PROVASI. LLM'siz: aynı
+  // çözüm zinciri (pin → depo → proje → branş → ağaç) sağlayıcıya
+  // hiç uğramadan koşar ve her adımın {ok, detail} sonucunu döner.
+  // KAYITLI ayarları okur (test ucunun aksine formdaki taslağı
+  // değil): soru "kaydettiğim konvansiyon ne üretiyor". Cache YOK —
+  // operatör konvansiyonu düzeltip hemen yeniden dener.
+  resolveDevOpsDryRun: (service: string) =>
+    request<DevOpsResolveDryRun>(`/api/devops/resolve-dryrun`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service }),
     }),
   // Thanos multi-cluster config (v0.8.577, admin). Tempo contract:
   // GET is masked (per-cluster hasToken), PUT's empty token

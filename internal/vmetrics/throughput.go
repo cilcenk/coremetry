@@ -409,6 +409,17 @@ func (s *Service) MetricUnit(ctx context.Context, name, service string) string {
 	return unitFromPresentNames(names)
 }
 
+// LatencyMetricName — the family name to read when the caller wants a VALUE
+// (avg / latency) rather than a rate, signature-shaped for the api.metricSource
+// seam (v0.9.1274).
+//
+// A METHOD on Service even though it needs no state and no round trip: the seam
+// requires both backends to answer, and answering from the interface is what
+// makes the ClickHouse half's "return it unchanged" an explicit decision rather
+// than an absent one. The rule itself is pure — latencyFamilyName carries the
+// full argument for why the trim happens here and not in buildPromQL.
+func (s *Service) LatencyMetricName(name string) string { return latencyFamilyName(name) }
+
 // unitFromPresentNames — pure: the first unit any present spelling describes.
 //
 // Sorted first so the answer does not depend on VM's label-index ordering: two

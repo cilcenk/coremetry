@@ -2264,6 +2264,18 @@ export type SpanAgg =
 export interface ServiceMetricThroughput {
   service: string;
   metric: string;
+  // v0.9.1274 — DEĞER okuyan panellerin adı (avg / latency), yani `metric`in
+  // ait olduğu ailenin soneksiz hâli.
+  //
+  // İki alan çünkü iki AYRI soru var ve aynı metrikte farklı cevapları oluyor:
+  // bir histogramın THROUGHPUT'u `rate(<aile>_count)` olduğu için `metric`
+  // VictoriaMetrics kurulumunda meşru olarak `…_seconds_count` çözülür, ama
+  // aynı adı `agg=avg` ile sormak kümülatif bir SAYACIN ortalamasını çizer —
+  // operatörün ekseninde "14.2 weeks" yazmasının sebebi tam buydu.
+  //
+  // `?:` çünkü eski (deploy öncesi) cache gövdelerinde YOK. Okuyan taraf
+  // `rtMetric || metric` yazmalı; ClickHouse kurulumunda ikisi zaten aynıdır.
+  rtMetric?: string;
   jobLabel: string;
   pattern: string;
   metricExists: boolean;

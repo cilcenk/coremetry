@@ -311,6 +311,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 					}
 					if ser, err := rate(ctx, withEnvFilter(f, env, src), "rate"); err == nil && len(ser) > 0 {
 						out["metric"] = b.Metric
+						out["rtMetric"] = src.LatencyMetricName(b.Metric)
 						out["metricExists"] = true
 						out["instrument"] = b.Instrument
 						out["series"] = ser
@@ -320,7 +321,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 						if b.EnvAmbiguous || envWiderThanAsked {
 							out["envAmbiguous"] = true
 						}
-						out["metricUnit"] = s.metricUnitFor(ctx, src, b.Metric, name)
+						out["metricUnit"] = s.metricUnitFor(ctx, src, src.LatencyMetricName(b.Metric), name)
 						return out, nil
 					}
 					// bayat bağ → düş ve yeniden keşfet
@@ -349,6 +350,29 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 			return out, nil
 		}
 		out["metric"] = resolved
+		// v0.9.1274 — İKİ AD, İKİ SORU (operatör-bildirimi).
+		//
+		// `metric` throughput'un çözdüğü seridir ve VM'de bu meşru olarak
+		// `…_seconds_count` olabilir: histogramın hızı `rate(_count)`.
+		// `rtMetric` ise DEĞER okuyan panellerin (avg / latency) adıdır —
+		// aynı ailenin soneksiz hâli. Overview iki panelini de tek "çözülmüş
+		// ad" alanından besliyordu; bu yüzden RT panelleri kümülatif bir
+		// sayacın ham ortalamasını çizdi ve `_seconds` yüzünden eksende
+		// "14.2 weeks" yazdı.
+		//
+		// Alan tputBinding'e YAZILMIYOR: kural saf (src.LatencyMetricName),
+		// uçuşta hesaplanıyor. Bağa yazsaydık kuralın bir sonraki sürümdeki
+		// düzeltmesi, önceden yazılmış bağların TTL'i boyunca sessizce eski
+		// cevabı servis ederdi — v0.5.187 sınıfının kalıcı-durum hâli.
+		//
+		// Anahtar sürümü (`:v2:`) BİLEREK artmadı, oysa zarf büyüdü. Kural
+		// (v0.9.774) zarf değişiminde sürüm ister çünkü eski gövde yeni koda
+		// EKSİK bir alanla ulaşır; burada o eksiklik zararsız: frontend
+		// `rtMetric || metric` okuyor, yani bayat bir gövde en fazla 30 sn
+		// boyunca düzeltme-öncesi davranışı sürdürür ve kendiliğinden geçer.
+		// Sürümü artırmak, tüm servislerin panelini bir kez soğuk okumaya
+		// zorlardı — bedeli faydasından büyük.
+		out["rtMetric"] = src.LatencyMetricName(resolved)
 		out["metricExists"] = true
 
 		// 2) INSTRUMENT belirle — hangi KOLON rate'lenecek.
@@ -510,7 +534,13 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		// "birim ölçekleme elle yazılmaz"). Eskiden burada ms'ye
 		// çevriliyordu çünkü çizim katmanı birim bilmiyordu.
 		if matched != nil {
-			out["metricUnit"] = s.metricUnitFor(ctx, src, resolved, name)
+			// v0.9.1274 — birim RT ADINDAN. Bu alanı okuyan tek yüzey
+			// Response time paneli/karosu (throughput ekseni sabit "reqps"),
+			// yani birim LATENCY ailesini tanımlamalı. VM'de ikisi de "s"
+			// çıkar (aile aday listesi `_count`i zaten kapsıyor), CH'de ad
+			// değişmediği için sorgu bayt-aynı — ama alanın hangi soruyu
+			// yanıtladığı artık kodda yazıyor.
+			out["metricUnit"] = s.metricUnitFor(ctx, src, src.LatencyMetricName(resolved), name)
 			return out, nil
 		}
 		out["matched"] = 0

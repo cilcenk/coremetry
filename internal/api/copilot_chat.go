@@ -11,6 +11,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/ai/assemble"
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/copilot"
+	"github.com/cilcenk/coremetry/internal/mcp"
 	"github.com/cilcenk/coremetry/internal/mcptools"
 )
 
@@ -359,7 +360,13 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			tr := copilot.ToolResult{CallID: tc.ID, Name: tc.Name}
 			if herr != nil {
 				tr.IsError = true
-				tr.Content = "error: " + herr.Error()
+				// v0.9.1234 — MCP telinin gördüğü sözleşmenin AYNISI
+				// (mcp.ToolErrorJSON): sınıf + tekrar denenebilirlik +
+				// Türkçe "şimdi ne yap" ipucu + kırpılmış ham metin.
+				// Öncesinde ham sürücü dökümü doğrudan gemma4'e ve
+				// oradan ⚙ çipine gidiyordu. Çipin kendisi aşağıda bu
+				// metni okuyor, yani operatör modelin GÖRDÜĞÜNÜ görür.
+				tr.Content = mcp.ToolErrorJSON(herr)
 			} else {
 				tr.Content = out
 			}

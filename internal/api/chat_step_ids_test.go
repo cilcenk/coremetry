@@ -17,6 +17,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/cilcenk/coremetry/internal/mcp"
 )
 
 // recEmit — yayınlanan olayları sırayla toplayan sahte emit.
@@ -116,8 +118,14 @@ func TestEmitStepEvidenceShape(t *testing.T) {
 	}{
 		{name: "düz kanıt", text: "Açık problem yok.\n", wantEmitted: true, wantOK: true,
 			wantBytes: len("Açık problem yok.\n"), wantPrefix: "Açık problem yok."},
-		{name: "hata", text: "", err: errors.New("ch timeout"), wantEmitted: true,
-			wantBytes: len("error: ch timeout"), wantPrefix: "error: ch timeout"},
+		// v0.9.1234 — hata çipi artık ham sürücü metni değil, tool
+		// hatalarının ortak sözleşmesi (mcp.ToolErrorJSON): sınıf +
+		// retryable + Türkçe ipucu + kırpılmış detay. Pin literal
+		// metne DEĞİL sözleşmeye bakıyor; ipucu cümlesi ayarlanınca
+		// testin kırılması gürültü olurdu.
+		{name: "hata", text: "", err: errors.New("code: 159, Timeout exceeded"), wantEmitted: true,
+			wantBytes:  len(mcp.ToolErrorJSON(errors.New("code: 159, Timeout exceeded"))),
+			wantPrefix: `{"error":"timeout","retryable":true`},
 		// Boş kanıt çipi düğmeye çevirirdi ve açılan blok bomboş olurdu:
 		// ölü affordance, eksik affordance'tan kötü (v0.9.592 dersi).
 		{name: "boş metin", text: "   \n", wantEmitted: false},

@@ -1077,8 +1077,12 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 
 	out, err := tool.Handler(ctx, p.Arguments)
 	if err != nil {
+		// v0.9.1234 — ham sürücü metni yerine YAPISAL hata: modelin
+		// cevaplaması gereken soru "şimdi ne yapayım", ham
+		// `err.Error()` onu söylemiyordu (toolerr.go). isError=true
+		// ve content-in-text protokol şekli aynen korunuyor.
 		return successResp(req.ID, toolCallResult{
-			Content: []toolCallContent{{Type: "text", Text: err.Error()}},
+			Content: []toolCallContent{{Type: "text", Text: ToolErrorJSON(err)}},
 			IsError: true,
 		})
 	}
@@ -1088,7 +1092,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 	body, err := json.Marshal(out)
 	if err != nil {
 		return successResp(req.ID, toolCallResult{
-			Content: []toolCallContent{{Type: "text", Text: "marshal error: " + err.Error()}},
+			Content: []toolCallContent{{Type: "text", Text: ToolErrorJSON(fmt.Errorf("marshal result: %w", err))}},
 			IsError: true,
 		})
 	}

@@ -1194,7 +1194,7 @@ export interface AICodeContext {
   branch?: string;
   /** 'pin' = service_metadata.repository, 'convention' = önek/ek soyma. */
   source?: string;
-  files?: { path: string; fromLine: number; toLine: number }[];
+  files?: { path: string; fromLine: number; toLine: number; line?: number }[];
   reason?: string;
 }
 

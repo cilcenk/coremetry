@@ -156,6 +156,11 @@ type codeFileRefDTO struct {
 	Path     string `json:"path"`
 	FromLine int    `json:"fromLine"`
 	ToLine   int    `json:"toLine"`
+	// Line — frame'in işaret ettiği hata satırı (v0.9.1254): modelin
+	// ">>>" ile işaretlendiği satırın numarası. Kod İÇERİĞİ tarayıcıya
+	// gitmez (bilinçli); numara, operatörün "model neye baktı"yı
+	// içeriksiz görebildiği en küçük dürüst iz.
+	Line int `json:"line,omitempty"`
 }
 
 // codePayload — CodeContext → wire. requested=false ise nil döner:
@@ -169,7 +174,7 @@ func codePayload(cc devops.CodeContext, requested bool) *codeContextPayload {
 		Repo: cc.Repo, Branch: cc.Branch, Source: cc.Source, Reason: cc.Reason,
 	}
 	for _, w := range cc.Windows {
-		p.Files = append(p.Files, codeFileRefDTO{Path: w.Path, FromLine: w.FromLine, ToLine: w.ToLine})
+		p.Files = append(p.Files, codeFileRefDTO{Path: w.Path, FromLine: w.FromLine, ToLine: w.ToLine, Line: w.Line})
 	}
 	return p
 }

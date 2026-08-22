@@ -57,10 +57,11 @@
 //     doğru çağrının koşulu, orada kazanılan bayt yanlış argümanla
 //     harcanan bir tura değmez.
 //
-// Tool catalogue (34 tools; sayım v0.9.1050'de düzeltildi — blok
+// Tool catalogue (36 tools; sayım v0.9.1050'de düzeltildi — blok
 // v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu;
 // v0.9.1227'de get_operation_health ile 33; v0.9.1233'te
-// get_exception_samples ile 34; v0.9.1141'ta beş keşif
+// get_exception_samples ile 34; v0.9.1244'te list_teams +
+// get_team_services ile 36; v0.9.1141'ta beş keşif
 // tool'uyla 19 → 24; v0.9.1142'de
 // find_trace_by_request_id ile 25; v0.9.1146'da üç analiz tool'uyla 28;
 // v0.9.1147'de dört guided-parite tool'uyla 32):
@@ -113,6 +114,20 @@
 //   - get_messaging_health ("kuyruk tarafı nasıl" — messaging_summary_5m)
 //   - get_pod_health ("hangi pod'un heap'i dolu" — OTel runtime)
 //   - list_problem_window_events ("dün gece neler oldu" — açılan+ÇÖZÜLEN)
+//
+// Takım/sahiplik (v0.9.1244, team_ownership.go). D6'nın kalan üç
+// intent'inden ikisi: guided sahiplik sorularını cevaplıyordu ama
+// katalogda TAKIM okuyan tek bir tool yoktu, yani guided regex'lerinin
+// dışına düşen her sahiplik sorusu çıkmazdı. Çözümleme guided ile ORTAK
+// (TeamCatalogue / TeamServiceNames / ReadTeamServicesRED — api artık
+// buradan besleniyor, iki uygulama yok):
+//   - list_teams ("hangi takımlar var" — service_metadata kataloğu)
+//   - get_team_services ("ödeme takımı nasıl" — takımın servisleri + RED)
+//
+// KİMLİK KAPSAM DIŞI: "benim servislerim" guided'da (CallMeta → users →
+// User.Team) çalışmaya devam ediyor; MCP'de karşılığı YOK ve bilinçli —
+// cmk_ token'ı ROL taşır, kullanıcı değil. Ayrıntı team_ownership.go
+// başlığında.
 //
 // Cross-signal pivot tools (v0.8.333, pivots.go):
 //   - get_logs_for_trace
@@ -218,6 +233,12 @@ func (d Deps) metrics() MetricSource {
 func ToolList(d Deps) []mcp.Tool {
 	return []mcp.Tool{
 		listServicesTool(d),
+		// v0.9.1244 (D6 kalanı) — SAHİPLİK ekseni, filo listesinin hemen
+		// yanında: "ne var" sorusunun ardından gelen "kimin" sorusu.
+		// list_teams, get_team_services'in `team` arg'ının keşif eşi
+		// (Faz 3.2 doktrini), o yüzden ikisi bitişik.
+		listTeamsTool(d),
+		getTeamServicesTool(d),
 		getServiceHealthTool(d),
 		// v0.9.1227 (CoSRE denetimi) — servis-seviyesi RED'in hemen
 		// ardındaki İÇERİ kazı: "bu servisin HANGİ endpoint'i?". Bugüne

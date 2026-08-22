@@ -251,8 +251,14 @@ func TestAllShippedToolsAreViewerLevel(t *testing.T) {
 	// GET /api/exception-groups/{fp}/samples de kapısız (api.go:850;
 	// aynı ailenin YAZMA uçları RequireAnyRole(editorRoles) ile sarılı,
 	// tool yalnız okuma yapıyor), MinRole "" ona eşit.
-	if len(tools) != 34 {
-		t.Errorf("katalog %d tool (34 bekleniyordu) — yeni tool'un REST eşinin kapısını (auth.RequireRole/"+
+	// v0.9.1244 — 36: list_teams'in REST eşi GET /api/services-metadata
+	// (api.go:726) ve get_team_services'inki GET /api/services?ownerTeam=…
+	// (api.go:576) de kapısız — takım atamaları Service Catalog'da her
+	// role zaten görünür; ikisi de MinRole "". Takım AYARLARI (PUT
+	// /api/settings/team-aliases) admin-kapılı KALDI: tool'lar alias
+	// tablosunu bir çözümleyici olarak kullanıyor, İÇERİĞİNİ yayınlamıyor.
+	if len(tools) != 36 {
+		t.Errorf("katalog %d tool (36 bekleniyordu) — yeni tool'un REST eşinin kapısını (auth.RequireRole/"+
 			"RequireAnyRole) kontrol et, MinRole'ü ona eşitle, sonra bu sayıyı güncelle", len(tools))
 	}
 	for _, tool := range tools {

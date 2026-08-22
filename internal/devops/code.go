@@ -119,6 +119,13 @@ type CodeContext struct {
 	Source  string       `json:"source,omitempty"` // pin | convention
 	Windows []CodeWindow `json:"windows,omitempty"`
 	Reason  string       `json:"reason,omitempty"`
+	// Outcome — bu denemenin SINIFI (v0.9.1243), sayaçlarla BİREBİR
+	// aynı taksonomi. v0.9.1241'de sınıf yalnız sayaca gidiyordu; tek
+	// bir çağrının kaydına (ai_calls maskeli kopyası) hangi çıkmaza
+	// düşüldüğü yazılamıyordu. Sınıfı Reason METNİNDEN çıkarmak
+	// alternatifti ve reddedildi: metin operatöre hitap eden, serbestçe
+	// değişen bir cümle; sınıf bir sözleşme.
+	Outcome CodeOutcome `json:"outcome,omitempty"`
 }
 
 // Empty — kod bağlamı yok mu?
@@ -133,11 +140,26 @@ func (c CodeContext) Empty() bool { return len(c.Windows) == 0 }
 // tersi doğru değil.
 //
 // Yeni bir ağ isteği YOK: eldeki pencereler kırpılır.
+// v0.9.1243 — küçültme KAYIPTIR ve kayda öyle yazılır. Öncesinde
+// yeniden denemenin maskeli kopyası, ilk denemeninkiyle aynı dilde
+// "kod geldi" diyordu; oysa modele giden pencereler kırpılmış ya da
+// düşmüştü. Not BAŞA yazılıyor: gerekçe tavana çarparsa kesilecek olan
+// eski kuyruk olsun, yeni kayıp değil.
 func (c CodeContext) Halved() CodeContext {
 	if c.Empty() {
 		return c
 	}
-	c.Windows, _ = ClampCodeWindows(c.Windows, codeBudgetRunes/2)
+	before := len(c.Windows)
+	var trimmed bool
+	c.Windows, trimmed = ClampCodeWindows(c.Windows, codeBudgetRunes/2)
+	if dropped := before - len(c.Windows); trimmed || dropped > 0 {
+		note := "bağlam taşması — kod bütçesi yarıya indirildi"
+		if dropped > 0 {
+			note += fmt.Sprintf(", %d pencere düştü", dropped)
+		}
+		c.Outcome = CodePartial
+		c.Reason = withNote(note, c.Reason)
+	}
 	return c
 }
 
@@ -246,7 +268,14 @@ func (c *codeCache) put(key string, paths []string) {
 // bir "ok" değil.
 func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, frames []stackparse.Frame) (out CodeContext) {
 	class := CodeOther
-	defer func() { s.RecordCodeOutcome(class, out.Reason) }()
+	// v0.9.1243 — sınıf sayaca GİDERKEN bağlamın kendisine de yazılır.
+	// Aynı defer BİLİNÇLİ: on dört çıkışın sınıfı zaten burada tek
+	// yerde okunuyor, ikinci bir yazım noktası açmak ilk yeni çıkışta
+	// sayaç ile kayıt arasında sessiz bir ayrışma demekti.
+	defer func() {
+		out.Outcome = class
+		s.RecordCodeOutcome(class, out.Reason)
+	}()
 	out = CodeContext{Repo: repo}
 	if s == nil {
 		class = CodeUnconfigured
@@ -1246,7 +1275,73 @@ func (c CodeContext) LogSummary() string {
 		parts = append(parts, fmt.Sprintf("[kod: %s%s:%d-%d · %d satır]",
 			c.Repo, w.Path, w.FromLine, w.ToLine, lines))
 	}
+	// v0.9.1243 — KISMİ isabette kayıp da yazılır. Pencere listesi tek
+	// başına "kod geldi" der ve NEYİN gelmediğini gizler: üç frame'den
+	// biri ağaçta bulunamadıysa ya da bütçe bir pencereyi düşürdüyse,
+	// kayda bakan operatör modelin eksik kanıtla konuştuğunu göremezdi.
+	// Sınıf CodePartial'dan okunuyor, Reason metninden değil (v0.9.1241
+	// ayrımı: başarılı çekmede de not olabiliyor).
+	if c.Outcome == CodePartial {
+		if note := capRunes(c.Reason, codeNoteRuneCap); note != "" {
+			parts[len(parts)-1] += " (kısmi: " + note + ")"
+		}
+	}
 	return "\n\n" + strings.Join(parts, "\n")
+}
+
+// codeNoteRuneCap — maskeli kayda giren serbest metnin rune tavanı.
+// Rune (bayt değil): Türkçe gerekçeler çok baytlı karakter taşıyor ve
+// bayt sayarak kesmek UTF-8 dizisini ortasından bölerdi.
+const codeNoteRuneCap = 120
+
+// capRunes — metni rune tavanına indirir; kesildiyse "…" ekler. Saf.
+func capRunes(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return strings.TrimSpace(string(r[:max])) + "…"
+}
+
+// LogMissSummary — "kod İSTENDİ ama gelmedi" işareti (v0.9.1243).
+//
+// Neden var: maskeli ai_calls kopyası, kod geldiğinde `[kod: …]`
+// özetini taşıyor; gelmediğinde HİÇBİR ŞEY taşımıyordu. Yani bir
+// ai_calls satırına bakan operatör "kod hiç istenmedi" ile "istendi,
+// ıskaladı" hâllerini AYIRT EDEMİYORDU — /ai analizi ve her postmortem
+// ıska yarısını sessizce eksik sayıyordu (isabet oranı olduğundan iyi
+// görünüyordu; v0.9.1241 sayaçlarının çözdüğü sorunun satır-düzeyi
+// ikizi).
+//
+// Dolu bağlamda "" döner: işaret yalnız ıskanın işareti.
+func (c CodeContext) LogMissSummary() string {
+	if !c.Empty() {
+		return ""
+	}
+	return FormatCodeMissNote(c.Outcome, c.Reason)
+}
+
+// FormatCodeMissNote — ıska işaretinin TEK yazımı. Saf; tablo-testli.
+//
+// Sınıf varsa sınıf yazılır: taksonomi sabit bir sözlük, kayıtlar
+// üzerinde gruplanabilir. Sınıf yoksa (çıkmaz FetchCode taksonomisinin
+// dışında — ör. bağlam taşmasında kod bloğunun düşürülmesi) gerekçe
+// metni tavanlanarak yazılır; ikisi de yoksa sessiz kalmak yerine
+// "bilinmiyor" denir — işaretin YOKLUĞU "hiç istenmedi" demektir ve
+// tam olarak bu karışıklığı kapatmaya çalışıyoruz.
+func FormatCodeMissNote(class CodeOutcome, reason string) string {
+	label := strings.TrimSpace(string(class))
+	if label == "" {
+		label = capRunes(reason, codeNoteRuneCap)
+	}
+	if label == "" {
+		label = "sebep bilinmiyor"
+	}
+	return "\n\n[kod alınamadı: " + label + "]"
 }
 
 // MaskCodeInPrompt — prompt'un LOG KOPYASINDA kod bloğunu özetiyle

@@ -290,8 +290,18 @@ func summaryRange(t *testing.T, sample, head string) (int, int) {
 	return from, to
 }
 
+// v0.9.1243 — pin ÜÇ VAKAYA genişledi: tam isabet, kısmi, ıska.
+// Üçü BİRLİKTE olmak zorunda, çünkü sözleşme bir varlık değil bir
+// AYRIM: ai_calls satırına bakan operatör "kod hiç istenmedi", "geldi",
+// "geldi ama eksik" ve "istendi, gelmedi" hâllerini birbirinden
+// ayırabilmeli. Yalnız isabet vakasını pinlemek, ıska yarısının sessizce
+// işaretsiz kalmasına 1241'e kadar izin veren boşluğun ta kendisiydi.
 func TestExplainCodeMasksPromptInAICalls(t *testing.T) {
+	// Sahte fikstür bütçeyi doldurur → gerçek akışta KISMİ isabet.
 	cc := fetchFakeCodeContext(t)
+	if cc.Outcome != devops.CodePartial {
+		t.Fatalf("fikstür sınıfı=%q, bu vaka kısmi isabeti pinliyor", cc.Outcome)
+	}
 	fp := newFakeProvider(t, false)
 	rec := newCapRecorder()
 	s := codeServer(t, fp, rec)
@@ -364,6 +374,81 @@ func TestExplainCodeMasksPromptInAICalls(t *testing.T) {
 	if got.Surface != "explain-exception" {
 		t.Errorf("Surface=%q, istenen explain-exception (/ai atıfı)", got.Surface)
 	}
+	// (4) KISMİ isabet: özetin yanında KAYIP da yazılı. Pencere listesi
+	// tek başına "kod geldi" der; bütçenin kestiğini söylemeyen bir
+	// kayıt, modelin eksik kanıtla konuştuğunu gizler.
+	if !strings.Contains(got.PromptSample, "(kısmi: ") {
+		t.Fatalf("kısmi isabette kayıp notu yok:\n%s", got.PromptSample)
+	}
+	if strings.Contains(got.PromptSample, "[kod alınamadı") {
+		t.Fatalf("kod GELDİĞİ hâlde ıska işareti yazılmış:\n%s", got.PromptSample)
+	}
+
+	t.Run("tam isabet — özet var, kayıp notu YOK", func(t *testing.T) {
+		fp := newFakeProvider(t, false)
+		rec := newCapRecorder()
+		s := codeServer(t, fp, rec)
+		clean := devops.CodeContext{
+			Repo: "core-service", Branch: "release", Outcome: devops.CodeOK,
+			Windows: []devops.CodeWindow{{
+				Path: "/src/A.java", Frame: "com.example.A.handle(A.java:12)",
+				Line: 12, FromLine: 10, ToLine: 14,
+				Content: "12| throw new HostException(\"" + secretCodeMarker + "\");",
+			}},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/copilot/explain-exception/fp1", nil)
+		if _, err := s.copilotExplainCode(r,
+			copilot.SystemPromptException(), copilot.SystemPromptExceptionWithCode(),
+			"Exception GRUBU: x", clean); err != nil {
+			t.Fatalf("explain hata verdi: %v", err)
+		}
+		if !strings.Contains(fp.sent()[0], secretCodeMarker) {
+			t.Fatal("kod sağlayıcıya gitmedi")
+		}
+		sample := rec.wait(t, 1)[0].PromptSample
+		if strings.Contains(sample, secretCodeMarker) {
+			t.Fatalf("KOD ai_calls kaydına sızdı:\n%s", sample)
+		}
+		if !strings.Contains(sample, "[kod: core-service/src/A.java:10-14 · 5 satır]") {
+			t.Fatalf("özet yok:\n%s", sample)
+		}
+		if strings.Contains(sample, "kısmi") || strings.Contains(sample, "[kod alınamadı") {
+			t.Fatalf("tertemiz isabet kayıplı gösterildi:\n%s", sample)
+		}
+	})
+
+	t.Run("ıska — [kod alınamadı: sınıf]", func(t *testing.T) {
+		fp := newFakeProvider(t, false)
+		rec := newCapRecorder()
+		s := codeServer(t, fp, rec)
+		miss := devops.CodeContext{
+			Repo:    "core-service",
+			Reason:  "ağaçta eşleşen dosya yok: CardDetailBusiness.java",
+			Outcome: devops.CodeTreeMiss,
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/copilot/explain-exception/fp1", nil)
+		out, err := s.copilotExplainCode(r,
+			copilot.SystemPromptException(), copilot.SystemPromptExceptionWithCode(),
+			"Exception GRUBU: x", miss)
+		if err != nil || out == "" {
+			t.Fatalf("fail-open bozuldu: out=%q err=%v", out, err)
+		}
+		// GERÇEK prompt'a işaret GİRMEZ — model olmayan kanıt hakkında
+		// konuşmasın; işaret yalnız kayda aittir.
+		if strings.Contains(fp.sent()[0], "[kod alınamadı") {
+			t.Fatalf("ıska işareti sağlayıcıya giden prompt'a sızdı:\n%s", fp.sent()[0])
+		}
+		sample := rec.wait(t, 1)[0].PromptSample
+		if !strings.Contains(sample, "[kod alınamadı: tree-miss]") {
+			t.Fatalf("ıska işareti kayda yazılmadı — satır 'hiç istenmedi'den ayırt edilemez:\n%s", sample)
+		}
+		if strings.Contains(sample, "[kod: ") {
+			t.Fatalf("kod gelmediği hâlde isabet özeti yazılmış:\n%s", sample)
+		}
+		if !strings.Contains(sample, "Exception GRUBU") {
+			t.Fatalf("kod dışı bağlam kayıttan düştü:\n%s", sample)
+		}
+	})
 }
 
 // TestExplainCodeRetriesHalvedOnOverflow — bağlam taşması 400'ünde kod
@@ -444,6 +529,13 @@ func TestExplainCodeFallsBackWhenNoCode(t *testing.T) {
 	recs := rec.wait(t, 1)
 	if strings.Contains(recs[0].PromptSample, "[kod:") {
 		t.Fatal("kod yokken maskeleme özeti yazılmış")
+	}
+	// v0.9.1243 — sınıf YOKKEN gerekçe yazılır. Bu dal bilerek ayrı
+	// pinleniyor: sınıfsız bir bağlam (elle kurulmuş ya da taksonomi
+	// dışı bir çıkış) işaretsiz kalırsa, satır yine "hiç istenmedi"
+	// gibi okunur.
+	if !strings.Contains(recs[0].PromptSample, "[kod alınamadı: depo çözülemedi]") {
+		t.Fatalf("sınıfsız ıskada gerekçe işareti yok:\n%s", recs[0].PromptSample)
 	}
 }
 

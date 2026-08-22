@@ -758,6 +758,20 @@ func (s *Service) repoTree(ctx context.Context, cli *http.Client, cfg Settings, 
 	if paths, ok := s.code.get(key); ok {
 		return paths, nil
 	}
+	// v0.9.1266 — eşzamanlı miss'ler tek uçuşta: kazanan fetch'i yapar,
+	// diğerleri sonucu paylaşır. ctx kazananın ctx'i olur — kaybedenin
+	// iptali kazananı düşürmez (singleflight semantiği); 25s FetchCode
+	// tavanı her çağıranda ayrı ayrı zaten işliyor.
+	v, err, _ := s.treeFlight.Do(key, func() (any, error) {
+		return s.repoTreeFetch(ctx, cli, cfg, ver, repo, branch, key)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.([]string), nil
+}
+
+func (s *Service) repoTreeFetch(ctx context.Context, cli *http.Client, cfg Settings, ver, repo, branch, key string) ([]string, error) {
 	u := repoURL(cfg, repo) + "/items?recursionLevel=Full" +
 		"&versionDescriptor.versionType=branch&versionDescriptor.version=" + url.QueryEscape(branch) +
 		"&api-version=" + ver

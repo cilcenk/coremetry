@@ -146,6 +146,12 @@ type Service struct {
 	// and must not block Snapshot() / the settings page behind it.
 	code codeCache
 
+	// obs — kod-çekme sonuç sayaçları (v0.9.1241, code_stats.go).
+	// Süreç-içi ve atomik: ölçmek istediğimiz yol zaten pahalı, ona
+	// istek başına bir CH yazımı eklemek ölçümün kendisini soruna
+	// çevirirdi. Kendi kilidi yok — bu blok tamamen atomik sayaçlar.
+	obs codeObs
+
 	// codeDeadline — FetchCode'un toplam süre tavanı; 0 →
 	// codeFetchDeadline (v0.9.1237). Sayının TEK kaynağı hâlâ o
 	// sabit; bu alan yalnız testin seam'i: tavanın gerçekten

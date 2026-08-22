@@ -238,16 +238,27 @@ func (c *codeCache) put(key string, paths []string) {
 // önerinin kaynağı, öneri boşsa çıkmazın nedeni. Ayardaki açık Project
 // boşsa kullanılır. Operatör isteği: "service_name başında bsa-
 // yazıyorsa direkt project BSA olduğunu anlasın."
-func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, frames []stackparse.Frame) CodeContext {
-	out := CodeContext{Repo: repo}
+//
+// v0.9.1241 — her çıkış SAYILIR. Dönüş DEĞERİ adlandırıldı ve sayaç
+// tek bir defer'den geçiyor: on dört çıkışın her birine elle sayaç
+// eklemek, on beşinci eklendiğinde sessizce eksik kalırdı. Sınıfı
+// atamayan bir dal "other" kovasına düşer — görünür bir eksik, sessiz
+// bir "ok" değil.
+func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, frames []stackparse.Frame) (out CodeContext) {
+	class := CodeOther
+	defer func() { s.RecordCodeOutcome(class, out.Reason) }()
+	out = CodeContext{Repo: repo}
 	if s == nil {
+		class = CodeUnconfigured
 		return CodeContext{Reason: "DevOps istemcisi yok"}
 	}
 	if strings.TrimSpace(repo) == "" {
+		class = CodeRepoUnresolved
 		return CodeContext{Reason: "servis için depo çözülemedi"}
 	}
 	cfg := s.CurrentSettings()
 	if strings.TrimSpace(cfg.BaseURL) == "" {
+		class = CodeUnconfigured
 		return CodeContext{Repo: repo, Reason: "DevOps bağlantısı yapılandırılmamış (Ayarlar → Kod entegrasyonu)"}
 	}
 	// v0.9.1237 — TOPLAM süre tavanı. parent AYRI tutulur: tavanın
@@ -268,6 +279,7 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	}
 	if cfg.Project == "" {
 		// Depo ADIYLA çağırıyoruz; ada göre çözüm proje kapsamı ister.
+		class = CodeProjectDeadEnd
 		return CodeContext{Repo: repo, Reason: projectDeadEnd(hint)}
 	}
 	// v0.9.1235 — AppFrames artık EN DERİN "Caused by" segmentinden dışa
@@ -276,6 +288,7 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	// v0.9.1237 — aday listesi GENİŞ (10), tavan çıktıda (3 pencere).
 	targets := stackparse.AppFrames(frames, codeCandidateLimit)
 	if len(targets) == 0 {
+		class = CodeNoStack
 		return CodeContext{Repo: repo, Reason: "stack'te dosya+satır taşıyan uygulama frame'i yok"}
 	}
 
@@ -298,8 +311,10 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 		}
 		if err != nil {
 			if deadlineHit(parent, ctx) {
+				class = CodeDeadline
 				return CodeContext{Repo: repo, Reason: withNote(note, deadlineReason(s.fetchDeadline()))}
 			}
+			class = CodeBackendError
 			return CodeContext{Repo: repo, Reason: sanitize(err.Error(), cfg)}
 		}
 	}
@@ -308,8 +323,10 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	paths, err := s.repoTree(ctx, cli, cfg, ver, repo, branch)
 	if err != nil {
 		if deadlineHit(parent, ctx) {
+			class = CodeDeadline
 			return CodeContext{Repo: repo, Branch: branch, Reason: withNote(note, deadlineReason(s.fetchDeadline()))}
 		}
+		class = CodeBackendError
 		return CodeContext{Repo: repo, Branch: branch, Reason: withNote(note, sanitize(err.Error(), cfg))}
 	}
 	if len(paths) == 0 {
@@ -318,6 +335,7 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 		// tek başına operatöre yanlış tahmini göstermez, oysa hatanın en
 		// olası sebebi tam olarak yanlış proje/depo adıdır (ör. gerçek depo
 		// farklı harf yazımında). Katalogdaki Repository pini bunu ezer.
+		class = CodeEmptyTree
 		return CodeContext{Repo: repo, Branch: branch,
 			Reason: withNote(note, "depo ağacı boş döndü (proje "+cfg.Project+", depo "+repo+", branş "+branch+")")}
 	}
@@ -334,12 +352,16 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	ours := deadlineHit(parent, ctx)
 	switch {
 	case len(windows) == 0 && hunt.timedOut && ours:
+		class = CodeDeadline
 		out.Reason = deadlineReason(s.fetchDeadline())
 	case len(windows) == 0 && hunt.timedOut:
+		class = CodeCancelled
 		out.Reason = "istek iptal edildi — kod bağlamı toplanamadı"
 	case len(windows) == 0 && len(hunt.misses) > 0:
+		class = CodeTreeMiss
 		out.Reason = "ağaçta eşleşen dosya yok: " + strings.Join(hunt.misses, ", ")
 	case len(windows) == 0:
+		class = CodeWindowFailed
 		out.Reason = "kod penceresi kurulamadı"
 	case trimmed && len(hunt.windows) > len(windows):
 		// v0.9.1239 — DÜŞEN pencere ayrı söylenir. Kesme artık hata
@@ -350,6 +372,19 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 			codeBudgetRunes, len(hunt.windows)-len(windows))
 	case trimmed:
 		out.Reason = fmt.Sprintf("kod bütçesi (%d karakter) doldu — pencereler hata satırı çevresinde kısaltıldı", codeBudgetRunes)
+	}
+	// v0.9.1241 — TAM/KISMİ ayrımı KAYIPTAN türetilir, Reason
+	// METNİNDEN değil. Başarılı bir çekmede de not olabiliyor (depo
+	// adı düzeltme izi, v0.9.1236) ve "reason doluysa kısmi" demek
+	// tertemiz bir isabeti kısmi göstererek oranı haksızca düşürürdü.
+	// Kayıp = bütçe kesmesi, ıska, süre ya da deneme tavanı. Pencere
+	// TAVANINA çarpmak (hunt.untried) kayıp DEĞİLDİR: üç pencere
+	// zaten istenen cevabın kendisi.
+	if len(windows) > 0 {
+		class = CodeOK
+		if trimmed || len(hunt.misses) > 0 || hunt.timedOut || hunt.patience {
+			class = CodePartial
+		}
 	}
 	// v0.9.1237 — KISMİ sonuç da rapor edilir. En az bir pencere
 	// kesildiğinde eski kod susuyordu: ıskalanan frame'ler ve tavana

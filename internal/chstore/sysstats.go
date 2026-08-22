@@ -46,6 +46,16 @@ type SystemStats struct {
 	// cevabı da yok; sessizce 20 saniyeye çıkmış bir tarama hiçbir
 	// ekranda iz bırakmazdı.
 	Behavior BehaviorDetectorStats `json:"behavior"`
+	// CodeFetch (v0.9.1241) — "Kodu da incele" kod-çekme sonuçları.
+	// Behavior ile AYNI kablo: API getSystemStats handler'ı süreç-içi
+	// atomiklerden doldurur, GetSystemStats (yalnız CH) sıfır bırakır —
+	// chstore, devops paketini import ETMEZ.
+	//
+	// NEDEN GEREKLİ: bu yol FAIL-OPEN. Kod gelmezse açıklama kodsuz
+	// üretilir ve hiçbir yerde iz kalmaz; süresi dolmuş bir PAT tüm
+	// filoda kod bağlamını sessizce kapatabilirdi. Toplamda "isabet
+	// ediyor mu" sorusunun cevabı yalnız burada.
+	CodeFetch CodeFetchStats `json:"codeFetch"`
 	// DistributionQueue (v0.9.985) — dağıtık kipte Distributed tabloların
 	// spool derinliği. nil = tek-düğüm kurulumu (sorgu hiç çalışmadı) →
 	// alan JSON'da YOK, panel çizilmez. Neden burada: bir INSERT'in "OK"
@@ -71,6 +81,41 @@ type BehaviorDetectorStats struct {
 	LastServices      int64  `json:"lastServices"`
 	LastScarceBuckets int64  `json:"lastScarceBuckets"`
 	LastError         string `json:"lastError,omitempty"`
+}
+
+// CodeFetchStats — kod-çekme sonuçlarının /admin/stats görüntüsü
+// (v0.9.1241). Alan adları internal/devops.CodeStats ile birebir; ayrı
+// tip çünkü chstore o paketi import edemez (döngü) — BehaviorDetectorStats
+// ile aynı gerekçe.
+//
+// TÜM SAYAÇLAR SÜREÇ BAŞLANGICINDAN BERİ; restart sıfırlar. Panelde
+// aynen böyle yazıyor: kalıcı sayaç yeni bir tablo ve yeni bir yazma
+// yolu demekti, oysa bu operatör telemetrisi — faturalama değil.
+type CodeFetchStats struct {
+	// Attempts — kod bağlamı istenen deneme sayısı (isabet + çıkmaz).
+	Attempts int64 `json:"attempts"`
+	// OK / Partial — tam ve kısmi isabet. Kısmi = pencere geldi ama
+	// eksik (bütçe kesti / frame ıskalandı / tavan doldu).
+	OK      int64 `json:"ok"`
+	Partial int64 `json:"partial"`
+	// Misses — çıkmaz kovaları, ÇOKTAN AZA sıralı; sıfır olan kova
+	// hiç gelmez. Sınıflar devops.CodeOutcome sabitleri.
+	Misses []CodeFetchMiss `json:"misses,omitempty"`
+	// LastUnix / LastOutcome — SON denemenin anı ve sınıfı.
+	LastUnix    int64  `json:"lastUnix"`
+	LastOutcome string `json:"lastOutcome,omitempty"`
+	// LastError / LastErrorUnix — son BAŞARISIZ denemenin gerekçesi.
+	// YAPIŞKAN: sonraki bir başarı silmez (flap eden bir arızayı tek
+	// şanslı isabet ekrandan silmesin, v0.9.1077 dersi); tazeliği
+	// zaman damgası anlatır.
+	LastError     string `json:"lastError,omitempty"`
+	LastErrorUnix int64  `json:"lastErrorUnix,omitempty"`
+}
+
+// CodeFetchMiss — tek çıkmaz kovası (sınıf + sayı).
+type CodeFetchMiss struct {
+	Class string `json:"class"`
+	Count int64  `json:"count"`
 }
 
 // ExemplarIngest — the two OTLP metric-exemplar ingest totals (cumulative

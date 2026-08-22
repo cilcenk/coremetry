@@ -2058,6 +2058,26 @@ func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
 			LastScarceBuckets: obs.LastScarceBuckets,
 			LastError:         obs.LastError,
 		}
+		// v0.9.1241 — "Kodu da incele" kod-çekme sonuçları. Aynı kablo:
+		// süreç-içi atomikler, CH yazımı yok. Bu yol FAIL-OPEN olduğu
+		// için başarısızlığı hiçbir ekranda iz bırakmıyordu; toplamda
+		// "isabet ediyor mu" sorusunun cevabı yalnız burada.
+		// s.devops nil ise (kod entegrasyonu hiç kurulmamış) sıfır
+		// kalır ve panel "hiç denenmedi" der — sıfır isabet DEMEZ.
+		cobs := s.devops.CodeObservability()
+		st.CodeFetch = chstore.CodeFetchStats{
+			Attempts:      cobs.Attempts,
+			OK:            cobs.OK,
+			Partial:       cobs.Partial,
+			LastUnix:      cobs.LastUnix,
+			LastOutcome:   cobs.LastOutcome,
+			LastError:     cobs.LastError,
+			LastErrorUnix: cobs.LastErrorUnix,
+		}
+		for _, m := range cobs.Misses {
+			st.CodeFetch.Misses = append(st.CodeFetch.Misses,
+				chstore.CodeFetchMiss{Class: m.Class, Count: m.Count})
+		}
 		// v0.8.212 — surface the duplicate-worker HA hazard (Redis configured but
 		// the lock fell back to always-leader Noop). main.go owns the lock state;
 		// since v0.8.341 the re-probe clears it live, hence the atomic load.

@@ -247,8 +247,12 @@ func TestAllShippedToolsAreViewerLevel(t *testing.T) {
 	tools := mcptools.ToolList(mcptools.Deps{})
 	// v0.9.1227 — 33: get_operation_health'in REST eşi GET /api/endpoints
 	// kapısız (viewer-açık, api.go:690), MinRole "" ona eşit.
-	if len(tools) != 33 {
-		t.Errorf("katalog %d tool (33 bekleniyordu) — yeni tool'un REST eşinin kapısını (auth.RequireRole/"+
+	// v0.9.1233 — 34: get_exception_samples'ın REST eşi
+	// GET /api/exception-groups/{fp}/samples de kapısız (api.go:850;
+	// aynı ailenin YAZMA uçları RequireAnyRole(editorRoles) ile sarılı,
+	// tool yalnız okuma yapıyor), MinRole "" ona eşit.
+	if len(tools) != 34 {
+		t.Errorf("katalog %d tool (34 bekleniyordu) — yeni tool'un REST eşinin kapısını (auth.RequireRole/"+
 			"RequireAnyRole) kontrol et, MinRole'ü ona eşitle, sonra bu sayıyı güncelle", len(tools))
 	}
 	for _, tool := range tools {

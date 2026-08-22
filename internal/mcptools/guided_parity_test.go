@@ -109,10 +109,11 @@ func TestGuidedParityToolsGroupedNearFamilies(t *testing.T) {
 		}
 	}
 	// v0.9.1147 — 28 → 32; v0.9.1227 — 32 → 33 (operation_health.go:
-	// get_operation_health). Sayı ÜÇ yerde daha yazılı (tools.go başlığı,
+	// get_operation_health); v0.9.1233 — 33 → 34 (exception_samples.go:
+	// get_exception_samples). Sayı ÜÇ yerde daha yazılı (tools.go başlığı,
 	// api/mcp_authz_test.go duruş notu, docs/runbooks/mcp-claude-code.md)
 	// ve discovery_test.go da aynı sayıyı pinliyor.
-	if len(tools) != 33 {
+	if len(tools) != 34 {
 		t.Errorf("katalog %d tool — sayı değiştiyse tools.go başlığındaki sayımı, "+
 			"api/mcp_authz_test.go'daki duruş notunu, discovery_test.go'daki pini ve "+
 			"docs/runbooks/mcp-claude-code.md'yi de güncelle", len(tools))

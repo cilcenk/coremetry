@@ -57,9 +57,10 @@
 //     doğru çağrının koşulu, orada kazanılan bayt yanlış argümanla
 //     harcanan bir tura değmez.
 //
-// Tool catalogue (33 tools; sayım v0.9.1050'de düzeltildi — blok
+// Tool catalogue (34 tools; sayım v0.9.1050'de düzeltildi — blok
 // v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu;
-// v0.9.1227'de get_operation_health ile 33; v0.9.1141'ta beş keşif
+// v0.9.1227'de get_operation_health ile 33; v0.9.1233'te
+// get_exception_samples ile 34; v0.9.1141'ta beş keşif
 // tool'uyla 19 → 24; v0.9.1142'de
 // find_trace_by_request_id ile 25; v0.9.1146'da üç analiz tool'uyla 28;
 // v0.9.1147'de dört guided-parite tool'uyla 32):
@@ -76,6 +77,8 @@
 //   - query_metric
 //   - list_metric_names (v0.9.1090 — query_metric'in eşi)
 //   - list_exception_groups (v0.9.1091 — Exceptions sayfasının okuması)
+//   - get_exception_samples (v0.9.1233 — grubun stack'i + trace pivotu;
+//     zincirin ikinci yarısı, tarama penceresi GRUBUN kendi ömrü)
 //   - get_correlated_changes (v0.9.1092 — MV'li "başka ne değişti")
 //   - get_deploy_diff (v0.9.1092 — deploy önce/sonra RED kıyası)
 //   - render_chart (v0.9.520)
@@ -277,6 +280,11 @@ func ToolList(d Deps) []mcp.Tool {
 		listOperationsTool(d),
 		// v0.9.1091 (Faz 4) — parmak-izine gruplu istisnalar.
 		listExceptionGroupsTool(d),
+		// v0.9.1233 — grubun DEVAMI: stack + trace pivotu. Zincir burada
+		// bitiyordu (grup satırında ne stacktrace ne trace id var), o
+		// yüzden hemen yanında: model kataloğu okurken "sayıyı gördüm,
+		// peki neden" sorusunun cevabını komşu satırda bulsun.
+		getExceptionSamplesTool(d),
 		// v0.9.1092 (Faz 4) — "o anda başka ne değişti" (MV okuması).
 		getCorrelatedChangesTool(d),
 		// v0.9.1092 (Faz 4) — deploy önce/sonra RED kıyası.

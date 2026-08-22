@@ -56,6 +56,8 @@ export interface ChatThreadOpts {
   // trace (v0.9.537) — EKRANDAKİ trace ID'si (/trace?id=). "bu trace
   // neden yavaş" gibi ID'siz sorular sunucuda buna oturur.
   trace?: string;
+  // env (v0.9.1259) — Topbar'daki global env seçimi (rangeS aynası).
+  env?: string;
   // persist (v0.9.1139) — konuşma sunucuda saklansın mı. Global CoSRE
   // penceresi true; AI çekmecesi bilinçle KAPALI (gerekçe dosya başında).
   persist?: boolean;
@@ -169,7 +171,7 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
           patchLast(t => ({ ...t, pending: false }));
         }
       }, ac.signal, o.service || undefined, o.operation || undefined, o.explain || undefined,
-        o.subject || undefined, o.rangeS || undefined, o.trace || undefined);
+        o.subject || undefined, o.rangeS || undefined, o.trace || undefined, o.env || undefined);
     } catch (err) {
       patchLast(t => ({ ...t, error: err instanceof Error ? err.message : String(err), pending: false }));
     } finally {

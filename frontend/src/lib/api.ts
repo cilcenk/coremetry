@@ -1831,9 +1831,12 @@ export const api = {
     // 32-hex varsa sunucu onu tercih eder; bu yalnız ID'siz "bu trace
     // neden yavaş" şekilleri için.
     contextTrace?: string,
+    // v0.9.1259 — Topbar'daki global env seçimi. Soru açık env adı
+    // taşımıyorsa guided router bunu varsayılan alır (rangeS aynası).
+    contextEnv?: string,
   ): Promise<void> => {
     const context =
-      contextService || contextOperation || contextExplain || contextSubject || contextRangeS || contextTrace
+      contextService || contextOperation || contextExplain || contextSubject || contextRangeS || contextTrace || contextEnv
         ? {
             ...(contextService ? { service: contextService } : {}),
             ...(contextOperation ? { operation: contextOperation } : {}),
@@ -1841,6 +1844,7 @@ export const api = {
             ...(contextSubject ? { subject: contextSubject } : {}),
             ...(contextRangeS && contextRangeS > 0 ? { rangeS: contextRangeS } : {}),
             ...(contextTrace ? { trace: contextTrace } : {}),
+            ...(contextEnv ? { env: contextEnv } : {}),
           }
         : undefined;
     const r = await fetch(API_BASE + '/api/copilot/chat', {

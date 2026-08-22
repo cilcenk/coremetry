@@ -97,10 +97,7 @@ func (s *Store) QueryRepeatedSpans(ctx context.Context, f RepeatedSpanFilter) ([
 	keysArrayLiteral := "[" + strings.Join(keyExprs, ", ") + "]"
 
 	q := repeatedSpansSQL(keysArrayLiteral, wc.sql())
-
-	args := append([]any{}, wc.args...)
-	args = append(args, keyArgs...)
-	args = append(args, f.MinRepeats, limit, f.From, f.To)
+	args := repeatedSpansArgs(keyArgs, wc.args, f.MinRepeats, limit, f.From, f.To)
 
 	rows, err := s.conn.Query(ctx, q, args...)
 	if err != nil {
@@ -182,4 +179,32 @@ func repeatedSpansSQL(keysArrayLiteral, whereSQL string) string {
 		ORDER BY d.cnt DESC
 		SETTINGS max_execution_time = 20,
 		         distributed_product_mode = 'global'`
+}
+
+// repeatedSpansArgs binds repeatedSpansSQL's placeholders. Pure and
+// separate from the caller because binding is POSITIONAL: the list
+// has to follow the order the `?` appear in the SQL TEXT, and the
+// SQL text is the pure function above.
+//
+// Text order is: group-key projection (inner SELECT) → inner WHERE →
+// HAVING → LIMIT → the joined subquery's from/to.
+//
+// v0.9.1286 — this used to append the where args FIRST, so any
+// group-by carrying a bind arg got the From timestamp shoved into
+// its attr-name slot. Well-known keys (db.statement → the
+// `db_statement` column) emit no bind arg at all, which is exactly
+// why the default group-by hid the defect and every other pick 500'd:
+//
+//	GET /api/spans/repeats?groupBy=resource.k8s.namespace.name
+//	  → 500 code 386, "There is no supertype for types String,
+//	    DateTime ... indexOf(res_keys, toDateTime('2026-08-22 ...'))"
+//
+// The three sibling group-by builders (spanmetric.go ×2,
+// exemplar_otlp.go) all fold the group args into the FRONT and carry
+// a comment saying why; repeats.go was the one that had it backwards.
+func repeatedSpansArgs(keyArgs, whereArgs []any, minRepeats, limit int, from, to time.Time) []any {
+	args := make([]any, 0, len(keyArgs)+len(whereArgs)+4)
+	args = append(args, keyArgs...)
+	args = append(args, whereArgs...)
+	return append(args, minRepeats, limit, from, to)
 }

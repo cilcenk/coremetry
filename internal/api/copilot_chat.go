@@ -91,6 +91,11 @@ type chatRequest struct {
 		// cevabını alıyordu ve fark görünmüyordu. Açık pencere taşıyan
 		// soru bunu EZER. 0/absent = eski istemci, davranış değişmez.
 		RangeS int64 `json:"rangeS,omitempty"`
+		// Env (v0.9.1259) — Topbar'daki global env seçimi. Soru AÇIK bir
+		// env adı taşımıyorsa guided router bunu varsayılan alır: ekran
+		// uat gösterirken cevabın sessizce başka env'i kapsaması (CoSRE
+		// denetim bulgusu) biter. Açık env sorusu her zaman ezer.
+		Env string `json:"env,omitempty"`
 		// Trace (v0.9.537) — operatörün EKRANDA baktığı trace'in ID'si
 		// (/trace?id=). "bu trace neden yavaş" gibi ID'siz sorular
 		// bununla çözülür; mesajda açık 32-hex varsa o kazanır.
@@ -191,7 +196,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// frontier models; the 2B-class primary target (qwen3.5-2b) can't
 	// drive the 5-round × 11-schema loop reliably at all. No match →
 	// the free tool loop below runs UNCHANGED.
-	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain, req.Context.RangeS, req.Context.Trace); handled {
+	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain, req.Context.RangeS, req.Context.Trace, req.Context.Env); handled {
 		emit("done", map[string]bool{"ok": gok})
 		return
 	}

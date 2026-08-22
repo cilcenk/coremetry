@@ -1118,7 +1118,7 @@ func fmtAgoTR(seconds int64) string {
 // ctxRangeS (v0.9.529) — operatörün EKRANDAKİ zaman aralığı, saniye.
 // 0 = bilgi yok (eski istemci); o hâlde davranış bayt-bayt eskisidir.
 // ctxTrace (v0.9.537) — ekrandaki trace ID'si (/trace?id=), "" = yok.
-func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation, explain string, ctxRangeS int64, ctxTrace string) (handled, ok bool) {
+func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation, explain string, ctxRangeS int64, ctxTrace, ctxEnv string) (handled, ok bool) {
 	question := strings.TrimSpace(lastUserText(msgs))
 	if question == "" {
 		return false, false
@@ -1173,6 +1173,14 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	rangeS, explicitRange := guidedRangeSExplicit(norm)
 	if !explicitRange && ctxRangeS > 0 {
 		rangeS = snapRangeS(ctxRangeS)
+	}
+	// v0.9.1259 — env devri (ctxRangeS deseninin aynası, v0.9.529
+	// gerekçesi): soru açık env taşımıyorsa ekrandaki seçim kullanılır.
+	// Öncelik bilinçli: sorunun açık env'i > ekran > (boş = tümü).
+	// Çip şeffaflığı: bundle'lar env'i zaten arg yankısında gösteriyor
+	// (withEnvArg) — devralınan env de oradan görünür.
+	if route.Env == "" && ctxEnv != "" {
+		route.Env = ctxEnv
 	}
 	followBase := "" // devralınan temel mesaj (operasyon çözümü için)
 	if followCue {

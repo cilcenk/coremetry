@@ -8,6 +8,7 @@ import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { useOpenCriticalCount, useProblems } from '@/lib/queries';
 import { useAuth } from '@/components/AuthProvider';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { useUrlEnv } from '@/lib/useUrlEnv';
 import { timeRangeToNs, tsRel } from '@/lib/utils';
 import { contextStarter, serviceFromRoute } from '@/lib/chatContext';
 import { syncChatParam } from '@/lib/chatUrl';
@@ -143,6 +144,9 @@ export function CopilotChat() {
   // JSX'te ASLA (v0.5.184 sonsuz refetch); burada useMemo içinde ve
   // yalnız pencere kimliğinden türüyor, `now()` okunmuyor.
   const [range] = useUrlRange();
+  // v0.9.1259 — env devri: ekrandaki global env seçimi sohbete bağlam
+  // olarak gider (rangeS aynası); kapsam bandı da gösterir.
+  const [env] = useUrlEnv();
   const rangeS = useMemo(() => {
     const { from, to } = timeRangeToNs(range);
     const s = Math.round((to - from) / 1e9);
@@ -154,7 +158,7 @@ export function CopilotChat() {
   // useChatThread'in dosya başında.
   const { turns, busy, send, rate, clear, load, conversationId, last, showFollowups } =
     useChatThread({
-      service: currentService, operation: currentOp, rangeS, trace: currentTrace,
+      service: currentService, operation: currentOp, rangeS, trace: currentTrace, env,
       persist: true,
     });
 
@@ -341,13 +345,22 @@ export function CopilotChat() {
           }>
 
           {/* Context banner (v0.9.164) — bulunulan servis, scope şeffaflığı. */}
-          {currentService && (
+          {(currentService || env) && (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 6, fontSize: 11,
               color: 'var(--text2)', background: 'var(--accent-soft)',
               padding: '5px 14px', borderBottom: '1px solid var(--border)',
             }}>
-              📍 <b className="mono" style={{ color: 'var(--accent2)' }}>{currentService}</b> · sorular bu servise scope'lanır
+              {currentService && (<>
+                📍 <b className="mono" style={{ color: 'var(--accent2)' }}>{currentService}</b> · sorular bu servise scope'lanır
+              </>)}
+              {/* v0.9.1259 — env devri şeffaf: ekrandaki env seçimi sohbete
+                  bağlam gider; bant söylemezse daraltma görünmez olurdu. */}
+              {env && (
+                <span className="mono" style={{ marginLeft: currentService ? 8 : 0, color: 'var(--info)' }}>
+                  env: {env}
+                </span>
+              )}
             </div>
           )}
 

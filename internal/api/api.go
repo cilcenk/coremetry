@@ -1114,6 +1114,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/settings/anomaly-sensitivity", auth.RequireRole(auth.RoleAdmin, s.putAnomalySensitivity))
 	mux.HandleFunc("GET /api/settings/runtime-alerts", auth.RequireRole(auth.RoleAdmin, s.getRuntimeAlerts))
 	mux.HandleFunc("PUT /api/settings/runtime-alerts", auth.RequireRole(auth.RoleAdmin, s.putRuntimeAlerts))
+	// v0.9.1279 — self-health alarm ailesinin eşikleri (self_health blobu).
+	mux.HandleFunc("GET /api/settings/self-health", auth.RequireRole(auth.RoleAdmin, s.getSelfHealth))
+	mux.HandleFunc("PUT /api/settings/self-health", auth.RequireRole(auth.RoleAdmin, s.putSelfHealth))
 	mux.HandleFunc("GET /api/settings/problem-escalation", auth.RequireRole(auth.RoleAdmin, s.getProblemEscalation))
 	mux.HandleFunc("PUT /api/settings/problem-escalation", auth.RequireRole(auth.RoleAdmin, s.putProblemEscalation))
 	// v0.9.775 — exception triyaj basamağının pencereleri (P1 tazeliği /
@@ -8432,6 +8435,51 @@ func (s *Server) putRuntimeAlerts(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf(`{"gcPauseWarnMs":%v,"gcPauseCritMs":%v,"gcShareWarnPct":%v,"gcShareCritPct":%v}`,
 			c.GCPauseWarnMs, c.GCPauseCritMs, c.GCShareWarnPct, c.GCShareCritPct))
 	writeJSON(w, c)
+}
+
+// getSelfHealth / putSelfHealth (v0.9.1279) — self-health alarm
+// ailesinin eşikleri (ingest durması / spool derinliği / disk ETA / ölü
+// bildirim kanalı). runtime-alerts şablonu birebir: admin-kapılı, PUT
+// audit'li, evaluator her tik taze okur → bir sonraki tikte devrede.
+//
+// Settings SEKMESİ bu dilimde bilinçli YOK. Vidanın kendisi yine de
+// döndürülebilir olmalıydı: dönmeyen bir vida vida değildir ve
+// SaveSelfHealth'i çağıran hiçbir yol olmasaydı ölü kod olurdu.
+func (s *Server) getSelfHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.store.GetSelfHealth(r.Context()))
+}
+
+func (s *Server) putSelfHealth(w http.ResponseWriter, r *http.Request) {
+	var c chstore.SelfHealthConfig
+	if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Kaba sınırlar. Ayrıntılı zero-patch okuma tarafında
+	// (patchSelfHealth); burada yalnız absürt değerler elenir — bir
+	// dakikalık stall penceresi her deploy'da alarm çalar, 365 günlük
+	// disk ufku hiç çalmaz. İkisi de vidayı işlevsiz kılar.
+	if c.IngestStallMin != 0 && (c.IngestStallMin < 5 || c.IngestStallMin > 1440) {
+		http.Error(w, "ingestStallMin 5-1440 dakika aralığında olmalı", http.StatusBadRequest)
+		return
+	}
+	if c.DiskEtaDays != 0 && (c.DiskEtaDays <= 0 || c.DiskEtaDays > 90) {
+		http.Error(w, "diskEtaDays 0-90 gün aralığında olmalı", http.StatusBadRequest)
+		return
+	}
+	if c.ChannelConsecFails != 0 && (c.ChannelConsecFails < 2 || c.ChannelConsecFails > 100) {
+		http.Error(w, "channelConsecFails 2-100 aralığında olmalı", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.SaveSelfHealth(r.Context(), c); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.audit(r, "settings.self_health.update", "settings", "self_health",
+		fmt.Sprintf(`{"enabled":%v,"ingestStallMin":%d,"spoolMaxFiles":%d,"spoolMaxBytes":%d,"diskEtaDays":%v,"channelConsecFails":%d}`,
+			c.SelfHealthOn(), c.IngestStallMin, c.SpoolMaxFiles, c.SpoolMaxBytes,
+			c.DiskEtaDays, c.ChannelConsecFails))
+	writeJSON(w, s.store.GetSelfHealth(r.Context()))
 }
 
 // getAnomalyPromotion returns the live anomaly auto-promotion

@@ -48,14 +48,39 @@ export function serviceFromRoute(pathname: string, search: string): string {
   return '';
 }
 
+// v0.9.1260 — trace'e ek: ekrandaki problem/exception çekmecesi de
+// başlangıç çipi olur. İkisinin de sorusu ANLAMLI ve cevaplanabilir
+// (dosya başındaki şart): problem → get_problem_root_cause (v0.9.160),
+// exception → list_exception_groups + get_exception_samples zinciri
+// (v0.9.1233). Anomali BİLİNÇLİ dışarıda: global sohbetin anomali
+// öznesini çözen bir yolu henüz yok — boş vaat çipi öneriden kötü.
+const TRIAGE_ROUTES = new Set(['/inbox', '/problems', '/anomalies', '/exceptions']);
+// Kaba kimlik süzgeci: boş/boşluklu/aşırı uzun değerle soru sormak
+// "bulunamadı"yla biter; şekil doğrulamasının gerisi sunucuda.
+const looksLikeId = (v: string) => v.length > 0 && v.length <= 64 && !/\s/.test(v);
+
 export function contextStarter(pathname: string, search: string): ChatContextStarter | null {
-  if (pathname !== '/trace') return null;
-  const id = new URLSearchParams(search).get('id')?.trim() ?? '';
-  // 32-hex: trace id'nin gerçek şekli. Yarım/bozuk bir id ile soru
-  // sormak, backend'in "bulunamadı" demesiyle biter.
-  if (!/^[0-9a-f]{32}$/i.test(id)) return null;
-  return {
-    chip: "Bu trace'i açıkla",
-    question: aiSubjectQuestion('trace', id),
-  };
+  const sp = new URLSearchParams(search);
+  if (pathname === '/trace') {
+    const id = sp.get('id')?.trim() ?? '';
+    // 32-hex: trace id'nin gerçek şekli. Yarım/bozuk bir id ile soru
+    // sormak, backend'in "bulunamadı" demesiyle biter.
+    if (!/^[0-9a-f]{32}$/i.test(id)) return null;
+    return {
+      chip: "Bu trace'i açıkla",
+      question: aiSubjectQuestion('trace', id),
+    };
+  }
+  if (TRIAGE_ROUTES.has(pathname)) {
+    // Öncelik problem > exception (triage hiyerarşisiyle aynı).
+    const prob = sp.get('problem')?.trim() ?? '';
+    if (looksLikeId(prob)) {
+      return { chip: 'Bu problemin kök nedeni?', question: aiSubjectQuestion('problem', prob) };
+    }
+    const fp = sp.get('exception')?.trim() ?? '';
+    if (looksLikeId(fp)) {
+      return { chip: "Bu exception'ın kök nedeni?", question: aiSubjectQuestion('exception', fp) };
+    }
+  }
+  return null;
 }

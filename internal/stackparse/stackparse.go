@@ -46,6 +46,12 @@ type Frame struct {
 	Module string
 	// IsApp — uygulama kodu mu? Çerçeve/JDK frame'leri false.
 	IsApp bool
+	// Segment — frame'in "Caused by" zincirindeki derinliği (v0.9.1235).
+	// 0 = en dış (wrapper) exception'ın kendi stack'i, 1 = ilk
+	// "Caused by:" bölümü, 2 = onun sebebi… Java en DIŞTAKİNİ önce
+	// basar, kök neden ise EN DERİN segmenttedir; bu alan olmadan
+	// zincirdeki yer aşağı akışta geri kazanılamıyordu.
+	Segment int
 }
 
 // javaAtRe — "    at <ref>(<source>)" satırı.
@@ -92,22 +98,48 @@ func IsAppClass(class string) bool {
 
 // ParseJava — Java/Kotlin/Scala stack trace'ini frame'lere çevirir.
 //
-// Tanınmayan satırlar (mesaj başlığı, "Caused by:", "... 42 more",
-// yarım kesilmiş satır) sessizce ATLANIR: stacktrace'ler log
-// alanlarında kırpılmış gelir, tek bozuk satır tüm çözümlemeyi
-// düşürmemeli. "Caused by:" zincirindeki frame'ler sıralarıyla
-// listeye girer — kök nedene en yakın kod genelde oradadır.
+// Tanınmayan satırlar (mesaj başlığı, "... 42 more", yarım kesilmiş
+// satır) sessizce ATLANIR: stacktrace'ler log alanlarında kırpılmış
+// gelir, tek bozuk satır tüm çözümlemeyi düşürmemeli.
+//
+// "Caused by:" satırı da bir frame DEĞİL, ama artık sessiz değil:
+// gördüğü yerde segment sayacı artar ve sonraki frame'ler Segment=N
+// ile işaretlenir (v0.9.1235). Frame'ler yine metindeki SIRAYLA
+// listeye girer — sıralamayı değiştirmek çağıranın işi (AppFrames),
+// çünkü bu paketin sözleşmesi "metni sadakatle çevir".
+//
+// "Suppressed:" bölümleri BİLİNÇLİ kapsam dışı: try-with-resources'ın
+// bastırılmış hatası semantik olarak bir sebep zinciri değil, paralel
+// bir yan olaydır ve operatörün filosunda nadirdir. Segment sayacına
+// karışmaması, bastırılmış bir kapatma hatasının kök neden yerine
+// geçmesini engeller.
 func ParseJava(stack string) []Frame {
 	if strings.TrimSpace(stack) == "" {
 		return nil
 	}
 	var out []Frame
+	seg := 0
 	for _, line := range strings.Split(stack, "\n") {
+		if isCausedByLine(line) {
+			seg++
+			continue
+		}
 		if f, ok := parseJavaLine(line); ok {
+			f.Segment = seg
 			out = append(out, f)
 		}
 	}
 	return out
+}
+
+// isCausedByLine — satır bir sebep-zinciri başlığı mı? Saf.
+//
+// Baştaki boşluk kırpılır (bazı log biçimleyicileri "Caused by:"
+// satırını girintiler), ama eşleşme ÖNEKTEDİR: mesajın içinde
+// "... caused by: timeout" geçen bir exception metni segment sayacını
+// artırmamalı.
+func isCausedByLine(line string) bool {
+	return strings.HasPrefix(strings.TrimSpace(line), "Caused by:")
 }
 
 // parseJavaLine — tek satır. ok=false: bu satır bir frame değil.
@@ -177,26 +209,54 @@ func parseJavaSource(src string) (string, int) {
 }
 
 // AppFrames — IsApp olan ve kodda konumlandırılabilen (dosya+satır)
-// ilk n frame. Kod çekmenin girdisi; saf.
+// en fazla n frame, EN DERİN "Caused by" segmentinden dışa doğru.
+// Kod çekmenin girdisi; saf.
 //
 // Satırsız app frame'i ELENİR: dosya adı eşleşse bile pencere
 // merkezi olmaz, "dosyanın başından 60 satır" ise kanıt değil
 // gürültüdür.
+//
+// # Neden en derin segment önce (v0.9.1235)
+//
+// Java stack'i en DIŞTAKİ (wrapper) exception'la başlar; gerçek kök
+// neden en derin "Caused by:" bölümündedir. Metin sırasına göre ilk n
+// frame'i almak, katmanlı BSA/EJB kodunda — ki orada catch-rethrow
+// yolu da uygulama sınıflarından geçer — üç kod penceresinin üçünü de
+// wrapper'ın yeniden-fırlatma satırlarına harcıyor, hatanın DOĞDUĞU
+// satır hiç pencere alamıyordu. Artık bütçe önce kök nedene gidiyor,
+// artan kalırsa dışarı doğru yürüyor.
+//
+// Segment İÇİNDEKİ sıra korunur (fırlatma noktası o segmentin de en
+// üstündedir) ve tek segmentli stack'te davranış eskisiyle
+// BİRE BİR aynıdır — elle kurulan Frame'lerin Segment'i 0'dır.
 func AppFrames(frames []Frame, n int) []Frame {
 	if n <= 0 {
 		return nil
 	}
-	out := make([]Frame, 0, n)
+	deepest := 0
 	for _, f := range frames {
-		if !f.IsApp || f.File == "" || f.Line <= 0 {
-			continue
+		if locatableApp(f) && f.Segment > deepest {
+			deepest = f.Segment
 		}
-		out = append(out, f)
-		if len(out) >= n {
-			break
+	}
+	out := make([]Frame, 0, n)
+	for seg := deepest; seg >= 0 && len(out) < n; seg-- {
+		for _, f := range frames {
+			if !locatableApp(f) || f.Segment != seg {
+				continue
+			}
+			out = append(out, f)
+			if len(out) >= n {
+				break
+			}
 		}
 	}
 	return out
+}
+
+// locatableApp — bu frame için kod penceresi kurulabilir mi?
+func locatableApp(f Frame) bool {
+	return f.IsApp && f.File != "" && f.Line > 0
 }
 
 // String — "com.x.Y.m(Y.java:246)". Prompt'ta ve kaynak satırında

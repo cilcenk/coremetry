@@ -206,8 +206,14 @@ func TestParseJavaSkipsGarbageKeepsGoodFrames(t *testing.T) {
 	if len(app) != 2 {
 		t.Fatalf("app frame sayısı=%d, istenen 2 (Spring elenmeli): %+v", len(app), app)
 	}
-	if app[0].Class != "com.example.a.A" || app[1].Class != "com.example.c.C" {
-		t.Errorf("app frame sırası bozuk: %+v", app)
+	// v0.9.1235 — BEKLENTİ DEĞİŞTİ (eskiden A önce, C sonra). C
+	// "Caused by:" bölümünde, yani kök nedene ait; A dıştaki wrapper'ın
+	// frame'i. Kod penceresi bütçesi artık önce C'ye gidiyor.
+	if app[0].Class != "com.example.c.C" || app[1].Class != "com.example.a.A" {
+		t.Errorf("app frame sırası bozuk (kök neden önce beklenir): %+v", app)
+	}
+	if app[0].Segment != 1 || app[1].Segment != 0 {
+		t.Errorf("segment etiketleri yanlış: %+v", app)
 	}
 }
 

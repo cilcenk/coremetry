@@ -10,7 +10,7 @@ import type {
   AlertRule, Problem, EvaluatorHealth, WatcherImportResult, WatcherSummaryEntry, WatcherHistory,
   Runbook, RunbookExecution,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
-  SMTPSettings, NotificationChannel,
+  SMTPSettings, NotificationChannel, ChannelHealthRow,
   ExceptionGroup, ExceptionGroupState, ExceptionSample, OccurrencePoint,
   SparklineBucket, OperationSummary,
   SystemStatus,
@@ -2827,6 +2827,11 @@ export const api = {
     request<void>(`/api/channels/${id}`, { method: 'DELETE' }),
   testChannel:   (id: string) =>
     request<{ status: string }>(`/api/channels/${id}/test`, { method: 'POST' }),
+  // Dispatch health per (kind, name), 30-day lookback, server-cached 60s.
+  // `refresh` bypasses that cache — used right after a Test send so the
+  // badge reflects the probe immediately instead of up to a minute later.
+  channelHealth: (refresh = false) =>
+    get<ChannelHealthRow[] | null>(`/api/notify/channels/health${refresh ? '?refresh=1' : ''}`),
 
   // ── User management (admin) ──────────────────────────────────────────────
   listUsers: () => get<UserRow[] | null>('/api/users'),

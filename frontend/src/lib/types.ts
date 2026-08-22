@@ -2956,6 +2956,25 @@ export interface SMTPSettings {
 
 export type ChannelType = 'email' | 'slack' | 'mattermost' | 'teams' | 'zoomchat' | 'webhook' | 'whatsapp';
 
+// Per-channel dispatch verdict derived from notification_log
+// (v0.9.1278) — powers the "Health" column on Settings → Channels.
+// Identity is (channelKind, channelName): the log carries no channel
+// id, so a RENAMED channel starts its history over.
+export interface ChannelHealthRow {
+  channelKind: string;
+  channelName: string;
+  lastAt: number;   // unix ns of the most recent send
+  lastOk: boolean;
+  lastError?: string;
+  // Failures counted back from the newest send until the most recent
+  // success. 0 while healthy; with no success in the window it is every
+  // failure the window holds.
+  consecFails: number;
+  // True on EVERY row when the 5000-row cover-fetch hit its cap — the
+  // counts are then a lower bound, not the whole 30-day truth.
+  capped: boolean;
+}
+
 export interface NotificationChannel {
   id: string;
   name: string;

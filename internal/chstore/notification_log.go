@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"sort"
 	"strings"
 	"time"
 )
@@ -205,6 +206,166 @@ func buildNotificationLogRelatedQuery(relatedIDs []string, since time.Time, limi
 		SETTINGS max_execution_time = 10`
 	args = append(args, limit)
 	return q, args
+}
+
+// ── Channel health (v0.9.1278) ──────────────────────────────────────────────
+
+// channelHealthWindow / channelHealthCap bound the health cover-fetch.
+// 30 days is long enough that a channel which last fired weeks ago still
+// reports a verdict instead of "hiç gönderim yok"; the 5000-row cap keeps
+// the read O(one page) on a busy install. Both are honest in the output:
+// a capped fetch stamps Capped on every row so the UI can say so.
+const (
+	channelHealthWindow = 30 * 24 * time.Hour
+	channelHealthCap    = 5000
+)
+
+// ChannelHealthRow is the per-channel verdict derived from the
+// notification_log dispatch history (v0.9.1278). Settings → Channels
+// showed configuration only — a dead SMTP relay or a rotated webhook
+// token was invisible until someone opened /events. In a bank the
+// missed page is the most expensive failure class, so the channel list
+// itself carries its last-send outcome.
+//
+// Identity is (ChannelKind, ChannelName): notification_log does NOT
+// carry the channel id, so a RENAMED channel starts its history over.
+// Accepted deliberately — adding a channel_id column would need a
+// distributed-safe ALTER + a backfill for zero read-path benefit, and
+// the rename case self-heals on the next send.
+type ChannelHealthRow struct {
+	ChannelKind string `json:"channelKind"`
+	ChannelName string `json:"channelName"`
+	LastAt      int64  `json:"lastAt"` // unix ns of the most recent send
+	LastOK      bool   `json:"lastOk"`
+	LastError   string `json:"lastError,omitempty"`
+	// ConsecFails counts failures back from the newest send until the
+	// most recent SUCCESS. 0 while healthy; when no success exists in
+	// the window it is every failure the window holds.
+	ConsecFails int `json:"consecFails"`
+	// Capped is true on EVERY row when the cover-fetch hit its row cap
+	// — the counts are then a lower bound, not the whole 30-day truth.
+	Capped bool `json:"capped"`
+}
+
+// channelSend is one slim notification_log row as read by the health
+// cover-fetch: only the columns the rollup needs, so the 5000-row page
+// stays cheap to decode.
+type channelSend struct {
+	Kind   string
+	Name   string
+	SentAt int64 // unix ns
+	OK     bool
+	Error  string
+}
+
+// ChannelHealth reads the recent dispatch history and folds it into one
+// verdict per (kind, name). Deliberately a bounded cover-fetch + a PURE
+// fold rather than an argMax/SQL aggregate: the "consecutive failures
+// since the last success" walk is a sequential predicate that SQL would
+// express as a window function over the same rows anyway, and keeping
+// the arithmetic in Go makes it table-testable without a live CH.
+func (s *Store) ChannelHealth(ctx context.Context) ([]ChannelHealthRow, error) {
+	q, args := buildChannelHealthQuery(time.Now().Add(-channelHealthWindow), channelHealthCap)
+	rows, err := s.conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sends []channelSend
+	for rows.Next() {
+		var c channelSend
+		var ok uint8
+		if err := rows.Scan(&c.Kind, &c.Name, &c.SentAt, &ok, &c.Error); err != nil {
+			return nil, err
+		}
+		c.OK = ok == 1
+		sends = append(sends, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return channelHealthFromRows(sends, channelHealthCap), nil
+}
+
+// buildChannelHealthQuery is the pure SQL builder for ChannelHealth —
+// extracted like the two builders above so the mandatory read bounds
+// (time-bounded WHERE on the sent_at ORDER BY prefix + LIMIT +
+// max_execution_time) are table-testable without a live CH.
+func buildChannelHealthQuery(since time.Time, limit int) (string, []any) {
+	if limit <= 0 || limit > channelHealthCap {
+		limit = channelHealthCap
+	}
+	q := `
+		SELECT channel_kind, channel_name,
+		       toUnixTimestamp64Nano(sent_at),
+		       ok, error
+		FROM notification_log
+		WHERE sent_at >= ?
+		ORDER BY sent_at DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 10`
+	return q, []any{since, limit}
+}
+
+// channelHealthFromRows folds raw sends into one row per (kind, name).
+//
+// Order-independent by construction: the caller's SQL already returns
+// newest-first, but the fold re-sorts each channel's slice descending
+// rather than trusting that ORDER BY to survive a future edit. limit is
+// the cover-fetch cap — hitting it stamps Capped on every row.
+//
+// Output is sorted by (kind, name) so the result is deterministic for
+// the cache and for tests.
+func channelHealthFromRows(sends []channelSend, limit int) []ChannelHealthRow {
+	if len(sends) == 0 {
+		return nil
+	}
+	capped := limit > 0 && len(sends) >= limit
+
+	type key struct{ kind, name string }
+	groups := map[key][]channelSend{}
+	order := make([]key, 0, 8)
+	for _, s := range sends {
+		k := key{s.Kind, s.Name}
+		if _, seen := groups[k]; !seen {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], s)
+	}
+
+	out := make([]ChannelHealthRow, 0, len(order))
+	for _, k := range order {
+		g := groups[k]
+		sort.SliceStable(g, func(i, j int) bool { return g[i].SentAt > g[j].SentAt })
+		last := g[0]
+		// Walk newest→oldest and STOP at the first success: that is what
+		// makes the count "consecutive since the last OK" rather than
+		// "failures in the window". Dropping this break is the mutation
+		// the regression test pins.
+		consec := 0
+		for _, s := range g {
+			if s.OK {
+				break
+			}
+			consec++
+		}
+		out = append(out, ChannelHealthRow{
+			ChannelKind: k.kind,
+			ChannelName: k.name,
+			LastAt:      last.SentAt,
+			LastOK:      last.OK,
+			LastError:   last.Error,
+			ConsecFails: consec,
+			Capped:      capped,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ChannelKind != out[j].ChannelKind {
+			return out[i].ChannelKind < out[j].ChannelKind
+		}
+		return out[i].ChannelName < out[j].ChannelName
+	})
+	return out
 }
 
 func newNotificationLogID() string {

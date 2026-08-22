@@ -1251,6 +1251,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT    /api/channels/{id}", auth.RequireRole(auth.RoleAdmin, s.updateChannel))
 	mux.HandleFunc("DELETE /api/channels/{id}", auth.RequireRole(auth.RoleAdmin, s.deleteChannel))
 	mux.HandleFunc("POST   /api/channels/{id}/test", auth.RequireRole(auth.RoleAdmin, s.testChannel))
+	// Per-channel dispatch health derived from notification_log
+	// (v0.9.1278). Same admin gate as listChannels — it is the
+	// same page's data and the error strings can name internal
+	// relay hosts.
+	mux.HandleFunc("GET    /api/notify/channels/health", auth.RequireRole(auth.RoleAdmin, s.channelHealth))
 	// Maintenance windows — admin-only CRUD. While an active
 	// window matches a problem's (service, severity), the
 	// notifier skips the live fan-out. Problems still open +
@@ -6819,6 +6824,23 @@ func (s *Server) listChannels(w http.ResponseWriter, r *http.Request) {
 		out[i].Config = redactSecrets(out[i].Type, out[i].Config)
 	}
 	writeJSON(w, out)
+}
+
+// channelHealth serves the per-channel dispatch verdict that drives the
+// Settings → Channels "Health" column (v0.9.1278). Configuration was
+// visible there but OUTCOME was not: a dead SMTP relay or a rotated
+// webhook token only surfaced on /events, and a missed page is the most
+// expensive failure class this product has.
+//
+// The read takes NO inputs — the lookback is a fixed 30 days inside the
+// store — so a constant cache key hashes all of them. 60s TTL keeps
+// repeated Settings visits off ClickHouse; the "Test" button refetches
+// with ?refresh=1 so the badge reflects a just-sent probe immediately
+// instead of up to a minute later.
+func (s *Server) channelHealth(w http.ResponseWriter, r *http.Request) {
+	s.serveCached(w, r, "notify-channel-health", 60*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.ChannelHealth(ctx)
+	})
 }
 
 // redactSecrets strips fields the UI should never see — Zoom

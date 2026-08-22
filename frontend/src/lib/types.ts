@@ -4100,6 +4100,34 @@ export interface SystemStats {
     lastError?: string;
     lastErrorAtNs?: number; // v0.9.1077 — istisnanın zamanı (yaş etiketi)
   };
+  // v0.9.1241 — "Kodu da incele" kod-çekme sonuçları (backend:
+  // devops.CodeStats → chstore.CodeFetchStats).
+  //
+  // NEDEN VAR: bu yol FAIL-OPEN — kod gelmezse açıklama kodsuz üretilir
+  // ve hiçbir yerde iz kalmaz. Süresi dolmuş bir PAT tüm filoda kod
+  // bağlamını sessizce kapatabilirdi; "gerçekte ne sıklıkla isabet
+  // ediyor" sorusunun cevabı yalnız burada.
+  //
+  // TÜM SAYAÇLAR SÜREÇ BAŞLANGICINDAN BERİ; restart sıfırlar (panel
+  // aynen böyle yazıyor). OPSİYONEL: bu sürümden eski bir backend
+  // alanı hiç döndürmez.
+  codeFetch?: {
+    attempts: number;      // kod bağlamı istenen deneme (isabet + çıkmaz)
+    ok: number;            // tam isabet (kayıpsız)
+    partial: number;       // pencere geldi ama eksik
+    // Çıkmaz kovaları, ÇOKTAN AZA sıralı; sıfır olan kova hiç gelmez.
+    // Sınıflar: unconfigured · repo-unresolved · project-dead-end ·
+    // no-stack · catalog-error · empty-tree · tree-miss ·
+    // window-failed · deadline · cancelled · backend-error · other.
+    misses?: { class: string; count: number }[];
+    lastUnix: number;      // son denemenin anı (0 = hiç denenmedi)
+    lastOutcome?: string;  // son denemenin sınıfı
+    // Son BAŞARISIZ denemenin gerekçesi. YAPIŞKAN: sonraki bir başarı
+    // silmez (flap eden arızayı tek şanslı isabet ekrandan silmesin);
+    // tazeliği lastErrorUnix anlatır.
+    lastError?: string;
+    lastErrorUnix?: number;
+  };
   // v0.9.985 — dağıtık kipte Distributed tabloların spool derinliği.
   //
   // NEDEN VAR: Distributed motoru INSERT'i diske spool'layıp HEMEN OK

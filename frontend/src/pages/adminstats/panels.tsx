@@ -112,6 +112,134 @@ export function BehaviorPanel({ behavior }: { behavior: SystemStats['behavior'] 
   );
 }
 
+// CODE_MISS_LABEL — çıkmaz sınıfının insan-okunur karşılığı
+// (backend: devops.CodeOutcome sabitleri). Bilinmeyen bir sınıf ham
+// adıyla gösterilir: yeni bir kova eklendiğinde panel onu SAKLAMAZ.
+const CODE_MISS_LABEL: Record<string, string> = {
+  'unconfigured': 'bağlantı yapılandırılmamış',
+  'repo-unresolved': 'depo çözülemedi',
+  'project-dead-end': 'proje çözülemedi',
+  'no-stack': 'stack yok',
+  'catalog-error': 'katalog okunamadı',
+  'empty-tree': 'depo ağacı boş',
+  'tree-miss': 'dosya ağaçta yok',
+  'window-failed': 'pencere kurulamadı',
+  'deadline': 'süre tavanı',
+  'cancelled': 'istek iptal edildi',
+  'backend-error': 'DevOps hatası',
+  'other': 'sınıflandırılmamış',
+};
+
+// ENTEGRASYON çıkmazları: operatörün AYAR/ERİŞİM düzeltmesi gereken
+// sınıflar. no-stack / tree-miss bilerek DIŞARIDA — onlar verinin hâli
+// (kayıtta stack yok, dosya o depoda değil), arıza değil. Ayrım
+// olmadan sağlıklı bir kurulum sürekli kırmızı yanardı.
+const CODE_BROKEN_CLASSES = new Set([
+  'unconfigured', 'catalog-error', 'empty-tree', 'backend-error', 'other',
+]);
+
+// CodeFetchPanel — "Kodu da incele" kod-çekme sonuçları (v0.9.1241).
+//
+// NEDEN KENDİ KARTI: bu yol FAIL-OPEN. Kod gelmezse açıklama kodsuz
+// üretilir, çekmecede tek satırlık bir gerekçe kalır ve TOPLAMDA
+// hiçbir iz olmaz — süresi dolmuş bir PAT tüm filoda kod bağlamını
+// sessizce kapatabilir, hiçbir ekran bunu söylemezdi. "Kod bağlamı
+// gerçekte ne sıklıkla isabet ediyor" sorusunun cevabı yalnız burada.
+//
+// ÜÇ HÂL, ÜÇ DÜRÜST CEVAP:
+//   alan yok / deneme yok → "hiç denenmedi". %0 İSABET DEMEK YALAN
+//     OLURDU: kutuyu hiç işaretlememek ile hep ıskalamak aynı şey değil.
+//   entegrasyon çıkmazı   → ⚠ ve gerekçe. Ayar/erişim işi.
+//   temiz                 → isabet oranı + kırılım.
+//
+// SÜREÇ BAŞLANGICINDAN BERİ olduğu başlıkta YAZIYOR: sayaçlar süreç-içi
+// ve restart sıfırlar. Kalıcı sayaç yeni bir tablo ve yeni bir yazma
+// yolu demekti — bu operatör telemetrisi, faturalama değil.
+export function CodeFetchPanel({ code }: { code: SystemStats['codeFetch'] }) {
+  const c = code;
+  const attempts = c?.attempts ?? 0;
+  const neverTried = !c || attempts === 0;
+  const misses = c?.misses ?? [];
+  const broken = misses.some(m => CODE_BROKEN_CLASSES.has(m.class) && m.count > 0);
+  const hits = (c?.ok ?? 0) + (c?.partial ?? 0);
+  const rate = attempts > 0 ? Math.round((hits / attempts) * 100) : 0;
+  return (
+    <div style={{
+      background: 'var(--bg1)', border: '1px solid var(--border)',
+      borderRadius: 8, padding: 14, marginBottom: 18,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: neverTried ? 0 : 12 }}>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>CoSRE kod bağlamı</span>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+          &quot;Kodu da incele&quot; · DevOps kaynak penceresi · süreç başlangıcından beri
+          (restart sıfırlar)
+        </span>
+        <span style={{ flex: 1 }} />
+        {neverTried
+          ? <span style={{ fontSize: 12, color: 'var(--text3)' }}>hiç denenmedi</span>
+          : broken
+            ? <span className="err" style={{ fontSize: 12, fontWeight: 700 }}>⚠ %{rate} isabet</span>
+            : <span className="ok" style={{ fontSize: 12, fontWeight: 600 }}>✓ %{rate} isabet</span>}
+      </div>
+      {!neverTried && c && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 }}>
+            <KPI label="Deneme" value={fmtNum(attempts)} />
+            <KPI label="İsabet" value={`%${rate}`} cls={broken ? 'err' : 'ok'}
+                 sub={`${fmtNum(hits)} / ${fmtNum(attempts)}`} />
+            <KPI label="Tam" value={fmtNum(c.ok)} />
+            {/* Kısmi = pencere geldi ama eksik (bütçe kesti, bir frame
+                ıskalandı, tavan doldu). Tam ile aynı kovaya koymak
+                isabeti olduğundan iyi gösterirdi. */}
+            <KPI label="Kısmi" value={fmtNum(c.partial)} />
+            <KPI label="Son deneme"
+                 value={c.lastUnix ? fmtUptime(Math.max(0, Math.floor(Date.now() / 1000) - c.lastUnix)) + ' önce' : '—'}
+                 sub={c.lastOutcome ? (CODE_MISS_LABEL[c.lastOutcome] ?? c.lastOutcome) : undefined} />
+          </div>
+          {misses.length > 0 && (
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 10, lineHeight: 1.7 }}>
+              <b>Çıkmazlar:</b>{' '}
+              {misses.map((m, i) => (
+                <span key={m.class}>
+                  {i > 0 && ' · '}
+                  <span className={CODE_BROKEN_CLASSES.has(m.class) ? 'err' : undefined}>
+                    {CODE_MISS_LABEL[m.class] ?? m.class}
+                  </span>
+                  {' '}{fmtNum(m.count)}
+                </span>
+              ))}
+            </div>
+          )}
+          {/* Son BAŞARISIZ denemenin gerekçesi. YAPIŞKAN: sonraki bir
+              başarı silmez — flap eden bir arızayı tek şanslı isabet
+              ekrandan silerse operatör onu hiç görmez. Tazeliği
+              zaman damgası anlatır. */}
+          {c.lastError && (
+            <div className="err" style={{
+              fontSize: 11, marginTop: 10, fontFamily: 'ui-monospace, monospace',
+              overflowWrap: 'anywhere',
+            }}>
+              {c.lastError}
+              {!!c.lastErrorUnix && (
+                <span style={{ color: 'var(--text3)', fontFamily: 'inherit' }}>
+                  {' '}· {fmtUptime(Math.max(0, Math.floor(Date.now() / 1000) - c.lastErrorUnix))} önce
+                </span>
+              )}
+            </div>
+          )}
+          {broken && (
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 10, lineHeight: 1.5 }}>
+              Çıkmazların bir kısmı ayar/erişim kaynaklı (bağlantı, PAT yetkisi,
+              proje/depo adı). Settings &rarr; <b>Kod entegrasyonu</b> ve servis
+              kataloğundaki <b>Repository</b> alanı bu kovaları kapatır.
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // DistributionQueuePanel — dağıtık kipte Distributed spool derinliği
 // (v0.9.985).
 //

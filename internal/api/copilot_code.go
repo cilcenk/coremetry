@@ -50,12 +50,22 @@ func decodeExplainOptions(r *http.Request) explainOptions {
 // FAIL-OPEN her adımda: devops yok, katalogda depo yok, konvansiyon
 // tutmadı, dosya ağaçta yok — hepsi boş bağlam + Reason. Açıklama
 // yine üretilir, yalnızca kodsuz.
+//
+// v0.9.1241 — FetchCode'a VARAMAYAN çıkışlar da sayılır. Sayaç
+// "operatör kod istedi" anını ölçmeli; yalnız işin devops paketine
+// kadar gelebilen kısmını ölçerse, en sık çıkmazlar (stack yok, depo
+// çözülemedi) isabet oranının dışında kalır ve oran olduğundan iyi
+// görünür. TEK sayılmayan dal s.devops==nil: sayaçlar Service'e ait,
+// Service yoksa sayacak yer de yok — ve o hâlde ölçülecek bir
+// entegrasyon zaten yoktur.
 func (s *Server) buildCodeContext(ctx context.Context, service, stack string) devops.CodeContext {
 	if s.devops == nil {
 		return devops.CodeContext{Reason: "kod entegrasyonu yapılandırılmamış"}
 	}
 	if strings.TrimSpace(stack) == "" {
-		return devops.CodeContext{Reason: "bu kayıtta stacktrace yok"}
+		const reason = "bu kayıtta stacktrace yok"
+		s.devops.RecordCodeOutcome(devops.CodeNoStack, reason)
+		return devops.CodeContext{Reason: reason}
 	}
 	// Katalog pini önce: elle girilen depo konvansiyonu EZER.
 	repoPin := ""
@@ -67,6 +77,7 @@ func (s *Server) buildCodeContext(ctx context.Context, service, stack string) de
 		}
 		pin, abort := pinReadDecision(mdRepo, md != nil, err)
 		if abort != "" {
+			s.devops.RecordCodeOutcome(devops.CodeCatalogError, abort)
 			return devops.CodeContext{Reason: abort}
 		}
 		repoPin = pin
@@ -77,6 +88,7 @@ func (s *Server) buildCodeContext(ctx context.Context, service, stack string) de
 		if reason == "" {
 			reason = "servis için depo çözülemedi"
 		}
+		s.devops.RecordCodeOutcome(devops.CodeRepoUnresolved, reason)
 		return devops.CodeContext{Reason: reason, Source: res.Source}
 	}
 	// v0.9.1183 — res.Project, proje ÖNERİSİ: pinin kendi taşıdığı proje

@@ -392,6 +392,8 @@ func repoSegment(path string) string {
 
 // sawPathContaining — bu parçayı taşıyan bir istek geldi mi?
 func (f *fakeTFS) sawPathContaining(frag string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, p := range f.seen {
 		if strings.Contains(p, frag) {
 			return true
@@ -422,7 +424,12 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, q := r.URL.Path, r.URL.Query()
-		f.seen = append(f.seen, p)
+		// v0.9.1269 — seen yazımı KİLİTLİ. Eşzamanlı iki isteğin
+		// gerçekten paralel geldiği ilk test (ayrı kapsam anahtarları,
+		// TestScopedTreeSingleflightIsKeyed) bu appendi -race'te
+		// yakaladı: eski singleflight testinde tüm çağrılar tek uçuşta
+		// birleştiği için handler hiç çakışmıyordu.
+		f.mu.Lock(); f.seen = append(f.seen, p); f.mu.Unlock()
 		// v0.9.1236 — liste DENEMESİ en tepede sayılır, kimlik ve
 		// api-version muhafızlarından ÖNCE. Sayacı aşağıya, başarı
 		// dalına koymak testi kör ederdi: "kaçış kapısı hiç açılmadı"
@@ -486,7 +493,16 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 			}
 			_ = json.NewEncoder(w).Encode(out)
 		case strings.HasSuffix(p, "/items") && q.Get("recursionLevel") == "Full":
-			f.mu.Lock(); f.hits["tree"]++; f.mu.Unlock()
+			// v0.9.1269 — scopePath GERÇEK API gibi süzer: verilen dizinin
+			// ALTINDAKİ girdiler döner, dizin hiç yoksa 404 (TF401174).
+			// Süzmeyi taklit etmemek, kapsamlı geri-denemeyi tam ağacın
+			// kopyasıyla test etmek olurdu — yani hiç test etmemek.
+			scope := strings.TrimRight(q.Get("scopePath"), "/")
+			bucket := "tree"
+			if scope != "" {
+				bucket = "scoped"
+			}
+			f.mu.Lock(); f.hits[bucket]++; f.mu.Unlock()
 			if f.treeDelay > 0 {
 				time.Sleep(f.treeDelay)
 			}
@@ -502,14 +518,26 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 			out := struct {
 				Value []item `json:"value"`
 			}{}
-			out.Value = append(out.Value, item{Path: "/src", GitObjectType: "tree", IsFolder: true})
+			var kept []string
 			for _, pth := range f.tree {
+				if scope != "" && !strings.HasPrefix(pth, scope+"/") {
+					continue
+				}
+				kept = append(kept, pth)
+			}
+			if scope != "" && len(kept) == 0 {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"message":"TF401174: scope path does not exist"}`))
+				return
+			}
+			out.Value = append(out.Value, item{Path: "/src", GitObjectType: "tree", IsFolder: true})
+			for _, pth := range kept {
 				out.Value = append(out.Value, item{Path: pth, GitObjectType: "blob"})
 			}
 			_ = json.NewEncoder(w).Encode(out)
 		case strings.HasSuffix(p, "/items"):
-			f.mu.Lock(); f.hits["item"]++; f.mu.Unlock()
-			if f.itemDelay > 0 && f.hits["item"] >= f.slowItemAfter {
+			f.mu.Lock(); f.hits["item"]++; items := f.hits["item"]; f.mu.Unlock()
+			if f.itemDelay > 0 && items >= f.slowItemAfter {
 				select {
 				case <-time.After(f.itemDelay):
 				case <-r.Context().Done():
@@ -1547,5 +1575,325 @@ func TestRepoTreeSingleflight(t *testing.T) {
 	f.mu.Unlock()
 	if hits != 1 {
 		t.Fatalf("6 eşzamanlı istek 1 ağaç fetch'i beklerdi, %d oldu", hits)
+	}
+}
+
+// ---------------------------------------------------------------
+// v0.9.1269 — MONOREPO DUVARLARI: kesik ağaç + kapsamlı geri-deneme
+//
+// Denetim [3/M] + [3/S]: 60k yol tavanı ve 8MB gövde tavanı sessizce
+// ısırıyor, hedef dosya kesik bölgede kalınca operatör "ağaçta
+// eşleşen dosya yok" okuyordu. Aşağıdaki üç kapı üç mutasyona
+// kırmızı yanar:
+//   (1) kapsamlı geri-deneme adımını (scopedHunt.find çağrısı) kaldır
+//   (2) capped bayrağını cache'e yazma (treeEntry.capped'i düşür)
+//   (3) Reason'daki kesilme notunu (cappedTreeNote) sil
+// ---------------------------------------------------------------
+
+// scopedFrames — hedef dosyası kesik bölgede kalan tek app frame'i.
+func scopedFrames() []stackparse.Frame {
+	return stackparse.ParseJava("" +
+		"jakarta.ejb.EJBException: host response error\n" +
+		"\tat deployment.APPWEB.war//com.example.card.CardDetailBusiness.handleHostResponseError(CardDetailBusiness.java:246)\n")
+}
+
+// bigTreeFake — yol tavanı 5'e çekilmiş bir serviste hedef dosya ilk
+// 5 yolun DIŞINDA: tam ağaç ıskalar, kapsamlı deneme bulur.
+func bigTreeFake(t *testing.T) (*fakeTFS, *Service, string) {
+	t.Helper()
+	f := newFakeTFS(t)
+	const target = "/src/main/java/com/example/card/CardDetailBusiness.java"
+	f.tree = []string{
+		"/README.md",
+		"/docs/a.md", "/docs/b.md", "/docs/c.md", "/docs/d.md",
+		"/docs/e.md", "/docs/f.md",
+		target, // tavanın ÖTESİNDE
+	}
+	f.files[target] = javaFile("com.example.card", "CardDetailBusiness", 400, 246)
+	svc := New()
+	svc.Configure(f.settings())
+	svc.treeMaxPaths = 5
+	return f, svc, target
+}
+
+func TestCappedTreeScopedRetryFindsFile(t *testing.T) {
+	f, svc, target := bigTreeFake(t)
+	cc := svc.FetchCode(context.Background(), "core-service", ProjectHint{}, scopedFrames())
+
+	if len(cc.Windows) != 1 {
+		t.Fatalf("kapsamlı deneme pencere bulmalıydı, %d geldi (reason=%q)", len(cc.Windows), cc.Reason)
+	}
+	if cc.Windows[0].Path != target {
+		t.Fatalf("Path=%q, istenen %q", cc.Windows[0].Path, target)
+	}
+	// Gerçekten scopePath'li bir istek çıktı mı?
+	f.mu.Lock()
+	scoped := f.hits["scoped"]
+	f.mu.Unlock()
+	if scoped == 0 {
+		t.Fatalf("scopePath isteği hiç çıkmadı — geri-deneme adımı devrede değil")
+	}
+	// Kesilme İSABETTE de söylenir (kısmi doktrini, v0.9.1237/1241).
+	if !strings.Contains(cc.Reason, "kesildi") {
+		t.Fatalf("Reason kesilmeyi söylemiyor: %q", cc.Reason)
+	}
+	// Outcome taksonomisi v0.9.1241'de pinli: kesik ağaçta bulunan
+	// pencere hâlâ normal bir isabet, yeni sınıf YOK.
+	if cc.Outcome != CodeOK && cc.Outcome != CodePartial {
+		t.Fatalf("Outcome=%q, ok|partial beklenirdi", cc.Outcome)
+	}
+	// Alt-ağaç yolları ANA cache'i zenginleştirmez: kesik ağaç kesik
+	// kalmalı, yoksa başka frame'lerde "ağaçta yok" yanlış güven olur.
+	cfg := f.settings()
+	if r, ok := svc.code.get(treeCacheKey(cfg, "core-service", "release")); ok {
+		if len(r.paths) != 5 || !r.capped {
+			t.Fatalf("ana ağaç cache'i bozuldu: %d yol, capped=%v", len(r.paths), r.capped)
+		}
+		for _, p := range r.paths {
+			if p == target {
+				t.Fatalf("kapsamlı sonuç ana cache'e sızdı: %s", p)
+			}
+		}
+	}
+}
+
+// Mutasyon (2) kapısı: capped bayrağı CACHE'e girmezse ikinci çağrı
+// (ağaç cache'ten gelir) geri-denemeyi hiç açmaz ve pencere kaybolur.
+func TestCappedFlagSurvivesCache(t *testing.T) {
+	f, svc, _ := bigTreeFake(t)
+	first := svc.FetchCode(context.Background(), "core-service", ProjectHint{}, scopedFrames())
+	if len(first.Windows) != 1 {
+		t.Fatalf("ilk çağrı: %d pencere (reason=%q)", len(first.Windows), first.Reason)
+	}
+	second := svc.FetchCode(context.Background(), "core-service", ProjectHint{}, scopedFrames())
+	if len(second.Windows) != 1 {
+		t.Fatalf("cache'ten gelen ikinci çağrı pencereyi kaybetti (reason=%q)", second.Reason)
+	}
+	if !strings.Contains(second.Reason, "kesildi") {
+		t.Fatalf("ikinci çağrının Reason'ı kesilmeyi söylemiyor: %q", second.Reason)
+	}
+	f.mu.Lock()
+	tree := f.hits["tree"]
+	f.mu.Unlock()
+	if tree != 1 {
+		t.Fatalf("ikinci çağrı ağacı yeniden listeledi (%d) — cache yolu test edilmemiş olur", tree)
+	}
+}
+
+// Iskada dürüstlük: dosya gerçekten yoksa bile cümle artık "yok"
+// demiyor, "kesik bölgede olabilir" diyor ve denenen kapsamları
+// sayıyor. Sınıf DEĞİŞMİYOR (tree-miss).
+func TestCappedTreeMissReasonIsHonest(t *testing.T) {
+	f := newFakeTFS(t)
+	f.tree = []string{"/README.md", "/docs/a.md", "/docs/b.md", "/docs/c.md", "/docs/d.md", "/docs/e.md"}
+	svc := New()
+	svc.Configure(f.settings())
+	svc.treeMaxPaths = 5
+
+	cc := svc.FetchCode(context.Background(), "core-service", ProjectHint{}, scopedFrames())
+	if len(cc.Windows) != 0 {
+		t.Fatalf("pencere beklenmiyordu: %+v", cc.Windows)
+	}
+	if cc.Outcome != CodeTreeMiss {
+		t.Fatalf("Outcome=%q, tree-miss beklenirdi (taksonomi v0.9.1241'de pinli)", cc.Outcome)
+	}
+	for _, want := range []string{
+		"kesildi", "kesik bölgede olabilir", "kapsamlı denemeler:",
+		"/src/main/java/com/example/card",
+	} {
+		if !strings.Contains(cc.Reason, want) {
+			t.Fatalf("Reason %q içermiyor: %q", want, cc.Reason)
+		}
+	}
+	f.mu.Lock()
+	scoped := f.hits["scoped"]
+	f.mu.Unlock()
+	if scoped != 3 {
+		t.Fatalf("üç aday kapsam denenmeliydi, %d istek çıktı", scoped)
+	}
+}
+
+// Tam ağaçta bu yolun HİÇ açılmadığı: kesik değilse ne fazladan
+// istek ne de kesilme cümlesi olur (fail-open'ın maliyet tarafı).
+func TestCompleteTreeSkipsScopedRetry(t *testing.T) {
+	f := newFakeTFS(t)
+	f.tree = []string{"/README.md", "/src/main/java/com/other/X.java"}
+	svc := New()
+	svc.Configure(f.settings())
+
+	cc := svc.FetchCode(context.Background(), "core-service", ProjectHint{}, scopedFrames())
+	f.mu.Lock()
+	scoped := f.hits["scoped"]
+	f.mu.Unlock()
+	if scoped != 0 {
+		t.Fatalf("tam ağaçta kapsamlı istek çıkmamalıydı, %d çıktı", scoped)
+	}
+	if strings.Contains(cc.Reason, "kesildi") {
+		t.Fatalf("tam ağaçta kesilme cümlesi: %q", cc.Reason)
+	}
+}
+
+// Kapsamlı fetch'ler AYRI singleflight anahtarında: aynı kapsamın
+// eşzamanlı istekleri birleşir, FARKLI kapsamlar birbirini beklemez
+// (v0.9.1266'nın ana-ağaç uçuşuyla da çakışmaz).
+func TestScopedTreeSingleflightIsKeyed(t *testing.T) {
+	f := newFakeTFS(t)
+	f.tree = []string{"/src/a/A.java", "/src/b/B.java"}
+	f.treeDelay = 60 * time.Millisecond
+	svc := New()
+	svc.Configure(f.settings())
+	cfg := f.settings()
+	cli := svc.clientFor(false)
+	key := treeCacheKey(cfg, "core-service", "refs/heads/master")
+
+	var wg sync.WaitGroup
+	for _, scope := range []string{"/src/a", "/src/a", "/src/a", "/src/b"} {
+		wg.Add(1)
+		go func(sp string) {
+			defer wg.Done()
+			_, _, err := svc.scopedTree(context.Background(), cli, cfg, "6.0", "core-service", "refs/heads/master", sp, key)
+			if err != nil {
+				t.Errorf("scopedTree(%s): %v", sp, err)
+			}
+		}(scope)
+	}
+	wg.Wait()
+	f.mu.Lock()
+	scoped := f.hits["scoped"]
+	f.mu.Unlock()
+	if scoped != 2 {
+		t.Fatalf("iki ayrı kapsam = 2 istek beklenirdi (aynı kapsam birleşir), %d oldu", scoped)
+	}
+}
+
+func TestScopePathCandidates(t *testing.T) {
+	frame := func(class string) stackparse.Frame {
+		return stackparse.Frame{Class: class, File: "X.java", Line: 1}
+	}
+	tests := []struct {
+		name string
+		in   stackparse.Frame
+		want []string
+	}{
+		{"paket yolu", frame("com.example.card.CardDetailBusiness"), []string{
+			"/src/main/java/com/example/card",
+			"/src/com/example/card",
+			"/com/example/card",
+		}},
+		{"tek segment paket", frame("app.Main"), []string{
+			"/src/main/java/app", "/src/app", "/app",
+		}},
+		{"paketsiz sınıf", frame("Main"), nil},
+		{"boş", stackparse.Frame{}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := scopePathCandidates(tt.in)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got=%v want=%v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("sıra/aday farkı: got=%v want=%v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// parseTreeItems — akışkan çözüm: kesik gövde artık TÜM çekmeyi
+// öldürmüyor, eldeki yolları kesik bayrağıyla döndürüyor.
+func TestParseTreeItems(t *testing.T) {
+	full := `{"count":3,"value":[` +
+		`{"path":"/a.java","gitObjectType":"blob"},` +
+		`{"path":"/src","gitObjectType":"tree","isFolder":true},` +
+		`{"path":"/b.java","gitObjectType":"blob"}]}`
+	tests := []struct {
+		name       string
+		body       string
+		max        int
+		truncated  bool
+		wantPaths  int
+		wantCapped bool
+		wantWhy    string
+		wantErr    bool
+	}{
+		{name: "tam gövde", body: full, max: 100, wantPaths: 2},
+		{name: "yol tavanı", body: full, max: 1, wantPaths: 1, wantCapped: true, wantWhy: cappedByPaths},
+		{
+			name: "eleman ortasında kesik", body: full[:len(full)-30], max: 100,
+			truncated: true, wantPaths: 1, wantCapped: true, wantWhy: cappedByBody,
+		},
+		{
+			// Tam da eleman sınırında kesilmiş gövde: decoder sessizce
+			// biter, bayt tavanı tek kanıttır.
+			name: "eleman sınırında kesik", body: `{"value":[{"path":"/a.java","gitObjectType":"blob"},`,
+			max: 100, truncated: true, wantPaths: 1, wantCapped: true, wantWhy: cappedByBody,
+		},
+		{name: "hiç yol yokken kesik", body: `{"value":[{"path":"/a.j`, max: 100, truncated: true, wantErr: true},
+		{name: "value alanı yok", body: `{"count":0}`, max: 100, wantErr: true},
+		{name: "JSON değil", body: `<html>sign in</html>`, max: 100, wantErr: true},
+		{name: "boş dizi", body: `{"value":[]}`, max: 100, wantPaths: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseTreeItems([]byte(tt.body), tt.max, tt.truncated)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("hata beklenirdi, got=%+v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("beklenmeyen hata: %v", err)
+			}
+			if len(got.paths) != tt.wantPaths {
+				t.Fatalf("yol sayısı=%d, istenen %d (%v)", len(got.paths), tt.wantPaths, got.paths)
+			}
+			if got.capped != tt.wantCapped || got.why != tt.wantWhy {
+				t.Fatalf("capped=%v why=%q, istenen %v/%q", got.capped, got.why, tt.wantCapped, tt.wantWhy)
+			}
+		})
+	}
+}
+
+func TestCappedTreeNote(t *testing.T) {
+	tests := []struct {
+		name  string
+		note  string
+		wants []string
+		empty bool
+	}{
+		{name: "kesik değil", note: cappedTreeNote(false, "", 10, 60000, nil, 0), empty: true},
+		{
+			name:  "yol tavanı, deneme yok",
+			note:  cappedTreeNote(true, cappedByPaths, 60000, 60000, nil, 0),
+			wants: []string{"60000 yolda kesildi", "(tavan 60000)", "kesik bölgede olabilir"},
+		},
+		{
+			name:  "yanıt tavanı, denemeler listeli",
+			note:  cappedTreeNote(true, cappedByBody, 19000, 60000, []string{"/src/main/java/com/x", "/src/com/x"}, 0),
+			wants: []string{"19000 yolda kesildi", "yanıt tavanı 8 MB", "kapsamlı denemeler: /src/main/java/com/x, /src/com/x"},
+		},
+		{
+			name:  "bulundu",
+			note:  cappedTreeNote(true, cappedByPaths, 60000, 60000, []string{"/src/x"}, 2),
+			wants: []string{"kesildi", "2 dosya kapsamlı aramayla bulundu"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.empty {
+				if tt.note != "" {
+					t.Fatalf("boş beklenirdi: %q", tt.note)
+				}
+				return
+			}
+			for _, w := range tt.wants {
+				if !strings.Contains(tt.note, w) {
+					t.Fatalf("%q içermiyor: %q", w, tt.note)
+				}
+			}
+		})
 	}
 }

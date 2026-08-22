@@ -1,6 +1,7 @@
 package devops
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -81,14 +82,48 @@ const (
 	treeTTL = 10 * time.Minute
 	// treeMaxPaths — cache'te tutulan yol sayısı tavanı. Devasa bir
 	// monorepo'nun ağacı pod'un RAM'ini yemesin.
+	//
+	// v0.9.1269 — tavana çarpmak artık SESSİZ DEĞİL: kesilme cache'e de
+	// giren bir bayrakla taşınır (treeResult.capped) ve eşleşme
+	// bulunamayınca Reason kesilmeyi söyler. Öncesinde bu satırdaki
+	// `break` yüzünden tavanın ötesindeki bir dosya "ağaçta eşleşen
+	// dosya yok" diye rapor ediliyordu — dev bir monorepo'da yanıltıcı
+	// bir ölüm noktası (denetim [3/M] + [3/S]).
 	treeMaxPaths = 60000
 	// treeMaxRepos — cache'teki depo sayısı tavanı (basit eviction).
 	treeMaxRepos = 8
 	// treeBodyCap — recursive listing yanıtı için okuma tavanı (8MB).
 	// 60k dosyalık bir ağacın JSON'u birkaç MB tutar.
+	//
+	// v0.9.1269 — bu tavan pratikte 60k'dan ÇOK ÖNCE ısırıyor: ADO items
+	// girdisi url+objectId+commitId taşır (~400-600B), yani 8MB ≈ 13-20k
+	// dosya. Öncesinde kesik gövde json.Unmarshal'da patlıyor ve TÜM
+	// çekme "depo ağacı çözümlenemedi" ile ölüyordu — 2KB'lık hedef
+	// dosya için bile. Artık akışkan çözülüyor: kesilene KADAR okunan
+	// yollar kurtarılır, kesilme bayrakla söylenir.
 	treeBodyCap = 8 << 20
+	// scopedFetchLimit — bir FetchCode'da yapılabilecek KAPSAMLI
+	// (scopePath) alt-ağaç isteği tavanı. Kesik ağaçta her ıska 3 aday
+	// üretir; 10 aday frame'lik patolojik bir stack 30 isteğe çıkardı.
+	// 6 = iki frame'in tam denemesi; gerisini cache (aynı paket
+	// tekrarlanır) ve 25 sn'lik toplam tavan karşılar.
+	scopedFetchLimit = 6
+	// scopedMaxEntries — kapsamlı alt-ağaç cache'i tavanı. Alt-ağaçlar
+	// küçüktür (tek paket dizini), ana ağaç cache'inin 8'lik kotasını
+	// yemesinler diye AYRI kova.
+	scopedMaxEntries = 32
 	// fileBodyCap — tek dosya içeriği için tavan (2MB).
 	fileBodyCap = 2 << 20
+)
+
+// Ağaç kesilme SEBEPLERİ. Tek bayrak (treeResult.capped) + sebep
+// ETİKETİ: çağıranın kararı ikisinde de aynı (kapsamlı geri-deneme),
+// ama operatörün aksiyonu farklı — yol tavanı bir kod sabiti, yanıt
+// tavanı deponun büyüklüğü. Ayrım bu yüzden Reason METNİNDE yaşıyor,
+// dallanmada değil.
+const (
+	cappedByPaths = "paths"
+	cappedByBody  = "body"
 )
 
 // CodeWindow — tek frame için çekilen kaynak penceresi.
@@ -163,10 +198,28 @@ func (c CodeContext) Halved() CodeContext {
 	return c
 }
 
+// treeResult — bir listelemenin ürünü: yollar + KESİLDİ Mİ.
+//
+// v0.9.1269 — bayrak dönüşün parçası, yan-kanal değil. Kesik bir
+// ağacı düz `[]string` olarak taşımak, çağıranın "bu liste TAM" diye
+// varsaymasından başka bir şey bırakmıyordu; monorepo duvarının
+// sessiz olmasının sebebi tam olarak buydu.
+type treeResult struct {
+	paths  []string
+	capped bool
+	why    string // cappedByPaths | cappedByBody — yalnız Reason metni için
+}
+
 // treeEntry — cache'lenen depo ağacı.
+//
+// v0.9.1269 — capped/why de cache'e GİRER. Bayrağı cache'e yazmamak,
+// ikinci tıkta kesik ağacı tam ağaç gibi göstermek demekti: ilk tık
+// geri-denemeyi koşar, cache'ten gelen ikinci tık "eşleşme yok" der.
 type treeEntry struct {
-	paths []string
-	at    time.Time
+	paths  []string
+	capped bool
+	why    string
+	at     time.Time
 }
 
 // repoListEntry — cache'lenen proje depo listesi (v0.9.1236).
@@ -183,9 +236,15 @@ type repoListEntry struct {
 // İkinci bir cache açmak yerine mevcut disipline yerleşiyor: aynı
 // mutex, aynı TTL ölçeği, aynı "tavana çarpınca en eskiyi at".
 type codeCache struct {
-	mu    sync.Mutex
-	tree  map[string]treeEntry
-	repos map[string]repoListEntry
+	mu   sync.Mutex
+	tree map[string]treeEntry
+	// scoped — kapsamlı (scopePath) alt-ağaçlar, AYRI kova (v0.9.1269).
+	// Ana ağaç cache'ine karıştırılmaz: kesik bir ağacı alt-ağaç
+	// yollarıyla zenginleştirmek onu "tam" gibi gösterir ve BAŞKA
+	// frame'lerde yanlış güven üretir ("ağaçta yok" derken aslında
+	// bakılmamış bir bölge var).
+	scoped map[string]treeEntry
+	repos  map[string]repoListEntry
 }
 
 // getRepos / putRepos — depo adı listesi cache'i (v0.9.1236).
@@ -219,17 +278,17 @@ func (c *codeCache) putRepos(key string, names []string) {
 	c.repos[key] = repoListEntry{names: names, at: time.Now()}
 }
 
-func (c *codeCache) get(key string) ([]string, bool) {
+func (c *codeCache) get(key string) (treeResult, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.tree[key]
 	if !ok || time.Since(e.at) > treeTTL {
-		return nil, false
+		return treeResult{}, false
 	}
-	return e.paths, true
+	return treeResult{paths: e.paths, capped: e.capped, why: e.why}, true
 }
 
-func (c *codeCache) put(key string, paths []string) {
+func (c *codeCache) put(key string, r treeResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.tree == nil {
@@ -238,17 +297,47 @@ func (c *codeCache) put(key string, paths []string) {
 	if len(c.tree) >= treeMaxRepos {
 		// En eski girdiyi at. LRU değil FIFO-ish: 8 girdide fark
 		// pratikte yok, kod ise bir satır.
-		oldestKey, oldestAt := "", time.Now()
-		for k, v := range c.tree {
-			if v.at.Before(oldestAt) {
-				oldestKey, oldestAt = k, v.at
-			}
-		}
-		if oldestKey != "" {
-			delete(c.tree, oldestKey)
+		evictOldest(c.tree)
+	}
+	c.tree[key] = treeEntry{paths: r.paths, capped: r.capped, why: r.why, at: time.Now()}
+}
+
+// getScoped / putScoped — kapsamlı alt-ağaç cache'i (v0.9.1269). Aynı
+// TTL (10 dk): alt-ağaç da depo ağacının bir parçası, farklı bir
+// tazelik sözleşmesi tutmak için sebep yok.
+func (c *codeCache) getScoped(key string) (treeResult, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.scoped[key]
+	if !ok || time.Since(e.at) > treeTTL {
+		return treeResult{}, false
+	}
+	return treeResult{paths: e.paths, capped: e.capped, why: e.why}, true
+}
+
+func (c *codeCache) putScoped(key string, r treeResult) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.scoped == nil {
+		c.scoped = map[string]treeEntry{}
+	}
+	if len(c.scoped) >= scopedMaxEntries {
+		evictOldest(c.scoped)
+	}
+	c.scoped[key] = treeEntry{paths: r.paths, capped: r.capped, why: r.why, at: time.Now()}
+}
+
+// evictOldest — en eski girdiyi atar (iki kovanın ortak eviction'ı).
+func evictOldest(m map[string]treeEntry) {
+	oldestKey, oldestAt := "", time.Now()
+	for k, v := range m {
+		if v.at.Before(oldestAt) {
+			oldestKey, oldestAt = k, v.at
 		}
 	}
-	c.tree[key] = treeEntry{paths: paths, at: time.Now()}
+	if oldestKey != "" {
+		delete(m, oldestKey)
+	}
 }
 
 // FetchCode — bir depodaki frame'ler için kod pencereleri toplar.
@@ -335,9 +424,24 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	// note — düzeltme izi. Boş kalırsa hiçbir şey değişmedi demektir.
 	note, ver, branch, paths := ch.note, ch.ver, ch.branch, ch.paths
 
+	// v0.9.1269 — KESİK AĞAÇTA kapsamlı geri-deneme. Tam ağaç ıskaladı
+	// ve ağaç kesikse, frame'in paket yolundan türeyen alt-ağaçlar
+	// (scopePath) tek tek denenir. Yalnız KESİKKEN: tam bir ağaçta
+	// "yok" gerçekten yoktur ve her ıskaya üç istek eklemek çerçeve
+	// frame'lerinde saf israf olurdu.
+	scoped := &scopedHunt{
+		svc: s, cli: cli, cfg: cfg, ver: ver, repo: repo, branch: branch,
+		treeKey: treeCacheKey(cfg, repo, branch),
+		on:      ch.capped, budget: scopedFetchLimit,
+	}
 	hunt := huntWindows(ctx, targets,
 		huntLimits{windows: codeWindowLimit, lookups: codeLookupLimit, radius: codeWindowRadius},
-		func(f stackparse.Frame) string { return BestPathForFrame(paths, f) },
+		func(f stackparse.Frame) string {
+			if p := BestPathForFrame(paths, f); p != "" {
+				return p
+			}
+			return scoped.find(ctx, f)
+		},
 		func(c context.Context, p string) (string, error) {
 			return fetchItemContent(c, cli, cfg, ver, repo, branch, p)
 		})
@@ -386,6 +490,13 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	// çarpma hiçbir yere yazılmıyor, "kod geldi" cevabının yanında
 	// NEYİN gelmediği görünmüyordu.
 	out.Reason = withNote(out.Reason, hunt.note(len(windows), len(targets), cutoffLabel(ours, s.fetchDeadline())))
+	// v0.9.1269 — KESİLME her hâlde söylenir. Iskada "eşleşme yok"
+	// cümlesi tek başına YANILTICIYDI (dosya orada, biz bakmadık);
+	// isabette de kısmi-not doktrini (v0.9.1237/1241) geçerli: kayıp
+	// varsa söyle. Outcome taksonomisine DOKUNULMAZ — kesik ağaçtaki
+	// bir ıska hâlâ tree-miss, sayaçlar v0.9.1241'de pinlendi.
+	out.Reason = withNote(out.Reason,
+		cappedTreeNote(ch.capped, ch.cappedWhy, len(paths), s.treePathCap(), scoped.tried, scoped.found))
 	// v0.9.1236 — düzeltme izi BAŞARILI çekmede de kalır. Kod geldi
 	// diye susmak, operatörün katalogdaki/konvansiyondaki yanlış adı
 	// hiç öğrenmemesi demek olurdu; ekrandaki "Kaynak: <depo>" satırı
@@ -432,6 +543,12 @@ type chainResult struct {
 	branch string
 	note   string // düzeltme izi ("" = düzeltme yok)
 	paths  []string
+	// capped/cappedWhy — ağaç TAM MI (v0.9.1269). paths'in kendisi bunu
+	// söyleyemez: 60.000 yol da, tavana dayanmış 60.000 yol da aynı
+	// dilimdir. Bayrak zincirin ürününde taşınır ki hem FetchCode'un
+	// geri-denemesi hem dry-run'ın "N dosya" satırı dürüst kalsın.
+	capped    bool
+	cappedWhy string
 	// at — zincirin DURDUĞU adım (chainStepBranch | chainStepTree).
 	// class boşken anlamsız. Dry-run hangi adımın kırmızı yanacağını
 	// buradan okur: durumdan ÇIKARMAK ("branch boşsa branş adımı
@@ -488,7 +605,7 @@ func (s *Service) resolveChain(ctx, parent context.Context, cli *http.Client, cf
 	}
 	res.ver, res.branch = ver, branch
 
-	paths, err := s.repoTree(ctx, cli, cfg, ver, res.repo, branch)
+	tree, err := s.repoTree(ctx, cli, cfg, ver, res.repo, branch)
 	if err != nil {
 		res.at = chainStepTree
 		if deadlineHit(parent, ctx) {
@@ -498,7 +615,8 @@ func (s *Service) resolveChain(ctx, parent context.Context, cli *http.Client, cf
 		res.class, res.reason = CodeBackendError, withNote(res.note, sanitize(err.Error(), cfg))
 		return res
 	}
-	if len(paths) == 0 {
+	res.capped, res.cappedWhy = tree.capped, tree.why
+	if len(tree.paths) == 0 {
 		// v0.9.1183 — NE DENENDİĞİ yazılıyor. Proje artık türetilebiliyor
 		// (bsa-… → BSA) ve türetme bir tahmin; "depo ağacı boş döndü"
 		// tek başına operatöre yanlış tahmini göstermez, oysa hatanın en
@@ -509,7 +627,7 @@ func (s *Service) resolveChain(ctx, parent context.Context, cli *http.Client, cf
 			"depo ağacı boş döndü (proje "+cfg.Project+", depo "+res.repo+", branş "+branch+")")
 		return res
 	}
-	res.paths = paths
+	res.paths = tree.paths
 	return res
 }
 
@@ -669,6 +787,113 @@ func (h huntOutcome) note(kept, total int, cutoff string) string {
 	return strings.Join(parts, " · ")
 }
 
+// scopedHunt — kesik ağaçta KAPSAMLI geri-deneme (v0.9.1269).
+//
+// Duvar şuydu: 60k yol / 8MB tavanına çarpan bir monorepo'da hedef
+// dosya kesik bölgede kalıyor, BestPathForFrame boş dönüyor ve
+// operatör "ağaçta eşleşen dosya yok" cümlesini okuyordu — dosya
+// deponun içinde dururken. Çıkış, tam listelemeyi büyütmek değil
+// (aynı duvar, biraz daha ötede): frame'in PAKET YOLU zaten hedefin
+// nerede olduğunu söylüyor, o dizinin alt-ağacı ise küçük ve ucuz.
+//
+// Bulunan yollar ana ağaç cache'ine EKLENMEZ; frame başına kullanılıp
+// kapsam cache'inde kalır.
+type scopedHunt struct {
+	svc     *Service
+	cli     *http.Client
+	cfg     Settings
+	ver     string
+	repo    string
+	branch  string
+	treeKey string
+	on      bool // ağaç kesik mi — değilse bu yol hiç açılmaz
+	budget  int  // kalan GERÇEK istek hakkı (cache isabeti harcamaz)
+	tried   []string
+	found   int
+}
+
+// find — frame için kapsamlı alt-ağaçlarda arama. Boş dönerse ıska.
+func (h *scopedHunt) find(ctx context.Context, f stackparse.Frame) string {
+	if h == nil || !h.on {
+		return ""
+	}
+	for _, sp := range scopePathCandidates(f) {
+		if ctx.Err() != nil || h.budget <= 0 {
+			return ""
+		}
+		h.mark(sp)
+		res, cached, err := h.svc.scopedTree(ctx, h.cli, h.cfg, h.ver, h.repo, h.branch, sp, h.treeKey)
+		if !cached {
+			h.budget--
+		}
+		if err != nil || len(res.paths) == 0 {
+			continue
+		}
+		if p := BestPathForFrame(res.paths, f); p != "" {
+			h.found++
+			return p
+		}
+	}
+	return ""
+}
+
+// mark — denenen kapsamı tekrarsız kaydeder (Reason'a girer).
+func (h *scopedHunt) mark(sp string) {
+	for _, t := range h.tried {
+		if t == sp {
+			return
+		}
+	}
+	h.tried = append(h.tried, sp)
+}
+
+// scopePathCandidates — frame'in paket yolundan türeyen alt-ağaç
+// kökleri, SIRAYLA. SAF; tablo-testli.
+//
+// Üç yazım, en olasıdan en genele: Maven/Gradle standardı
+// (src/main/java/<pkg>), sadeleştirilmiş kaynak kökü (src/<pkg>) ve
+// paketin doğrudan depo kökünde durduğu hâl (/<pkg>). Üçü de
+// ıskalarsa modül-içi kökler (modules/x/src/main/java/…) kapsam
+// DIŞIDIR: her modül önekini denemek istek sayısını depo şekline
+// bağlar; Reason denenenleri yazdığı için operatör eksiği görür.
+func scopePathCandidates(f stackparse.Frame) []string {
+	pkg := strings.Trim(f.PackagePath(), "/")
+	if pkg == "" {
+		return nil
+	}
+	out := make([]string, 0, 3)
+	seen := map[string]bool{}
+	for _, prefix := range []string{"/src/main/java/", "/src/", "/"} {
+		c := prefix + pkg
+		if seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	return out
+}
+
+// cappedTreeNote — kesilmenin insan-okunur karşılığı. SAF;
+// tablo-testli. capped değilse "" — tam bir ağaçta bu cümlenin
+// görünmesi, olmayan bir duvarın peşine düşürürdü.
+func cappedTreeNote(capped bool, why string, n, max int, tried []string, found int) string {
+	if !capped {
+		return ""
+	}
+	head := fmt.Sprintf("depo ağacı %d yolda kesildi (tavan %d)", n, max)
+	if why == cappedByBody {
+		head = fmt.Sprintf("depo ağacı %d yolda kesildi (yanıt tavanı %d MB)", n, treeBodyCap>>20)
+	}
+	switch {
+	case found > 0:
+		return head + fmt.Sprintf(" — %d dosya kapsamlı aramayla bulundu", found)
+	case len(tried) > 0:
+		return head + " — eşleşme kesik bölgede olabilir; kapsamlı denemeler: " + strings.Join(tried, ", ")
+	}
+	return head + " — eşleşme kesik bölgede olabilir"
+}
+
 // resolveBranch — refs API'sinden branşları çeker ve ayardaki sıraya
 // göre seçer; hiçbiri yoksa deponun VARSAYILAN branşına düşer.
 // Dönen ilk değer, bu depo için çalışan api-version'dur.
@@ -753,10 +978,10 @@ func defaultBranch(ctx context.Context, cli *http.Client, cfg Settings, ver, rep
 
 // repoTree — recursive listing, 10 dk cache (depo+branş anahtarlı).
 // Yalnız blob'ların (dosya) yolu tutulur; ağaç düğümleri atılır.
-func (s *Service) repoTree(ctx context.Context, cli *http.Client, cfg Settings, ver, repo, branch string) ([]string, error) {
-	key := cfg.BaseURL + "|" + cfg.Collection + "|" + cfg.Project + "|" + repo + "@" + branch
-	if paths, ok := s.code.get(key); ok {
-		return paths, nil
+func (s *Service) repoTree(ctx context.Context, cli *http.Client, cfg Settings, ver, repo, branch string) (treeResult, error) {
+	key := treeCacheKey(cfg, repo, branch)
+	if r, ok := s.code.get(key); ok {
+		return r, nil
 	}
 	// v0.9.1266 — eşzamanlı miss'ler tek uçuşta: kazanan fetch'i yapar,
 	// diğerleri sonucu paylaşır. ctx kazananın ctx'i olur — kaybedenin
@@ -766,45 +991,157 @@ func (s *Service) repoTree(ctx context.Context, cli *http.Client, cfg Settings, 
 		return s.repoTreeFetch(ctx, cli, cfg, ver, repo, branch, key)
 	})
 	if err != nil {
-		return nil, err
+		return treeResult{}, err
 	}
-	return v.([]string), nil
+	return v.(treeResult), nil
 }
 
-func (s *Service) repoTreeFetch(ctx context.Context, cli *http.Client, cfg Settings, ver, repo, branch, key string) ([]string, error) {
+// treeCacheKey — ana ağaç anahtarı. Kapsamlı alt-ağaçlar bundan
+// TÜRETİLİR (scopedCacheKey) ama AYRI anahtar taşır: aynı kapsamın
+// eşzamanlı istekleri birleşsin, farklı kapsamlar birbirini
+// beklemesin (v0.9.1269, 1266'nın singleflight'ı üstüne).
+func treeCacheKey(cfg Settings, repo, branch string) string {
+	return cfg.BaseURL + "|" + cfg.Collection + "|" + cfg.Project + "|" + repo + "@" + branch
+}
+
+func scopedCacheKey(treeKey, scopePath string) string {
+	return treeKey + "|scope|" + scopePath
+}
+
+func (s *Service) repoTreeFetch(ctx context.Context, cli *http.Client, cfg Settings, ver, repo, branch, key string) (treeResult, error) {
 	u := repoURL(cfg, repo) + "/items?recursionLevel=Full" +
 		"&versionDescriptor.versionType=branch&versionDescriptor.version=" + url.QueryEscape(branch) +
 		"&api-version=" + ver
+	r, err := s.listItems(ctx, cli, cfg, u)
+	if err != nil {
+		return treeResult{}, err
+	}
+	s.code.put(key, r)
+	return r, nil
+}
+
+// listItems — items listelemesini çeker ve AKIŞKAN çözer.
+func (s *Service) listItems(ctx context.Context, cli *http.Client, cfg Settings, u string) (treeResult, error) {
 	body, err := doGetCapped(ctx, cli, u, cfg, treeBodyCap)
 	if err != nil {
-		return nil, err
+		return treeResult{}, err
 	}
-	var lr struct {
-		Value []struct {
+	return parseTreeItems(body, s.treePathCap(), int64(len(body)) >= treeBodyCap)
+}
+
+// treePathCap — yürürlükteki yol tavanı. Alan yalnız TESTİN seam'i
+// (v0.9.1237'nin codeDeadline emsali): 60.000 yollu bir ağacı testte
+// üretmek dakikalar sürerdi, sabite dayanan bir kapı da hiç ısırmazdı.
+// Sayının TEK kaynağı hâlâ treeMaxPaths sabiti.
+func (s *Service) treePathCap() int {
+	if s != nil && s.treeMaxPaths > 0 {
+		return s.treeMaxPaths
+	}
+	return treeMaxPaths
+}
+
+// parseTreeItems — items yanıtını AKIŞKAN çözer (v0.9.1269). SAF;
+// tablo-testli.
+//
+// Neden json.Unmarshal değil: 8MB tavanına dayanmış bir gövde
+// Unmarshal'da tek parça patlıyordu ve TÜM çekme ölüyordu ("depo
+// ağacı çözümlenemedi") — oysa kesilene kadar okunan on binlerce yol
+// tamamen kullanılabilir. Decoder eleman eleman ilerler: kesik son
+// eleman düşer, öncekiler kalır, kesilme BAYRAKLANIR.
+//
+// Sözleşme: hiç yol çözülemediyse HATA (bozuk/HTML yanıtı "boş ağaç"
+// diye yutmak, teşhisi bir sonraki adıma yalan söyletirdi); en az bir
+// yol çözüldüyse eldeki + capped.
+func parseTreeItems(body []byte, max int, truncated bool) (treeResult, error) {
+	var res treeResult
+	fail := func() (treeResult, error) {
+		return treeResult{}, fmt.Errorf("depo ağacı çözümlenemedi (çok büyük ya da beklenmeyen yanıt)")
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	t, err := dec.Token()
+	if err != nil || t != json.Delim('{') {
+		return fail()
+	}
+	// "value" dizisine kadar ilerle; diğer alanları (count vb.) atla.
+	for {
+		t, err := dec.Token()
+		if err != nil {
+			return fail()
+		}
+		if d, ok := t.(json.Delim); ok && d == '}' {
+			return fail() // value alanı yok
+		}
+		key, _ := t.(string)
+		if key == "value" {
+			break
+		}
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return fail()
+		}
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim('[') {
+		return fail()
+	}
+	for dec.More() {
+		var it struct {
 			Path          string `json:"path"`
 			GitObjectType string `json:"gitObjectType"`
 			IsFolder      bool   `json:"isFolder"`
-		} `json:"value"`
-	}
-	if err := json.Unmarshal(body, &lr); err != nil {
-		// Kesilmiş gövde (tavana çarptı) burada patlar — dürüst mesaj.
-		return nil, fmt.Errorf("depo ağacı çözümlenemedi (çok büyük ya da beklenmeyen yanıt)")
-	}
-	paths := make([]string, 0, len(lr.Value))
-	for _, it := range lr.Value {
-		if it.IsFolder || (it.GitObjectType != "" && it.GitObjectType != "blob") {
+		}
+		if err := dec.Decode(&it); err != nil {
+			// Kesik son eleman: eldekini kesik bayrağıyla döndür.
+			if len(res.paths) == 0 {
+				return fail()
+			}
+			res.capped, res.why = true, cappedByBody
+			return res, nil
+		}
+		if it.IsFolder || (it.GitObjectType != "" && it.GitObjectType != "blob") || it.Path == "" {
 			continue
 		}
-		if it.Path == "" {
-			continue
-		}
-		paths = append(paths, it.Path)
-		if len(paths) >= treeMaxPaths {
-			break
+		res.paths = append(res.paths, it.Path)
+		if len(res.paths) >= max {
+			res.capped, res.why = true, cappedByPaths
+			return res, nil
 		}
 	}
-	s.code.put(key, paths)
-	return paths, nil
+	// Gövde tam da eleman sınırında kesilmiş olabilir: dizi kapanmadan
+	// biten bir akışta dec.More() sessizce false döner. Bayt tavanına
+	// dayanmak tek başına yeterli kanıt.
+	if truncated && len(res.paths) > 0 {
+		res.capped, res.why = true, cappedByBody
+	}
+	return res, nil
+}
+
+// scopedTree — TEK bir dizin altını listeler (items?scopePath=…).
+// Kesik ağaçta geri-deneme yolu; cache'i AYRI (kesik ağacı zenginmiş
+// gibi göstermemek için), singleflight anahtarı da ayrı.
+//
+// İkinci dönüş: sonuç CACHE'ten mi geldi — istek bütçesi yalnız
+// gerçek isteklerde harcansın diye.
+func (s *Service) scopedTree(ctx context.Context, cli *http.Client, cfg Settings, ver, repo, branch, scopePath, treeKey string) (treeResult, bool, error) {
+	key := scopedCacheKey(treeKey, scopePath)
+	if r, ok := s.code.getScoped(key); ok {
+		return r, true, nil
+	}
+	v, err, _ := s.treeFlight.Do(key, func() (any, error) {
+		u := repoURL(cfg, repo) + "/items?recursionLevel=Full" +
+			"&scopePath=" + url.QueryEscape(scopePath) +
+			"&versionDescriptor.versionType=branch&versionDescriptor.version=" + url.QueryEscape(branch) +
+			"&api-version=" + ver
+		r, err := s.listItems(ctx, cli, cfg, u)
+		if err != nil {
+			return treeResult{}, err
+		}
+		s.code.putScoped(key, r)
+		return r, nil
+	})
+	if err != nil {
+		return treeResult{}, false, err
+	}
+	return v.(treeResult), false, nil
 }
 
 // fetchItemContent — tek dosyanın metni. Önce JSON+includeContent

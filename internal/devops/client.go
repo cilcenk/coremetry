@@ -165,6 +165,11 @@ type Service struct {
 	// takıldığını görmenin öbür yolu 25 sn beklemekti, o da testi
 	// yazılmadan ölmüş bir kapıya çevirirdi.
 	codeDeadline time.Duration
+	// treeMaxPaths — depo ağacı yol tavanı; 0 → treeMaxPaths sabiti
+	// (v0.9.1269). codeDeadline ile aynı gerekçe: sabite dayanan bir
+	// kapı testte hiç ısırmaz — 60.000 yollu bir ağacı fake sunucuda
+	// üretmek testin kendisini soruna çevirirdi.
+	treeMaxPaths int
 }
 
 func New() *Service {

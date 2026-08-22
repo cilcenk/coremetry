@@ -1223,6 +1223,37 @@ export interface DevOpsSettingsInput {
   repoPrefixes?: string[];
   branchOrder?: string[];
 }
+// DevOpsResolveStep / DevOpsResolveDryRun (v0.9.1242) — "çözümü dene".
+//
+// Konvansiyonu (önek, branş sırası, proje) test etmenin tek yolu, stack
+// taşıyan gerçek bir exception bulup "Kodu da incele"yi tıklamak ve TAM
+// BİR LLM turu ödemekti. Bu uç aynı zinciri sağlayıcıya hiç uğramadan
+// koşar ve her adımın sonucunu ayrı ayrı döner.
+//
+// `steps` SIRALI ve zincir nerede durduysa orada biter: koşmamış bir
+// adım listede YOKTUR (kırmızı gösterilmez — olmayan bir arıza olurdu).
+// `detail` her iki hâlde de dolu: yeşilde ne bulunduğu, kırmızıda
+// nedeni. `fileCount` ağaçtaki dosya sayısı; dosya ADLARI dönmez.
+export interface DevOpsResolveStep {
+  /** connection | pin | repo | project | branch | tree */
+  key: string;
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+export interface DevOpsResolveDryRun {
+  service: string;
+  /** Zincirin TAMAMI yürüdü mü (ağaç dahil). */
+  ok: boolean;
+  steps: DevOpsResolveStep[];
+  repo?: string;
+  project?: string;
+  branch?: string;
+  /** 'pin' = katalogdaki Repository, 'convention' = önek/ek soyma. */
+  source?: string;
+  fileCount?: number;
+}
+
 export interface DevOpsTestResult {
   ok: boolean;
   detectedFlavor?: DevOpsFlavor;

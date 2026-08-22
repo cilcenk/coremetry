@@ -210,3 +210,64 @@ func (s *Server) testDevOpsSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, s.devops.Test(r.Context(), cfg))
 }
+
+// devopsResolveDryRunInput — "çözümü dene" gövdesi. Tek alan: servis
+// adı. Ayarlar KAYITLI hâliyle okunur (test ucunun aksine formdaki
+// taslak değerlerle değil) — soru "kaydettiğim konvansiyon bu servis
+// için ne üretiyor", "kaydetsem ne olurdu" değil.
+type devopsResolveDryRunInput struct {
+	Service string `json:"service"`
+}
+
+// devopsResolveDryRun — servis → depo/branş/ağaç provası (v0.9.1242).
+//
+// Bugüne kadar konvansiyonu denemenin tek yolu, stack taşıyan gerçek
+// bir exception bulup "Kodu da incele"yi tıklamak ve TAM BİR LLM turu
+// ödemekti; yanlış önek de ancak cevabın altındaki bir `reason`
+// satırında görünüyordu (fail-open). Bu uç aynı zinciri sağlayıcıya
+// hiç uğramadan koşar.
+//
+// DÖRT DURUŞ:
+//
+//  1. YAZMAZ. Salt teşhis: ayara dokunmaz, katalogu değiştirmez —
+//     bu yüzden audit satırı YOK (audit yazma eylemlerinin izidir;
+//     her okumayı da yazmak izi kullanışsız hale getirirdi).
+//  2. CACHE YOK. Operatör konvansiyonu düzenleyip yeniden dener;
+//     60 sn'lik bir cache tam da düzelttiği şeyi eski cevapla
+//     gösterirdi. Tek tık = tek istek, admin-only, ve ağır kısmı
+//     (depo ağacı) devops paketinde zaten 10 dk cache'li.
+//  3. SAYAÇLARA KARIŞMAZ. FetchCode'a hiç girilmez, dolayısıyla
+//     v0.9.1241'in isabet-oranı sayaçları kıpırdamaz. Buradaki
+//     RecordCodeOutcome çağrılarının YOKLUĞU bilinçli.
+//  4. BAŞARISIZLIK 200'DÜR. "Depo bulunamadı" operatörün sorusuna
+//     verilmiş BAŞARILI bir cevaptır; test ucunun ({ok,error})
+//     duruşunun aynısı.
+func (s *Server) devopsResolveDryRun(w http.ResponseWriter, r *http.Request) {
+	if s.devops == nil {
+		http.Error(w, "devops connection not available", http.StatusServiceUnavailable)
+		return
+	}
+	var in devopsResolveDryRunInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	service := strings.TrimSpace(in.Service)
+	if service == "" {
+		http.Error(w, "service required", http.StatusBadRequest)
+		return
+	}
+	// Katalog pini — gerçek yoldaki okumanın AYNISI (copilot_code.go
+	// buildCodeContext), pinReadDecision dahil: okuma hatası burada da
+	// fail-CLOSED, çünkü dry-run'ın işi gerçek davranışı göstermek.
+	var pin devops.PinRead
+	if s.store != nil {
+		md, err := s.store.GetServiceMetadataStrict(r.Context(), service)
+		mdRepo := ""
+		if md != nil {
+			mdRepo = md.Repository
+		}
+		pin.Repo, pin.Abort = pinReadDecision(mdRepo, md != nil, err)
+	}
+	writeJSON(w, s.devops.ResolveDryRun(r.Context(), service, pin))
+}

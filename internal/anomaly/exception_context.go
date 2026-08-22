@@ -405,7 +405,7 @@ func assembleExceptionPrompt(g *chstore.ExceptionGroup, trend, stack, traceBlock
 	sb.WriteString(traceBlock)
 	sb.WriteString(logsBlock)
 	sb.WriteString(deployBlock)
-	sb.WriteString("\n\nStacktrace + trace + logları BİRLİKTE yorumla: kök nedeni stack'in en üst uygulama-frame'ine ve trace'te hatanın DOĞDUĞU (en derin error) span'a dayandır; yayılan (propagate) hataları kök sanma.")
+	sb.WriteString("\n\nStacktrace + trace + logları BİRLİKTE yorumla: kök nedeni stack'in EN DERİN \"Caused by\" bölümündeki ilk uygulama-frame'ine (yoksa en üst uygulama-frame'ine) ve trace'te hatanın DOĞDUĞU (en derin error) span'a dayandır; yayılan (propagate) hataları kök sanma.")
 	return sb.String()
 }
 

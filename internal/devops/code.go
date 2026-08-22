@@ -183,6 +183,9 @@ func (s *Service) FetchCode(ctx context.Context, repo, projectHint string, frame
 		// Depo ADIYLA çağırıyoruz; ada göre çözüm proje kapsamı ister.
 		return CodeContext{Repo: repo, Reason: "DevOps ayarında Project boş ve servis adı bilinen bir önekle başlamıyor — Project'i doldurun ya da servis önekini Ayarlar → Kod entegrasyonu'na ekleyin"}
 	}
+	// v0.9.1235 — AppFrames artık EN DERİN "Caused by" segmentinden dışa
+	// doğru seçiyor: üç pencerenin ilki kök nedenin fırlatıldığı satır,
+	// wrapper'ın yeniden-fırlatma satırları arta kalan bütçeye düşüyor.
 	targets := stackparse.AppFrames(frames, codeFrameLimit)
 	if len(targets) == 0 {
 		return CodeContext{Repo: repo, Reason: "stack'te dosya+satır taşıyan uygulama frame'i yok"}
@@ -551,8 +554,10 @@ func WindowAround(content string, line, radius int) CodeWindow {
 // ClampCodeWindows — pencereleri TOPLAM rune bütçesine sığdırır.
 // trimmed=true: en az bir pencere kısaldı ya da tümüyle düştü.
 //
-// Sıra korunur: ilk frame hataya en yakın olandır, bütçe daralınca
-// düşecek olan SON frame'dir. Kesme rune bazlı ve pencere içindeki
+// Sıra korunur: ilk pencere kök nedene en yakın olandır (AppFrames
+// v0.9.1235'ten beri en derin "Caused by" segmentini başa koyuyor),
+// bütçe daralınca düşecek olan SON penceredir — yani dıştaki
+// wrapper/yeniden-fırlatma kodu. Kesme rune bazlı ve pencere içindeki
 // SATIR sınırında yapılır — yarım satır kod, kod değildir.
 func ClampCodeWindows(ws []CodeWindow, maxRunes int) ([]CodeWindow, bool) {
 	if len(ws) == 0 {

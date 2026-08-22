@@ -10,6 +10,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs, tsRel } from '@/lib/utils';
 import { contextStarter, serviceFromRoute } from '@/lib/chatContext';
+import { syncChatParam } from '@/lib/chatUrl';
 import { Empty, Spinner } from './Spinner';
 import { ChatBubble } from './ai/ChatBubble';
 import { useChatThread } from './ai/useChatThread';
@@ -106,7 +107,7 @@ export function CopilotChat() {
   // adı taşımıyorsa backend guided router bunu varsayılan alır ("neden yavaş?"
   // servis sayfasında → o servis). Banner scope'u şeffaf gösterir.
   const loc = useLocation();
-  const [sp] = useSearchParams();
+  const [sp, setSp] = useSearchParams();
   // v0.9.653 — ekrandaki özneden türeyen başlangıç çipi. Saf çözümleyici
   // (lib/chatContext.ts); rota değişince kendiliğinden güncelleniyor.
   const ctxStarter = useMemo(
@@ -156,6 +157,26 @@ export function CopilotChat() {
       service: currentService, operation: currentOp, rangeS, trace: currentTrace,
       persist: true,
     });
+
+  // v0.9.1258 — konuşma deep-link'i (?chat=<convId>): URL → state yarısı.
+  // Ref sig-guard: aynı değer bir kez yüklenir; load zaten akış sürerken
+  // (busyRef) kendini iptal ediyor — yarım cevabın üstüne basılmaz.
+  const chatParamRef = useRef('');
+  useEffect(() => {
+    const want = sp.get('chat') ?? '';
+    if (!want || chatParamRef.current === want) return;
+    chatParamRef.current = want;
+    if (want !== conversationId) {
+      setOpen(true);
+      void load(want);
+    }
+  }, [sp, conversationId, load]);
+  // state → URL yarısı: saf çekirdek karar verir (null = dokunma);
+  // replace:true + prev kopyası — yabancı paramlar korunur.
+  useEffect(() => {
+    const next = syncChatParam(sp, conversationId, open);
+    if (next) setSp(next, { replace: true });
+  }, [sp, setSp, conversationId, open]);
 
   // ── Geçmiş (v0.9.1139) ──
   // Liste YALNIZ çekmece açılışında çekiliyor (ev kuralı: aç-üzerine

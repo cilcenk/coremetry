@@ -27,7 +27,13 @@ import (
 
 // Canlı takım kataloğu — testlerin eşleştiği liste. "payment-service"
 // BİLEREK guidedTestServices ile aynı: takım/servis ad çakışması bu
-// dosyanın asıl konusu. "sy" 3 karakterden kısa (atlanmalı).
+// dosyanın asıl konusu.
+//
+// "sy" ARTIK GEÇERLİ bir takım (v0.9.1246). Operatör: gerçek takım adları
+// "SY"/"UG" gibi 2 harfli kısa kodlar — eski 3-karakter tabanı onların
+// hiçbir soruda çözülmemesi demekti. Kısa kodun yanında uzun kardeşi
+// ("SY-Dijital Bankacılık") duruyor ki "en uzun kazanır" kuralı da
+// kısa-kod dünyasında sınanmış olsun.
 var teamTestTeams = []string{
 	"Avengersy",
 	"SY-Dijital Bankacılık",
@@ -49,12 +55,19 @@ func TestExtractTeamEntity(t *testing.T) {
 		{"ı/i katlaması (ascii yazım)", "sy-dijital bankacilik servisleri", "SY-Dijital Bankacılık"},
 		{"ı/i katlaması (tam büyük)", "SY-DIJITAL BANKACILIK", "SY-Dijital Bankacılık"},
 		{"aksanlı yazım aynen", "sy-dijital bankacılık", "SY-Dijital Bankacılık"},
-		// En uzun ad kazanır: "sy" zaten atlanıyor, ama uzun ad kısa
-		// adayı gölgelemeli.
+		// En uzun ad kazanır: kısa kod ("sy") uzun kardeşinin içinde
+		// geçse bile gölgelenmeli.
 		{"en uzun eşleşme kazanır", "sy-dijital bankacılık takımı", "SY-Dijital Bankacılık"},
 		{"servisle aynı ad — çıkarım katalogdan, karar router'ın", "payment-service", "payment-service"},
 		{"sınır: ad-içi eşleşme yok", "avengersy-legacy nasıl", ""},
-		{"3 karakterden kısa takım atlanır", "sy", ""},
+		// v0.9.1246 (operatör: takım adları "SY"/"UG" gibi 2 harfli
+		// olabilir) — eskiden "" bekleniyordu (3-karakter tabanı).
+		// Taban kalksaydı bile eşleşme SINIRLI kalır: aşağıdaki iki
+		// vaka kısa kodun rastgele metnin içine yapışMADIĞINI çiviliyor.
+		{"2 harflik kısa kod (çip turu)", "sy", "sy"},
+		{"2 harflik kod cümle içinde", "sy takımının exceptionları", "sy"},
+		{"kısa kod ad-içinde eşleşmez", "kaysysteam nasıl", ""},
+		{"kısa kod uzun kardeşine yapışmaz", "avengersy", "Avengersy"},
 		{"katalogda olmayan", "checkout-service nasıl", ""},
 		{"boş katalog", "avengersy", ""},
 	}
@@ -103,8 +116,14 @@ func TestMayNameTeam(t *testing.T) {
 		{"avengersy", true},
 		{"sy-dijital bankacılık", true},
 		{"Avengersy takımı", true},
+		// v0.9.1246 — 2 harflik takım KODLARI ("SY"/"UG") gerçek
+		// (operatör). "hangi takım?" çipine basınca mesaj tam olarak bu
+		// çıplak koddan ibaret olur; kapı 3-karakter tabanında kalsaydı
+		// çip serbest tool döngüsüne düşer ve diyalog vaadini kırardı.
+		{"sy", true},
+		{"UG?", true},
 		{"", false},
-		{"a b", false}, // 3 karakterden uzun token yok
+		{"a b", false}, // 2 karakterden uzun token yok
 		{"bu uzun bir cümle ve beş kelimeden fazla token taşıyor", false},
 		{"çok çok çok çok uzun bir takım adı olamayacak kadar uzun metin burada", false},
 	}
@@ -303,8 +322,14 @@ func TestTeamServicesLinksAvoidDeadServicesParam(t *testing.T) {
 		Intent: guidedTeamServices, Team: "Avengersy",
 		TeamServices: []string{"päy ments", "checkout-service"},
 	})
-	if len(links) != 2 {
-		t.Fatalf("takım cevabı iki link taşımalı (Servisler + en kötü servis): %+v", links)
+	// v0.9.1246 — üçüncü link: takım-filtreli exception kuyruğu. /inbox
+	// ?team='i GERÇEKTEN okuyor (readInboxTeam, lib/inboxUrl.ts), yani
+	// bu link ölü param değil; aşağıdaki K4 pini o okumayı da çiviliyor.
+	if len(links) != 3 {
+		t.Fatalf("takım cevabı üç link taşımalı (Servisler + en kötü servis + takım exception'ları): %+v", links)
+	}
+	if links[2].Href != "/inbox?kind=exception&team=Avengersy" {
+		t.Errorf("takım exception linki beklenen şekilde değil: %s", links[2].Href)
 	}
 	for _, l := range links {
 		if !strings.HasPrefix(l.Href, "/") || l.Label == "" {

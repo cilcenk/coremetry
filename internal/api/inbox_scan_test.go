@@ -325,7 +325,7 @@ func TestIncidentToInbox(t *testing.T) {
 // full TTL and nothing failed loudly. The prefix must match both the list key
 // and the count key.
 func TestInboxListCachePrefixMatchesKeys(t *testing.T) {
-	listKey := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc", 5, nil, nil)
+	listKey := inboxListKey("open", "", "", "", "", "", "", 200, "priority", "desc", 5, nil, nil)
 	if !strings.HasPrefix(listKey, inboxListCachePrefix) {
 		t.Errorf("list key %q is not dropped by prefix %q", listKey, inboxListCachePrefix)
 	}
@@ -550,17 +550,15 @@ func TestApplyInboxFacets(t *testing.T) {
 // The facets change WHICH rows come back, so two operators on different
 // facets must not share one cached page — the v0.5.187 shape.
 func TestInboxFacetsInCacheKey(t *testing.T) {
-	base := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc", 5, inboxKindsAll, inboxPriosAll)
-	exc := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc", 5, []string{"exception"}, inboxPriosAll)
-	p1 := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc", 5, inboxKindsAll, []string{"P1"})
+	base := inboxListKey("open", "", "", "", "", "", "", 200, "priority", "desc", 5, inboxKindsAll, inboxPriosAll)
+	exc := inboxListKey("open", "", "", "", "", "", "", 200, "priority", "desc", 5, []string{"exception"}, inboxPriosAll)
+	p1 := inboxListKey("open", "", "", "", "", "", "", 200, "priority", "desc", 5, inboxKindsAll, []string{"P1"})
 	if base == exc || base == p1 || exc == p1 {
 		t.Errorf("facet variants collide:\n base=%s\n exc=%s\n p1=%s", base, exc, p1)
 	}
 	// Order must NOT matter: ?kind=a,b and ?kind=b,a are one view.
-	ab := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc", 5,
-		[]string{"exception", "incident"}, inboxPriosAll)
-	ba := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc", 5,
-		[]string{"incident", "exception"}, inboxPriosAll)
+	ab := inboxListKey("open", "", "", "", "", "", "", 200, "priority", "desc", 5, []string{"exception", "incident"}, inboxPriosAll)
+	ba := inboxListKey("open", "", "", "", "", "", "", 200, "priority", "desc", 5, []string{"incident", "exception"}, inboxPriosAll)
 	if ab != ba {
 		t.Errorf("facet order changed the key:\n %s\n %s", ab, ba)
 	}

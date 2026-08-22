@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // v0.9.650 — operatör: "Takımıma ait servislerin hataları (Exceptions)
 // neler?"
@@ -157,6 +160,52 @@ func TestServiceHealthChipsCarryOperatorDrilldowns(t *testing.T) {
 	for k, seen := range want {
 		if !seen {
 			t.Errorf("%q çipi kayıp, üretilen: %v", k, got)
+		}
+	}
+}
+
+// v0.9.1246 — operatör: "Takımımın exceptionları dediğinde o takım
+// filtreli exceptions açabilir."
+//
+// Cevabın altındaki derin link, dilimin OPERATÖRE GÖRÜNEN yarısı: cevap
+// takımın exception'larını sayarken link TÜM filonun kuyruğunu açıyordu,
+// yani operatör sayfada kendi takımını elle aramak zorundaydı ve iki sayı
+// (cevaptaki ile sayfadaki) birbirini tutmuyordu.
+//
+// Takım adı SUNUCUDA çözülüyor (guidedMyTeamBundle: CallMeta → users →
+// User.Team → katalog yazımı) ve URL'e KANONİK ADIYLA yazılıyor: "benim"
+// kelimesi URL'e girseydi paylaşılan link, açan kişinin takımını
+// gösterirdi.
+func TestMyExceptionsLinkCarriesResolvedTeam(t *testing.T) {
+	links := guidedAnswerLinks(guidedRoute{Intent: guidedMyExceptions, Team: "SY"})
+	if len(links) != 1 {
+		t.Fatalf("tek link beklenir: %+v", links)
+	}
+	if links[0].Href != "/inbox?kind=exception&team=SY" {
+		t.Errorf("link %q — takım-filtreli exception görünümü açmalı", links[0].Href)
+	}
+	if links[0].Label != "SY · Exceptions" {
+		t.Errorf("etiket takımı söylemeli, got %q", links[0].Label)
+	}
+
+	// Takım ÇÖZÜLMEDİYSE (kimlik yok / takım atanmamış / takımın hiç
+	// servisi yok) link filo geneline döner. Yanlış kapsamlı bir link
+	// linksizlikten kötü, ama "hiç link yok" da çıkmazdır — kuyruğun
+	// kendisi hâlâ doğru hedef.
+	fallback := guidedAnswerLinks(guidedRoute{Intent: guidedMyExceptions})
+	if len(fallback) != 1 || fallback[0].Href != "/inbox?kind=exception" {
+		t.Errorf("takımsız cevapta düz exception kuyruğu beklenir: %+v", fallback)
+	}
+}
+
+// Kimlik URL'e SIZMAMALI: link paylaşılabilir olmalı.
+func TestMyExceptionsLinkHasNoIdentityToken(t *testing.T) {
+	for _, team := range []string{"SY", "UG", "Ödeme Takımı"} {
+		l := guidedAnswerLinks(guidedRoute{Intent: guidedMyExceptions, Team: team})[0]
+		for _, bad := range []string{"benim", "me=", "user=", "self"} {
+			if strings.Contains(strings.ToLower(l.Href), bad) {
+				t.Errorf("link kimlik taşıyor (%q): %s", bad, l.Href)
+			}
 		}
 	}
 }

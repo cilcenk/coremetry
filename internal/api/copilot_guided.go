@@ -620,16 +620,25 @@ func extractEnvEntity(msg string, envs []string) string {
 // ÇIPLAK takım adı da eşleşir ("avengersy") — "hangi takım?" sorusuna
 // verilen cevap turu tam olarak bu şekildedir ve akışın tek dayanağıdır.
 //
-// 3 karakterden kısa ve stopword olan takım adları BİLEREK atlanır: iki
-// harflik bir takım adı ("sy") rastgele metnin içinde sınırlı eşleşme
-// yakalayıp tüm sohbeti kaçırırdı — deterministic beats clever.
+// UZUNLUK TABANI 2 (v0.9.1246, operatör: gerçek takım adları "SY"/"UG"
+// gibi 2 harfli KISA kodlar). v0.9.1134'te taban 3'tü ve gerekçesi "iki
+// harflik bir ad rastgele metnin içinde eşleşir" idi — ölçüldüğünde bu
+// gerekçe indexBounded'ı yok sayıyordu: eşleşme zaten SINIRLI, yani
+// "sy" ancak kendi başına bir token olarak yakalanır ("sy takımının
+// exception'ları" ✓, "kaysysteam" ✗). Taban 3 kalsaydı operatörün
+// GERÇEK takımı hiçbir soruda çözülemezdi — sessiz ve kalıcı bir
+// çıkmaz. Stopword kapısı yerinde duruyor ve adlar CANLI katalogdan
+// geliyor, yani yüzey katalogla sınırlı.
+//
+// Tek karakter hâlâ dışarıda: tek harflik bir token noktalama/kısaltma
+// gürültüsüyle karışır ve katalogda böyle bir ad görülmedi.
 func extractTeamEntity(msg string, teams []string) string {
 	folded := chstore.NormTeamName(msg)
 	best := ""
 	bestLen := 0
 	for _, t := range teams {
 		ft := chstore.NormTeamName(t)
-		if len(ft) < 3 || guidedStopwords[ft] || len(ft) <= bestLen {
+		if utf8.RuneCountInString(ft) < 2 || guidedStopwords[ft] || len(ft) <= bestLen {
 			continue
 		}
 		if indexBounded(folded, ft) >= 0 {
@@ -697,7 +706,13 @@ func mayNameTeam(norm string) bool {
 		return false
 	}
 	for _, t := range toks {
-		if utf8.RuneCountInString(t) >= 3 {
+		// v0.9.1246 — taban 3 → 2. "SY" / "UG" gibi 2 harfli takım
+		// KODLARI gerçek (operatör), ve "hangi takım?" çipine basınca
+		// mesaj tam olarak o çıplak koddan ibaret oluyor: taban 3'te
+		// kapı kapalı kalır, çip serbest tool döngüsüne düşer ve
+		// diyalog vaadini kırardı. Bedeli, sinyalsiz kısa mesajlarda
+		// üç adet 60sn-cache'li katalog okuması.
+		if utf8.RuneCountInString(t) >= 2 {
 			return true
 		}
 	}
@@ -1748,7 +1763,8 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 		emitGuidedStepResult(emit, nTeam, "resolve_user_team", "", merr)
 		return "", "", merr
 	}
-	svcs := servicesForUserTeam(s.teamAliasesCtx(ctx), mds, u.Team)
+	ta := s.teamAliasesCtx(ctx)
+	svcs := servicesForUserTeam(ta, mds, u.Team)
 	if len(svcs) == 0 {
 		ev := fmt.Sprintf("%q takımı hiçbir serviste ownerTeam/sreTeam olarak geçmiyor (Service Catalog). Kullanıcıya söyle: katalogda takım ataması yapılmalı.\n", u.Team)
 		emitGuidedStepResult(emit, nTeam, "resolve_user_team", ev, nil)
@@ -1762,6 +1778,23 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 	// v0.9.651 — çözülen liste rotaya yazılıyor; guidedSuggestions
 	// buradan servis-adlı çipler üretiyor.
 	route.TeamServices = svcs
+	// v0.9.1246 — KİMLİK burada çözülüyor, LİNKTE değil: "takımımın
+	// exception'ları" cevabının altındaki derin link
+	// /inbox?kind=exception&team=<AD> yazacak, yani URL paylaşılabilir
+	// olmalı ve "benim" kelimesini TAŞIYAMAZ (başkasının açtığı link
+	// onun takımını gösterirdi — kimlik URL'e girmez).
+	//
+	// Yazım KATALOGDAN (TeamDisplayName): users tablosunda "sy" yazıyor
+	// olabilir ama katalogda "SY" geçiyorsa çipte kataloğun yazımı
+	// görünmeli. Eşleşme zaten katlamalı (TeamEqual), yani fark
+	// yalnızca operatörün GÖRDÜĞÜ metinde — ve orada iki yazım iki ayrı
+	// takım gibi okunuyor.
+	//
+	// Servissiz takımda (yukarıdaki erken dönüş) bilerek YAZILMIYOR:
+	// cevabın kendisi "bu takım hiçbir serviste geçmiyor" diyorken
+	// takım-filtreli boş bir sayfaya link vermek, cevabı tekrar eden
+	// bir çıkmaz olurdu.
+	route.Team = mcptools.TeamDisplayName(ta, mds, u.Team)
 	header := fmt.Sprintf("Kullanıcının takımı: %s — %d servis (owner/SRE eşleşmesi).\n", u.Team, len(svcs)+trimmed)
 	if trimmed > 0 {
 		header += fmt.Sprintf("Not: ilk %d servis okundu, %d servis dışarıda kaldı.\n", maxTeamServices, trimmed)

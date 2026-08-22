@@ -1988,6 +1988,10 @@ export const api = {
     // shared links; the page's search box drives this.
     q?: string;
     ownerTeam?: string; sreTeam?: string;
+    // v0.9.1246 — ?team=: owner VEYA SRE eşleşmesi (birleşim), sunucuda
+    // servicesForUserTeam ile çözülür ve cache anahtarına KATLANMIŞ
+    // hâliyle girer ("sy" ile "SY" tek girdi).
+    team?: string;
     env?: string; // v0.8.387 — service-scoped, same semantics as /api/problems
     limit?: number;
     // v0.9.319 — server-side sort. Ranking happens over the whole candidate

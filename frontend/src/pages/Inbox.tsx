@@ -11,7 +11,7 @@ import { useInbox, useServicesMetadata } from '@/lib/queries';
 import { tsLong, fmtFixed, fmtAgoNs } from '@/lib/utils';
 import { IconSparkles } from '@/components/icons';
 import { teamOptionsCI } from '@/lib/teamOptions';
-import { decodeCsvSet, encodeCsvSet } from '@/lib/inboxUrl';
+import { decodeCsvSet, encodeCsvSet, readInboxTeam, INBOX_TEAM_PARAM } from '@/lib/inboxUrl';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { useDataTable, DataTableHead, DataTableColgroup, resolveInitialSort } from '@/components/DataTable';
 import { FacetMultiSelect } from '@/components/ui/FacetMultiSelect';
@@ -162,6 +162,15 @@ export default function InboxPage() {
   const qc = useQueryClient();
   const ownerFilter = searchParams.get('owner') ?? '';
   const sreFilter = searchParams.get('sre') ?? '';
+  // v0.9.1246 (operatör: "takımımın exception'ları dediğinde o takım
+  // filtreli exceptions açabilir") — TEK EKSENLİ takım süzgeci: takım
+  // owner VEYA SRE olarak geçiyorsa satır kalır. owner/sre açılırlarından
+  // FARKLI ve bilerek: onlar iki ayrı eksen (AND), bu birleşim.
+  //
+  // Kendi açılır menüsü YOK — kaynağı sohbetin derin linki ve paylaşılan
+  // URL. Karşılığında GÖRÜNÜR bir çip basıyoruz (× ile temizlenir): bir
+  // filtre görünmezse operatör eksik listeyi "sistem boş" diye okur.
+  const teamFilter = readInboxTeam(searchParams);
   // v0.9.320 — occurrence floor, same semantics and same default as
   // /problems (v0.9.315) so the two surfaces can't disagree about what
   // counts as noise. URL-borne like every other facet here, so a saved view
@@ -261,6 +270,10 @@ export default function InboxPage() {
   const setSearchFilter = (v: string) => setParam('q', v || null);
   const setOwnerFilter = (v: string) => setParam('owner', v || null);
   const setSreFilter = (v: string) => setParam('sre', v || null);
+  // v0.9.1246 — param ADI tek yerden (INBOX_TEAM_PARAM): okuyan taraf
+  // (readInboxTeam) ile yazan taraf aynı sabiti kullanmalı, yoksa çipin
+  // × düğmesi filtreyi TEMİZLEMEZ ve operatör "kaldıramıyorum" der.
+  const setTeamFilter = (v: string) => setParam(INBOX_TEAM_PARAM, v || null);
   // v0.9.341 — an EXCEPTION row opens its full detail page, not the drawer.
   //
   // Operator: "Eskiden occurrences görürdüm, şimdi göremiyorum exception'a
@@ -307,6 +320,7 @@ export default function InboxPage() {
     q: searchFilter || undefined,
     ownerTeam: ownerFilter || undefined,
     sreTeam: sreFilter || undefined,
+    team: teamFilter || undefined,
     env: env || undefined,
     limit: 300,
     sort: srvSort.id ?? 'priority',
@@ -333,7 +347,7 @@ export default function InboxPage() {
   // a filter is actually active: unfiltered, the priority-ranked page is the
   // honest top of the queue and `capped` already covers it. Filtered, silence
   // would let "no results" mean "none exist".
-  const anyFilter = !!(serviceFilter || searchFilter || ownerFilter || sreFilter || env);
+  const anyFilter = !!(serviceFilter || searchFilter || ownerFilter || sreFilter || teamFilter || env);
   const scanCapped = !inboxQ.isPending && !inboxQ.isError
     && !!inboxQ.data?.scanCapped && anyFilter;
   const hiddenByMinOcc = inboxQ.data?.hiddenByMinOcc ?? 0;
@@ -664,6 +678,18 @@ export default function InboxPage() {
               removeLabel={`Remove the ${serviceFilter} service filter`}
               title="Service filter carried in the URL (?service=). Narrows on top of the search box.">
               service: {serviceFilter}
+            </Chip>
+          )}
+          {/* v0.9.1246 — takım süzgeci GÖRÜNÜR. Sohbetten gelen derin link
+              (/inbox?kind=exception&team=SY) sayfayı sessizce daraltmamalı:
+              görünmeyen bir filtre, kısa listeyi "kuyrukta bir şey yok" diye
+              okutur (v0.9.330'un prod dersi). Viewer da bu çipi görür —
+              rolü ne olursa olsun durumu GÖRÜR, silik panel değil. */}
+          {teamFilter && (
+            <Chip onRemove={() => setTeamFilter('')}
+              removeLabel={`${teamFilter} takım filtresini kaldır`}
+              title="Takım süzgeci URL'de taşınıyor (?team=). Servisin ownerTeam VEYA sreTeam'i bu takımsa satır kalır; owner/SRE açılırlarıyla birlikte kullanılırsa hepsi birden daraltır.">
+              takım: {teamFilter}
             </Chip>
           )}
         </div>

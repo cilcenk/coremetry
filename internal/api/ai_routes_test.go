@@ -72,13 +72,61 @@ func TestNoInlineCopilotGates(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s okunamadı: %v", f, err)
 		}
+		src := string(b)
+		// v0.9.1281 — muafiyet ADA değil MEKANİZMAYA bağlandı.
+		//
+		// Kapının adı "handler-içi copilot kapısı" ve korktuğu şey somut:
+		// bir HTTP ucunun 503 ön-kapısını middleware yerine gövdesine
+		// kopyalaması. HİÇ handler İÇERMEYEN bir dosya bu hatayı tanım
+		// gereği yapamaz — requireCopilot HTTP middleware'i, sarabileceği
+		// bir route yoksa reçete de uygulanamaz.
+		//
+		// Somut vaka: rca_auto_verdict.go (v0.9.1281). Arka plan işçisi
+		// tarafından çağrılan bir metot; ResponseWriter yok, route yok,
+		// dönecek 503 yok. Doğru davranış ProblemExplainer'ınkinin aynısı
+		// — sessizce atlamak — ve o da `!s.copilot.Active()` yazılışını
+		// gerektiriyor.
+		//
+		// Muafiyet DAR: dosyaya bir handler eklenir eklenmez kapı geri
+		// gelir. Yani bu, muhafızı gevşetmek değil, korktuğu şeyi
+		// dosya adı listesi yerine mekanizmayla ifade etmek.
+		if !strings.Contains(src, "http.ResponseWriter") {
+			continue
+		}
 		for _, sp := range spellings {
 			if sp.allowed[f] {
 				continue
 			}
-			if strings.Contains(string(b), sp.needle) {
+			if strings.Contains(src, sp.needle) {
 				t.Errorf("%s: handler-içi copilot kapısı (%s) — %s", f, sp.needle, sp.hint)
 			}
+		}
+	}
+}
+
+// TestWorkerCopilotGateStaysGuarded — yukarıdaki muafiyetin karşı ağırlığı
+// (v0.9.1281).
+//
+// Muafiyet "handler yoksa serbest" diyor. Bu test, muaf tutulan dosyanın
+// GERÇEKTEN handler'sız olduğunu ve kapıyı da GERÇEKTEN taşıdığını
+// pinliyor. İkisi birden gerekli: kapısız kalırsa arka plan işçisi Copilot
+// kapalıyken sağlayıcıyı döver (v0.9.200'ün devre kesicisini kuran olay),
+// handler kazanırsa muafiyet geçersizleşir ve üstteki tarama zaten yanar.
+func TestWorkerCopilotGateStaysGuarded(t *testing.T) {
+	b, err := os.ReadFile("rca_auto_verdict.go")
+	if err != nil {
+		t.Fatalf("rca_auto_verdict.go okunamadı: %v", err)
+	}
+	src := string(b)
+	if strings.Contains(src, "http.ResponseWriter") {
+		t.Fatal("rca_auto_verdict.go artık HTTP handler içeriyor — muafiyet " +
+			"geçersiz; ucu ai_routes.go'da requireCopilot ile sar")
+	}
+	for _, needle := range []string{"s.copilot.Active()", "QuotaBackoffActive()", "AutoExplainEnabled()"} {
+		if !strings.Contains(src, needle) {
+			t.Errorf("otomatik verdict yolu %s kapısını kaybetmiş — arka plan "+
+				"tüketicisi Copilot kapalıyken/kotada sağlayıcıyı dövmeye devam eder "+
+				"(ProblemExplainer.tickIfLeader ile aynı üçlü)", needle)
 		}
 	}
 }

@@ -1061,8 +1061,16 @@ func main() {
 	// then render a "Root cause: <suspect> (NN%)" ribbon (rc #3) with no
 	// per-row synthesis. Leader-gated + batched like the explainer; no Copilot
 	// dependency (deterministic ranking only). v0.8.x — worker-only.
+	//
+	// v0.9.1281 — KURULUR ama HENÜZ BAŞLATILMAZ. Derin soruşturma
+	// kapısından geçen vakalarda artık otomatik kök-neden VERDICT'i de
+	// üretiliyor ve üretici api.Server'da yaşıyor (prompt + kalkanlar +
+	// kanıt kataloğu orada; anomaly→api importu derleme döngüsü olurdu).
+	// Bu yüzden kanca Server kurulduktan SONRA bağlanıp döngü ondan sonra
+	// başlıyor: Start()'tan sonra yazmak koşan tick'le yarışırdı.
+	var rcSynth *anomaly.RootCauseSynthesizer
 	if mode.worker {
-		go anomaly.NewRootCauseSynthesizer(store, lockImpl).Start(ctx)
+		rcSynth = anomaly.NewRootCauseSynthesizer(store, lockImpl)
 	}
 
 	// ── HTTP server (OTLP + API + UI) ─────────────────────────────────────────
@@ -1076,6 +1084,14 @@ func main() {
 
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, bus)
 	srv.SetRAG(ragSvc)
+	// v0.9.1281 — kanca bağlanır, ANCAK ŞİMDİ döngü başlar. Kanca kendi
+	// kapılarını taşıyor (AutoExplainEnabled / Active / kota devre-kesici
+	// / 30dk dedup), yani burada ek bir koşul yok: kapalı bir Copilot'ta
+	// çağrı sessizce hiçbir şey yapmaz.
+	if rcSynth != nil {
+		rcSynth.SetAutoVerdict(srv.AutoRCAVerdict)
+		go rcSynth.Start(ctx)
+	}
 	// v0.9.775 — exception triyaj pencereleri (P1 tazeliği / P2 aynı-gün)
 	// system_settings'ten. Boot'ta hidrate, sonra 30 sn'de bir yenile:
 	// çok-pod kurulumda bir podda yapılan PUT diğerlerine bu döngüyle

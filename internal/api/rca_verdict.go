@@ -182,6 +182,20 @@ const rcaVerdictSurface = "rootcause-verdict"
 // verdict.summary'ye yazılır, prose'a DEĞİL — aksi hâlde yedek cümle
 // gerçek LLM anlatımıyla aynı kutuda çizilir ve operatör ayırt edemez.
 func (s *Server) buildRCAVerdict(ctx context.Context, h *chstore.RootCauseHypothesis, anchorStartNs int64) (*RCAVerdict, *string) {
+	return s.buildRCAVerdictSurface(ctx, rcaVerdictSurface, h, anchorStartNs)
+}
+
+// buildRCAVerdictSurface — v0.9.1281. Aynı üretim, ATIF ETİKETİ dışarıdan.
+//
+// Tek fark surface ve tam da bu yüzden ayrı: otomatik üretim (worker) ile
+// tıklamalı üretim (✨ Explain) ai_calls'ta AYNI satır sınıfına düşemez.
+// Düşselerdi /ai kalite paneli "model ne kadar iyi cevap veriyor"
+// sorusunu iki farklı trafiği harmanlayarak cevaplardı ve arka plan
+// maliyeti hiç görünmezdi.
+//
+// Mantık gövdesi kopyalanmadı: buildRCAVerdict artık bunu çağırıyor.
+func (s *Server) buildRCAVerdictSurface(ctx context.Context, surface string,
+	h *chstore.RootCauseHypothesis, anchorStartNs int64) (*RCAVerdict, *string) {
 	// v0.9.1203 (Faz 6.1) — katalog artık hipotezin ötesini de anlatır:
 	// BlastRadius + Correlations + BubbleUp, E-uzayına satır olur.
 	// Toplama soft-fail; boş extras = bugüne kadarki katalog.
@@ -211,7 +225,7 @@ func (s *Server) buildRCAVerdict(ctx context.Context, h *chstore.RootCauseHypoth
 		}
 	}
 
-	raw, err := s.copilotExplainJSONSurface(ctx, rcaVerdictSurface,
+	raw, err := s.copilotExplainJSONSurface(ctx, surface,
 		copilot.SystemPromptRCAVerdict(),
 		buildRCAVerdictPrompt(h, cat, rivals, sigs, time.Now()),
 		rcaVerdictSchema(entities, rivals))

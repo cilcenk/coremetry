@@ -41,7 +41,8 @@ func sampleVerdict() *RCAVerdict {
 // indirdiği görünmez.
 func TestRecordCarriesTheShieldedVerdict(t *testing.T) {
 	h := &chstore.RootCauseHypothesis{Version: 42, Service: "checkout-service"}
-	rec, ok := rcaVerdictRecordOf("ex-1", "problem", "p-9", h, sampleVerdict())
+	rec, ok := rcaVerdictRecordOf("ex-1", "problem", "p-9",
+		chstore.RCAVerdictSourceOperator, h, sampleVerdict(), nil)
 	if !ok {
 		t.Fatal("kayıt üretilmedi")
 	}
@@ -75,11 +76,13 @@ func TestRecordCarriesTheShieldedVerdict(t *testing.T) {
 // geri bildirime yarar. Yazmak, sonradan hiçbir soruya cevap vermeyen
 // satır biriktirmek olurdu — üstelik toplamları şişirerek.
 func TestRecordSkippedWithoutIdentity(t *testing.T) {
-	if _, ok := rcaVerdictRecordOf("", "problem", "p-1", nil, sampleVerdict()); ok {
+	if _, ok := rcaVerdictRecordOf("", "problem", "p-1",
+		chstore.RCAVerdictSourceOperator, nil, sampleVerdict(), nil); ok {
 		t.Error("kimliksiz verdict kaydedilecekti — ai_feedback'e join olamaz, " +
 			"yalnız toplamları şişirir")
 	}
-	if _, ok := rcaVerdictRecordOf("ex-1", "problem", "p-1", nil, nil); ok {
+	if _, ok := rcaVerdictRecordOf("ex-1", "problem", "p-1",
+		chstore.RCAVerdictSourceOperator, nil, nil, nil); ok {
 		t.Error("nil verdict kaydedilecekti — boş satır ölçümde 'karar verildi' " +
 			"diye sayılır ama hiçbir şey söylemez")
 	}
@@ -87,7 +90,8 @@ func TestRecordSkippedWithoutIdentity(t *testing.T) {
 
 // TestRecordSurvivesNilHypothesis — savunmacı yol çökmemeli.
 func TestRecordSurvivesNilHypothesis(t *testing.T) {
-	rec, ok := rcaVerdictRecordOf("ex-2", "anomaly", "a-1", nil, sampleVerdict())
+	rec, ok := rcaVerdictRecordOf("ex-2", "anomaly", "a-1",
+		chstore.RCAVerdictSourceOperator, nil, sampleVerdict(), nil)
 	if !ok {
 		t.Fatal("hipotez nil diye kayıt tamamen düştü — verdict yine de verildi")
 	}

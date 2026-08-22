@@ -95,12 +95,39 @@ const (
 	synthesizerRecentAnomaly = 30 * time.Minute
 )
 
+// AutoVerdictFunc — derin soruşturma sonrası kök-neden VERDICT'ini üretip
+// kalıcılaştıran kanca (v0.9.1281).
+//
+// Neden fonksiyon değeri, neden doğrudan çağrı değil: üretici
+// api.Server'da yaşıyor (prompt + kalkanlar + kanıt kataloğu orada) ve
+// api paketi zaten anomaly'yi import ediyor (insight.go). Ters yönde bir
+// import derleme döngüsü olurdu. Paketi taşımak yerine — ki bu kalkan
+// zincirinin tamamını kıpırdatırdı — main.go kablolamasında tek bir
+// metot değeri enjekte ediliyor.
+//
+// nil ⇒ özellik kapalı (api/ingest kipleri, ya da worker'ın Server'dan
+// önce başladığı bir kablolama). Kanca yokken davranış v0.9.1280 ile
+// birebir aynı.
+type AutoVerdictFunc func(ctx context.Context, anchorKind string, h *chstore.RootCauseHypothesis, anchorStartNs int64) error
+
 type RootCauseSynthesizer struct {
 	store    *chstore.Store
 	lock     cache.Lock
 	leader   *cache.LeaderHolder
 	interval time.Duration
 	batch    int
+	// autoVerdict — bkz. AutoVerdictFunc. Start() öncesinde SetAutoVerdict
+	// ile kuruluyor; tick'ler tek goroutine'de koştuğu için yarış yok.
+	autoVerdict AutoVerdictFunc
+}
+
+// SetAutoVerdict — kancayı bağlar. Start()'tan ÖNCE çağrılmalı (main.go
+// bunu yapıyor): sonrasında yazmak, koşan tick'le yarışırdı.
+func (s *RootCauseSynthesizer) SetAutoVerdict(fn AutoVerdictFunc) {
+	if s == nil {
+		return
+	}
+	s.autoVerdict = fn
 }
 
 func NewRootCauseSynthesizer(store *chstore.Store, lock cache.Lock) *RootCauseSynthesizer {
@@ -236,7 +263,8 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 			// sınırlı okuma sözleşmesi aynen.
 			prio := chstore.EnrichProblemsWithPriority([]chstore.Problem{p})
 			isP1 := len(prio) > 0 && prio[0].Priority == "P1"
-			if shouldDeepInvestigate(isP1, bundle.Deploy != nil) {
+			deep := shouldDeepInvestigate(isP1, bundle.Deploy != nil)
+			if deep {
 				if plan := investigationPlan(p); len(plan) > 0 {
 					d := gatherDeepEvidence(ctx, s.store, p, plan, now.Add(-evidenceWindow), now)
 					h.Deep = &d
@@ -245,6 +273,28 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 			if err := s.store.UpsertHypothesis(ctx, h); err != nil {
 				log.Printf("[rootcause-synth] upsert problem %s: %v", p.ID, err)
 				continue
+			}
+			// v0.9.1281 — OTOMATİK VERDICT, derin soruşturma kapısında.
+			//
+			// Kapı KASTEN genişletilmedi: yalnız derin soruşturmanın
+			// ZATEN koştuğu vakalar (P1 veya deploy-korelasyonlu).
+			// Gerekçe iki katlı — (1) kota: yeni bir tetikleyici sınıf,
+			// açık her critical problemi LLM çağrısına çevirirdi ve
+			// prod'da o sayı 100'ün üstünde; (2) kalite: verdict'in
+			// değeri kanıtın derinliğiyle orantılı, sığ paketle üretilen
+			// bir karar hem pahalı hem zayıf olurdu.
+			//
+			// Hipotez YAZILDIKTAN SONRA çağrılıyor ve sırası önemli:
+			// üretici h.Deep'i okuyor, yani kanıt kalıcı olmadan
+			// üretilen bir verdict, dayandığı kanıtı gösteremezdi.
+			//
+			// EN İYİ ÇABA: hata hipotez yazımını geçersiz kılmaz,
+			// yalnız loglanır. Bu döngünün asıl ürünü hipotez; verdict
+			// onun üstüne bir ek.
+			if deep && s.autoVerdict != nil {
+				if err := s.autoVerdict(ctx, "problem", &h, p.StartedAt); err != nil {
+					log.Printf("[rootcause-synth] auto verdict problem %s: %v", p.ID, err)
+				}
 			}
 			done++
 		}

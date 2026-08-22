@@ -4,9 +4,12 @@ import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from './Spinner';
 import { IconFlame } from './icons';
 import { api } from '@/lib/api';
-import type { RootCauseSummary, RootCause, AnomalyRootCause, ScoredCause, RCAVerdict } from '@/lib/types';
+import type {
+  RootCauseSummary, RootCause, AnomalyRootCause, ScoredCause, RCAVerdict,
+  PersistedRCAVerdict,
+} from '@/lib/types';
 import { RCAVerdictPanel } from './RCAVerdictPanel';
-import { fmtDurShort } from '@/lib/utils';
+import { fmtDurShort, fmtDateTime } from '@/lib/utils';
 import { serviceHref } from '@/lib/serviceHref';
 
 // RootCauseRibbon (rc #3) — the in-page "Root cause: <suspect> (NN%) ▸" chip on
@@ -303,6 +306,26 @@ function ExplainBlock({ anchor, id }: { anchor: 'problem' | 'anomaly'; id: strin
   // v0.9.592 — cevabın kimliği; 👍/👎 bununla gider. Yoksa panel
   // derecelendirme affordance'ını HİÇ çizmez (ölü düğme üretmemek).
   const [exchangeId, setExchangeId] = useState<string | undefined>(undefined);
+  // v0.9.1281 — KALICI kayıt. Genişletmede okunur (ÜRETİMSİZ uç: model
+  // çağırmaz, 60s sunucu önbellekli satır okuması) — yani ✨ Explain'in
+  // "asla mount/expand'de çağırma" kuralı buraya UYGULANMAZ, o kural
+  // Copilot maliyeti içindi.
+  //
+  // Var olma sebebi: arka planda (derin soruşturma kapısı) üretilen
+  // verdict'e operatörün başka erişimi yok. Explain önbelleği 10 dakikada
+  // düşüyor ve düştükten sonra karar hiçbir ekranda görünmüyordu.
+  const [persisted, setPersisted] = useState<PersistedRCAVerdict | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api.rootCauseVerdictPersisted(anchor, id)
+      .then(r => { if (alive) setPersisted(r?.found && r.verdict ? r.verdict : null); })
+      // Sessiz düşüş: kalıcı kayıt bir EK. Yokluğu ya da okunamaması
+      // ✨ Explain yolunu etkilemez ve operatöre hata göstermeyi hak
+      // edecek bir olay değil.
+      .catch(() => { if (alive) setPersisted(null); });
+    return () => { alive = false; };
+  }, [anchor, id]);
 
   const onExplain = () => {
     if (loading) return;
@@ -316,6 +339,11 @@ function ExplainBlock({ anchor, id }: { anchor: 'problem' | 'anomaly'; id: strin
     }).catch(() => { setProse(null); setVerdict(null); setExchangeId(undefined); })
       .finally(() => setLoading(false));
   };
+
+  // Taze verdict geldiyse kalıcı özet ÇEKİLİR: ikisi aynı anda dururken
+  // operatör hangisinin güncel olduğunu ayırt edemez ve kalıcı satır
+  // tanım gereği daha eski. Yapılandırılmış panel her zaman daha zengin.
+  const showPersisted = !!persisted && verdict === undefined && !loading;
 
   return (
     <div style={{ marginTop: 4, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
@@ -348,6 +376,75 @@ function ExplainBlock({ anchor, id }: { anchor: 'problem' | 'anomaly'; id: strin
         </div>
       )}
       {verdict && <RCAVerdictPanel v={verdict} exchangeId={exchangeId} />}
+      {showPersisted && persisted && <PersistedVerdictBlock v={persisted} />}
+    </div>
+  );
+}
+
+// PersistedVerdictBlock — rca_verdicts'teki KALICI karar (v0.9.1281).
+//
+// Neden RCAVerdictPanel değil: kalıcı satır kararın ÖZETİNİ taşıyor
+// (enum + imza + güven + gövde), yapılandırılmış nesnenin tamamını
+// değil. Zengin paneli yarı boş verilerle çizmek, kaydedilmemiş alanları
+// "bulunamadı" gibi gösterirdi — kanıt referansı olmayan bir kanıt
+// bölümü, reddedilmemiş sanılan hipotezler. Daha dar bir kutu daha
+// dürüst.
+//
+// PROVENANCE ŞART ve panelin var olma sebebinin yarısı: operatör bunun
+// ŞU AN üretilmiş bir analiz değil, GEÇMİŞTE düşmüş bir kayıt olduğunu
+// bilmeli. Tarihsiz gösterseydik bayat bir karar tazeymiş gibi okunurdu
+// — kod tabanının tekrar eden hata sınıfı (v0.5.394 sürüm damgası).
+function PersistedVerdictBlock({ v }: { v: PersistedRCAVerdict }) {
+  const label =
+    v.verdict === 'root_cause_identified' ? 'Kök neden belirlendi'
+      : v.verdict === 'probable_cause' ? 'Olası neden'
+        : 'Kanıt yetersiz';
+  // source boş olabilir: v0.9.1281 ÖNCESİ yazılmış satırlarda kolon yok
+  // (DEFAULT ''). Bilmediğimizi uydurmuyoruz — etiket düşer.
+  const src =
+    v.source === 'auto' ? 'otomatik'
+      : v.source === 'operator' ? 'operatör'
+        : '';
+
+  return (
+    <div
+      style={{
+        marginTop: 10, padding: '10px 12px', borderRadius: 6,
+        background: 'var(--bg2)', border: '1px solid var(--border)',
+      }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap',
+        marginBottom: v.body ? 6 : 0,
+      }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{label}</span>
+        {v.rootCauseEntity && (
+          <span style={{
+            fontSize: 12, color: 'var(--text2)',
+            // Uzun varlık adı satırı taşırmasın: min/max-width + ellipsis
+            // + title (table-layout:fixed + nowrap kırpma olayının dersi).
+            maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }} title={v.rootCauseEntity}>
+            {v.rootCauseEntity}
+          </span>
+        )}
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+          %{Math.round((v.confidence || 0) * 100)} güven
+        </span>
+      </div>
+      {v.body && (
+        <div style={{ fontSize: 12.5, lineHeight: 1.55, color: 'var(--text2)' }}>
+          {v.body}
+        </div>
+      )}
+      {/* Provenance — küçük, panelin dilinde, ama HER ZAMAN görünür. */}
+      <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>
+        kalıcı kayıt · {fmtDateTime(v.createdAt / 1e6)}{src ? ` · ${src}` : ''}
+        {' · '}
+        <span style={{ fontStyle: 'italic' }}>
+          ✨ Explain güncel kanıtla yeniden değerlendirir
+        </span>
+      </div>
     </div>
   );
 }

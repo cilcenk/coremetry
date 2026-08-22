@@ -176,6 +176,23 @@ type Store struct {
 	// UpDownCounter guard (best-effort). Probed once at boot.
 	hasIsMonotonicCol bool
 
+	// hasRCAVerdictBodyCol — rca_verdicts GERÇEKTEN body+source kolonlarını
+	// taşıyor mu (v0.9.1281).
+	//
+	// rca_verdicts spans/metric_points sınıfında DEĞİL: chstore onu dış
+	// Distributed kümelerde bile tek-node şeklinde yaratıyor, yani
+	// wrapper/_local uyumsuzluğu (v0.8.185/186 prod kırılmaları) bu
+	// tabloda oluşamaz. Probe yine de ŞART ve sebebi başka: küme kipinde
+	// DDL ERTELENİR (ddlDeferred). Kolonu EKLEYEN boot, ALTER kuyruğa
+	// alındığı için probe'u false okur — ve o boot boyunca INSERT kolonsuz
+	// koşmalı, yoksa her verdict yazımı code 16 ile düşerdi. İkinci boot
+	// true okur ve gövde yazılmaya başlar.
+	//
+	// false ⇒ INSERT body/source'u ATLAR (kayıt yine yazılır, yalnız gövde
+	// taşımaz) ve kalıcı okuma boş gövde döner. Verdict ÜRETİMİ bundan
+	// etkilenmez: muhasebe, tanıyı düşüremez.
+	hasRCAVerdictBodyCol bool
+
 	// hasDBStmtHashCol records whether the spans table actually carries the
 	// `db_stmt_hash` column (v0.8.375, Stage-2 D1 — persistent DB-statement
 	// identity). Unlike op_group / series_fingerprint the column is
@@ -1601,6 +1618,21 @@ func (s *Store) migrate(ctx context.Context) error {
 			parsed        UInt8   DEFAULT 0,
 			repaired      UInt8   DEFAULT 0,
 			shield_notes  Array(String),
+			-- v0.9.1281 — operatöre GÖSTERİLEN gövde + onu kim tetikledi.
+			--
+			-- Öncesinde verdict'in METNİ yalnız 30dk'lık explain
+			-- önbelleğinde yaşıyordu: enum/güven/kalkanlar kalıcıydı ama
+			-- "ne yazıyordu" önbellek düşünce yok oluyordu. Yani üretilen
+			-- bir tanının ömrü bir önbellek TTL'iydi.
+			--
+			-- body serbest metin (prose; model çözümlenemediyse
+			-- deterministik summary) — LowCardinality DEĞİL, CODEC(ZSTD(3))
+			-- (ai_feedback.comment emsali). Yazan taraf 8KB'a kırpar
+			-- (trimRCAVerdictBody).
+			-- source iki değerli: 'operator' (✨ Explain tıklaması) |
+			-- 'auto' (derin soruşturma kapısı) → LowCardinality.
+			body          String        DEFAULT '' CODEC(ZSTD(3)),
+			source        LowCardinality(String) DEFAULT '',
 			created_at    DateTime64(9) DEFAULT now64(9),
 			version       UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
@@ -2458,6 +2490,16 @@ func (s *Store) migrate(ctx context.Context) error {
 		// yaratıyor, yani spans-tarzı wrapper/_local tuzağı yok.
 		`ALTER TABLE rca_verdicts ADD COLUMN IF NOT EXISTS rc_entity LowCardinality(String) DEFAULT ''`,
 		`ALTER TABLE rca_verdicts ADD COLUMN IF NOT EXISTS rc_fail_mode String DEFAULT ''`,
+		// v0.9.1281 — GÖVDE + KAYNAK. Aynı gerekçe: CREATE yeni
+		// kurulumları, bu iki ALTER v0.9.591-1280 çalıştırmış olanları
+		// kapsar. IF NOT EXISTS ikisini de idempotent yapar ve
+		// planAlterDDL zaten var olanı hiç göndermez.
+		//
+		// Eski satırlar DEFAULT '' okur — yani "bu verdict gövdesiz
+		// üretildi", uydurulmuş bir metin değil. Kalıcı okuma bunu boş
+		// gövde olarak döner ve frontend gövdesiz satırı çizmez.
+		`ALTER TABLE rca_verdicts ADD COLUMN IF NOT EXISTS body String DEFAULT '' CODEC(ZSTD(3))`,
+		`ALTER TABLE rca_verdicts ADD COLUMN IF NOT EXISTS source LowCardinality(String) DEFAULT ''`,
 		// v0.8.20 — drop the dead topology-mute setting. The
 		// "Mute on topology" chip was removed from the service detail
 		// page in v0.8.19; this migration removes the now-orphaned
@@ -2538,6 +2580,22 @@ func (s *Store) migrate(ctx context.Context) error {
 	// evaluator snapshot), yani kolon henüz inmemişken koşulsuz bir
 	// projeksiyon bütün triyaj yüzeyini karartırdı. false iken SELECT/INSERT
 	// kolonu atlar; öncelik hesabı ters-çevirmesiz (güvenli) tarafta kalır.
+	// rca_verdicts body/source probe (v0.9.1281) — comparator ile birebir
+	// aynı şekil. İKİ kolon TEK probe'la: ikisi aynı ALTER turunda
+	// gönderiliyor, dolayısıyla ayrı ayrı düşmeleri gözlenebilir bir durum
+	// değil; tek bir SELECT ikisini de kanıtlar.
+	//
+	// Bu probe'un asıl işi dağıtık/ertelenmiş DDL kipini yakalamak: kolonu
+	// EKLEYEN boot ALTER'ı kuyruğa aldığı için burayı false okur ve o boot
+	// boyunca INSERT gövdesiz koşar (yazım code 16 ile düşmez). İkinci
+	// boot true okur — "yeni kolon iki boot ister" davranışı, bilinçli.
+	rvRows, rvErr := s.conn.Query(ctx, `SELECT body, source FROM rca_verdicts LIMIT 1 SETTINGS max_execution_time = 3`)
+	maybeCloseRows(rvRows, rvErr)
+	s.hasRCAVerdictBodyCol = rvErr == nil
+	if !s.hasRCAVerdictBodyCol {
+		log.Printf("[chstore] `body`/`source` columns not present on rca_verdicts (%v) — INSERT omits them; verdict rows still record the decision, only the persisted narration is skipped until the next boot", rvErr)
+	}
+
 	cmpRows, cmpErr := s.conn.Query(ctx, `SELECT comparator FROM problems LIMIT 1 SETTINGS max_execution_time = 3`)
 	maybeCloseRows(cmpRows, cmpErr)
 	s.hasProblemCmpCol = cmpErr == nil

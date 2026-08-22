@@ -26,7 +26,9 @@ package chstore
 
 import (
 	"context"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // RCAVerdictRecord — operatöre GÖSTERİLEN verdict'in kaydı.
@@ -71,7 +73,60 @@ type RCAVerdictRecord struct {
 	// ShieldNotes — kalkanların operatöre gösterilen kısa notları.
 	ShieldNotes []string `json:"shieldNotes,omitempty"`
 
+	// Body (v0.9.1281) — operatöre GÖSTERİLEN metin. prose varsa o,
+	// yoksa deterministik summary. 8KB'a kırpılır (trimRCAVerdictBody).
+	//
+	// Neden kararın kendisiyle aynı satırda: enum + güven + kalkanlar
+	// v0.9.591'den beri kalıcıydı ama METİN yalnız 30dk'lık explain
+	// önbelleğindeydi. "Bu verdict yanlıştı" geri bildirimi, verdict'in
+	// ne dediği bilinmeden yorumlanamaz — 👎 ile eşleşecek gövde
+	// önbellekle birlikte buharlaşıyordu.
+	Body string `json:"body,omitempty"`
+
+	// Source (v0.9.1281) — 'operator' (✨ Explain tıklaması) | 'auto'
+	// (derin soruşturma kapısı). Kalite ölçümünde ikisi AYNI kefeye
+	// konamaz: otomatik üretim operatörün seçmediği bir ankorda koşar.
+	Source string `json:"source,omitempty"`
+
 	CreatedAt int64 `json:"createdAt"`
+}
+
+const (
+	// RCAVerdictSourceOperator / RCAVerdictSourceAuto — source enum'u.
+	// Sabit çünkü İKİ tarafta okunuyor (yazan api, gösteren frontend) ve
+	// elle yazılan iki dize bir gün sessizce ayrışır.
+	RCAVerdictSourceOperator = "operator"
+	RCAVerdictSourceAuto     = "auto"
+
+	// rcaVerdictBodyMax — kalıcı gövde tavanı (bayt).
+	//
+	// 8KB: verdict özeti birkaç paragraf; bundan uzun bir metin ya
+	// modelin taşması ya da bir hata. Tavan olmadan tek bir kaçak yanıt
+	// state tablosuna megabaytlarca metin yazabilir ve bu tablo FINAL ile
+	// okunuyor (kalite paneli, imza okuması) — şişmesi okuma yolunu da
+	// yavaşlatır.
+	rcaVerdictBodyMax = 8 * 1024
+)
+
+// trimRCAVerdictBody — gövdeyi tavana kırpar. SAF.
+//
+// Kırpma UTF-8 SINIRINDA yapılır: ham `s[:n]` çok baytlı bir karakterin
+// ortasından keser ve CH'ye geçersiz UTF-8 yazar (Türkçe metinde bu
+// istisna değil, beklenen durum — "ı", "ş", "ğ" hepsi 2 bayt).
+//
+// Kırpıldığı GÖRÜNÜR ("…"): sessizce kesilmiş bir tanı, tam sanılır.
+func trimRCAVerdictBody(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= rcaVerdictBodyMax {
+		return s
+	}
+	cut := rcaVerdictBodyMax
+	// Geçerli bir rune sınırına kadar geri sar. utf8.RuneStart false
+	// olduğu sürece devam takip baytındayız.
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(s[:cut]) + "…"
 }
 
 // UpsertRCAVerdict — bir verdict kaydını yazar.
@@ -98,23 +153,104 @@ func (s *Store) UpsertRCAVerdict(ctx context.Context, v RCAVerdictRecord) error 
 	if notes == nil {
 		notes = []string{}
 	}
-	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO rca_verdicts
-		(exchange_id, anchor_kind, anchor_id, service, verdict,
+	// v0.9.1281 — body/source KOŞULLU. Kolonlar henüz inmemişse (küme
+	// kipinde DDL ertelendiği için kolonu ekleyen boot bunu false okur)
+	// onlarsız yazarız: kayıt yine düşer, yalnız gövde taşımaz. Koşulsuz
+	// yazsaydık o boot boyunca HER verdict yazımı code 16 ile ölürdü —
+	// yani muhasebe için eklenen kolon, muhasebenin tamamını silerdi.
+	cols := `(exchange_id, anchor_kind, anchor_id, service, verdict,
 		 rc_entity, rc_fail_mode,
 		 confidence, model_conf, hypo_conf, hypo_version,
-		 parsed, repaired, shield_notes, created_at)`)
+		 parsed, repaired, shield_notes, created_at)`
+	if s.hasRCAVerdictBodyCol {
+		cols = `(exchange_id, anchor_kind, anchor_id, service, verdict,
+		 rc_entity, rc_fail_mode,
+		 confidence, model_conf, hypo_conf, hypo_version,
+		 parsed, repaired, shield_notes, body, source, created_at)`
+	}
+	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO rca_verdicts `+cols)
 	if err != nil {
 		return err
 	}
-	if err := batch.Append(
+	args := []any{
 		v.ExchangeID, v.AnchorKind, v.AnchorID, v.Service, v.Verdict,
 		v.RCEntity, v.RCFailMode,
 		v.Confidence, v.ModelConf, v.HypoConf, v.HypoVersion,
-		boolToUInt8(v.Parsed), boolToUInt8(v.Repaired), notes, created,
-	); err != nil {
+		boolToUInt8(v.Parsed), boolToUInt8(v.Repaired), notes,
+	}
+	if s.hasRCAVerdictBodyCol {
+		args = append(args, trimRCAVerdictBody(v.Body), v.Source)
+	}
+	args = append(args, created)
+	if err := batch.Append(args...); err != nil {
 		return err
 	}
 	return batch.Send()
+}
+
+// LatestRCAVerdictForAnchor — bir ankorun EN YENİ verdict kaydı
+// (v0.9.1281). Kayıt yoksa (nil, nil).
+//
+// Bu okumanın var olma sebebi: verdict metni 30dk'lık explain
+// önbelleğinden düştüğünde operatör için hiçbir yerde kalmıyordu. Kart
+// ve çekmece artık önbellek ıskasında BURAYA düşüyor — ve bu okuma
+// ÜRETİMSİZ, yani "kart otomatik LLM ateşlemez" (A2) kararı aynen
+// geçerli: kalıcı bir satırı okumak model çağırmak değildir.
+//
+// Bounded: rca_verdicts 90g TTL'li küçük bir state tablosu; zaman
+// pencereli WHERE + LIMIT 1 + max_execution_time. ORDER BY exchange_id
+// olduğu için ankor filtresi bir tarama — tabloda binler mertebesi satır
+// var (ai_calls emsali), MV gerektiren bir agregasyon değil.
+//
+// FINAL şart: ReplacingMergeTree, aynı exchange_id yeniden yazılabilir.
+//
+// hasRCAVerdictBodyCol false iken body/source SELECT'ten DÜŞER — kolonu
+// olmayan tabloda onları istemek okumanın tamamını hataya çevirirdi ve
+// gövdesiz de olsa karar okunabilmeli.
+func (s *Store) LatestRCAVerdictForAnchor(ctx context.Context, anchorKind, anchorID string) (*RCAVerdictRecord, error) {
+	if anchorKind == "" || anchorID == "" {
+		return nil, nil
+	}
+	bodyExpr, sourceExpr := `''`, `''`
+	if s.hasRCAVerdictBodyCol {
+		bodyExpr, sourceExpr = `v.body`, `v.source`
+	}
+	row := s.conn.QueryRow(ctx, `
+		SELECT v.exchange_id, v.service, v.verdict,
+		       v.rc_entity, v.rc_fail_mode,
+		       v.confidence, v.model_conf, v.hypo_conf, v.hypo_version,
+		       v.parsed, v.repaired, v.shield_notes,
+		       `+bodyExpr+` AS body, `+sourceExpr+` AS source,
+		       toUnixTimestamp64Nano(v.created_at) AS created_ns
+		FROM rca_verdicts AS v FINAL
+		WHERE v.anchor_kind = ? AND v.anchor_id = ?
+		  AND v.created_at >= ?
+		ORDER BY v.created_at DESC
+		LIMIT 1
+		SETTINGS max_execution_time = 5`,
+		anchorKind, anchorID, chDateTime64Arg(time.Now().Add(-rcaSignatureLookback)))
+
+	var (
+		rec              RCAVerdictRecord
+		parsed, repaired uint8
+	)
+	if err := row.Scan(&rec.ExchangeID, &rec.Service, &rec.Verdict,
+		&rec.RCEntity, &rec.RCFailMode,
+		&rec.Confidence, &rec.ModelConf, &rec.HypoConf, &rec.HypoVersion,
+		&parsed, &repaired, &rec.ShieldNotes,
+		&rec.Body, &rec.Source, &rec.CreatedAt); err != nil {
+		// Ev kalıbı (rootcause_hypothesis.go:183, user.go:99): clickhouse-go
+		// boş sonucu bu dizeyle bildiriyor. Kayıt yokluğu HATA DEĞİL —
+		// çağıran "henüz verdict üretilmemiş" ile "okuma patladı"yı ayırt
+		// edebilmeli.
+		if err.Error() == "sql: no rows in result set" {
+			return nil, nil
+		}
+		return nil, err
+	}
+	rec.AnchorKind, rec.AnchorID = anchorKind, anchorID
+	rec.Parsed, rec.Repaired = parsed == 1, repaired == 1
+	return &rec, nil
 }
 
 // boolToUInt8 — CH'de Nullable yok, UInt8 sentinel var (ev kuralı).

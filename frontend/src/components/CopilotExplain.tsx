@@ -364,6 +364,9 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
               {code.files.map(f => (
                 <div key={`${f.path}:${f.fromLine}`} style={{ fontFamily: 'var(--mono, monospace)' }}>
                   {f.path}:{f.fromLine}-{f.toLine}
+                  {/* v0.9.1254 — modelin ">>>" ile işaretlendiği satır;
+                      içerik tarayıcıya gitmez, numara yeter. */}
+                  {!!f.line && <span style={{ color: 'var(--text3)' }}> · hata satırı {f.line}</span>}
                 </div>
               ))}
             </div>

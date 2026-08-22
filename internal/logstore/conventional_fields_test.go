@@ -11,18 +11,37 @@ import (
 // (ClusterLogForwarder) cluster adını ÜST-DÜZEY openshift.labels.cluster
 // alanına yazar. Prod'da /logs cluster seçimi bu yüzden HİÇBİR kaydı
 // eşleştirmiyordu. Pin: yol listede kalır.
+//
+// v0.9.1250 — liste artık esClusterFields (es_group_fields.go): aynı
+// listeyi histogramın cluster KIRILIMI da kullanıyor. Korku aynı
+// (openshift.labels.cluster düşerse prod'da eşleşme yok), mekanizma
+// değişti — o yüzden hem listenin İÇERİĞİ hem de filtrenin o listeyi
+// gerçekten dolaştığı çakılıyor (kaynak dizesi pinlemek, v0.9.1250'de
+// olduğu gibi, taşınmada yanlış yere kırmızı yanar).
 func TestClusterFilterCoversOpenShiftLabels(t *testing.T) {
+	found := false
+	for _, f := range esClusterFields {
+		if f == "openshift.labels.cluster" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("openshift.labels.cluster missing from esClusterFields (%v) — OpenShift cluster-logging indices match on the TOP-LEVEL field, not resource_attributes.*; the /logs cluster picker matches nothing on prod without it", esClusterFields)
+	}
+	// Mekanizma: buildQuery'nin cluster ayağı bu listeyi dolaşmalı.
+	// Liste doğru ama filtre kendi kopyasını taşıyorsa pin hiçbir şey
+	// korumaz.
 	b, err := os.ReadFile("elasticsearch.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	src := string(b)
-	i := strings.Index(src, `"resource_attributes.k8s.cluster.name",`)
+	i := strings.Index(src, `if f.Cluster != "" {`)
 	if i < 0 {
-		t.Fatal("cluster path list not found")
+		t.Fatal("cluster filter leg not found in buildQuery")
 	}
-	if !strings.Contains(src[i:i+400], `"openshift.labels.cluster",`) {
-		t.Error("openshift.labels.cluster missing from the cluster filter paths — OpenShift cluster-logging indices match on the TOP-LEVEL field, not resource_attributes.*; the /logs cluster picker matches nothing on prod without it")
+	if !strings.Contains(src[i:i+1400], "range esClusterFields") {
+		t.Error("cluster filtresi esClusterFields'ı dolaşmıyor — filtre ile histogram kırılımı ayrı listelere düşerse kırılımın adlandırdığı cluster filtrede bulunamaz (v0.8.265 sınıfı)")
 	}
 }
 

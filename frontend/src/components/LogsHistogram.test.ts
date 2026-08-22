@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { collapse, collapseGroups } from './LogsHistogram';
+import {
+  BREAKDOWNS, BREAKDOWN_LABEL, collapse, collapseGroups, histogramFeedsChips, parseBreakdown,
+} from './LogsHistogram';
 
 // v0.9.218 — the severity-stacked histogram was replaced by a
 // total + error-overlay + error-rate fold. The fold is where the chart's
@@ -225,5 +227,59 @@ describe('collapseGroups', () => {
     const gappy = r.series.find(s => s.label === 'gappy')!;
     expect(gappy.data).toEqual([0, 3]);
     expect(r.times).toEqual([T0 / 1e9, T1 / 1e9].map(Math.round));
+  });
+});
+
+// v0.9.1250 — kırılım ekseni cluster + namespace ile genişledi. Üç
+// sözleşme çakılıyor: (1) union/parse, backend whitelist'iyle bire bir
+// (internal/api normalizeLogsGroupBy); (2) select seçenekleri o üniondan
+// üretilir; (3) çip kaynağı kuralı — seviye DIŞI her eksende grafik bant
+// yaymaz, ebeveyn kendi hacim sorgusuna (volumeQ) döner.
+describe('kırılım ekseni', () => {
+  it('backend whitelist ile aynı dört eksen', () => {
+    expect(BREAKDOWNS).toEqual(['severity', 'service', 'cluster', 'namespace']);
+  });
+
+  it('parseBreakdown tanınan ekseni geçirir', () => {
+    for (const b of BREAKDOWNS) expect(parseBreakdown(b)).toBe(b);
+  });
+
+  it('bilinmeyen / boş / null değer seviyeye düşer', () => {
+    for (const v of ['pod', 'Cluster', '', null, undefined, 'namespace ']) {
+      expect(parseBreakdown(v)).toBe('severity');
+    }
+  });
+
+  it('her eksenin bir etiketi var (select boş seçenek çizemez)', () => {
+    for (const b of BREAKDOWNS) expect(BREAKDOWN_LABEL[b]).toBeTruthy();
+    // Operatörün kubectl/OpenShift kelimeleri çevrilmedi.
+    expect(BREAKDOWN_LABEL.cluster).toBe('cluster');
+    expect(BREAKDOWN_LABEL.namespace).toBe('namespace');
+  });
+
+  it('çipler YALNIZ seviye ekseninde + seviye tabanı yokken histogramdan', () => {
+    expect(histogramFeedsChips('severity', 0)).toBe(true);
+    // Seviye tabanı açık: histogram alt-küme çeker, çipler tam sayım ister.
+    expect(histogramFeedsChips('severity', 17)).toBe(false);
+    // Seviye dışı eksenler: seriler bant değil → volumeQ devreye girer.
+    for (const b of ['service', 'cluster', 'namespace'] as const) {
+      expect(histogramFeedsChips(b, 0)).toBe(false);
+    }
+  });
+
+  it('seviye dışı eksenler grup katlamasını kullanır (bant sınıflaması DEĞİL)', () => {
+    // Bir cluster adı severityBandOf'tan geçseydi OTHER'a yığılır ve
+    // grafik tek gri çizgiye inerdi; collapseGroups adı korur.
+    const r = collapseGroups([S('ocp5', [[T0, 7]]), S('ocpa', [[T0, 3]])]);
+    expect(r.series.map(s => s.label)).toEqual(['ocp5', 'ocpa']);
+  });
+
+  it("CH'nin attribute'suz satırları (OTHER) 'diğer'e katlanır, seri kapmaz", () => {
+    const r = collapseGroups([
+      S('ocp5', [[T0, 7]]),
+      S('OTHER', [[T0, 90]]), // en büyük — ad ayıklaması olmasa ilk sırayı alırdı
+    ]);
+    expect(r.series.map(s => s.label)).toEqual(['ocp5', 'diğer']);
+    expect(r.totals.all).toBe(97);
   });
 });

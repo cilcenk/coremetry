@@ -935,6 +935,31 @@ func (s *Server) getLogsFieldStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// normalizeLogsGroupBy is the histogram break-down axis whitelist
+// (v0.9.1250). PURE + table-tested (logs_groupby_test.go).
+//
+// The rule it enforces: an axis is offered ONLY when a backend really
+// implements it. Both logstore backends collapse an unrecognised
+// groupBy to a single `_total` series — a silent, plausible-looking
+// non-answer — which is why v0.9.1220 shipped just severity+service
+// and left cluster/namespace out until the backends grew them. This
+// whitelist is where that promise now lives: adding an option to the
+// frontend select without adding it here changes nothing on the wire.
+//
+// Unknown values keep today's behaviour (total-only), NOT a 400 and
+// NOT a silent rewrite to severity: saved views and hand-built URLs
+// from older releases keep rendering, and the operator sees an
+// un-broken chart rather than someone else's break-down. Normalising
+// before the cache key also stops "foo"/"bar"/"" — which all produce
+// the identical total-only answer — from occupying three entries.
+func normalizeLogsGroupBy(groupBy string) string {
+	switch g := strings.TrimSpace(groupBy); g {
+	case "severity", "service", "cluster", "namespace":
+		return g
+	}
+	return ""
+}
+
 func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	sev, _ := strconv.Atoi(q.Get("severity"))
@@ -974,7 +999,7 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 	// ~2,880 buckets on a 30-day window) — this catches hand-built URLs
 	// and saved views from a wider range.
 	bucketSec = floorBucketByWindow(bucketSec, f.From, f.To)
-	groupBy := strings.TrimSpace(q.Get("groupBy"))
+	groupBy := normalizeLogsGroupBy(q.Get("groupBy"))
 	key := logsTimeseriesKey(f, q.Get("from"), q.Get("to"), bucketSec, groupBy)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.3 — bound the Go goroutine on BOTH backends. CH already

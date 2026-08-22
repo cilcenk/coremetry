@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { ExploreViz, type ExploreVizKind } from './ExploreViz';
 import { Spinner } from './Spinner';
 import { ServicePicker } from './ServicePicker';
+import {
+  BREAKDOWNS, BREAKDOWN_LABEL, parseBreakdown, type LogsBreakdown,
+} from './LogsHistogram';
 import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
 import type { ExploreSeries, TimeRange } from '@/lib/types';
@@ -24,7 +27,11 @@ export function LogsExplorer({ range, viz, compare }: {
   // doesn't trigger one CH histogram-over-1B-rows per keystroke.
   const [search, setSearch]   = useState('');
   const [committedSearch, setCommittedSearch] = useState('');
-  const [groupBy, setGroupBy] = useState<'service' | 'severity' | ''>('severity');
+  // v0.9.1250 — eksen kümesi tek kaynakta (LogsHistogram.LogsBreakdown +
+  // handler'daki normalizeLogsGroupBy whitelist'i). Burada ekstra olarak
+  // '' = gruplama yok seçeneği var; union kopyası taşımak, /logs'ta
+  // desteklenen bir eksenin Explore'da sessizce eksik kalmasıydı.
+  const [groupBy, setGroupBy] = useState<LogsBreakdown | ''>('severity');
   const [bucketSec, setBucketSec] = useState<number>(0); // 0 = auto
   const [series, setSeries]   = useState<ExploreSeries[] | null | undefined>(undefined);
 
@@ -90,10 +97,16 @@ export function LogsExplorer({ range, viz, compare }: {
         <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 4 }}>
           Group by:
         </span>
-        <select value={groupBy} onChange={e => setGroupBy(e.target.value as never)}>
+        {/* v0.9.1250 — `as never` cast'i kalktı: değer üniona
+            parseBreakdown ile daralıyor, seçenekler tek listeden
+            üretiliyor (yeni eksen eklemek artık iki dosyayı ayrı ayrı
+            hatırlamayı gerektirmiyor). */}
+        <select value={groupBy}
+          onChange={e => setGroupBy(e.target.value === '' ? '' : parseBreakdown(e.target.value))}>
           <option value="">— total —</option>
-          <option value="service">service</option>
-          <option value="severity">severity</option>
+          {BREAKDOWNS.map(b => (
+            <option key={b} value={b}>{BREAKDOWN_LABEL[b]}</option>
+          ))}
         </select>
         <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 4 }}>
           Bucket:

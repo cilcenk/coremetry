@@ -46,12 +46,45 @@ type Filter = {
 
 type Series = { name: string; points: { t: number; v: number }[] };
 
-// v0.9.1220 (Kibana dilim 3) — histogram kırılımı. İki backend'in de
-// (ES terms agg + CH whitelist) desteklediği tek grup ekseni ikilisi:
-// canonical seviye bantları (varsayılan) ve servis. Namespace/cluster
-// KASITLI yok — logstore.Histogram alan haritası iki backend'de de
-// tanımlı değil; sessizce _total'a düşerdi.
-export type LogsBreakdown = 'severity' | 'service';
+// v0.9.1220 (Kibana dilim 3) — histogram kırılımı. Kural: bir eksen
+// ancak İKİ backend de gerçekten uyguladığında sunulur; tanınmayan
+// groupBy tek '_total' serisine düşer ve o sessiz cevapsızlık, seçicide
+// duran bir seçeneğin arkasında en kötü hâline gelir. 1220 bu yüzden
+// yalnız seviye + servis ile çıktı.
+//
+// v0.9.1250 — cluster + namespace de backend'de gerçek oldu: CH'de
+// chLogsGroupExpr (hazır cluster ifadesi + yeni namespace ifadesi),
+// ES'te aday-alan-başına terms agg + Go birleştirmesi
+// (es_group_fields.go). Whitelist artık handler'da da var
+// (normalizeLogsGroupBy) — bu union oraya bağlı.
+export type LogsBreakdown = 'severity' | 'service' | 'cluster' | 'namespace';
+
+export const BREAKDOWNS: LogsBreakdown[] = ['severity', 'service', 'cluster', 'namespace'];
+
+// Etiketler: "seviye|servis" TR, "cluster|namespace" olduğu gibi —
+// ürün dili karışık ve bu ikisi zaten operatörün kubectl/OpenShift
+// kelimeleri (çeviri onları tanınmaz yapardı).
+export const BREAKDOWN_LABEL: Record<LogsBreakdown, string> = {
+  severity: 'seviye', service: 'servis', cluster: 'cluster', namespace: 'namespace',
+};
+
+// parseBreakdown — URL / select değerini üniona daraltır. Bilinmeyen
+// değer seviyeye düşer (sayfanın varsayılanı); backend'in aynı
+// durumdaki davranışı _total, yani ikisi de "uydurma bir kırılım
+// gösterme" tarafında.
+export function parseBreakdown(v: string | null | undefined): LogsBreakdown {
+  return BREAKDOWNS.includes(v as LogsBreakdown) ? (v as LogsBreakdown) : 'severity';
+}
+
+// histogramFeedsChips — /logs'un seviye ÇİPLERİNİ neyin beslediği
+// kuralı (v0.9.1250, v0.9.358 sözleşmesinin tek kaynağı). Grafik
+// onSeries'i YALNIZ seviye kırılımında yayar; seviye süzgeci açıkken
+// de toplamlar süzülmüş alt-küme olur. İkisinden biri bozulursa
+// ebeveyn kendi hacim sorgusuna (volumeQ) döner — cluster/namespace
+// kırılımında olması gereken de budur.
+export function histogramFeedsChips(bd: LogsBreakdown, severityFloor: number): boolean {
+  return severityFloor === 0 && bd === 'severity';
+}
 
 export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSeries, breakdown, onBreakdown }: {
   range: { from?: number; to?: number };
@@ -63,7 +96,7 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
   // iletilir; verilmezse eski davranış (yalnız brush).
   onZoomReset?: () => void;
   // v0.9.358 — opsiyonel; verilirse fetch edilen serilerin bant toplamları
-  // iletilir. SEVİYE-sözleşmeli: servis kırılımında ÇAĞRILMAZ (seri adları
+  // iletilir. SEVİYE-sözleşmeli: diğer eksenlerde ÇAĞRILMAZ (seri adları
   // artık bant değil — çip sayaçlarını servis adlarıyla beslemek v0.9.216
   // sınıfı bir sessiz-yanlış olurdu). v0.9.1220: fetch HATASI null iletir
   // (tri-state) — ebeveyn sonsuz '·' yerine hata/geri-düşüş gösterebilsin
@@ -131,9 +164,13 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
   }, [range.from, range.to, filter.service, filter.cluster, filter.env, filter.search, filter.severity, filter.traceId, filter.hasTrace, bd]);
 
   const { times, series, totals } = useMemo(
-    () => (bd === 'service'
-      ? collapseGroups(data ?? [])
-      : collapse(data ?? [], filter.severity > 0)),
+    // v0.9.1250 — seviye DIŞINDAKİ her eksen grup katlamasını kullanır
+    // (bd === 'service' testi yeni iki ekseni sessizce seviye
+    // bantlarına sokardı: cluster adları severityBandOf'tan geçip
+    // OTHER'a yığılırdı).
+    () => (bd === 'severity'
+      ? collapse(data ?? [], filter.severity > 0)
+      : collapseGroups(data ?? [])),
     [data, filter.severity, bd]);
 
   if (data === undefined) return <div style={{ height: 104, marginBottom: 10 }} />;
@@ -159,15 +196,17 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
         fontFamily: 'ui-monospace, monospace',
       }}>
         {/* v0.9.1220 — kırılım seçicisi (Kibana "Break down by"). Sabit
-            2 değerli küme → düz select (frontend-conventions §3). */}
+            küçük küme → düz select (frontend-conventions §3); v0.9.1250'de
+            4 eksene çıktı, hâlâ picker eşiğinin altında. */}
         {onBreakdown && (
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             kırılım
             <select value={bd} aria-label="Histogram kırılımı"
-              onChange={e => onBreakdown(e.target.value === 'service' ? 'service' : 'severity')}
+              onChange={e => onBreakdown(parseBreakdown(e.target.value))}
               style={{ fontSize: 10, padding: '1px 4px' }}>
-              <option value="severity">seviye</option>
-              <option value="service">servis</option>
+              {BREAKDOWNS.map(b => (
+                <option key={b} value={b}>{BREAKDOWN_LABEL[b]}</option>
+              ))}
             </select>
           </label>
         )}
@@ -210,7 +249,9 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
           // istatistik lejantı log yüzeylerinde tamamen kapalı.
           // v0.9.1220 — servis kırılımında AÇIK: seri kimliği artık renkten
           // okunamaz (servis adları), lejant o kimliğin tek taşıyıcısı.
-          hideLegend={bd !== 'service'}
+          // v0.9.1250 — cluster/namespace de aynı sınıf: seviye dışındaki
+          // her eksende lejant açık.
+          hideLegend={bd === 'severity'}
         />
       )}
     </div>
@@ -244,7 +285,8 @@ function fmtPct(v: number): string {
 // the rows we got back are already a subset. The error RATE is
 // undefined against that denominator and is withheld rather than
 // guessed; totals.ratePct goes null for the same reason.
-// collapseGroups (v0.9.1220) — servis kırılımı: toplamda ilk 5 seri
+// collapseGroups (v0.9.1220) — seviye dışı kırılımlar (servis, v0.9.1250
+// ile cluster + namespace): toplamda ilk 5 seri
 // kendi çizgisiyle, kalanı tek "diğer" çizgisinde. Çizgi (bar değil):
 // TimeChart bar'ları yığmaz, ÖRTER — 6 grupta öndeki çubuk arkadakini
 // tamamen gizlerdi; overlay-okuma numarası (total⊃warn⊃err) yalnız
@@ -273,6 +315,10 @@ export function collapseGroups(input: Series[]) {
   // Adıyla ayıklanıp "diğer"e katlanır. CH tarafı da top_groups LIMIT 20
   // ile keser: kesilen servisler HİÇ gelmez — bu yüzden "diğer" etikete
   // sayı YAZMAZ (iki backend'de de tam sayı bilinemez, v0.9.1220 review).
+  // v0.9.1250 — cluster/namespace ekseninde CH, attribute'u OLMAYAN
+  // satırları da 'OTHER' adıyla gönderir (chLogsGroupOrOther): eleseydi
+  // yığın sessizce eksik sayardı, '' gönderseydi lejantta boş çip
+  // olurdu. Aynı ad, aynı katlama — iki backend tek kelime dağarcığı.
   const withTotal = (s: Series) =>
     ({ s, total: s.points.reduce((a, p) => a + p.v, 0) });
   const otherSeries = input.filter(s => s.name === 'OTHER').map(withTotal);

@@ -402,9 +402,14 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		// Hit the round cap with tool calls still pending → ask the
 		// model for a best-effort answer with what it has, no more
 		// tools, so the operator isn't left hanging.
+		//
+		// v0.9.1232 — tavan yönergesi burada satır-içi İngilizce bir
+		// literaldi; prompt METNİ olduğu için internal/copilot/prompts.go'ya
+		// taşındı (SystemPromptChatRoundCap = taban + ek). Sicil
+		// accessor'lardan türediğinden bu ek artık dil kapısının kapsamında.
 		if round == chatMaxToolRounds-1 {
-			turn2, err2 := s.copilot.ChatWithTools(ctx, loopPrompt+
-				"\n\nYou have reached the tool-call limit. Answer now with what you have.", conv, nil)
+			capPrompt := withAddressee(addressee, copilot.SystemPromptChatRoundCap())
+			turn2, err2 := s.copilot.ChatWithTools(ctx, capPrompt, conv, nil)
 			totalIn += turn2.InputTokens
 			totalOut += turn2.OutputTokens
 			if err2 != nil {

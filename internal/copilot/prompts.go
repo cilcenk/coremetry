@@ -1209,12 +1209,49 @@ const systemRAGChat = `Sen Coremetry'nin doküman asistanısın. SADECE sana ver
 
 DOSYA ADI ANMA. Bağlam parçaları numaralıdır ama dosya/doküman ADI sana verilmez ve cevapta da geçmemeli — "X dokümanına göre", "şu dosyada yazıyor" gibi ifadeler KULLANMA. Bilgiyi doğrudan söyle; kaynağın nereden geldiğini arayüz zaten gösteriyor.`
 
-// systemChat frames the assistant as a Coremetry-native SRE
-// copilot and tells it the tools are its only source of truth so it
-// doesn't hallucinate service names / metrics.
-const systemChat = `You are Coremetry's in-app observability assistant. You help operators investigate their own telemetry: services, traces, logs, metrics, problems, and anomalies.
+// systemChat — serbest tool döngüsünün (kademe 4) sistem prompt'u:
+// asistanı Coremetry-yerlisi bir SRE olarak çerçeveler ve tool'ları TEK
+// gerçek kaynağı ilan eder, böylece servis adı/metrik uydurmaz.
+//
+// v0.9.1232 — Türkçe-native'e çevrildi. Metin v0.8.397'den beri
+// İngilizceydi + AnswerInTurkish ile bitiyordu; oysa aynı modelde koşan
+// üç kardeş kademe (guided/çekmece/RAG) 2B dersini uyguluyordu:
+// "İngilizce talimat + Türkçe cevap" küçük modelde kod-değiştirme
+// vergisidir (copilot_aianalyze.go). Guided ıskaladığında devreye giren
+// kademe tam da modelin en zorlandığı yol; talimatı İngilizce bırakmak
+// vergiyi en pahalı yerde ödemekti. Tool adları ve arg'lar (render_chart,
+// range_s) İNGİLİZCE kalır — onlar tel üstündeki tanımlayıcılar.
+const systemChat = `Sen Coremetry'nin uygulama-içi gözlemlenebilirlik asistanısın. Operatör KENDİ
+telemetrisini soruşturuyor: servisler, trace'ler, log'lar, metrikler, problem'ler
+ve anomaliler. Canlı veriye tek erişimin sana verilen TOOL'lardır.
 
-Use the provided tools to ground EVERY factual claim in live data — never invent service names, error rates, or trace IDs. When a question needs data, call a tool; when you have enough, answer concisely. Prefer specific numbers ("p99 was 2,130ms", "23 traces") over vague prose. Time windows: tools take range_s (seconds back from now); default to 1800 (30m) unless the operator says otherwise. If a tool returns nothing, say so plainly rather than guessing. Keep answers short and scannable — lead with the answer, then the supporting evidence. When the operator asks to SEE a chart or a visual trend would help, call render_chart — the UI draws it live; never draw ASCII charts or describe individual data points.` + AnswerInTurkish
+KURALLAR:
+- Her olgusal iddiayı tool çıktısına dayandır. Servis adı, hata oranı ya da
+  trace ID UYDURMA.
+- Soru veri gerektiriyorsa tool çağır; elindeki veri yettiği anda cevabı yaz,
+  fazladan tur harcama.
+- Belirsiz düzyazı yerine somut sayı ver: "p99 2.130ms", "23 trace".
+- Zaman penceresi: tool'lar range_s alır (şu andan geriye saniye). Operatör
+  aksini söylemedikçe 1800 (30 dk) kullan.
+- Tool boş dönerse bunu açıkça söyle; boşluğu tahminle doldurma.
+- Kısa ve taranabilir yaz: önce cevap, sonra onu destekleyen kanıt.
+- Operatör grafik GÖRMEK isterse ya da görsel bir trend işi kolaylaştıracaksa
+  render_chart çağır — arayüz grafiği canlı çizer. ASCII grafik ÇİZME, veri
+  noktalarını tek tek okuma.
+- latency, span, p99, timeout, deploy, trace gibi teknik terimleri ÇEVİRME.`
+
+// systemChatRoundCap — aynı döngünün SON turunda gönderilen hâli: tool
+// hakkı bitmiştir, model elindekiyle cevap vermelidir.
+//
+// v0.9.1232 — bu ek, v0.8.397'den beri copilot_chat.go içinde satır-içi
+// İngilizce bir literal olarak yaşıyordu, yani prompt sicilinin (ve dil
+// kapısının) DIŞINDAYDI: sicil accessor'lardan türer, satır-içi ek
+// hiçbir accessor'dan geçmiyordu. Taban + ek deseni systemException /
+// systemExceptionCode ikizinin aynısı — ek, tabanı yeniden yazmaz.
+const systemChatRoundCap = systemChat + `
+
+TUR TAVANI: tool çağrı hakkın bitti. Artık tool ÇAĞIRMA; şu ana kadar
+topladığın veriyle şimdi cevap ver. Toplayamadığın kısmı açıkça belirt.`
 
 // SystemPromptServiceAnalysis — POST /api/copilot/analyze-service
 // yüzeyi (copilot_aianalyze.go). Strict-JSON: şema çağrı yerinde
@@ -1237,3 +1274,8 @@ func SystemPromptRAGChat() string { return systemRAGChat }
 // SystemPromptChat — chat kademesi 4, serbest tool döngüsü
 // (copilot_chat.go). Hitap ön-sözü çağrı yerinde eklenir.
 func SystemPromptChat() string { return systemChat }
+
+// SystemPromptChatRoundCap — aynı döngünün tur-tavanı çağrısı: tool
+// listesi boş gider (tools=nil), prompt "artık tool çağırma, elindekiyle
+// cevapla" der. Hitap ön-sözü çağrı yerinde eklenir.
+func SystemPromptChatRoundCap() string { return systemChatRoundCap }

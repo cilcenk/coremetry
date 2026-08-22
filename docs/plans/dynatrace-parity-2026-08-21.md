@@ -102,16 +102,21 @@ Chip + `groupSimilar` toggle dilimi temiz (kod TraceWaterfall içinde yaşıyor,
 
 ## BÖLÜM C — En yüksek değer/efor 10'luk kısa liste (sıralı)
 
-1. **⌘K palet adlarını i18n'e bağla + alias skorlama** (B5#1) — `CommandPalette.tsx:55-57` vs `i18n.ts:36,171`; sidebar "Problems" diyen sayfa palette "Inbox". ~1sa · Değer 5.
-2. **JVM non-heap (Metaspace) kartı** (B3#7) — `RuntimeCharts.tsx:42` heap'e sabit; JBoss classloader-leak sınıfı görünmez. ~30dk · Değer 4.
-3. **Settings sekmelerini palete + rol filtresi** (B5#3 + Q3) — `CommandPalette.tsx:110` tek Settings girişi, 24 sekme aranamaz; "ayar ara…" vaadi boş. ~30-45dk · Değer 4.
-4. **Span self-time** (B2#1) — `SpanDetail.tsx:254` yalnız toplam Duration; çocuk toplamı client'ta hazır. ~1sa · Değer 4.
-5. **OOMKilled/last-termination rozeti** (B3#3) — `kube_pod_container_status_last_terminated_reason` hiç sorgulanmıyor (`internal/thanos/promql.go`); restart sayısı var, nedeni kubectl'de. ~2sa · Değer 5.
-6. **N+1 görünürlüğü: waterfall tekrar-chip'i + DB drawer pivotu** (B2#2, AggregatedStructure kararı ayrık) — `spanRepeats` ucu yetim (`api.go:4943`), `groupSimilar` uykuda. ~2sa · Değer 5.
-7. **Kanal sağlık rozeti** (B4#2a) — `notification_log` var (`notification_log.go:33`), ChannelsTab'da durum yok; ölü SMTP = kaçan sayfa. ~2sa · Değer 4.
-8. **Self-health alarm ailesi** (YENİ, A1) — ingest stall + spool derinliği + disk days-to-full sentetik problemleri; kanıt: `sysstats.go:50-56` yorumu + 2026-08-20 spool olayı. ~yarım gün · Değer 5. (B4#2b channel-broken bu aileye katılır.)
-9. **Share mutlak-zaman kopyalama** (B5#4) — `ShareButton.tsx` href'i ham kopyalıyor; incident linki ertesi gün başka pencere. ~1sa · Değer 4.
-10. **Auto-verdict + kalıcı gövde (birleşik dilim)** (B1#1+#6, önce git log doğrulaması) — deep-investigate kapısında `buildRCAVerdict` + `rca_verdicts.body ZSTD` kolonu + drawer'da persisted çizim. ~yarım gün+2sa · Değer 5.
+> **İCRA DURUMU (2026-08-23): 10/10 GEMİDE** — v0.9.1270→1281 (+1282
+> null/undefined düzeltmesi), sıra raporun sırası. Madde-başı sürüm
+> damgaları aşağıda. Kalan seçilebilir işler yalnız "Yedek sıra" +
+> adaylar (demo N+1 senaryosu, A1'in ertelenen hacim-sıçraması kuralı).
+
+1. ✅ v0.9.1270 — **⌘K palet adlarını i18n'e bağla + alias skorlama** (B5#1) — `CommandPalette.tsx:55-57` vs `i18n.ts:36,171`; sidebar "Problems" diyen sayfa palette "Inbox". ~1sa · Değer 5.
+2. ✅ v0.9.1271 — **JVM non-heap (Metaspace) kartı** (B3#7) — `RuntimeCharts.tsx:42` heap'e sabit; JBoss classloader-leak sınıfı görünmez. ~30dk · Değer 4.
+3. ✅ v0.9.1272 — **Settings sekmelerini palete + rol filtresi** (B5#3 + Q3) — `CommandPalette.tsx:110` tek Settings girişi, 24 sekme aranamaz; "ayar ara…" vaadi boş. ~30-45dk · Değer 4.
+4. ✅ v0.9.1273 — **Span self-time** (B2#1) — `SpanDetail.tsx:254` yalnız toplam Duration; çocuk toplamı client'ta hazır. ~1sa · Değer 4. (Aralık-birleşimli: çocuk örtüşmesi çift sayılmaz.)
+5. ✅ v0.9.1276 — **OOMKilled/last-termination rozeti** (B3#3) — `kube_pod_container_status_last_terminated_reason` hiç sorgulanmıyor (`internal/thanos/promql.go`); restart sayısı var, nedeni kubectl'de. ~2sa · Değer 5. (Hayalet pod satırları da rozeti taşır; lokalde KSM yok, görsel teyit prod'da.)
+6. ✅ v0.9.1277 — **N+1 görünürlüğü: waterfall tekrar-chip'i + DB drawer pivotu** (B2#2) — `spanRepeats` ucu yetim, `groupSimilar` uykuda. ~2sa · Değer 5. (groupSimilar kimlik çürümesi onarıldı; AggregatedStructure SİLİNDİ; demo tekrar üretmediği için chip lokalde tetiklenmez → demo N+1 senaryosu aday.)
+7. ✅ v0.9.1278 — **Kanal sağlık rozeti** (B4#2a) — `notification_log` vardı, ChannelsTab görmüyordu. ~2sa · Değer 4. (Uçtan uca kanıt: kırık webhook ×1→×2→başarıda 0.)
+8. ✅ v0.9.1279 — **Self-health alarm ailesi** (A1) — self-ingest-stall (P1) + self-spool-depth + self-disk-eta + self-channel-broken; eşikler `system_settings.self_health` vidası. ~yarım gün · Değer 5. (Hacim-sıçraması kuralı raporun kendi efor notuyla ERTELENDİ — aday.)
+9. ✅ v0.9.1280 — **Share mutlak-zaman kopyalama** (B5#4) — paylaşım linki `range=custom:` ile pencereyi sabitler; range'siz/zaten-custom URL bayt-aynı. ~1sa · Değer 4.
+10. ✅ v0.9.1281 (+1282) — **Auto-verdict + kalıcı gövde** (B1#1+#6) — `rca_verdicts.body ZSTD` + `source` kolonları (dağıtık-güvenli probe+koşullu INSERT), deep-investigate kapısında otomatik üretim (`ai_calls.surface=rootcause-verdict`, autoExplain vidası + dedup + yalnız P1/deploy), drawer'da `kalıcı kayıt · zaman · otomatik|operatör` provenance. A2 (insight kartı LLM ateşlemez) KORUNDU; kart bilinçli cache-only kaldı (kalıcı satır tam RCAVerdict şekli taşımıyor). 1282: `verdict===undefined` vs `null` — başarısız canlı üretim anında kalıcı kaydı gizleyen dal düzeltildi.
 
 **Yedek sıra (10'a giremeyenler):** GC collections/s + exceptions/s kartları (B3#6, ~1sa/4), problem'den tek-tık susturma (B4#5, ~1sa/3), node→pod haritası (B3#2, ~yarım gün/4), recurring maintenance (B4#1, ~yarım gün/4), kapsam matrisi (A2, ~yarım gün/4), incident-farkında fan-out (B4#3, ~yarım gün/4), runbooks'u config export'a ekle (A4, ~30dk/3).
 

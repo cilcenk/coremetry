@@ -100,6 +100,18 @@ func (s *Service) explainOpenAI(ctx context.Context, systemPrompt, userPrompt st
 	if lvl >= jsonObject && s.jsonModeBlocked(prov, base, model) {
 		lvl = jsonNone
 	}
+	// v0.9.1261 (CoSRE denetimi [3/S]) — KATI-JSON çağrıları sıcaklık 0'da
+	// koşar: yapısal çıktıda yaratıcılık değil determinizm istenir; 0.2'de
+	// aynı girdiye farklı şekiller/alan sıraları üreyebiliyordu. Kural
+	// SEVİYE İSTENDİĞİNDE uygulanır (merdiven kısıtsıza düşse bile) —
+	// çağıranın niyeti yapısal çıktıysa determinizm gerekçesi aynen
+	// geçerli, servisin json desteğinden bağımsız. Operatörün prose
+	// tuning'i (Settings temperature) yapısal yüzeyleri ETKİLEMEZ; prose
+	// yüzeyleri eskisi gibi tuned/varsayılan sıcaklıkta.
+	if jsonLevelRequested(ctx) > jsonNone {
+		zero := 0.0
+		req.Temperature = &zero
+	}
 	return s.explainOpenAIAtLevel(ctx, cfg, req, prov, base, model, lvl, spec)
 }
 
@@ -155,6 +167,12 @@ func (s *Service) explainAnthropic(ctx context.Context, systemPrompt, userPrompt
 	cfg, req, _, _, _ := s.callSnapshot()
 	req.System, req.User = systemPrompt, userPrompt
 	req.JSONLevel = provider.JSONPlain
+	// v0.9.1261 — determinizm kuralı sağlayıcıdan bağımsız: niyet
+	// yapısal çıktıysa sıcaklık 0 (openai yolundaki kararın aynısı).
+	if jsonLevelRequested(ctx) > jsonNone {
+		zero := 0.0
+		req.Temperature = &zero
+	}
 	resp, err := provider.DoAnthropic(ctx, cfg, req)
 	return resp.Text, clampTokens(resp.InputTokens), clampTokens(resp.OutputTokens), err
 }

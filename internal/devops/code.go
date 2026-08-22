@@ -676,6 +676,34 @@ func (s *Service) resolveBranch(ctx context.Context, cli *http.Client, cfg Setti
 	order := s.ResolveConfig().BranchOrder
 	var firstErr error
 	for _, ver := range s.apiVersionCandidates(cfg) {
+		// v0.9.1265 (denetim [3/S]) — ÖNCE branş-bazlı kesin filtreler:
+		// refs listelemesi TEK sayfa okunuyordu ve yüzlerce branşlı bir
+		// depoda ayarlı branş (release/master) sayfa dışında kalınca
+		// SESSİZCE varsayılan branşa düşülüyordu — yanlış-satır kodu
+		// sınıfı (v0.9.1236'nın branş-case kardeşi). filter=heads/<ad>
+		// önek eşleşmesi döndürür; kesinlik/casing kararını yine
+		// PickBranch verir. Yapılandırılmış branş artık branş SAYISINDAN
+		// bağımsız bulunur; tam listeleme yalnız fold-yedek.
+		perBranchFailed := false
+		for _, want := range order {
+			u := repoURL(cfg, repo) + "/refs?filter=heads/" + url.PathEscape(want) + "&api-version=" + ver
+			body, err := doGet(ctx, cli, u, cfg)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				perBranchFailed = true
+				break // sürüm/erişim sorunu — bu ver için tam listemeye düş
+			}
+			if names, ok := refNames(body); ok {
+				if b := PickBranch(names, []string{want}); b != "" {
+					return ver, b, nil
+				}
+			}
+		}
+		if perBranchFailed && firstErr != nil {
+			continue
+		}
 		u := repoURL(cfg, repo) + "/refs?filter=heads&api-version=" + ver
 		body, err := doGet(ctx, cli, u, cfg)
 		if err != nil {
@@ -684,20 +712,12 @@ func (s *Service) resolveBranch(ctx context.Context, cli *http.Client, cfg Setti
 			}
 			continue
 		}
-		var rr struct {
-			Value []struct {
-				Name string `json:"name"`
-			} `json:"value"`
-		}
-		if err := json.Unmarshal(body, &rr); err != nil {
+		names, ok := refNames(body)
+		if !ok {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("branş listesi çözümlenemedi")
 			}
 			continue
-		}
-		names := make([]string, 0, len(rr.Value))
-		for _, r := range rr.Value {
-			names = append(names, r.Name)
 		}
 		if b := PickBranch(names, order); b != "" {
 			return ver, b, nil
@@ -1408,4 +1428,22 @@ func frameGiveUpReason(frames []stackparse.Frame) string {
 		return "stack yalnız çerçeve/JDK frame'leri taşıyor — uygulama kodu görünmüyor"
 	}
 	return "uygulama frame'leri dosya/satır taşımıyor (debug bilgisi olmadan derlenmiş olabilir)"
+}
+
+
+// refNames — refs cevabından branş adları. SAF; bozuk JSON → ok=false.
+func refNames(body []byte) ([]string, bool) {
+	var rr struct {
+		Value []struct {
+			Name string `json:"name"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(body, &rr); err != nil {
+		return nil, false
+	}
+	names := make([]string, 0, len(rr.Value))
+	for _, r := range rr.Value {
+		names = append(names, r.Name)
+	}
+	return names, true
 }

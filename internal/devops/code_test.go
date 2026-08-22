@@ -370,6 +370,7 @@ type fakeTFS struct {
 	// httptest.Server.Close() askıdaki handler'ı beklerdi.
 	slowItemAfter int
 	itemDelay     time.Duration
+	hiddenFromListing map[string]bool
 }
 
 // repoSegment — istek yolundaki depo adı. Liste ucunda "".
@@ -459,12 +460,23 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 		switch {
 		case strings.HasSuffix(p, "/refs"):
 			f.hits["refs"]++
+			// v0.9.1265 — gerçek API gibi filter=heads/<ad> ÖNEK süzer;
+			// filter=heads tümünü döndürür. hiddenFromListing, tek-sayfa
+			// kesilmesini taklit eder: SÜZGEÇSİZ listede görünmez ama
+			// kesin filtreyle bulunur (sayfalama-kaybı senaryosu).
+			filter := q.Get("filter")
 			var out struct {
 				Value []struct {
 					Name string `json:"name"`
 				} `json:"value"`
 			}
 			for _, b := range f.branches {
+				if filter != "" && filter != "heads" && !strings.HasPrefix(b, "refs/"+filter) {
+					continue
+				}
+				if (filter == "" || filter == "heads") && f.hiddenFromListing[b] {
+					continue
+				}
 				out.Value = append(out.Value, struct {
 					Name string `json:"name"`
 				}{b})
@@ -1471,5 +1483,26 @@ func TestFrameGiveUpReasonThreeClasses(t *testing.T) {
 	app := []stackparse.Frame{{Class: "com.bank.App", IsApp: true}} // File/Line yok
 	if got := frameGiveUpReason(app); !strings.Contains(got, "dosya/satır") {
 		t.Errorf("locatable-değil: %q", got)
+	}
+}
+
+
+// v0.9.1265 — tek-sayfa refs kaybı: ayarlı branş süzgeçsiz listede
+// görünmese bile (sayfalama kesmesi) branş-bazlı kesin filtre bulur.
+// Mutasyon: resolveBranch'in per-branch adımını kaldır → bu test
+// varsayılan branşa düşer ve kırmızı olur.
+func TestResolveBranchSurvivesListingTruncation(t *testing.T) {
+	f := newFakeTFS(t)
+	f.branches = []string{"refs/heads/master", "refs/heads/release"}
+	f.hiddenFromListing = map[string]bool{"refs/heads/release": true}
+	svc := New()
+	svc.Configure(f.settings())
+	cfg := f.settings()
+	_, branch, err := svc.resolveBranch(context.Background(), svc.clientFor(false), cfg, "core-service")
+	if err != nil {
+		t.Fatalf("resolveBranch: %v", err)
+	}
+	if branch != "refs/heads/release" && branch != "release" {
+		t.Fatalf("release beklenirdi (kesin filtre bulmalıydı), %q geldi", branch)
 	}
 }

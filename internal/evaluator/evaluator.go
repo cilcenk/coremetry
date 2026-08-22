@@ -73,6 +73,17 @@ type Evaluator struct {
 	// early re-run (accepted trade-off; the monitor runner's
 	// interval_sec pacing has the same shape). Guarded by watcherMu.
 	watcherLastRun map[string]time.Time
+	// diskSeries — self-disk-eta'nın (v0.9.1279, selfhealth.go) disk
+	// başına doluluk örnekleri. BELLEKTE ve YALNIZ liderde: disk
+	// geçmişini kalıcılaştırmak yeni bir tablo + yeni bir yazma yolu
+	// demekti, oysa soru "önümüzdeki günlerde dolar mı" ve altı saatlik
+	// bir pencere onu cevaplıyor. Lider değişimi seriyi sıfırlar →
+	// yarım saat tahmin üretilmez (watcherLastRun ile aynı ömür
+	// sözleşmesi: kabul edilmiş, sessiz-değil tarafta hata yapan bir
+	// takas). diskMu, breachMu ile aynı gerekçeyle var.
+	diskMu     sync.Mutex
+	diskSeries map[string][]diskSample
+
 	// watcherFails — ardışık ölçüm hatası sayacı (v0.9.447): bozuk
 	// kaynaklı (silinmiş index, ES yetkisi) watch'ların açık problemi
 	// keep-alive'la ölümsüzleşiyordu. Guarded by watcherMu; girdiler
@@ -520,6 +531,14 @@ func (e *Evaluator) evaluateAll(ctx context.Context) int {
 	// geçmez" sınıfı: tek oluşum bile anında P1. Aynı openSnap, ek okuma
 	// yok.
 	e.evaluateFatalExceptions(ctx, openSnap)
+
+	// v0.9.1279 — SELF-HEALTH ailesi (Dynatrace-parite #8). "İzleme
+	// sistemi kendisi öldü ve kimse bilmedi" sınıfı: ingest durması,
+	// Distributed spool birikmesi, disk dolma projeksiyonu, ölü bildirim
+	// kanalı. Tüm meta-görünürlük bugüne dek PASİF paneldi (sysstats.go,
+	// cardinality.go) ve 2026-08-20 prod olayında 3.5 saatlik ölü ingest
+	// tüm ekranlarda yeşil göründü. Aynı openSnap, ek problem sorgusu yok.
+	e.evaluateSelfHealth(ctx, openSnap)
 
 	// Escalation sweep — bump severity on problems that have
 	// been open past the configured threshold without

@@ -558,11 +558,38 @@ func (s *Store) EnrichProblemsWithRunbooks(ctx context.Context, problems []Probl
 			problems[i].RunbookURL = u
 			continue
 		}
+		if u, ok := selfHealthRunbooks[problems[i].RuleID]; ok {
+			problems[i].RunbookURL = u
+			continue
+		}
 		if u, ok := svcBooks[problems[i].Service]; ok {
 			problems[i].RunbookURL = u
 		}
 	}
 	return problems
+}
+
+// selfHealthRunbooks — v0.9.1279. Self-health kuralları (`self-*`)
+// SENTETİKTİR: alert_rules'ta satırları yoktur, dolayısıyla operatörün
+// runbook_url alanı da yoktur ve yukarıdaki ruleBooks onları asla
+// bulamaz. Oysa müdahale adımları ÜRÜNÜN İÇİNDE: spool runbook'u
+// v0.9.1191'de /admin/stats'taki spool kartına girdi (gönderici başlat /
+// zorla boşalt düğmeleri), disk doluluğu aynı sayfanın 0. adımı,
+// kanallar Settings → Channels.
+//
+// Sıra bilinçli: operatörün alert_rules'a elle koyduğu bir URL bu
+// gömülü haritayı EZER (yukarıdaki dal önce koşar). Gömülü harita bir
+// varsayılan, bir kilit değil.
+//
+// URL'ler ÜRÜN İÇİ ve gerçek rotalar (kontrol edildi: /settings
+// path-param'lı — `/settings/channels`, query değil; /admin/stats'ta
+// çapa id'si YOK, o yüzden uydurma bir `#spool` fragment'i yazılmadı —
+// çalışmayan bir bağlantı, bağlantı olmamasından kötüdür).
+var selfHealthRunbooks = map[string]string{
+	"self-spool-depth":    "/admin/stats",
+	"self-disk-eta":       "/admin/stats",
+	"self-ingest-stall":   "/admin/stats",
+	"self-channel-broken": "/settings/channels",
 }
 
 // EnrichProblemsWithTeams attaches each problem's owning team

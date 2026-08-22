@@ -7,6 +7,7 @@ import { DrillButton } from '@/components/DrillButton';
 import { Spinner, Empty } from '@/components/Spinner';
 import { perSpanLogSignals, spanEventLogRows, traceServicesWithoutTraceField } from '@/lib/traceEventLogs';
 import { computeCriticalPath } from '@/lib/criticalPath';
+import { traceRepeatGroups, type TraceRepeatGroup } from '@/lib/traceRepeats';
 import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
 import { AIExplainButton } from '@/components/ai/AIExplainButton';
@@ -72,6 +73,12 @@ function TraceDetailInner() {
   // never need them.
   const [tab, setTab] = useState<'trace' | 'logs'>(
     () => (searchParams.get('tab') === 'logs' ? 'logs' : 'trace'));
+  // v0.9.1277 (Dynatrace-parite #6) — ×N gruplama. URL'de yaşıyor (?xn=1)
+  // çünkü paylaşılan bir trace linki "şu N+1 desenine bak" demek zorunda:
+  // gruplama kapalı gelen bir link, göndereni ikna eden görüntüyü ALMAZ.
+  // Aşağıdaki span/tab yazıcısıyla AYNI efektte URL'e iniyor.
+  const [groupSimilar, setGroupSimilar] = useState(
+    () => searchParams.get('xn') === '1');
   // Correlated Signals (task #6) — "Correlate ◆" opens the pivot drawer anchored
   // on this trace, surfacing the METRICS lens (the anchor service's RED series)
   // the Trace page doesn't otherwise show, alongside the trace + correlated logs.
@@ -144,6 +151,14 @@ function TraceDetailInner() {
   // Mirror selectedId + tab to the URL via replaceState so the Share
   // button captures the current view exactly. We don't push history
   // — selecting a span shouldn't add a back-button stop.
+  //
+  // v0.9.1277 — `xn` (×N gruplama) BU yazıcıya katıldı, ayrı bir
+  // `setSearchParams(prev => …)` açılmadı. Gerekçe kayıtlı: bu sayfa
+  // URL'ini ham `history.replaceState` ile yazıyor ve router'ı HİÇ
+  // haberdar etmiyor, dolayısıyla router'ın `prev`i bayat bir ALT
+  // KÜME — prev'i kopyalayan bir yazıcı operatörün seçili span'ini
+  // (?span=) sessizce silerdi (v0.8.256/.265/.267 sınıfı). Buradaki
+  // `new URL(window.location.href)` her zaman üst küme.
   useEffect(() => {
     if (typeof window === 'undefined' || !id) return;
     const url = new URL(window.location.href);
@@ -151,8 +166,10 @@ function TraceDetailInner() {
     else url.searchParams.delete('span');
     if (tab === 'logs') url.searchParams.set('tab', 'logs');
     else url.searchParams.delete('tab');
+    if (groupSimilar) url.searchParams.set('xn', '1');
+    else url.searchParams.delete('xn');
     window.history.replaceState({}, '', url.toString());
-  }, [selectedId, tab, id]);
+  }, [selectedId, tab, id, groupSimilar]);
 
   // Visible-order span list for j/k navigation. Same DFS the
   // waterfall renders — sort all spans by parent + start
@@ -269,6 +286,10 @@ function TraceDetailInner() {
   // the dominant latency chain reads as the only bright thing on
   // screen. Composes with the span filter's own dimming.
   const [critFocus, setCritFocus] = useState(false);
+  // Trace'in TAMAMINDAKİ tekrar desenleri. Ham `spans` kimliğine bağlı —
+  // seçim / sekme değişimi yeniden hesaplatmaz.
+  const repeatGroups = useMemo(
+    () => traceRepeatGroups(spans ?? []), [spans]);
   const spanMatchIds = useMemo<Set<string> | undefined>(() => {
     const q = spanFilter.trim().toLowerCase();
     if (!q || !spans) return undefined;
@@ -527,9 +548,13 @@ function TraceDetailInner() {
                     <TraceServiceBreakdown spans={spans} />
                     <SpanFilterBar spans={spans} value={spanFilter} onChange={setSpanFilter}
                       critCount={criticalPath?.ids.size ?? 0}
-                      critFocus={critFocus} onCritFocus={setCritFocus} />
+                      critFocus={critFocus} onCritFocus={setCritFocus}
+                      repeatGroups={repeatGroups}
+                      onRepeatChip={g => { setSpanFilter(g.name); setGroupSimilar(true); }} />
                     <TraceWaterfall spans={spans} selectedId={selectedId} onSelect={setSelectedId}
                       evidenceIds={evidenceIds}
+                      groupSimilar={groupSimilar}
+                      onGroupSimilarChange={setGroupSimilar}
                       criticalPathIds={criticalPathIds} matchIds={spanMatchIds}
                       focusIds={critFocus && criticalPath ? criticalPath.ids : undefined}
                       logSignals={logSignals} onLogsClick={() => setTab('logs')} />
@@ -589,13 +614,31 @@ function spanMatchesQuery(s: SpanRow, q: string): boolean {
   return false;
 }
 
-function SpanFilterBar({ spans, value, onChange, critCount, critFocus, onCritFocus }: {
+// Uzun bir işlem adını çipe sığdır. Tam ad her zaman `title`da.
+function shortName(n: string, max = 38): string {
+  return n.length <= max ? n : n.slice(0, max - 1) + '…';
+}
+
+// Süre etiketi — çip "· 4.8s" gibi TEK bir sayı taşır; ms altına inen
+// toplamlar zaten N+1 sayılmaz, ama fmtNs ölçeği kendi seçsin.
+function repeatTotalLabel(totalMs: number): string {
+  return fmtNs(totalMs * 1e6);
+}
+
+function SpanFilterBar({ spans, value, onChange, critCount, critFocus, onCritFocus,
+  repeatGroups, onRepeatChip }: {
   spans: SpanRow[];
   value: string;
   onChange: (v: string) => void;
   critCount?: number;
   critFocus?: boolean;
   onCritFocus?: (v: boolean) => void;
+  // v0.9.1277 — trace'in tekrar desenleri (traceRepeatGroups, toplam
+  // süreye göre sıralı). Boşsa çip HİÇ çizilmez: sağlıklı bir trace'te
+  // "0 desen" rozeti taşımak, kritik-yol çipinin critCount>0 disiplinini
+  // bozardı ve uyarı rengini enflasyona uğratırdı.
+  repeatGroups?: TraceRepeatGroup[];
+  onRepeatChip?: (g: TraceRepeatGroup) => void;
 }) {
   const matches = useMemo(() => {
     const q = value.trim().toLowerCase();
@@ -607,7 +650,11 @@ function SpanFilterBar({ spans, value, onChange, critCount, critFocus, onCritFoc
     return n;
   }, [spans, value]);
   return (
-    <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+    // v0.9.1277 — flexWrap: bu satır artık ÜÇ çip taşıyabiliyor (sayaç +
+    // kritik yol + N+1) ve tekrar çipi bir işlem adı taşıyor. Sarmasız
+    // hâlde dar ekranda input'u eziyordu.
+    <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center',
+      gap: 8, flexWrap: 'wrap' }}>
       <input value={value} onChange={e => onChange(e.target.value)}
         aria-label="Filter spans by name, service, or attribute value"
         placeholder="Filter spans (name, service, attr value)…"
@@ -630,6 +677,35 @@ function SpanFilterBar({ spans, value, onChange, critCount, critFocus, onCritFoc
           Critical path focus <span className="n">{critCount}</span>
         </span>
       )}
+      {/* v0.9.1277 — N+1 uyarı çipi. En pahalı tekrar desenini adıyla
+          söyler; tıklayınca span filtresini o ada kurar VE ×N gruplamayı
+          açar, yani tek tıkla "20 satırlık gürültü → tek ×20 satırı".
+          `.facet.f-warn` kapalıyken bile amber okur (uyarı tonu at rest),
+          tıklandığında filtre alanı zaten dolduğu için `.on` durumu bu
+          çipe uygulanmaz — çip bir anahtar değil, bir SIÇRAMA. */}
+      {onRepeatChip && repeatGroups && repeatGroups.length > 0 && (() => {
+        const top = repeatGroups[0];
+        const extra = repeatGroups.length - 1;
+        const tip = [
+          `Bu trace'te tekrar eden çağrı desenleri (N+1 adayı) — tıkla: filtreyi kur + ×N grupla`,
+          '',
+          ...repeatGroups.slice(0, 5).map(g =>
+            `${g.count}× ${g.service} · ${g.name} — toplam ${repeatTotalLabel(g.totalMs)}`),
+          ...(repeatGroups.length > 5 ? [`… +${repeatGroups.length - 5} desen daha`] : []),
+        ].join('\n');
+        return (
+          <span className="facet f-warn" role="button" tabIndex={0}
+            title={tip}
+            onClick={() => onRepeatChip(top)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRepeatChip(top); }
+            }}>
+            ⚠ {shortName(top.name)} <span className="n">×{top.count}</span>
+            <span className="n">· {repeatTotalLabel(top.totalMs)}</span>
+            {extra > 0 && <span className="n">+{extra} desen</span>}
+          </span>
+        );
+      })()}
     </div>
   );
 }

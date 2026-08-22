@@ -11,6 +11,7 @@ import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, SlowQueryRow, DBStmtDetail, DBStmtCaller } from '@/lib/types';
 import { densifyTrend, type StmtRef } from './stmtParam';
 import { serviceHref } from '@/lib/serviceHref';
+import { repeatsExploreHref } from '@/lib/pivotHref';
 
 // StmtDetailDrawer — v0.8.378 (Stage-2 slice D2). Row click on
 // /slow-queries opens this right-side drawer (shell mirrors the
@@ -139,7 +140,7 @@ export function StmtDetailDrawer({ refObj, row, range, onClose }: {
               <SummarySection detail={detail} compare={compare} />
               <TrendSection detail={detail} />
               <CallersSection detail={detail} compare={compare} range={range} />
-              <ExemplarsSection detail={detail} />
+              <ExemplarsSection detail={detail} range={range} />
             </>
           )}
         </div>
@@ -364,8 +365,27 @@ function CallersSection({ detail, compare, range }: {
 // ExemplarsSection — the TRUE trace pivots: slowest + worst-error span
 // of THIS statement class (spans.db_stmt_hash = hash), not a LIKE-prefix
 // approximation.
-function ExemplarsSection({ detail }: { detail: DBStmtDetail }) {
+//
+// v0.9.1277 — üçüncü pivot: "N+1 trace'leri →". İlk ikisi TEK bir
+// trace'e götürür ("bu ifadenin en yavaş örneği"); bu ise DESENE
+// götürür ("bu ifadeyi tek istek içinde defalarca çağıran trace'ler").
+// Yavaş bir sorgunun asıl hikâyesi çoğu zaman ikincisi: 4ms'lik bir
+// SELECT, istek başına 200 kez çağrıldığında 800ms'dir.
+//
+// Kapsam KASITLI olarak servis + db.system: normalize ifade metni
+// span'lerdeki ham `db.statement` ile eşleşmez, gerekçe
+// repeatsExploreHref'in başında.
+function ExemplarsSection({ detail, range }: { detail: DBStmtDetail; range: TimeRange }) {
   const ex = detail.exemplars;
+  // Bu ifadeyi GERÇEKTEN çağıran servisler — MV'nin kendi boyutu, tahmin
+  // değil. Yoksa link servis filtresi olmadan gider (dürüst: daha geniş
+  // bir soru sorar, YANLIŞ bir soru değil).
+  const callerServices = (detail.callers ?? []).map(c => c.service).filter(Boolean);
+  const repeatsHref = repeatsExploreHref({
+    window: range,
+    services: callerServices,
+    dbSystem: detail.summary?.dbSystem || undefined,
+  });
   return (
     <div>
       <SectionTitle>Exemplar traces</SectionTitle>
@@ -374,24 +394,35 @@ function ExemplarsSection({ detail }: { detail: DBStmtDetail }) {
           No exemplar spans for this statement in the window.
         </div>
       )}
-      {ex && (
-        <div style={{ display: 'flex', gap: 16, fontSize: 12, flexWrap: 'wrap' }}>
-          {ex.slowTraceId && (
-            <Link to={`/trace?id=${encodeURIComponent(ex.slowTraceId)}`}
-              style={{ color: 'var(--accent2)' }}
-              title={`Slowest span of this statement class in the window (trace ${ex.slowTraceId})`}>
-              slowest →
-            </Link>
-          )}
-          {ex.errorTraceId && (
-            <Link to={`/trace?id=${encodeURIComponent(ex.errorTraceId)}`}
-              style={{ color: 'var(--err)' }}
-              title={`Slowest ERRORED span of this statement class in the window (trace ${ex.errorTraceId})`}>
-              worst error →
-            </Link>
-          )}
-        </div>
-      )}
+      <div style={{ display: 'flex', gap: 16, fontSize: 12, flexWrap: 'wrap',
+        marginTop: ex ? 0 : 8 }}>
+        {ex?.slowTraceId && (
+          <Link to={`/trace?id=${encodeURIComponent(ex.slowTraceId)}`}
+            style={{ color: 'var(--accent2)' }}
+            title={`Slowest span of this statement class in the window (trace ${ex.slowTraceId})`}>
+            slowest →
+          </Link>
+        )}
+        {ex?.errorTraceId && (
+          <Link to={`/trace?id=${encodeURIComponent(ex.errorTraceId)}`}
+            style={{ color: 'var(--err)' }}
+            title={`Slowest ERRORED span of this statement class in the window (trace ${ex.errorTraceId})`}>
+            worst error →
+          </Link>
+        )}
+        <Link to={repeatsHref}
+          style={{ color: 'var(--warn)' }}
+          title={callerServices.length
+            ? `Explore → Repeats: aynı istek içinde ≥5 kez DB çağıran trace'ler`
+              + ` (kapsam: ${callerServices.slice(0, 4).join(', ')}`
+              + `${callerServices.length > 4 ? ` +${callerServices.length - 4}` : ''}`
+              + `, gruplama db.statement, aynı zaman penceresi).`
+              + ` İfade metni FİLTREYE konmaz — buradaki SQL normalize, span'lerdeki ham.`
+            : `Explore → Repeats: aynı istek içinde ≥5 kez DB çağıran trace'ler`
+              + ` (bu pencerede çağıran servis listelenemedi, kapsam tüm servisler).`}>
+          N+1 trace'leri →
+        </Link>
+      </div>
     </div>
   );
 }

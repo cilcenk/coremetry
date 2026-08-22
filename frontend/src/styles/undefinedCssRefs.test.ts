@@ -108,7 +108,12 @@ describe('undefinedCssRefs — sessizce düşen token/sınıf referansları', ()
       ['fgb',                'öksüz — FilterGroupBuilder.tsx:77, tüketicisi yok (2026-08-10 tarandı)'],
       ['fgb-group',          'öksüz — FilterGroupBuilder.tsx:90, tüketicisi yok'],
       ['metric-panel-title', 'öksüz — MetricPanel.tsx:230; mB13 bu sınıfın VAR olduğunu varsayıyor, YOK'],
-      ['wf-err-dot',         'öksüz — AggregatedStructure.tsx:141, tüketicisi yok'],
+      // (`wf-err-dot` — v0.9.1277'de KAPANDI: tek sitesi olan
+      //  AggregatedStructure.tsx tüketicisiz bir öksüzdü ve o dilimde
+      //  SİLİNDİ. `.wf-err-dot` diye bir CSS kuralı zaten hiç yoktu, yani
+      //  silinecek stil de yok; bu satırın kalması izin listesini
+      //  bayatlatırdı — testin yeşilliği artık silmenin doğruluğunu
+      //  ölçüyor, muafiyeti değil.)
     ]);
     const lit = /className\s*=\s*"([^"{}]+)"/g;
     const offenders: string[] = [];

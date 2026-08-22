@@ -245,3 +245,46 @@ export function dbTracesHref(p: {
       : { filters: encodeFilters(root.filters as never) }),
   });
 }
+
+
+// repeatsExploreHref — v0.9.1277 (Dynatrace-parite #6). Pivot into
+// Explore's "Repeats" result mode: "hangi trace'lerde bu çağrı N+ kez
+// tekrarlıyor".
+//
+// TUZAK — İFADE METNİ FİLTREYE GİRMEZ. Çağıran taraf (DB statement
+// drawer) elinde NORMALİZE edilmiş SQL tutar (`SELECT * FROM t WHERE
+// id = ?`); span'lerdeki `db.statement` ise sürücünün bastığı HAM
+// metindir (bind placeholder'ları, whitespace, hint'ler). Tam-eşleşme
+// bir filtre KESİNLİKLE boş döner — ve boş bir sonuç "bu desen yok"
+// diye okunur, "yanlış anahtarla sordun" diye değil (v0.9.256 ile aynı
+// yanılma sınıfı). Bu yüzden ifade FİLTREYE değil GRUPLAMAYA
+// (`groupBy=db.statement`) girer: backend ham metni kendi gruplar,
+// kapsamı ise servis + db.system daraltır.
+//
+// Zaman penceresi ZORUNLU argüman — bu dosyanın var oluş sebebi.
+export function repeatsExploreHref(p: {
+  window: TracesPivot['window'];
+  /** Kapsam servisleri. Boş = servis filtresi yok (tüm servisler). */
+  services?: string[];
+  /** db.system daraltması (postgresql / oracle / …). */
+  dbSystem?: string;
+  /** Explore `groupBy=`; varsayılan db.statement (N+1 sorgu avcısı). */
+  groupBy?: string[];
+  /** Explore `minRepeats=`; varsayılan 5 (Explore'un kendi varsayılanı). */
+  minRepeats?: number;
+}): string {
+  const filters: FilterExpr[] = [];
+  const svcs = (p.services ?? []).filter(Boolean);
+  // `=` backend'de TEK değer ister (filterexpr.go); çok servis IN olur.
+  if (svcs.length === 1) filters.push({ k: 'service.name', op: '=', v: [svcs[0]] });
+  else if (svcs.length > 1) filters.push({ k: 'service.name', op: 'IN', v: svcs });
+  if (p.dbSystem) filters.push({ k: 'db.system', op: '=', v: [p.dbSystem] });
+
+  const q = new URLSearchParams();
+  q.set('result', 'repeats');
+  if (filters.length) q.set('filters', encodeFilters(filters));
+  q.set('groupBy', (p.groupBy ?? ['db.statement']).join(','));
+  q.set('minRepeats', String(p.minRepeats ?? 5));
+  q.set('range', rangeParam(p.window));
+  return `/explore?${q.toString()}`;
+}

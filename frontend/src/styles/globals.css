@@ -1483,6 +1483,19 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   /* Background colour set inline to the per-service hash colour. */
 }
 
+/* v0.9.1277 — şelale başlığındaki "×N grupla" anahtarı. Gövdesi `.facet`
+   (tek tasarım dili: kritik-yol odak çipiyle aynı chip); burada YALNIZ
+   başlık hücresine uyum için ölçü/metin dönüşümü yerelleşiyor —
+   `.wf-col-name` UPPERCASE + letter-spacing dayatıyor ve 42px yüksek. */
+.wf-grp-toggle {
+  margin-left: auto;
+  flex-shrink: 0;
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 2px 8px;
+  font-size: 10.5px;
+}
+
 /* Group multiplier — appears in service-structure rows when N>1
    sibling spans collapse to a single "×N" entry. Outlined chip in
    accent2 so the eye finds it quickly when scanning a deep tree

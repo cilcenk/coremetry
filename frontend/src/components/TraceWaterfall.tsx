@@ -46,6 +46,12 @@ interface Row {
   // row. The synthetic id encodes the group key, not the rep, so
   // Alt+click has no other way back to a node the children map knows.
   repSpanId?: string;
+  // v0.9.1277 — the group's REAL member ids. Every id-keyed decoration
+  // (filter match, critical path, focus, AI evidence, selection) is a
+  // question about real spans, and a synthetic id answers `false` to all
+  // of them. Before this, turning grouping on while a filter was active
+  // dimmed the very rows the filter had just found.
+  memberIds?: string[];
 }
 
 // Span kind is exposed via tooltips on the row name only — we
@@ -152,6 +158,7 @@ export function TraceServiceBreakdown({ spans }: { spans: SpanRow[] }) {
 
 export function TraceWaterfall({
   spans, selectedId, onSelect, defaultCollapsed, groupSimilar = false,
+  onGroupSimilarChange,
   criticalPathIds, matchIds, focusIds, evidenceIds, logSignals, onLogsClick,
 }: {
   spans: SpanRow[];
@@ -169,6 +176,11 @@ export function TraceWaterfall({
   // loop patterns like N+1 DB queries — used by the service-
   // structure waterfall, off by default in the regular trace view.
   groupSimilar?: boolean;
+  // v0.9.1277 — when provided, the sticky header grows a "×N grupla"
+  // toggle and the caller owns the state (URL-bound on /trace). Absent =
+  // no toggle rendered, which is how the service-structure view keeps its
+  // header clean while forcing grouping on.
+  onGroupSimilarChange?: (v: boolean) => void;
   // Optional set of span IDs on the trace's critical path. Rows
   // matching these get the .wf-critical class — left-edge red
   // accent stripe — so the operator sees at a glance which
@@ -358,6 +370,7 @@ export function TraceWaterfall({
           groupMaxDur: entry.maxDur,
           hasError: entry.anyError,
           repSpanId: entry.rep.spanId,
+          memberIds: entry.members.map(m => m.spanId),
         });
         if (collapsed.has(synthId)) return;
         // Recurse into the rep's children directly (one level
@@ -485,7 +498,33 @@ export function TraceWaterfall({
   return (
     <div id="wf-outer" ref={containerRef}>
       <div className="wf-header">
-        <div className="wf-col-name" style={{ width: colWidth }}>Span</div>
+        <div className="wf-col-name" style={{ width: colWidth, overflow: 'hidden' }}>
+          Span
+          {/* v0.9.1277 — ×N gruplama anahtarı. Yapışkan başlıkta duruyor
+              çünkü uzun bir şelalede aşağı kaydırdıktan sonra "bu satırlar
+              neden katlanmış?" sorusunun cevabı görünür kalmalı. Görsel
+              dil kritik-yol çipiyle aynı (`.facet` / `.facet.on`); <span
+              role="button"> BİLİNÇLİ: `.facet:hover` (0,2,0) element
+              seviyesindeki `button:hover:not(:disabled)` (0,2,1) kuralını
+              yenemez, yani gerçek bir <button> hover'da dolu mavi olurdu
+              (v0.9.895'te ib-bare'in 12 sitesini kıran tuzak). */}
+          {onGroupSimilarChange && (
+            <span className={'facet wf-grp-toggle' + (groupSimilar ? ' on' : '')}
+              role="button" tabIndex={0} aria-pressed={groupSimilar}
+              title={groupSimilar
+                ? 'Gruplama AÇIK — aynı (servis, işlem) kardeş span\'ler tek ×N satırında. Kapatmak için tıkla.'
+                : 'Aynı (servis, işlem) kardeş span\'leri tek ×N satırında katla — N+1 desenlerini okunur kılar.'}
+              onClick={e => { e.stopPropagation(); onGroupSimilarChange(!groupSimilar); }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onGroupSimilarChange(!groupSimilar);
+                }
+              }}>
+              ×N grupla
+            </span>
+          )}
+        </div>
         <div className="wf-resizer"
           title="Drag to resize · double-click to auto-fit"
           onPointerDown={onResizeStart}
@@ -535,7 +574,22 @@ export function TraceWaterfall({
       </div>
 
       {rows.map(({ span: s, depth, hasChildren, ancestorContinues, isLastSibling,
-                    groupCount, groupTotalDur, groupAvgDur, groupMaxDur, repSpanId }) => {
+                    groupCount, groupTotalDur, groupAvgDur, groupMaxDur, repSpanId,
+                    memberIds }) => {
+        // v0.9.1277 — id kimliği İKİ soruya ayrıldı.
+        //   • `s.spanId` DÜĞÜM kimliği: katlama anahtarı, React key,
+        //     data-span-id. Sentetik grup satırında "group:…" olması
+        //     DOĞRU — o satır gerçek bir span değil.
+        //   • `realIds` / `pickId` GERÇEK span kimliği: seçim, filtre
+        //     eşleşmesi, kritik yol, kanıt, log rozeti. Bunlar gerçek
+        //     span'ler hakkında sorular; sentetik id hepsine `false`
+        //     cevap verir. Gruplama açıkken bir filtre aktifse, filtrenin
+        //     BULDUĞU satırlar sönükleşiyordu (v0.9.226'dan beri uyuyan
+        //     kod olduğu için hiç görülmemiş bir kırık).
+        const realIds = memberIds ?? [s.spanId];
+        const pickId = repSpanId ?? s.spanId;
+        const anyId = (set: Set<string> | undefined) =>
+          set !== undefined && realIds.some(id => set.has(id));
         const color = colorFor(s);
         const cat = categoryOf(s);
         // v0.8.549 — the cluster chip marks SERVICE ENTRY, not just the
@@ -559,24 +613,24 @@ export function TraceWaterfall({
         const displayName = displaySpanName(s);
         const durMs = dur / 1e6;
         const isCol = collapsed.has(s.spanId);
-        const sel = s.spanId === selectedId;
-        const onCritical = criticalPathIds?.has(s.spanId) ?? false;
+        const sel = selectedId !== null && realIds.includes(selectedId);
+        const onCritical = anyId(criticalPathIds);
         // v0.5.383 — in-trace filter classes. matchIds undefined →
         // no filter active, every row is "neutral". matchIds set →
         // matches glow (.wf-match), non-matches dim (.wf-dim).
         const filterActive = matchIds !== undefined;
-        const onMatch = filterActive && matchIds!.has(s.spanId);
+        const onMatch = anyId(matchIds);
         // Focus mode dims rows outside focusIds; the filter dims
         // non-matches. Either signal alone is enough to dim — a row
         // must survive BOTH active modes to stay full-opacity.
         const dimmed = (filterActive && !onMatch)
-          || (focusIds !== undefined && !focusIds.has(s.spanId));
+          || (focusIds !== undefined && !anyId(focusIds));
         const cls = [
           'wf-row',
           s.statusCode === 'error' ? 'wf-err' : '',
           sel ? 'wf-sel' : '',
           onCritical ? 'wf-critical' : '',
-          evidenceIds?.has(s.spanId) ? 'wf-evidence' : '',
+          anyId(evidenceIds) ? 'wf-evidence' : '',
           filterActive && onMatch ? 'wf-match' : '',
           dimmed ? 'wf-dim' : '',
         ].filter(Boolean).join(' ');
@@ -626,7 +680,7 @@ export function TraceWaterfall({
         // data-span-id (v0.9.477): AI çekmecesindeki kanıt satırı tıklanınca
         // sayfa bu satırı bulup görünüme kaydırır.
         return (
-          <div key={s.spanId} data-span-id={s.spanId} className={cls} onClick={() => onSelect(s.spanId)}
+          <div key={s.spanId} data-span-id={pickId} className={cls} onClick={() => onSelect(pickId)}
             style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 28px' }}>
             {/* Left stripe — solid 3px service-color marker so the eye
                 can scan service handoffs down the trace. Selected row
@@ -706,11 +760,11 @@ export function TraceWaterfall({
                 {(() => {
                   // v0.8.407 — "logs in context": correlated log/event
                   // count for THIS span; click opens the Logs tab.
-                  const lc = logSignals?.get(s.spanId);
+                  const lc = logSignals?.get(pickId);
                   if (!lc || lc.n === 0) return null;
                   return (
                     <span
-                      onClick={e => { e.stopPropagation(); onLogsClick?.(s.spanId); }}
+                      onClick={e => { e.stopPropagation(); onLogsClick?.(pickId); }}
                       title={`${lc.n} correlated log line${lc.n === 1 ? '' : 's'} / span event${lc.n === 1 ? '' : 's'} — open Logs tab`}
                       style={{
                         flexShrink: 0, cursor: onLogsClick ? 'pointer' : 'default',

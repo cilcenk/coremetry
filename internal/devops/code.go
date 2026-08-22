@@ -3,10 +3,12 @@ package devops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,7 +22,8 @@ import (
 // Akış: depo ağacını recursive listele (10 dk cache) → frame'in dosya
 // adını yol SONEKİ olarak eşleştir (birden çok aday varsa paket yoluna
 // en çok benzeyen kazanır) → dosya içeriğini çek → hatalı satırın ±30
-// satırı. İlk 3 uygulama frame'i, toplam ~4.000 rune.
+// satırı. En fazla 3 PENCERE (aday frame değil, v0.9.1237), toplam
+// ~4.000 rune.
 //
 // İKİ SÖZLEŞME, İKİSİ DE PAZARLIKSIZ:
 //
@@ -34,10 +37,38 @@ import (
 //     değildir; varlığını varsayan bir tasarım tam da sahada patlar.
 //     Düz items API'si her kurulumda vardır.
 const (
-	// codeFrameLimit — kaç uygulama frame'i için kod çekilir.
+	// codeWindowLimit — kaç pencere KESİLİNCE av biter.
 	// 3: hata satırı + onu çağıran + bir üstü. Daha fazlası gemma4'ün
 	// bağlamında kod-dışı kanıtı (trace, log) sıkıştırmaya başlar.
-	codeFrameLimit = 3
+	//
+	// v0.9.1237 — bu sayı ADAYLARI kırpıyordu (AppFrames(frames, 3)).
+	// Üç ıska — ağaçta olmayan dosya, okunamayan içerik — avı
+	// bitiriyordu; dördüncü frame isabet edecekken hiç denenmiyordu.
+	// Tavan artık ÇIKTIYA bakıyor: 3 pencere kesilene kadar aday
+	// listesi yürünür. Sayının kendisi (3) ve gerekçesi değişmedi.
+	codeWindowLimit = 3
+	// codeCandidateLimit — AppFrames'ten alınan aday frame sayısı.
+	// 10: derin bir JBoss stack'inde kök neden segmentinin uygulama
+	// frame'leri bu aralığa rahat sığar (AppFrames v0.9.1235'ten beri
+	// en derin "Caused by" segmentini başa koyuyor, yani sıra zaten
+	// doğru); daha uzun bir liste sabır tavanına nasılsa takılır.
+	codeCandidateLimit = 10
+	// codeLookupLimit — toplam DENEME tavanı. Iska bütçe harcamaz ama
+	// SABIR harcar: 60.000 yollu bir ağaçta on frame'i tek tek arayıp
+	// her birinde ıskalayan patolojik bir stack açıklamayı bekletmesin.
+	// 6 = 3 pencere + 3 ıska payı.
+	codeLookupLimit = 6
+	// codeFetchDeadline — FetchCode'un TOPLAM süre tavanı (v0.9.1237).
+	// İstek başına 20 sn'lik client tavanı vardı ama N ARDIŞIK isteğin
+	// tavanı yoktu: kara delik bir host'ta zincir (2 refs + varsayılan
+	// branş + ağaç + frame başına 2 dosya çağrısı) dakikalara çıkabilir.
+	// Üstelik buildCodeContext deliverExplain'den ÖNCE koşar — o süre
+	// boyunca tek bayt yazılmaz ve 60 sn'lik ingress proxy_read_timeout
+	// tam burada bağlantıyı keserek fail-open sözleşmesini boşa çıkarır.
+	// 25 sn: takılan TEK isteğin 20 sn'si içeri sığar, ingress tavanına
+	// 35 sn pay kalır. Tavan dolarsa elde ne varsa o döner — kısmi
+	// sonuç, hiçbir şeyden iyidir.
+	codeFetchDeadline = 25 * time.Second
 	// codeWindowRadius — hatalı satırın etrafından ±N satır.
 	codeWindowRadius = 30
 	// codeBudgetRunes — tüm pencerelerin TOPLAM tavanı. Rune, byte
@@ -211,6 +242,12 @@ func (s *Service) FetchCode(ctx context.Context, repo, projectHint string, frame
 	if strings.TrimSpace(cfg.BaseURL) == "" {
 		return CodeContext{Repo: repo, Reason: "DevOps bağlantısı yapılandırılmamış (Ayarlar → Kod entegrasyonu)"}
 	}
+	// v0.9.1237 — TOPLAM süre tavanı. parent AYRI tutulur: tavanın
+	// dolmasıyla çağıranın (tarayıcı gitti) vazgeçmesini ayırt etmeden
+	// "DevOps 25 sn'de yanıt vermedi" demek yanlış suçlama olurdu.
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, s.fetchDeadline())
+	defer cancel()
 	// v0.9.1183 — proje ayarda boşsa servis önekinden TÜRETİLİR
 	// (bsa-… → BSA). Açık ayar HER ZAMAN kazanır: türetme bir tahmin,
 	// operatörün yazdığı ad bir karar (ResolveRepo'daki pin sözleşmesinin
@@ -228,7 +265,8 @@ func (s *Service) FetchCode(ctx context.Context, repo, projectHint string, frame
 	// v0.9.1235 — AppFrames artık EN DERİN "Caused by" segmentinden dışa
 	// doğru seçiyor: üç pencerenin ilki kök nedenin fırlatıldığı satır,
 	// wrapper'ın yeniden-fırlatma satırları arta kalan bütçeye düşüyor.
-	targets := stackparse.AppFrames(frames, codeFrameLimit)
+	// v0.9.1237 — aday listesi GENİŞ (10), tavan çıktıda (3 pencere).
+	targets := stackparse.AppFrames(frames, codeCandidateLimit)
 	if len(targets) == 0 {
 		return CodeContext{Repo: repo, Reason: "stack'te dosya+satır taşıyan uygulama frame'i yok"}
 	}
@@ -251,6 +289,9 @@ func (s *Service) FetchCode(ctx context.Context, repo, projectHint string, frame
 			err = fmt.Errorf("%v (sunucudaki en yakın adlar: %s)", err, strings.Join(near, ", "))
 		}
 		if err != nil {
+			if deadlineHit(parent, ctx) {
+				return CodeContext{Repo: repo, Reason: withNote(note, deadlineReason(s.fetchDeadline()))}
+			}
 			return CodeContext{Repo: repo, Reason: sanitize(err.Error(), cfg)}
 		}
 	}
@@ -258,6 +299,9 @@ func (s *Service) FetchCode(ctx context.Context, repo, projectHint string, frame
 
 	paths, err := s.repoTree(ctx, cli, cfg, ver, repo, branch)
 	if err != nil {
+		if deadlineHit(parent, ctx) {
+			return CodeContext{Repo: repo, Branch: branch, Reason: withNote(note, deadlineReason(s.fetchDeadline()))}
+		}
 		return CodeContext{Repo: repo, Branch: branch, Reason: withNote(note, sanitize(err.Error(), cfg))}
 	}
 	if len(paths) == 0 {
@@ -270,44 +314,195 @@ func (s *Service) FetchCode(ctx context.Context, repo, projectHint string, frame
 			Reason: withNote(note, "depo ağacı boş döndü (proje "+cfg.Project+", depo "+repo+", branş "+branch+")")}
 	}
 
-	var windows []CodeWindow
-	var misses []string
-	for _, f := range targets {
-		p := BestPathForFrame(paths, f)
-		if p == "" {
-			misses = append(misses, f.File)
-			continue
-		}
-		body, ferr := fetchItemContent(ctx, cli, cfg, ver, repo, branch, p)
-		if ferr != nil {
-			misses = append(misses, f.File+" (okunamadı)")
-			continue
-		}
-		w := WindowAround(body, f.Line, codeWindowRadius)
-		if w.Content == "" {
-			misses = append(misses, f.File+" (satır aralığı boş)")
-			continue
-		}
-		w.Path, w.Frame, w.Line = p, f.String(), f.Line
-		windows = append(windows, w)
-	}
+	hunt := huntWindows(ctx, targets,
+		huntLimits{windows: codeWindowLimit, lookups: codeLookupLimit, radius: codeWindowRadius},
+		func(f stackparse.Frame) string { return BestPathForFrame(paths, f) },
+		func(c context.Context, p string) (string, error) {
+			return fetchItemContent(c, cli, cfg, ver, repo, branch, p)
+		})
 
-	windows, trimmed := ClampCodeWindows(windows, codeBudgetRunes)
+	windows, trimmed := ClampCodeWindows(hunt.windows, codeBudgetRunes)
 	out.Windows = windows
+	ours := deadlineHit(parent, ctx)
 	switch {
-	case len(windows) == 0 && len(misses) > 0:
-		out.Reason = "ağaçta eşleşen dosya yok: " + strings.Join(misses, ", ")
+	case len(windows) == 0 && hunt.timedOut && ours:
+		out.Reason = deadlineReason(s.fetchDeadline())
+	case len(windows) == 0 && hunt.timedOut:
+		out.Reason = "istek iptal edildi — kod bağlamı toplanamadı"
+	case len(windows) == 0 && len(hunt.misses) > 0:
+		out.Reason = "ağaçta eşleşen dosya yok: " + strings.Join(hunt.misses, ", ")
 	case len(windows) == 0:
 		out.Reason = "kod penceresi kurulamadı"
 	case trimmed:
 		out.Reason = fmt.Sprintf("kod bütçesi (%d karakter) doldu — pencereler kısaltıldı", codeBudgetRunes)
 	}
+	// v0.9.1237 — KISMİ sonuç da rapor edilir. En az bir pencere
+	// kesildiğinde eski kod susuyordu: ıskalanan frame'ler ve tavana
+	// çarpma hiçbir yere yazılmıyor, "kod geldi" cevabının yanında
+	// NEYİN gelmediği görünmüyordu.
+	out.Reason = withNote(out.Reason, hunt.note(len(windows), len(targets), cutoffLabel(ours, s.fetchDeadline())))
 	// v0.9.1236 — düzeltme izi BAŞARILI çekmede de kalır. Kod geldi
 	// diye susmak, operatörün katalogdaki/konvansiyondaki yanlış adı
 	// hiç öğrenmemesi demek olurdu; ekrandaki "Kaynak: <depo>" satırı
 	// beklediğinden farklı bir ad gösterirken sebebi de söylemeli.
 	out.Reason = withNote(note, out.Reason)
 	return out
+}
+
+// fetchDeadline — yürürlükteki toplam süre tavanı.
+func (s *Service) fetchDeadline() time.Duration {
+	if s.codeDeadline > 0 {
+		return s.codeDeadline
+	}
+	return codeFetchDeadline
+}
+
+// deadlineHit — duran şey BİZİM tavanımız mı? parent hâlâ canlıyken
+// türetilmiş ctx'in DeadlineExceeded olması tek kesin işarettir;
+// çağıran vazgeçtiyse (tarayıcı kapandı) parent de hatalıdır ve suçu
+// DevOps'a yıkmayız.
+func deadlineHit(parent, ctx context.Context) bool {
+	return parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded)
+}
+
+// cutoffLabel — döngüyü kesen şeyin ADI. ours=false ise kesen biz
+// değiliz (tarayıcı gitti, üst ctx düştü): "süre tavanı" yazmak
+// operatörü olmayan bir DevOps yavaşlığının peşine düşürürdü.
+func cutoffLabel(ours bool, dl time.Duration) string {
+	if ours {
+		return fmt.Sprintf("süre tavanı (%s)", dl)
+	}
+	return "istek iptal edildi"
+}
+
+// deadlineReason — süre tavanının insan-okunur karşılığı. Süre
+// PARAMETRE: ekranda yazan sayı, gerçekten uygulanan tavan olmalı.
+func deadlineReason(dl time.Duration) string {
+	return fmt.Sprintf("DevOps %s içinde yanıt vermedi — kodsuz analiz", dl)
+}
+
+// huntLimits — döngü disiplininin üç vidası.
+type huntLimits struct {
+	windows int // kaç pencere kesilince durulur
+	lookups int // kaç deneme sonrası sabır biter
+	radius  int // pencere yarıçapı (satır)
+}
+
+// huntOutcome — döngünün ürünü + NEDEN durduğu.
+type huntOutcome struct {
+	windows  []CodeWindow
+	misses   []string
+	dupes    int  // birebir tekrar olduğu için hiç denenmeyen frame
+	untried  int  // tavana çarpıldığı için denenmeyen aday
+	patience bool // deneme tavanı doldu
+	timedOut bool // süre tavanı doldu
+}
+
+// huntWindows — kod çekme döngüsünün çekirdeği (v0.9.1237). Ağı
+// BİLMEZ: yol çözümü ve içerik çekimi enjekte edilir, böylece "hangi
+// frame denenir, ne zaman durulur, ne rapor edilir" kararı tablo
+// testlenebilir kalır.
+//
+// Üç kural:
+//
+//  1. TAVAN ÇIKTIDA. windows tavanı KESİLEN pencereyi sayar, denenen
+//     frame'i değil. Iska avı bitirmez; dördüncü frame'in isabet etme
+//     ihtimali üçüncünün ıskasına kurban gitmez.
+//  2. TEKRAR İSTEK ETMEZ. Birebir aynı (dosya,satır) frame'i —
+//     özyineleme ve wrapper kalıplarında sık — atlanır: ne istek ne
+//     sabır harcar, ve aynı pencerenin kopyası bütçeyi yiyip daha
+//     derin bir frame'i dışarı itmez. Aynı DOSYANIN başka satırı ise
+//     eldeki içerikten kesilir; ikinci bir GET yok.
+//  3. IŞKA SABIR HARCAR. Denenen her frame sabırdan düşer; lookups
+//     tavanı, ağaçta hiçbir şeyi tutmayan patolojik bir stack'in
+//     açıklamayı bekletmesini engeller.
+func huntWindows(
+	ctx context.Context,
+	targets []stackparse.Frame,
+	lim huntLimits,
+	find func(stackparse.Frame) string,
+	fetch func(context.Context, string) (string, error),
+) huntOutcome {
+	var out huntOutcome
+	tried := map[string]bool{}    // (dosya,satır) — birebir tekrar muhafızı
+	bodies := map[string]string{} // yol → içerik (aynı dosya, başka satır)
+	lookups := 0
+	for i, f := range targets {
+		if len(out.windows) >= lim.windows {
+			out.untried = len(targets) - i
+			break
+		}
+		if lookups >= lim.lookups {
+			out.untried, out.patience = len(targets)-i, true
+			break
+		}
+		if ctx.Err() != nil {
+			out.untried, out.timedOut = len(targets)-i, true
+			break
+		}
+		key := f.File + ":" + strconv.Itoa(f.Line)
+		if tried[key] {
+			out.dupes++
+			continue
+		}
+		tried[key] = true
+		lookups++
+
+		p := find(f)
+		if p == "" {
+			out.misses = append(out.misses, f.File)
+			continue
+		}
+		body, cached := bodies[p]
+		if !cached {
+			b, ferr := fetch(ctx, p)
+			if ferr != nil {
+				// Süre tavanı bir ıska DEĞİLDİR: dosya orada, biz
+				// bekleyemedik. Ayırmazsak "ağaçta eşleşen dosya yok"
+				// diye yanlış teşhis yazardık.
+				if ctx.Err() != nil {
+					out.untried, out.timedOut = len(targets)-i-1, true
+					break
+				}
+				out.misses = append(out.misses, f.File+" (okunamadı)")
+				continue
+			}
+			bodies[p], body = b, b
+		}
+		w := WindowAround(body, f.Line, lim.radius)
+		if w.Content == "" {
+			out.misses = append(out.misses, f.File+" (satır aralığı boş)")
+			continue
+		}
+		w.Path, w.Frame, w.Line = p, f.String(), f.Line
+		out.windows = append(out.windows, w)
+	}
+	return out
+}
+
+// note — KISMİ sonucun dürüst özeti. kept: bütçeden sonra ELDE KALAN
+// pencere sayısı; total: aday frame sayısı.
+//
+// Pencere hiç yoksa boş döner — o hâli çağıran zaten daha açık bir
+// cümleyle anlatıyor; buranın işi "kod geldi ama şu eksik" demek.
+// Tekrar atlanan frame'ler rapor edilmez: onlar kayıp değil, tasarruf.
+func (h huntOutcome) note(kept, total int, cutoff string) string {
+	if kept == 0 {
+		return ""
+	}
+	var parts []string
+	if h.timedOut {
+		parts = append(parts, fmt.Sprintf("%s: %d adaydan %d pencere kesildi",
+			cutoff, total, kept))
+	}
+	if h.patience {
+		parts = append(parts, fmt.Sprintf("deneme tavanı (%d) doldu — %d frame denenmedi",
+			codeLookupLimit, h.untried))
+	}
+	if len(h.misses) > 0 {
+		parts = append(parts, "eşleşmeyen: "+strings.Join(h.misses, ", "))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // resolveBranch — refs API'sinden branşları çeker ve ayardaki sıraya

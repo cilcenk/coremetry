@@ -145,6 +145,13 @@ type Service struct {
 	// (v0.9.830). Its own mutex: a recursive listing takes seconds
 	// and must not block Snapshot() / the settings page behind it.
 	code codeCache
+
+	// codeDeadline — FetchCode'un toplam süre tavanı; 0 →
+	// codeFetchDeadline (v0.9.1237). Sayının TEK kaynağı hâlâ o
+	// sabit; bu alan yalnız testin seam'i: tavanın gerçekten
+	// takıldığını görmenin öbür yolu 25 sn beklemekti, o da testi
+	// yazılmadan ölmüş bir kapıya çevirirdi.
+	codeDeadline time.Duration
 }
 
 func New() *Service {

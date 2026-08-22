@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   nextSort, sortRows,
   parseSortParam, formatSortParam, resolveToggle, computeSortedRows,
-  type DataTableColumn, type SortState,
+  type DataTableColumn, type SortState, stickyLeftOffsets,
 } from './dataTable';
 
 // v0.7.53 — pins the shared sortable-table primitive's click semantics
@@ -154,5 +154,26 @@ describe('flex kolon genişliği (v0.9.542)', () => {
   });
   it('genişliksiz flex olmayan kolon varsayılana düşer', () => {
     expect(colW({}, { id: 'x' })).toBe(120);
+  });
+});
+
+// v0.9.1256 — sola sabit kolonların kümülatif ofsetleri.
+describe('stickyLeftOffsets', () => {
+  const cols = [
+    { id: 'service', stickyLeft: true, width: 170 },
+    { id: 'path', stickyLeft: true, width: 240 },
+    { id: 'calls', width: 90 },
+    { id: 'oops', stickyLeft: true, width: 50 }, // zincir kesildikten sonra — yok sayılır
+  ];
+  it('cumulates resized-or-declared widths, breaks at first non-sticky', () => {
+    expect(stickyLeftOffsets(cols, {})).toEqual({ service: 0, path: 170 });
+    expect(stickyLeftOffsets(cols, { service: 200 })).toEqual({ service: 0, path: 200 });
+  });
+  it('empty when the first column is not sticky', () => {
+    expect(stickyLeftOffsets([{ id: 'a' }, { id: 'b', stickyLeft: true }], {})).toEqual({});
+  });
+  it('falls back to defaultW for width-less sticky columns', () => {
+    expect(stickyLeftOffsets([{ id: 'a', stickyLeft: true }, { id: 'b', stickyLeft: true }], {}))
+      .toEqual({ a: 0, b: 120 });
   });
 });

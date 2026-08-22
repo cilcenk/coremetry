@@ -45,6 +45,12 @@ export interface DataTableColumn<T> {
   // column: multiple pinned columns would need per-column right
   // offsets, which nothing needs yet.
   stickyRight?: boolean;
+  // v0.9.1256 (operatör: /endpoints + /databases "yatayda kayma —
+  // kimlik kayboluyor") — SOL sabitleme. Yalnız İLK N ardışık görünür
+  // kolonda anlamlı; kümülatif left ofsetleri stickyLeftOffsets saf
+  // çekirdeğinden gelir (resize'lı genişliklerle canlı). is-fit
+  // (kaydırmayan) kaplarda görsel etkisi yok — zaten kaymaz.
+  stickyLeft?: boolean;
   // flex — v0.9.542. Bu kolon ARTAN genişliği emer; diğerleri kendi
   // genişliğinde kalır.
   //
@@ -350,4 +356,28 @@ export function fitColumnWidths(
       return out;
     }
   }
+}
+
+// stickyLeftOffsets — v0.9.1256 saf çekirdek: görünür kolon listesi +
+// efektif genişliklerden (resize edilmiş ?? beyan ?? varsayılan) sola
+// sabit kolonların kümülatif left ofsetleri. stickyLeft olmayan ilk
+// kolonda zincir KESİLİR: aradan sabitlenmemiş kolon atlayıp sonrakini
+// sabitlemek, kaydırmada üst üste binen yüzer kolonlar üretir.
+export function stickyLeftOffsets(
+  cols: { id: string; stickyLeft?: boolean; width?: number }[],
+  colWidths: Record<string, number>,
+  defaultW = 120,
+  // base — yönetilen kolonlardan ÖNCE duran leading hücrelerin (genişlet
+  // oku vb.) toplam genişliği; onlar da sola sabitlenir ve zincir onların
+  // ardından başlar (DependenciesTable 24px oku).
+  base = 0,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  let acc = base;
+  for (const c of cols) {
+    if (!c.stickyLeft) break;
+    out[c.id] = acc;
+    acc += colWidths[c.id] ?? c.width ?? defaultW;
+  }
+  return out;
 }

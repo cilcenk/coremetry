@@ -296,8 +296,12 @@ export function CopilotChat() {
           bodyStyle={{ display: 'flex', flexDirection: 'column', padding: 0 }}
           header={
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-              <AiMark size={18} />
-              <span style={{ fontWeight: 600, fontSize: 13 }}>CoSRE</span>
+              {/* v0.9.1253 (operatör: "CoSRE yazısı biraz daha belirgin,
+                  büyük font olabilir") — 13→16 + 700 + hafif harf aralığı;
+                  marka adı çekmece başlığında artık ilk bakışta okunur.
+                  AiMark de eşlik etsin diye 18→20. */}
+              <AiMark size={20} />
+              <span style={{ fontWeight: 700, fontSize: 16, letterSpacing: 0.3 }}>CoSRE</span>
               <span style={{ flex: 1 }} />
               {/* v0.9.1139 — konuşma arşivi. Menü değil bir BÖLÜM:
                   çekmece zaten sağ kenarda ve ikinci bir uçan katman

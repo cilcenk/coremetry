@@ -19,6 +19,7 @@ import { CopilotExplain } from './CopilotExplain';
 import { __resetCopilotEnabledCache } from './ai/useCopilotEnabled';
 import { api } from '@/lib/api';
 import type { ExplainStreamOpts } from '@/lib/api';
+import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 
 let host: HTMLDivElement;
 let root: Root;
@@ -82,6 +83,17 @@ function fakeExplain() {
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   __resetCopilotEnabledCache();
+  // v0.9.1238 — "Kodu da incele" tercihi artık localStorage'da yaşıyor;
+  // testler arası sızması, bir sonraki testin ilk isteğini sessizce
+  // kodlu yapardı. Bellek-içi taklit, çünkü Node 22'nin deneysel
+  // yerleşik localStorage'ı jsdom'unkini gölgeliyor ve metotları
+  // çalışmıyor (aynı tuzak CorePanel.smoke.test.tsx'te belgeli).
+  const mem = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => mem.get(k) ?? null,
+    setItem: (k: string, v: string) => { mem.set(k, String(v)); },
+    removeItem: (k: string) => { mem.delete(k); },
+  });
   vi.spyOn(api, 'copilotConfig').mockResolvedValue({ enabled: true, model: 'gemma4' });
   host = document.createElement('div');
   document.body.appendChild(host);
@@ -92,6 +104,7 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('CopilotExplain — akan render', () => {
@@ -233,6 +246,15 @@ describe('CopilotExplain — "Kodu da incele" kutusu (v0.9.1184)', () => {
     expect(chip()!.className).not.toContain('active');
   });
 
+  it('tıklama tercihi KALICI yazar (v0.9.1238)', async () => {
+    fakeExplain();
+    await mount(<CopilotExplain kind="trace" id="t1" />);
+    await act(async () => { chip()!.click(); });
+    expect(getRaw(STORAGE_KEYS.aiIncludeCode)).toBe('1');
+    await act(async () => { chip()!.click(); });
+    expect(getRaw(STORAGE_KEYS.aiIncludeCode)).toBe('0');
+  });
+
   it('durum ÜÇ işaretle birden söylenir (ton · glif · aria-pressed)', async () => {
     // Üçü de aynı anda doğru olmalı: renk körü bir operatör glifi okur,
     // ekran okuyucu aria-pressed'ı, geri kalan herkes tonu. Biri sessizce
@@ -246,5 +268,93 @@ describe('CopilotExplain — "Kodu da incele" kutusu (v0.9.1184)', () => {
     expect(chip()!.getAttribute('aria-pressed')).toBe('true');
     expect(chip()!.textContent).toContain('☑');
     expect(chip()!.className).toContain('active');
+  });
+});
+
+// ── v0.9.1238 — hatırlanan tercih + KISMİ sonucun görünürlüğü ──────────
+//
+// İki denetim bulgusu, tek yüzey:
+//   (1) tercih her mount'ta unutuluyordu (AIDrawer özne başına `key` ile
+//       yeniden mount ediyor) → auto koşusunun İLK turu her zaman
+//       kodsuz; kutuyu yeniden işaretlemek İKİNCİ bir yerel LLM turu.
+//   (2) kod GELDİĞİNDE de bir not olabilir (v0.9.1237: "3 pencereden
+//       2'si kesildi", v0.9.1236: "depo adı sunucudan düzeltildi") ve
+//       backend bunu `reason`da taşıyor.
+//
+// Neden gerçek mount: ikisi de ÇALIŞMA ZAMANI dalı. (1)'in iddiası
+// "state tohumlandı" değil, İLK İSTEĞİN ARGÜMANI — tohumu bir useEffect
+// ile düzeltmek tsc'yi memnun eder ve kodsuz istek çoktan yola çıkmış
+// olurdu. (2)'nin iddiası "reason alanı var" değil, dosya listesi VARKEN
+// de EKRANA çizilmesi; bu satır dal koşuluna asılı ve saf testle
+// ölçülemez.
+describe('CopilotExplain — hatırlanan "Kodu da incele" (v0.9.1238)', () => {
+  const chip = () => host.querySelector<HTMLButtonElement>('button.btn-chip');
+
+  /** Trace ucunun sahtesi — hangi çağrının hangi `includeCode` ile
+   *  gittiğini AYRI AYRI tutar: sorunun tamamı İLK çağrının argümanı. */
+  function fakeTrace(code?: import('@/lib/types').AICodeContext) {
+    const flags: (boolean | undefined)[] = [];
+    vi.spyOn(api, 'copilotExplainTrace').mockImplementation(
+      async (_id: string, includeCode?: boolean, _opts?: ExplainStreamOpts) => {
+        flags.push(includeCode);
+        return { explanation: 'kök neden: bağlantı havuzu doldu', exchangeId: 'x1', code };
+      });
+    return flags;
+  }
+
+  const settle = async () => { await act(async () => { await Promise.resolve(); }); };
+
+  it('kayıtlı tercihle auto koşusunun İLK turu kodlu gider', async () => {
+    setRaw(STORAGE_KEYS.aiIncludeCode, '1');
+    const flags = fakeTrace();
+    await mount(<CopilotExplain kind="trace" id="t1" auto />);
+    await settle();
+
+    expect(flags).toEqual([true]);        // tek tur, ve kodlu
+    expect(chip()!.className).toContain('active');
+    expect(chip()!.textContent).toContain('☑');
+  });
+
+  it('tercih yokken ilk tur kodsuz KALIR (v0.9.831 varsayılanı)', async () => {
+    const flags = fakeTrace();
+    await mount(<CopilotExplain kind="trace" id="t1" auto />);
+    await settle();
+    expect(flags).toEqual([false]);
+  });
+
+  it('kod okunamayan tür kayıtlı tercihi görmezden gelir', async () => {
+    // Tercih açıkken /problems açıklamasının "CoSRE kodu okuyor…"
+    // demesi yalan olurdu: o uçta kod çekilmiyor.
+    setRaw(STORAGE_KEYS.aiIncludeCode, '1');
+    fakeExplain();
+    await mount(<CopilotExplain kind="problem" id="p1" auto />);
+    expect(chip()).toBeNull();
+    expect(panelText()).toContain('CoSRE düşünüyor');
+    expect(panelText()).not.toContain('kodu okuyor');
+  });
+
+  it('KISMİ sonuçta not, dosya listesiyle BİRLİKTE çizilir', async () => {
+    setRaw(STORAGE_KEYS.aiIncludeCode, '1');
+    fakeTrace({
+      repo: 'CashManagement.CashFlow', branch: 'release', source: 'convention',
+      files: [{ path: 'src/Batch.java', fromLine: 40, toLine: 100 }],
+      reason: 'süre tavanı: 3 pencereden 2\'si kesildi',
+    });
+    await mount(<CopilotExplain kind="trace" id="t1" auto />);
+    await settle();
+
+    expect(panelText()).toContain('src/Batch.java');            // başarı dalı
+    expect(panelText()).toContain('3 pencereden 2');            // …ve not YİNE DE görünür
+    expect(panelText()).not.toContain('Kod okunamadı');         // sıfır-dosya dalı DEĞİL
+  });
+
+  it('hiç pencere gelmediğinde dürüst not aynen kalır', async () => {
+    setRaw(STORAGE_KEYS.aiIncludeCode, '1');
+    fakeTrace({ files: [], reason: 'bu kayıtta stacktrace yok' });
+    await mount(<CopilotExplain kind="trace" id="t1" auto />);
+    await settle();
+
+    expect(panelText()).toContain('Kod okunamadı');
+    expect(panelText()).toContain('bu kayıtta stacktrace yok');
   });
 });

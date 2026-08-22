@@ -58,6 +58,16 @@ export const STORAGE_KEYS = {
   problemsPrio:     'problems.prio',
   svcHeatmapCollapsed: 'svc.heatmap.collapsed',
   svcChartsCompare:    'svc.charts.compare',
+  // v0.9.1238 — "Kodu da incele" (CopilotExplain). Operatörün SON
+  // açık tercihi; AI çekmecesi her özne için yeni bir mount kurduğundan
+  // (AIDrawer `key`) tercih aksi hâlde her açılışta unutuluyordu ve
+  // auto-koşu İLK turu her seferinde kodsuz atıyordu — kutuyu yeniden
+  // işaretleyen operatör aynı soruya İKİNCİ bir yerel LLM turu ödüyordu.
+  //
+  // Hatırlamak, VARSAYILANI AÇMAK DEĞİLDİR: anahtar yokken değer
+  // false kalır (v0.9.831'in bilinçli maliyet kararı — kod okumak bir
+  // depo listelemesi + dosya çekmesi demek).
+  aiIncludeCode:    'cm.ai.includeCode',
 } as const;
 
 /** DataTable persistence family: sort + column widths per table. */

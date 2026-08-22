@@ -44,6 +44,17 @@ model so metrics, traces and logs tell one coherent story:
    GC pause, host CPU/mem, and Kafka consumer lag — all load-correlated
    (Go: `flush()` gauge loop).
 
+7. **Load-bound N+1 fan-out (v0.9.1284).** `MeshPortfolioValuation`
+   (`portfolio-service`, `cmd/demo/mesh.go`) emits a Hibernate/JPA
+   1 + N: one `SELECT positions`, then N identical
+   `SELECT instrument_prices` client spans. N is **not** a constant —
+   `nPlusOneRepeats(L.latencyFactor(), jitter)` gives ~8 at rest and
+   climbs to the 40 ceiling while an incident saturates the mesh, with a
+   floor of 6 so the repeat chip (threshold 5) is always live. It is the
+   local fixture for the v0.9.1277 N+1 family: the waterfall repeat
+   chip, the ×N sibling grouping, and Explore's
+   `?result=repeats&groupBy=db.statement`.
+
 **Rule:** any new demo scenario or metric must read from the load model
 (`L`) rather than rolling its own fixed probability or
 uniform latency, or it will visibly desync from the rest of the data.

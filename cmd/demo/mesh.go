@@ -29,6 +29,12 @@
 // reads land on the existing account-service + Oracle core, and the
 // audit trail forwards into the existing audit-service.
 //
+// Slice 3 adds ONE service and ONE chain for a shape the mesh could not
+// express before: a Hibernate/JPA N+1 (portfolio-service, chain
+// MeshPortfolioValuation). A chainHop may now carry `rep`, meaning "emit
+// me N times as sequential siblings" — with N resolved per trace from
+// the load model, not from the table. See nPlusOneRepeats.
+//
 // Realism contract (docs/DEMO-REALISM.md): every hop's latency goes
 // through dur(minMs,maxMs) and every failure through rollFail(failPct)
 // — the shared load model — so the mesh saturates, spikes and fails in
@@ -37,6 +43,8 @@
 package main
 
 import (
+	"math"
+	mrand "math/rand/v2"
 	"strings"
 	"time"
 
@@ -82,6 +90,9 @@ var meshServices = []Service{
 	svc("customer-360", rtJava21, "c360-prod-1", "c360-prod-2", "c360-prod-3"),
 	svc("secrets-broker", rtGo, "secbrk-prod-1", "secbrk-prod-2"),
 	svc("entitlements-service", rtDotnet, "entitl-prod-1", "entitl-prod-2"),
+	// Wealth / investments (slice 3) — the JPA service that carries the
+	// demo's Hibernate N+1 (MeshPortfolioValuation).
+	svc("portfolio-service", rtJava21, "portf-prod-1", "portf-prod-2", "portf-prod-3"),
 	// Batch/ETL & data platform (slice 2)
 	svc("eod-batch-orchestrator", rtJava17, "eodb-prod-1", "eodb-prod-2"),
 	svc("statement-generator", rtJava21, "stmtgen-prod-1", "stmtgen-prod-2"),
@@ -150,6 +161,7 @@ var meshTeams = map[string][2]string{
 	"customer-360":         {"core-platform", "core-platform-sre"},
 	"secrets-broker":       {"core-platform", "security-sre"},
 	"entitlements-service": {"core-platform", "security-sre"},
+	"portfolio-service":    {"core-platform", "core-platform-sre"},
 
 	"eod-batch-orchestrator": {"data-platform", "data-platform-sre"},
 	"statement-generator":    {"data-platform", "data-platform-sre"},
@@ -244,6 +256,7 @@ type chainHop struct {
 	errMsg       string     // status message when the hop fails
 	biz          string     // optional business counter recorded when reached
 	par          bool       // kids fan out in parallel instead of sequentially
+	rep          bool       // N+1 fan-out: emitted reps() times as sequential siblings
 	kids         []chainHop // downstream calls made while serving this hop
 }
 
@@ -273,7 +286,12 @@ type builtHop struct {
 // children so the waterfall nests cleanly. kafka-pub is the exception:
 // its kids are async consumer continuations that run AFTER the publish,
 // so they never inflate the producer span.
-func resolveHop(h *chainHop, roll func(int) bool) builtHop {
+//
+// `reps` resolves the multiplicity of a kid marked rep — the N+1
+// lazy-load fan-out (v0.9.1284). It is a seam, not a constant: in
+// production it reads the load model (liveNPlusOneReps), in tests it is
+// pinned so the span-count contract stays computable from the table.
+func resolveHop(h *chainHop, roll func(int) bool, reps func() int) builtHop {
 	b := builtHop{h: h, d: dur(h.minMs, h.maxMs)}
 	if h.failPct > 0 && roll(h.failPct) {
 		b.fail = true
@@ -281,15 +299,23 @@ func resolveHop(h *chainHop, roll func(int) bool) builtHop {
 	}
 	var kidSpan time.Duration
 	for i := range h.kids {
-		kb := resolveHop(&h.kids[i], roll)
-		if h.par {
-			if kb.d > kidSpan {
-				kidSpan = kb.d
+		n := 1
+		if h.kids[i].rep {
+			if n = reps(); n < 1 {
+				n = 1
 			}
-		} else {
-			kidSpan += kb.d + hopGap
 		}
-		b.kids = append(b.kids, kb)
+		for j := 0; j < n; j++ {
+			kb := resolveHop(&h.kids[i], roll, reps)
+			if h.par {
+				if kb.d > kidSpan {
+					kidSpan = kb.d
+				}
+			} else {
+				kidSpan += kb.d + hopGap
+			}
+			b.kids = append(b.kids, kb)
+		}
 	}
 	if h.proto != "kafka-pub" {
 		if min := kidSpan + 2*hopGap; len(b.kids) > 0 && b.d < min {
@@ -436,14 +462,74 @@ func emitKids(t *Trace, b *builtHop, parent []byte, start time.Duration) {
 	}
 }
 
+// ─── N+1 fan-out size (v0.9.1284) ───────────────────────────────────────────────
+//
+// A Hibernate/JPA N+1 is not a fixed shape: the number of lazy per-row
+// SELECTs is the number of rows the page walked, and a real portfolio
+// page walks MORE rows exactly when the system is busiest (bigger
+// batches, retries, fatter pages during the morning peak). Hard-coding
+// it would violate the realism contract in docs/DEMO-REALISM.md the
+// same way a fixed failure probability does — the fan-out would stay
+// flat while every other signal in the demo breathed.
+//
+// So the count rides the SAME load factor dur() rides: quiet hours ~8
+// price queries per request, a saturating incident (latencyMult 1.8-4.0
+// in realism.go) climbing to 30-40. That is what makes the N+1 chip,
+// the ×N grouping and the Explore repeats mode tell a story rather than
+// show a constant.
+const (
+	nPlusOneBase   = 8.0 // repeats at rest (latencyFactor == 1)
+	nPlusOneSlope  = 1.5 // how hard saturation inflates the page
+	nPlusOneJitter = 3.0 // +0..3 rows of page-size noise
+	nPlusOneMin    = 6   // FLOOR — see below
+	nPlusOneMax    = 40  // one page's worth; past this it's a full scan
+)
+
+// nPlusOneRepeats maps the live latency factor (+ a [0,1) jitter draw)
+// onto the number of per-row queries the ORM fires. PURE: no globals,
+// no clock — the caller passes L.latencyFactor().
+//
+// The MIN floor is a product guarantee, not a safety net: the trace-page
+// repeat chip and Explore's minRepeats both trigger at 5
+// (lib/traceRepeats.ts REPEAT_MIN_COUNT), so a demo that ever dipped
+// below that would make the whole N+1 family (v0.9.1277) invisible
+// locally — which is exactly the gap this scenario exists to close.
+func nPlusOneRepeats(latencyFactor, jitter float64) int {
+	if latencyFactor < 0 {
+		latencyFactor = 0
+	}
+	if jitter < 0 {
+		jitter = 0
+	}
+	if jitter > 1 {
+		jitter = 1
+	}
+	n := int(math.Round(nPlusOneBase*(1+nPlusOneSlope*(latencyFactor-1)) + jitter*nPlusOneJitter))
+	if n < nPlusOneMin {
+		n = nPlusOneMin
+	}
+	if n > nPlusOneMax {
+		n = nPlusOneMax
+	}
+	return n
+}
+
+// liveNPlusOneReps is the production repeat seam — load model + jitter.
+func liveNPlusOneReps() int { return nPlusOneRepeats(L.latencyFactor(), mrand.Float64()) }
+
 // buildMeshTrace is the production entry point — failures roll through
 // the shared load model. buildMeshTraceRoll is the injectable seam the
-// tests pin the failure/skip contract on.
+// tests pin the failure/skip contract on; buildMeshTraceSeams adds the
+// repeat-count seam so the span-count contract stays deterministic.
 func buildMeshTrace(spec *chainSpec) *Trace { return buildMeshTraceRoll(spec, rollFail) }
 
 func buildMeshTraceRoll(spec *chainSpec, roll func(int) bool) *Trace {
+	return buildMeshTraceSeams(spec, roll, liveNPlusOneReps)
+}
+
+func buildMeshTraceSeams(spec *chainSpec, roll func(int) bool, reps func() int) *Trace {
 	t := NewTrace()
-	b := resolveHop(&spec.root, roll)
+	b := resolveHop(&spec.root, roll, reps)
 	emitHop(t, &b, "", nil, 0)
 	return t
 }
@@ -1047,6 +1133,61 @@ var meshChains = []chainSpec{
 						minMs: 10, maxMs: 45,
 						kids: []chainHop{
 							{svc: "email-renderer", proto: "grpc", op: "Render", minMs: 10, maxMs: 45},
+						}},
+				}},
+		},
+	}},
+
+	// Portfolio valuation (slice 3) — the demo's Hibernate N+1.
+	// portfolio-service loads one page of position rows with a single
+	// query, then walks the list and lazily fetches each instrument's
+	// price with the SAME prepared statement: the textbook 1 + N.
+	//
+	// WHY IT EXISTS: the N+1 visibility family shipped in v0.9.1277 (the
+	// waterfall repeat chip, ×N sibling grouping, Explore's repeats mode)
+	// had NOTHING to fire on locally — no demo trace repeated a span name
+	// more than three times, so all three surfaces were structurally
+	// invisible on a fresh install. This chain is their fixture.
+	//
+	// The repeated hop carries `rep: true`; its multiplicity is resolved
+	// per trace by nPlusOneRepeats from the live load factor, so the
+	// fan-out breathes with the rest of the demo (~8 quiet, 30-40 while
+	// an incident saturates) instead of being a constant. Same span name
+	// ("SELECT instrument_prices"), same db.statement on every copy —
+	// that one signature is what the chip ((service, span name) count),
+	// the ×N grouping (sibling (service, displayName)) and
+	// /api/spans/repeats (groupBy=db.statement) each key on.
+	//
+	// The failure roll sits on the pricing-engine hop, which runs AFTER
+	// the fan-out: putting it on GetValuation would drop the kids
+	// (downstream skip) and hide the N+1 exactly during the incidents
+	// that make it worst.
+	{name: "MeshPortfolioValuation", weight: 3, root: chainHop{
+		svc: "web-bff", proto: "http", op: "GET /web/portfolio", minMs: 120, maxMs: 380,
+		kids: []chainHop{
+			{svc: "session-gateway", proto: "grpc", op: "Validate", minMs: 4, maxMs: 16,
+				kids: []chainHop{
+					{svc: "session-gateway", proto: "redis", op: "GET", table: "sess:{sid}", minMs: 1, maxMs: 4},
+				}},
+			{svc: "portfolio-service", proto: "grpc", op: "GetValuation", minMs: 60, maxMs: 240,
+				biz: "portfolio.valuations",
+				kids: []chainHop{
+					// The "1" — one page of holdings.
+					{svc: "portfolio-service", proto: "db-postgres", op: "SELECT", dbName: "wealthdb",
+						table: "positions",
+						stmt:  "SELECT id, instrument_id, quantity FROM positions WHERE portfolio_id = $1",
+						minMs: 3, maxMs: 16},
+					// The "N" — one lazy price load per holding.
+					{svc: "portfolio-service", proto: "db-postgres", op: "SELECT", dbName: "wealthdb",
+						table: "instrument_prices",
+						stmt:  "SELECT price, currency FROM instrument_prices WHERE instrument_id = $1",
+						minMs: 1, maxMs: 4, rep: true},
+					{svc: "pricing-engine", proto: "grpc", op: "ValuePositions", minMs: 10, maxMs: 45,
+						biz: "pricing.quotes", par: true, failPct: 2,
+						errMsg: "valuation timed out waiting for FX marks — serving previous close",
+						kids: []chainHop{
+							{svc: "pricing-engine", proto: "redis", op: "GET", table: "rates:{ccy}", minMs: 1, maxMs: 4},
+							{svc: "forex-service", proto: "grpc", op: "GetRates", minMs: 5, maxMs: 20},
 						}},
 				}},
 		},

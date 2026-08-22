@@ -70,3 +70,24 @@ describe('serviceFromRoute', () => {
     expect(serviceFromRoute('/traces', '?range=1h')).toBe('');
   });
 });
+
+// v0.9.1260 — triage çekmecelerinden başlangıç çipleri.
+describe('contextStarter — problem/exception', () => {
+  it('offers the problem chip on triage routes with ?problem=', () => {
+    for (const p of ['/inbox', '/problems', '/anomalies', '/exceptions']) {
+      const st = contextStarter(p, '?problem=pr-123');
+      expect(st?.chip).toBe('Bu problemin kök nedeni?');
+      expect(st?.question).toContain('pr-123');
+    }
+  });
+  it('falls back to the exception chip; problem wins when both present', () => {
+    expect(contextStarter('/inbox', '?exception=abc123ff')?.chip).toBe("Bu exception'ın kök nedeni?");
+    expect(contextStarter('/inbox', '?problem=p1&exception=e1')?.chip).toBe('Bu problemin kök nedeni?');
+  });
+  it('rejects junk ids and foreign routes', () => {
+    expect(contextStarter('/inbox', '?problem=')).toBeNull();
+    expect(contextStarter('/inbox', '?problem=' + 'x'.repeat(80))).toBeNull();
+    expect(contextStarter('/inbox', '?exception=a b')).toBeNull();
+    expect(contextStarter('/services', '?problem=p1')).toBeNull();
+  });
+});

@@ -15,6 +15,7 @@
 package devops
 
 import (
+	"golang.org/x/sync/singleflight"
 	"context"
 	"crypto/tls"
 	"encoding/base64"
@@ -145,6 +146,12 @@ type Service struct {
 	// (v0.9.830). Its own mutex: a recursive listing takes seconds
 	// and must not block Snapshot() / the settings page behind it.
 	code codeCache
+	// treeFlight — v0.9.1266: aynı (repo@branş) ağacının EŞZAMANLI
+	// istekleri tek uçuşta birleşir (iki operatör aynı exception'a aynı
+	// anda tıklarsa — ya da auto-explain + elle tık çakışırsa — ağır
+	// recursionLevel=Full istemi ÇİFTLENİYORDU; denetim [2/S]).
+	// x/sync zaten bağımlılık; yeni modül yok.
+	treeFlight singleflight.Group
 
 	// obs — kod-çekme sonuç sayaçları (v0.9.1241, code_stats.go).
 	// Süreç-içi ve atomik: ölçmek istediğimiz yol zaten pahalı, ona

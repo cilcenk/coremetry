@@ -1,6 +1,7 @@
 package devops
 
 import (
+	"sync"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -371,6 +372,8 @@ type fakeTFS struct {
 	slowItemAfter int
 	itemDelay     time.Duration
 	hiddenFromListing map[string]bool
+	mu        sync.Mutex
+	treeDelay time.Duration
 }
 
 // repoSegment — istek yolundaki depo adı. Liste ucunda "".
@@ -426,7 +429,7 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 		// ile "açıldı ama sunucu 401 verdi" aynı sıfırı gösterirdi —
 		// oysa testin ölçtüğü şey tam olarak İSTEĞİN ÇIKIP ÇIKMADIĞI.
 		if strings.HasSuffix(p, "/_apis/git/repositories") {
-			f.hits["list"]++
+			f.mu.Lock(); f.hits["list"]++; f.mu.Unlock()
 		}
 		// PAT sözleşmesi: Basic auth, kullanıcı adı boş, PAT şifrede.
 		if u, pw, ok := r.BasicAuth(); !ok || u != "" || pw == "" {
@@ -459,7 +462,7 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 		}
 		switch {
 		case strings.HasSuffix(p, "/refs"):
-			f.hits["refs"]++
+			f.mu.Lock(); f.hits["refs"]++; f.mu.Unlock()
 			// v0.9.1265 — gerçek API gibi filter=heads/<ad> ÖNEK süzer;
 			// filter=heads tümünü döndürür. hiddenFromListing, tek-sayfa
 			// kesilmesini taklit eder: SÜZGEÇSİZ listede görünmez ama
@@ -483,7 +486,10 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 			}
 			_ = json.NewEncoder(w).Encode(out)
 		case strings.HasSuffix(p, "/items") && q.Get("recursionLevel") == "Full":
-			f.hits["tree"]++
+			f.mu.Lock(); f.hits["tree"]++; f.mu.Unlock()
+			if f.treeDelay > 0 {
+				time.Sleep(f.treeDelay)
+			}
 			if q.Get("versionDescriptor.version") == "" {
 				w.WriteHeader(http.StatusBadRequest)
 				return
@@ -502,7 +508,7 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 			}
 			_ = json.NewEncoder(w).Encode(out)
 		case strings.HasSuffix(p, "/items"):
-			f.hits["item"]++
+			f.mu.Lock(); f.hits["item"]++; f.mu.Unlock()
 			if f.itemDelay > 0 && f.hits["item"] >= f.slowItemAfter {
 				select {
 				case <-time.After(f.itemDelay):
@@ -1504,5 +1510,42 @@ func TestResolveBranchSurvivesListingTruncation(t *testing.T) {
 	}
 	if branch != "refs/heads/release" && branch != "release" {
 		t.Fatalf("release beklenirdi (kesin filtre bulmalıydı), %q geldi", branch)
+	}
+}
+
+// v0.9.1266 — eşzamanlı ağaç istekleri tek uçuşta birleşir (denetim
+// [2/S]: çift tık = çift recursionLevel=Full). Mutasyon: treeFlight.Do
+// sarmalını kaldır → hits["tree"] N olur, test kırmızı.
+func TestRepoTreeSingleflight(t *testing.T) {
+	f := newFakeTFS(t)
+	f.treeDelay = 60 * time.Millisecond // uçuşları gerçekten çakıştır
+	svc := New()
+	svc.Configure(f.settings())
+	cfg := f.settings()
+	cli := svc.clientFor(false)
+
+	const n = 6
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := svc.repoTree(context.Background(), cli, cfg, "6.0", "core-service", "refs/heads/master")
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("repoTree: %v", err)
+		}
+	}
+	f.mu.Lock()
+	hits := f.hits["tree"]
+	f.mu.Unlock()
+	if hits != 1 {
+		t.Fatalf("6 eşzamanlı istek 1 ağaç fetch'i beklerdi, %d oldu", hits)
 	}
 }

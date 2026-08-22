@@ -31,17 +31,27 @@ func neverFail(int) bool  { return false }
 func alwaysFail(int) bool { return true }
 
 // wantSpans mirrors the span-count contract above: 1 for a root hop, 2 for a
-// nested http/grpc hop, 1 for everything else, plus children.
-func wantSpans(h *chainHop, root bool) int {
+// nested http/grpc hop, 1 for everything else, plus children — with a
+// `rep` kid (the v0.9.1284 N+1 fan-out) counted `reps` times, subtree and
+// all. The count stays computable from the table BECAUSE the repeat count
+// is a seam: the shape test pins it, production reads the load model.
+func wantSpans(h *chainHop, root bool, reps int) int {
 	n := 1
 	if !root && (h.proto == "http" || h.proto == "grpc") {
 		n = 2
 	}
 	for i := range h.kids {
-		n += wantSpans(&h.kids[i], false)
+		k := wantSpans(&h.kids[i], false, reps)
+		if h.kids[i].rep {
+			k *= reps
+		}
+		n += k
 	}
 	return n
 }
+
+// constReps pins the repeat seam so a spec's span count is deterministic.
+func constReps(n int) func() int { return func() int { return n } }
 
 func chainByName(t *testing.T, name string) *chainSpec {
 	t.Helper()
@@ -56,18 +66,23 @@ func chainByName(t *testing.T, name string) *chainSpec {
 
 func TestMeshChainShapes(t *testing.T) {
 	// 8 slice-1 chains + 8 slice-2 chains (EOD batch, CDC, TPP AISP/PISP,
-	// webhook fan-out, nightly archive, partner portal, platform maintenance).
-	if len(meshChains) < 16 {
-		t.Fatalf("meshChains has %d specs, want at least 16", len(meshChains))
+	// webhook fan-out, nightly archive, partner portal, platform
+	// maintenance) + 1 slice-3 chain (portfolio N+1).
+	if len(meshChains) < 17 {
+		t.Fatalf("meshChains has %d specs, want at least 17", len(meshChains))
 	}
+	// 7 repeats: an arbitrary pin, but ABOVE the 5 the repeat chip fires
+	// at, so a `rep` hop that silently stopped repeating shows up as a
+	// span-count mismatch here rather than as a quietly missing chip.
+	const reps = 7
 	for i := range meshChains {
 		spec := &meshChains[i]
 		t.Run(spec.name, func(t *testing.T) {
-			tr := buildMeshTraceRoll(spec, neverFail)
+			tr := buildMeshTraceSeams(spec, neverFail, constReps(reps))
 			if tr == nil {
-				t.Fatal("buildMeshTraceRoll returned nil trace")
+				t.Fatal("buildMeshTraceSeams returned nil trace")
 			}
-			if want := wantSpans(&spec.root, true); len(tr.spans) != want {
+			if want := wantSpans(&spec.root, true, reps); len(tr.spans) != want {
 				t.Fatalf("span count = %d, want %d", len(tr.spans), want)
 			}
 			byID := map[string]bool{}
@@ -226,9 +241,10 @@ func TestMeshServiceCoverage(t *testing.T) {
 		walk(&meshChains[i].root)
 	}
 
-	// 30 slice-1 + 25 slice-2 (batch/ETL, open-banking, platform-ops).
-	if len(meshServices) != 55 {
-		t.Fatalf("meshServices has %d entries, want 55", len(meshServices))
+	// 30 slice-1 + 25 slice-2 (batch/ETL, open-banking, platform-ops)
+	// + 1 slice-3 (portfolio-service, the N+1 fixture).
+	if len(meshServices) != 56 {
+		t.Fatalf("meshServices has %d entries, want 56", len(meshServices))
 	}
 	for _, s := range meshServices {
 		if !inChain[s.Name] {
@@ -244,7 +260,7 @@ func TestMeshServiceCoverage(t *testing.T) {
 			t.Errorf("%s: %d pods, want 2-4", s.Name, len(s.Pods))
 		}
 	}
-	// 20 base + 25 bank_extra + 55 mesh: any name collision would merge two
+	// 20 base + 25 bank_extra + 56 mesh: any name collision would merge two
 	// entries and drop the total below 100.
 	if len(services) < 100 {
 		t.Errorf("services map has %d entries, want >= 100 — a mesh name collided with an existing service", len(services))

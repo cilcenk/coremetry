@@ -59,10 +59,17 @@ func (s *Server) buildCodeContext(ctx context.Context, service, stack string) de
 	}
 	// Katalog pini önce: elle girilen depo konvansiyonu EZER.
 	repoPin := ""
-	if service != "" {
-		if md, err := s.store.GetServiceMetadata(ctx, service); err == nil && md != nil {
-			repoPin = md.Repository
+	if service != "" && s.store != nil {
+		md, err := s.store.GetServiceMetadataStrict(ctx, service)
+		mdRepo := ""
+		if md != nil {
+			mdRepo = md.Repository
 		}
+		pin, abort := pinReadDecision(mdRepo, md != nil, err)
+		if abort != "" {
+			return devops.CodeContext{Reason: abort}
+		}
+		repoPin = pin
 	}
 	res := devops.ResolveRepo(service, repoPin, s.devops.ResolveConfig())
 	if res.Repo == "" {
@@ -78,6 +85,37 @@ func (s *Server) buildCodeContext(ctx context.Context, service, stack string) de
 	cc := s.devops.FetchCode(ctx, res.Repo, res.Project, stackparse.ParseJava(stack))
 	cc.Source = res.Source
 	return cc
+}
+
+// pinReadDecision — katalog okumasının ÜÇ hâli → (pin, iptal nedeni).
+// Saf; tablo-testli. v0.9.1236.
+//
+// Ayrım neden bu kadar önemli: bu yolda FAIL-OPEN'ın yönü değişiyor.
+// Her yerde "kod gelmezse açıklama yine üretilsin" doğrudur, çünkü en
+// kötü sonuç eksik kanıttır. Burada değil — operatör bir depo PİNLEDİ,
+// yani konvansiyonun VAR OLAN ama YANLIŞ bir depoya çözüldüğünü zaten
+// biliyor. Pin okunamadığında konvansiyona düşmek, tam da operatörün
+// kapattığı hataya geri açmak ve BAŞKA bir uygulamanın kaynağını
+// "kanıt" diye modele ve ekrana koymak demektir. Eksik kanıt kurtarılır,
+// yanlış kanıt kurtarılamaz — o yüzden bu tek adım fail-CLOSED.
+//
+// Üç hâl BİLİNÇLİ olarak ayrı: (a) hata → iptal, (b) satır yok →
+// konvansiyon (servis henüz küratörlenmemiş, normal), (c) satır var ama
+// repository boş → konvansiyon (operatör diğer alanları doldurmuş,
+// depoyu bilerek boş bırakmış). (b) ile (c) aynı sonuca çıkar ama aynı
+// şey değildir; birleştirmek, ileride biri değişince ötekini de sessizce
+// taşırdı.
+func pinReadDecision(repo string, found bool, err error) (pin, abort string) {
+	if err != nil {
+		// Hata METNİ taşınmıyor: bu dize operatör ekranına ve AI
+		// yüzeyine gidiyor, CH hatası ise bağlantı dizesini (parola
+		// dahil) içerebilir. Teşhis sunucu loglarında duruyor.
+		return "", "servis kataloğu okunamadı — yanlış depoya düşmemek için kod bağlamı atlandı"
+	}
+	if !found {
+		return "", ""
+	}
+	return strings.TrimSpace(repo), ""
 }
 
 // codeContextPayload — yanıtın `code` alanı. Kod GÖVDESİ tarayıcıya

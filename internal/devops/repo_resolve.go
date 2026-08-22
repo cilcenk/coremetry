@@ -181,6 +181,19 @@ func repoNameFromMeta(meta string) string {
 // tam ref adı döner, karşılaştırma son parça üzerinden yapılır.
 // Hiçbiri yoksa "" döner ve çağıran deponun VARSAYILAN branşına düşer:
 // "release yok, master yok" bir hata değil, farklı bir konvansiyondur.
+//
+// v0.9.1236 — eşleşme HARF DUYARSIZ. Eskiden bayt-bayt eşleşiyordu ve
+// "refs/heads/Release" taşıyan bir depo, ayardaki "release" ile hiç
+// tutmuyordu: PickBranch "" dönüyor, çağıran sessizce deponun
+// VARSAYILAN branşına (çoğunlukla Master/Develop) düşüyordu. Sonuç en
+// kötü sınıftan bir hataydı — kod pencereleri YANLIŞ BRANŞTAN, yani
+// yanlış satırlardan kesiliyor ve operatöre kanıt diye gösteriliyordu;
+// hiçbir yerde bir uyarı yoktu.
+//
+// Basamak sırası: aynı `want` için ÖNCE birebir, sonra harf duyarsız.
+// Sunucunun KANONİK yazımı döner — git ref URL'i harf duyarlıdır,
+// operatörün ayardaki yazımını geri vermek 404 üretirdi.
+// Ayardaki SIRA semantiği korunur: dış döngü order, iç döngü basamak.
 func PickBranch(available []string, order []string) string {
 	if len(available) == 0 {
 		return ""
@@ -188,7 +201,8 @@ func PickBranch(available []string, order []string) string {
 	if len(order) == 0 {
 		order = DefaultBranchOrder()
 	}
-	have := make(map[string]string, len(available))
+	exact := make(map[string]string, len(available))
+	fold := make(map[string]string, len(available))
 	for _, a := range available {
 		short := ShortBranch(a)
 		if short == "" {
@@ -196,8 +210,13 @@ func PickBranch(available []string, order []string) string {
 		}
 		// İlk gelen kazanır: aynı kısa ada iki tam ref düşmez ama
 		// deterministik olsun.
-		if _, ok := have[short]; !ok {
-			have[short] = short
+		if _, ok := exact[short]; !ok {
+			exact[short] = short
+		}
+		if lo := strings.ToLower(short); lo != "" {
+			if _, ok := fold[lo]; !ok {
+				fold[lo] = short
+			}
 		}
 	}
 	for _, want := range order {
@@ -205,7 +224,10 @@ func PickBranch(available []string, order []string) string {
 		if want == "" {
 			continue
 		}
-		if b, ok := have[want]; ok {
+		if b, ok := exact[want]; ok {
+			return b
+		}
+		if b, ok := fold[strings.ToLower(want)]; ok {
 			return b
 		}
 	}

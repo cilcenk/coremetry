@@ -175,6 +175,53 @@ func TestPickBranch(t *testing.T) {
 			order:     []string{},
 			want:      "release",
 		},
+		// --- v0.9.1236: HARF DUYARSIZ eşleşme ---------------------
+		//
+		// Eski davranış sessizce "" dönüyor, çağıran deponun VARSAYILAN
+		// branşına düşüyor ve kod pencereleri YANLIŞ BRANŞTAN, yani
+		// yanlış satırlardan kesiliyordu. Uyarı yoktu.
+		{
+			name:      "Release büyük harfli — yine de seçilir",
+			available: []string{"refs/heads/Master", "refs/heads/Release"},
+			want:      "Release",
+		},
+		{
+			name:      "sunucunun KANONİK yazımı döner (git ref harf duyarlı)",
+			available: []string{"refs/heads/RELEASE"},
+			want:      "RELEASE",
+		},
+		{
+			name:      "Master var, Release yok → sıra korunur",
+			available: []string{"refs/heads/Develop", "refs/heads/Master"},
+			want:      "Master",
+		},
+		{
+			name:      "ayardaki yazım büyük harfli, sunucudaki küçük",
+			available: []string{"refs/heads/master", "refs/heads/release"},
+			order:     []string{"Release", "Master"},
+			want:      "release",
+		},
+		{
+			// BİREBİR eşleşme, harf duyarsıza YEĞLENİR.
+			name:      "ikisi de varsa birebir kazanır",
+			available: []string{"Release", "release"},
+			order:     []string{"release"},
+			want:      "release",
+		},
+		{
+			// SIRA semantiği bozulmamalı: harf duyarsız eşleşme
+			// sıradaki İKİNCİ adayı öne geçirmez.
+			name:      "sıra > basamak: Release (fold) master'dan (exact) önce gelir",
+			available: []string{"refs/heads/master", "refs/heads/Release"},
+			order:     []string{"release", "master"},
+			want:      "Release",
+		},
+		{
+			name:      "çoklu yazım varsa ilk gelen kazanır (deterministik)",
+			available: []string{"refs/heads/RELEASE", "refs/heads/Release"},
+			order:     []string{"release"},
+			want:      "RELEASE",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

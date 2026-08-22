@@ -9,6 +9,7 @@ import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { envDSL } from '@/lib/entrySpans';
 import { ServiceOverview } from './service/Overview';
+import { ServiceOneGlance } from './service/OneGlance';
 import { ServiceLogsTab, ServiceTopologyTab } from './service/ServiceSignalTabs';
 import { ServiceInfraTab } from './service/ServiceInfraTab';
 import { ServicePodsTab } from './service/ServicePodsTab';
@@ -124,6 +125,9 @@ function ServiceDetailInner() {
   // v0.7.97 — Overview is now the DEFAULT landing tab (the at-a-glance
   // health view). Operations / Details are opt-in via ?tab=.
   const tabParam = searchParams.get('tab');
+  // v0.9.1262 — yeni-Overview bayrağı (URL kaynak; yalnız okunur, silme
+  // OneGlance içindeki 'klasik'e dön düğmesinde).
+  const newPageFlag = searchParams.get('newpage') === '1';
   const tab: ServiceTab = tabParam === 'operations' ? 'operations'
     : tabParam === 'details' ? 'details'
     : tabParam === 'logs' ? 'logs'
@@ -553,10 +557,18 @@ function ServiceDetailInner() {
               onChange={setTab}
               opCount={operations.length} />
 
-            {tab === 'overview' && (
+            {/* v0.9.1262 — ?newpage=1: "az bilgi, entegre" Overview önerisi
+                GERÇEK veriyle, bayrak arkasında (v0.9.743 bayraklı geçiş emsali). Varsayılan
+                davranış DEĞİŞMEDİ; operatör tarayıcıda kıyaslar, onaylarsa
+                varsayılan olur. RED sorgusu klasikle AYNI anahtar (cache
+                ortak — bayrakla gidip-gelmek ücretsiz). */}
+            {tab === 'overview' && (newPageFlag ? (
+              <ServiceOneGlance service={svc} range={range} windowNs={rangeNs} operations={operations}
+                endpoints={endpoints} onZoom={handleZoom} onZoomReset={handleZoomReset} env={env} />
+            ) : (
               <ServiceOverview service={svc} range={range} windowNs={rangeNs} info={info} operations={operations}
                 endpoints={endpoints} onZoom={handleZoom} onZoomReset={handleZoomReset} env={env} />
-            )}
+            ))}
             {tab === 'logs' && <ServiceLogsTab service={svc} range={range} windowNs={rangeNs}
               onZoom={handleZoom} onZoomReset={handleZoomReset} />}
             {tab === 'topology' && <ServiceTopologyTab service={svc} range={range} />}

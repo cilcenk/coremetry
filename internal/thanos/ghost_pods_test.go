@@ -28,7 +28,15 @@ func TestAppendGhostPods(t *testing.T) {
 		key("prod", "quiet-1"): 0,  // restart series exists, zero count, no phase → excluded
 	}
 
-	out := appendGhostPods(base, "c1", emitted, phaseBy, restartBy)
+	// v0.9.1276 — sebep haritası ALANI doldurur, KAPIYI genişletmez:
+	// yalnız reasonBy'da olan bir pod satır DOĞURMAZ, ama zaten
+	// çizilen hayalet satır sebebini taşır.
+	reasonBy := map[string]string{
+		key("prod", "api-3"):      "OOMKilled",
+		key("prod", "ghost-only"): "Completed", // yalnız sebep serisi → satır YOK
+	}
+
+	out := appendGhostPods(base, "c1", emitted, phaseBy, restartBy, reasonBy)
 
 	got := map[string]PodRow{}
 	for _, r := range out {
@@ -59,6 +67,15 @@ func TestAppendGhostPods(t *testing.T) {
 	}
 	if got["api-4"].RestartsUnknown {
 		t.Errorf("api-4 has a restart series (14) — must not be RestartsUnknown")
+	}
+	// v0.9.1276 — çökmüş pod'un rozeti hayalet satırda da görünür…
+	if got["api-3"].LastTermReason != "OOMKilled" {
+		t.Errorf("api-3 LastTermReason = %q, want OOMKilled (ghost row must carry the reason)",
+			got["api-3"].LastTermReason)
+	}
+	// …ama sebep serisi TEK BAŞINA satır doğurmaz.
+	if _, ok := got["ghost-only"]; ok {
+		t.Errorf("ghost-only: reason series alone must not create a row")
 	}
 	for _, absent := range []string{"idle-1", "job-done", "quiet-1"} {
 		if _, ok := got[absent]; ok {

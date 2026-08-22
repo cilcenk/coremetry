@@ -889,3 +889,70 @@ func TestApplyDeployKSM(t *testing.T) {
 		t.Errorf("empty desired must be a no-op: %+v", same)
 	}
 }
+
+// v0.9.1276 (Dynatrace-parite #5) — son-sonlanma rozeti. Semptom:
+// pod listelerinde restart SAYISI vardı ama SEBEBİ yoktu; operatör
+// OOMKilled'ı yalnız kubectl'de görüyordu. KSM sebep serisini
+// CONTAINER başına basar, satır tek sebep gösterir → çakışmayı
+// worseTermReason çözer ve en kötüsü kazanır.
+func TestWorseTermReason(t *testing.T) {
+	for _, c := range []struct {
+		name, a, b, want string
+	}{
+		// OOMKilled her şeyi ezer — aradığımız sinyal bu.
+		{"oom beats error", "OOMKilled", "Error", "OOMKilled"},
+		{"oom beats error (ters sıra)", "Error", "OOMKilled", "OOMKilled"},
+		{"oom beats completed", "Completed", "OOMKilled", "OOMKilled"},
+		// Hata > normal çıkış.
+		{"error beats completed", "Error", "Completed", "Error"},
+		{"completed vs error (ters sıra)", "Completed", "Error", "Error"},
+		// BİLİNMEYEN ad "diğer hata" sınıfına düşer (whitelist değil):
+		// KSM yeni bir sebep basarsa sessizce kaybolmamalı.
+		{"unknown beats completed", "Completed", "ContainerCannotRun", "ContainerCannotRun"},
+		{"unknown beats completed (uydurma ad)", "Completed", "SomeFutureKSMReason", "SomeFutureKSMReason"},
+		{"oom beats unknown", "SomeFutureKSMReason", "OOMKilled", "OOMKilled"},
+		// Boş = sebep yok; dolu olan her zaman kazanır (ilk container'ı
+		// birleştirirken zero-value ile çağrılıyoruz).
+		{"empty vs completed", "", "Completed", "Completed"},
+		{"completed vs empty", "Completed", "", "Completed"},
+		{"empty vs oom", "", "OOMKilled", "OOMKilled"},
+		{"both empty", "", "", ""},
+		// Eşit rütbe → sözlük sırası. Prometheus seri sırası rastgele;
+		// satırın iki okumada aynı çıkması gerekir.
+		{"eşit rütbe kararlı", "Error", "Evicted", "Error"},
+		{"eşit rütbe kararlı (ters sıra)", "Evicted", "Error", "Error"},
+		{"aynı sebep", "OOMKilled", "OOMKilled", "OOMKilled"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := worseTermReason(c.a, c.b); got != c.want {
+				t.Fatalf("worseTermReason(%q, %q) = %q, want %q", c.a, c.b, got, c.want)
+			}
+		})
+	}
+}
+
+// Birleştirme sırası SONUCU değiştirmemeli: üç container'lı bir pod
+// hangi sırada gelirse gelsin aynı rozeti almalı (v0.9.1276).
+func TestWorseTermReasonFoldIsOrderIndependent(t *testing.T) {
+	reasons := []string{"Completed", "OOMKilled", "Error"}
+	fold := func(in []string) string {
+		acc := ""
+		for _, r := range in {
+			acc = worseTermReason(acc, r)
+		}
+		return acc
+	}
+	base := fold(reasons)
+	if base != "OOMKilled" {
+		t.Fatalf("fold = %q, want OOMKilled", base)
+	}
+	for _, perm := range [][]string{
+		{"Error", "Completed", "OOMKilled"},
+		{"OOMKilled", "Error", "Completed"},
+		{"Error", "OOMKilled", "Completed"},
+	} {
+		if got := fold(perm); got != base {
+			t.Errorf("fold(%v) = %q, want %q — sıra bağımsız olmalı", perm, got, base)
+		}
+	}
+}

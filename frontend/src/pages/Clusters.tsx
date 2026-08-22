@@ -9,6 +9,7 @@ import { PhaseDonut } from '@/pages/clusters/PhaseDonut';
 import { safePct, restartColor, fmtCores, fmtBps, podPhaseBadge } from '@/pages/clusters/thresholds';
 import { TREND_WINDOWS } from '@/pages/clusters/TrendPanel';
 import { podWorkloadName } from '@/pages/clusters/podWorkload';
+import { termReasonTone } from '@/lib/podTerm';
 import { podDetailPath } from '@/pages/service/podDetailPath';
 import { NodeHeatmap } from '@/pages/clusters/NodeHeatmap';
 import { MiniBar } from '@/pages/clusters/MiniBar';
@@ -100,7 +101,11 @@ const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
   // v0.9.10 — network (best-effort).
   { id: 'netIn',     label: 'Net in',    sortValue: r => r.netInBps ?? 0, numeric: true, width: 90 },
   { id: 'netOut',    label: 'Net out',   sortValue: r => r.netOutBps ?? 0, numeric: true, width: 90 },
-  { id: 'restarts',  label: 'Restarts',  sortValue: r => (r.restartsUnknown ? -1 : r.restarts ?? 0), numeric: true, width: 84 },
+  // v0.9.1276 — hücre artık sayının yanında son-sonlanma rozeti de
+  // taşıyor ("OOMKilled"); varsayılan genişlik 84→150. Kaydedilmiş
+  // genişliği olan operatörde eski değer kalır — rozet ellipsis +
+  // title ile okunur kalsın diye ikisi de var (tablo-kırpma olayı).
+  { id: 'restarts',  label: 'Restarts',  sortValue: r => (r.restartsUnknown ? -1 : r.restarts ?? 0), numeric: true, width: 150 },
 ];
 
 // fmtCores v0.9.51'de thresholds.ts'e taşındı (PodDrawer + §8 ortak).
@@ -982,10 +987,26 @@ export default function ClustersPage() {
                                 {r.memPct ? r.memPct.toFixed(0) : '—'}</td>
                               <td className="num mono">{r.netInBps ? fmtBps(r.netInBps) : '—'}</td>
                               <td className="num mono">{r.netOutBps ? fmtBps(r.netOutBps) : '—'}</td>
+                              {/* v0.9.1276 — restart SAYISININ yanında son
+                                  sonlanma SEBEBİ: OOMKilled'ı görmek için
+                                  kubectl'e düşmek gerekmiyor artık. Sebep
+                                  serisi yoksa rozet hiç çizilmez (sessiz
+                                  düşüş doğru davranış — '—' zaten ayrı bir
+                                  bilinmezlik sinyali, restartsUnknown). */}
                               <td className="num mono"
                                 title={r.restartsUnknown ? 'Restart serisi yok (KSM eksik ya da seri tavanı) — 0 değil, bilinmiyor.' : undefined}
                                 style={{ color: r.restartsUnknown ? 'var(--text3)' : restartColor(r.restarts ?? 0) }}>
-                                {r.restartsUnknown ? '—' : fmtNum(r.restarts ?? 0)}</td>
+                                {r.restartsUnknown ? '—' : fmtNum(r.restarts ?? 0)}
+                                {r.lastTermReason && (
+                                  <span className={`badge b-${termReasonTone(r.lastTermReason)}`}
+                                    style={{
+                                      marginLeft: 5, fontSize: 10, verticalAlign: 'middle',
+                                      maxWidth: 96, overflow: 'hidden', textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap', display: 'inline-block',
+                                    }}
+                                    title={`${r.lastTermReason} · Son sonlanma sebebi (kube-state-metrics)`}>
+                                    {r.lastTermReason}</span>
+                                )}</td>
                             </tr>
                           ))}
                         </tbody>

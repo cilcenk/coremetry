@@ -125,9 +125,59 @@ type PodRow struct {
 	// parse tavanı) RestartsUnknown=true — 0 sağlıklıymış gibi değil,
 	// '—' bilinmiyor gibi çizilir. Üyelik = bilgi: KSM 0 restart'lı
 	// pod için de seri döndürür.
-	Phase    string `json:"phase,omitempty"`
-	Restarts        int  `json:"restarts"`
-	RestartsUnknown bool `json:"restartsUnknown,omitempty"`
+	Phase           string `json:"phase,omitempty"`
+	Restarts        int    `json:"restarts"`
+	RestartsUnknown bool   `json:"restartsUnknown,omitempty"`
+	// v0.9.1276 (Dynatrace-parite #5) — son sonlanma sebebi
+	// (kube_pod_container_status_last_terminated_reason), pod
+	// satırında rozet. Boş = hiç sonlanmamış YA DA KSM yok:
+	// RestartsUnknown'dan BAĞIMSIZ best-effort — restart sayısı
+	// bilinirken sebep bilinmeyebilir (ve tersi). Pod'un birden çok
+	// container'ı farklı sebep taşıyabilir; satıra en kötüsü çıkar
+	// (worseTermReason).
+	LastTermReason string `json:"lastTermReason,omitempty"`
+}
+
+// termReasonRank — son-sonlanma sebeplerinin kötülük sırası
+// (v0.9.1276). Whitelist DEĞİL bilerek: KSM yeni bir sebep adı
+// basmaya başlarsa (ya da bir dağıtım kendi adını kullanırsa) o ad
+// "diğer hata" sınıfına düşer — sessizce kaybolmaz.
+//
+//	3 OOMKilled — operatörün aradığı sinyal, her şeyi ezer
+//	2 diğer hata — Error, ContainerCannotRun, StartError,
+//	  DeadlineExceeded, Evicted… + BİLİNMEYEN her ad
+//	1 Completed  — normal çıkış, hata değil
+//	0 ""         — sebep yok
+func termReasonRank(reason string) int {
+	switch reason {
+	case "":
+		return 0
+	case "Completed":
+		return 1
+	case "OOMKilled":
+		return 3
+	default:
+		return 2
+	}
+}
+
+// worseTermReason — aynı pod'un iki container'ının sonlanma
+// sebebinden satırda gösterileceni seçer: kötü olan kazanır. Eşit
+// rütbede sözlük sırası belirler; Prometheus seri sırası (ve map
+// gezinme sırası) rastgeledir, satırın kararlı olması gerekir.
+// Saf; tablo-testli (client_test.go, v0.9.1276).
+func worseTermReason(a, b string) string {
+	ra, rb := termReasonRank(a), termReasonRank(b)
+	switch {
+	case ra > rb:
+		return a
+	case rb > ra:
+		return b
+	case b < a:
+		return b
+	default:
+		return a
+	}
 }
 
 // PodSeriesTrend — multi-pod görünümün seri birimi (v0.9.3): bir
@@ -494,6 +544,21 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig, podRe string)
 		}
 	}
 
+	// v0.9.1276 — son sonlanma sebebi (best-effort, restart eşlemesinin
+	// birebiri). KSM container başına seri basar: aynı pod'un iki
+	// container'ı farklı sebep taşıyabilir, satıra en kötüsü çıkar.
+	reasonBy := map[string]string{}
+	if series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {podLastTermQuery(c.NamespaceFilter)}}); err == nil {
+		for _, ser := range series {
+			reason := ser.Metric["reason"]
+			if reason == "" {
+				continue
+			}
+			k := ser.Metric["namespace"] + "\x00" + ser.Metric["pod"]
+			reasonBy[k] = worseTermReason(reasonBy[k], reason)
+		}
+	}
+
 	out := make([]PodRow, 0, len(byKey))
 	emitted := map[string]bool{}
 	for k, a := range byKey {
@@ -507,7 +572,8 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig, podRe string)
 		rst, rstKnown := restartBy[k]
 		row := PodRow{Cluster: c.Name, Namespace: ns, Pod: pod,
 			CPUCores: a.cpu, MemBytes: a.mem,
-			Phase: phaseBy[k], Restarts: rst, RestartsUnknown: !rstKnown}
+			Phase: phaseBy[k], Restarts: rst, RestartsUnknown: !rstKnown,
+			LastTermReason: reasonBy[k]}
 		if a.cpuLim > 0 {
 			row.CPUPct = clampPct(a.cpu / a.cpuLim * 100)
 		}
@@ -532,7 +598,7 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig, podRe string)
 	// kuralına takılır) ve sekme tam servis yattığı anda "No pods matched"
 	// diyordu. KSM faz/restart haritaları o pod'ları zaten biliyor —
 	// applyDeployKSM'in aynası: sıfır-kaynaklı hayalet satır ekle.
-	out = appendGhostPods(out, c.Name, emitted, phaseBy, restartBy)
+	out = appendGhostPods(out, c.Name, emitted, phaseBy, restartBy, reasonBy)
 	return out, truncated, nil
 }
 
@@ -541,8 +607,15 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig, podRe string)
 // to pods that are actually interesting: a non-Running/non-Succeeded phase
 // (Pending, Failed, Unknown) or a nonzero restart count. Healthy idle pods
 // with a scrape gap stay excluded (the "limit-only keys are noise" rule).
+// v0.9.1276 — reasonBy yalnız ALANI doldurur, kapıyı GENİŞLETMEZ:
+// anahtar birleşimine girmez. Bir hayalet satırın var olma gerekçesi
+// hâlâ kötü faz / nonzero restart; sebep serisi o gerekçeye eklenmez
+// (yoksa "Completed" ile sonlanmış sağlıklı bir pod listeye sızardı).
+// Ama satır ZATEN çiziliyorsa sebebi taşır — çünkü tam çökmüş pod,
+// OOMKilled rozetinin en çok gerektiği yerdir.
+//
 // Pure; table-tested (ghost_pods_test.go, v0.9.368).
-func appendGhostPods(out []PodRow, cluster string, emitted map[string]bool, phaseBy map[string]string, restartBy map[string]int) []PodRow {
+func appendGhostPods(out []PodRow, cluster string, emitted map[string]bool, phaseBy map[string]string, restartBy map[string]int, reasonBy map[string]string) []PodRow {
 	keys := map[string]bool{}
 	for k := range phaseBy {
 		keys[k] = true
@@ -565,7 +638,8 @@ func appendGhostPods(out []PodRow, cluster string, emitted map[string]bool, phas
 		}
 		rst, rstKnown := restartBy[k]
 		out = append(out, PodRow{Cluster: cluster, Namespace: ns, Pod: pod,
-			Phase: phase, Restarts: rst, RestartsUnknown: !rstKnown})
+			Phase: phase, Restarts: rst, RestartsUnknown: !rstKnown,
+			LastTermReason: reasonBy[k]})
 	}
 	return out
 }

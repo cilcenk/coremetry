@@ -4,6 +4,7 @@ import { DataTableHead, DataTableColgroup, type DataTable } from '@/components/D
 import { PodJmxInline } from './PodJmxInline';
 import { fmtCores, fmtBps, podPhaseBadge, restartColor } from '@/pages/clusters/thresholds';
 import { fmtBytes } from '@/lib/utils';
+import { termReasonTone } from '@/lib/podTerm';
 import type { ClusterPodRow } from '@/lib/types';
 
 // ServiceClusterPods (v0.9.155, operatör onaylı mock A) — Infrastructure
@@ -143,10 +144,23 @@ export function ServiceClusterPods({ dt, effNs, effDeploy, cFrom, cTo, colCount,
                             <td className="num mono">{fmtBytes(r.memBytes)}</td>
                             <td className="num mono">{(r.netInBps ?? 0) > 0 ? fmtBps(r.netInBps!) : '—'}</td>
                             <td className="num mono">{(r.netOutBps ?? 0) > 0 ? fmtBps(r.netOutBps!) : '—'}</td>
+                            {/* v0.9.1276 — Clusters.tsx pod tablosuyla AYNI
+                                rozet: restart sayısının yanında son sonlanma
+                                sebebi. Sebep serisi yoksa çizilmez. */}
                             <td className="num mono"
                               title={r.restartsUnknown ? 'Restart serisi yok (KSM eksik ya da seri tavanı) — 0 değil, bilinmiyor.' : undefined}
                               style={{ color: r.restartsUnknown ? 'var(--text3)' : restartColor(r.restarts ?? 0) }}>
-                              {r.restartsUnknown ? '—' : r.restarts ?? 0}</td>
+                              {r.restartsUnknown ? '—' : r.restarts ?? 0}
+                              {r.lastTermReason && (
+                                <span className={`badge b-${termReasonTone(r.lastTermReason)}`}
+                                  style={{
+                                    marginLeft: 5, fontSize: 10, verticalAlign: 'middle',
+                                    maxWidth: 96, overflow: 'hidden', textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap', display: 'inline-block',
+                                  }}
+                                  title={`${r.lastTermReason} · Son sonlanma sebebi (kube-state-metrics)`}>
+                                  {r.lastTermReason}</span>
+                              )}</td>
                           </tr>
                           {open && (
                             <tr>

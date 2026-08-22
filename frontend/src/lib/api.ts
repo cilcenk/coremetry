@@ -1428,6 +1428,16 @@ export const api = {
     get<import('./types').RootCauseExplain>(`/api/anomalies/${encodeURIComponent(id)}/rootcause/explain`),
   problemRootCauseExplain: (id: string) =>
     get<import('./types').RootCauseExplain>(`/api/problems/${encodeURIComponent(id)}/rootcause/explain`),
+  // v0.9.1281 — KALICI verdict okuma. /rootcause/explain'in ÜRETİMSİZ ikizi:
+  // model çağırmaz, rca_verdicts satırını okur, sunucuda 60s önbellekli.
+  //
+  // Bu yüzden ✨ Explain'in aksine GENİŞLETMEDE çağrılabilir — Copilot
+  // maliyeti yok. Arka planda (derin soruşturma kapısı) üretilmiş bir
+  // verdict operatöre ancak böyle ulaşır; explain önbelleği 10 dakikada
+  // düşüyor ve düştükten sonra karar hiçbir yerde görünmüyordu.
+  rootCauseVerdictPersisted: (anchorKind: 'problem' | 'anomaly', anchorId: string) =>
+    get<import('./types').PersistedRCAVerdictResponse>(
+      `/api/rootcause/verdict?anchorKind=${anchorKind}&anchorId=${encodeURIComponent(anchorId)}`),
   // Correlated Signals (task #6) — one cross-signal pivot bundle. Given any
   // anchor (trace / log / metric) the backend assembles the correlated other
   // two (trace ↔ logs ↔ metrics, joined on trace_id → service.name → window),

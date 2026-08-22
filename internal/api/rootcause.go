@@ -593,9 +593,106 @@ func (s *Server) rootCauseExplainProse(w http.ResponseWriter, r *http.Request, a
 		//
 		// En iyi çaba: yazım hatası cevabı DÜŞÜREMEZ. Operatörün
 		// beklediği tanı, bizim muhasebemiz yüzünden kaybolmaz.
-		s.recordRCAVerdict(ctx, exchangeID, anchorKind, id, h, verdict)
+		//
+		// v0.9.1281 — GÖVDE de kayda giriyor, kaynak 'operator': bu yol
+		// YALNIZ ✨ Explain tıklamasında koşar. Otomatik üretim
+		// (rca_auto_verdict.go) aynı kaydı 'auto' ile yazar; ikisi
+		// kalite ölçümünde ayrılabilsin diye etiketleri ayrı.
+		s.recordRCAVerdict(ctx, exchangeID, anchorKind, id,
+			chstore.RCAVerdictSourceOperator, h, verdict, prose)
 		return rcaExplainResponse{
 			Prose: prose, Verdict: verdict, ExchangeID: exchangeID,
+		}, nil
+	})
+}
+
+// ── Kalıcı verdict okuma (v0.9.1281) ─────────────────────────────────
+
+// PersistedRCAVerdict — rca_verdicts satırının operatöre dönen şekli.
+//
+// RCAVerdict'in KOPYASI DEĞİL ve olmaması bilinçli: kalıcı satır kararın
+// ÖZETİNİ taşıyor (enum, imza, güven, kalkan notları, gövde), tam
+// yapılandırılmış nesneyi değil (nedensel zincir, reddedilen hipotezler,
+// kanıt referansları). Aynı tipi kullanmak, doldurulmamış alanları "yok"
+// diye gösterirdi — oysa onlar KAYDEDİLMEDİ. Ayrı tip, farkı görünür
+// kılıyor ve frontend'i dürüst bir "kalıcı kayıt" rozetine zorluyor.
+type PersistedRCAVerdict struct {
+	ExchangeID           string   `json:"exchangeId,omitempty"`
+	Verdict              string   `json:"verdict"`
+	Body                 string   `json:"body,omitempty"`
+	Source               string   `json:"source,omitempty"`
+	Service              string   `json:"service,omitempty"`
+	RootCauseEntity      string   `json:"rootCauseEntity,omitempty"`
+	RootCauseFailureMode string   `json:"rootCauseFailureMode,omitempty"`
+	Confidence           float64  `json:"confidence"`
+	ShieldNotes          []string `json:"shieldNotes,omitempty"`
+	CreatedAt            int64    `json:"createdAt"`
+}
+
+// persistedRCAVerdictResponse — bulunamadı DURUMU açıkça taşınır.
+//
+// 404 yerine found=false: yokluk bu uçta NORMAL hâl (henüz üretilmemiş
+// bir ankor), hata değil. 404 dönseydi frontend'in catch dalı gerçek
+// hatalarla yokluğu ayırt edemezdi ve önbellek negatif sonucu tutamazdı.
+type persistedRCAVerdictResponse struct {
+	Found   bool                 `json:"found"`
+	Verdict *PersistedRCAVerdict `json:"verdict,omitempty"`
+}
+
+// getRootCauseVerdict — bir ankorun EN SON kalıcı verdict kaydı.
+// GET /api/rootcause/verdict?anchorKind=problem|anomaly&anchorId=…
+//
+// ÜRETİMSİZ: model çağırmaz, yalnız satır okur. Bu yüzden A2 kararını
+// (kart/panel otomatik LLM ateşlemez) ihlal etmez — ✨ Explain'in
+// aksine bu uç bedava.
+//
+// Var olma sebebi: verdict metni 10dk'lık explain önbelleğinden düştüğü
+// anda operatör için hiçbir yerde kalmıyordu. Panel artık ıskada buraya
+// düşüyor ve "kalıcı kayıt" olduğunu SÖYLÜYOR.
+//
+// Viewer-okunur, denetim izi yok (salt okuma — yazan uç değil).
+func (s *Server) getRootCauseVerdict(w http.ResponseWriter, r *http.Request) {
+	anchorKind := strings.TrimSpace(r.URL.Query().Get("anchorKind"))
+	anchorID := strings.TrimSpace(r.URL.Query().Get("anchorId"))
+	// Whitelist: anchor_kind LowCardinality bir kolon ve serbest bir dize
+	// hem önbellek anahtarını hem kolonun sözlüğünü kirletirdi.
+	if anchorKind != "problem" && anchorKind != "anomaly" {
+		http.Error(w, "anchorKind must be problem or anomaly", http.StatusBadRequest)
+		return
+	}
+	if anchorID == "" {
+		http.Error(w, "anchorId required", http.StatusBadRequest)
+		return
+	}
+	// Anahtar HER İKİ girdiyi de taşıyor (v0.5.187 dersi: uzunluk/sayı
+	// digest'i çapraz zehirler). İkisi de sınırlı dize, küme yok — sıralı
+	// FNV gerektiren bir girdi bu uçta bulunmuyor.
+	key := fmt.Sprintf("rootcause-verdict:%s:%s", anchorKind, anchorID)
+	// 60s: satır ya arka plan işçisinin tikiyle (30s) ya da bir ✨
+	// tıklamasıyla değişir. Daha uzun bir TTL, yeni inen bir verdict'i
+	// operatörden dakikalarca saklardı.
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		rec, err := s.store.LatestRCAVerdictForAnchor(ctx, anchorKind, anchorID)
+		if err != nil {
+			return nil, err
+		}
+		if rec == nil {
+			return persistedRCAVerdictResponse{Found: false}, nil
+		}
+		return persistedRCAVerdictResponse{
+			Found: true,
+			Verdict: &PersistedRCAVerdict{
+				ExchangeID:           rec.ExchangeID,
+				Verdict:              rec.Verdict,
+				Body:                 rec.Body,
+				Source:               rec.Source,
+				Service:              rec.Service,
+				RootCauseEntity:      rec.RCEntity,
+				RootCauseFailureMode: rec.RCFailMode,
+				Confidence:           rec.Confidence,
+				ShieldNotes:          rec.ShieldNotes,
+				CreatedAt:            rec.CreatedAt,
+			},
 		}, nil
 	})
 }

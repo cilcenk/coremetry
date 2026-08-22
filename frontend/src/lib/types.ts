@@ -931,6 +931,43 @@ export interface RCAVerdict {
   };
 }
 
+/** PersistedRCAVerdict — rca_verdicts'teki KALICI verdict satırı (v0.9.1281).
+ *
+ *  RCAVerdict'in kopyası DEĞİL ve bu bilinçli: kalıcı satır kararın ÖZETİNİ
+ *  taşıyor (enum, imza, güven, kalkan notları, gövde metni) — nedensel zincir,
+ *  reddedilen hipotezler ve kanıt referansları KAYDEDİLMEDİ. Aynı tipi
+ *  kullansaydık doldurulmamış alanlar "yok" gibi okunurdu; oysa onlar
+ *  üretildi ve saklanmadı. Ayrı tip, farkı görünür kılıyor.
+ *
+ *  Bu satırı OKUMAK üretimsizdir — model çağırmaz. "Kart/panel otomatik LLM
+ *  ateşlemez" (A2) kararı aynen geçerli. */
+export interface PersistedRCAVerdict {
+  /** 👍/👎 bu kimlikle POST /api/ai/feedback'e gider. Otomatik üretilmiş bir
+   *  verdict de oylanabilmeli — oylanamayan karar LEARN'e giremez. */
+  exchangeId?: string;
+  verdict: 'root_cause_identified' | 'probable_cause' | 'insufficient_evidence';
+  /** Operatöre GÖSTERİLMİŞ metin (prose; model çözümlenemediyse deterministik
+   *  özet). Boş olabilir — gövdesiz kayıt dürüst bir hâl, uydurulmaz. */
+  body?: string;
+  /** 'operator' = ✨ Explain tıklaması · 'auto' = derin soruşturma kapısı. */
+  source?: 'operator' | 'auto' | string;
+  service?: string;
+  rootCauseEntity?: string;
+  rootCauseFailureMode?: string;
+  confidence: number;
+  shieldNotes?: string[];
+  /** unix ns — provenance satırındaki "ne zaman üretildi". */
+  createdAt: number;
+}
+
+/** found=false: bu ankor için henüz verdict üretilmemiş. 404 DEĞİL çünkü
+ *  yokluk bu uçta normal hâl; 404 olsaydı frontend'in catch dalı gerçek
+ *  hatalarla yokluğu ayırt edemezdi. */
+export interface PersistedRCAVerdictResponse {
+  found: boolean;
+  verdict?: PersistedRCAVerdict;
+}
+
 // ── Correlated Signals (task #6) ────────────────────────────────────────────
 // One pivot surface: given any single signal (trace / log / metric) the
 // /api/correlate/context endpoint assembles the correlated OTHER two —

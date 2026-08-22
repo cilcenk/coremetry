@@ -881,6 +881,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// version-keyed cache, routes through s.copilotExplain. The 5-segment
 	// {id}/rootcause/explain out-ranks the 4-segment {id}/rootcause — no collision.
 	mux.HandleFunc("GET    /api/problems/{id}/rootcause/explain", s.getProblemRootCauseExplain)
+	// v0.9.1281 — KALICI verdict okuma. /rootcause/explain'in ÜRETİMSİZ
+	// ikizi: model çağırmaz, rca_verdicts satırını okur. Ankor türü query
+	// parametresinde (problem|anomaly) çünkü tek uç iki ankoru da
+	// karşılıyor — kardeş explain uçlarının aksine burada anchor kind bir
+	// yol segmenti olmayı hak edecek kadar davranış değiştirmiyor.
+	// Viewer-okunur; salt okuma olduğu için rol kapısı yok (kardeş
+	// explain uçlarıyla aynı duruş).
+	mux.HandleFunc("GET    /api/rootcause/verdict", s.getRootCauseVerdict)
 	mux.HandleFunc("POST   /api/problems/acknowledge", auth.RequireAnyRole(editorRoles, s.acknowledgeProblems))
 	mux.HandleFunc("PATCH  /api/problems/{id}/assignee", auth.RequireAnyRole(editorRoles, s.setProblemAssignee))
 	// Unified triage inbox (v0.5.211) — merges Problems +

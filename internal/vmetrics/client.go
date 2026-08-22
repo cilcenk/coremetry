@@ -443,45 +443,14 @@ func (s *Service) QueryMetricNoted(ctx context.Context, f chstore.MetricQueryFil
 	if err != nil {
 		return nil, "", err
 	}
-	now := time.Now()
-	if f.To.IsZero() {
-		f.To = now
-	}
-	if f.From.IsZero() {
-		f.From = f.To.Add(-24 * time.Hour)
-	}
+	f = normalizeQueryWindow(f)
 	q, err := buildPromQL(f, promOptions(cfg))
 	if err != nil {
 		return nil, "", err
 	}
-	step := promStep(f.From, f.To, f.StepSeconds, f.MaxDataPoints)
-	params := url.Values{
-		"query": {q},
-		"start": {promTime(f.From)},
-		"end":   {promTime(f.To)},
-		"step":  {strconv.Itoa(step) + "s"},
-	}
-	series, err := promapi.QuerySeries(ctx, s.request("/api/v1/query_range", params, cfg))
+	out, err := s.runRangeQuery(ctx, cfg, q, f)
 	if err != nil {
 		return nil, "", err
-	}
-	out := make([]chstore.SpanMetricSeries, 0, len(series))
-	for _, sr := range series {
-		row := chstore.SpanMetricSeries{GroupKey: seriesGroupKey(f.GroupBy, sr.Metric)}
-		for _, raw := range sr.Values {
-			ts, v, ok := promapi.Sample(raw)
-			if !ok {
-				// Non-finite or malformed: skip the POINT, keep the series.
-				// A gap renders as a gap; a 0 renders as a measurement.
-				continue
-			}
-			row.Points = append(row.Points, chstore.SpanMetricPoint{
-				// SpanMetricPoint.Time is unix NANOS (bucket start).
-				Time:  int64(ts * 1e9),
-				Value: v,
-			})
-		}
-		out = append(out, row)
 	}
 	// The note is attached only on the empty PERCENTILE outcome — see the
 	// header. Everything else returns "" and the envelope carries no note
@@ -567,32 +536,13 @@ func (s *Service) MetricAttrKeys(ctx context.Context, metric, service string, si
 	if metric == "" {
 		return nil, nil
 	}
-	cfg, err := s.ready()
+	// v0.9.1268 — the fetch moved to labelNames so MetricPresentKeys can
+	// intersect against the UNCAPPED set. The 100 cap stays HERE because it is
+	// a picker bound, not a fact about the metric.
+	out, err := s.labelNames(ctx, metric, service, since)
 	if err != nil {
 		return nil, err
 	}
-	matchers := []string{nameMatcher(discoveryNameCandidates(metric))}
-	if svc := strings.TrimSpace(service); svc != "" {
-		matchers = append(matchers, serviceLabel()+"="+quotePromString(svc))
-	}
-	now := time.Now()
-	params := url.Values{
-		"start":   {promTime(now.Add(-since))},
-		"end":     {promTime(now)},
-		"match[]": {"{" + strings.Join(matchers, ", ") + "}"},
-	}
-	keys, err := promapi.QueryStrings(ctx, s.request("/api/v1/labels", params, cfg))
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(keys))
-	for _, k := range keys {
-		if k == "" || k == "__name__" {
-			continue
-		}
-		out = append(out, k)
-	}
-	sort.Strings(out)
 	if len(out) > 100 {
 		out = out[:100]
 	}

@@ -1,4 +1,6 @@
-import type { ServiceMetricThroughput } from '@/lib/types';
+import type { MetricSourceKind, ServiceMetricThroughput } from '@/lib/types';
+import { Badge } from '@/components/ui';
+import { METRIC_SOURCE_LABELS } from '@/lib/metricSource';
 
 // v0.9.665 — metrik türevli throughput ÇİZİLEMEDİĞİNDE nedenini söyler.
 //
@@ -17,17 +19,48 @@ import type { ServiceMetricThroughput } from '@/lib/types';
 //
 // Boş bir grafik üçünü de aynı gösterirdi ve teşhis operatöre kalırdı.
 
+// v0.9.1268 — HANGİ DEPODA ARANDI.
+//
+// Operatör-bildirimi: bu not "bu servise eşleşen seri yok" diyordu, oysa
+// metrik VictoriaMetrics'te VARDI ve aynı metriği okuyan komşu panel
+// çiziyordu. Eşleyici ClickHouse'a çakılıydı — cevap doğruydu ama YANLIŞ
+// deponun hakkındaydı. Backend düzeltildi; rozet, aynı körlüğün bir daha
+// SESSİZ kalmamasını sağlıyor. "Seri yok" ile "yanlış yerde arandı"
+// arasındaki farkı ekranda gösteren tek şey bu satır.
+//
+// Üç dalın ÜÇÜNDE de basılıyor. Not zaten yalnız seri boşken çiziliyor,
+// yani rozetin göründüğü her an tam olarak teşhisin gerektiği an.
+//
+// `source` yoksa hiç çizilmiyor: alanı bilmeyen bir sunucuya bakan arayüz
+// (rolling deploy) "ClickHouse'ta arandı" diye VARSAYMAMALI — varsayılanı
+// basmak, düzeltmenin yalan söyleyebildiği tek yol olurdu.
+function SearchedIn({ source }: { source?: MetricSourceKind }) {
+  if (!source) return null;
+  const label = METRIC_SOURCE_LABELS[source] ?? source;
+  return (
+    <Badge
+      tone={source === 'vm' ? 'info' : 'neutral'}
+      title={`Bu panel metriği ${label} üzerinde aradı (Settings → Metrik backend'i). ` +
+        `Metrik başka bir depoda yaşıyorsa burada "eşleşme yok" görünür — ` +
+        `soldaki panel çiziyorsa iki panel farklı depoya bakıyor demektir.`}
+    >
+      {label}'de arandı
+    </Badge>
+  );
+}
+
 export function MetricThroughputNote({ d }: { d: ServiceMetricThroughput }) {
   const box: React.CSSProperties = {
     marginTop: 8, padding: '8px 10px', borderRadius: 6,
     background: 'var(--bg2)', border: '1px solid var(--border)',
     fontSize: 11.5, lineHeight: 1.5, color: 'var(--text2)',
   };
+  const searched = <SearchedIn source={d.source} />;
 
   if (d.unsupportedInstrument) {
     return (
       <div style={box}>
-        <b>Bu metrikten throughput türetilemiyor.</b>
+        <b>Bu metrikten throughput türetilemiyor.</b> {searched}
         <div style={{ marginTop: 4 }}>
           <code>{d.metric}</code> · instrument <code>{d.instrument || '?'}</code>
         </div>
@@ -42,7 +75,7 @@ export function MetricThroughputNote({ d }: { d: ServiceMetricThroughput }) {
   if (!d.metricExists) {
     return (
       <div style={box}>
-        <b>Metrik bu kurulumda yok.</b>
+        <b>Metrik bu kurulumda yok.</b> {searched}
         {(d.tried?.length ?? 0) > 0 && (
           <div style={{ marginTop: 4 }}>
             Denenen adlar:{' '}
@@ -75,7 +108,7 @@ export function MetricThroughputNote({ d }: { d: ServiceMetricThroughput }) {
   const hasJobs = (d.sampleJobs?.length ?? 0) > 0;
   return (
     <div style={box}>
-      <b>Metrik var ama bu servise eşleşen seri yok.</b>
+      <b>Metrik var ama bu servise eşleşen seri yok.</b> {searched}
       <div style={{ marginTop: 4 }}>
         <code>{d.metric}</code>
         {d.instrument && <> · instrument <code>{d.instrument}</code></>}

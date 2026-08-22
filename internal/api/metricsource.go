@@ -25,11 +25,25 @@ package api
 //
 //   - span-derived reads (services, operations, topology, traces, …) are
 //     not metrics at all;
-//   - fixed-name internal readers (hosts, infra, JVM panels, db capacity,
-//     the throughput probe in service_metric_throughput.go, the DQL
-//     evaluator in dql.go) each hard-code metric names and CH-side column
+//   - fixed-name internal readers (hosts, infra, JVM panels, db capacity, the
+//     DQL evaluator in dql.go) each hard-code metric names and CH-side column
 //     behaviour. Routing them piecemeal would put two backends behind one
 //     page.
+//
+// v0.9.1268 REMOVED ONE NAME FROM THAT SECOND LIST, and the removal is the
+// more instructive half of the rule. service_metric_throughput.go — the
+// service-Overview throughput mapper — was listed as deliberately ClickHouse.
+// That reasoning was sound in v0.9.1150 and went stale the moment VM became a
+// PRIMARY backend rather than an alternative view: on a VM install the panel
+// searched a store the metric does not live in, and reported the honest empty
+// that operator-reported bug arrived as. "Deliberately scoped to CH" and
+// "pinned to the wrong store" are the same code; only the deployment around it
+// decides which one it is.
+//
+// So the second list means "reads that a backend could not answer
+// differently", not "reads we have not gotten to". dql.go still qualifies —
+// its evaluator IS ClickHouse query machinery. A fixed metric NAME never
+// qualified on its own.
 //
 // v0.9.1157 (Faz 2) brought the last two operator-driven metric surfaces
 // through the seam: GET /api/metrics/histogram and GET /api/metrics/promql.
@@ -173,6 +187,74 @@ type metricSource interface {
 	// answer" reasoning lives next to the code that returns it.
 	ValidatePromQL(query string) error
 
+	// ── The throughput mapper's needs (v0.9.1268) ──────────────────────────
+	//
+	// service_metric_throughput.go used to call *chstore.Store for all of
+	// these and was therefore pinned to ClickHouse. On a VictoriaMetrics
+	// install that produced the operator's report: the panel searched a store
+	// the metric does not live in and said "bu servise eşleşen seri yok" —
+	// honest about ClickHouse, wrong about the question.
+	//
+	// The names and signatures are copied from *chstore.Store like every
+	// method above, so drift on either side is a compile error. They are on
+	// the seam ENTIRELY rather than as the two obvious query methods, because
+	// a handler that routes its query but not its diagnostics tells the
+	// operator about one store's labels while the chart searched another's —
+	// the same wrong-store blindness in a place nobody would think to look.
+
+	// MetricExists picks WHICH of the mapper's candidate metric names is
+	// used, so it has to be answered by the store that will be queried.
+	MetricExists(ctx context.Context, name string) (bool, error)
+
+	// MetricInstrument returns "sum", "histogram", "" (unknown) or a gauge
+	// class the mapper refuses. It decides which of the two rate methods
+	// below is called.
+	MetricInstrument(ctx context.Context, name, service string) string
+
+	QueryMetricRate(ctx context.Context, f chstore.MetricQueryFilter, mode string) ([]chstore.SpanMetricSeries, error)
+	QueryMetricCountRate(ctx context.Context, f chstore.MetricQueryFilter, mode string) ([]chstore.SpanMetricSeries, error)
+
+	// MetricUnit feeds the panel's axis. A unit read from the other store is
+	// worse than no unit: it labels an axis with a confidence nothing earned.
+	MetricUnit(ctx context.Context, metric, service string) string
+
+	// MetricPresentKeys answers "does this metric carry this identity key at
+	// all" — the diagnostic that separates a mis-configured collector from a
+	// mismatched value (v0.9.682).
+	MetricPresentKeys(ctx context.Context, metric string, keys []string, since time.Duration) []string
+
+	// ServiceIdentityLabels is the ONE method here with no chstore twin, and
+	// it exists because the two backends genuinely disagree about the
+	// question rather than about the answer.
+	//
+	// In ClickHouse a service's identity lives in the `service_name` COLUMN,
+	// and chstore.ServiceIdentityLabels lists only the ATTRIBUTES that might
+	// carry it instead. In VictoriaMetrics there are no columns: the resource
+	// attribute lands as the ordinary label `service_name`, which on an
+	// OTLP-fed install is the likeliest identity of all — and which the CH
+	// list therefore does not contain. Deriving the VM list by translating
+	// the CH one would reproduce that gap exactly.
+	ServiceIdentityLabels() []string
+
+	// EnvFilterExpr renders the global env picker as a query conjunct, or
+	// reports that this backend CANNOT express it.
+	//
+	// ClickHouse can: its filter compiler coalesces every semconv spelling of
+	// deployment.environment behind one key (metricPointsWellKnown), so a
+	// single `=` conjunct matches whichever the install writes.
+	//
+	// VictoriaMetrics cannot. A MetricsQL matcher names ONE label, and the
+	// spellings are different LABELS there (`deployment_environment` vs
+	// `deployment_environment_name`), so any single matcher we pick is right
+	// for some installs and silently empties the panel on the rest. Refusing
+	// is the honest half; the mapper marks the result env-ambiguous so the
+	// operator is told the series may span environments rather than being
+	// shown a narrowed chart that narrowed by nothing. Env still reaches the
+	// VM path through the identity itself — k8s_deployment_name carries the
+	// environment suffix, and serviceNameAttempts constrains the suffix-less
+	// spelling with its own env conjunct.
+	EnvFilterExpr(env string) (chstore.FilterExpr, bool)
+
 	// QueryPromQLRange runs an operator-written range query.
 	//
 	// Explicit parameters instead of an options struct because there is no
@@ -241,6 +323,49 @@ func (c chMetricSource) MetricAttrKeys(ctx context.Context, metric, service stri
 
 func (c chMetricSource) QueryMetricHistogram(ctx context.Context, f chstore.MetricQueryFilter) (*chstore.HistogramSeries, error) {
 	return c.store.QueryMetricHistogram(ctx, f)
+}
+
+// ── The throughput mapper's methods, ClickHouse half (v0.9.1268) ───────────
+//
+// Pure delegation, like every method above. The behaviour is BYTE-IDENTICAL to
+// the direct s.store calls these replaced, which is the property the delegation
+// parity test pins: this release must change what the VM install sees and
+// nothing at all about what the ClickHouse install sees.
+
+func (c chMetricSource) MetricExists(ctx context.Context, name string) (bool, error) {
+	return c.store.MetricExists(ctx, name)
+}
+
+func (c chMetricSource) MetricInstrument(ctx context.Context, name, service string) string {
+	return c.store.MetricInstrument(ctx, name, service)
+}
+
+func (c chMetricSource) QueryMetricRate(ctx context.Context, f chstore.MetricQueryFilter, mode string) ([]chstore.SpanMetricSeries, error) {
+	return c.store.QueryMetricRate(ctx, f, mode)
+}
+
+func (c chMetricSource) QueryMetricCountRate(ctx context.Context, f chstore.MetricQueryFilter, mode string) ([]chstore.SpanMetricSeries, error) {
+	return c.store.QueryMetricCountRate(ctx, f, mode)
+}
+
+func (c chMetricSource) MetricUnit(ctx context.Context, metric, service string) string {
+	return c.store.MetricUnit(ctx, metric, service)
+}
+
+func (c chMetricSource) MetricPresentKeys(ctx context.Context, metric string, keys []string, since time.Duration) []string {
+	return c.store.MetricPresentKeys(ctx, metric, keys, since)
+}
+
+func (chMetricSource) ServiceIdentityLabels() []string { return chstore.ServiceIdentityLabels }
+
+// EnvFilterExpr — the key the ClickHouse filter compiler coalesces. See the
+// interface comment: `deployment.environment` there is not one spelling among
+// several, it is the alias metricPointsWellKnown expands into all of them.
+func (chMetricSource) EnvFilterExpr(env string) (chstore.FilterExpr, bool) {
+	if strings.TrimSpace(env) == "" {
+		return chstore.FilterExpr{}, false
+	}
+	return chstore.FilterExpr{Key: "deployment.environment", Op: "=", Values: []string{env}}, true
 }
 
 // ValidatePromQL — the ClickHouse half parses. See the interface's comment for
@@ -353,6 +478,54 @@ func (vmMetricSource) ValidatePromQL(string) error { return nil }
 func (v vmMetricSource) QueryPromQLRange(ctx context.Context, query string, from, to time.Time, stepSeconds, maxDataPoints int) ([]chstore.SpanMetricSeries, error) {
 	out, err := v.svc.QueryPromQLRange(ctx, query, from, to, stepSeconds, maxDataPoints)
 	return out, upstream(err)
+}
+
+// ── The throughput mapper's methods, VictoriaMetrics half (v0.9.1268) ──────
+//
+// Same upstream() tagging as every method above: an untagged error 500s and
+// reads as a Coremetry bug rather than as "your VM is unreachable".
+//
+// The three that return a BARE value (no error) mirror their chstore twins,
+// which swallow their own query errors the same way. That is not a dropped
+// error: each is a diagnostic refinement on a path whose next call surfaces the
+// real failure, and the mapper reads their zero value as "unknown" rather than
+// as "absent".
+
+func (v vmMetricSource) MetricExists(ctx context.Context, name string) (bool, error) {
+	ok, err := v.svc.MetricExists(ctx, name)
+	return ok, upstream(err)
+}
+
+func (v vmMetricSource) MetricInstrument(ctx context.Context, name, service string) string {
+	return v.svc.MetricInstrument(ctx, name, service)
+}
+
+func (v vmMetricSource) QueryMetricRate(ctx context.Context, f chstore.MetricQueryFilter, mode string) ([]chstore.SpanMetricSeries, error) {
+	out, err := v.svc.QueryMetricRate(ctx, f, mode)
+	return out, upstream(err)
+}
+
+func (v vmMetricSource) QueryMetricCountRate(ctx context.Context, f chstore.MetricQueryFilter, mode string) ([]chstore.SpanMetricSeries, error) {
+	out, err := v.svc.QueryMetricCountRate(ctx, f, mode)
+	return out, upstream(err)
+}
+
+func (v vmMetricSource) MetricUnit(ctx context.Context, metric, service string) string {
+	return v.svc.MetricUnit(ctx, metric, service)
+}
+
+func (v vmMetricSource) MetricPresentKeys(ctx context.Context, metric string, keys []string, since time.Duration) []string {
+	return v.svc.MetricPresentKeys(ctx, metric, keys, since)
+}
+
+func (v vmMetricSource) ServiceIdentityLabels() []string { return v.svc.ServiceIdentityLabels() }
+
+// EnvFilterExpr refuses ON PURPOSE — MetricsQL cannot express "either of these
+// two LABELS equals x" in one matcher, and picking one spelling would empty the
+// panel on every install that writes the other. See the interface comment for
+// the full argument and for the paths through which env still narrows here.
+func (vmMetricSource) EnvFilterExpr(string) (chstore.FilterExpr, bool) {
+	return chstore.FilterExpr{}, false
 }
 
 // QueryMetricNoted satisfies the OPTIONAL metricNoteSource capability — the

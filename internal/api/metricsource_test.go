@@ -33,15 +33,25 @@ import (
 
 // Metric store methods that MUST NOT be called directly from api.go.
 //
-// Scoped to api.go on purpose. Two other files call these legitimately
-// and stay on ClickHouse by DESIGN (metricsource.go's header lists why):
-//   - service_metric_throughput.go — the fixed-name throughput probe,
-//   - dql.go — the DQL evaluator.
+// Scoped to api.go on purpose. Widening the scan to the package would have
+// to exempt the files that read the store for non-metric reasons, and an
+// exemption list is the thing that quietly grows. api.go is where every
+// operator-facing metric handler lives, which makes it the precise boundary.
 //
-// Widening the scan to the package would therefore have to exempt them,
-// and an exemption list is the thing that quietly grows. api.go is where
-// every operator-facing metric handler lives, which makes it the precise
-// boundary.
+// ONE FILE WAS ON THAT EXEMPTION LIST AND IS NOT ANY MORE, and the reason it
+// left is worth keeping. service_metric_throughput.go was listed here as
+// "stays on ClickHouse by DESIGN — the fixed-name throughput probe". That was
+// written in v0.9.1150, when VictoriaMetrics was a second opinion rather than
+// the only place a metric lives. Once VM became a primary backend the same
+// sentence stopped describing a SCOPE and started describing a BUG: the
+// service Overview's throughput panel searched ClickHouse on a VM install,
+// found nothing, and said so honestly (operator-reported, v0.9.1268).
+//
+// It now routes through the seam and has its OWN gate —
+// TestThroughputMapperReadsThroughTheSourceSeam in
+// service_metric_throughput_test.go — because its method set is wider than the
+// six below. dql.go remains genuinely exempt: its evaluator is CH-side query
+// machinery, not a metric read that a backend could answer differently.
 // v0.9.1157 — QueryMetricHistogram joined the list when the heatmap joined
 // the seam. Adding the METHOD to this slice is the half that keeps the gate
 // honest: without it, a future handler could reintroduce the direct call and
@@ -418,5 +428,93 @@ func TestSourceNamesAreStable(t *testing.T) {
 	}
 	if got := fmt.Sprintf("%s|%s", chMetricSource{}.Name(), vmMetricSource{}.Name()); got != "ch|vm" {
 		t.Fatalf("adapter names = %q", got)
+	}
+}
+
+// v0.9.1268 — chMetricSource DELEGASYON PARİTESİ.
+//
+// Bu sürüm ClickHouse kurulumunda HİÇBİR ŞEYİ değiştirmemeli: throughput
+// eşleyicisinin s.store.X(...) çağrıları c.store.X(...) delegasyonlarına
+// dönüştü, ve dönüşümün doğru olduğunun tek kanıtı argümanların AYNI SIRADA
+// geçmesi.
+//
+// NEDEN DERLEYİCİ YETMİYOR: bu metotların çoğu iki string alıyor —
+// MetricUnit(ctx, metric, service), MetricInstrument(ctx, name, service),
+// ListMetricNames(ctx, service, pattern, …). İkisini yer değiştirmek SESSİZ:
+// derlenir, koşar, ve "cart servisinin http.server.duration metriği" yerine
+// "http.server.duration servisinin cart metriği" sorar — her zaman boş, hiçbir
+// zaman hatalı. Tam olarak bu sürümün düzelttiği semptomun bir başka üreteci.
+//
+// Kapı gövdeyi TEK SATIRLIK delegasyon olarak çiviliyor. Bir metot mantık
+// kazanırsa (dönüşüm, varsayılan, ikinci çağrı) burası kırmızı yanar — ve
+// yanmalı: chMetricSource'un sözleşmesi "saf delegasyon", davranış farkı
+// varsa vmMetricSource tarafında olmalı.
+func TestCHSourceDelegationIsArgumentIdentical(t *testing.T) {
+	raw, err := os.ReadFile("metricsource.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := stripGoComments(string(raw))
+
+	// Vacuous-pass guard — yorum soyucu kodu yediyse tarama hiçbir şey bulmaz
+	// ve BAŞARI raporlar.
+	if !strings.Contains(src, "type chMetricSource struct") {
+		t.Fatal("yorum soyucu gerçek kodu yedi — chMetricSource tanımı yok, bu tarama hiçbir şey kanıtlamıyor")
+	}
+
+	// Her satır: metodun gövdesinde AYNEN bulunması gereken delegasyon.
+	// Argüman adları ve sıraları imzadan birebir kopya.
+	for _, want := range []string{
+		"return c.store.MetricExists(ctx, name)",
+		"return c.store.MetricInstrument(ctx, name, service)",
+		"return c.store.QueryMetricRate(ctx, f, mode)",
+		"return c.store.QueryMetricCountRate(ctx, f, mode)",
+		"return c.store.MetricUnit(ctx, metric, service)",
+		"return c.store.MetricPresentKeys(ctx, metric, keys, since)",
+		// Faz 1/2'den beri var olanlar da listede: bu sürüm onlara
+		// dokunmadı, ve dokunulmadığının kanıtı da burada dursun.
+		"return c.store.QueryMetric(ctx, f)",
+		"return c.store.QueryMetricHistogram(ctx, f)",
+		"return c.store.MetricLabelValues(ctx, metric, key, since)",
+		"return c.store.MetricAttrKeys(ctx, metric, service, since)",
+		"return c.store.ListMetricNames(ctx, service, pattern, limit, offset)",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("chMetricSource delegasyonu bulunamadı ya da argümanları değişti:\n\t%s\n"+
+				"Aynı tipli iki argümanı yer değiştirmek DERLENİR ve sessizce boş sonuç verir.", want)
+		}
+	}
+
+	// ServiceIdentityLabels ClickHouse tarafında chstore listesinin KENDİSİ
+	// olmalı — kopyalanmış bir liste, iki tarafın sessizce ayrışacağı yerdir.
+	if !strings.Contains(src, "func (chMetricSource) ServiceIdentityLabels() []string { return chstore.ServiceIdentityLabels }") {
+		t.Error("chMetricSource.ServiceIdentityLabels chstore listesini AYNEN döndürmüyor — " +
+			"kopya bir liste, CH davranışının bu sürümde değişmediği iddiasını çürütür")
+	}
+}
+
+// v0.9.1268 — VM'siz kurulumda seçici ClickHouse'a düşmeli, yani bu sürüm
+// VictoriaMetrics'i olmayan bir kurulumda GÖRÜNMEZ olmalı.
+//
+// Yerel smoke'un kanıtlayabildiği tek şey bu ve dürüst olmak gerekirse
+// kanıtlaması gereken de bu: bu makinede VictoriaMetrics yok, VM yolu
+// httptest ile test ediliyor (internal/vmetrics/throughput_test.go).
+func TestThroughputFallsBackToClickHouseWithoutVM(t *testing.T) {
+	// Hiç vmetrics servisi bağlı değil — Available() nil alıcıda false.
+	s := &Server{}
+	got, err := s.metricSourceFor(httptest.NewRequest("GET",
+		"/api/services/checkout/metric-throughput?from=1&to=2", nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Name() != metricSourceCH {
+		t.Fatalf("VM'siz kurulumda kaynak %q, beklenen %q — bu sürüm VM'i olmayan bir "+
+			"kurulumda davranış DEĞİŞTİRMEMELİ", got.Name(), metricSourceCH)
+	}
+	// Ve kimlik adayları ClickHouse'un listesi olmalı: VM yazımları
+	// (service_name, k8s_deployment_name) CH'de sessizce hiç eşleşmez.
+	labels := identityLabelCandidates("", got)
+	if strings.Join(labels, ",") != strings.Join(chstore.ServiceIdentityLabels, ",") {
+		t.Fatalf("CH fallback'inde aday listesi değişti: %v", labels)
 	}
 }

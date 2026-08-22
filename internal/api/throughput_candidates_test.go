@@ -46,7 +46,7 @@ func TestThroughputMetricCandidatesHonoursExplicit(t *testing.T) {
 }
 
 func TestIdentityLabelCandidatesTriesFullListWhenUnspecified(t *testing.T) {
-	got := identityLabelCandidates("")
+	got := identityLabelCandidates("", chMetricSource{})
 	if len(got) < 2 {
 		t.Fatalf("boş girdide TÜM etiketler denenmeli, alınan %v", got)
 	}
@@ -63,7 +63,7 @@ func TestIdentityLabelCandidatesTriesFullListWhenUnspecified(t *testing.T) {
 }
 
 func TestIdentityLabelCandidatesHonoursExplicit(t *testing.T) {
-	got := identityLabelCandidates("kubernetes_job")
+	got := identityLabelCandidates("kubernetes_job", chMetricSource{})
 	if len(got) != 1 || got[0] != "kubernetes_job" {
 		t.Errorf("açık etiket tek aday olmalı, alınan %v", got)
 	}
@@ -152,7 +152,7 @@ func TestServiceNameAttemptsOrderAndEnvConstraint(t *testing.T) {
 // BAŞINDA olmalı; sonra denenirse eksiz-ad yolu önce tutup gereksiz
 // belirsizlik üretir.
 func TestIdentityLabelsPreferK8sWorkloadFirst(t *testing.T) {
-	got := identityLabelCandidates("")
+	got := identityLabelCandidates("", chMetricSource{})
 	if len(got) == 0 || got[0] != "resource.k8s.deployment.name" {
 		t.Errorf("k8s işyükü kimliği İLK sırada olmalı, alınan %v", got)
 	}

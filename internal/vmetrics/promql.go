@@ -574,6 +574,60 @@ func regexAlternation(vals []string) string {
 	return strings.Join(quoted, "|")
 }
 
+// ── Selector atoms, shared by every builder in the package ─────────────────
+//
+// Extracted in v0.9.1268, when the service-Overview throughput mapper gained a
+// VictoriaMetrics arm and needed to render a `_count`-only rate — the one shape
+// buildPromQL cannot express, because its rate branch always composes the base
+// family `or` the histogram family.
+//
+// EXTRACTED RATHER THAN COPIED, and the difference is the whole point. A second
+// hand-written matcher loop is where an arm quietly loses a filter: it would
+// answer the operator's question about one service with every service's traffic,
+// and nothing on screen would say so (the v0.9.566 class this file keeps
+// citing). One definition means the throughput arm and the Explore arm cannot
+// scope differently.
+
+// selectorMatchers renders the NON-NAME half of a selector: the service scope
+// first, then one matcher per filter. Returns the refusal verbatim when a
+// filter operator has no MetricsQL equivalent — the caller turns that into a
+// 400, never into a dropped conjunct.
+func selectorMatchers(f chstore.MetricQueryFilter) ([]string, error) {
+	out := make([]string, 0, len(f.Filters)+1)
+	if svc := strings.TrimSpace(f.Service); svc != "" {
+		out = append(out, serviceLabel()+"="+quotePromString(svc))
+	}
+	for _, fe := range f.Filters {
+		m, err := promMatcher(fe)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// promSelector joins a candidate name matcher with those matchers.
+//
+// The `append([]string{…}, extra...)` allocates a FRESH slice every call: the
+// callers reuse one `extra` across several arms, and appending into it in place
+// would let arm N+1 inherit arm N's name matcher.
+func promSelector(candidates, extra []string) string {
+	return "{" + strings.Join(append([]string{nameMatcher(candidates)}, extra...), ", ") + "}"
+}
+
+// groupByLabels maps the caller's group-by keys into label names, dropping the
+// ones that sanitize to nothing.
+func groupByLabels(groupBy []string) []string {
+	out := make([]string, 0, len(groupBy)+1)
+	for _, g := range groupBy {
+		if l := promLabel(g); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 // buildPromQL renders the whole query expression for a MetricQueryFilter.
 // Pure — table-tested in promql_test.go.
 //
@@ -606,16 +660,9 @@ func buildPromQL(f chstore.MetricQueryFilter, opts promOpts) (string, error) {
 	// candidate list rather than once. Resolved here rather than in
 	// promAggregator so the name rule has exactly one home and the aggregator
 	// stays a pure label→shape map.
-	extra := make([]string, 0, len(f.Filters)+1)
-	if svc := strings.TrimSpace(f.Service); svc != "" {
-		extra = append(extra, serviceLabel()+"="+quotePromString(svc))
-	}
-	for _, fe := range f.Filters {
-		m, err := promMatcher(fe)
-		if err != nil {
-			return "", err
-		}
-		extra = append(extra, m)
+	extra, err := selectorMatchers(f)
+	if err != nil {
+		return "", err
 	}
 	// Every arm carries the SAME service + filter matchers. Sharing them is not
 	// tidiness: an arm that lost a filter would answer the operator's question
@@ -623,7 +670,7 @@ func buildPromQL(f chstore.MetricQueryFilter, opts promOpts) (string, error) {
 	// fill in wherever the correctly-filtered arm was empty — the v0.9.566 shape
 	// with a fallback attached.
 	sel := func(cands []string) string {
-		return "{" + strings.Join(append([]string{nameMatcher(cands)}, extra...), ", ") + "}"
+		return promSelector(cands, extra)
 	}
 
 	// The window is resolved from the SAME promStep call the client uses for
@@ -665,14 +712,7 @@ func buildPromQL(f chstore.MetricQueryFilter, opts promOpts) (string, error) {
 	//   - never a FABRICATION. sum/avg would report a number no series ever
 	//     measured, off from the CH backend by the group's cardinality:
 	//     plausible, wrong, unquestioned — the v0.9.566 class.
-	labels := make([]string, 0, len(f.GroupBy)+1)
-	for _, g := range f.GroupBy {
-		l := promLabel(g)
-		if l == "" {
-			continue
-		}
-		labels = append(labels, l)
-	}
+	labels := groupByLabels(f.GroupBy)
 
 	// PERCENTILES ALWAYS CARRY A BY-CLAUSE, and `le` always comes first.
 	//

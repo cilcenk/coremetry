@@ -2309,6 +2309,22 @@ export interface ServiceMetricThroughput {
   // Sessiz kalmamalı: sayı makul göründüğü için kimse fark etmez.
   envAmbiguous?: boolean;
   unsupportedInstrument?: boolean;
+  // v0.9.1268 — HANGİ DEPODA ARANDI ("ch" | "vm").
+  //
+  // Operatör-bildirimi: panel "bu servise eşleşen seri yok" diyordu, oysa
+  // metrik VictoriaMetrics'te VARDI ve aynı metriği okuyan komşu panel
+  // çiziyordu. Eşleyici ClickHouse'a çakılıydı; cevap doğruydu ama YANLIŞ
+  // deponun hakkındaydı — ve not bunu söyleyemediği için hata görünmez
+  // kaldı.
+  //
+  // Alan CEVAPTAN geliyor, ayardan değil (Metrics.tsx rozetinin emsali):
+  // ayrı bir /api/settings okuması hem admin-only, hem iki istek arasında
+  // ayrışabilir. Cevabın kendisi hangi depodan geldiğini bilir.
+  //
+  // MetricSourceKind — /api/metrics/names zarfının kullandığı AYNI tip.
+  // İkinci bir yazım açmak, iki alanın aynı backend'i farklı adlandırdığı
+  // bir gelecek demekti.
+  source?: MetricSourceKind;
 }
 
 export interface SpanMetricSeries {

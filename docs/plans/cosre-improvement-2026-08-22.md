@@ -185,9 +185,14 @@ bulgusunun dispozisyonu:
     ALINMAZ. Rollback: tek bayrak (settings blob), sessiz fallback
     yok — seçim yolu ayrı ai_calls surface etiketi taşır.
   * Onay verirsen: ölçüm koşusu + rapor ayrı, gemi kararı rapora.
-- Değer-3 kuyruğu (chat): env handoff · konuşma deep-link (?conversation=) ·
-  /trace dışı bağlam çipleri · yüzey-başına temperature · final cevap
-  stream'i. Değer-2/3 kuyruğu (kod-bağlamı): monorepo duvarları [3/M] ·
+- ~~Değer-3 kuyruğu (chat)~~ → GEMİDE: env handoff v0.9.1259 · konuşma
+  deep-link v0.9.1258 (?chat=) · triage bağlam çipleri v0.9.1260 ·
+  katı-JSON sıcaklık-0 v0.9.1261. FİNAL CEVAP STREAM'İ [3/S] BİLİNÇLİ
+  ÇİZGİ-ALTI (2026-08-23 değerlendirmesi): yalnız tur-tavanı yolunda
+  geçerli (nadir) ve doğru uygulama copilot çekirdeğinde kayıtsız-stream
+  + kullanım-dönen yeni API ister (StreamText kendi ai_calls satırını
+  basar, chat tur-toplamı TEK satır basar — çift kayıt/attribution
+  kırılır; M'e büyür). Operatör isterse ayrı dilim. Değer-2/3 kuyruğu (kod-bağlamı): monorepo duvarları [3/M] ·
   refs sayfalama · api-version drift · singleflight · inner-class
   fallback · framework-only sebep ayrıştırması. Hiçbiri sessiz vaat
   değil; operatör seçerse dilimlenir.

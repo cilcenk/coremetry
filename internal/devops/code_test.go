@@ -283,6 +283,10 @@ type fakeTFS struct {
 	repos []string
 	// hits — uç başına istek sayısı (cache pini için).
 	hits map[string]int
+	// seen — görülen istek YOLLARI (v0.9.1240). Proje adının gerçekten
+	// URL'e girdiğini ölçmek için: hint'i okuyup isteğe koymayan bir
+	// uygulama, yalnız Reason'a bakan bir testten geçerdi.
+	seen []string
 	// slowItemAfter / itemDelay — N'inci dosya isteğinden İTİBAREN
 	// uyu (v0.9.1237 süre tavanı testi). Uyku ctx-duyarlı: aksi hâlde
 	// httptest.Server.Close() askıdaki handler'ı beklerdi.
@@ -302,6 +306,16 @@ func repoSegment(path string) string {
 		rest = rest[:j]
 	}
 	return rest
+}
+
+// sawPathContaining — bu parçayı taşıyan bir istek geldi mi?
+func (f *fakeTFS) sawPathContaining(frag string) bool {
+	for _, p := range f.seen {
+		if strings.Contains(p, frag) {
+			return true
+		}
+	}
+	return false
 }
 
 // knownRepo — sunucu bu adı tanıyor mu?
@@ -326,6 +340,7 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, q := r.URL.Path, r.URL.Query()
+		f.seen = append(f.seen, p)
 		// v0.9.1236 — liste DENEMESİ en tepede sayılır, kimlik ve
 		// api-version muhafızlarından ÖNCE. Sayacı aşağıya, başarı
 		// dalına koymak testi kör ederdi: "kaçış kapısı hiç açılmadı"
@@ -469,7 +484,7 @@ func TestFetchCodeEndToEnd(t *testing.T) {
 		"\tat java.base/java.util.Optional.orElseThrow(Optional.java:403)\n"
 
 	frames := stackparse.ParseJava(stack)
-	cc := svc.FetchCode(context.Background(), "core-service", "", frames)
+	cc := svc.FetchCode(context.Background(), "core-service", ProjectHint{}, frames)
 
 	if cc.Reason != "" && cc.Empty() {
 		t.Fatalf("kod çekilemedi: %s", cc.Reason)
@@ -525,7 +540,7 @@ func TestFetchCodeEndToEnd(t *testing.T) {
 
 	// (g) ağaç cache'i: ikinci çağrı yeni listeleme yapmaz
 	treeHits := f.hits["tree"]
-	_ = svc.FetchCode(context.Background(), "core-service", "", frames)
+	_ = svc.FetchCode(context.Background(), "core-service", ProjectHint{}, frames)
 	if f.hits["tree"] != treeHits {
 		t.Errorf("ağaç yeniden listelendi (%d → %d) — 10 dk cache tutmuyor",
 			treeHits, f.hits["tree"])
@@ -585,7 +600,7 @@ func TestFetchCodeFailOpen(t *testing.T) {
 			}
 			svc := New()
 			svc.Configure(cfg)
-			cc := svc.FetchCode(context.Background(), tt.repo, "", tt.frames)
+			cc := svc.FetchCode(context.Background(), tt.repo, ProjectHint{}, tt.frames)
 			if !cc.Empty() {
 				t.Fatalf("kod dönmemeliydi: %+v", cc.Windows)
 			}
@@ -608,7 +623,7 @@ func TestFetchCodeSanitizesPATInReason(t *testing.T) {
 		PAT: "sup3rsecret", Flavor: FlavorServer,
 	})
 	frames := stackparse.ParseJava("\tat com.example.a.A.b(A.java:1)\n")
-	cc := svc.FetchCode(context.Background(), "repo", "", frames)
+	cc := svc.FetchCode(context.Background(), "repo", ProjectHint{}, frames)
 	if strings.Contains(cc.Reason, "sup3rsecret") {
 		t.Fatalf("PAT fail-open mesajına sızdı: %s", cc.Reason)
 	}
@@ -625,7 +640,7 @@ func TestFetchCodeFallsBackToDefaultBranch(t *testing.T) {
 
 	svc := New()
 	svc.Configure(f.settings())
-	cc := svc.FetchCode(context.Background(), "core-service", "",
+	cc := svc.FetchCode(context.Background(), "core-service", ProjectHint{},
 		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
 	if cc.Branch != "master" {
 		t.Fatalf("Branch=%q, deponun varsayılanı (master) beklenirdi — reason=%q", cc.Branch, cc.Reason)
@@ -647,7 +662,7 @@ func TestFetchCodeRespectsBranchOrderSetting(t *testing.T) {
 	cfg.BranchOrder = []string{"master", "release"}
 	svc := New()
 	svc.Configure(cfg)
-	cc := svc.FetchCode(context.Background(), "core-service", "",
+	cc := svc.FetchCode(context.Background(), "core-service", ProjectHint{},
 		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
 	if cc.Branch != "master" {
 		t.Fatalf("Branch=%q, ayardaki sıra (master önce) uygulanmadı", cc.Branch)
@@ -674,7 +689,7 @@ func TestFetchCodeRecoversRepoNameFromServerList(t *testing.T) {
 	frames := stackparse.ParseJava(
 		"\tat com.example.cash.CashFlowService.post(CashFlowService.java:88)\n")
 
-	cc := svc.FetchCode(context.Background(), "cashmanagement-cashflow", "", frames)
+	cc := svc.FetchCode(context.Background(), "cashmanagement-cashflow", ProjectHint{}, frames)
 
 	if cc.Empty() {
 		t.Fatalf("kaçış kapısı açılmadı: %s", cc.Reason)
@@ -694,6 +709,129 @@ func TestFetchCodeRecoversRepoNameFromServerList(t *testing.T) {
 	}
 }
 
+// --- v0.9.1240: katalog pini + proje türetimi --------------------
+
+// TestFetchCodePinnedServiceDerivesProject — SAHADAKİ VAKA.
+//
+// Operatör depoyu pinliyor (konvansiyon tutmuyor) ama Ayarlar'da Project
+// boş. v0.9.1183 türetimi (bsa- → BSA) pinli yolda HİÇ koşmadığı için
+// kod bağlamı "Project boş ve servis adı bilinen bir önekle başlamıyor"
+// çıkmazına düşüyordu — üstelik servis adı TAM DA bsa- ile başlıyordu.
+// Pin, kod bağlamını açmak yerine kapatıyordu.
+//
+// Zincirin tamamı burada: ResolveRepo (pin depoyu, önek projeyi verir) →
+// FetchCode (türetilen proje isteğe girer) → v0.9.1236 kaçış kapısı
+// (pinin harf yazımı sunucudan düzeltilir) → pencere. Kaçış kapısı pinli
+// yolda zaten kuruluydu ama proje çıkmazı ondan ÖNCE dönüyordu, yani
+// pratikte erişilemezdi.
+func TestFetchCodePinnedServiceDerivesProject(t *testing.T) {
+	f := newFakeTFS(t)
+	const canonical = "CashManagement.CashFlow"
+	f.repos = []string{canonical, "identity"}
+	const path = "/src/main/java/com/example/cash/CashFlowService.java"
+	f.tree = []string{path}
+	f.files[path] = javaFile("com.example.cash", "CashFlowService", 200, 88)
+
+	cfg := f.settings()
+	cfg.Project = "" // operatör doldurmadı
+	svc := New()
+	svc.Configure(cfg)
+
+	// Pin: doğru depo, elle yazıldığı için YANLIŞ harf yazımında.
+	res := ResolveRepo("bsa-cashmanagement-cashflow-prod", "CashManagement.cashflow", ResolveConfig{})
+	if res.Source != RepoSourcePin || res.Project.Value != "BSA" {
+		t.Fatalf("çözüm=%+v — pin depoyu, önek projeyi vermeliydi", res)
+	}
+
+	frames := stackparse.ParseJava(
+		"\tat com.example.cash.CashFlowService.post(CashFlowService.java:88)\n")
+	cc := svc.FetchCode(context.Background(), res.Repo, res.Project, frames)
+
+	if cc.Empty() {
+		t.Fatalf("kod gelmedi: %s", cc.Reason)
+	}
+	if strings.Contains(cc.Reason, "Project boş") {
+		t.Fatalf("proje çıkmazı hâlâ tetikleniyor: %q", cc.Reason)
+	}
+	// Türetilen proje İSTEĞE girmeli: hint'i okuyup URL'de kullanmayan
+	// bir uygulama yalnız Reason'a bakan bir testten geçerdi.
+	if !f.sawPathContaining("/BSA/_apis/git/repositories") {
+		t.Fatalf("türetilen proje istek yoluna girmedi: %v", f.seen)
+	}
+	if cc.Repo != canonical {
+		t.Errorf("Repo=%q, sunucunun kanonik adı (%q) beklenirdi — kaçış kapısı "+
+			"pinli yolda da çalışmalı", cc.Repo, canonical)
+	}
+}
+
+// TestFetchCodePinProjectBeatsPrefix — pinin KENDİ projesi türetimi ezer
+// ve isteğe O girer (v0.9.1240).
+func TestFetchCodePinProjectBeatsPrefix(t *testing.T) {
+	f := newFakeTFS(t)
+	const path = "/src/main/java/com/example/a/A.java"
+	f.tree = []string{path}
+	f.files[path] = javaFile("com.example.a", "A", 40, 12)
+
+	cfg := f.settings()
+	cfg.Project = ""
+	svc := New()
+	svc.Configure(cfg)
+
+	res := ResolveRepo("bsa-core-prod",
+		f.srv.URL+"/DefaultCollection/OTHER/_git/core-service", ResolveConfig{})
+	if res.Project.Value != "OTHER" {
+		t.Fatalf("Project=%+v, pinin projesi (OTHER) beklenirdi", res.Project)
+	}
+
+	cc := svc.FetchCode(context.Background(), res.Repo, res.Project,
+		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
+	if cc.Empty() {
+		t.Fatalf("kod gelmedi: %s", cc.Reason)
+	}
+	if f.sawPathContaining("/BSA/_apis/git/repositories") {
+		t.Fatalf("önekten türetilen BSA kullanılmış — pinin projesi kazanmalıydı: %v", f.seen)
+	}
+	if !f.sawPathContaining("/OTHER/_apis/git/repositories") {
+		t.Fatalf("pinin projesi istek yoluna girmedi: %v", f.seen)
+	}
+}
+
+// TestProjectDeadEndNamesAllThree — proje gerçekten çözülemediğinde
+// Reason ÜÇ kaynağın da durumunu söyler (v0.9.1240).
+//
+// Eski cümle tek bir kaynağı suçluyordu ("servis adı bilinen bir önekle
+// başlamıyor") ve pinli yolda bu çoğunlukla YANLIŞTI — önek tutuyor,
+// türetim hiç koşmuyordu. Operatör düzeltilecek şeyi arayıp bulamıyordu.
+func TestProjectDeadEndNamesAllThree(t *testing.T) {
+	f := newFakeTFS(t)
+	cfg := f.settings()
+	cfg.Project = ""
+	svc := New()
+	svc.Configure(cfg)
+
+	res := ResolveRepo("standalone-service-prod", "pushconfirm-legacy", ResolveConfig{})
+	cc := svc.FetchCode(context.Background(), res.Repo, res.Project,
+		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
+
+	if !cc.Empty() {
+		t.Fatalf("proje yokken kod gelmemeliydi: %+v", cc.Windows)
+	}
+	for _, want := range []string{
+		"Project boş", // (1) Ayarlar
+		"katalog pini yalnız depo adı taşıyor", // (2) pin bileşeni
+		"standalone-service-prod",              // (3) önek türetimi: hangi ad
+		"bsa-",                                 // (3) hangi öneklerle denendi
+	} {
+		if !strings.Contains(cc.Reason, want) {
+			t.Errorf("Reason=%q, %q içermeliydi", cc.Reason, want)
+		}
+	}
+	// Sunucuya tek istek bile çıkmamalı: proje yoksa URL kurulamaz.
+	if len(f.seen) != 0 {
+		t.Errorf("proje çıkmazında istek çıktı: %v", f.seen)
+	}
+}
+
 // TestFetchCodeRepoListOnlyOnFailure — MUTLU YOL bir istek bile
 // fazladan görmemeli; liste yalnız 404'ten SONRA çekilir.
 func TestFetchCodeRepoListOnlyOnFailure(t *testing.T) {
@@ -707,7 +845,7 @@ func TestFetchCodeRepoListOnlyOnFailure(t *testing.T) {
 	svc.Configure(f.settings())
 	frames := stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n")
 
-	cc := svc.FetchCode(context.Background(), "core-service", "", frames)
+	cc := svc.FetchCode(context.Background(), "core-service", ProjectHint{}, frames)
 	if cc.Empty() {
 		t.Fatalf("mutlu yol kırıldı: %s", cc.Reason)
 	}
@@ -728,12 +866,12 @@ func TestFetchCodeRepoListCached(t *testing.T) {
 	svc.Configure(f.settings())
 	frames := stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n")
 
-	_ = svc.FetchCode(context.Background(), "billing-gateway", "", frames)
+	_ = svc.FetchCode(context.Background(), "billing-gateway", ProjectHint{}, frames)
 	first := f.hits["list"]
 	if first != 1 {
 		t.Fatalf("ilk çağrıda liste %d kez çekildi, 1 beklenirdi", first)
 	}
-	_ = svc.FetchCode(context.Background(), "another-missing", "", frames)
+	_ = svc.FetchCode(context.Background(), "another-missing", ProjectHint{}, frames)
 	if f.hits["list"] != first {
 		t.Fatalf("liste yeniden çekildi (%d → %d) — cache tutmuyor", first, f.hits["list"])
 	}
@@ -749,7 +887,7 @@ func TestFetchCodeNoMatchListsNearestNames(t *testing.T) {
 	}
 	svc := New()
 	svc.Configure(f.settings())
-	cc := svc.FetchCode(context.Background(), "cashflow", "",
+	cc := svc.FetchCode(context.Background(), "cashflow", ProjectHint{},
 		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
 
 	if !cc.Empty() {
@@ -775,7 +913,7 @@ func TestFetchCodeEscapeHatchSkipsOnAuthError(t *testing.T) {
 	cfg.PAT = "" // sahte sunucu 401 döner
 	svc := New()
 	svc.Configure(cfg)
-	cc := svc.FetchCode(context.Background(), "payments-core", "",
+	cc := svc.FetchCode(context.Background(), "payments-core", ProjectHint{},
 		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
 
 	if !strings.Contains(cc.Reason, "http 401") {
@@ -795,7 +933,7 @@ func TestFetchCodeEscapeHatchSanitizesPAT(t *testing.T) {
 	cfg.PAT = "sup3rsecret"
 	svc := New()
 	svc.Configure(cfg)
-	cc := svc.FetchCode(context.Background(), "sup3rsecret-missing", "",
+	cc := svc.FetchCode(context.Background(), "sup3rsecret-missing", ProjectHint{},
 		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
 	if strings.Contains(cc.Reason, "sup3rsecret") {
 		t.Fatalf("PAT kaçış kapısı mesajına sızdı: %s", cc.Reason)
@@ -815,7 +953,7 @@ func TestFetchCodePicksCaseDifferentBranch(t *testing.T) {
 
 	svc := New()
 	svc.Configure(f.settings())
-	cc := svc.FetchCode(context.Background(), "core-service", "",
+	cc := svc.FetchCode(context.Background(), "core-service", ProjectHint{},
 		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
 	if cc.Branch != "Release" {
 		t.Fatalf("Branch=%q, sunucunun kanonik yazımı (Release) beklenirdi — reason=%q",
@@ -1070,7 +1208,7 @@ func TestFetchCodeWalksPastMissesToLaterFrame(t *testing.T) {
 		"\tat com.example.card.Wrapper.c(Chain.java:33)\n" +
 		"\tat com.example.card.CardRepository.find(CardRepository.java:88)\n"
 
-	cc := svc.FetchCode(context.Background(), "core-service", "", stackparse.ParseJava(stack))
+	cc := svc.FetchCode(context.Background(), "core-service", ProjectHint{}, stackparse.ParseJava(stack))
 	if len(cc.Windows) != 1 {
 		t.Fatalf("pencere=%d, istenen 1 — ıskalar avı bitirmiş olabilir (reason=%q)",
 			len(cc.Windows), cc.Reason)
@@ -1103,7 +1241,7 @@ func TestFetchCodeDedupsSameFileFrames(t *testing.T) {
 		"\tat com.example.card.Recursive.walk(Recursive.java:12)\n" +
 		"\tat com.example.card.Recursive.enter(Recursive.java:120)\n"
 
-	cc := svc.FetchCode(context.Background(), "core-service", "", stackparse.ParseJava(stack))
+	cc := svc.FetchCode(context.Background(), "core-service", ProjectHint{}, stackparse.ParseJava(stack))
 	if len(cc.Windows) != 2 {
 		t.Fatalf("pencere=%d, istenen 2 (tekrar atlanmalı, 120. satır kalmalı): %q",
 			len(cc.Windows), cc.Reason)
@@ -1141,7 +1279,7 @@ func TestFetchCodeTotalDeadlineReturnsPartial(t *testing.T) {
 	svc.codeDeadline = 300 * time.Millisecond
 
 	start := time.Now()
-	cc := svc.FetchCode(context.Background(), "core-service", "", stackparse.ParseJava(
+	cc := svc.FetchCode(context.Background(), "core-service", ProjectHint{}, stackparse.ParseJava(
 		"\tat com.example.a.A.x(A.java:12)\n"+
 			"\tat com.example.a.B.y(B.java:20)\n"))
 	el := time.Since(start)
@@ -1179,7 +1317,7 @@ func TestFetchCodeDeadlineBlamesNobodyWhenCallerCancels(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		go func() { time.Sleep(150 * time.Millisecond); cancel() }()
 		defer cancel()
-		return svc.FetchCode(ctx, "core-service", "", stackparse.ParseJava(stack))
+		return svc.FetchCode(ctx, "core-service", ProjectHint{}, stackparse.ParseJava(stack))
 	}
 
 	t.Run("hiç pencere yokken", func(t *testing.T) {

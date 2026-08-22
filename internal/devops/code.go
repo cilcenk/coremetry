@@ -234,10 +234,11 @@ func (c *codeCache) put(key string, paths []string) {
 // repo boşsa ya da bağlantı yapılandırılmamışsa boş + Reason döner;
 // HATA DÖNDÜRMEZ (fail-open sözleşmesi — imzada error yok ki çağıran
 // yanlışlıkla açıklamayı düşürmesin).
-// projectHint (v0.9.1183) — servis önekinden türetilen proje ÖNERİSİ;
-// ayardaki açık Project boşsa kullanılır. Operatör isteği: "service_name
-// başında bsa- yazıyorsa direkt project BSA olduğunu anlasın."
-func (s *Service) FetchCode(ctx context.Context, repo, projectHint string, frames []stackparse.Frame) CodeContext {
+// hint (v0.9.1183, v0.9.1240'ta yapılandırıldı) — proje ÖNERİSİ +
+// önerinin kaynağı, öneri boşsa çıkmazın nedeni. Ayardaki açık Project
+// boşsa kullanılır. Operatör isteği: "service_name başında bsa-
+// yazıyorsa direkt project BSA olduğunu anlasın."
+func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, frames []stackparse.Frame) CodeContext {
 	out := CodeContext{Repo: repo}
 	if s == nil {
 		return CodeContext{Reason: "DevOps istemcisi yok"}
@@ -263,11 +264,11 @@ func (s *Service) FetchCode(ctx context.Context, repo, projectHint string, frame
 	// ikinci kez istiyordu.
 	cfg.Project = strings.TrimSpace(cfg.Project)
 	if cfg.Project == "" {
-		cfg.Project = strings.TrimSpace(projectHint)
+		cfg.Project = strings.TrimSpace(hint.Value)
 	}
 	if cfg.Project == "" {
 		// Depo ADIYLA çağırıyoruz; ada göre çözüm proje kapsamı ister.
-		return CodeContext{Repo: repo, Reason: "DevOps ayarında Project boş ve servis adı bilinen bir önekle başlamıyor — Project'i doldurun ya da servis önekini Ayarlar → Kod entegrasyonu'na ekleyin"}
+		return CodeContext{Repo: repo, Reason: projectDeadEnd(hint)}
 	}
 	// v0.9.1235 — AppFrames artık EN DERİN "Caused by" segmentinden dışa
 	// doğru seçiyor: üç pencerenin ilki kök nedenin fırlatıldığı satır,

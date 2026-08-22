@@ -79,9 +79,10 @@ func (s *Server) buildCodeContext(ctx context.Context, service, stack string) de
 		}
 		return devops.CodeContext{Reason: reason, Source: res.Source}
 	}
-	// v0.9.1183 — res.Project, servis adının eşleşen önekinden türetilen
-	// proje ÖNERİSİ (bsa-… → BSA). FetchCode onu yalnız ayardaki Project
-	// boşken kullanır.
+	// v0.9.1183 — res.Project, proje ÖNERİSİ: pinin kendi taşıdığı proje
+	// (v0.9.1240) ya da servis önekinden türetilen ad (bsa-… → BSA).
+	// FetchCode onu yalnız ayardaki Project boşken kullanır; öneri boşsa
+	// içindeki Reason çıkmazı üç kaynak üzerinden anlatır.
 	cc := s.devops.FetchCode(ctx, res.Repo, res.Project, stackparse.ParseJava(stack))
 	cc.Source = res.Source
 	return cc

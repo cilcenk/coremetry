@@ -68,15 +68,29 @@ type RepoResolution struct {
 	Source string
 	Reason string
 	// Project (v0.9.1183, operatör isteği: "service_name başında bsa-
-	// yazıyorsa direkt project BSA olduğunu anlasın") — servis adının
-	// EŞLEŞEN önekinden türetilen DevOps proje adı.
+	// yazıyorsa direkt project BSA olduğunu anlasın") — DevOps proje
+	// ÖNERİSİ + önerinin kaynağı.
 	//
-	// Yalnız bir ÖNERİ: ayardaki açık Project her zaman kazanır. Önek
-	// zaten "bu servis şu projeye ait" bilgisini taşıyor (kurulumun kendi
-	// adlandırma sözleşmesi), o yüzden aynı bilgiyi ikinci bir alana daha
-	// yazdırmak gereksiz bir el işiydi — ve boş bırakıldığında kod
-	// bağlamı sessizce hiç çalışmıyordu.
-	Project string
+	// Yalnız bir ÖNERİ: ayardaki açık Project her zaman kazanır (FetchCode
+	// sırası). Önek zaten "bu servis şu projeye ait" bilgisini taşıyor
+	// (kurulumun kendi adlandırma sözleşmesi), o yüzden aynı bilgiyi
+	// ikinci bir alana daha yazdırmak gereksiz bir el işiydi — ve boş
+	// bırakıldığında kod bağlamı sessizce hiç çalışmıyordu.
+	Project ProjectHint
+}
+
+// ProjectHint — proje adı ÖNERİSİ, kaynağı ve (boşsa) neden boş kaldığı.
+//
+// v0.9.1240 — üçüncü alan Reason yeni: proje çözülemediğinde çıkmazın
+// nedeni ÜÇ kaynağa dağılmış durumda (pinin proje bileşeni, Ayarlar'daki
+// Project, önek türetimi) ve ikisini yalnız burası bilir. FetchCode
+// yalnız Ayarlar'ı görüyor, o yüzden tek başına yazdığı cümle ("servis
+// adı bilinen bir önekle başlamıyor") pin kısa devresi yüzünden düpedüz
+// YANLIŞ olabiliyordu: önek tutuyor, türetim hiç koşmuyordu.
+type ProjectHint struct {
+	Value  string // önerilen proje ("" = öneri yok)
+	Source string // RepoSourcePin | RepoSourceConvention | ""
+	Reason string // Value=="" iken pin + önek kaynaklarının durumu
 }
 
 // projectFromPrefix — eşleşen servis önekinden proje adı.
@@ -107,39 +121,115 @@ func projectFromPrefix(prefix string) string {
 // sunucuya sorulmadan bilinemez.
 func ResolveRepo(service, metaRepository string, cfg ResolveConfig) RepoResolution {
 	cfg = cfg.withDefaults()
+	svc := strings.TrimSpace(service)
 
-	if pinned := repoNameFromMeta(metaRepository); pinned != "" {
-		return RepoResolution{Repo: pinned, Source: RepoSourcePin}
+	if pinProject, pinned := parsePinnedRepo(metaRepository); pinned != "" {
+		out := RepoResolution{Repo: pinned, Source: RepoSourcePin}
+		// v0.9.1240 — pinin KENDİ taşıdığı proje her şeyi ezer: operatör
+		// tam URL ("…/BSA/_git/repo") ya da "BSA/repo" yazdıysa hangi
+		// projede olduğunu AÇIKÇA söylemiştir. Eskiden bu bileşen
+		// ayrıştırma sırasında atılıyordu ve çapraz-proje pini, servis
+		// adından türetilen (yanlış) projede aranıyordu.
+		if pinProject != "" {
+			out.Project = ProjectHint{Value: pinProject, Source: RepoSourcePin}
+			return out
+		}
+		// Pin YALNIZ depo adı taşıyor. Burada türetimi atlamak için bir
+		// sebep yok: pin deponun adını söylüyor, projeyi söylemiyor —
+		// söylenmemiş olanı konvansiyondan doldurmak, pinin iradesine
+		// dokunmaz. v0.9.1183 türetimi pinli yolda hiç koşmadığı için
+		// Ayarlar'da Project boşken pinli servis "proje yok" çıkmazına
+		// düşüyordu; pin, kod bağlamını AÇMAK yerine KAPATIYORDU.
+		_, project := matchRepoPrefix(svc, cfg.RepoPrefixes)
+		out.Project = projectHintFor(project, svc, true, cfg.RepoPrefixes)
+		return out
 	}
 
-	svc := strings.TrimSpace(service)
 	if svc == "" {
 		return RepoResolution{Source: RepoSourceNone, Reason: "servis adı yok"}
 	}
 
-	name := svc
-	project := ""
-	for _, p := range cfg.RepoPrefixes {
-		p = strings.TrimSpace(p)
-		// Adın TAMAMI önekse soymayız — boş depo adı üretmek yerine
-		// "eşleşmedi" demek dürüst.
-		if p != "" && len(name) > len(p) && strings.HasPrefix(name, p) {
-			name = name[len(p):]
-			// v0.9.1183 — EŞLEŞEN önek proje adını da söyler. Hangi önekin
-			// tuttuğu yalnız burada biliniyor; çağırana taşımazsak bilgi
-			// bu döngüde kaybolur ve operatör aynı şeyi bir kez daha,
-			// elle yazmak zorunda kalır.
-			project = projectFromPrefix(p)
-			break
-		}
-	}
+	// v0.9.1183 — EŞLEŞEN önek proje adını da söyler. Hangi önekin
+	// tuttuğu yalnız burada biliniyor; çağırana taşımazsak bilgi
+	// kaybolur ve operatör aynı şeyi bir kez daha, elle yazmak zorunda
+	// kalır.
+	name, project := matchRepoPrefix(svc, cfg.RepoPrefixes)
 	name = stripEnvSuffix(name)
 
 	if name == "" {
 		return RepoResolution{Source: RepoSourceNone,
 			Reason: "servis adı konvansiyona uymuyor: " + svc}
 	}
-	return RepoResolution{Repo: name, Source: RepoSourceConvention, Project: project}
+	return RepoResolution{Repo: name, Source: RepoSourceConvention,
+		Project: projectHintFor(project, svc, false, cfg.RepoPrefixes)}
+}
+
+// matchRepoPrefix — ilk EŞLEŞEN öneki soyar ve o önekten proje adını
+// türetir. Eşleşme yoksa ad AYNEN döner, proje boş kalır. SAF.
+//
+// Tek yazım: hem konvansiyon yolu (depo + proje) hem pinli yol (yalnız
+// proje) buradan okur. İki yerde ayrı ayrı yazılsaydı biri diğerinden
+// sessizce ayrışırdı — pinli yolun türetimi ZATEN bu şekilde, hiç
+// yazılmadığı için kayıptı.
+func matchRepoPrefix(name string, prefixes []string) (rest, project string) {
+	for _, p := range prefixes {
+		p = strings.TrimSpace(p)
+		// Adın TAMAMI önekse soymayız — boş depo adı üretmek yerine
+		// "eşleşmedi" demek dürüst.
+		if p != "" && len(name) > len(p) && strings.HasPrefix(name, p) {
+			return name[len(p):], projectFromPrefix(p)
+		}
+	}
+	return name, ""
+}
+
+// projectHintFor — öneriyi paketler; öneri boşsa ÇIKMAZIN nedenini
+// yazar. SAF; tablo-testli.
+//
+// Cümle yalnız BU katmanın bildiği iki kaynağı anlatır (pin bileşeni +
+// önek türetimi); Ayarlar'daki Project'i FetchCode ekler. Bölme
+// bilinçli: her kaynağın durumunu onu OKUYAN katman söylesin, yoksa
+// biri değiştiğinde öteki sessizce yalan söylemeye başlar.
+func projectHintFor(project, service string, pinned bool, prefixes []string) ProjectHint {
+	if project != "" {
+		return ProjectHint{Value: project, Source: RepoSourceConvention}
+	}
+	pinPart := "katalogda depo pini yok"
+	if pinned {
+		pinPart = "katalog pini yalnız depo adı taşıyor (proje bileşeni yok)"
+	}
+	shown := make([]string, 0, len(prefixes))
+	for _, p := range prefixes {
+		if p = strings.TrimSpace(p); p != "" {
+			shown = append(shown, p)
+		}
+	}
+	prefixPart := "servis adı (" + service + ") bilinen öneklerden hiçbiriyle başlamıyor"
+	if len(shown) > 0 {
+		prefixPart = "servis adı (" + service + ") bilinen öneklerden (" +
+			strings.Join(shown, ", ") + ") hiçbiriyle başlamıyor"
+	}
+	return ProjectHint{Reason: pinPart + ", " + prefixPart}
+}
+
+// projectDeadEnd — "proje adı çözülemedi" cümlesi (v0.9.1240). SAF.
+//
+// ÜÇ kaynağın durumu tek satırda: Ayarlar'daki Project (bu katman
+// bilir), katalog pininin proje bileşeni ve önek türetimi (hint.Reason
+// ile ResolveRepo'dan gelir). Eski cümle tek bir kaynağı suçluyordu
+// ("servis adı bilinen bir önekle başlamıyor") ve pinli yolda bu
+// çoğunlukla YANLIŞTI: önek tutuyordu, türetim hiç koşmuyordu. Operatör
+// düzeltilecek şeyi arayıp bulamıyordu.
+//
+// Eylem üç kapıyı da açık bırakır; hangisinin ucuz olduğunu kurulumun
+// sahibi bilir.
+func projectDeadEnd(hint ProjectHint) string {
+	msg := "proje adı çözülemedi: Ayarlar → Kod entegrasyonu'nda Project boş"
+	if r := strings.TrimSpace(hint.Reason); r != "" {
+		msg += ", " + r
+	}
+	return msg + " — Project'i doldurun, katalogdaki depo pinini proje bileşeniyle yazın " +
+		"(BSA/depo ya da tam URL) ya da servis önekini Ayarlar → Kod entegrasyonu'na ekleyin"
 }
 
 // stripEnvSuffix — chstore.StripEnvSuffix'in aynadaki ikizi.
@@ -152,26 +242,97 @@ func stripEnvSuffix(name string) string {
 	return name
 }
 
-// repoNameFromMeta — katalogdaki `repository` alanından depo adı.
-// Boş/yalnız-boşluk → "" (konvansiyona düşülür).
-func repoNameFromMeta(meta string) string {
+// parsePinnedRepo — katalogdaki `repository` alanını ayrıştırır:
+// (proje, depo). SAF; tablo-testli. Boş/bozuk girdi → ("", "") ve
+// çağıran konvansiyona düşer.
+//
+// Tanınan ÜÇ biçim (operatörler bu alana üçünü de yazıyor):
+//
+//	düz depo adı     "payments-core"                  → ("", "payments-core")
+//	proje/depo       "BSA/payments-core"              → ("BSA", "payments-core")
+//	tam URL          ".../BSA/_git/repo?version=GBx"  → ("BSA", "repo")
+//	scp-benzeri SSH  "git@host:BSA/repo.git"          → ("BSA", "repo")
+//
+// v0.9.1240 — proje bileşeni ARTIK atılmıyor. Eskiden yalnız depo adı
+// çıkarılıyordu; başka bir projedeki bir depoyu pinleyen operatörün
+// yazdığı proje sessizce düşüyor ve depo YANLIŞ projede aranıyordu.
+//
+// Proje çıkarımı bilinçli olarak MUHAFAZAKÂR: host varken _git'ten
+// önceki yolun en az İKİ parçası olmalı (koleksiyon/org + proje), çünkü
+// koleksiyon kapsamlı bir link (".../DefaultCollection/_git/repo")
+// koleksiyonu proje sanıp her isteği 404'e çevirirdi. Kaçırılan bir
+// proje türetimle telafi edilir; YANLIŞ bir proje edilmez.
+func parsePinnedRepo(meta string) (project, repo string) {
 	m := strings.TrimSpace(meta)
 	if m == "" {
-		return ""
+		return "", ""
 	}
 	// Sorgu parçası ve fragment atılır: .../_git/foo?version=GBmaster
 	if i := strings.IndexAny(m, "?#"); i >= 0 {
 		m = m[:i]
 	}
 	m = strings.TrimRight(m, "/")
-	// Azure DevOps depo linkinin kanonik şekli: .../_git/<repo>
-	if i := strings.LastIndex(m, "/_git/"); i >= 0 {
-		m = m[i+len("/_git/"):]
-	} else if i := strings.LastIndex(m, "/"); i >= 0 {
-		m = m[i+1:]
+
+	// Şema + otorite ya da scp-benzeri "user@host:" öneki soyulur.
+	// hadHost, YOLUN host'tan sonra başladığını söyler: o durumda ilk
+	// parça en iyi ihtimalle koleksiyon/org'dur, proje değil.
+	hadHost := false
+	if i := strings.Index(m, "://"); i >= 0 {
+		rest := m[i+3:]
+		if j := strings.Index(rest, "/"); j >= 0 {
+			m = rest[j+1:]
+		} else {
+			m = ""
+		}
+		hadHost = true
+	} else if i := strings.Index(m, "@"); i >= 0 {
+		// "git@host:BSA/repo.git" — ":" sonrası zaten PROJE kökünden
+		// başlar, o yüzden hadHost FALSE kalır (host tüketildi).
+		if j := strings.Index(m[i+1:], ":"); j >= 0 {
+			m = m[i+1+j+1:]
+		}
 	}
-	m = strings.TrimSuffix(m, ".git")
-	return strings.TrimSpace(m)
+
+	segs := splitNonEmpty(m, "/")
+	if len(segs) == 0 {
+		return "", ""
+	}
+	var before []string
+	gitAt := -1
+	for i, s := range segs {
+		if s == "_git" {
+			gitAt = i
+		}
+	}
+	switch {
+	case gitAt >= 0 && gitAt+1 < len(segs):
+		// _git'ten SONRAKİ İLK parça depodur; web arayüzü linkleri
+		// arkasına başka segment ekleyebiliyor (.../_git/repo/commit/…).
+		repo, before = segs[gitAt+1], segs[:gitAt]
+	case gitAt >= 0:
+		return "", "" // ".../_git" — depo adı yok
+	default:
+		repo, before = segs[len(segs)-1], segs[:len(segs)-1]
+	}
+	repo = strings.TrimSpace(strings.TrimSuffix(repo, ".git"))
+	if repo == "" {
+		return "", ""
+	}
+
+	minBefore := 1
+	if hadHost {
+		minBefore = 2
+	}
+	switch {
+	case gitAt >= 0 && len(before) >= minBefore:
+		project = before[len(before)-1]
+	case gitAt < 0 && !hadHost && len(before) == 1:
+		// "BSA/payments-core" — _git yok ama iki parça var ve host
+		// yok: tek makul okuma proje/depo. Üç ve daha fazla parçada
+		// hangi parçanın proje olduğu belirsizdir; tahmin etmeyiz.
+		project = before[0]
+	}
+	return strings.TrimSpace(project), repo
 }
 
 // PickBranch — sunucudan gelen branş adları arasından ayardaki SIRAYA

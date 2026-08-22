@@ -338,26 +338,172 @@ func TestResolveRepoProjectFromPrefix(t *testing.T) {
 			if got.Repo != c.wantRepo {
 				t.Errorf("Repo=%q, istenen %q", got.Repo, c.wantRepo)
 			}
-			if got.Project != c.wantProject {
-				t.Errorf("Project=%q, istenen %q", got.Project, c.wantProject)
+			if got.Project.Value != c.wantProject {
+				t.Errorf("Project=%q, istenen %q", got.Project.Value, c.wantProject)
 			}
 		})
 	}
 }
 
-// TestResolveRepoPinCarriesNoProject — elle pin proje ÖNERMEZ.
+// TestResolveRepoPinProjectWinsOverPrefix — pinin KENDİ projesi türetimi
+// ezer (v0.9.1240).
 //
-// Pin, konvansiyonu atlar; atlanan konvansiyondan proje türetmek, kullanıcı
-// başka bir projedeki bir depoyu pinlediğinde onu yanlış projede aratırdı.
-// Ayardaki açık Project bu durumda tek doğru kaynaktır.
-func TestResolveRepoPinCarriesNoProject(t *testing.T) {
+// Bu test v0.9.1183'te TestResolveRepoPinCarriesNoProject olarak yazıldı
+// ve doğru bir KORKUYU kodluyordu: çapraz-proje pinini servis önekinden
+// türetilen projede aratmak (burada OTHER yerine BSA) sunucuda sessiz bir
+// 404 üretir. Korunan davranış aynen duruyor — Project ASLA "BSA"
+// olmamalı — ama v0.9.1183'ün çözümü fazla genişti: türetimi kapatmakla
+// kalmayıp pinin AÇIKÇA yazdığı projeyi de atıyordu, yani doğru cevap
+// elde dururken çıkmaza düşülüyordu. Artık pinin bileşeni kazanıyor.
+func TestResolveRepoPinProjectWinsOverPrefix(t *testing.T) {
 	got := ResolveRepo("bsa-payments-core-prod", "https://tfs.example.com/DefaultCollection/OTHER/_git/payments-core", ResolveConfig{})
 	if got.Source != RepoSourcePin {
 		t.Fatalf("Source=%q, pin bekleniyordu", got.Source)
 	}
-	if got.Project != "" {
-		t.Errorf("pin yolunda Project=%q — konvansiyon atlanmışken proje "+
-			"türetmek başka projedeki bir depoyu yanlış yerde aratır", got.Project)
+	if got.Project.Value == "BSA" {
+		t.Fatalf("pinin projesi (OTHER) yerine servis önekinden türetilen BSA " +
+			"kullanılmış — çapraz-proje pini yanlış projede aranır")
+	}
+	if got.Project.Value != "OTHER" || got.Project.Source != RepoSourcePin {
+		t.Errorf("Project=%+v, istenen {OTHER pin} — pinin taşıdığı proje atılmamalı",
+			got.Project)
+	}
+}
+
+// TestResolveRepoPinWithoutProjectDerives — pin YALNIZ depo adı
+// taşıyorsa v0.9.1183 önek türetimi pinli yolda da koşar (v0.9.1240).
+//
+// Kaybın şekli: operatör konvansiyonun tutmadığı bir depoyu pinliyor,
+// Ayarlar'da Project boş; pin kısa devresi türetimi hiç çalıştırmadığı
+// için kod bağlamı "proje yok" çıkmazına düşüyordu. Pin deponun adını
+// söylüyor, projeyi söylemiyor — söylenmemiş olanı doldurmak pinin
+// iradesine dokunmaz.
+func TestResolveRepoPinWithoutProjectDerives(t *testing.T) {
+	got := ResolveRepo("bsa-payments-core-prod", "pushconfirm-legacy", ResolveConfig{})
+	if got.Repo != "pushconfirm-legacy" || got.Source != RepoSourcePin {
+		t.Fatalf("Repo/Source=%q/%q — pin depo adını vermeli", got.Repo, got.Source)
+	}
+	if got.Project.Value != "BSA" || got.Project.Source != RepoSourceConvention {
+		t.Fatalf("Project=%+v, istenen {BSA convention} — pin projeyi söylemiyorsa "+
+			"önek türetimi koşmalı", got.Project)
+	}
+}
+
+// TestResolveRepoProjectMissReason — proje çözülemediğinde neden ÜÇ
+// kaynağı da anlatmalı (v0.9.1240). Reason'ın pin yarısı ve önek yarısı
+// burada, Ayarlar yarısı FetchCode'da (TestProjectDeadEndNamesAllThree).
+func TestResolveRepoProjectMissReason(t *testing.T) {
+	cases := []struct {
+		name    string
+		service string
+		meta    string
+		want    []string
+	}{
+		{
+			"pinli, önek tutmuyor",
+			"standalone-service-prod", "pushconfirm-legacy",
+			[]string{"katalog pini yalnız depo adı taşıyor", "standalone-service-prod", "bsa-"},
+		},
+		{
+			"pinsiz, önek tutmuyor",
+			"standalone-service-prod", "",
+			[]string{"katalogda depo pini yok", "standalone-service-prod", "bsa-"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := ResolveRepo(c.service, c.meta, ResolveConfig{})
+			if got.Project.Value != "" {
+				t.Fatalf("Project=%q — bu vakada öneri olmamalı", got.Project.Value)
+			}
+			for _, w := range c.want {
+				if !strings.Contains(got.Project.Reason, w) {
+					t.Errorf("Reason=%q, %q içermeliydi", got.Project.Reason, w)
+				}
+			}
+		})
+	}
+}
+
+// TestParsePinnedRepo — pin alanının ÜÇ biçimi + bozuk girdiler.
+//
+// v0.9.1240. Proje bileşeni MUHAFAZAKÂR çıkarılır: kaçırılan proje önek
+// türetimiyle telafi edilir, yanlış proje edilmez (her isteği 404'e
+// çeviren sessiz bir hata olurdu).
+func TestParsePinnedRepo(t *testing.T) {
+	cases := []struct {
+		name              string
+		in                string
+		wantProj, wantRep string
+	}{
+		// (1) düz depo adı
+		{"düz ad", "pushconfirm-legacy", "", "pushconfirm-legacy"},
+		{"düz ad — boşluklu", "  bsa-core  ", "", "bsa-core"},
+		// (2) proje/depo
+		{"proje/depo", "BSA/payments-core", "BSA", "payments-core"},
+		{"proje/depo — .git eki", "BSA/payments-core.git", "BSA", "payments-core"},
+		{"üç parça, _git yok → proje TAHMİN EDİLMEZ", "Coll/BSA/payments-core", "", "payments-core"},
+		// (3) tam URL
+		{
+			"URL — koleksiyon + proje",
+			"https://devops.example.local/tfs/DefaultCollection/Payments/_git/core-service",
+			"Payments", "core-service",
+		},
+		{
+			"URL — sorgu parçası atılır",
+			"https://devops.example.local/tfs/Coll/Proj/_git/core-service?version=GBrelease",
+			"Proj", "core-service",
+		},
+		{
+			"URL — fragment atılır",
+			"https://devops.example.local/Coll/Proj/_git/core-service#readme",
+			"Proj", "core-service",
+		},
+		{
+			"URL — sondaki eğik çizgi",
+			"https://devops.example.local/Coll/Proj/_git/core-service/",
+			"Proj", "core-service",
+		},
+		{
+			"URL — _git sonrası fazladan segment (web arayüzü linki)",
+			"https://devops.example.local/Coll/Proj/_git/core-service/commit/abc123",
+			"Proj", "core-service",
+		},
+		{
+			"URL — dev.azure.com (org + proje)",
+			"https://dev.azure.com/contoso/Payments/_git/core-service",
+			"Payments", "core-service",
+		},
+		{
+			// Koleksiyon kapsamlı link: _git'ten önce TEK parça var ve o
+			// koleksiyondur. Proje sanmak her isteği 404'e çevirirdi.
+			"URL — koleksiyon kapsamlı, proje YOK",
+			"https://devops.example.local/DefaultCollection/_git/core-service",
+			"", "core-service",
+		},
+		{
+			"scp-benzeri SSH", "git@devops.example.local:Proj/core-service.git",
+			"Proj", "core-service",
+		},
+		// bozuk / boş girdiler
+		{"boş", "", "", ""},
+		{"yalnız boşluk", "   ", "", ""},
+		{"yalnız eğik çizgi", "///", "", ""},
+		{"yalnız sorgu", "?version=GBmaster", "", ""},
+		{"yalnız .git", ".git", "", ""},
+		{"_git sonrası boş", "https://devops.example.local/Coll/Proj/_git/", "", ""},
+		{"host var, yol yok", "https://devops.example.local", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotProj, gotRep := parsePinnedRepo(c.in)
+			if gotRep != c.wantRep {
+				t.Errorf("repo=%q, istenen %q", gotRep, c.wantRep)
+			}
+			if gotProj != c.wantProj {
+				t.Errorf("proje=%q, istenen %q", gotProj, c.wantProj)
+			}
+		})
 	}
 }
 

@@ -255,7 +255,7 @@ func fetchFakeCodeContext(t *testing.T) devops.CodeContext {
 	stack := "\tat deployment.APPWEB.war//com.example.card.CardDetailBusiness.handle(CardDetailBusiness.java:246)\n"
 	// v0.9.1183 — üçüncü arg proje ÖNERİSİ (servis önekinden). Burada boş:
 	// ayarda Project açıkça verilmiş ve açık ayar öneriyi ezmeli.
-	cc := dv.FetchCode(context.Background(), "core-service", "", stackparse.ParseJava(stack))
+	cc := dv.FetchCode(context.Background(), "core-service", devops.ProjectHint{}, stackparse.ParseJava(stack))
 	if cc.Empty() {
 		t.Fatalf("sahte TFS'ten kod çekilemedi: %s", cc.Reason)
 	}

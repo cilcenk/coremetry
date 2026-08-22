@@ -11,6 +11,7 @@ import type { TimeRange, ServiceGraphResponse, GraphNode, GraphEdge, ServiceMap 
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
 import { nodeDetailHref } from '@/components/topology/nodeDetailHref';
+import { ExternalPaths } from '@/components/ExternalPaths';
 import { serviceHref } from '@/lib/serviceHref';
 
 // FocusedNeighborhood — the focused topology graph (service-detail Topology
@@ -77,6 +78,28 @@ export function capPerSide(
   const nDeps    = Math.min(deps.length,    budget - nCallers);
   const keep = [focus, ...others, ...callers.slice(0, nCallers), ...deps.slice(0, nDeps)];
   return { keep, collapsed: ids.length - keep.length };
+}
+
+/**
+ * externalPinHost — v0.9.1255. Pin'li düğümden, yol kırılımı için
+ * sorgulanacak dış host. Kapı DÜĞÜM TÜRÜNDE: yalnız
+ * `kind === 'external'` bir host üretir.
+ *
+ * Kapının varlık sebebi maliyet: /api/external/host'un yol yarısı ham
+ * `spans` okuması. Servis / db / queue düğümü pin'lendiğinde o istek
+ * ATILMAMALI — atılsaydı her pin bir ham tarama tetiklerdi ve dönen
+ * cevap da anlamsız olurdu (servis adı dış host değildir; sunucu
+ * tarafındaki GLOBAL NOT IN onu zaten eler, yani bedeli ödeyip BOŞ
+ * cevap alırdık).
+ *
+ * Host = düğümün prefix'i soyulmuş adı (`ext:osbprod` → `osbprod`);
+ * sunucu decodeNodeName ile aynı soyma zaten yapıyor, `id` fallback'i
+ * yalnız o alan boş gelirse devreye girer.
+ */
+export function externalPinHost(node: GraphNode | null | undefined): string | null {
+  if (!node || node.kind !== 'external') return null;
+  const host = node.name || (node.id.startsWith('ext:') ? node.id.slice(4) : node.id);
+  return host || null;
 }
 
 export function assignFocusColumns(edges: GraphEdge[], focus: string, hops: number): Map<string, number> {
@@ -177,6 +200,30 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
 
   const [hover, setHover] = useState<string | null>(null);
 
+  // v0.9.1255 — pin'li düğüm + hover düğümü ERKEN türetiliyor (eskiden
+  // erken-return'lerin ALTINDAydı). Sebep: dış düğümün yol kırılımı bir
+  // hook ve hook koşullu olamaz; gate'in girdisi de pin'li düğümün ta
+  // kendisi.
+  const pinnedNode = pinned ? nb.nodes.find(n => n.id === pinned) : null;
+  const hoverNode = pinnedNode ?? (hover ? nb.nodes.find(n => n.id === hover) : null);
+
+  // v0.9.1255 — Operator-reported: dış düğümde host değil hangi UÇ
+  // olduğu anlamlı. Kırılım PIN'de yükleniyor, HOVER'da değil: hover
+  // grafikte gezinirken düğüm başına bir ham-spans okuması tetiklerdi
+  // (ES/CH maliyet disiplini — "aç/genişlet üzerine fetch"). Hover
+  // davranışı bu yüzden aynen duruyor, kart yalnız SABİTLENİNCE
+  // zenginleşiyor.
+  //
+  // queryKey /external çekmecesiyle BİREBİR aynı → aynı hostu iki
+  // yüzeyde de açmak tek istek. staleTime = sunucu TTL'i (30s).
+  const extHost = externalPinHost(pinnedNode);
+  const extDetail = useQuery({
+    queryKey: ['external-host', extHost, from, to],
+    queryFn: () => api.externalHost(extHost!, from, to),
+    enabled: !!extHost,
+    staleTime: 30_000,
+  });
+
   // GraphNode/GraphEdge → ServiceMap adapter (TopologyFlowGraph's contract).
   // errorRate: /api/servicegraph returns PERCENT, ServiceMapNode is a
   // FRACTION (the component thresholds at 0.05 / 0.01). subkind carries the
@@ -226,8 +273,6 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
 
   if (graph.isLoading) return <div style={{ padding: 60, display: 'grid', placeItems: 'center' }}><Spinner /></div>;
 
-  const pinnedNode = pinned ? nb.nodes.find(n => n.id === pinned) : null;
-  const hoverNode = pinnedNode ?? (hover ? nb.nodes.find(n => n.id === hover) : null);
   // v0.9.958 (G3-b) — düğümün detay/katalog hedefi. null = kimlik
   // türetilemedi; o hâlde link HİÇ çizilmez (uydurma bir instance ile
   // sorgulamak sessizce boş bir sayfa açardı).
@@ -307,8 +352,11 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
       />
 
       {/* ── hover inspector ─────────────────────────────────────────────── */}
+      {/* v0.9.1255 — kart yalnız PIN'li dış düğümde genişliyor: yol
+          tablosu 240px'e sığmıyor ve sığdırmak için yolu daha da
+          kırpmak, kırpmanın çözdüğü sorunu geri getirirdi. */}
       {hoverNode && (
-        <div style={{ position: 'absolute', left: 10, bottom: 44, zIndex: 5, width: 240, padding: 12, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)', boxShadow: '0 6px 20px rgba(0,0,0,.28)', fontSize: 12 }}>
+        <div style={{ position: 'absolute', left: 10, bottom: 44, zIndex: 5, width: extHost ? 300 : 240, padding: 12, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)', boxShadow: '0 6px 20px rgba(0,0,0,.28)', fontSize: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
             <span style={{ width: 9, height: 9, borderRadius: '50%', background: healthToken(hoverNode.errorRate) }} />
             <span style={{ fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hoverNode.name}</span>
@@ -394,6 +442,31 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
                   : 'Messaging kataloğunda göster →'}
               </Link>
             </span>
+          )}
+          {/* v0.9.1255 — dış düğümün İÇİ. Düğüm host-anahtarlı kalıyor
+              (url bazlı düğüm grafiği binlerce düğüme patlatırdı); bu
+              blok "esbprod.example.internal altında HANGİ uç" sorusunu
+              cevaplıyor. Yalnız PIN'de: extHost gate'i pinnedNode'dan
+              türüyor, hover hiçbir istek atmıyor. */}
+          {extHost && (
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 10, color: 'var(--text3)', letterSpacing: '0.3px', marginBottom: 4 }}>
+                EN ÇOK ÇAĞRILAN YOLLAR
+              </div>
+              {extDetail.isPending ? <Spinner /> : (
+                <ExternalPaths
+                  dense
+                  limit={5}
+                  paths={extDetail.data?.paths}
+                  error={extDetail.isError ? String(extDetail.error) : extDetail.data?.pathsError}
+                  windowS={extDetail.data?.pathsWindowS}
+                />
+              )}
+              <Link to={`/external?host=${encodeURIComponent(extHost)}&range=${encodeRange(range)}`}
+                style={{ fontSize: 10.5, color: 'var(--accent)', textDecoration: 'none' }}>
+                Dış bağımlılık detayı →
+              </Link>
+            </div>
           )}
         </div>
       )}

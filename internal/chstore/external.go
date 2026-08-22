@@ -59,12 +59,26 @@ type ExternalTrendPoint struct {
 }
 
 // ExternalHostDetail is the drawer payload for one host.
+//
+// v0.9.1255 — Paths: "en çok çağrılan yollar". Host-keyed düğümün
+// İÇİNİ açan kırılım (external_paths.go). Üç alan birlikte anlamlı:
+//   - Paths boş + PathsError boş = bu pencerede URL taşıyan istemci
+//     span'i yok (dürüst boş, hata değil)
+//   - PathsError dolu = okuma DENENDİ ve başarısız oldu; çekmece bunu
+//     "yol yok" diye göstermez (v0.9.363'ün dersi: timeout ile gerçek
+//     boşluk aynı tuvali üretmemeli)
+//   - PathsWindowS = yol kırılımının GERÇEKTEN kapsadığı saniye. Ham
+//     spans okuması externalPathsMaxWindow ile kırpılıyor; kırpma
+//     gizlenirse operatör 7 günlük bir sayı sanır.
 type ExternalHostDetail struct {
-	Host     string               `json:"host"`
-	Display  string               `json:"display,omitempty"`
-	Category string               `json:"category,omitempty"`
-	Callers  []ExternalCaller     `json:"callers"`
-	Trend    []ExternalTrendPoint `json:"trend"`
+	Host         string               `json:"host"`
+	Display      string               `json:"display,omitempty"`
+	Category     string               `json:"category,omitempty"`
+	Callers      []ExternalCaller     `json:"callers"`
+	Trend        []ExternalTrendPoint `json:"trend"`
+	Paths        []ExternalPathRow    `json:"paths"`
+	PathsWindowS int64                `json:"pathsWindowS,omitempty"`
+	PathsError   string               `json:"pathsError,omitempty"`
 }
 
 // GetExternalHosts returns every external destination seen in the
@@ -227,5 +241,33 @@ func (s *Store) GetExternalHostDetail(ctx context.Context, host string, from, to
 		p.AvgMs = safeF(avgMs)
 		d.Trend = append(d.Trend, p)
 	}
-	return d, trows.Err()
+	if err := trows.Err(); err != nil {
+		return nil, err
+	}
+
+	// v0.9.1255 — yol kırılımı. Çağıran listesi ham okumanın birincil
+	// anahtar ön eki (service_name IN ?) olarak GİRİYOR, o yüzden bu
+	// üçüncü okuma ancak MV yarısı bir şey döndürdüyse anlamlı — ve
+	// çağıran yoksa (host penceresinden düştü / elle kurulmuş bir
+	// ?host=<servis> derin linki) hiç koşmuyor. Aynı hamle, bogus-host
+	// kapısını yukarıdaki GLOBAL NOT IN'den bedavaya devralıyor.
+	//
+	// Hata YUTULMUYOR ama ÖLDÜRMÜYOR da: yol okuması ham spans'e
+	// gidiyor ve timeout'u mümkün; onun 500'ü çağıranları ve trendi de
+	// götürseydi çekmece bir ek kırılım yüzünden tamamen kaybolurdu.
+	// Hata satırı payload'a binip UI'da söyleniyor.
+	svcNames := make([]string, 0, len(d.Callers))
+	for _, c := range d.Callers {
+		svcNames = append(svcNames, c.Service)
+	}
+	pFrom, pTo := clampExternalPathsWindow(from, to)
+	d.PathsWindowS = int64(pTo.Sub(pFrom) / time.Second)
+	paths, perr := s.GetExternalHostPaths(ctx, host, svcNames, from, to, externalPathsDefaultLimit)
+	if perr != nil {
+		d.Paths = []ExternalPathRow{}
+		d.PathsError = perr.Error()
+	} else {
+		d.Paths = paths
+	}
+	return d, nil
 }

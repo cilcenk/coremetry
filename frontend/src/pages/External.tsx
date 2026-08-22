@@ -9,6 +9,7 @@ import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { ExternalPaths } from '@/components/ExternalPaths';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ExternalHost, ExternalHostDetail, TimeRange } from '@/lib/types';
 import { serviceHref } from '@/lib/serviceHref';
@@ -282,6 +283,20 @@ function ExternalHostDrawer({ host, range, onClose }: {
                   </tbody>
                 </table>
               )}
+            </DrawerSection>
+
+            {/* v0.9.1255 — Operator-reported: dış düğümde host değil
+                hangi UÇ olduğu anlamlı. `esbprod.example.internal` tek bir
+                bağımlılık gibi görünüyordu ama altında nvi/kps/
+                yerlesimyerisorgulama gibi ayrı uçlar var. Ham url.full
+                DEĞİL, normalize yol grupları: tek span'ın değeri
+                yerine "hangi uç sıcak" sorusunun cevabı. */}
+            <DrawerSection title="En çok çağrılan yollar">
+              <ExternalPaths
+                paths={detail.paths}
+                error={detail.pathsError}
+                windowS={detail.pathsWindowS}
+              />
             </DrawerSection>
           </>
         )}

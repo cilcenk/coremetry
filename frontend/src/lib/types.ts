@@ -4995,12 +4995,33 @@ export interface ExternalTrendPoint {
   p99Ms: number;
 }
 
+// v0.9.1255 — bir dış hostun NORMALIZE yol grubu. `path` ham url.full
+// değil: /orders/12345 ve /orders/67890 tek satırdır ({id}). Ham değer
+// tek bir span'ın değeri olurdu ve "hangi uç sıcak" sorusuna cevap
+// vermezdi.
+export interface ExternalPathRow {
+  path: string;
+  calls: number;
+  errors: number;
+  errorRate: number;
+  p99Ms: number;
+}
+
 export interface ExternalHostDetail {
   host: string;
   display?: string;
   category?: string;
   callers: ExternalCaller[];
   trend: ExternalTrendPoint[];
+  // v0.9.1255 — üçü birlikte okunur: paths boş + pathsError boş = bu
+  // pencerede URL taşıyan istemci span'i yok (dürüst boşluk);
+  // pathsError dolu = okuma denendi, başarısız (timeout'u "yol yok"
+  // diye göstermemek için); pathsWindowS = yol kırılımının GERÇEKTEN
+  // kapsadığı saniye (ham spans okuması sunucuda kırpılıyor).
+  // `?:` — dönen sunucu eski sürümse (rolling deploy) alan hiç gelmez.
+  paths?: ExternalPathRow[];
+  pathsWindowS?: number;
+  pathsError?: string;
 }
 
 // v0.8.449 — /hosts inventory (Wave 3 / A4): one row per host/pod

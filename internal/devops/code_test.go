@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cilcenk/coremetry/internal/stackparse"
 )
@@ -262,6 +263,83 @@ func TestMaskCodeInPrompt(t *testing.T) {
 		var empty CodeContext
 		if empty.PromptBlock() != "" || empty.LogSummary() != "" {
 			t.Fatal("boş CodeContext metin üretti")
+		}
+	})
+	t.Run("tam isabette kısmi notu YOK", func(t *testing.T) {
+		ok := cc
+		ok.Outcome = CodeOK
+		ok.Reason = "depo adı sunucudan düzeltildi: core → core-service"
+		if s := ok.LogSummary(); strings.Contains(s, "kısmi") {
+			t.Fatalf("tertemiz isabet kısmi gösterildi: %q", s)
+		}
+	})
+	t.Run("kısmi isabette kayıp notu EKLİ", func(t *testing.T) {
+		part := cc
+		part.Outcome = CodePartial
+		part.Reason = "ağaçta eşleşen dosya yok: Other.java"
+		s := part.LogSummary()
+		if !strings.Contains(s, want) {
+			t.Fatalf("kısmi isabette özet düştü: %q", s)
+		}
+		if !strings.Contains(s, "(kısmi: ağaçta eşleşen dosya yok: Other.java)") {
+			t.Fatalf("kayıp notu yok: %q", s)
+		}
+	})
+}
+
+// TestFormatCodeMissNote — v0.9.1243 REGRESYON PİNİ.
+//
+// Semptom: "Kodu da incele" işaretliyken kod GELMEDİĞİNDE ai_calls'ın
+// maskeli kopyası hiçbir iz taşımıyordu; satır, kodun hiç istenmediği
+// bir çağrıdan ayırt edilemiyordu ve /ai analizi ıska yarısını sessizce
+// eksik sayıyordu.
+func TestFormatCodeMissNote(t *testing.T) {
+	long := strings.Repeat("ş", 200) // çok baytlı: rune tavanı bayt sayamaz
+	cases := []struct {
+		name  string
+		class CodeOutcome
+		reas  string
+		want  string
+	}{
+		{"sınıf varsa sınıf", CodeTreeMiss, "ağaçta eşleşen dosya yok: A.java", "\n\n[kod alınamadı: tree-miss]"},
+		{"sınıf varsa sınıf (deadline)", CodeDeadline, "", "\n\n[kod alınamadı: deadline]"},
+		{"sınıf yoksa gerekçe", "", "bağlam taşması — kod bloğu prompt'a sığmadı",
+			"\n\n[kod alınamadı: bağlam taşması — kod bloğu prompt'a sığmadı]"},
+		{"ikisi de yoksa sessiz kalınmaz", "", "  ", "\n\n[kod alınamadı: sebep bilinmiyor]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := FormatCodeMissNote(tc.class, tc.reas); got != tc.want {
+				t.Fatalf("got=%q want=%q", got, tc.want)
+			}
+		})
+	}
+	t.Run("uzun gerekçe rune tavanında kesilir", func(t *testing.T) {
+		got := FormatCodeMissNote("", long)
+		if !utf8.ValidString(got) {
+			t.Fatal("kesme UTF-8 dizisini böldü")
+		}
+		// Tavan + "…" + sarmalayıcı; 200 karakterlik gerekçe AYNEN geçemez.
+		if strings.Contains(got, long) {
+			t.Fatalf("gerekçe kesilmedi: %q", got)
+		}
+		if n := utf8.RuneCountInString(got); n > codeNoteRuneCap+30 {
+			t.Fatalf("işaret %d rune — tavan tutmuyor", n)
+		}
+		if !strings.HasSuffix(got, "…]") {
+			t.Fatalf("kesme işareti yok: %q", got)
+		}
+	})
+	t.Run("dolu bağlam ıska işareti üretmez", func(t *testing.T) {
+		full := CodeContext{Repo: "r", Windows: []CodeWindow{{Path: "/a.java", FromLine: 1, ToLine: 2}}}
+		if s := full.LogMissSummary(); s != "" {
+			t.Fatalf("kod geldiği hâlde ıska işareti: %q", s)
+		}
+	})
+	t.Run("boş bağlam sınıfını yazar", func(t *testing.T) {
+		empty := CodeContext{Reason: "servis için depo çözülemedi", Outcome: CodeRepoUnresolved}
+		if s := empty.LogMissSummary(); s != "\n\n[kod alınamadı: repo-unresolved]" {
+			t.Fatalf("got=%q", s)
 		}
 	})
 }

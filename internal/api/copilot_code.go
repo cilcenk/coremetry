@@ -60,12 +60,20 @@ func decodeExplainOptions(r *http.Request) explainOptions {
 // entegrasyon zaten yoktur.
 func (s *Server) buildCodeContext(ctx context.Context, service, stack string) devops.CodeContext {
 	if s.devops == nil {
-		return devops.CodeContext{Reason: "kod entegrasyonu yapılandırılmamış"}
+		// Sayaç YOK (Service yok), ama SINIF var: v0.9.1243'ten beri
+		// sınıf tek bir çağrının kaydına da yazılıyor ve o kayıt
+		// Service'ten bağımsız. "Sayılmıyorsa adı da olmasın" demek,
+		// maskeli kopyada bu hâli "sebep bilinmiyor" diye göstermek
+		// olurdu — oysa sebep tam olarak biliniyor.
+		return devops.CodeContext{
+			Reason:  "kod entegrasyonu yapılandırılmamış",
+			Outcome: devops.CodeUnconfigured,
+		}
 	}
 	if strings.TrimSpace(stack) == "" {
 		const reason = "bu kayıtta stacktrace yok"
 		s.devops.RecordCodeOutcome(devops.CodeNoStack, reason)
-		return devops.CodeContext{Reason: reason}
+		return devops.CodeContext{Reason: reason, Outcome: devops.CodeNoStack}
 	}
 	// Katalog pini önce: elle girilen depo konvansiyonu EZER.
 	repoPin := ""
@@ -78,7 +86,7 @@ func (s *Server) buildCodeContext(ctx context.Context, service, stack string) de
 		pin, abort := pinReadDecision(mdRepo, md != nil, err)
 		if abort != "" {
 			s.devops.RecordCodeOutcome(devops.CodeCatalogError, abort)
-			return devops.CodeContext{Reason: abort}
+			return devops.CodeContext{Reason: abort, Outcome: devops.CodeCatalogError}
 		}
 		repoPin = pin
 	}
@@ -89,7 +97,7 @@ func (s *Server) buildCodeContext(ctx context.Context, service, stack string) de
 			reason = "servis için depo çözülemedi"
 		}
 		s.devops.RecordCodeOutcome(devops.CodeRepoUnresolved, reason)
-		return devops.CodeContext{Reason: reason, Source: res.Source}
+		return devops.CodeContext{Reason: reason, Source: res.Source, Outcome: devops.CodeRepoUnresolved}
 	}
 	// v0.9.1183 — res.Project, proje ÖNERİSİ: pinin kendi taşıdığı proje
 	// (v0.9.1240) ya da servis önekinden türetilen ad (bsa-… → BSA).
@@ -208,11 +216,16 @@ func isContextOverflowErr(err error) bool {
 //     prompt boyutunu; ikisi farklı sorun ve tek bir yerde
 //     birleştirilirse hangi hipotezin denendiği okunamaz hale gelir.
 //
-// Kod bağlamı boşsa doğrudan kodsuz yola düşer (fail-open).
+// Kod bağlamı boşsa doğrudan kodsuz yola düşer (fail-open) — ama
+// SESSİZCE değil: v0.9.1243'ten beri maskeli kayda "[kod alınamadı:
+// <sınıf>]" işareti düşer. Bu fonksiyona YALNIZ operatör "Kodu da
+// incele"yi işaretlediğinde girilir (iki çağıranın ikisi de
+// opts.IncludeCode kapısının arkasında), dolayısıyla işaretin varlığı
+// "istendi" demektir ve yokluğu "hiç istenmedi".
 func (s *Server) copilotExplainCode(r *http.Request, systemNoCode, systemWithCode, user string, cc devops.CodeContext) (string, error) {
 	block := cc.PromptBlock()
 	if block == "" {
-		return s.copilotExplain(r, systemNoCode, user)
+		return s.explainNoCode(r, systemNoCode, user, cc.LogMissSummary())
 	}
 	out, err := s.explainWithCodeBlock(r, systemWithCode, user, block, cc.LogSummary())
 	if err == nil || !isContextOverflowErr(err) {
@@ -222,9 +235,26 @@ func (s *Server) copilotExplainCode(r *http.Request, systemNoCode, systemWithCod
 	hb := half.PromptBlock()
 	if hb == "" || hb == block {
 		// Küçültecek bir şey kalmadı: kodsuz dene, cevapsız bırakma.
-		return s.copilotExplain(r, systemNoCode, user)
+		// Kod BURADA vardı ama prompt'a sığmadı — taksonomideki bir
+		// çıkmaz değil, o yüzden sınıf değil gerekçe yazılıyor. Kayda
+		// "ıska" demek yine de doğru: bu SATIRIN prompt'unda kod yok.
+		return s.explainNoCode(r, systemNoCode, user,
+			devops.FormatCodeMissNote("", "bağlam taşması — kod bloğu prompt'a sığmadı"))
 	}
 	return s.explainWithCodeBlock(r, systemWithCode, user, hb, half.LogSummary())
+}
+
+// explainNoCode — kodsuz çağrı + maskeli kayda ıska işareti.
+//
+// GERÇEK prompt'a dokunulmaz: işaret yalnız log kopyasına gider.
+// Modele "kod alınamadı" diye bir satır göndermek, olmayan bir kanıt
+// hakkında konuşmasına davetiye olurdu (kodsuz system prompt'unun
+// zaten sustuğu bir konu); kayıt ise tam tersine bunu bilmek zorunda.
+func (s *Server) explainNoCode(r *http.Request, system, user, missNote string) (string, error) {
+	if missNote == "" {
+		return s.copilotExplain(r, system, user)
+	}
+	return s.copilotExplainMasked(r, system, user, user+missNote)
 }
 
 // explainWithCodeBlock — tek çağrı: gerçek prompt = user + block,

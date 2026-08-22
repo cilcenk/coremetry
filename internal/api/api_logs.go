@@ -745,6 +745,17 @@ func (s *Server) getLogsTemplates(w http.ResponseWriter, r *http.Request) {
 // (ASC limit n). 30-minute symmetric window — wide enough to
 // catch a slow incident, narrow enough that the search stays
 // sub-second on a busy index.
+// logsContextKey — the Context modal's cache key. Every input that
+// NARROWS the two half-windows must be in it (v0.5.187 cross-poison
+// class): a service/env/pod/query-scoped pair of halves can never be
+// served from the unscoped entry inside the shared 15s TTL, and n is
+// a rung of its own (the "±50 daha" button would otherwise look dead).
+// Pure so the key contract is table-testable (logs_context_key_test.go).
+func logsContextKey(ts int64, service, env, pod, search string, n int) string {
+	return fmt.Sprintf("logs-context:ts=%d:svc=%s:env=%s:pod=%s:n=%d:q=%s",
+		ts, service, env, pod, n, search)
+}
+
 func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	ts, _ := strconv.ParseInt(q.Get("ts"), 10, 64)
@@ -783,9 +794,16 @@ func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
 	// Varsayılan BOŞ — bağlam normalde süzgeçsiz komşuluktur; Search
 	// zaten her iki backend'de Filter alanı, sıfır yeni yol.
 	search := strings.TrimSpace(q.Get("search"))
+	// v0.9.1249 — pod kapsamı (Kibana-parite artığı): kalabalık bir
+	// serviste ±pencere BAŞKA podların satırlarıyla dolar; incelenen
+	// olay tek podun hikâyesiyken komşuluk çok-pod karışımı olur.
+	// Servis kapsamı gibi İSTEĞE BAĞLI — boş = tüm podlar (bağlamın
+	// varsayılanı geniş komşuluk).
+	pod := strings.TrimSpace(q.Get("pod"))
 	beforeF := logstore.Filter{
 		Service: service,
 		Env:     env,
+		Pod:     pod,
 		Search:  search,
 		From:    pivot.Add(-30 * time.Minute),
 		To:      pivot,
@@ -794,15 +812,14 @@ func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
 	afterF := logstore.Filter{
 		Service:   service,
 		Env:       env,
+		Pod:       pod,
 		Search:    search,
 		From:      pivot,
 		To:        pivot.Add(30 * time.Minute),
 		Limit:     n,
 		Ascending: true,
 	}
-	// search anahtarda (v0.5.187 sınıfı: süzgeçli yarılar süzgeçsiz
-	// girdiden servis edilemez).
-	key := fmt.Sprintf("logs-context:ts=%d:svc=%s:env=%s:n=%d:q=%s", ts, service, env, n, search)
+	key := logsContextKey(ts, service, env, pod, search, n)
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.350 (HA 🟡6) — a slow/unreachable backend degrades the
 		// modal to 200 {degraded:true} + empty halves instead of a 5xx.

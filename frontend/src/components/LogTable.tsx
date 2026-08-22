@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { CopyButton } from './CopyButton';
 import { useDataTable, DataTableColgroup, DataTableHead } from './DataTable';
 import { highlightSegments } from '@/lib/logFilters';
+import { podOfLog } from '@/lib/logPod';
 import { tsLong, sevName, sevClass } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { LogRow } from '@/lib/types';
@@ -377,13 +378,13 @@ function LogRow({
   // BOTH an empty canonical OTel attr AND the real snake_case
   // one. firstNonEmpty also treats "" as missing so an
   // empty-but-present attr doesn't block the fallback.
+  // v0.9.1249 — pod zinciri lib/logPod.ts'e taşındı: bağlam modalının
+  // "yalnız bu pod" kapsamı AYNI çıkarımı kullanmak zorunda, yoksa
+  // kolonda görünen pod filtrenin bulamadığı bir değer olabilir
+  // (v0.8.265 sınıfı). Aynı zincir + attributes yedeği + ES'in
+  // resource_attributes.* düz alanı.
   const ra = l.resourceAttributes ?? {};
-  const pod = firstNonEmpty(
-    ra['kubernetes.pod_name'],
-    ra['k8s.pod.name'],
-    ra['kubernetes.pod.name'],
-    ra['pod_name'],
-  );
+  const pod = podOfLog(l);
   const cluster = firstNonEmpty(
     ra['openshift.labels.cluster'],
     ra['openshift.cluster.name'],

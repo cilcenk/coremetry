@@ -3954,7 +3954,11 @@ type LogFilter struct {
 	// Env (v0.8.400 — env-separation Phase 4) — deployment-environment
 	// filter, applied as the bounded res-array conjunct
 	// logsEnvChainSQL. Empty = all environments.
-	Env         string
+	Env string
+	// Pod (v0.9.1249) — k8s pod scope for the /logs Context modal,
+	// applied as the bounded res-array conjunct logsPodChainSQL.
+	// Empty = all pods.
+	Pod         string
 	Search      string
 	From, To    time.Time
 	SeverityMin uint8
@@ -4005,6 +4009,22 @@ const logsMaxLimit = 1000
 const logsEnvChainSQL = `coalesce(
 			nullIf(res_values[indexOf(res_keys, 'deployment.environment.name')], ''),
 			nullIf(res_values[indexOf(res_keys, 'deployment.environment')], ''),
+			'')`
+
+// logsPodChainSQL is the logs-local k8s pod derivation (v0.9.1249 —
+// the Context modal's "only this pod" scope). Canonical semconv key
+// first, then the pipeline spellings; res-array indexOf lookups like
+// every other logs-table derivation (the table stores attributes as
+// parallel arrays, not Map columns). MUST stay semantically identical
+// to logstore's chLogsPodExpr — GetLogs and Histogram/FieldStats
+// filter the same rows, and a chain that diverges between them is the
+// v0.8.400 map-access class all over again. Pinned by
+// TestLogsPodChainSQL + TestLogsWhere_PodConjunct (repo_logs_pod_test.go).
+const logsPodChainSQL = `coalesce(
+			nullIf(res_values[indexOf(res_keys, 'k8s.pod.name')], ''),
+			nullIf(res_values[indexOf(res_keys, 'kubernetes.pod_name')], ''),
+			nullIf(res_values[indexOf(res_keys, 'kubernetes.pod.name')], ''),
+			nullIf(res_values[indexOf(res_keys, 'pod_name')], ''),
 			'')`
 
 // logsRowKeyExpr is the ONE SQL expression that makes a log line
@@ -4166,7 +4186,15 @@ func logsKeysetPredicate(c LogsCursor, hasCursor bool) (string, []interface{}) {
 // Returns the rows, the (capped-cost) total match count for the UI,
 // and a NextCursor — empty when fewer than the requested limit came
 // back (last page).
-func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, string, error) {
+// logsWhere builds GetLogs' conjunct set. Extracted as a pure seam
+// (v0.9.1249) so every filter field can be pinned WITHOUT a live CH:
+// the failure this guards is not a wrong row set, it is a filter the
+// caller sets and the query silently ignores — the class that cost
+// v0.8.400 (map access on absent columns) and is invisible in a
+// const-shape-only test. Every conjunct lands here, BEFORE GetLogs'
+// SinceNs branch, so the count(), the page read AND the forward-tail
+// all carry it.
+func logsWhere(f LogFilter) whereClause {
 	var wc whereClause
 	if !f.From.IsZero() {
 		wc.add("time >= ?", f.From)
@@ -4178,10 +4206,12 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 		wc.add("service_name = ?", f.Service)
 	}
 	if f.Env != "" {
-		// v0.8.400 — env conjunct. Built into wc BEFORE the SinceNs
-		// branch below, so the count(), the main page read AND the
-		// forward-tail read all carry it.
+		// v0.8.400 — env conjunct.
 		wc.add(logsEnvChainSQL+" = ?", f.Env)
+	}
+	if f.Pod != "" {
+		// v0.9.1249 — pod conjunct (Context modal "yalnız bu pod").
+		wc.add(logsPodChainSQL+" = ?", f.Pod)
 	}
 	if f.Search != "" {
 		wc.add("body LIKE ?", "%"+f.Search+"%")
@@ -4198,6 +4228,11 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 	if f.HasTrace {
 		wc.add("trace_id != ''")
 	}
+	return wc
+}
+
+func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, string, error) {
+	wc := logsWhere(f)
 	if f.Limit <= 0 {
 		f.Limit = 100
 	}

@@ -14,6 +14,7 @@ import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { stickyLeftOffsets } from '@/lib/dataTable';
 import { TrendDelta } from '@/components/TrendDelta';
 import { endpointDetailHref, legacyEndpointTarget } from '@/pages/endpoints/endpointParam';
 import { tracesLink } from '@/pages/endpoints/links';
@@ -91,12 +92,12 @@ function spreadOf(r: EndpointRow): number {
 // SORT_KEYS below sanitizes stale persisted ids before they reach
 // the fetch. New MV-backed columns: Req/min, P50, P95.
 const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
-  { id: 'service',   label: 'Service',    sortValue: r => r.service,   naturalDir: 'asc', width: 150 },
+  { id: 'service',   label: 'Service',    sortValue: r => r.service,   naturalDir: 'asc', width: 150, stickyLeft: true },
   // v0.9.313 — the header reads "Path" on the HTTP surface and
   // "Operation" on the RPC one: the column carries http.route there and
   // the span NAME here, and calling a gRPC method a "path" would be a
   // small lie repeated on every row.
-  { id: 'path',      label: 'Path',       sortValue: r => r.path,      naturalDir: 'asc', width: 260 },
+  { id: 'path',      label: 'Path',       sortValue: r => r.path,      naturalDir: 'asc', width: 260, stickyLeft: true },
   { id: 'method',    label: 'Method',     width: 68 },
   { id: 'calls',     label: 'Calls',      sortValue: r => r.calls,     numeric: true, width: 84 },
   { id: 'errors',    label: 'Errors',     sortValue: r => r.errors,    numeric: true, width: 76 },
@@ -118,7 +119,7 @@ const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
   // does it have a heavy TAIL (spread high, most calls fine)? Those two
   // have different causes and different fixes.
   { id: 'spread',    label: 'Spread',     sortValue: spreadOf, numeric: true, width: 76 },
-  { id: 'trend',     label: 'Trend',      width: 120 },
+  { id: 'trend',     label: 'Trend',      width: 104 },
   // v0.8.573 — pinned to the right edge: the 14-column table overflows
   // laptop widths and the horizontal scrollbar sits below 2000 rows, so
   // the trailing drill-through was effectively invisible (operator
@@ -401,6 +402,10 @@ export default function EndpointsPage() {
     onOpen: openEndpointPage,
     searchRef,
   });
+  // v0.9.1256 — sola sabit kimlik kolonlarının kümülatif ofsetleri
+  // (görünür kolonlar + resize'lı genişliklerle; saf çekirdek).
+  const leftOffs = stickyLeftOffsets(dt.visibleColumns, dt.colWidths, 120);
+
   const sortOk = (SORT_KEYS as readonly string[]).includes(dt.sort.id ?? '');
   const sortBy = sortOk ? (dt.sort.id as string) : DEFAULT_ENDPOINTS_SORT.id;
   const sortDir = sortOk ? dt.sort.dir : DEFAULT_ENDPOINTS_SORT.dir;
@@ -707,13 +712,13 @@ export default function EndpointsPage() {
                             its column is visible (?cols=); order stays in
                             lockstep with ENDPOINT_COLS so the colgroup and
                             body never misalign. */}
-                        {visibleCols.has('service') && <td>
+                        {visibleCols.has('service') && <td className="sticky-left" style={{ left: leftOffs['service'] }}>
                           <Link to={serviceHref(r.service, { range, env })}
                                 style={{ fontFamily: 'monospace', fontSize: 12 }}>
                             {r.service}
                           </Link>
                         </td>}
-                        {visibleCols.has('path') && <td className="mono" style={{ fontSize: 12 }} title={r.path}>
+                        {visibleCols.has('path') && <td className="mono sticky-left" style={{ fontSize: 12, left: leftOffs['path'] }} title={r.path}>
                           {r.path}
                         </td>}
                         {visibleCols.has('method') && <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}>
@@ -802,7 +807,7 @@ export default function EndpointsPage() {
                             className="btn-bare"
                           >
                             <Sparkline values={r.sparkline ?? []}
-                              width={100} height={22}
+                              width={88} height={22}
                               color={r.errorRate >= 5 ? 'var(--err)' : r.errorRate >= 1 ? 'var(--warn)' : undefined}
                               title={`${r.calls.toLocaleString()} calls — click for detail`} />
                           </button>
@@ -825,9 +830,12 @@ export default function EndpointsPage() {
                               trace that includes a call on this
                               endpoint. */}
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                            <Link to={tracesLink(r, range, env, cluster)}
-                                  style={{ fontSize: 11, color: 'var(--accent2)' }}>
-                              view →
+                            {/* v0.9.1257 (operatör: "Traces butonu çok
+                                belirgin değil, View yazıyor sadece") —
+                                a.sec düğme anatomisi (v0.9.1210 kuralı). */}
+                            <Link to={tracesLink(r, range, env, cluster)} className="sec"
+                                  style={{ fontSize: 11, padding: '2px 8px' }}>
+                              Traces →
                             </Link>
                             {/* v0.9.310 (brief N3) — jump STRAIGHT to the
                                 slowest / worst-error trace for this route.

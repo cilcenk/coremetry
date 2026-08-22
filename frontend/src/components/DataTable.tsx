@@ -10,6 +10,7 @@ import {
   columnLayoutSig, computeSortedRows, fitColumnWidths, formatSortParam,
   parseSortParam, readPersistedWidths, resolveToggle, visibleColumns,
   type DataTableColumn, type SortState,
+  stickyLeftOffsets,
 } from '@/lib/dataTable';
 import { getItem, setItem, dtSortKey, dtWidthKey } from '@/lib/storage';
 
@@ -380,11 +381,14 @@ export function ResetLayoutButton<T>({ dt }: { dt: DataTable<T> }) {
 // lets a caller decorate a header label (e.g. LogTable's hover-×
 // remove-column affordance) without touching the pure core's string
 // label type.
-export function DataTableHead<T>({ dt, leading, trailing, renderLabel }: {
+export function DataTableHead<T>({ dt, leading, trailing, renderLabel, stickyLeftBase = 0 }: {
   dt: DataTable<T>;
   leading?: ReactNode;
   trailing?: ReactNode;
   renderLabel?: (c: DataTable<T>['columns'][number]) => ReactNode;
+  // v0.9.1256 — leading (yönetilmeyen) hücrelerin toplam genişliği;
+  // sola sabit zincir onların ardından başlar.
+  stickyLeftBase?: number;
 }) {
   return (
     // v0.9.928 — başlık da tablonun kimliğini taşıyor: bir kolona tıklayıp
@@ -398,14 +402,21 @@ export function DataTableHead<T>({ dt, leading, trailing, renderLabel }: {
           const sortable = !!c.sortValue;
           const active = dt.sort.id === c.id;
           const align = c.align ?? (c.numeric ? 'right' : 'left');
-          const cls = [c.numeric ? 'num' : '', sortable ? 'sortable' : '', active ? 'sorted' : '', c.stickyRight ? 'sticky-right' : '']
+          const cls = [c.numeric ? 'num' : '', sortable ? 'sortable' : '', active ? 'sorted' : '', c.stickyRight ? 'sticky-right' : '', c.stickyLeft ? 'sticky-left' : '']
             .filter(Boolean).join(' ');
+          // v0.9.1256 — sola sabit başlıkların kümülatif left'i (saf
+          // çekirdek; resize edilmiş genişlik anında yansır).
+          const leftOff = c.stickyLeft
+            ? stickyLeftOffsets(dt.visibleColumns, dt.colWidths, DEFAULT_W)[c.id]
+            : undefined;
           return (
             <th key={c.id}
                 className={cls || undefined}
                 onClick={sortable ? () => dt.toggleSort(c.id) : undefined}
                 aria-sort={active ? (dt.sort.dir === 'asc' ? 'ascending' : 'descending') : (sortable ? 'none' : undefined)}
                 style={{
+                  left: leftOff,
+
                   // v0.9.697 — `position` ARTIK INLINE DEĞİL (globals.css:
                   // `thead th { position: relative }`).
                   //

@@ -90,6 +90,12 @@ const ALLOWED: { selector: string; why: string }[] = [
       'tamamı aşağı-doğru yayılıyor; yatay bir kademe yok ve bu tek ' +
       'kullanım için token açmak ölü token üretir.',
   },
+  {
+    selector: 'th.sticky-left, td.sticky-left',
+    why:
+      'v0.9.1256 — sticky-right ile AYNI gerekçenin ayna hâli: yönlü ' +
+      'örtme gölgesi (6px 0 8px -8px), yatay kademeli tek kullanım.',
+  },
 ];
 
 describe('globals.css renk literalleri', () => {

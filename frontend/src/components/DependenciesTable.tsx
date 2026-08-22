@@ -10,6 +10,7 @@ import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { trendsEnabled, latencyPresent, depRowKey } from '@/lib/depsTable';
 import { msgP99Delta } from '@/lib/msgBalance';
 import { useDataTable, DataTableHead, DataTableColgroup } from './DataTable';
+import { stickyLeftOffsets } from '@/lib/dataTable';
 import { DetailDrawer } from '@/features/dependencies/DetailDrawer';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { serviceHref } from '@/lib/serviceHref';
@@ -212,7 +213,7 @@ export function DependenciesTable({
   // name label (Instance vs Destination) + the optional Cluster column
   // track kind/hasClusterCol. Accessors mirror the prior sort keys.
   const depCols = useMemo<DataTableColumn<DepRow>[]>(() => [
-    { id: 'system', label: 'System', sortValue: r => r.system, naturalDir: NATURAL.system, width: 150 },
+    { id: 'system', label: 'System', sortValue: r => r.system, naturalDir: NATURAL.system, width: 150, stickyLeft: true },
     ...(hasClusterCol
       ? [{ id: 'cluster', label: 'Cluster', sortValue: (r: DepRow) => r.cluster ?? '', naturalDir: NATURAL.cluster, width: 120 } as DataTableColumn<DepRow>]
       : []),
@@ -312,6 +313,11 @@ export function DependenciesTable({
       setOpen(openKey === rowKey ? null : row, openKey === rowKey ? null : rowKey);
     },
   });
+  // v0.9.1256 — kimlik kolonu (System) sola sabit: /databases ve
+  // /messaging geniş tabloda kaydırınca satır kimliği kayboluyordu
+  // (operatör raporu). 24 = leading genişlet-oku hücresi; o da sabit.
+  const leftOffs = stickyLeftOffsets(dt.visibleColumns, dt.colWidths, 120, 24);
+
 
   // Click-through DSL — pre-filters /explore by the chosen
   // system + instance. For DBs the key is db.system; for
@@ -446,7 +452,7 @@ export function DependenciesTable({
       <div className="table-wrap">
         <table style={{ tableLayout: 'fixed', width: '100%' }}>
           <DataTableColgroup dt={dt} leading={[24]} />
-          <DataTableHead dt={dt} leading={<th style={{ width: 24 }} aria-label="Expand"></th>} />
+          <DataTableHead dt={dt} stickyLeftBase={24} leading={<th className="sticky-left" style={{ width: 24, left: 0 }} aria-label="Expand"></th>} />
           <tbody>
             {dt.sortedRows.map((r, i) => {
               const errCls = r.errorRate > 5 ? 'err' : r.errorRate > 0 ? 'warn' : 'ok';
@@ -472,11 +478,11 @@ export function DependenciesTable({
                                // with many DB schemas this list reaches 1000s.
                                contentVisibility: 'auto', containIntrinsicSize: 'auto 32px',
                                background: isOpen ? 'var(--bg2)' : undefined }}>
-                    <td style={{ color: 'var(--text3)', width: 24, textAlign: 'center' }}
+                    <td className="sticky-left" style={{ color: 'var(--text3)', width: 24, textAlign: 'center', left: 0 }}
                         title={onRowNavigate ? 'Open the detail page' : undefined}>
                       {onRowNavigate ? '›' : isOpen ? '▾' : '▸'}
                     </td>
-                    <td>
+                    <td className="sticky-left" style={{ left: leftOffs['system'] }}>
                       <SystemBadge system={r.system} kind={kind} />
                       {r.source === 'receiver' && (
                         <span title="Discovered via OpenTelemetry database receiver (oracledb / postgres / mysql / …). No application spans yet — drill down to see receiver metrics directly."

@@ -8,13 +8,15 @@ import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
 import { ServiceMapNodeDrawer } from '@/components/ServiceMapNodeDrawer';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import { ServicePicker } from '@/components/ServicePicker';
+import { FocusedNeighborhood } from '@/components/topology/FocusedNeighborhood';
+import { DEFAULT_TOPOLOGY_HOPS } from '@/pages/service/topologyHops';
 import { useServiceMap } from '@/lib/queries';
 import { api } from '@/lib/api';
 import { serviceGraphToMap } from '@/lib/serviceGraphAdapter';
 import { fmtNum, rangeToSince, timeRangeToNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { encodeRange } from '@/lib/urlState';
-import type { ServiceMap, ServiceMapNode } from '@/lib/types';
+import type { ServiceMap } from '@/lib/types';
 import { serviceHref } from '@/lib/serviceHref';
 import { PageShell } from '@/components/ui/PageShell';
 
@@ -113,10 +115,21 @@ export default function ServiceMapPage() {
   // v0.9.1112 — kenar p99 Δ kıyası (?compare=prior; /services ve
   // /endpoints ile aynı param dili). Yalnız MV/odak yolunda anlamlı —
   // örneklenmiş global görünümde kenar p99'u zaten yok.
-  const compareP99 = searchParams.get('compare') === 'prior';
-  const setCompareP99 = (v: boolean) => setSearchParams(prev => {
+  // v0.9.1252 (operatör-raporlu) — focus görünümü artık servis
+  // sekmesindeki FocusedNeighborhood'un TA KENDİSİ; hops/eonly kodekleri
+  // de aynı param adları (?hops=, ?eonly=1 — ServiceSignalTabs:341-357
+  // deseni: varsayılan URL'e yazılmaz, okuma aynı varsayılanı bilir).
+  const hops = Math.min(3, Math.max(1,
+    parseInt(searchParams.get('hops') ?? String(DEFAULT_TOPOLOGY_HOPS), 10) || DEFAULT_TOPOLOGY_HOPS));
+  const eonly = searchParams.get('eonly') === '1';
+  const setHops = (h: number) => setSearchParams(prev => {
     const p = new URLSearchParams(prev);
-    if (v) p.set('compare', 'prior'); else p.delete('compare');
+    if (h !== DEFAULT_TOPOLOGY_HOPS) p.set('hops', String(h)); else p.delete('hops');
+    return p;
+  }, { replace: true });
+  const setEonly = (v: boolean) => setSearchParams(prev => {
+    const p = new URLSearchParams(prev);
+    if (v) p.set('eonly', '1'); else p.delete('eonly');
     return p;
   }, { replace: true });
   // Auto-pick a focused service on first load so the operator
@@ -173,28 +186,11 @@ export default function ServiceMapPage() {
     return [...set].sort();
   }, [data]);
 
-  // Focus view data source (v0.8.273, operator-reported: "focus
-  // seçtiğimde göstermiyor — test ortamında bug"). The old path
-  // filtered the SAMPLED global map (200 heaviest traces) down to
-  // the focus neighborhood — any service outside the sample kept
-  // zero nodes, so on a 1200-service install almost every pick
-  // rendered an empty graph. Focus now fetches its neighborhood
-  // from the MV-backed /api/servicegraph (full coverage,
-  // sample-independent, hidden patterns applied) and renders that;
-  // the trace-sampled map stays the source for the global view.
+  // v0.9.1252 — v0.8.273'ün focus-harita sorgusu KALKTI: focus artık
+  // FocusedNeighborhood'un kendi MV sorgusuyla çiziliyor (servis
+  // sekmesiyle bire bir aynı bileşen/veri/derinlik). winFrom/winTo
+  // düğüm çekmecesi için kalıyor.
   const { from: winFrom, to: winTo } = useMemo(() => timeRangeToNs(range), [range]);
-  const focusQ = useQuery({
-    queryKey: ['servicegraph', 'map-focus', focus, winFrom, winTo, compareP99],
-    queryFn: () => api.serviceGraph({ focus, scope: 'neighborhood', from: winFrom, to: winTo, compare: compareP99 ? 'prior' : undefined }),
-    // v0.8.469 — Structure modunda MV-graf sorgusu atılmaz (göstermediğini
-    // fetch'leme); Flow'a geçişte tetiklenir.
-    enabled: !!focus,
-    staleTime: 15_000,
-  });
-  const focusMap = useMemo(
-    () => (focusQ.data ? serviceGraphToMap(focusQ.data) : undefined),
-    [focusQ.data],
-  );
 
   // Filter to the 1-hop neighbourhood of the focused service
   // (focused + every direct caller + every direct callee).
@@ -202,23 +198,12 @@ export default function ServiceMapPage() {
   // MV path carries no cluster enrichment).
   // Edges are kept iff both endpoints survived. Memoised so
   // hover-induced re-renders don't recompute.
+  // v0.9.1252 — filtered artık YALNIZ global görünüm (örneklem +
+  // cluster süzgeci). Focus dalı kalktı: focus FocusedNeighborhood'da.
   const filtered = useMemo<ServiceMap | undefined>(() => {
-    if (focus && focusMap) return focusMap; // MV-backed, already scoped server-side
     if (!data) return undefined;
     let nodes = data.nodes;
     let edges = data.edges;
-    if (focus) {
-      // MV fetch still in flight — show the sample-derived slice
-      // as a preview (small installs render instantly; large ones
-      // upgrade when the MV response lands).
-      const keep = new Set<string>([focus]);
-      for (const e of data.edges) {
-        if (e.caller === focus) keep.add(e.callee);
-        if (e.callee === focus) keep.add(e.caller);
-      }
-      nodes = nodes.filter(n => keep.has(n.service));
-      edges = edges.filter(e => keep.has(e.caller) && keep.has(e.callee));
-    }
     if (clusterPick) {
       const inCluster = (svc: string) => {
         const n = nodes.find(x => x.service === svc);
@@ -235,35 +220,7 @@ export default function ServiceMapPage() {
       sampledFrom: data.sampledFrom,
       totalSpans:  data.totalSpans,
     };
-  }, [data, focus, focusMap, clusterPick]);
-
-  // Focus header facts read from the ACTIVE source — the MV map
-  // when it's loaded, the sampled map otherwise.
-  const activeMap: ServiceMap | undefined = focus && focusMap ? focusMap : data ?? undefined;
-  const focusNode: ServiceMapNode | undefined = focus && activeMap
-    ? activeMap.nodes.find(n => n.service === focus)
-    : undefined;
-  const callers = activeMap && focus
-    ? activeMap.edges.filter(e => e.callee === focus).length
-    : 0;
-  // Callee buckets — tell the operator at a glance how many of
-  // the focused service's downstreams are services vs DBs vs
-  // external deps. Reads as "calls 3 services, 2 dbs, 1 ext"
-  // in the focus header.
-  const calleeBuckets = useMemo(() => {
-    const out = { service: 0, db: 0, queue: 0, external: 0 };
-    if (!activeMap || !focus) return out;
-    const byName = new Map<string, ServiceMapNode>(
-      activeMap.nodes.map(n => [n.service, n] as const));
-    for (const e of activeMap.edges) {
-      if (e.caller !== focus) continue;
-      const callee = byName.get(e.callee);
-      const kind = (callee?.kind || 'service') as keyof typeof out;
-      if (kind in out) out[kind] += 1;
-    }
-    return out;
-  }, [activeMap, focus]);
-  const calleesTotal = calleeBuckets.service + calleeBuckets.db + calleeBuckets.queue + calleeBuckets.external;
+  }, [data, clusterPick]);
 
   return (
     <>
@@ -292,7 +249,7 @@ export default function ServiceMapPage() {
               the separate Clear button was redundant. Operators
               who want the full hairball back can clear the
               input manually. */}
-          {focus && focusNode && (
+          {focus && (
             <Link to={serviceHref(focus, { range })}
                   className="sec"
                   style={{
@@ -312,7 +269,7 @@ export default function ServiceMapPage() {
               map never descended to per-route RED. range rides along;
               a pivot must ask the question the screen it left asked
               (v0.9.307). */}
-          {focus && focusNode && (
+          {focus && (
             <Link to={`/endpoints?service=${encodeURIComponent(focus)}&range=${encodeURIComponent(encodeRange(range))}`}
                   className="sec"
                   title="Per-route RED for this service — calls, errors, P50/P90/P95/P99 and spread per endpoint"
@@ -334,6 +291,11 @@ export default function ServiceMapPage() {
               the current window but not the baseline) and lists
               ones that went missing. The summary strip below the
               picker row renders the delta count. */}
+          {/* v0.9.1252 — örneklem-harita kontrolleri (Compare/Samples/Show/
+              Cluster) yalnız global görünümde: focus'ta çizilen şey
+              FocusedNeighborhood ve bu kontrollerin ona etkisi yok —
+              etkisiz kontrol çizmek K4 sınıfının UI hâli olurdu. */}
+          {!focus && (<>
           <span style={{ fontSize: 12, color: 'var(--text2)' }}>Compare</span>
           <select value={diff} onChange={e => setDiff(e.target.value)}
                   style={{ fontSize: 12 }}>
@@ -341,21 +303,6 @@ export default function ServiceMapPage() {
               <option key={p.key} value={p.key}>{p.label}</option>
             ))}
           </select>
-          {/* v0.9.1112 (Faz 5) — kenar p99 Δ'sı: odak görünümünde her
-              kenara önceki pencerenin p99'u gelir, chip Δ% basar.
-              Yapısal Compare'den (diff — yeni/kaybolan) ayrı eksen. */}
-          <label style={{ fontSize: 12, color: 'var(--text2)', display: 'flex',
-                          alignItems: 'center', gap: 5,
-                          cursor: focus ? 'pointer' : 'not-allowed',
-                          opacity: focus ? 1 : 0.5 }}
-            title={focus
-              ? 'Kenar chip\'lerine önceki eş-uzunluk pencereye göre p99 Δ% ekler'
-              : 'Önce bir servise odaklan — kenar p99\'u yalnız odak görünümünde var'}>
-            <input type="checkbox" checked={compareP99} disabled={!focus}
-              onChange={e => setCompareP99(e.target.checked)} />
-            Δ p99
-          </label>
-
           <span style={{ fontSize: 12, color: 'var(--text2)' }}>Samples</span>
           <select value={samples}
                   onChange={e => setSamples(Number(e.target.value))}
@@ -400,6 +347,7 @@ export default function ServiceMapPage() {
               </select>
             </>
           )}
+          </>)}
         </div>
 
         {/* Cluster colour legend — decodes the node rings the
@@ -457,41 +405,6 @@ export default function ServiceMapPage() {
           } />
         )}
 
-        {/* Focus header — when a service is selected, surface
-            its KPIs above the graph so the operator doesn't
-            have to navigate away to read them. */}
-        {focus && focusNode && (
-          <div style={{
-            display: 'flex', gap: 14, alignItems: 'center',
-            padding: '10px 14px', marginBottom: 12,
-            background: 'var(--bg1)',
-            border: '1px solid var(--border)',
-            borderRadius: 8,
-            flexWrap: 'wrap',
-          }}>
-            <span style={{ fontSize: 14, fontWeight: 600 }}>{focus}</span>
-            <span className={`badge b-${focusNode.errorRate > 0.05 ? 'err' : focusNode.errorRate > 0.01 ? 'warn' : 'ok'}`}>
-              {(focusNode.errorRate * 100).toFixed(2)}% error
-            </span>
-            <Chip label="Spans"   value={fmtNum(focusNode.spanCount)} />
-            <Chip label="Callers" value={`${callers}`} />
-            <Chip label="Callees" value={
-              calleesTotal === 0
-                ? '0'
-                : [
-                    calleeBuckets.service  > 0 && `${calleeBuckets.service} svc`,
-                    calleeBuckets.db       > 0 && `${calleeBuckets.db} db`,
-                    calleeBuckets.queue    > 0 && `${calleeBuckets.queue} queue`,
-                    calleeBuckets.external > 0 && `${calleeBuckets.external} ext`,
-                  ].filter(Boolean).join(' · ')
-            } />
-            <span style={{ flex: 1 }} />
-            <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-              showing {focus}'s 1-hop neighbourhood — {filtered?.nodes.length ?? 0} services
-            </span>
-          </div>
-        )}
-
         {/* v0.9.225 — Operator-reported: "ilk açılışta çok bekletiyor".
             These gates read `data` — the FULL sampled map — even when a focus
             is set and `filtered` (the focus neighbourhood) is what actually
@@ -502,6 +415,23 @@ export default function ServiceMapPage() {
             widens with service count, which is exactly the operator's point
             that one service's flow topology shouldn't cost that much.
             The gates now follow the map being rendered. */}
+        {/* v0.9.1252 (operatör-raporlu): "service üzerinden gidince farklı,
+            topology üzerinden gidince farklı" — focus artık servis
+            sekmesinin çizdiği AYNI FocusedNeighborhood (aynı bileşen,
+            aynı MV sorgusu, aynı hops/eonly kodekleri). Harita zinciri
+            yalnız focus'suz global görünüm. */}
+        {focus ? (
+          <FocusedNeighborhood
+            range={range}
+            focus={focus}
+            hops={hops}
+            errorsOnly={eonly}
+            onHops={setHops}
+            onErrorsOnly={setEonly}
+            onRecenter={commitFocus}
+            onClear={() => commitFocus('')}
+          />
+        ) : (<>
         {!filtered && data === undefined && <Spinner />}
         {!filtered && data === null && (
           <Empty icon="!" title="Failed to load service map">
@@ -520,21 +450,14 @@ export default function ServiceMapPage() {
             focus={focus || null}
             hoverNode={hoverNode}
             onHoverNode={setHoverNode}
-            onSelectNode={v => {
-              // v0.9.1112 — odaklı düğüme ikinci tık = detay çekmecesi;
-              // yalnız gerçek servis düğümleri (db/queue/ext sentetik).
-              const real = filtered?.nodes.some(n => n.service === v && !n.kind);
-              if (v === focus && real) commitNode(v);
-              else commitFocus(v);
-            }}
+            onSelectNode={commitFocus}
           />
         )}
 
         <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>
-          {focus
-            ? 'Click any node to switch focus · click the focused node for details · auto-refresh 30 s'
-            : 'Click a node to focus on its 1-hop neighbourhood · auto-refresh 30 s'}
+          Click a node to focus on its neighbourhood · auto-refresh 30 s
         </div>
+        </>)}
 
         {nodeParam && (
           <ServiceMapNodeDrawer service={nodeParam} range={range}

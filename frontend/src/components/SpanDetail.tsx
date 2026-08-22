@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useEscLayer } from '@/lib/escLayer';
 import { Link } from 'react-router-dom';
 import type { SpanRow, ProfileRow, SpanHotspotsResponse, LogRow } from '@/lib/types';
+import { selfTimeMs } from '@/lib/selfTime';
 import { tsLong, tsShort, sevName, sevClass, displaySpanName } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { getRaw, setRaw } from '@/lib/storage';
@@ -26,7 +27,7 @@ const SPAN_LOG_WINDOW_BUFFER_NS = 60_000_000_000;
 // @timestamp'ler pencere dışında kalmasın.
 const LOGS_LINK_EXTRA_NS = 15 * 60_000_000_000;
 
-export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = true }: {
+export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = true, traceSpans }: {
   span: SpanRow;
   onClose: () => void;
   // Trace-anchored log lookup window (Unix ns), threaded down from the Trace
@@ -39,6 +40,10 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   // the anonymous /public/trace viewer must not advertise in-app
   // navigation its recipients can't open.
   serviceLinks?: boolean;
+  // v0.9.1273 (Dynatrace-parite #4) — trace'in TÜM span'leri; verilirse
+  // Self time satırı çizilir (aralık-birleşimli öz süre, lib/selfTime).
+  // Bağımsız mount'lar (span'siz) satırı hiç görmez.
+  traceSpans?: SpanRow[];
 }) {
   const attrs = Object.entries(span.attributes ?? {});
   const res = Object.entries(span.resourceAttributes ?? {});
@@ -252,6 +257,20 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
             <Row k="Service" v={span.serviceName} copyable />
             <Row k="Kind" v={span.kind} copyable />
             <Row k="Duration" v={`${span.durationMs.toFixed(3)} ms`} copyable />
+            {/* v0.9.1273 — öz süre: çocukların kapsamadığı kısım. %'si
+                "vakit BURADA mı geçti, altta mı" sorusunun tek-bakış
+                cevabı — %90+ self = bu span'in kendisi; %10 self =
+                çocuklara in. Çakışan async çocuklar birleşimle bir kez
+                düşülür (naif toplam negatif/saçma değer üretirdi). */}
+            {traceSpans && traceSpans.length > 0 && (() => {
+              const self = selfTimeMs(span, traceSpans);
+              const pct = span.durationMs > 0 ? (self / span.durationMs) * 100 : 100;
+              return (
+                <Row k="Self time"
+                  v={`${self.toFixed(3)} ms (%${pct.toFixed(0)})`}
+                  copyable />
+              );
+            })()}
             {baseP50 !== null && (
               <tr>
                 <td>Baseline p50 (24h)</td>

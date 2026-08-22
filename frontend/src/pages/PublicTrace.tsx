@@ -157,7 +157,7 @@ function PublicTraceInner() {
           </div>
           {/* serviceLinks off: anonymous recipients can't open in-app
               service pages (v0.8.371). */}
-          {sel && <SpanDetail span={sel} onClose={closeSpanPanel} serviceLinks={false} />}
+          {sel && <SpanDetail span={sel} onClose={closeSpanPanel} serviceLinks={false} traceSpans={data.spans} />}
         </div>
       )}
 

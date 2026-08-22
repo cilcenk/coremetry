@@ -534,7 +534,7 @@ function TraceDetailInner() {
                       focusIds={critFocus && criticalPath ? criticalPath.ids : undefined}
                       logSignals={logSignals} onLogsClick={() => setTab('logs')} />
                   </div>
-                  {sel && <SpanDetail span={sel} onClose={closeSpanPanel}
+                  {sel && <SpanDetail span={sel} onClose={closeSpanPanel} traceSpans={spans ?? undefined}
                     logsFrom={logWin?.from} logsTo={logWin?.to} />}
                 </div>
               </>

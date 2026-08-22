@@ -44,6 +44,106 @@ func pickExceptionStack(sampleStacks []string, logStack, logStackSvc string) (fo
 	return "", "", ""
 }
 
+// liteLog — prompt'a giren log satırı. Paket düzeyinde: Stack alanı
+// artık döngüde değil, temsilî stack seçildikten SONRA dolduruluyor
+// (v0.9.1239) ve tip iki yerden görünmek zorunda.
+type liteLog struct {
+	Sev    string `json:"sev,omitempty"`
+	Svc    string `json:"svc,omitempty"`
+	ExType string `json:"exType,omitempty"`
+	Stack  string `json:"stack,omitempty"`
+	Body   string `json:"body,omitempty"`
+}
+
+// dupStackRef — tekrar eden stack'in yerine geçen tek satır.
+const dupStackRef = "(stack yukarıdakiyle aynı)"
+
+// foldDuplicateLogStacks — aynı stack'in prompt'taki KOPYALARINI tek
+// satırlık referansa katlar (v0.9.1239). Saf; dönen dilim girdiyle
+// aynı uzunluktadır.
+//
+// # Neden
+//
+// Bir exception grubunun örnek trace'inde 12 loga kadar satır var ve
+// retry fırtınasında hepsi AYNI exception'ın stack'ini taşıyor. Temsilî
+// stack (1800 rune) + 12×900 rune = tek metnin 13 kopyası, ~12k rune.
+// Taşma yeniden-denemesi (copilot_code.go) yalnız KOD bloğunu yarıya
+// indiriyor: benzersiz kanıt küçülürken tekrar aynen kalıyordu.
+// Öncelik doktrini: kod + taze kanıt > tekrarlanan stack.
+//
+// # İki tuzak
+//
+//  1. primary, prompt'ta GÖRÜNEN stack olmalı (stackForPrompt), ham
+//     olan değil. Örnekler stack taşımıyorsa temsilî bölüm BOŞ basılır
+//     ve stack yalnız logda vardır; ham stack'e karşı katlamak
+//     prompt'taki TEK stack'i silerdi.
+//  2. Kırpma farkı: temsilî kopya 1800, log kopyası 900 rune. Birebir
+//     eşitlik aramak hiçbir şeyi katlamazdı — kısa olan, uzun olanın
+//     ÖN EKİ ise aynı metindir.
+func foldDuplicateLogStacks(stacks []string, primary string) []string {
+	out := make([]string, len(stacks))
+	// seen — prompt'ta TAM hâliyle görünen stack'ler; sonraki kopyalar
+	// bunlardan herhangi birine katlanır ("yukarıdaki" hepsini kapsar).
+	var seen []string
+	if primary != "" {
+		seen = append(seen, primary)
+	}
+	for i, st := range stacks {
+		if st == "" {
+			continue
+		}
+		dup := false
+		for _, s := range seen {
+			if sameStackText(st, s) {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			out[i] = dupStackRef
+			continue
+		}
+		out[i] = truncRunes(st, 900)
+		seen = append(seen, st)
+	}
+	return out
+}
+
+// sameStackText — iki stack metni AYNI stack'in kopyası mı? Saf.
+//
+// Kırpılmış kopyalar için önek karşılaştırması yapılır; kısa olan
+// metinlerde önek eşleşmesi yanlış katlama üretebileceği için
+// (ör. iki farklı exception'ın ortak ilk satırı) minimum uzunluk
+// altında BİREBİR eşitlik aranır.
+func sameStackText(a, b string) bool {
+	x, y := normStackText(a), normStackText(b)
+	if x == "" || y == "" {
+		return false
+	}
+	if x == y {
+		return true
+	}
+	if len(x) > len(y) {
+		x, y = y, x
+	}
+	// dupStackMinPrefix — önek eşleşmesinin geçerli sayıldığı en kısa
+	// metin. Bir Java stack'inin ilk satırı + iki frame'i rahat aşar;
+	// altında kalan metinler için kesme zaten olmamıştır.
+	const dupStackMinPrefix = 120
+	if len([]rune(x)) < dupStackMinPrefix {
+		return false
+	}
+	return strings.HasPrefix(y, x)
+}
+
+// normStackText — karşılaştırma için normalleştirme: satır sonları,
+// baş/son boşluk ve truncRunes'un eklediği "…" eki.
+func normStackText(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.TrimSpace(s)
+	return strings.TrimSuffix(s, "…")
+}
+
 type ExceptionExplainInput struct {
 	User     string   // narration user prompt'u
 	EvTraces []string // kanıt trace id'leri (örnek tablosu kutulaması)
@@ -153,6 +253,10 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 	// v0.9.1225 — kod çekicinin log-fallback istihkakı (aşağıdaki logs
 	// döngüsünde dolar; yalnız örnekler stack taşımıyorsa kullanılır).
 	var logStack, logStackSvc string
+	// v0.9.1239 — log satırları ve HAM stack'leri; JSON'a çevirme
+	// pickExceptionStack'ten SONRAYA ertelendi (bkz. foldDuplicateLogStacks).
+	var logLines []liteLog
+	var logStacks []string
 	var evTraces, evSpans []string
 	traceID := ""
 	var traceMinT, traceMaxT int64
@@ -226,13 +330,6 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 		to := time.Unix(0, traceMaxT).Add(time.Minute)
 		lctx, cancel := context.WithTimeout(ctx, 6*time.Second)
 		if page, lerr := logstore.LogsForTrace(lctx, logs, traceID, from, to, 30); lerr == nil && page != nil && len(page.Logs) > 0 {
-			type liteLog struct {
-				Sev    string `json:"sev,omitempty"`
-				Svc    string `json:"svc,omitempty"`
-				ExType string `json:"exType,omitempty"`
-				Stack  string `json:"stack,omitempty"`
-				Body   string `json:"body,omitempty"`
-			}
 			lgs := page.Logs
 			sort.SliceStable(lgs, func(i, j int) bool { return lgs[i].Severity > lgs[j].Severity })
 			ll := make([]liteLog, 0, 12)
@@ -261,12 +358,12 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 				}
 				e := liteLog{Sev: lg.SeverityText, Svc: lg.ServiceName, Body: truncRunes(bodyForPrompt, 500)}
 				e.ExType = lg.Attributes["exception.type"] // nil map okuması güvenli
-				e.Stack = truncRunes(stackText, 900)
+				// Stack HAM biriktirilir; kırpma + tekrar katlaması
+				// temsilî stack seçildikten SONRA yapılır.
 				ll = append(ll, e)
+				logStacks = append(logStacks, stackText)
 			}
-			if lp, e := json.Marshal(ll); e == nil {
-				logsBlock = fmt.Sprintf("\n\nBu trace'in ilişkili LOGLARI (yüksek severity önce):\n```json\n%s\n```", string(lp))
-			}
+			logLines = ll
 		}
 		cancel()
 	}
@@ -300,6 +397,21 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 		sampleStacks = append(sampleStacks, sm.Stacktrace)
 	}
 	stackForPrompt, stackRaw, stackSvc := pickExceptionStack(sampleStacks, logStack, logStackSvc)
+
+	// v0.9.1239 — log bloğu ANCAK ŞİMDİ kurulabilir: her logun stack'i
+	// prompt'ta GÖRÜNEN temsilî stack'e karşı katlanıyor ve o seçim
+	// (pickExceptionStack) log döngüsünün kendi çıktısına bağlı.
+	if len(logLines) > 0 {
+		folded := foldDuplicateLogStacks(logStacks, stackForPrompt)
+		for i := range logLines {
+			if i < len(folded) {
+				logLines[i].Stack = folded[i]
+			}
+		}
+		if lp, e := json.Marshal(logLines); e == nil {
+			logsBlock = fmt.Sprintf("\n\nBu trace'in ilişkili LOGLARI (yüksek severity önce):\n```json\n%s\n```", string(lp))
+		}
+	}
 
 	return ExceptionExplainInput{
 		User:         assembleExceptionPrompt(g, trend, stackForPrompt, traceBlock, logsBlock, deployBlock),

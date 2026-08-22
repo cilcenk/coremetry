@@ -269,6 +269,27 @@ func fetchFakeCodeContext(t *testing.T) devops.CodeContext {
 // TAŞIMAZ, yerine `[kod: repo/dosya:aralık · N satır]` özeti geçer.
 // PromptChars ise GERÇEK prompt boyutunu bildirir — maskeli bir boyut
 // çağrının maliyetini olduğundan küçük gösterirdi.
+// summaryRange — maskeli kayıttaki "[kod: …:FROM-TO · N satır]"
+// aralığını okur (v0.9.1239). Aralık artık bütçeye göre kaydığı için
+// test sabit sayı yerine KAPSAMA bakıyor.
+func summaryRange(t *testing.T, sample, head string) (int, int) {
+	t.Helper()
+	i := strings.Index(sample, head)
+	if i < 0 {
+		t.Fatalf("özet başlığı yok: %q", head)
+	}
+	rest := sample[i+len(head):]
+	j := strings.Index(rest, " ")
+	if j < 0 {
+		t.Fatalf("özet aralığı okunamadı: %q", rest)
+	}
+	var from, to int
+	if _, err := fmt.Sscanf(rest[:j], "%d-%d", &from, &to); err != nil {
+		t.Fatalf("özet aralığı ayrıştırılamadı (%q): %v", rest[:j], err)
+	}
+	return from, to
+}
+
 func TestExplainCodeMasksPromptInAICalls(t *testing.T) {
 	cc := fetchFakeCodeContext(t)
 	fp := newFakeProvider(t, false)
@@ -317,10 +338,19 @@ func TestExplainCodeMasksPromptInAICalls(t *testing.T) {
 	// Özet: hangi depo + hangi dosya + hangi aralık + kaç satır.
 	// Aralık, bütçe kırpmasından SONRAKİ gerçek aralıktır — kayıt
 	// "modele ne gitti"yi söylemeli, ne göndermeyi planladığımızı değil.
-	if !strings.Contains(got.PromptSample,
-		"[kod: core-service/src/main/java/com/example/card/CardDetailBusiness.java:216-") ||
+	//
+	// v0.9.1239 — pin BİLİNÇLİ güncellendi: eskiden başlangıç satırı
+	// (216) sabitleniyordu çünkü kırpma pencereyi BAŞTAN kesiyordu.
+	// Kırpma artık hata satırını merkezde tutuyor, yani başlangıç
+	// bütçeye göre kayıyor; sabitlenecek doğru şey sayı değil
+	// SÖZLEŞMEdir: aralık hata satırını (246) İÇERMELİ.
+	const codeSummaryHead = "[kod: core-service/src/main/java/com/example/card/CardDetailBusiness.java:"
+	if !strings.Contains(got.PromptSample, codeSummaryHead) ||
 		!strings.Contains(got.PromptSample, " satır]") {
 		t.Fatalf("maskeli kayıtta kaynak özeti yok:\n%s", got.PromptSample)
+	}
+	if from, to := summaryRange(t, got.PromptSample, codeSummaryHead); from > 246 || to < 246 {
+		t.Fatalf("kaydedilen aralık %d-%d hata satırını (246) kapsamıyor", from, to)
 	}
 	// Kod dışı bağlam kayıtta AYNEN durmalı — maskeleme yalnız kodu alır.
 	if !strings.Contains(got.PromptSample, "Exception GRUBU") {
@@ -365,6 +395,17 @@ func TestExplainCodeRetriesHalvedOnOverflow(t *testing.T) {
 	// Kod hâlâ VAR (tümüyle atılmadı) — yarıya indi.
 	if !strings.Contains(sent[1], "KOD BAĞLAMI") {
 		t.Error("yeniden denemede kod bağlamı tümüyle düşmüş; istenen YARIYA inmesi")
+	}
+	// v0.9.1239 — YARIYA İNEN pencere hâlâ HATA SATIRINI taşımalı.
+	// Denetim bulgusunun tam senaryosu buydu: Halved() bütçeyi 2000'e
+	// indiriyor, baştan kesen kırpma 246'yı pencerenin dışında
+	// bırakıyor, başlık ise onu göstermeye devam ediyordu — model
+	// göremediği satırdan kök neden uyduruyordu.
+	if !strings.Contains(sent[1], ">>> 246| ") {
+		t.Fatalf("yarıya inen pencerede işaretli hata satırı yok:\n%s", sent[1])
+	}
+	if !strings.Contains(sent[1], secretCodeMarker) {
+		t.Fatal("yarıya inen pencere hata satırının KODUNU taşımıyor")
 	}
 	// SADECE BİR kez: üçüncü bir deneme yok.
 	recs := rec.wait(t, 2)

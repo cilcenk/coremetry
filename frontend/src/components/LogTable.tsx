@@ -193,6 +193,7 @@ export function LogTable({
   onToggleColumn,
   onTracePeek,
   onContextOpen,
+  permalink,
 }: {
   logs: LogRow[];
   hideTraceColumn?: boolean;
@@ -250,6 +251,8 @@ export function LogTable({
   // the parent's LogContextModal with the 50 logs immediately
   // before + after the pivot. Datadog Context tab pattern.
   onContextOpen?: (pivot: LogRow) => void;
+  // v0.9.1248 — kalıcı doküman linki üreticisi; yalnız /logs geçirir.
+  permalink?: (l: LogRow) => string;
 }) {
   const [localExpanded, setLocalExpanded] = useState<Set<number>>(new Set());
   const expanded = expandedIds ?? localExpanded;
@@ -329,6 +332,7 @@ export function LogTable({
                 onToggleColumn={onToggleColumn}
                 onTracePeek={onTracePeek}
                 onContextOpen={onContextOpen}
+                permalink={permalink}
               />
             );
           })}
@@ -340,7 +344,7 @@ export function LogTable({
 
 function LogRow({
   l, idx, tableId, cols, colIds, highlightTerms, hideTraceColumn, selected, expanded, onClick, extraExpanded,
-  onFilterAdd, onFilterExclude, onToggleColumn, onTracePeek, onContextOpen,
+  onFilterAdd, onFilterExclude, onToggleColumn, onTracePeek, onContextOpen, permalink,
 }: {
   l: LogRow;
   idx: number;
@@ -358,6 +362,7 @@ function LogRow({
   onToggleColumn?: (key: string) => void;
   onTracePeek?: (traceId: string) => void;
   onContextOpen?: (pivot: LogRow) => void;
+  permalink?: (l: LogRow) => string;
 }) {
   const attrs = Object.entries(l.attributes ?? {});
   const res = Object.entries(l.resourceAttributes ?? {});
@@ -525,6 +530,12 @@ function LogRow({
                   title="Show 50 logs before and after this one (same service)">
                   ≡ View ±50 surrounding context
                 </Button>
+              )}
+              {/* v0.9.1248 — kalıcı doküman linki (Kibana artığı): yalnız
+                  /logs geçirir; ts+id çifti mevcut context ucuyla çözülür. */}
+              {permalink && (
+                <CopyButton value={permalink(l)}
+                  title="Kalıcı doküman linkini kopyala (ts+id — pencereden bağımsız çözülür)" />
               )}
               {extraExpanded && extraExpanded(l)}
             </div>

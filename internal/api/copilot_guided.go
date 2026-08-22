@@ -1319,7 +1319,12 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// v0.9.479 — çekmece bağlamı (varsa) narration bloğuna ek bölüm
 	// olarak girer; explain boşken üretilen metin bayt-bayt eskisidir
 	// (guidedNarrationUser, copilot_drawer.go — testte pinli).
-	user := guidedNarrationUser(question, evidence, explain)
+	// v0.9.1231 — konuşma geçmişi de bloğa girer. msgs, copilot_chat.go'da
+	// assemble.ClampHistory'den GEÇMİŞ dizinin ta kendisidir (rotalamadan
+	// önce klamplanır); guided ikinci bir kaynak kurmaz, yalnız kendi dar
+	// bütçesini (guidedHistoryMaxRunes) uygular — kanıt geçmişten önce
+	// gelir. Geçmiş yoksa metin yine bayt-bayt eskisidir.
+	user := guidedNarrationUser(question, evidence, explain, msgs)
 	// v0.9.528 Faz 2 — kiminle konuşulduğu prompt'un başına girer
 	// (ctx'ten; ön-söz boşsa metin bayt-bayt eskisi).
 	raw, exErr := s.copilotStreamSurface(ctx, "chat-guided", withAddressee(addresseeFromCtx(ctx), guidedNarrationPrompt(route.Intent)), user, func(delta string) {

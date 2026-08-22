@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cilcenk/coremetry/internal/ai/assemble"
 	"github.com/cilcenk/coremetry/internal/anomaly"
 	"github.com/cilcenk/coremetry/internal/copilot"
 )
@@ -244,19 +245,129 @@ func drawerSuppressesGuided(explain string, route guidedRoute, question string) 
 	return !wantsFleetScope(guidedTokens(normalizeGuidedMsg(question)))
 }
 
-// guidedNarrationUser — guided narration çağrısının user bloğu.
-// explain BOŞKEN üretilen metin v0.9.478'dekiyle bayt-bayt aynıdır
-// (regresyon testi bunu pinler); doluyken açıklama ek bir blok olarak
-// eklenir — guided prompt'un (copilot.SystemPromptGuidedChat)
-// "SADECE verilen veriye dayan" kuralı
-// böylece açıklamayı da kapsar. Saf; tablo-testli.
-func guidedNarrationUser(question, evidence, explain string) string {
-	base := "SORU: " + question + "\n\nVERİ:\n" + evidence
-	ex := clampDrawerExplain(explain)
-	if ex == "" {
-		return base
+// guidedHistoryMaxRunes — guided anlatıma giren konuşma geçmişinin rune
+// bütçesi (v0.9.1231).
+//
+// Serbest tool döngüsü geçmişi 6000 rune ile taşır
+// (assemble.HistoryMaxRunes; klamp copilot_chat.go'da, ROTALAMADAN ÖNCE
+// uygulanır). Guided AYNI klamplanmış diziyi devralır — ikinci bir
+// kesim kaynağı yok — ama üstüne DAHA DAR bir bütçe koyar. Neden dar:
+// guided'ın prompt'u zaten prefetch edilmiş kanıt paketini (+ varsa
+// çekmece açıklamasını, ≤3000) taşıyor ve küçük modelde (gemma4) en
+// pahalı hata, TAZE KANITIN eski konuşma tarafından bağlamdan
+// atılmasıdır. Öncelik merdiveni ExceptionExplainInput'un LogsBlock
+// kuralıyla ve assemble paketinin K3 doktriniyle aynı: kanıt > geçmiş.
+//
+// 1500 ≈ serbest döngü bütçesinin dörtte biri: "peki dünkü?" / "onu
+// logla kıyasla" gibi ATIF taşıyan birkaç kısa turu rahat taşır,
+// yapıştırılmış bir log yığınının kanıtı ezmesine izin vermez.
+const guidedHistoryMaxRunes = 1500
+
+// guidedHistoryTurns — tur tavanı. Rune bütçesi bol kalsa bile 20 kısa
+// tur küçük modelde odağı dağıtır. Çekmece bloğuyla (drawerHistoryTurns)
+// bugün aynı sayı ama AYRI ad: iki yüzeyin bütçesi birbirini
+// kilitlemeden ayrışabilmeli.
+const guidedHistoryTurns = 6
+
+// guidedHistoryHeader — geçmiş bölümünün başlığı. Rol önekleri çekmece
+// bloğuyla aynı (K: operatör, C: sen) ve başlık önceliği de SÖYLER:
+// geçmiş yalnız atıf çözmek içindir, cevabın dayanağı VERİ bloğudur.
+const guidedHistoryHeader = "ÖNCEKİ KONUŞMA (K: operatör, C: sen — yalnız \"peki dünkü?\" gibi ATIFLARI çözmek için; cevabın dayanağı VERİ bloğudur):\n"
+
+// guidedHistorySection — guided narration bloğunun konuşma bölümü
+// (v0.9.1231).
+//
+// Guided sohbet turlarının ÇOĞUNU cevaplıyor ama v0.9.1230'a dek
+// narration çağrısı tek-tur körüydü: yalnız aktif soru + prefetch
+// paketi giriyordu. Serbest döngü geçmişi taşıdığı için aynı takip
+// sorusu ("peki dünkü?", "onu logla kıyasla") hangi yola düştüğüne göre
+// referansını buluyor ya da kaybediyordu. applyFollowUpContext ROTA
+// devrini zaten yapıyor — burada eksik olan ANLATIM metninin referansı.
+//
+// Şekil bilinçli: geçmiş, sohbet mesajı olarak DEĞİL, tek-prompt user
+// bloğunun sonuna sınırlı bir BÖLÜM olarak girer (guided narration
+// tek-çağrılı; çağrı tipi değişmiyor). Kırpma olduysa modele SÖYLENİR
+// (assemble.TrimNoteIfNeeded) — sessiz kırpma, modelin olmayan bir
+// konuşmayı hatırlıyormuş gibi davranmasına yol açar.
+//
+// Saf; tablo-testli.
+func guidedHistorySection(msgs []copilot.ChatMessage) string {
+	// Aktif soru = son, metni dolu kullanıcı turu (lastUserText ve
+	// drawerHistoryBlock ile aynı kural). O tur SORU: satırında zaten
+	// var; geçmişe de girerse modele iki kez sorulmuş olur.
+	cut := len(msgs)
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" && strings.TrimSpace(msgs[i].Text) != "" {
+			cut = i
+			break
+		}
 	}
-	return base + "\n\nEKRANDAKİ AÇIKLAMA (operatör bu cevabı az önce okudu; soru buna dair olabilir):\n" + ex
+	rows := make([]string, 0, cut)
+	upstreamTrim := false
+	for i := 0; i < cut; i++ {
+		txt := strings.TrimSpace(msgs[i].Text)
+		if txt == "" {
+			continue // metinsiz tool-result turu
+		}
+		if assemble.HasTrimNote(txt) {
+			// copilot_chat.go'nun ENJEKTE ettiği yukarı-akış kırpma
+			// işareti. "K:" önekiyle yazmak konuşmayı tahrif ederdi
+			// (operatör bunu söylemedi); bilgisi kaybolmaz, bölümün
+			// kendi notuna döner.
+			upstreamTrim = true
+			continue
+		}
+		tag := "C: "
+		if msgs[i].Role == "user" {
+			tag = "K: "
+		}
+		rows = append(rows, tag+txt)
+	}
+	if len(rows) == 0 {
+		return ""
+	}
+	keep, trimmed := assemble.ClampHistory(
+		assemble.RuneLens(rows), guidedHistoryTurns, guidedHistoryMaxRunes)
+	rows = rows[len(rows)-keep:]
+	body := strings.Join(rows, "\n")
+	if utf8.RuneCountInString(body) > guidedHistoryMaxRunes {
+		// ClampHistory'nin "EN AZ BİR tur" köşesi: tek bir dev tur
+		// (yapıştırılmış log yığını) bütçeyi tek başına aşabilir. O
+		// sözleşme SORUNUN kendisini korumak için var; burada tur zaten
+		// geçmiştir, kanıttan önce gelemez → kuyruktan kes.
+		body = cutRunes(body, guidedHistoryMaxRunes)
+		trimmed++
+	}
+	if upstreamTrim {
+		trimmed++
+	}
+	out := guidedHistoryHeader
+	if note := assemble.TrimNoteIfNeeded(trimmed); note != "" {
+		out += note + "\n"
+	}
+	return out + body
+}
+
+// guidedNarrationUser — guided narration çağrısının user bloğu.
+// explain BOŞ ve geçmiş YOKKEN üretilen metin v0.9.478'dekiyle
+// bayt-bayt aynıdır (regresyon testi bunu pinler); doluyken açıklama ek
+// bir blok olarak eklenir — guided prompt'un
+// (copilot.SystemPromptGuidedChat) "SADECE verilen veriye dayan" kuralı
+// böylece açıklamayı da kapsar.
+//
+// v0.9.1231 — konuşma geçmişi EN SONA, kanıttan ve açıklamadan sonra
+// eklenir: merdivenin en alt basamağı odur (assemble paket doküman
+// başlığı) ve bloğun başı küçük modelde en ağır okunan yerdir.
+// Saf; tablo-testli.
+func guidedNarrationUser(question, evidence, explain string, msgs []copilot.ChatMessage) string {
+	out := "SORU: " + question + "\n\nVERİ:\n" + evidence
+	if ex := clampDrawerExplain(explain); ex != "" {
+		out += "\n\nEKRANDAKİ AÇIKLAMA (operatör bu cevabı az önce okudu; soru buna dair olabilir):\n" + ex
+	}
+	if h := guidedHistorySection(msgs); h != "" {
+		out += "\n\n" + h
+	}
+	return out
 }
 
 // drawerEvidenceHeader — HAM KANIT bloğunun başlığı (v0.9.482). Modele

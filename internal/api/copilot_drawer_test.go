@@ -32,7 +32,10 @@ func TestGuidedNarrationUserAbsentExplain(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := guidedNarrationUser(c.question, c.evidence, c.explain)
+			// Tek turluk konuşma: geçmiş bölümü de doğmaz, yani pin
+			// v0.9.1231'den sonra da BAYT-BAYT aynı metni bekler.
+			got := guidedNarrationUser(c.question, c.evidence, c.explain,
+				[]copilot.ChatMessage{{Role: "user", Text: c.question}})
 			if want := legacy(c.question, c.evidence); got != want {
 				t.Fatalf("explain'siz blok değişti\n got=%q\nwant=%q", got, want)
 			}
@@ -41,7 +44,7 @@ func TestGuidedNarrationUserAbsentExplain(t *testing.T) {
 }
 
 func TestGuidedNarrationUserWithExplain(t *testing.T) {
-	got := guidedNarrationUser("peki hata logları?", "log: 12 error", "NPE checkout'ta, 34 kez")
+	got := guidedNarrationUser("peki hata logları?", "log: 12 error", "NPE checkout'ta, 34 kez", nil)
 	if !strings.HasPrefix(got, "SORU: peki hata logları?\n\nVERİ:\nlog: 12 error") {
 		t.Fatalf("taban blok korunmadı: %q", got)
 	}

@@ -199,6 +199,13 @@ type CallerRow struct {
 //   - The right side is constrained by trace_id IN (LEFT.trace_id)
 //     so ClickHouse can use the trace_id skip index instead of a
 //     full window scan.
+//   - v0.9.1285 — the parent side is a GLOBAL join over a
+//     time-bounded subquery, not a bare `JOIN spans` with the
+//     bounds in the WHERE. `spans` is Distributed with a rand()
+//     sharding key, so a non-GLOBAL join resolves each trace
+//     against one shard's slice only; and the bound has to live in
+//     the joined subquery's WHERE to prune (see repeats.go for the
+//     measured 22.69M→75.65K rows on the ON-clause variant).
 //   - GROUP BY columns are all low-cardinality lookups extracted
 //     once in the LEFT subquery; aggregation happens on a few
 //     thousand rows in the typical case.
@@ -233,9 +240,12 @@ func (s *Store) ServiceCallers(
 		  quantile(0.99)(c.duration) / 1e6                 AS p99_ms,
 		  toUnixTimestamp64Nano(max(c.time))               AS last_seen_ns
 		FROM child c
-		INNER JOIN spans p ON p.trace_id = c.trace_id AND p.span_id = c.parent_id
+		GLOBAL INNER JOIN (
+		  SELECT trace_id, span_id, service_name, host_name, res_keys, res_values
+		  FROM spans
+		  WHERE time >= ? AND time <= ?
+		) AS p ON p.trace_id = c.trace_id AND p.span_id = c.parent_id
 		WHERE p.trace_id GLOBAL IN (SELECT trace_id FROM child)
-		  AND p.time >= ? AND p.time <= ?
 		  AND p.service_name != ?
 		GROUP BY caller_service, caller_host, caller_instance, client_address, user_agent
 		ORDER BY calls DESC

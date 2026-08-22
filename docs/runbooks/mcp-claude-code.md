@@ -6,7 +6,7 @@ docs/plans/ai-assistant-design-2026-08-16.md §K7)
 
 ## 1. Token üret
 
-Settings → API Tokens → **New token**, rol: **viewer** (33 tool'un
+Settings → API Tokens → **New token**, rol: **viewer** (34 tool'un
 tamamı salt-okunur ve hepsi viewer seviyesinde — editor/admin
 GEREKMEZ). `cmk_…` değeri yalnız oluşturma anında görünür; kasaya
 koy. İptal: aynı ekrandan Revoke (anında, cache invalidation'lı).
@@ -32,7 +32,7 @@ Rol zorlaması nerede: her tool/resource/prompt kaydı bir `MinRole`
 taşır (`internal/mcp`), kapı (`internal/api/mcp_gate.go`) çağrı
 öncesi token rolüyle karşılaştırır. Yetersizse JSON-RPC **-32001** ve
 gereken rolü söyleyen okunur bir metin döner (model boşuna yeniden
-denemez). Bugün 33 tool'un tamamı `MinRole=""` (viewer tabanı; v0.9.1141'ta
+denemez). Bugün 34 tool'un tamamı `MinRole=""` (viewer tabanı; v0.9.1141'ta
 beş keşif tool'u eklendi — list_operations / list_environments /
 list_clusters / list_deploys / find_trace_by_span; v0.9.1142'de
 find_trace_by_request_id — yapılandırılmış kurumsal istek numarası →
@@ -41,7 +41,9 @@ tool'u — get_topology / get_blast_radius / get_log_histogram, üçü de
 mevcut MV/logstore okumasını köprüler; v0.9.1147'de dört guided-parite
 tool'u — get_db_health / get_messaging_health / get_pod_health /
 list_problem_window_events, in-app guided sohbetin kanıt paketleriyle
-AYNI veri katmanından).
+AYNI veri katmanından; v0.9.1233'te get_exception_samples — bir istisna
+grubunun gerçek oluşumları: stacktrace + trace_id pivotu, REST eşi
+GET /api/exception-groups/{fp}/samples viewer'a açık).
 
 ## 2. Bağlan
 

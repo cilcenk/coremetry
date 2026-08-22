@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { IconLink, IconCheck } from './icons';
 import { Button } from './ui/Button';
 import { copyToClipboard } from '@/lib/clipboard';
+import { absoluteShareHref } from '@/lib/shareUrl';
 
 export interface ShareButtonProps {
   /** Idle label. Logs says "Copy link"; everywhere else "Share". */
@@ -36,21 +37,28 @@ export interface ShareButtonProps {
  * its full state there (Explore's encoded query, ProblemDetail's
  * ?problem=/?exc= via problemLink.ts, Logs' filters — the same
  * mechanism SavedViewsBar persists), so `window.location.href` is
- * always the canonical shareable link. Open to every role incl. viewers
+ * always the canonical shareable link — modulo one rewrite: a RELATIVE
+ * time window is pinned to absolute ms on the way to the clipboard
+ * (lib/shareUrl.ts, v0.9.1280), because a link is evidence and evidence
+ * must not drift. Open to every role incl. viewers
  * (v0.8.102), and NOT a public/unauth link — recipients still sign in.
  */
 export function ShareButton({
   label = 'Share',
   copiedLabel = 'Link copied',
-  title = 'Copy a shareable link to this view',
+  title = 'Copy a shareable link — the time window is pinned to absolute times',
   size = 'md',
 }: ShareButtonProps = {}) {
   const [copied, setCopied] = useState(false);
   // v0.8.550 — the fallback this used to inline (its own comment admitted
   // it "mirrors CopyButton") now lives in lib/clipboard, which also covers
   // the writeText-REJECTS case this copy treated as a dead end.
+  // v0.9.1280 — the copied link freezes its window: a relative `?range=1h`
+  // becomes `custom:<fromMs>-<toMs>` resolved against THIS clock, so the
+  // recipient sees the hour the sender meant, not the hour they open it in.
+  // Pages that carry no `range` (Trace detail) come back byte-identical.
   const onClick = async () => {
-    if (await copyToClipboard(window.location.href)) {
+    if (await copyToClipboard(absoluteShareHref(window.location.href, Date.now()))) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     }

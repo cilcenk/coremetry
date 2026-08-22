@@ -655,7 +655,9 @@ func TestFetchCodeFailOpen(t *testing.T) {
 		{
 			name: "uygulama frame'i yok", repo: "core-service",
 			frames:     stackparse.ParseJava("\tat java.base/java.util.Optional.orElseThrow(Optional.java:403)\n"),
-			wantReason: "uygulama frame'i yok",
+			// v0.9.1264 — tek-cümle üç sınıfa ayrıldı; JDK-only fixture
+			// artık kesin sınıfını söylüyor.
+			wantReason: "çerçeve/JDK",
 		},
 		{
 			name: "ağaçta eşleşme yok", repo: "core-service", frames: frames,
@@ -1453,5 +1455,21 @@ func TestAPIVersionOrderDetectionFirst(t *testing.T) {
 		if base[i] != again[i] {
 			t.Fatalf("tespitsiz sıra deterministik değil: %v vs %v", base, again)
 		}
+	}
+}
+
+// v0.9.1264 — vazgeçiş sebebi üç sınıfa ayrıldı (tek cümle üçünü
+// katıyordu; aksiyonları farklı).
+func TestFrameGiveUpReasonThreeClasses(t *testing.T) {
+	if got := frameGiveUpReason(nil); !strings.Contains(got, "çözümlenemedi") {
+		t.Errorf("boş parse: %q", got)
+	}
+	fw := []stackparse.Frame{{Class: "org.springframework.X", IsApp: false, File: "X.java", Line: 1}}
+	if got := frameGiveUpReason(fw); !strings.Contains(got, "çerçeve/JDK") {
+		t.Errorf("framework-only: %q", got)
+	}
+	app := []stackparse.Frame{{Class: "com.bank.App", IsApp: true}} // File/Line yok
+	if got := frameGiveUpReason(app); !strings.Contains(got, "dosya/satır") {
+		t.Errorf("locatable-değil: %q", got)
 	}
 }

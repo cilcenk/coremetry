@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/stackparse"
 )
@@ -282,6 +283,11 @@ type fakeTFS struct {
 	repos []string
 	// hits — uç başına istek sayısı (cache pini için).
 	hits map[string]int
+	// slowItemAfter / itemDelay — N'inci dosya isteğinden İTİBAREN
+	// uyu (v0.9.1237 süre tavanı testi). Uyku ctx-duyarlı: aksi hâlde
+	// httptest.Server.Close() askıdaki handler'ı beklerdi.
+	slowItemAfter int
+	itemDelay     time.Duration
 }
 
 // repoSegment — istek yolundaki depo adı. Liste ucunda "".
@@ -392,6 +398,13 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 			_ = json.NewEncoder(w).Encode(out)
 		case strings.HasSuffix(p, "/items"):
 			f.hits["item"]++
+			if f.itemDelay > 0 && f.hits["item"] >= f.slowItemAfter {
+				select {
+				case <-time.After(f.itemDelay):
+				case <-r.Context().Done():
+					return
+				}
+			}
 			body, ok := f.files[q.Get("path")]
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
@@ -811,4 +824,385 @@ func TestFetchCodePicksCaseDifferentBranch(t *testing.T) {
 	if cc.Empty() {
 		t.Fatalf("kod çekilemedi: %s", cc.Reason)
 	}
+}
+
+// --- döngü disiplini (v0.9.1237) ---
+//
+// Üç denetim bulgusu tek döngüde birleşti: (1) tavan ADAYLARI değil
+// PENCERELERİ saymalı — 3 ıska avı bitiriyor, 4. frame isabet
+// edecekken hiç denenmiyordu; (2) birebir tekrar frame'i ikinci kez
+// çekilmemeli, aynı dosyanın başka satırı eldeki içerikten kesilmeli;
+// (3) toplam bir süre tavanı olmalı ve tavan dolduğunda elde ne varsa
+// dönmeli (fail-open). Çekirdek saf: ağ enjekte ediliyor.
+
+// huntFrame — testte frame kurmanın kısa yolu.
+func huntFrame(file string, line int) stackparse.Frame {
+	return stackparse.Frame{
+		Class:  "com.example." + strings.TrimSuffix(file, ".java"),
+		Method: "m", File: file, Line: line, IsApp: true,
+	}
+}
+
+func TestHuntWindowsLoopDiscipline(t *testing.T) {
+	// tree — sahte depo ağacı: yalnız bu dosyalar bulunur.
+	type want struct {
+		windows  int
+		fetches  int
+		dupes    int
+		misses   int
+		patience bool
+		timedOut bool
+		note     []string
+	}
+	tests := []struct {
+		name string
+		tree []string
+		trg  []stackparse.Frame
+		lim  huntLimits
+		// cancelOn — kaçıncı fetch'te ctx iptal edilir (0 = hiç).
+		cancelOn int
+		// cancelFails — o fetch içeriği DÖNMEZ, hata döner.
+		cancelFails bool
+		want        want
+	}{
+		{
+			// (a) ASIL BULGU: üç ıska avı bitirmez.
+			name: "üç ıskadan sonra dördüncü frame isabet eder",
+			tree: []string{"D.java"},
+			trg: []stackparse.Frame{
+				huntFrame("A.java", 10), huntFrame("B.java", 20),
+				huntFrame("C.java", 30), huntFrame("D.java", 40),
+			},
+			want: want{windows: 1, fetches: 1, misses: 3,
+				note: []string{"eşleşmeyen: A.java, B.java, C.java"}},
+		},
+		{
+			// (b) Tavan ÇIKTIDA: 3 pencere kesilince durulur.
+			name: "pencere tavanı fazlasını denemez",
+			tree: []string{"A.java", "B.java", "C.java", "D.java", "E.java"},
+			trg: []stackparse.Frame{
+				huntFrame("A.java", 10), huntFrame("B.java", 20),
+				huntFrame("C.java", 30), huntFrame("D.java", 40),
+				huntFrame("E.java", 50),
+			},
+			want: want{windows: 3, fetches: 3},
+		},
+		{
+			// (c) Iska bütçe harcamaz ama SABIR harcar.
+			name: "deneme tavanı patolojik stack'i durdurur",
+			tree: nil,
+			trg: []stackparse.Frame{
+				huntFrame("A.java", 1), huntFrame("B.java", 2),
+				huntFrame("C.java", 3), huntFrame("D.java", 4),
+				huntFrame("E.java", 5), huntFrame("F.java", 6),
+				huntFrame("G.java", 7), huntFrame("H.java", 8),
+			},
+			// Pencere yok → note boş (o hâli çağıran anlatıyor).
+			want: want{windows: 0, misses: 6, patience: true},
+		},
+		{
+			name: "deneme tavanı kısmi sonuçta rapor edilir",
+			tree: []string{"C.java", "F.java", "Z.java"},
+			trg: []stackparse.Frame{
+				huntFrame("A.java", 1), huntFrame("B.java", 2),
+				huntFrame("C.java", 3), huntFrame("D.java", 4),
+				huntFrame("E.java", 5), huntFrame("F.java", 6),
+				huntFrame("Z.java", 7),
+			},
+			want: want{windows: 2, fetches: 2, misses: 4, patience: true,
+				note: []string{"deneme tavanı (6) doldu — 1 frame denenmedi", "eşleşmeyen:"}},
+		},
+		{
+			// (d) Dedup: birebir tekrar hiç denenmez, aynı DOSYANIN
+			// başka satırı ikinci istek doğurmaz.
+			name: "tekrar frame atlanır, aynı dosya yeniden çekilmez",
+			tree: []string{"A.java", "B.java"},
+			trg: []stackparse.Frame{
+				huntFrame("A.java", 10), huntFrame("A.java", 10),
+				huntFrame("A.java", 90), huntFrame("B.java", 20),
+			},
+			want: want{windows: 3, fetches: 2, dupes: 1},
+		},
+		{
+			// (e) Süre tavanı döngü ORTASINDA: elde olan döner.
+			name: "süre tavanı kısmi pencereyle döner",
+			tree: []string{"A.java", "B.java", "C.java"},
+			trg: []stackparse.Frame{
+				huntFrame("A.java", 10), huntFrame("B.java", 20),
+				huntFrame("C.java", 30),
+			},
+			cancelOn: 1,
+			want: want{windows: 1, fetches: 1, timedOut: true,
+				note: []string{"süre tavanı", "3 adaydan 1 pencere kesildi"}},
+		},
+		{
+			// Süre tavanı fetch'in İÇİNDE dolarsa bu bir ıska DEĞİLDİR:
+			// dosya orada, biz bekleyemedik.
+			name: "istek sırasında dolan tavan ıska sayılmaz",
+			tree: []string{"A.java", "B.java", "C.java"},
+			trg: []stackparse.Frame{
+				huntFrame("A.java", 10), huntFrame("B.java", 20),
+				huntFrame("C.java", 30),
+			},
+			cancelOn: 2, cancelFails: true,
+			want: want{windows: 1, fetches: 2, misses: 0, timedOut: true,
+				note: []string{"süre tavanı", "3 adaydan 1 pencere kesildi"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lim := tt.lim
+			if lim.windows == 0 {
+				lim = huntLimits{windows: codeWindowLimit, lookups: codeLookupLimit, radius: codeWindowRadius}
+			}
+			inTree := map[string]bool{}
+			for _, f := range tt.tree {
+				inTree[f] = true
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			fetches := 0
+			find := func(f stackparse.Frame) string {
+				if inTree[f.File] {
+					return "/src/main/java/com/example/" + f.File
+				}
+				return ""
+			}
+			fetch := func(c context.Context, p string) (string, error) {
+				fetches++
+				if tt.cancelOn == fetches {
+					cancel()
+					if tt.cancelFails {
+						return "", context.Canceled
+					}
+				}
+				name := p[strings.LastIndex(p, "/")+1:]
+				return javaFile("com.example", strings.TrimSuffix(name, ".java"), 200, 10), nil
+			}
+
+			h := huntWindows(ctx, tt.trg, lim, find, fetch)
+
+			if len(h.windows) != tt.want.windows {
+				t.Errorf("pencere=%d, istenen %d", len(h.windows), tt.want.windows)
+			}
+			if fetches != tt.want.fetches {
+				t.Errorf("fetch=%d, istenen %d (aynı dosya yeniden mi çekildi?)", fetches, tt.want.fetches)
+			}
+			if h.dupes != tt.want.dupes {
+				t.Errorf("dupes=%d, istenen %d", h.dupes, tt.want.dupes)
+			}
+			if len(h.misses) != tt.want.misses {
+				t.Errorf("ıska=%d, istenen %d (%v)", len(h.misses), tt.want.misses, h.misses)
+			}
+			if h.patience != tt.want.patience {
+				t.Errorf("patience=%v, istenen %v", h.patience, tt.want.patience)
+			}
+			if h.timedOut != tt.want.timedOut {
+				t.Errorf("timedOut=%v, istenen %v", h.timedOut, tt.want.timedOut)
+			}
+			note := h.note(len(h.windows), len(tt.trg), cutoffLabel(true, codeFetchDeadline))
+			if len(tt.want.note) == 0 && note != "" {
+				t.Errorf("not boş olmalıydı: %q", note)
+			}
+			for _, sub := range tt.want.note {
+				if !strings.Contains(note, sub) {
+					t.Errorf("notta %q yok: %q", sub, note)
+				}
+			}
+			// Kesilen her pencere gerçekten dolu olmalı.
+			for _, w := range h.windows {
+				if w.Path == "" || w.Content == "" || w.Frame == "" {
+					t.Errorf("yarım pencere: %+v", w)
+				}
+			}
+		})
+	}
+}
+
+// TestDeadlineHitDistinguishesCallerCancel — tavan BİZDE mi doldu?
+// Çağıran vazgeçtiğinde "DevOps 25 sn'de yanıt vermedi" demek yanlış
+// suçlama olurdu; ayrım Reason'ın dürüstlüğünü taşıyor.
+func TestDeadlineHitDistinguishesCallerCancel(t *testing.T) {
+	live := context.Background()
+
+	past, cancel := context.WithDeadline(live, time.Now().Add(-time.Second))
+	defer cancel()
+	if !deadlineHit(live, past) {
+		t.Error("kendi tavanımız dolduğunda true beklenirdi")
+	}
+
+	gone, cancelGone := context.WithCancel(live)
+	cancelGone()
+	child, cancelChild := context.WithTimeout(gone, time.Hour)
+	defer cancelChild()
+	if deadlineHit(gone, child) {
+		t.Error("çağıran vazgeçtiğinde DevOps suçlanmamalı")
+	}
+
+	ok, cancelOK := context.WithTimeout(live, time.Hour)
+	defer cancelOK()
+	if deadlineHit(live, ok) {
+		t.Error("her şey canlıyken false beklenirdi")
+	}
+	if !strings.Contains(deadlineReason(codeFetchDeadline), "25s") {
+		t.Errorf("Reason süreyi söylemiyor: %q", deadlineReason(codeFetchDeadline))
+	}
+}
+
+// TestFetchCodeWalksPastMissesToLaterFrame — uçtan uca: ilk üç
+// uygulama frame'i ağaçta yok, dördüncü var. v0.9.1237 öncesi
+// AppFrames(frames, 3) bu dördüncüyü hiç görmüyor, cevap "ağaçta
+// eşleşen dosya yok" oluyordu.
+func TestFetchCodeWalksPastMissesToLaterFrame(t *testing.T) {
+	f := newFakeTFS(t)
+	const path = "/src/main/java/com/example/card/CardRepository.java"
+	f.tree = []string{"/README.md", path}
+	f.files[path] = javaFile("com.example.card", "CardRepository", 200, 88)
+
+	svc := New()
+	svc.Configure(f.settings())
+	stack := "" +
+		"jakarta.ejb.EJBException: host response error\n" +
+		"\tat com.example.card.Wrapper.a(Wrapper.java:11)\n" +
+		"\tat com.example.card.Wrapper.b(Filter.java:22)\n" +
+		"\tat com.example.card.Wrapper.c(Chain.java:33)\n" +
+		"\tat com.example.card.CardRepository.find(CardRepository.java:88)\n"
+
+	cc := svc.FetchCode(context.Background(), "core-service", "", stackparse.ParseJava(stack))
+	if len(cc.Windows) != 1 {
+		t.Fatalf("pencere=%d, istenen 1 — ıskalar avı bitirmiş olabilir (reason=%q)",
+			len(cc.Windows), cc.Reason)
+	}
+	if cc.Windows[0].Path != path {
+		t.Fatalf("Path=%q, istenen %q", cc.Windows[0].Path, path)
+	}
+	// Kısmi ıska GÖRÜNÜR: kod geldi diye eksik susturulmaz.
+	for _, sub := range []string{"eşleşmeyen:", "Wrapper.java", "Filter.java", "Chain.java"} {
+		if !strings.Contains(cc.Reason, sub) {
+			t.Errorf("Reason'da %q yok: %q", sub, cc.Reason)
+		}
+	}
+}
+
+// TestFetchCodeDedupsSameFileFrames — uçtan uca: birebir tekrar frame
+// ikinci kez ÇEKİLMEZ, aynı dosyanın başka satırı eldeki içerikten
+// kesilir. Özyineleme/wrapper kalıbında hem istek hem kod bütçesi
+// boşa gidiyordu.
+func TestFetchCodeDedupsSameFileFrames(t *testing.T) {
+	f := newFakeTFS(t)
+	const path = "/src/main/java/com/example/card/Recursive.java"
+	f.tree = []string{path}
+	f.files[path] = javaFile("com.example.card", "Recursive", 200, 12)
+
+	svc := New()
+	svc.Configure(f.settings())
+	stack := "" +
+		"\tat com.example.card.Recursive.walk(Recursive.java:12)\n" +
+		"\tat com.example.card.Recursive.walk(Recursive.java:12)\n" +
+		"\tat com.example.card.Recursive.enter(Recursive.java:120)\n"
+
+	cc := svc.FetchCode(context.Background(), "core-service", "", stackparse.ParseJava(stack))
+	if len(cc.Windows) != 2 {
+		t.Fatalf("pencere=%d, istenen 2 (tekrar atlanmalı, 120. satır kalmalı): %q",
+			len(cc.Windows), cc.Reason)
+	}
+	if f.hits["item"] != 1 {
+		t.Fatalf("dosya %d kez çekildi, 1 beklenirdi — içerik yeniden kullanılmıyor", f.hits["item"])
+	}
+	if cc.Windows[0].Line == cc.Windows[1].Line {
+		t.Fatalf("aynı pencerenin kopyası bütçeyi yemiş: %d / %d",
+			cc.Windows[0].Line, cc.Windows[1].Line)
+	}
+	if cc.Reason != "" {
+		t.Fatalf("tam isabette Reason dolu: %q", cc.Reason)
+	}
+}
+
+// TestFetchCodeTotalDeadlineReturnsPartial — uçtan uca: ikinci dosya
+// isteği asılı kalınca TOPLAM tavan devreye girer ve elde olan pencere
+// DÖNER. v0.9.1237 öncesi tek sınır istek başına 20 sn'ydi; ardışık N
+// isteğin tavanı yoktu, explain baytsız dakikalarca bekleyebiliyordu.
+//
+// Tavan testte kısaltılır (Service.codeDeadline); ölçülen şey süre
+// değil, tavanın GERÇEKTEN takılması ve kısmi sonucun raporlanması.
+func TestFetchCodeTotalDeadlineReturnsPartial(t *testing.T) {
+	f := newFakeTFS(t)
+	const a = "/src/main/java/com/example/a/A.java"
+	const b = "/src/main/java/com/example/a/B.java"
+	f.tree = []string{a, b}
+	f.files[a] = javaFile("com.example.a", "A", 200, 12)
+	f.files[b] = javaFile("com.example.a", "B", 200, 20)
+	f.slowItemAfter, f.itemDelay = 2, 5*time.Second // 2. dosya asılır
+
+	svc := New()
+	svc.Configure(f.settings())
+	svc.codeDeadline = 300 * time.Millisecond
+
+	start := time.Now()
+	cc := svc.FetchCode(context.Background(), "core-service", "", stackparse.ParseJava(
+		"\tat com.example.a.A.x(A.java:12)\n"+
+			"\tat com.example.a.B.y(B.java:20)\n"))
+	el := time.Since(start)
+
+	if len(cc.Windows) != 1 {
+		t.Fatalf("pencere=%d, istenen 1 (kısmi sonuç dönmeliydi): %q", len(cc.Windows), cc.Reason)
+	}
+	if !strings.Contains(cc.Reason, "süre tavanı") || !strings.Contains(cc.Reason, "1 pencere kesildi") {
+		t.Errorf("kesinti Reason'da yok: %q", cc.Reason)
+	}
+	if el > 3*time.Second {
+		t.Errorf("tavan tutmadı: %s beklendi ~300ms", el)
+	}
+}
+
+// TestFetchCodeDeadlineBlamesNobodyWhenCallerCancels — çağıran
+// vazgeçtiyse (tarayıcı kapandı, üst ctx düştü) Reason "DevOps yanıt
+// vermedi" ya da "süre tavanı" DEMEZ; yanlış suçlama operatörü
+// olmayan bir sunucu arızasının peşine düşürürdü. İki hâl de gerekli:
+// hiç pencere gelmeyen dal Reason'ı, kısmi dal ise notu üretiyor.
+func TestFetchCodeDeadlineBlamesNobodyWhenCallerCancels(t *testing.T) {
+	const a = "/src/main/java/com/example/a/A.java"
+	const b = "/src/main/java/com/example/a/B.java"
+
+	run := func(t *testing.T, slowAfter int, stack string) CodeContext {
+		t.Helper()
+		f := newFakeTFS(t)
+		f.tree = []string{a, b}
+		f.files[a] = javaFile("com.example.a", "A", 200, 12)
+		f.files[b] = javaFile("com.example.a", "B", 200, 20)
+		f.slowItemAfter, f.itemDelay = slowAfter, 5*time.Second
+
+		svc := New()
+		svc.Configure(f.settings())
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() { time.Sleep(150 * time.Millisecond); cancel() }()
+		defer cancel()
+		return svc.FetchCode(ctx, "core-service", "", stackparse.ParseJava(stack))
+	}
+
+	t.Run("hiç pencere yokken", func(t *testing.T) {
+		cc := run(t, 1, "\tat com.example.a.A.x(A.java:12)\n")
+		if strings.Contains(cc.Reason, "yanıt vermedi") || strings.Contains(cc.Reason, "süre tavanı") {
+			t.Fatalf("çağıran vazgeçtiğinde DevOps suçlanmış: %q", cc.Reason)
+		}
+		if !strings.Contains(cc.Reason, "iptal") {
+			t.Fatalf("iptal sebebi yazılmamış: %q", cc.Reason)
+		}
+	})
+
+	t.Run("kısmi pencere gelmişken", func(t *testing.T) {
+		cc := run(t, 2, "\tat com.example.a.A.x(A.java:12)\n"+
+			"\tat com.example.a.B.y(B.java:20)\n")
+		if len(cc.Windows) != 1 {
+			t.Fatalf("pencere=%d, istenen 1 (kısmi sonuç): %q", len(cc.Windows), cc.Reason)
+		}
+		if strings.Contains(cc.Reason, "süre tavanı") {
+			t.Fatalf("iptal 'süre tavanı' diye raporlanmış: %q", cc.Reason)
+		}
+		if !strings.Contains(cc.Reason, "istek iptal edildi") {
+			t.Fatalf("kesinti notu yok: %q", cc.Reason)
+		}
+	})
 }

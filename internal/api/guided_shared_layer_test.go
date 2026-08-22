@@ -364,3 +364,43 @@ func guidedSharedSource(t *testing.T, name string) string {
 	}
 	return sb.String()
 }
+
+// TAKIM SEAM'İ (v0.9.1244) — guided'ın takım bundle'ı ortak katmandan
+// beslenmeli. list_teams / get_team_services tool'ları AYNI çözümlemeyi
+// ve AYNI okumayı kullanıyor; api'de ikinci bir kopya belirirse takım
+// cevabı iki yüzeyde sessizce ayrışır (v0.9.553 sınıfı) — "MCP takımın
+// 100 servisini saydı, guided 80'ini" gibi.
+func TestGuidedTeamPathUsesSharedLayer(t *testing.T) {
+	src := guidedSharedSource(t, "copilot_guided.go")
+	i := strings.Index(src, "func (s *Server) guidedTeamServicesBundle(")
+	if i < 0 {
+		t.Fatal("guidedTeamServicesBundle bulunamadı — taşındıysa bu pini de taşı")
+	}
+	body := src[i:]
+	if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
+		body = body[:j]
+	}
+	for _, want := range []string{
+		"mcptools.ReadTeamServiceNames(",
+		"mcptools.ReadTeamServicesRED(",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("guided takım bundle'ı ortak katmandan beslenmiyor — bekleniyor: %s", want)
+		}
+	}
+	if strings.Contains(body, "GetServicesAggFilteredIn(") {
+		t.Error("guided takım bundle'ı store'u DOĞRUDAN okuyor — okumanın ikinci kopyası geri geldi")
+	}
+	if strings.Contains(body, "ListServiceMetadata(") {
+		t.Error("guided takım bundle'ı çözümlemeyi kendi yapıyor — tavan/alias kuralı ikiye bölündü")
+	}
+	// Katalog tarafı da aynı okumadan: "hangi takım?" çipleri ile
+	// list_teams aynı takımları, aynı sırayla göstermeli.
+	if !strings.Contains(src, "mcptools.ReadTeamCatalogue(") {
+		t.Error("guidedTeamNames ortak katalog okumasını kullanmıyor")
+	}
+	// Tavan TEK yazımda: api kendi 100'ünü tanımlarsa iki sayı ayrışır.
+	if !strings.Contains(src, "mcptools.MaxTeamServices") {
+		t.Error("maxTeamServices ortak sabitten türemiyor")
+	}
+}

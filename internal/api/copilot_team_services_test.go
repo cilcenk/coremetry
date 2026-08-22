@@ -183,69 +183,13 @@ func TestRouteTeamBeatsContextService(t *testing.T) {
 	}
 }
 
-func TestTeamCatalogueOrderAndDedup(t *testing.T) {
-	mds := map[string]chstore.ServiceMetadata{
-		"a": {OwnerTeam: "Avengersy", SRETeam: "Platform"},
-		"b": {OwnerTeam: "avengerSY"},
-		"c": {SRETeam: "Platform"},
-		// Aynı takım iki rolde → servis BİR kez sayılmalı.
-		"d": {OwnerTeam: "Ödeme", SRETeam: "Ödeme"},
-		"e": {OwnerTeam: "  ", SRETeam: ""},
-	}
-	got := teamCatalogue(chstore.TeamAliases{}, mds)
-	want := []string{"Avengersy", "Platform", "Ödeme"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("teamCatalogue = %v, want %v", got, want)
-	}
-	// Alias tablosu iki yazımı TEK takıma indirir; sayım da birleşir,
-	// yani alias'lı takım sıralamada yukarı çıkar.
-	ta := chstore.TeamAliases{Aliases: map[string]string{"SY-Dijital Bankacılık": "Ödeme"}}
-	mds["f"] = chstore.ServiceMetadata{OwnerTeam: "SY-Dijital Bankacılık"}
-	mds["g"] = chstore.ServiceMetadata{OwnerTeam: "SY-Dijital Bankacılık"}
-	got = teamCatalogue(ta, mds)
-	if len(got) != 3 {
-		t.Fatalf("alias birleştirmesi çalışmadı: %v", got)
-	}
-	if got[0] != "Ödeme" {
-		t.Errorf("alias'lı takım 3 servisle başa geçmeli, sıra: %v", got)
-	}
-	// Determinizm: aynı girdi aynı sıra (map iterasyonu sızmıyor).
-	for i := 0; i < 20; i++ {
-		if again := teamCatalogue(ta, mds); strings.Join(again, "|") != strings.Join(got, "|") {
-			t.Fatalf("sıra deterministik değil: %v vs %v", again, got)
-		}
-	}
-}
-
-// SIRALAMA SÖZLEŞMESİ (operatörün cümlesi): hata oranı azalan, eşitlikte
-// hata sayısı azalan, sonra ad. Aile bundle'ının SAYI-birincil sırasıyla
-// karıştırılmamalı.
-func TestSortServicesByErrorRate(t *testing.T) {
-	rows := []chstore.ServiceSummary{
-		{Name: "low-rate-high-count", ErrorRate: 0.5, ErrorCount: 5000, SpanCount: 1_000_000},
-		{Name: "worst", ErrorRate: 42.0, ErrorCount: 42, SpanCount: 100},
-		{Name: "tie-b", ErrorRate: 10.0, ErrorCount: 100},
-		{Name: "tie-a", ErrorRate: 10.0, ErrorCount: 900},
-		{Name: "tie-name-b", ErrorRate: 1.0, ErrorCount: 1},
-		{Name: "tie-name-a", ErrorRate: 1.0, ErrorCount: 1},
-		{Name: "clean", ErrorRate: 0, ErrorCount: 0, SpanCount: 500},
-	}
-	sortServicesByErrorRate(rows)
-	want := []string{"worst", "tie-a", "tie-b", "tie-name-a", "tie-name-b", "low-rate-high-count", "clean"}
-	for i, w := range want {
-		if rows[i].Name != w {
-			t.Fatalf("sıra[%d] = %q, want %q (tam sıra: %v)", i, rows[i].Name, w, teamRowNames(rows))
-		}
-	}
-}
-
-func teamRowNames(rows []chstore.ServiceSummary) []string {
-	out := make([]string, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, r.Name)
-	}
-	return out
-}
+// v0.9.1244 — TestTeamCatalogueOrderAndDedup ve TestSortServicesByErrorRate
+// bu dosyadan TAŞINDI: katalog sayımı/sırası ile hata-oranı sıralaması artık
+// mcptools'ta yaşıyor (list_teams / get_team_services aynı çözümlemeyi
+// kullanmak zorunda ve mcptools api'yi import edemez). Aynı vakalar,
+// implementasyonun yanında: internal/mcptools/team_ownership_test.go
+// (TestTeamCatalogueOrderAndDedup, TestSortServicesByErrorRate). Buradaki
+// router + kanıt-metni kapıları yerinde kaldı — onların gövdesi hâlâ api'de.
 
 // Kanıt bloğu: satır tavanı + üç dürüstlük satırı.
 func TestRenderTeamServicesEvidenceTR(t *testing.T) {

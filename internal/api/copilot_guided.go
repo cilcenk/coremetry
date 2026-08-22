@@ -16,6 +16,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/logstore"
+	"github.com/cilcenk/coremetry/internal/mcptools"
 	"github.com/cilcenk/coremetry/internal/reqid"
 )
 
@@ -715,64 +716,13 @@ func mayNameTeam(norm string) bool {
 // dahil, yani "avengerSY"/"Avengersy" TEK takımdır (v0.8.330'un
 // /services tarafında yaptığı işin sunucu ikizi). Gösterilen yazımı
 // betterTeamDisplay seçer (deterministik).
-// betterTeamDisplay — aynı takımın iki yazımı arasında gösterilecek olanı
-// seçer. Kural: KANONİK yazım (normali kendi kanonuna eşit olan, yani
-// alias tablosunun HEDEF tarafı) her zaman kazanır; ikisi de kanonik ya
-// da ikisi de alias ise alfabetik küçük olan. Alias yazımının çipe
-// düşmesi operatörü şaşırtırdı — katalogda başka bir ad görüyor.
 //
-// "İlk görülen" kuralı KULLANILMAZ: map iterasyon sırası rastgeledir,
-// aynı soru iki farklı çip metni üretirdi.
-func betterTeamDisplay(cand, cur, canon string) bool {
-	candCanon := chstore.NormTeamName(cand) == canon
-	curCanon := chstore.NormTeamName(cur) == canon
-	if candCanon != curCanon {
-		return candCanon
-	}
-	return cand < cur
-}
-
-func teamCatalogue(ta chstore.TeamAliases, mds map[string]chstore.ServiceMetadata) []string {
-	type entry struct {
-		display string
-		n       int
-	}
-	byCanon := map[string]*entry{}
-	for _, md := range mds {
-		seen := map[string]bool{} // aynı servis owner=sre ise İKİ kez saymasın
-		for _, name := range []string{md.OwnerTeam, md.SRETeam} {
-			c := ta.CanonTeam(name)
-			if c == "" || seen[c] {
-				continue
-			}
-			seen[c] = true
-			disp := strings.TrimSpace(name)
-			if e, ok := byCanon[c]; ok {
-				e.n++
-				if betterTeamDisplay(disp, e.display, c) {
-					e.display = disp
-				}
-				continue
-			}
-			byCanon[c] = &entry{display: disp, n: 1}
-		}
-	}
-	out := make([]entry, 0, len(byCanon))
-	for _, e := range byCanon {
-		out = append(out, *e)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].n != out[j].n {
-			return out[i].n > out[j].n
-		}
-		return out[i].display < out[j].display
-	})
-	names := make([]string, 0, len(out))
-	for _, e := range out {
-		names = append(names, e.display)
-	}
-	return names
-}
+// v0.9.1244 — KATALOG mcptools.TeamCatalogue'a taşındı (list_teams tool'u
+// aynı sayımı ve aynı sırayı vermek zorunda; mcptools api'yi import
+// edemez, döngü). Buradaki tek çağıran guidedTeamNames artık
+// mcptools.ReadTeamCatalogue'u okuyor — api'de ikinci bir uygulama YOK.
+// Sıra/tekilleştirme/determinizm testleri de implementasyonun yanına
+// taşındı: mcptools/team_ownership_test.go.
 
 // extractServiceEntities (v0.9.422, CoSRE fikir #7) — mesajda sınırlı
 // (bounded) tam-ad olarak geçen TÜM canlı servisler. extractServiceEntity
@@ -1417,9 +1367,14 @@ func (s *Server) guidedEnvNames(ctx context.Context) []string {
 //
 // Maliyet notu: kaynak okuma ListServiceMetadata ve o ZATEN süreç-içi 30sn
 // cache'li + yazma-tarafı invalidasyonlu (v0.8.359). Redis katmanı asıl
-// olarak takım sayımı + sıralamayı (teamCatalogue) ve alias point-read'ini
-// (teamAliasesCtx) her mesajda yeniden yapmamak için var. Hata → nil:
-// router takım-kör koşar, yani v0.9.1134 öncesi davranış.
+// olarak takım sayımı + sıralamayı ve alias point-read'ini her mesajda
+// yeniden yapmamak için var. Hata → nil: router takım-kör koşar, yani
+// v0.9.1134 öncesi davranış.
+//
+// v0.9.1244 — okuma mcptools.ReadTeamCatalogue: list_teams tool'u ile
+// AYNI katalog, aynı sıra. İki yüzeyin farklı takım listesi göstermesi
+// (biri alias'ları birleştirir, öbürü birleştirmez) sessiz bir sapma
+// olurdu.
 func (s *Server) guidedTeamNames(ctx context.Context) []string {
 	const key = "copilot:guided:teamnames"
 	if b, ok, _ := s.cache.Get(ctx, key); ok && len(b) > 0 {
@@ -1428,11 +1383,11 @@ func (s *Server) guidedTeamNames(ctx context.Context) []string {
 			return names
 		}
 	}
-	mds, err := s.store.ListServiceMetadata(ctx)
+	data, err := mcptools.ReadTeamCatalogue(ctx, s.mcpDeps())
 	if err != nil {
 		return nil
 	}
-	names := teamCatalogue(s.teamAliasesCtx(ctx), mds)
+	names := mcptools.TeamCatalogueNames(data.Teams)
 	if b, merr := json.Marshal(names); merr == nil {
 		_ = s.cache.Set(ctx, key, b, 60*time.Second)
 	}
@@ -1730,25 +1685,21 @@ func (s *Server) guidedOperationHealthBundle(ctx context.Context, emit func(stri
 // maxTeamServices — takım-kapsamlı MV okumasının IN listesi tavanı.
 // Üstü okunmaz ve kanıt bunu SÖYLER. v0.9.1134'te fonksiyon içinden
 // dosya kapsamına çıkarıldı: guidedTeamServicesBundle da aynı tavana
-// uymalı, iki ayrı sayı zamanla ayrışırdı.
-const maxTeamServices = 100
+// uymalı, iki ayrı sayı zamanla ayrışırdı. v0.9.1244'te mcptools'a
+// taşındı — get_team_services de aynı tavanı ilan ediyor.
+const maxTeamServices = mcptools.MaxTeamServices
 
 // servicesForUserTeam (v0.9.375) — kullanıcının takımına ait servisler:
 // ownerTeam VEYA sreTeam eşleşmesi (case-insensitive). Inbox'ın
 // servicesForTeam'inden farkı: orada owner ve SRE ayrı süzgeçler (AND),
-// burada "benim servisim" iki rolün BİRLEŞİMİ. Saf; table-testli.
+// burada "benim servisim" iki rolün BİRLEŞİMİ.
+//
+// v0.9.1244 — gövde mcptools.TeamServiceNames'e taşındı (get_team_services
+// AYNI çözümlemeyi kullanmak zorunda; mcptools api'yi import edemez).
+// Burası tek satırlık delegasyon: KİMLİK yarısı (CallMeta → users →
+// User.Team) api'de kalıyor, çünkü MCP tarafında kimlik yok.
 func servicesForUserTeam(ta chstore.TeamAliases, mds map[string]chstore.ServiceMetadata, team string) []string {
-	if team == "" {
-		return nil
-	}
-	out := make([]string, 0, 16)
-	for svc, md := range mds {
-		if ta.TeamEqual(md.OwnerTeam, team) || ta.TeamEqual(md.SRETeam, team) {
-			out = append(out, svc)
-		}
-	}
-	sort.Strings(out)
-	return out
+	return mcptools.TeamServiceNames(ta, mds, team)
 }
 
 // guidedMyTeamBundle (v0.9.375, operatör istegi) — "takımımın
@@ -1936,29 +1887,19 @@ func (s *Server) guidedAskTeamEvidence(ctx context.Context, route *guidedRoute, 
 // (gemma4) anlatıda kaybetmeden sayabildiği üst sınır.
 const teamServicesMaxRows = 15
 
-// sortServicesByErrorRate (v0.9.1134, operatör istegi: "en çok hata alan /
+// SIRALAMA SÖZLEŞMESİ (v0.9.1134, operatör istegi: "en çok hata alan /
 // error rate yüksek olanlara göre sırala") — ORAN birincil, SAYI eşitlik
-// bozucu.
+// bozucu, ad üçüncü. guidedFamilyHealthBundle'ın sırası bilerek FARKLI
+// (sayı birincil): orada soru "hangisinde hata var", yani mutlak hacim.
 //
-// guidedFamilyHealthBundle'ın sırası bilerek FARKLI (sayı birincil): orada
-// soru "hangisinde hata var", yani mutlak hacim. Takım listesinde operatör
-// açıkça ORANI istedi — 10 istekte 5 hata alan servis, 1M istekte 100 hata
-// alandan daha kötüdür. Üçüncü anahtar ad: eşit oran+sayıda sıra
-// deterministik kalsın (aynı soru iki farklı liste üretmesin).
-func sortServicesByErrorRate(rows []chstore.ServiceSummary) {
-	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].ErrorRate != rows[j].ErrorRate {
-			return rows[i].ErrorRate > rows[j].ErrorRate
-		}
-		if rows[i].ErrorCount != rows[j].ErrorCount {
-			return rows[i].ErrorCount > rows[j].ErrorCount
-		}
-		return rows[i].Name < rows[j].Name
-	})
-}
+// v0.9.1244 — sıralama artık ORTAK OKUMANIN İÇİNDE
+// (mcptools.ReadTeamServicesRED → SortServicesByErrorRate), yani takım
+// cevabının "en kötü servis" iddiası guided'da ve get_team_services'te
+// aynı satırı gösteriyor. Tablo testi implementasyonun yanında:
+// mcptools/team_ownership_test.go.
 
 // renderTeamServicesEvidenceTR — takım servis listesinin kanıt bloğu
-// (saf; tablo-testli). rows ZATEN sıralı gelmeli (sortServicesByErrorRate).
+// (saf; tablo-testli). rows ZATEN sıralı gelmeli (ortak okuma sıralıyor).
 // readSvcs = MV'ye sorulan servis sayısı, trimmed = tavana takılıp hiç
 // sorulmayanlar. Üç dürüstlük satırı: tavana takılanlar, satır tavanı,
 // pencerede hiç span üretmeyenler.
@@ -2012,34 +1953,32 @@ func (s *Server) guidedTeamServicesBundle(ctx context.Context, emit func(string,
 		return "", "", errors.New("team_services: takım adı boş")
 	}
 	nResolve := emitGuidedStep(emit, "resolve_team_services", `{"team":`+jsonStr(team)+`}`)
-	mds, merr := s.store.ListServiceMetadata(ctx)
+	svcs, trimmed, merr := mcptools.ReadTeamServiceNames(ctx, s.mcpDeps(), team)
 	if merr != nil {
 		emitGuidedStepResult(emit, nResolve, "resolve_team_services", "", merr)
 		return "", "", merr
 	}
-	svcs := servicesForUserTeam(s.teamAliasesCtx(ctx), mds, team)
 	if len(svcs) == 0 {
 		ev := fmt.Sprintf("%q takımı hiçbir serviste ownerTeam/sreTeam olarak geçmiyor (Service Catalog). "+
 			"Kullanıcıya söyle: katalogda takım ataması yapılmalı ya da başka bir takım adı denemeli.\n", team)
 		emitGuidedStepResult(emit, nResolve, "resolve_team_services", ev, nil)
 		return ev, fmt.Sprintf("servis kataloğu (takım: %s)", team), nil
 	}
-	trimmed := 0
-	if len(svcs) > maxTeamServices {
-		trimmed = len(svcs) - maxTeamServices
-		svcs = svcs[:maxTeamServices]
-	}
 	// Çözümün kanıtı, RED okumasından ÖNCE: hangi servisler bu takım
 	// sayıldı? (v0.9.1229 — katalog eşleşmesi okumanın kendi çıktısı.)
+	// Tavan (mcptools.MaxTeamServices) çözümlemenin İÇİNDE uygulandı;
+	// `trimmed` tavana takılıp hiç okunmayanları sayıyor.
 	emitGuidedStepResult(emit, nResolve, "resolve_team_services",
 		fmt.Sprintf("%q takımına eşleşen servisler (%d):\n- %s\n", team, len(svcs), strings.Join(svcs, "\n- ")), nil)
 	nRED := emitGuidedStep(emit, "team_services_red", fmt.Sprintf(`{"team":%s,"services":%d}`, jsonStr(team), len(svcs)))
-	rows, err := s.store.GetServicesAggFilteredIn(ctx, from, to, "", svcs, "", "", len(svcs), 0)
+	// v0.9.1244 — okuma + hata-oranı sırası ortak katmanda
+	// (get_team_services AYNI çağrıyı yapıyor): "en kötü servis" iddiası
+	// iki yüzeyde de aynı satırı göstersin.
+	rows, err := mcptools.ReadTeamServicesRED(ctx, s.mcpDeps(), svcs, from, to)
 	if err != nil {
 		emitGuidedStepResult(emit, nRED, "team_services_red", "", err)
 		return "", "", err
 	}
-	sortServicesByErrorRate(rows)
 	// v0.9.651 emsali — çözülen liste rotaya yazılıyor; çipler ve derin
 	// linkler buradan besleniyor. SIRA hata oranına göre, yani
 	// TeamServices[0] = EN KÖTÜ servis (link/çip metni ona bakıyor).

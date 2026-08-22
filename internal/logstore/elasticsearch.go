@@ -308,6 +308,11 @@ type ESStore struct {
 	// (v0.8.400, es_env_field.go) — one field_caps per envFieldTTL,
 	// never per request.
 	envField esEnvFieldCache
+	// groupFields memoises the multi-field break-down axis discovery
+	// (v0.9.1250, es_group_fields.go) — cluster/namespace live on a
+	// different document path per pipeline, so the histogram resolves
+	// the aggregatable spellings once per axis per groupFieldTTL.
+	groupFields esGroupFieldsCache
 	// v0.9.1084 — hasTrace exists hedefinin varlık kararı (es_trace_presence.go).
 	tracePresence esTracePresenceCache
 	// NamespaceResolver maps a service name to its namespace for the
@@ -1927,6 +1932,16 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	// Bounded window + window-narrowed dailies (v0.8.109).
 	f.From, f.To = clampWindow(f.From, f.To)
 
+	// v0.9.1250 — cluster/namespace kırılımı: TEK alan yok, aday alan
+	// başına bir terms agg (es_group_fields.go). Alan çözümü cache'li
+	// field_caps ile yapılır; çözülemezse liste boş kalır ve aşağıdaki
+	// gövde seçimi gruplanmamış _total'a düşer (sessiz yanlış kırılım
+	// yerine görünür şekilde kırılımsız).
+	var multiFields []string
+	if !sevBanded && groupField == "" {
+		multiFields = s.histogramGroupAggFields(ctx, groupBy)
+	}
+
 	var bodyMap map[string]any
 	if sevBanded {
 		// v0.8.377 — canonical server-side banding (see
@@ -1935,6 +1950,11 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 			s.buildQuery(f), s.fields.Timestamp,
 			severityCandidateKeywordFields(s.fields.SeverityTx),
 			s.fields.SeverityNo, bucketSec,
+			esTimeseriesTimeoutFromEnv("10s"),
+		)
+	} else if len(multiFields) > 0 {
+		bodyMap = buildMultiFieldHistogramBody(
+			s.buildQuery(f), s.fields.Timestamp, multiFields, bucketSec,
 			esTimeseriesTimeoutFromEnv("10s"),
 		)
 	} else {
@@ -2010,11 +2030,33 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 		return pts
 	}
 
-	if !sevBanded && groupField == "" {
+	// termsGroups parses one terms agg (bucket array) into series.
+	termsGroups := func(agg any) []LogSeries {
+		root, _ := agg.(map[string]any)
+		bs, _ := root["buckets"].([]any)
+		list := make([]LogSeries, 0, len(bs))
+		for _, b := range bs {
+			bm, _ := b.(map[string]any)
+			name, _ := bm["key"].(string)
+			list = append(list, LogSeries{Name: name, Points: parseBuckets(bm["buckets"])})
+		}
+		return list
+	}
+
+	if !sevBanded && groupField == "" && len(multiFields) == 0 {
 		return []LogSeries{{Name: "_total", Points: parseBuckets(raw.Aggregations["buckets"])}}, nil
 	}
 	var out []LogSeries
-	if sevBanded {
+	if len(multiFields) > 0 {
+		// v0.9.1250 — aday alan başına bir terms agg; birleştirme GRUP
+		// ADINA göre (mergeFieldSeries; çift-alan çift-sayım oradaki
+		// yorumda dürüstçe belgeli).
+		perField := make([][]LogSeries, 0, len(multiFields))
+		for i := range multiFields {
+			perField = append(perField, termsGroups(raw.Aggregations[multiFieldAggKey(i)]))
+		}
+		out = mergeFieldSeries(perField)
+	} else if sevBanded {
 		// v0.8.377 — keyed filters agg: buckets is a MAP keyed by band
 		// name, not the terms agg's array. Iterate severityBands so the
 		// series order is canonical (ERROR first); skip empty bands so
@@ -2029,14 +2071,7 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 			}
 		}
 	} else {
-		groups, _ := raw.Aggregations["groups"].(map[string]any)
-		bs, _ := groups["buckets"].([]any)
-		out = make([]LogSeries, 0, len(bs)+1)
-		for _, b := range bs {
-			bm, _ := b.(map[string]any)
-			name, _ := bm["key"].(string)
-			out = append(out, LogSeries{Name: name, Points: parseBuckets(bm["buckets"])})
-		}
+		out = termsGroups(raw.Aggregations["groups"])
 	}
 	// v0.5.396 — synthesise "OTHER" band from
 	// (total - sum-of-named-groups) per bucket. For groupBy=service:
@@ -2064,6 +2099,10 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 				// band matches two filters, so sum(bands) can exceed the
 				// total. Clamp; the bands themselves stay right for every
 				// self-consistent doc.
+				// v0.9.1250 — also reachable on the cluster/namespace
+				// path: a doc carrying the same value on two candidate
+				// FIELDS is counted once per field (mergeFieldSeries'
+				// documented double-count). Same clamp, same reasoning.
 				rem = 0
 			}
 			otherPts = append(otherPts, LogPoint{T: p.T, V: rem})
@@ -2583,6 +2622,10 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		// mappings where the path is typed keyword directly (same class
 		// as the service filter fix above).
 		clShould := []any{}
+		// v0.9.1250 — aday alan listesi artık esClusterFields'ta (tek
+		// kaynak): histogramın cluster KIRILIMI da aynı listeyi
+		// kullanıyor, çünkü kırılımın adlandırdığı cluster bu filtrenin
+		// bulabildiği cluster olmak zorunda (v0.8.265 sınıfı).
 		// v0.9.452 (operatör isteği) — OpenShift cluster-logging şekli:
 		// ClusterLogForwarder cluster adını ÜST-DÜZEY
 		// `openshift.labels.cluster` alanına yazar (OTel resource_attributes
@@ -2590,12 +2633,7 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		// alanla eşleşiyor; üç OTel yolu bu indekste hiç yok — filtre o
 		// yüzden hiçbir kaydı bulamıyordu. exists-guard'lı should zinciri
 		// eksik alanlı indekslerde zararsız (mevcut sözleşme).
-		for _, fld := range []string{
-			"resource_attributes.k8s.cluster.name",
-			"resource_attributes.openshift.cluster.name",
-			"resource_attributes.cluster",
-			"openshift.labels.cluster",
-		} {
+		for _, fld := range esClusterFields {
 			clShould = append(clShould, exactTermsBothShapes(fld, f.Cluster)...)
 		}
 		must = append(must, map[string]any{
@@ -2724,7 +2762,7 @@ func (s *ESStore) expandShorthand(q string) string {
 		"body":       {s.fields.Body, "message", "Body", "body", "log.message"},
 		"pod":        {"kubernetes.pod.name", "kubernetes.pod_name", "k8s.pod.name", "resource.k8s.pod.name", "pod_name", "pod"},
 		"container":  {"kubernetes.container.name", "kubernetes.container_name", "k8s.container.name", "container.name", "container_name", "container"},
-		"namespace":  {"kubernetes.namespace.name", "kubernetes.namespace_name", "kubernetes.namespace", "k8s.namespace.name", "resource.k8s.namespace.name", "namespace"},
+		"namespace":  esNamespaceFields, // v0.9.1250 — histogram kırılımıyla tek kaynak
 		"deployment": {"kubernetes.deployment.name", "kubernetes.deployment_name", "k8s.deployment.name", "kubernetes.labels.app", "deployment"},
 		"cluster":    {"openshift.labels.cluster", "openshift.cluster.name", "kubernetes.cluster.name", "k8s.cluster.name", "resource.k8s.cluster.name", "kubernetes.cluster_name", "cluster"},
 		"host":       {"host.name", "host.hostname", "resource.host.name", "hostname", "host"},

@@ -16,7 +16,9 @@ import { LogTable, DEFAULT_LOG_COLUMNS } from '@/components/LogTable';
 import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer';
 import { LogContextModal } from '@/components/LogContextModal';
 import { LogPillEditor } from '@/components/LogPillEditor';
-import { LogsHistogram, type LogsBreakdown } from '@/components/LogsHistogram';
+import {
+  LogsHistogram, parseBreakdown, histogramFeedsChips, type LogsBreakdown,
+} from '@/components/LogsHistogram';
 import { LogFieldsPanel } from '@/components/LogFieldsPanel';
 import { Button } from '@/components/ui/Button';
 import { RenderedMarkdown } from '@/components/Markdown';
@@ -126,13 +128,14 @@ function LogsInner() {
   // v0.9.1220 (Kibana dilim 3) — histogram kırılımı. URL tek kaynak
   // (yerel state YOK — sig-guard gerektirmez, Share/SavedViews bedava);
   // varsayılan seviye hiç yazılmaz ki eski linkler bayt-bayt kalsın.
-  const breakdown: LogsBreakdown =
-    searchParams.get('breakdown') === 'service' ? 'service' : 'severity';
+  // v0.9.1250 — değer kümesi cluster + namespace ile genişledi; daraltma
+  // parseBreakdown'da tek kaynakta (bilinmeyen → seviye).
+  const breakdown: LogsBreakdown = parseBreakdown(searchParams.get('breakdown'));
   const setBreakdown = (b: LogsBreakdown) => {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
-      if (b === 'service') next.set('breakdown', 'service');
-      else next.delete('breakdown');
+      if (b === 'severity') next.delete('breakdown');
+      else next.set('breakdown', b);
       return next;
     }, { replace: true });
   };
@@ -434,8 +437,11 @@ function LogsInner() {
   // çipler histogramın onSeries'inden beslenir; bu sorgu yalnız seviye
   // tabanı aktifken (histogram alt-küme çeker, çipler TAM sayım ister —
   // yukarıdaki "chips must show counts for every level" sözleşmesi) veya
-  // servis kırılımındayken (seriler artık bant değil) koşar.
-  const chipsFromHistogram = filter.severity === 0 && breakdown === 'severity';
+  // seviye dışı kırılımdayken (seriler artık bant değil) koşar.
+  // v0.9.1250 — kural histogramın kendi onSeries koşuluyla tek kaynakta
+  // (histogramFeedsChips): cluster/namespace eksenlerinde grafik bant
+  // yaymaz, çipler otomatik olarak bu sorguya döner.
+  const chipsFromHistogram = histogramFeedsChips(breakdown, filter.severity);
   // Tri-state: undefined = yükleniyor · null = histogram fetch'i HATA verdi
   // (v0.9.1220 review bulgusu — sonsuz '·' yerine hata rozeti) · dizi = veri.
   const [histTotals, setHistTotals] =

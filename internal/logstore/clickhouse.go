@@ -146,6 +146,21 @@ const chLogsPodExpr = `coalesce(
 			nullIf(res_values[indexOf(res_keys, 'pod_name')], ''),
 			'')`
 
+// chLogsNamespaceExpr — v0.9.1250, namespace derivation for the logs
+// table (histogram kırılım ekseni). Same res-array coalesce shape as
+// the cluster/pod expressions above: canonical semconv key first, then
+// the pipeline spellings (OpenShift cluster-logging snake_case, the
+// bare `kubernetes.namespace`, the bare key last because it is the
+// most collision-prone). NO `resource.` / `resource_attributes.`
+// prefixed leg — those are ES DOCUMENT paths, never OTLP resource
+// keys, so they would be dead SQL here (the v0.9.1249 rule).
+const chLogsNamespaceExpr = `coalesce(
+			nullIf(res_values[indexOf(res_keys, 'k8s.namespace.name')], ''),
+			nullIf(res_values[indexOf(res_keys, 'kubernetes.namespace_name')], ''),
+			nullIf(res_values[indexOf(res_keys, 'kubernetes.namespace')], ''),
+			nullIf(res_values[indexOf(res_keys, 'namespace')], ''),
+			'')`
+
 // chLogsAttrLookupExpr — FieldStats' "any attribute path" value
 // expression: span attribute first, then resource attribute (same
 // precedence the old map version declared). Two positional args (the
@@ -183,27 +198,64 @@ const chSeverityBandExpr = `multiIf(
 		severity_num BETWEEN 1 AND 4, 'TRACE',
 		'OTHER')`
 
-// Histogram buckets log volume server-side via the same logs
-// table. Whitelisted groupBy options ("service", "severity",
-// or "" for total) map to indexed LowCardinality columns so the
-// query stays partition-pruned + index-friendly even at billion
-// log/day. Unknown groupBy collapses to a single _total series
-// rather than failing — operator notices empty break-down and
-// can pick a different field.
-func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupBy string) ([]LogSeries, error) {
-	if bucketSec <= 0 {
-		bucketSec = 30
-	}
-	groupExpr := "'_total'"
+// chLogsGroupOrOther names the EMPTY derivation of an optional
+// resource attribute (v0.9.1250). Decision, stated once here:
+//
+//   - Rows are NOT dropped. groupBy=service never drops a row (an
+//     empty service_name would group as itself), and the CH histogram
+//     has no total-minus-sum OTHER synthesis like the ES path — so
+//     eliding the attribute-less rows would make the stacked chart
+//     undercount the window with nothing to absorb the difference.
+//   - They are NOT emitted as "" either: a blank legend chip is the
+//     kind of half-answer this surface exists to avoid.
+//   - They are named OTHER, which is exactly what the ES backend
+//     already calls its un-attributable remainder (v0.5.396) and what
+//     the frontend already folds into "diğer" by name (v0.9.1220
+//     collapseGroups). One legend vocabulary across both backends.
+func chLogsGroupOrOther(expr string) string {
+	return "coalesce(nullIf(" + expr + ", ''), 'OTHER')"
+}
+
+// chLogsGroupExpr maps a groupBy selector to the SQL expression the
+// histogram groups on. PURE + extracted (v0.9.1250) so the axis
+// whitelist is table-testable without a live CH — the point being
+// that an axis the frontend OFFERS must be an axis this switch
+// actually implements: an unrecognised value falls to a single
+// _total series, and shipping a selector option whose value silently
+// lands there is the v0.9.1220 refusal (that release shipped only 2
+// axes for exactly this reason).
+func chLogsGroupExpr(groupBy string) string {
 	switch groupBy {
 	case "service":
-		groupExpr = "service_name"
+		return "service_name"
 	case "severity":
 		// v0.8.377 — canonical bands (6 values max, so the LIMIT 20
 		// top_groups cap never truncates). Was raw text / numeric
 		// strings; see chSeverityBandExpr.
-		groupExpr = chSeverityBandExpr
+		return chSeverityBandExpr
+	case "cluster":
+		// v0.9.1250 — the derivation the cluster FILTER already uses
+		// (chLogsClusterExpr): what the break-down names must be
+		// something the filter beside it can find (v0.8.265 class).
+		return chLogsGroupOrOther(chLogsClusterExpr)
+	case "namespace":
+		return chLogsGroupOrOther(chLogsNamespaceExpr)
 	}
+	return "'_total'"
+}
+
+// Histogram buckets log volume server-side via the same logs
+// table. Whitelisted groupBy options ("service", "severity",
+// "cluster", "namespace", or "" for total) map to indexed columns or
+// res-array derivations so the query stays partition-pruned +
+// index-friendly even at billion log/day. Unknown groupBy collapses
+// to a single _total series rather than failing — operator notices
+// empty break-down and can pick a different field.
+func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupBy string) ([]LogSeries, error) {
+	if bucketSec <= 0 {
+		bucketSec = 30
+	}
+	groupExpr := chLogsGroupExpr(groupBy)
 
 	from, to := f.From, f.To
 	if from.IsZero() {

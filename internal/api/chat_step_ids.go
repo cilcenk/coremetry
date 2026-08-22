@@ -23,7 +23,11 @@ package api
 // akıştaki her `step` olayı, kim yayınlarsa yayınlasın, sıradaki
 // numarayı alır.
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/cilcenk/coremetry/internal/mcp"
+)
 
 // withStepIDs — akıştaki her `step` olayına istek-boyunca tekil bir
 // `i` damgalar. copilotChat'in SSE emit'ini bir kez sarar.
@@ -89,7 +93,15 @@ func emitStepEvidence(emit func(string, any), i int, tool, text string, err erro
 	}
 	ok := err == nil
 	if err != nil {
-		text = "error: " + err.Error()
+		// v0.9.1234 — hata çipi de tool hatalarının ortak sözleşmesini
+		// gösterir (mcp.ToolErrorJSON): sınıf + tekrar denenebilirlik +
+		// Türkçe ipucu + KIRPILMIŞ ham metin. Öncesinde çipe ham sürücü
+		// dökümü basılıyordu — 4 KB'lık önizlemenin tamamını tek bir
+		// ClickHouse istisnası doldurabiliyordu ve operatörün okuduğu
+		// şey "ne yapmalı"yı söylemiyordu. Guided yolunda bu metin
+		// modele GİTMEZ (blok sessizce eksik kalır); yine de aynı
+		// sözleşme, çünkü okuyan gözün sorusu aynı.
+		text = mcp.ToolErrorJSON(err)
 	} else if strings.TrimSpace(text) == "" {
 		return
 	}

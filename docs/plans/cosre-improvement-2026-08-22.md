@@ -14,6 +14,159 @@ iyi kullanabiliriz, MCP iyileşebilir".
 GEMİDE:
 - ✅ v0.9.1225 — exception kod-çekicisine HAM stack + log-fallback
   (+StackService override; pickExceptionStack saf çekirdek + test).
+- ✅ v0.9.1226 — chat servis bağlamı 9 liste rotasından
+  (chatContext.serviceFromRoute; sıfır backend).
+- ✅ v0.9.1227 — MCP get_operation_health (katalog 33; smoke canlı:
+  p99-sıralı satırlar + dürüst truncated).
+- ✅ v0.9.1228 — toolCallLink köprüsü (çip "↗ Üründe aç" + cevap
+  linkleri; K4-denetimli harita; ham args QueryEscape'siz girmez).
+- ✅ v0.9.1229 — guided adım çiplerine kanıt: withStepIDs tek sayaç
+  (SSE sarmalayıcı, chat_step_ids.go), 26 guided + drawer/deps/pods/
+  shift emit'i çift (step + step-result), yapısal kapı testleri;
+  sıfır FE değişikliği. (Shipper ajanı; imaj -dirty→retag, ağaçtaki
+  yabancı chstore değişikliklerine dokunulmadı.)
+- ✅ v0.9.1230 — katalog diyeti + tool-sonuç tavanı: mcp.Tool.
+  ShortDescription (aynı literalde, ChatDescription() erişimi; MCP dış
+  yüzeyi TAM İngilizce kaldı — pin testli), 33 kompakt TR açıklama;
+  model turu 41.940→23.343 B (−%44,3; şemalar bilinçli dokunulmadı —
+  doğru çağrının ön koşulu). chatToolResultMaxRunes=6000, rune-güvenli,
+  kırpma İÇERİKTE söylenir; step-result önizlemesi kesilmemiş boyu
+  raporlamaya devam eder. 6/6 mutasyon-doğrulamalı test.
+- ✅ v0.9.1231 — guided narration'a konuşma geçmişi: guidedHistorySection
+  (1500 rune / 6 tur; free-loop 6000'inin ÜSTÜNE ikinci kesim yok —
+  zaten-kırpılmış dilimi devralır), bölüm VERİ'den SONRA ("cevabın
+  dayanağı VERİ bloğudur" yönergesiyle), kırpma söylenir, sentetik
+  HistoryTrimNote turu operatör konuşması gibi ASLA basılmaz;
+  v0.9.478 bayt-kimlik pinleri korundu, 4/4 mutasyon ısırdı.
+- ✅ v0.9.1232 — free-loop TR-native prompt + registry: systemChat
+  Türkçe-native yeniden yazıldı, TUR TAVANI eki systemChatRoundCap
+  olarak registry'de (SystemPromptChatRoundCap accessor'ı +
+  base-verbatim pin testi); classDirective→classTurkishNative.
+- ✅ v0.9.1233 — MCP get_exception_samples: GetExceptionGroupSamples
+  yeniden kullanıldı (yeni SQL yok; REST eşi /samples viewer-açık),
+  katalog 34 (beş pin + runbook), range_s dürüstçe FİLTRE (pencere
+  grubun ömrü — küçük range ucuzlatmaz, yalan pencere yok), üç yol
+  canlı smoke; lokal stack'lerin boş gelmesi VERİ (Go self-obs
+  errorString), eşleme kaybı değil — ajan memory'ye yazdı.
+- ✅ v0.9.1234 — yapısal tool hataları: mcp.ClassifyToolError
+  {timeout|backend_unavailable|bad_args|not_found|internal, retryable,
+  TR hint, 300-rune detay}; sınıflandırıcı SIFIR-bağımlılık
+  internal/mcp'de (bağımlılık kapısı testli — mcptools mcp'yi import
+  ediyor, tersi olmaz), üç merkezi çağrı noktası (chat döngüsü + MCP
+  teli + guided kanıt çipi); 4 canlı hata-yolu smoke'u.
+- ✅ v0.9.1235 — Caused-by kök neden pencereleme [5/S]: Frame.Segment
+  ("Caused by:" sayacı; Suppressed bilinçli kapsam dışı), AppFrames
+  en-derin-önce, prompt cümlesi (:408); tek-segment bayt-parite
+  (legacyAppFrames diff testi), fingerprint izolasyonu grep-kanıtlı
+  (chstore stackparse'ı hiç görmüyor). ÇIKARIM: make image
+  VERSION=vX ile damga temiz — -dirty retag'i artık gereksiz.
+- ✅ v0.9.1236 — depo çözüm kaçış kapısı: MatchRepoName üç basamak
+  (exact→fold→loose ayraç-soyulmuş; basamak içi sıralı-ilk + Alts;
+  ıskada Near önerileri), liste yalnız çözüm HATASINDA + 10dk cache +
+  4MB/5000 tavan + 401/403'te asla; PickBranch case-insensitive
+  (tam-yazım önce); pin fail-CLOSED (GetServiceMetadataStrict — ham
+  CH hatası DSN taşıyabilir, Reason'a girmez); FE 📄 Kaynak satırında
+  düzeltme izi. 7 mutasyon ısırdı; canlı TFS smoke'u YOK (lokalde
+  sunucu yok — dürüstçe httptest kanıtı; prod'da ilk bakılacak:
+  "depo adı sunucudan düzeltildi" satırı).
+- ✅ v0.9.1237 — FetchCode döngü disiplini: codeWindowLimit=3 artık
+  KESİLEN pencereyi sayar (aday tavanı 10, sabır tavanı 6 lookup),
+  (file,line) dedup + aynı-dosya içerik yeniden kullanımı,
+  codeFetchDeadline=25s (ingress 60s altında; caller-cancel ile
+  AYRIŞIK — ajanın testi gerçek kusur yakaladı: tarayıcı kopuşu
+  "DevOps yanıt vermedi" diye raporlanıyordu). 11/11 mutasyon kırmızı
+  (ikisi test-seam eklenince ısırır oldu — 25s sabitine kapı
+  dayanamazdı). Devir notu: code.reason yalnız sıfır-dosya dalında
+  çiziliyordu → 1238'e.
+- ✅ v0.9.1238 — includeCode tercihi localStorage'da (cm.ai.includeCode,
+  varsayılan KAPALI — v0.9.831 kararı; lazy-seed, auto-run yarışı yok;
+  codeCapable kapısı Spinner yalanını önler). Kısmi-sonuç satırı bayat
+  önculdü (1236'da zaten gemide) — test kilidi kondu. 4/4 mutasyon.
+- ✅ v0.9.1239 — pencere kalitesi paketi (4/4 canlıydı): centerToBudget
+  frame satırını asla düşürmez (düşecekse pencere düşer + Reason);
+  ">>> " işareti PromptBlock render'ında (Content bozulmaz, tek yazım
+  const); "pencere 1/3 — kök neden segmenti" etiketi yalnız o segment
+  gerçekten pencere verdiyse; log-stack tekrarları "(stack
+  yukarıdakiyle aynı)" katlaması; fence uzantıya göre. Golden →
+  contract assertion (216 üst-kesim artıefaktıydı); 7/7 + 1 mutasyon.
+  Açık FE mini-dilim adayı: ">>> " oku operatör panelinde de görünsün.
+- ✅ v0.9.1240 — katalog-pin proje türetimi: ProjectHint + parsePinnedRepo
+  (repo | Project/repo | URL | scp biçimleri; muhafazakâr — koleksiyon
+  proje sanılmaz), pinin projesi kazanır, projesiz pinde önek türetimi
+  pinli yolda da çalışır, çıkmaz Reason üç kaynağı söyler; 1183'ün
+  buggy-pinleyen testi korkusu korunarak düzeltildi; 7/7 mutasyon
+  (mutasyon-derlenmeli kuralıyla). Kaçış kapısı pinli yolda zaten
+  bağlıymış (kısmi bayat) — e2e testle kilitlendi.
+- ✅ v0.9.1241 — kod-çekme sayaçları: /admin/stats "CoSRE kod bağlamı"
+  bloğu (süreç-içi atomik; sınıf RETURN'da atanır — Reason'dan geri
+  ayrıştırma yok; partial KAYIPTAN türer, nottan değil; FetchCode'a
+  ulaşmayan çıkmazlar da oranda; "hiç denenmedi" ≠ "%0 isabet";
+  entegrasyon-çıkmazları ⚠, veri-şekilli olanlar değil). AÇIK YARIM:
+  ai_calls maskeli kopyasına [kod alınamadı: reason] işareti — satır
+  "hiç istenmedi" ile "istendi-ıskaladı"yı ayıramıyor (XS aday).
+- ✅ v0.9.1242 — Settings dry-run: POST /api/devops/resolve-dryrun,
+  GERÇEK zincir (resolveChain/pickProject çıkarımı davranış-değişimsiz
+  — mevcut testler değişmeden geçti = drift kanıtı); sayaç izolasyonu
+  YAPISAL (dry-run FetchCode'a hiç girmez; pozitif-kontrollü test);
+  bilinçli: ServicePicker değil düz Field (katalogda olmayan ad da
+  test edilebilmeli); unconfigured'da bile dürüst adım çıktısı, 500
+  değil (canlı smoke).
+- ✅ v0.9.1243 — ai_calls [kod alınamadı: sınıf] işareti: Outcome
+  FetchCode'un TEK defer'ından (sayaç ile satır ayrışamaz); kısmide
+  "(kısmi: not)" eki; overflow-drop kendi diliyle; Halved() artık
+  kaybını söylüyor; maskeleme değişmezi üç-vaka pinli.
+- ✅ v0.9.1244 — takım/sahiplik araçları: list_teams +
+  get_team_services (tek service_summary_5m okuması, hata-oranı
+  sıralı, silent_services adlı; katalog 36). Kişisel kapsam BİLİNÇLİ
+  dışarıda: cmk_ token rol taşır, kullanıcı değil — "benim takımım" o
+  yolda tanımsız; guided'ın kimlikli yolu dokunulmadı. Guided okuması
+  KOPYALANMADI, mcptools'a taşındı (drift imkânsız). Not: grouping
+  testlerinin "tools/list sıralı gelir" gerekçesi bayat — registry-map
+  sırası; kozmetik, önceden vardı.
+
+## KAPANIŞ (2026-08-23) — hedef: "CoSRE daha iyi hale getir"
+
+**20 sürüm: v0.9.1225 → v0.9.1244.** İki denetimin 58 doğrulanmış
+bulgusunun dispozisyonu:
+
+- **Chat/LLM/MCP (20 bulgu):** değer-4+ olanların TAMAMI gemide, tek
+  istisna router-ıska tek-tur intent-seçimi [4/M] — küçük-model
+  doktrininde davranış değişikliği, OPERATÖR KARARI (yukarıda).
+  Değer-3 kuyruğu (5 kalem) adlı adına açık.
+- **Kod-bağlamı (38 bulgu):** değer-4+ olanların TAMAMI gemide
+  (mercek-tekrarları tekilleştirilmiş, aynı-gün-bayatlayanlar
+  kanıtla kapatılmış); değer-2/3 kuyruğu (6 kalem) açık.
+- Somut iyileşmeler: model turu −%44 · /logs sınıfı kanıt çipleri +
+  "Üründe aç" köprüleri · guided çok-tur bellek · exception zinciri
+  uçtan uca (grup→örnek→stack→trace) · kod pencereleri kök nedene
+  iner + frame satırı garantili · depo çözümü yazım-dayanıklı + pin
+  disiplini · isabet oranı /admin/stats'ta + ai_calls işaretli +
+  Settings dry-run · yapısal tool hataları · katalog 33→36.
+- Süreç notu: 1225-1228 ana oturumda elle; 1229-1244 SERİ shipper
+  ajanlarıyla (her sürüm kendi kapıları + mutasyon doğrulaması;
+  toplam ~2,9M ajan-token). Öznel "daha iyi" hükmü operatörde —
+  elde-doğrulama en hızlı şurada: chat'te bir servis sayfasından
+  "neden yavaş?" sor (bağlam + çipler + linkler), bir exception'da
+  "Kodu da incele" (kök-neden penceresi + Reason), Settings'te
+  dry-run, /admin/stats'ta CoSRE bloğu.
+
+## Bilinçli açık kalanlar (2026-08-22 gecesi)
+
+- **Router-ıska tek-tur intent-seçimi [4/M]** — OPERATÖR KARARI İSTER:
+  küçük-model doktrini (prefetch+narrate > tool-loop) ile üçüncü bir
+  yol (tek şemalı seçim turu) arasında davranış değişikliği; gemma4
+  üzerinde ölçmeden gemiye alınmaz.
+- Değer-3 kuyruğu (chat): env handoff · konuşma deep-link (?conversation=) ·
+  /trace dışı bağlam çipleri · yüzey-başına temperature · final cevap
+  stream'i. Değer-2/3 kuyruğu (kod-bağlamı): monorepo duvarları [3/M] ·
+  refs sayfalama · api-version drift · singleflight · inner-class
+  fallback · framework-only sebep ayrıştırması. Hiçbiri sessiz vaat
+  değil; operatör seçerse dilimlenir.
+- FE mini aday: ">>>" işaret oku operatör kod panelinde (1239 önerisi).
+- NOT (bayat-kayıt): "1800-rune kırpık stack" + "FromLog fallback"
+  v0.9.1225'te kapandı — ajan devir notları bunları açık sanabilir,
+  yeniden kuyruğa almayın. Gerçek açıklar: katalog-pin proje türetimi
+  [4/S] · sayaçlar [4/S] · dry-run [4/M].
 
 SIRADA (chat/LLM/MCP ekseni — operatör önceliği):
 1. v0.9.1226 [4/XS] Chat servis bağlamı: CopilotChat currentService

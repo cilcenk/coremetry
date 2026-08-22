@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEscLayer } from '@/lib/escLayer';
 import { scorePaletteEntry } from '@/lib/paletteScore';
 import { useT } from '@/lib/i18n';
+import { SETTINGS_TAB_INDEX } from '@/pages/settings/tabIndex';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { navHref } from '@/lib/navHref';
 import { serviceHref } from '@/lib/serviceHref';
@@ -40,6 +41,9 @@ type Result = {
   // aliases eski/alternatif adları aranabilir tutar (paletteScore).
   navKey?: string;
   aliases?: string[];
+  // v0.9.1272 (#3/Q3) — admin-kapılı sayfalar palette rol-süzgeçli:
+  // viewer'a gidemeyeceği Settings/System girişlerini önermek boş vaat.
+  adminOnly?: boolean;
   hint?: string;
   // navigate target — set for page/service/trace; absent for actions
   // (selecting an action enters param-prompt mode, doesn't navigate).
@@ -102,20 +106,20 @@ const PAGES: Result[] = [
   { kind: 'page', label: 'Clusters',    navKey: 'nav.clusters', hint: 'Kubernetes / OpenShift inventory', to: '/clusters' },
   { kind: 'page', label: 'Watchers',    hint: 'Log pattern watchers', to: '/watchers' },
   // System (v0.8.9 — /admin/* → /system/:tab)
-  { kind: 'page', label: 'System · Overview',      hint: 'Internal CH + cache stats', to: '/system/stats' },
-  { kind: 'page', label: 'System · ClickHouse',    hint: 'CH health + mutations', to: '/system/clickhouse' },
-  { kind: 'page', label: 'System · Elasticsearch', hint: 'ES backend health', to: '/system/elastic' },
-  { kind: 'page', label: 'System · Cluster',       hint: 'Cluster topology', to: '/system/cluster' },
-  { kind: 'page', label: 'System · Cardinality',   hint: 'Attribute cardinality watch', to: '/system/cardinality' },
-  { kind: 'page', label: 'System · Catalog',       hint: 'Owner / runbook / oncall metadata', to: '/system/catalog' },
-  { kind: 'page', label: 'System · Audit log',     hint: 'Operator action history', to: '/system/audit' },
-  { kind: 'page', label: 'System · SQL',           hint: 'Raw CH query console', to: '/system/sql' },
-  { kind: 'page', label: 'System · Query',         hint: 'Query console', to: '/system/query' },
-  { kind: 'page', label: 'System · Status page',   hint: 'Components + subscribers', to: '/system/status-page' },
+  { kind: 'page', label: 'System · Overview', adminOnly: true,      hint: 'Internal CH + cache stats', to: '/system/stats' },
+  { kind: 'page', label: 'System · ClickHouse', adminOnly: true,    hint: 'CH health + mutations', to: '/system/clickhouse' },
+  { kind: 'page', label: 'System · Elasticsearch', adminOnly: true, hint: 'ES backend health', to: '/system/elastic' },
+  { kind: 'page', label: 'System · Cluster', adminOnly: true,       hint: 'Cluster topology', to: '/system/cluster' },
+  { kind: 'page', label: 'System · Cardinality', adminOnly: true,   hint: 'Attribute cardinality watch', to: '/system/cardinality' },
+  { kind: 'page', label: 'System · Catalog', adminOnly: true,       hint: 'Owner / runbook / oncall metadata', to: '/system/catalog' },
+  { kind: 'page', label: 'System · Audit log', adminOnly: true,     hint: 'Operator action history', to: '/system/audit' },
+  { kind: 'page', label: 'System · SQL', adminOnly: true,           hint: 'Raw CH query console', to: '/system/sql' },
+  { kind: 'page', label: 'System · Query', adminOnly: true,         hint: 'Query console', to: '/system/query' },
+  { kind: 'page', label: 'System · Status page', adminOnly: true,   hint: 'Components + subscribers', to: '/system/status-page' },
   { kind: 'page', label: 'AI observability', navKey: 'nav.ai', aliases: ['cosre', 'ai observability'], hint: 'CoSRE usage + cost', to: '/ai' },
   // Meta
-  { kind: 'page', label: 'Settings',    hint: 'AI / SMTP / retention / theme', to: '/settings' },
-  { kind: 'page', label: 'Users',       hint: 'Role + team management', to: '/users' },
+  { kind: 'page', label: 'Settings',    adminOnly: true, hint: 'AI / SMTP / retention / theme', to: '/settings' },
+  { kind: 'page', label: 'Users',       adminOnly: true, hint: 'Role + team management', to: '/users' },
   { kind: 'page', label: 'Public status',  hint: 'Public incident page', to: '/public-status' },
 ];
 
@@ -358,9 +362,21 @@ export function CommandPalette() {
   // girişlerin etiketi t(navKey). Sidebar "Problems" derken paletin
   // "Inbox" demesi bitti; TR kataloğu da bedavaya geldi. Alias'lar eski
   // adları aranabilir tutar (skor saf çekirdekte: lib/paletteScore).
-  const localizedPages = useMemo(
-    () => PAGES.map(pg => (pg.navKey ? { ...pg, label: t(pg.navKey) } : pg)),
-    [t]);
+  const isAdmin = user?.role === 'admin';
+  const localizedPages = useMemo(() => {
+    const base = PAGES
+      .filter(pg => !pg.adminOnly || isAdmin)
+      .map(pg => (pg.navKey ? { ...pg, label: t(pg.navKey) } : pg));
+    if (!isAdmin) return base;
+    // v0.9.1272 (#3) — 23 Settings sekmesi aranabilir: "ayar ara…"
+    // vaadi artık boş değil. Kaynak yaprak dizin (settings/tabIndex) —
+    // bileşen import'u yok, bundle şişmez; alias = slug.
+    const settings = SETTINGS_TAB_INDEX.map<Result>(tb => ({
+      kind: 'page', label: `Settings · ${tb.label}`, aliases: [tb.slug],
+      hint: 'Settings', to: `/settings/${tb.slug}`, adminOnly: true,
+    }));
+    return [...base, ...settings];
+  }, [t, isAdmin]);
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     const all = [...localizedPages, ...services];

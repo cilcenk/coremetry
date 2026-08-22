@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import { SETTINGS_TAB_INDEX } from './settings/tabIndex';
 import { useParams, Navigate, NavLink } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Empty } from '@/components/Spinner';
@@ -47,41 +48,37 @@ interface SettingsTab {
 
 // Slug order mirrors the former horizontal tab strip so deep links and the
 // operator's muscle memory both stay stable.
-const TABS: SettingsTab[] = [
-  { slug: 'smtp',        label: 'SMTP',                  Comp: SMTPTab },
-  { slug: 'channels',    label: 'Notification channels', Comp: ChannelsTab },
-  { slug: 'team-routing', label: 'Team routing', Comp: TeamRoutingTab },
-  { slug: 'api-tokens',   label: 'API Tokens', Comp: ApiTokensTab },
-  { slug: 'maintenance', label: 'Maintenance windows',   Comp: MaintenanceTab },
-  { slug: 'ai',          label: 'CoSRE',                 Comp: AITab },
-  // v0.8.491 — RAG/doküman/wiki bölümü AI Copilot'tan kendi sekmesine
-  // ayrıldı (operatör onaylı sadeleştirme #5); davranış birebir aynı.
-  { slug: 'knowledge',   label: 'Knowledge (RAG)',       Comp: KnowledgeTab },
-  { slug: 'tempo',       label: 'Tempo backend',         Comp: TempoTab },
-  // v0.9.1150 — dış VictoriaMetrics OKUMA backend'i. Tempo'nun yanına:
-  // aynı sınıf (dış veri kaynağı + token + TLS), ve ikisi de "bu sinyali
-  // nereden okuyoruz" sorusunun cevabı.
-  { slug: 'metrics-backend', label: 'Metrik backend’i',  Comp: MetricsBackendTab },
-  { slug: 'clusters',    label: 'Remote clusters',       Comp: ClustersTab },
-  { slug: 'elastic',     label: 'Elasticsearch logs',    Comp: ElasticTab },
-  { slug: 'kibana',      label: 'Kibana link',           Comp: KibanaTab },
-  // v0.9.657 — CoSRE cevaplarındaki request_id'den dış log sistemine
-  // köprü. Kibana sekmesinin yanına: aynı sınıf, dış derin-link.
-  { slug: 'log-bridge',  label: 'Log köprüsü',           Comp: LogBridgeTab },
-  // v0.9.829 — Azure DevOps / TFS bağlantısı. Şimdilik YALNIZ
-  // bağlantı katmanı (ayar + PAT + erişim testi); repo eşleme ve
-  // kod-inceleme sonraki dilimde bu ayarı tüketecek.
-  { slug: 'devops',      label: 'Kod entegrasyonu',      Comp: DevOpsTab },
-  { slug: 'ldap',        label: 'LDAP / AD',             Comp: LDAPTab },
-  { slug: 'sso',         label: 'SSO presets',           Comp: SSOPresetsTab },
-  { slug: 'retention',   label: 'Data retention',        Comp: RetentionTab },
-  { slug: 'anomaly',     label: 'Anomaly promotion',     Comp: AnomalyPromotionTab },
-  { slug: 'branding',    label: 'Branding',              Comp: BrandingTab },
-  { slug: 'roles',       label: 'Custom roles',          Comp: CustomRolesTab },
-  { slug: 'pipeline',    label: 'Pipeline',              Comp: PipelineTab },
-  { slug: 'backup',      label: 'Backup / Restore',      Comp: BackupTab },
-  { slug: 'danger',      label: 'Danger zone',           Comp: DangerZoneTab },
-];
+// v0.9.1272 — sekme kimlikleri (slug+label) YAPRAK dizinde
+// (settings/tabIndex.ts): CommandPalette bileşen import'suz okur.
+// Burası yalnız slug→bileşen eşlemesi; TABS dizinden türetilir.
+// Tamlık kaynak-pin vitest'inde (settingsTabIndex.test.ts) — dizine
+// girip buraya girmeyen (ya da tersi) slug testte patlar.
+const TAB_COMPS: Record<string, ComponentType> = {
+  'smtp': SMTPTab,
+  'channels': ChannelsTab,
+  'team-routing': TeamRoutingTab,
+  'api-tokens': ApiTokensTab,
+  'maintenance': MaintenanceTab,
+  'ai': AITab,
+  'knowledge': KnowledgeTab,
+  'tempo': TempoTab,
+  'metrics-backend': MetricsBackendTab,
+  'clusters': ClustersTab,
+  'elastic': ElasticTab,
+  'kibana': KibanaTab,
+  'log-bridge': LogBridgeTab,
+  'devops': DevOpsTab,
+  'ldap': LDAPTab,
+  'sso': SSOPresetsTab,
+  'retention': RetentionTab,
+  'anomaly': AnomalyPromotionTab,
+  'branding': BrandingTab,
+  'roles': CustomRolesTab,
+  'pipeline': PipelineTab,
+  'backup': BackupTab,
+  'danger': DangerZoneTab,
+};
+const TABS: SettingsTab[] = SETTINGS_TAB_INDEX.map(t => ({ ...t, Comp: TAB_COMPS[t.slug] })).filter(t => !!t.Comp);
 
 export default function SettingsPage() {
   const { section } = useParams<{ section: string }>();

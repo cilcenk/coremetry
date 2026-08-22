@@ -343,7 +343,14 @@ function ExplainBlock({ anchor, id }: { anchor: 'problem' | 'anomaly'; id: strin
   // Taze verdict geldiyse kalıcı özet ÇEKİLİR: ikisi aynı anda dururken
   // operatör hangisinin güncel olduğunu ayırt edemez ve kalıcı satır
   // tanım gereği daha eski. Yapılandırılmış panel her zaman daha zengin.
-  const showPersisted = !!persisted && verdict === undefined && !loading;
+  //
+  // Koşul `verdict === undefined` DEĞİL `!verdict` ve fark önemli:
+  // ✨ Explain BAŞARISIZ olduğunda (503 — Copilot kapalı, ağ) verdict
+  // null'a düşer. `=== undefined` yazsaydık tam o anda kalıcı kayıt da
+  // ekrandan silinir ve operatör "anlatım yok" görürdü — yani kararın
+  // kaybolmasını önlemek için eklenen panel, kararın en çok gerektiği
+  // anda kendini gizlerdi.
+  const showPersisted = !!persisted && !verdict && !loading;
 
   return (
     <div style={{ marginTop: 4, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
@@ -357,7 +364,11 @@ function ExplainBlock({ anchor, id }: { anchor: 'problem' | 'anomaly'; id: strin
           verdict geldiğinde basılır. Verdict varken bu mesajı basmak,
           asıl kararı gizlerdi — verdict'in kendi kalkan şeridi zaten
           modelin yanıt verip vermediğini söylüyor. */}
-      {prose === null && verdict === null && (
+      {/* v0.9.1282 — `!showPersisted` şartı: kalıcı bir karar duruyorken
+          "anlatım yok" basmak YANLIŞ olurdu. Karar var, yalnız TAZESİ
+          üretilemedi; ikisi aynı şey değil ve operatöre ikincisini
+          söylemek elindeki kanıtı gizlemek olur. */}
+      {prose === null && verdict === null && !showPersisted && (
         <div style={{ fontSize: 12, color: 'var(--text3)', fontStyle: 'italic' }}>
           No narration available — the hypothesis isn't synthesized yet, or the
           AI copilot isn't configured.

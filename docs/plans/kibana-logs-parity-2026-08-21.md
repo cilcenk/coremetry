@@ -67,8 +67,25 @@ Kapanış bölümündeki 7 kalemin dördü SONRADAN kapandı, biri bayat çıkt�
   (KqlSearchInput.tsx:89-119), `insertValue` valueStart/valueEnd
   dilimleriyle ORTADAN değiştirir + imleci geri koyar (:248-260).
   Matristeki boşluk metni bayattı — kod değil damga eksikti.
-KALAN 3 (kuyrukta, operatör seçimli): tek-doküman kalıcı linki ·
-pod/namespace bağlam kapsamı · kırılımda namespace/cluster ekseni.
+- ~~Tek-doküman kalıcı linki~~ → **v0.9.1248**: genişletilmiş satırda
+  kopyalama; ?doc=<tsNs>.<id> mevcut context ucuyla çözülür (yeni uç
+  yok, tek sınırlı sorgu); çözülemeyen link kapatılabilir dürüst not.
+- ~~Pod bağlam kapsamı~~ → **v0.9.1249**: Filter.Pod iki backend'de
+  yapısal clause (ES 4-yol bool.should; CH coalesce + GetLogs
+  conjunct — sessiz no-op sınıfı testli); "⌖ Yalnız bu pod" düğmesi
+  pod çıkarılamazsa çizilmez; FE/BE alan-listesi ayna-testli;
+  namespace kapsamı bilinçli kesim (env/cluster'la örtüşür).
+- ~~Kırılımda namespace/cluster ekseni~~ → **v0.9.1250**: CH'de hazır
+  cluster + yeni namespace expr (boş türetim dürüst OTHER); ES'te
+  field_caps-çözümlü aday-alan-başına terms + Go birleştirmesi
+  (çift-alan çift-sayımı belgeli); handler whitelist sessiz _total
+  sınıfını kapattı; canlı smoke: 5 gerçek cluster grubu, toplam =
+  severity toplamı.
+
+**MATRİS TAM KAPANDI (2026-08-23):** operatör-seçimli açık kalem
+KALMADI — her boşluk ya sürüm-damgalı ya kanıtla-bayat. Öznel
+"Kibana kadar iyi" hükmü hâlâ operatörde (elde-doğrulama listesi
+yukarıda; lokal v0.9.1250).
 
 **Öznel kabul AÇIK:** "Kibana kadar iyi" hükmü operatörün. Elde
 doğrulama listesi (lokal v0.9.1220+, http://localhost:8090/logs):

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { logsUrlSig, writeLogsParams, readLogsParams, logsRangeParam, type LogsUrlFilter } from './logsUrl';
+import { logsUrlSig, writeLogsParams, readLogsParams, logsRangeParam, buildDocPermalink, parseDocParam, type LogsUrlFilter } from './logsUrl';
 import { decodeRange } from './urlState';
 
 // v0.8.546 — /logs `severity` was a live filter that never round-tripped
@@ -181,5 +181,27 @@ describe('logsRangeParam — K3 ölü from/to parametresi', () => {
     ] as Array<[number | undefined, number | undefined]>) {
       expect(logsRangeParam(from, to), `${from}..${to} boş dönmeli`).toBe('');
     }
+  });
+});
+
+// v0.9.1248 — tek-doküman kalıcı linki saf çekirdeği.
+describe('doc permalink', () => {
+  it('builds with service + env, omits empties', () => {
+    expect(buildDocPermalink({ timestamp: 170e16, id: 42, serviceName: 'bsa-x' }, 'uat'))
+      .toBe('/logs?doc=1700000000000000000.42&docsvc=bsa-x&env=uat');
+    expect(buildDocPermalink({ timestamp: 5, id: 7 }, ''))
+      .toBe('/logs?doc=5.7');
+  });
+  it('round-trips through parse', () => {
+    const p = parseDocParam('1700000000000000000.9007199254740993');
+    expect(p?.ts).toBe(1700000000000000000);
+    expect(p?.id).toBe(Number('9007199254740993')); // 2^53+1 yuvarlanır — iki taraf AYNI yuvarlamayı görür, eşitlik bu
+  });
+  it('rejects garbage', () => {
+    for (const bad of [null, '', '123', '.5', '5.', 'a.b', '-1.5', '0.9', '1.2.3x']) {
+      if (bad === '1.2.3x') continue; // Number('2.3x')=NaN → null zaten
+      expect(parseDocParam(bad as string | null)).toBeNull();
+    }
+    expect(parseDocParam('1.2.3x')).toBeNull();
   });
 });

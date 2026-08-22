@@ -97,3 +97,34 @@ export function logsRangeParam(
   if (!(fromMs > 0) || !(toMs > fromMs)) return '';
   return `custom:${fromMs}-${toMs}`;
 }
+
+// ── Tek-doküman kalıcı linki (v0.9.1248, Kibana artığı) ──────────
+//
+// Biçim: ?doc=<tsNs>.<id>[&docsvc=<service>]. Çözüm YENİ UÇ İSTEMEZ:
+// mevcut /api/logs/context (ts pivotu, n=5) penceresinde id aranır —
+// tek sınırlı sorgu, ES disiplini korunur. id her iki backend'de de
+// içerik-türevi ve OTURUMLAR ARASI kararlı (ES: _id FNV'si; CH:
+// cityHash64) — 2^53 üstü değerler JSON'da yuvarlanır ama iki taraf da
+// AYNI yuvarlanmış sayıyı gördüğünden eşitlik tutarlıdır; tam sayılar
+// üstel gösterime düşmez (~1.8e19 < 1e21), '.' ayracı güvenli.
+
+export function buildDocPermalink(
+  l: { timestamp: number; id: number; serviceName?: string }, env: string,
+): string {
+  let qs = `doc=${l.timestamp}.${l.id}`;
+  if (l.serviceName) qs += `&docsvc=${encodeURIComponent(l.serviceName)}`;
+  if (env) qs += `&env=${encodeURIComponent(env)}`;
+  return `/logs?${qs}`;
+}
+
+// parseDocParam — '?doc=' değeri → {ts, id} | null. SAF; bozuk/eksik/
+// sayı-dışı her girdi null (link çözümü sessizce çöp üretmez).
+export function parseDocParam(raw: string | null | undefined): { ts: number; id: number } | null {
+  if (!raw) return null;
+  const dot = raw.indexOf('.');
+  if (dot <= 0 || dot === raw.length - 1) return null;
+  const ts = Number(raw.slice(0, dot));
+  const id = Number(raw.slice(dot + 1));
+  if (!Number.isFinite(ts) || !Number.isFinite(id) || ts <= 0) return null;
+  return { ts, id };
+}

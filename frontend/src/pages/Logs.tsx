@@ -40,7 +40,7 @@ import {
   extractHighlightTerms, toggleExistsFilter, replaceFilterAt,
 } from '@/lib/logFilters';
 import type { LogFilter } from '@/lib/logFilters';
-import { logsUrlSig, writeLogsParams, readLogsParams } from '@/lib/logsUrl';
+import { logsUrlSig, writeLogsParams, readLogsParams, buildDocPermalink, parseDocParam } from '@/lib/logsUrl';
 import type { LogsResponse, LogRow, TimeRange } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
 import { PageShell } from '@/components/ui/PageShell';
@@ -240,6 +240,27 @@ function LogsInner() {
   // LogContextModal fetches the before/after halves and renders
   // the chronological strip.
   const [contextPivot, setContextPivot] = useState<import('@/lib/types').LogRow | null>(null);
+  // v0.9.1248 — kalıcı doküman linki (?doc=<ts>.<id>): mevcut context
+  // ucundan tek sınırlı sorguyla çözülür (yeni uç yok); bulunan satır
+  // context modalını pivot'lar. Ref sig-guard: aynı değer bir kez
+  // çözülür — range/filtre yazımları efekti yeniden tetiklemez.
+  const docRaw = searchParams.get('doc');
+  const docResolvedRef = useRef('');
+  const [docMiss, setDocMiss] = useState(false);
+  useEffect(() => {
+    if (!docRaw || docResolvedRef.current === docRaw) return;
+    docResolvedRef.current = docRaw;
+    const parsed = parseDocParam(docRaw);
+    if (!parsed) { setDocMiss(true); return; }
+    const svc = searchParams.get('docsvc') || undefined;
+    api.logsContext({ ts: parsed.ts, service: svc, env: env || undefined, n: 5 })
+      .then(r => {
+        const rows = [...(r?.before ?? []), ...(r?.after ?? [])];
+        const hit = rows.find(x => x.id === parsed.id);
+        if (hit) { setDocMiss(false); setContextPivot(hit); } else setDocMiss(true);
+      })
+      .catch(() => setDocMiss(true));
+  }, [docRaw, searchParams, env]);
   // Live tail (HyperDX-style): poll, prepend new rows. Cadence is 10s — the
   // ≥10s polling budget, and at the operator's ES scale the ingest pipeline
   // (collector batch + ES exporter flush + index refresh) lags ~10s, so a
@@ -1081,6 +1102,13 @@ function LogsInner() {
             windowTotal={total} />
           <div style={{ flex: 1, minWidth: 0 }}>
 
+        {/* v0.9.1248 — kalıcı link çözülemedi notu: sessiz düşme yok. */}
+        {docMiss && (
+          <div style={{ fontSize: 11, color: 'var(--warn)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>kalıcı doküman linki çözülemedi — kayıt pencere/retention dışında olabilir</span>
+            <Button variant="secondary" size="sm" onClick={() => setDocMiss(false)}>×</Button>
+          </div>
+        )}
         {/* Severity-stacked histogram (v0.5.235) — spike of errors
             stands out against the background INFO traffic without
             reading the count column. Hidden when neither a time
@@ -1245,7 +1273,8 @@ function LogsInner() {
               onFilterExclude={excludeFromRow}
               onToggleColumn={toggleColumn}
               onTracePeek={tid => setPeekTraceId(tid)}
-              onContextOpen={l => setContextPivot(l)} />
+              onContextOpen={l => setContextPivot(l)}
+              permalink={l => buildDocPermalink(l, env)} />
             {/* Load more (v0.8.260 — replaced the Back/Next pager;
                 keyset cursor mechanics unchanged underneath). Rows
                 accumulate in accRows; the button advances the cursor
@@ -1299,7 +1328,18 @@ function LogsInner() {
         onClose={() => setPeekTraceId(null)} />
       <LogContextModal pivot={contextPivot}
         highlightTerms={highlightTerms} search={compiledSearch || undefined}
-        onClose={() => setContextPivot(null)}
+        onClose={() => {
+          setContextPivot(null);
+          // v0.9.1248 — link-açılışlı modal kapanınca ?doc= temizlenir ki
+          // sonraki gezinmelerde yeniden açılmasın; yabancı paramlar korunur.
+          if (searchParams.get('doc')) {
+            setSearchParams(prev => {
+              const n = new URLSearchParams(prev);
+              n.delete('doc'); n.delete('docsvc');
+              return n;
+            }, { replace: true });
+          }
+        }}
         onTracePeek={tid => { setContextPivot(null); setPeekTraceId(tid); }} />
     </>
   );

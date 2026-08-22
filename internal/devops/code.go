@@ -99,6 +99,13 @@ type CodeWindow struct {
 	FromLine int    `json:"fromLine"` // pencerenin ilk satırı (1-tabanlı)
 	ToLine   int    `json:"toLine"`   // pencerenin son satırı
 	Content  string `json:"content"`  // satır numarası ÖNEKLİ kaynak
+	// Segment — frame'in "Caused by" zincirindeki derinliği
+	// (stackparse.Frame.Segment, v0.9.1235). 0 = en dış wrapper
+	// exception, 1+ = Caused by bölümleri. v0.9.1239'dan beri prompt
+	// başlığına yazılıyor: pencere sırası kök-nedene göre kuruluyor
+	// (AppFrames en derini başa alır) ama modele bu SIRA hiç
+	// söylenmiyordu — üç pencereyi eşit ağırlıkta okuyordu.
+	Segment int `json:"segment,omitempty"`
 }
 
 // CodeContext — bir stacktrace için toplanan tüm kod bağlamı.
@@ -333,8 +340,15 @@ func (s *Service) FetchCode(ctx context.Context, repo, projectHint string, frame
 		out.Reason = "ağaçta eşleşen dosya yok: " + strings.Join(hunt.misses, ", ")
 	case len(windows) == 0:
 		out.Reason = "kod penceresi kurulamadı"
+	case trimmed && len(hunt.windows) > len(windows):
+		// v0.9.1239 — DÜŞEN pencere ayrı söylenir. Kesme artık hata
+		// satırını merkezde tutuyor; sığdıramadığı pencereyi kırpmak
+		// yerine düşürüyor ve bu, "kısaltıldı" ile aynı cümleye
+		// sığmayacak kadar farklı bir kayıp.
+		out.Reason = fmt.Sprintf("kod bütçesi (%d karakter) doldu — %d pencere düştü, kalanlar hata satırı çevresinde kısaltıldı",
+			codeBudgetRunes, len(hunt.windows)-len(windows))
 	case trimmed:
-		out.Reason = fmt.Sprintf("kod bütçesi (%d karakter) doldu — pencereler kısaltıldı", codeBudgetRunes)
+		out.Reason = fmt.Sprintf("kod bütçesi (%d karakter) doldu — pencereler hata satırı çevresinde kısaltıldı", codeBudgetRunes)
 	}
 	// v0.9.1237 — KISMİ sonuç da rapor edilir. En az bir pencere
 	// kesildiğinde eski kod susuyordu: ıskalanan frame'ler ve tavana
@@ -474,7 +488,7 @@ func huntWindows(
 			out.misses = append(out.misses, f.File+" (satır aralığı boş)")
 			continue
 		}
-		w.Path, w.Frame, w.Line = p, f.String(), f.Line
+		w.Path, w.Frame, w.Line, w.Segment = p, f.String(), f.Line, f.Segment
 		out.windows = append(out.windows, w)
 	}
 	return out
@@ -825,6 +839,24 @@ func WindowAround(content string, line, radius int) CodeWindow {
 // bütçe daralınca düşecek olan SON penceredir — yani dıştaki
 // wrapper/yeniden-fırlatma kodu. Kesme rune bazlı ve pencere içindeki
 // SATIR sınırında yapılır — yarım satır kod, kod değildir.
+//
+// # Kesme MERKEZDEN yapılır (v0.9.1239)
+//
+// Pencere hata satırının ÜSTÜNDEN başlar (line-30). Kırpma baştan
+// saymayla yapılırsa — v0.9.1239 öncesi hâli — kalan bütçe pencerenin
+// yarısından azken korunan satırlar hata satırına VARMADAN biter:
+// prompt başlığı hâlâ "… (Y.java:246)" diye satırı gösterir, o satır
+// pencerede YOKTUR. Küçük model bunu "246 bu blokta bir yerde" diye
+// okuyup gördüğü rastgele satırdan kök neden uydurur. Halved() bütçeyi
+// 2000'e indirdiğinde ilk pencere bile merkezini kaybediyordu, yani
+// taşma yeniden-denemesi tam da en çok kanıt gereken anda pencereyi
+// işe yaramaz hâle getiriyordu.
+//
+// Artık kırpma frame satırı MERKEZDE kalacak şekilde iki yandan
+// daraltılır. Hata satırı tek başına bile bütçeye sığmıyorsa pencere
+// DÜŞER: kullanılamaz bir pencere, hiç pencere olmamasından kötüdür
+// (çağıran düşüşü Reason'a yazar). Line=0 olan pencerede (frame satırı
+// bilinmiyor) eski baştan-kesme davranışı korunur.
 func ClampCodeWindows(ws []CodeWindow, maxRunes int) ([]CodeWindow, bool) {
 	if len(ws) == 0 {
 		return nil, false
@@ -843,6 +875,22 @@ func ClampCodeWindows(ws []CodeWindow, maxRunes int) ([]CodeWindow, bool) {
 		}
 		trimmed = true
 		left := maxRunes - used
+		if w.Line > 0 {
+			cut, from, to := centerToBudget(w.Content, w.Line, left)
+			if cut == "" {
+				// Hata satırı bile sığmıyor → pencereyi hiç gönderme.
+				break
+			}
+			w.Content = cut
+			if from > 0 {
+				w.FromLine = from
+			}
+			if to > 0 {
+				w.ToLine = to
+			}
+			out = append(out, w)
+			break
+		}
 		cut, lastLine := cutToLineBoundary(w.Content, left)
 		if cut == "" {
 			break // kalan bütçe tek satırı bile almıyor
@@ -858,6 +906,60 @@ func ClampCodeWindows(ws []CodeWindow, maxRunes int) ([]CodeWindow, bool) {
 		trimmed = true
 	}
 	return out, trimmed
+}
+
+// centerToBudget — numaralı içeriği n rune'a, `line` numaralı satır
+// MERKEZDE kalacak şekilde daraltır. Dönen: kesilmiş içerik + korunan
+// ilk/son satır numaraları. İçerik "" ise pencere kullanılamaz
+// (frame satırı yok ya da tek başına bütçeye sığmıyor) — çağıran onu
+// düşürmeli.
+//
+// Genişleme dönüşümlü, ÖNCE YUKARI: hata satırının üstündeki koşul ve
+// atamalar kök nedeni okumak için altındaki satırlardan daha
+// değerlidir, tek satırlık artan bütçe oraya gitsin.
+func centerToBudget(content string, line, n int) (string, int, int) {
+	if n <= 0 || line <= 0 || content == "" {
+		return "", 0, 0
+	}
+	lines := strings.Split(content, "\n")
+	center := -1
+	for i, ln := range lines {
+		if num, ok := lineNumberOf(ln); ok && num == line {
+			center = i
+			break
+		}
+	}
+	if center < 0 {
+		return "", 0, 0
+	}
+	// Satır maliyeti cutToLineBoundary ile AYNI sayılır (rune + satır
+	// sonu): iki kesici aynı bütçeyi farklı sayarsa toplam tavan kayar.
+	cost := func(i int) int { return utf8.RuneCountInString(lines[i]) + 1 }
+	used := cost(center)
+	if used > n {
+		return "", 0, 0
+	}
+	lo, hi := center, center
+	for {
+		grew := false
+		if lo > 0 && used+cost(lo-1) <= n {
+			lo--
+			used += cost(lo)
+			grew = true
+		}
+		if hi < len(lines)-1 && used+cost(hi+1) <= n {
+			hi++
+			used += cost(hi)
+			grew = true
+		}
+		if !grew {
+			break
+		}
+	}
+	kept := lines[lo : hi+1]
+	from, _ := lineNumberOf(kept[0])
+	to, _ := lineNumberOf(kept[len(kept)-1])
+	return strings.Join(kept, "\n"), from, to
 }
 
 // cutToLineBoundary — numaralı içeriği n rune'a, SATIR sınırında
@@ -907,22 +1009,109 @@ func lineNumberOf(ln string) (int, bool) {
 // Blok bir BÜTÜN olarak taşınır: ai_calls maskeleyicisi bu metni
 // prompt'un içinde tek parça bulup özetiyle değiştirir (emsal:
 // clampDrawerEvidence'in LogsBlock'u aynı şekilde tek parça geçer).
+// v0.9.1239 — pencere içi İŞARET + konum etiketi + dile göre çit.
+// Üçü de aynı boşluğu kapatıyor: modelin pencerede NEYE bakacağı.
+// Öncesinde her satır tıpatıp aynı ("246| kod") görünüyordu ve
+// pencereler sırasız bir yığındı; 4B'lik bir modelden başlıktaki
+// ":246" ile satır önekini kendi eşleştirmesi ve pencere sırasının
+// kök-nedene göre kurulduğunu tahmin etmesi bekleniyordu.
 func (c CodeContext) PromptBlock() string {
 	if c.Empty() {
 		return ""
+	}
+	deepest := 0
+	for _, w := range c.Windows {
+		if w.Segment > deepest {
+			deepest = w.Segment
+		}
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n\nKOD BAĞLAMI (depo: %s", c.Repo)
 	if c.Branch != "" {
 		fmt.Fprintf(&b, ", branş: %s", c.Branch)
 	}
-	b.WriteString("):")
-	for _, w := range c.Windows {
-		fmt.Fprintf(&b, "\n\n%s (satır %d-%d) — %s\n```java\n%s\n```",
-			w.Path, w.FromLine, w.ToLine, w.Frame, w.Content)
+	b.WriteString("). Satır başındaki sayı GERÇEK dosya satırıdır; " +
+		frameMarker + " ile işaretli satır stack'in gösterdiği hata satırıdır — analizini oradan başlat:")
+	for i, w := range c.Windows {
+		fmt.Fprintf(&b, "\n\npencere %d/%d%s\n%s (satır %d-%d) — %s\n```%s\n%s\n```",
+			i+1, len(c.Windows), segmentLabel(w.Segment, deepest),
+			w.Path, w.FromLine, w.ToLine, w.Frame,
+			fenceLang(w.Path), markFrameLine(w.Content, w.Line))
 	}
 	b.WriteString("\n\nKodu stack'le BİRLİKTE oku: hatanın atıldığı satırı göster ve kök nedeni o satırdaki koşula/çağrıya dayandır. Kodda görmediğin bir davranışı UYDURMA — pencere dışında kalan kısım hakkında \"bu pencerede görünmüyor\" de.")
 	return b.String()
+}
+
+// frameMarker — hata satırının pencere içi işareti. TEK yazım: hem
+// markFrameLine hem başlıktaki açıklama buradan okur, yoksa model
+// tarif edilmeyen bir işaretle karşılaşır.
+const frameMarker = ">>>"
+
+// markFrameLine — numaralı içerikte `line` satırının başına işaret
+// koyar. Saf; satır bulunamazsa içerik AYNEN döner.
+//
+// İşaret render anında ekleniyor, CodeWindow.Content'e YAZILMIYOR:
+// Content kanonik kalmalı — bütçe kesicisi (centerToBudget /
+// cutToLineBoundary) ve lineNumberOf satır numarasını satır BAŞINDAN
+// okuyor, frontend de aynı içeriği kendi biçimiyle gösteriyor.
+func markFrameLine(content string, line int) string {
+	if line <= 0 || content == "" {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	for i, ln := range lines {
+		if num, ok := lineNumberOf(ln); ok && num == line {
+			lines[i] = frameMarker + " " + ln
+			return strings.Join(lines, "\n")
+		}
+	}
+	return content
+}
+
+// segmentLabel — pencerenin "Caused by" zincirindeki yeri. Boş dize =
+// söylenecek bir şey yok (zincirsiz stack).
+//
+// deepest, ELDEKİ pencerelerin en derin segmentidir; kök neden
+// segmentinden pencere kesilemediyse (dosya ağaçta yok) hiçbir
+// pencereye "kök neden" demeyiz — modele olmayan bir istihkakı var
+// diye okutmak, işaretsiz bırakmaktan kötüdür.
+func segmentLabel(seg, deepest int) string {
+	switch {
+	case deepest == 0:
+		return "" // tek segmentli stack: zincir yok
+	case seg == deepest:
+		return fmt.Sprintf(" — kök neden segmenti (Caused by #%d)", seg)
+	case seg == 0:
+		return " — dış (wrapper) exception"
+	default:
+		return fmt.Sprintf(" — Caused by #%d", seg)
+	}
+}
+
+// fenceLang — kod çitinin dil etiketi, dosya UZANTISINDAN. Bilinmeyen
+// uzantı → etiketsiz çit; yanlış dil etiketi, etiketsizden kötüdür.
+//
+// stackparse.ParseJava Java/Kotlin/Scala stack'lerini birlikte
+// çözüyor ve BestPathForFrame uzantıya bakmadan eşleştiriyor, yani
+// .kt/.scala pencereleri buraya GELİYOR; hepsi ```java diye
+// etiketleniyordu.
+func fenceLang(path string) string {
+	i := strings.LastIndex(path, ".")
+	if i < 0 {
+		return ""
+	}
+	switch strings.ToLower(path[i:]) {
+	case ".java":
+		return "java"
+	case ".kt", ".kts":
+		return "kotlin"
+	case ".scala", ".sc":
+		return "scala"
+	case ".groovy":
+		return "groovy"
+	default:
+		return ""
+	}
 }
 
 // LogSummary — maskeli ai_calls kaydına giren tek satırlık özet.

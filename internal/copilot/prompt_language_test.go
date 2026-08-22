@@ -63,7 +63,6 @@ func promptRegistry() map[string]promptClass {
 		// ── Chat kademeleri (Faz 1.6'da internal/api'den taşındı)
 		"GuidedChat": classDirective, // kademe 1 — guided router narration
 		"DrawerChat": classDirective, // kademe 2 — explain-grounded çekmece
-		"Chat":       classDirective, // kademe 4 — serbest tool döngüsü
 		// ── Türkçe-native talimatlar. İkisi (RCAVerdict, ServiceAnalysis)
 		// JSON üretir ama talimatı Türkçedir: 2B dersi (copilot_aianalyze.go)
 		// — küçük modelde "İngilizce talimat + Türkçe cevap" kod-değiştirme
@@ -72,11 +71,17 @@ func promptRegistry() map[string]promptClass {
 		"RCAVerdict":      classTurkishNative,
 		"ServiceAnalysis": classTurkishNative, // JSON çıktı, Türkçe talimat
 		"RAGChat":         classTurkishNative, // kademe 3 — doküman yolu
-		"ShiftSummary":    classTurkishNative,
-		"AlertNoise":      classTurkishNative,
-		"LogPatterns":     classTurkishNative,
-		"Postmortem":      classTurkishNative, // Faz 5.4 — markdown taslak, Türkçe talimat
-		"RunbookUpdate":   classTurkishNative, // Faz 5.5 — güncelleme önerisi bloğu
+		// v0.9.1232 — kademe 4 (serbest tool döngüsü) classDirective'ten
+		// buraya taşındı: metin artık Türkçe yazılmış. ChatRoundCap aynı
+		// döngünün tur-tavanı hâli; sicile girmesiyle copilot_chat.go'daki
+		// satır-içi İngilizce ek de dil kapısının kapsamına girdi.
+		"Chat":          classTurkishNative,
+		"ChatRoundCap":  classTurkishNative,
+		"ShiftSummary":  classTurkishNative,
+		"AlertNoise":    classTurkishNative,
+		"LogPatterns":   classTurkishNative,
+		"Postmortem":    classTurkishNative, // Faz 5.4 — markdown taslak, Türkçe talimat
+		"RunbookUpdate": classTurkishNative, // Faz 5.5 — güncelleme önerisi bloğu
 		// ── Makine-parse edilen çıktı
 		"NLToQuery":       classStructured,
 		"CHQueryOptimize": classStructured,
@@ -98,7 +103,8 @@ func promptTexts() map[string]string {
 		"DeployImpact": SystemPromptDeployImpact(), "SLOBurn": SystemPromptSLOBurn(),
 		"SlowQuery": SystemPromptSlowQuery(), "GuidedChat": SystemPromptGuidedChat(),
 		"DrawerChat": SystemPromptDrawerChat(), "Chat": SystemPromptChat(),
-		"RCAVerdict": SystemPromptRCAVerdict(), "ServiceAnalysis": SystemPromptServiceAnalysis(),
+		"ChatRoundCap": SystemPromptChatRoundCap(),
+		"RCAVerdict":   SystemPromptRCAVerdict(), "ServiceAnalysis": SystemPromptServiceAnalysis(),
 		"RAGChat": SystemPromptRAGChat(), "ShiftSummary": SystemPromptShiftSummary(),
 		"AlertNoise": SystemPromptAlertNoise(), "LogPatterns": SystemPromptLogPatterns(),
 		"Postmortem": SystemPromptPostmortem(), "RunbookUpdate": SystemPromptRunbookUpdate(),
@@ -187,6 +193,30 @@ func TestCodePromptsExtendBaseVerbatim(t *testing.T) {
 		if strings.Contains(p, "KOD BAĞLAMI") {
 			t.Errorf("%s kodsuz olmasına rağmen kod eki taşıyor", name)
 		}
+	}
+}
+
+// TestChatRoundCapExtendsBaseVerbatim — v0.9.1232. Tur-tavanı prompt'u
+// serbest döngü prompt'unun ÜSTÜNE ek yapar; tabanı yeniden yazmaz.
+//
+// Neden pin: aynı istek içinde iki prompt gider (turlar için taban, son
+// tur için tavanlı hâl) ve aralarındaki tek fark "artık tool çağırma"
+// olmalı. Taban kopyalanıp ayrışırsa operatör, cevabın döngünün
+// neresinde üretildiğine göre bambaşka bir posture ile karşılaşır ve
+// nedenini göremez. İkinci assert, ekin ANLAMINI çiviler: metin
+// Türkçeleştirilirken (v0.9.1232) "tool çağırma" talimatının düşmesi
+// modeli tavandan sonra yeni tool çağırmaya iterdi — sağlayıcıya
+// tools=nil gittiği için o çağrı sessizce boş cevap olurdu.
+func TestChatRoundCapExtendsBaseVerbatim(t *testing.T) {
+	cap := SystemPromptChatRoundCap()
+	if !strings.HasPrefix(cap, SystemPromptChat()) {
+		t.Fatal("tur-tavanı prompt'u serbest döngü tabanından başlamıyor")
+	}
+	if !strings.Contains(cap, "tool ÇAĞIRMA") {
+		t.Error("tur-tavanı ekinde 'tool ÇAĞIRMA' talimatı yok")
+	}
+	if strings.Contains(SystemPromptChat(), "TUR TAVANI") {
+		t.Error("taban prompt tur-tavanı ekini taşıyor — her tur 'hakkın bitti' der")
 	}
 }
 

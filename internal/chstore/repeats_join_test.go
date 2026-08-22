@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // v0.9.1285 — Explore's "Repeats" mode (the N+1 finder) returned
@@ -175,6 +176,171 @@ func TestNoNonGlobalJoinOnTelemetryTables(t *testing.T) {
 						path, i+1, trimmed)
 				}
 			}
+		}
+	}
+}
+
+// v0.9.1287 — the Repeats list's top rows were blank. Measured live on
+// the 2-shard local cluster at v0.9.1286,
+// GET /api/spans/repeats?groupBy=db.statement&minRepeats=5 over 1h:
+// 2837 candidate groups, 2721 of them (95.9%) the ALL-EMPTY tuple at
+// 19-20 spans each — every non-DB span in a trace collapses into one
+// empty bucket and that bucket then reads as a repeat of itself. They
+// outnumbered the real N+1 badly enough to consume the LIMIT 200: 146
+// blank rows against 54 real, with 62 of the 116 genuinely repeating
+// statements pushed out of the response entirely.
+//
+// The fix excludes the tuple that is empty in EVERY position. It does
+// NOT exclude partially-empty tuples: ["SELECT instrument_prices", ""]
+// under groupBy=name,http.route is a real shape whose HTTP route is
+// legitimately absent (116 such rows in the same window).
+//
+// Two things are pinned here and both are load-bearing:
+//
+//   - ANY-semantics, not ALL. arrayExists over a not-empty predicate
+//     keeps a tuple with one non-empty element. The plausible wrong
+//     spelling, arrayAll, would drop every partial-empty row and
+//     silently delete the multi-key group-by's whole result set.
+//   - The conjunct binds NO argument. repeatedSpansArgs binds
+//     positionally in SQL TEXT order; v0.9.1286 was a 500 caused by one
+//     group-key arg drifting a slot. A filter carrying a `?` in the
+//     HAVING would re-open exactly that.
+func TestRepeatedSpansSQLDropsAllEmptyGroupTuple(t *testing.T) {
+	cases := []struct {
+		name      string
+		keysArray string
+		whereSQL  string
+	}{
+		{
+			name:      "single well-known column — the shape the operator hit",
+			keysArray: "[toString(db_statement)]",
+			whereSQL:  "WHERE time >= ? AND time <= ?",
+		},
+		{
+			name:      "attr-array key (carries a bind arg)",
+			keysArray: "[toString(attr_values[indexOf(attr_keys, ?)])]",
+			whereSQL:  "WHERE time >= ? AND time <= ?",
+		},
+		{
+			name:      "resource key (carries a bind arg)",
+			keysArray: "[toString(res_values[indexOf(res_keys, ?)])]",
+			whereSQL:  "WHERE time >= ? AND time <= ?",
+		},
+		{
+			name:      "multi-key — partial-empty tuples live here",
+			keysArray: "[toString(name), toString(attr_values[indexOf(attr_keys, ?)])]",
+			whereSQL:  "WHERE time >= ? AND time <= ?",
+		},
+		{
+			name:      "coalesce-chain key (peer) — no bind arg, quotes inside the expr",
+			keysArray: "[toString(coalesce(nullIf(peer_service, ''), ''))]",
+			whereSQL:  "WHERE time >= ? AND time <= ? AND service_name = ?",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sql := repeatedSpansSQL(tc.keysArray, tc.whereSQL)
+
+			// Isolate the HAVING span first, then assert against THAT.
+			// Asserting the finished literal against the whole query would
+			// make the first check subsume every later one — a wrong-verb
+			// mutation would trip the "exclusion is missing" branch and the
+			// ANY-vs-ALL guard below would never run, so it could rot
+			// without anyone noticing.
+			having := strings.Index(sql, "HAVING")
+			orderBy := strings.Index(sql, "ORDER BY cnt DESC")
+			if having < 0 || orderBy < 0 || orderBy < having {
+				t.Fatalf("cannot locate the inner HAVING…ORDER BY span\n--- SQL ---\n%s", sql)
+			}
+			havingSpan := sql[having:orderBy]
+
+			// (1) An exclusion exists, it is expressed over the group tuple,
+			// and it lives in the HAVING — after aggregation, where the
+			// tuple is formed, and therefore before ORDER BY / LIMIT so real
+			// rows reclaim the 200 slots.
+			if !strings.Contains(havingSpan, "group_values") || !strings.Contains(havingSpan, "!= ''") {
+				t.Errorf("the HAVING no longer excludes the all-empty group tuple: the "+
+					"Repeats list refills with blank rows that are not span shapes "+
+					"(v0.9.1287 — 2721 of 2837 groups measured on "+
+					"groupBy=db.statement over 1h)\n--- HAVING ---\n%s", havingSpan)
+			}
+
+			// (2) ANY, never ALL — an independent property of the same
+			// conjunct. arrayAll would drop ["SELECT instrument_prices", ""]
+			// and with it every multi-key result where one key is
+			// legitimately absent (116 such rows measured on
+			// groupBy=name,http.route in the same window).
+			if !strings.Contains(havingSpan, "arrayExists(") {
+				t.Errorf("exclusion is not ANY-semantics: only arrayExists keeps a "+
+					"partially-empty tuple, which IS a real shape\n--- HAVING ---\n%s",
+					havingSpan)
+			}
+			for _, bad := range []string{"arrayAll(", "arrayCount(", "empty(", "hasAll("} {
+				if strings.Contains(havingSpan, bad) {
+					t.Errorf("exclusion uses %q — ALL-semantics deletes partially-empty "+
+						"tuples wholesale\n--- HAVING ---\n%s", bad, havingSpan)
+				}
+			}
+
+			// The conjunct must not have introduced a placeholder — the
+			// v0.9.1286 arg-order defect is one slot away from here.
+			gotPlaceholders := strings.Count(sql, "?")
+			wantPlaceholders := strings.Count(tc.keysArray, "?") +
+				strings.Count(tc.whereSQL, "?") +
+				2 + // HAVING cnt >= ?, LIMIT ?
+				2 //  the joined subquery's from/to
+			if gotPlaceholders != wantPlaceholders {
+				t.Errorf("placeholder count = %d, want %d — the empty-tuple exclusion "+
+					"must bind NO argument or every arg after it shifts a slot "+
+					"(v0.9.1286)\n--- SQL ---\n%s", gotPlaceholders, wantPlaceholders, sql)
+			}
+
+			// The count filter has to survive alongside it; an exclusion that
+			// replaced `cnt >= ?` would pass the checks above.
+			if !strings.Contains(sql, "cnt >= ?") {
+				t.Errorf("MinRepeats filter lost from the HAVING\n--- SQL ---\n%s", sql)
+			}
+		})
+	}
+}
+
+// v0.9.1287 — the arg-order contract, re-asserted against the SQL that
+// now carries the empty-tuple exclusion. TestRepeatedSpansArgsMatchPlaceholderOrder
+// already pins the builder, but it pins repeatedSpansArgs against
+// whatever repeatedSpansSQL happens to emit; this states the specific
+// invariant the v0.9.1287 edit could have broken — that the new HAVING
+// conjunct sits BETWEEN `cnt >= ?` and `LIMIT ?` without displacing
+// either, so the tail bind order (minRepeats, limit, from, to) holds.
+func TestEmptyTupleExclusionKeepsBindOrder(t *testing.T) {
+	from := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+
+	sql := repeatedSpansSQL(
+		"[toString(attr_values[indexOf(attr_keys, ?)])]",
+		"WHERE time >= ? AND time <= ?",
+	)
+	args := repeatedSpansArgs([]any{"db.operation"}, []any{from, to}, 5, 200, from, to)
+
+	if n := strings.Count(sql, "?"); n != len(args) {
+		t.Fatalf("SQL has %d placeholders but %d args\n--- SQL ---\n%s", n, len(args), sql)
+	}
+
+	// Placeholder order in text: group key → WHERE from/to → HAVING
+	// minRepeats → LIMIT → subquery from/to. The exclusion inserts
+	// itself into the HAVING between the third and fourth.
+	idxHavingArg := strings.Index(sql, "cnt >= ?")
+	idxLimitArg := strings.Index(sql, "LIMIT ?")
+	idxExcl := strings.Index(sql, "arrayExists(")
+	if idxExcl < idxHavingArg || idxExcl > idxLimitArg {
+		t.Fatalf("exclusion moved outside the (cnt >= ?, LIMIT ?) span; bind order "+
+			"is positional and this reorders the tail\n--- SQL ---\n%s", sql)
+	}
+
+	want := []any{"db.operation", from, to, 5, 200, from, to}
+	for i, w := range want {
+		if args[i] != w {
+			t.Errorf("arg[%d] = %#v, want %#v", i, args[i], w)
 		}
 	}
 }

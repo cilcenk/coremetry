@@ -153,6 +153,38 @@ func (s *Store) QueryRepeatedSpans(ctx context.Context, f RepeatedSpanFilter) ([
 //     from a partial trace. GLOBAL is the JOIN twin of the house
 //     GLOBAL IN rule (v0.5.427); on a single-node install the two
 //     forms are semantically identical.
+//
+// v0.9.1287 — the HAVING carries a second conjunct, and it is a
+// correctness fix, not a cosmetic one. The group key is a tuple; when
+// EVERY element of that tuple is the empty string the row is not a
+// span shape at all, it is "the spans in this trace that carry none
+// of the requested attributes". Grouping by `db.statement` collapses
+// every non-DB span in a trace — HTTP handlers, internal work, queue
+// consumers — into one empty bucket, and that bucket then counts as a
+// repeat of itself.
+//
+// Measured live on the 2-shard local cluster at v0.9.1286,
+// GET /api/spans/repeats?groupBy=db.statement&minRepeats=5 over 1h:
+// 2837 candidate groups, of which 2721 (95.9%) were the all-empty
+// tuple at 19-20 spans apiece. They are individually smaller than the
+// real N+1 (40×) but they are so numerous that they ate the LIMIT
+// 200: the response held 146 blank rows against 54 real ones, and 62 of
+// the 116 genuinely repeating statements never reached the operator
+// at all. The top of Explore's Repeats list was blank rows.
+//
+// PARTIAL-empty tuples are deliberately KEPT. `arrayExists` asks for
+// ANY non-empty element, not all of them. groupBy=name,http.route on
+// the same window is 116 rows shaped ["SELECT instrument_prices", ""]
+// — a DB span has no HTTP route, and that absence is a real property
+// of a real shape. Only a tuple with no identity anywhere is dropped.
+//
+// The conjunct is bind-arg free on purpose. repeatedSpansArgs binds
+// positionally in SQL TEXT order and v0.9.1286 shipped a 500 because
+// a group-key arg drifted one slot; a filter that needs no `?` cannot
+// reopen that. It also sits in HAVING rather than WHERE so it applies
+// after aggregation, where the tuple actually exists — and therefore
+// before ORDER BY / LIMIT, which is what hands the 200 slots back to
+// real rows.
 func repeatedSpansSQL(keysArrayLiteral, whereSQL string) string {
 	return `
 		WITH dup_traces AS (
@@ -163,7 +195,7 @@ func repeatedSpansSQL(keysArrayLiteral, whereSQL string) string {
 			       min(time)                    AS earliest
 			FROM spans ` + whereSQL + `
 			GROUP BY trace_id, group_values
-			HAVING cnt >= ?
+			HAVING cnt >= ? AND arrayExists(x -> x != '', group_values)
 			ORDER BY cnt DESC
 			LIMIT ?
 		)

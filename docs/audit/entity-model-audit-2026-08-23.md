@@ -181,6 +181,17 @@ Tek arka plan goroutine'i, `internal/topology/aggregator.go`, Redis lider kilidi
 
 **Tuzak:** `parent_service` her zaman bir SERVİS değil — consumer pass'i oraya `queue:<system>:<topic>` yazar ve `node_kind`'ı **`'service'`** damgalar (`topology.go:879-881`). Sonucu: `GetServiceAdjacency`/`…Weighted` `node_kind='service'` filtresi kullanıyor (`service_adjacency.go:62,122` ✅ doğrulandı) → **korelatörün grafiğine `queue:…` düğümleri "çağıran servis" olarak giriyor**. Aynı sınıf frontend'de yaşandı ve düzeltildi (`api/topology.go:1029`, v0.9.1029).
 
+⚠ **DÜZELTME (v0.9.1327) — teşhis doğru, ÇARE yanlıştı.** Yukarıdaki gözlem
+(`parent_service` her zaman servis değil; kuyruk düğümleri korelatörün
+grafiğine "çağıran servis" olarak giriyor) doğrudur. Ama bundan "damga
+yanlış" sonucu çıkarılamaz: `node_kind` **çocuğun** türünü taşır ve o
+geçişte çocuk (`service_name`) gerçekten tüketici servistir. Yüklem
+çocukları AŞIRI, parent'ları ise HİÇ süzüyordu. Çare yazıcıda değil okuma
+tarafında: yüklem kalkar, iki uç da ham-ID önekinden tiplenir
+(`TopologyNodeIdentity`, `chstore/identity.go`). Bu ayrım kodda zaten
+yazılıydı — `servicegraph.go`'nun v0.9.1028/1029 şerhleri aynı şeyi
+söylüyor.
+
 ### 3.4 Kim okuyor
 
 **SQL noktaları:** 6 INSERT, 13 SELECT (+1 probe) `[v1101 tabanlı]`.
@@ -424,7 +435,7 @@ Sıra **operatörün kendi kuyruk kuralına** (bugs > perf > HA > features) gör
 | **A1** (bug) | `problems` + `anomaly_events` PARTITION P1 ihlali — `PARTITION BY toDate(started_at)` + `ORDER BY id`, partition kolonu ORDER BY'da değil → `FINAL` partition sınırını aşamıyor, bayat satır kazanabiliyor | v0.9.1304'ün `root_cause_hypotheses` için düzelttiğinin aynısı; **doğrulanmış**, `partitionNotInOrderBy` haritasında bilinen istisna olarak duruyor | 0,5-1 gün + repartition emsali `rootcause_repartition.go` | `store.go:1267,1369`; `partition_dedup_test.go:43` |
 | **A2** (feature, en ucuz) | `service_seen` MV — `minState(time) AS first_seen_state` + `maxState`, `service_version_5m` emsali (`store.go:3362-3372`) | **S5 tamamı**: "bu servis dün de var mıydı", "yeni servis", "kaybolan servis"; `/services`'te `Son görülme` kolonu. **Yeni yazma yolu, yeni worker, yeni kilit YOK** | 1-1,5 gün | yeni MV + `summary.go` + FE |
 | **A3** (bug sınıfı) | Paylaşılan kimlik-ifadesi sabitleri + **sıra-pinli** tablo testleri: (i) dış/db düğüm anahtarı `dbInstanceExpr`'e bağlanır → Ç2+Ç10; (ii) namespace tek ifade → Ç8; (iii) `clusterExpr` gölgeleme adı ayrıştırılır → Ç9 | Ç2 (çıkmaz link + sahte satır), Ç8, Ç9, Ç10 | 1,5-2 gün | `dependencies.go:157`, `chstore/topology.go:703`, `service_map.go:460`, `service_namespaces.go:32`, `repo.go:352` · emsal test `quantile_ordinal_test.go:284-305` |
-| **A4** (korelasyon) | `service_adjacency.go:62,122`'deki `node_kind = 'service'` filtresi gevşetilir + `queue:` düğümünün `node_kind='service'` damgası düzeltilir (`chstore/topology.go:879-881`) | **S2'nin (a) ve (c) katmanı**: paylaşılan bağımlılık **adlandırılabilir** hale gelir; ayrıca korelatörün grafiğine kuyruk düğümlerinin "servis" olarak sızması durur | 1-1,5 gün | aynı |
+| **A4** (korelasyon) | `service_adjacency.go:62,122`'deki `node_kind = 'service'` filtresi gevşetilir; okuma tarafı kenarın İKİ ucunu da ham-ID önekinden tipler. ⚠ **DÜZELTME (v0.9.1327):** bu hücre önceden "+ `queue:` düğümünün `node_kind='service'` damgası düzeltilir (`chstore/topology.go:879-881`)" diyordu — **YANLIŞTI, uygulanmadı.** `node_kind` düğümün değil **çocuğun** türüdür; kuyruk→tüketici geçişinde çocuk gerçekten tüketici servistir, yani damga doğru. Kusur, yüklemin **parent'ı hiç kısıtlamaması**. Damgayı değiştirmek `buildServiceGraph`'ın tüketici servisi kuyruk düğümü çizmesine, yani v0.9.1028'in yeniden kırılmasına yol açardı — üstelik yazıcı değişikliği olduğu için 14 günlük karışık-damga penceresi de açardı. `TestQueueConsumerPassStampsChildKind` bu değişmezliği çiviliyor | **S2'nin (a) ve (c) katmanı**: paylaşılan bağımlılık **adlandırılabilir** hale gelir; ayrıca korelatörün grafiğine kuyruk düğümlerinin "servis" olarak sızması durur | 1-1,5 gün | aynı |
 
 **A1-A4 toplam ≈ 4,5-6 gün**, dördü de ayrı `v0.9.X`, hiçbiri MV yeniden kurmuyor, hiçbiri URL kırmıyor, hiçbiri ikinci kaynak-hakikat yaratmıyor.
 

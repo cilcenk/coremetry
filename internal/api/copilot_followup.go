@@ -249,7 +249,23 @@ func inboxTeamExceptionsLink(team string) (guidedAnswerLink, bool) {
 // deterministik uygulama-içi linkler. LLM çıktısından DEĞİL rotadan
 // üretilir (gemma4'e link biçimletmeyiz); frontend çip olarak çizer ve
 // SPA navigate eder. Saf — copilot_followup_test.go.
-func guidedAnswerLinks(route guidedRoute) []guidedAnswerLink {
+//
+// v0.9.1321 (§3.1 K6) — pencere ZORUNLU argüman. Aşağıdaki 25 href
+// satırından yalnız biri (request-ID log köprüsü) pencere yazıyordu;
+// geri kalanı operatörü cevabın konuştuğu ana değil sticky penceresine
+// götürüyordu. Burada `win linkWindow` bir parametre çünkü bunu bir
+// grep-kapısıyla korumak, 26'ncı satırı yazan kişinin kuralı
+// hatırlamasına bağlı olurdu; imza ise derlemeyi durdurur. Pencere
+// TEK ÇIKIŞTA uygulanır (applyAll), yani yeni bir case eklemek onu
+// düşüremez.
+func guidedAnswerLinks(route guidedRoute, win linkWindow) []guidedAnswerLink {
+	return win.applyAll(guidedAnswerLinkTargets(route))
+}
+
+// guidedAnswerLinkTargets — penceresiz HAM hedefler. guidedAnswerLinks
+// dışından çağrılmamalı; link_window_test.go tek-çağıran sözleşmesini
+// pinler (imzanın ifade edemediği tek şey bu).
+func guidedAnswerLinkTargets(route guidedRoute) []guidedAnswerLink {
 	svc := route.Service
 	svcQ := url.QueryEscape(svc)
 	switch route.Intent {

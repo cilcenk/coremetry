@@ -104,7 +104,7 @@ func TestGuidedRequestIDAnswerLinks(t *testing.T) {
 			Intent: guidedRequestID, RequestID: testReqID, TraceID: testTraceHex,
 			Service:         "checkout-service",
 			ReqWindowFromMs: from.UnixMilli(), ReqWindowToMs: to.UnixMilli(),
-		})
+		}, noLinkWindow())
 		if len(links) != 3 {
 			t.Fatalf("çip sayısı %d: %+v", len(links), links)
 		}
@@ -126,7 +126,7 @@ func TestGuidedRequestIDAnswerLinks(t *testing.T) {
 	t.Run("pencere yoksa log çipi YAZILMAZ", func(t *testing.T) {
 		links := guidedAnswerLinks(guidedRoute{
 			Intent: guidedRequestID, RequestID: testReqID, TraceID: testTraceHex,
-		})
+		}, noLinkWindow())
 		for _, l := range links {
 			if strings.HasPrefix(l.Href, "/logs") {
 				t.Fatalf("penceresiz log çipi çizildi: %q", l.Href)
@@ -135,7 +135,7 @@ func TestGuidedRequestIDAnswerLinks(t *testing.T) {
 	})
 
 	t.Run("hiçbir şey çözülmediyse çip yok", func(t *testing.T) {
-		if got := guidedAnswerLinks(guidedRoute{Intent: guidedRequestID, RequestID: testReqID}); len(got) != 0 {
+		if got := guidedAnswerLinks(guidedRoute{Intent: guidedRequestID, RequestID: testReqID}, noLinkWindow()); len(got) != 0 {
 			t.Fatalf("çözümsüz rotada çip var: %+v", got)
 		}
 	})

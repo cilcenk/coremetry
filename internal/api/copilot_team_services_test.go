@@ -321,7 +321,7 @@ func TestTeamServicesLinksAvoidDeadServicesParam(t *testing.T) {
 	links := guidedAnswerLinks(guidedRoute{
 		Intent: guidedTeamServices, Team: "Avengersy",
 		TeamServices: []string{"päy ments", "checkout-service"},
-	})
+	}, noLinkWindow())
 	// v0.9.1246 — üçüncü link: takım-filtreli exception kuyruğu. /inbox
 	// ?team='i GERÇEKTEN okuyor (readInboxTeam, lib/inboxUrl.ts), yani
 	// bu link ölü param değil; aşağıdaki K4 pini o okumayı da çiviliyor.

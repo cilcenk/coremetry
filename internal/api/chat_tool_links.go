@@ -28,6 +28,7 @@ package api
 import (
 	"encoding/json"
 	"net/url"
+	"time"
 )
 
 // toolLinkArgs — köprünün okuduğu TEK alt küme. Bilinmeyen alanlar
@@ -36,17 +37,43 @@ import (
 type toolLinkArgs struct {
 	Service string `json:"service"`
 	Query   string `json:"query"`
+	// RangeS (v0.9.1321) — tool'ların ORTAK pencere argümanı
+	// (/mcp-tools sözleşmesi: ns damgası değil range_s). Modelin
+	// çağrıda verdiği değer, tool'un gerçekten sorguladığı aralıktır,
+	// yani köprü linkinin dürüst penceresi de odur. Yoksa (0) pencere
+	// YAZILMAZ — tool'un varsayılanını tahmin etmek, yanlış aralık
+	// yazmanın sessiz yolu olurdu.
+	RangeS int64 `json:"range_s"`
 }
 
 // toolCallLink — tool adı + HAM arg JSON'u → ürün linki. Saf, tablo
 // testli. ok=false → bu tool için köprü yok (ör. render_chart: grafik
 // zaten cevabın içine gömülü; list_services: hedef sayfa aramanın
 // kendisi değil).
-func toolCallLink(tool string, rawArgs json.RawMessage) (guidedAnswerLink, bool) {
+//
+// v0.9.1321 (§3.1 K6) — `now` ZORUNLU argüman. Pencere buradan türer:
+// tool [now-range_s, now] aralığını sorguladı, çipin açacağı sayfa da
+// o aralığı göstermeli. Parametre olması test için enjekte edilebilir
+// olmasını da sağlıyor; ama asıl sebep imzanın çağıranı pencere
+// konusunda KARAR VERMEYE zorlaması (bkz. link_window.go).
+func toolCallLink(tool string, rawArgs json.RawMessage, now time.Time) (guidedAnswerLink, bool) {
 	var a toolLinkArgs
 	if len(rawArgs) > 0 {
 		_ = json.Unmarshal(rawArgs, &a) // hata = alanlar boş; köprü yine kurulabilir
 	}
+	l, ok := toolCallLinkTarget(tool, a)
+	if !ok {
+		return guidedAnswerLink{}, false
+	}
+	// Pencere TEK ÇIKIŞTA uygulanır: aşağıya yeni bir case eklemek onu
+	// düşüremez (guidedAnswerLinks ile aynı şekil).
+	l.Href = linkWindowRelative(now, a.RangeS).apply(l.Href)
+	return l, true
+}
+
+// toolCallLinkTarget — penceresiz HAM hedef. toolCallLink dışından
+// çağrılmamalı; link_window_test.go tek-çağıran sözleşmesini pinler.
+func toolCallLinkTarget(tool string, a toolLinkArgs) (guidedAnswerLink, bool) {
 	svcQ := url.QueryEscape(a.Service)
 	withSvc := func(base, sep string) string {
 		if a.Service == "" {

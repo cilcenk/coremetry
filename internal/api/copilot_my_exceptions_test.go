@@ -177,7 +177,7 @@ func TestServiceHealthChipsCarryOperatorDrilldowns(t *testing.T) {
 // kelimesi URL'e girseydi paylaşılan link, açan kişinin takımını
 // gösterirdi.
 func TestMyExceptionsLinkCarriesResolvedTeam(t *testing.T) {
-	links := guidedAnswerLinks(guidedRoute{Intent: guidedMyExceptions, Team: "SY"})
+	links := guidedAnswerLinks(guidedRoute{Intent: guidedMyExceptions, Team: "SY"}, noLinkWindow())
 	if len(links) != 1 {
 		t.Fatalf("tek link beklenir: %+v", links)
 	}
@@ -192,7 +192,7 @@ func TestMyExceptionsLinkCarriesResolvedTeam(t *testing.T) {
 	// servisi yok) link filo geneline döner. Yanlış kapsamlı bir link
 	// linksizlikten kötü, ama "hiç link yok" da çıkmazdır — kuyruğun
 	// kendisi hâlâ doğru hedef.
-	fallback := guidedAnswerLinks(guidedRoute{Intent: guidedMyExceptions})
+	fallback := guidedAnswerLinks(guidedRoute{Intent: guidedMyExceptions}, noLinkWindow())
 	if len(fallback) != 1 || fallback[0].Href != "/inbox?kind=exception" {
 		t.Errorf("takımsız cevapta düz exception kuyruğu beklenir: %+v", fallback)
 	}
@@ -201,7 +201,7 @@ func TestMyExceptionsLinkCarriesResolvedTeam(t *testing.T) {
 // Kimlik URL'e SIZMAMALI: link paylaşılabilir olmalı.
 func TestMyExceptionsLinkHasNoIdentityToken(t *testing.T) {
 	for _, team := range []string{"SY", "UG", "Ödeme Takımı"} {
-		l := guidedAnswerLinks(guidedRoute{Intent: guidedMyExceptions, Team: team})[0]
+		l := guidedAnswerLinks(guidedRoute{Intent: guidedMyExceptions, Team: team}, noLinkWindow())[0]
 		for _, bad := range []string{"benim", "me=", "user=", "self"} {
 			if strings.Contains(strings.ToLower(l.Href), bad) {
 				t.Errorf("link kimlik taşıyor (%q): %s", bad, l.Href)

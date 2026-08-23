@@ -3916,8 +3916,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	// db_name dimension so one host serving multiple databases
 	// surfaces as distinct rows. Detect via system.columns: if
 	// the older two-key schema is in place (no db_name column),
-	// drop both MVs and re-create from the updated mvs[3]/mvs[4]
-	// definitions. Past 5-min buckets are dropped but only
+	// drop both MVs and re-create from the updated definitions,
+	// resolved BY NAME via findMV (v0.8.52 — never by slice
+	// position). Past 5-min buckets are dropped but only
 	// recent windows are operator-visible so the cost is hidden
 	// behind the next merge cycle (~5 min).
 	dbMigrations := []string{"db_summary_5m", "db_caller_summary_5m"}
@@ -4073,10 +4074,19 @@ func (s *Store) migrate(ctx context.Context) error {
 	// Past 5-min buckets are dropped (same trade-off as the
 	// v0.5.327 db_name migration).
 	for _, table := range []string{"db_summary_5m", "db_caller_summary_5m"} {
-		mvIdx := 3
-		if table == "db_caller_summary_5m" {
-			mvIdx = 4
-		}
+		// v0.9.1319 — bug-fix: this loop was the ONE upgrade path the
+		// v0.8.52 by-name migration missed. It resolved the recreate DDL
+		// as mvs[3] / mvs[4], and the slice has grown twice since those
+		// constants were written: today index 3 is spanmetrics_1m and 4
+		// is spanmetrics_10s, while db_summary_5m sits at 7 and
+		// db_caller_summary_5m at 8. On a genuine pre-v0.5.349 upgrade
+		// the branch therefore dropped db_summary_5m and then ran
+		// `CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_1m`, which
+		// no-ops because that MV already exists — so the table stayed
+		// GONE for the rest of the process lifetime with no error
+		// anywhere and /databases rendered empty. Name lookup kills the
+		// whole index-shift class; execDDL now also rejects an empty DDL
+		// so a renamed/removed MV fails the boot loudly instead.
 		// v0.5.436 — bug-fix: probe the right object in cluster mode.
 		// Pre-v0.5.435 the bare name was the MV itself, so
 		// create_table_query contained the SELECT body and the
@@ -4110,7 +4120,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			if err := s.dropCombinedMV(ctx, dropTarget); err != nil {
 				return fmt.Errorf("drop old %s for upgrade: %w", table, err)
 			}
-			if err := s.execDDL(ctx, mvs[mvIdx]); err != nil {
+			if err := s.execDDL(ctx, findMV(table)); err != nil {
 				return fmt.Errorf("recreate %s with fallback chain: %w", table, err)
 			}
 		}

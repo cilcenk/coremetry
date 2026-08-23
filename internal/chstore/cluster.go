@@ -1183,6 +1183,16 @@ func (s *Store) adaptDDL(sql string) []string {
 // until ZK converges (typically <30s). Without retry, boot
 // crashes. With retry, the migration self-heals.
 func (s *Store) execDDL(ctx context.Context, sql string) error {
+	// v0.9.1319 — boş DDL = ÇAĞIRAN TARAFTA BUG, sessizce yutma.
+	// Tek gerçek üreticisi mvDDLByName'in "" dönüşü: bir MV yeniden
+	// adlandırılır ya da mvs kataloğundan çıkarılırsa upgrade yolu
+	// "drop et, sonra hiçbir şey yaratma" hâline gelir — tablo yok
+	// olur, hiçbir yerde hata görünmez (v0.9.1319'un öldürdüğü
+	// özellik). Erteleme kontrolünden ÖNCE duruyor: defer kipinde ""
+	// kuyruğa girip nil dönerdi, yani en sessiz dal tam da buydu.
+	if strings.TrimSpace(sql) == "" {
+		return fmt.Errorf("execDDL: boş DDL — çağıran taraf bir MV/tablo adını çözemedi")
+	}
 	// v0.9.614 — erteleme kipi (ddl_defer.go): şema yerindeyken boot
 	// DDL'i ÇALIŞTIRMAZ, biriktirir. HAM sql saklanır — adaptDDL
 	// yürütme anında uygulanır, böylece ertelenen ifade de normal

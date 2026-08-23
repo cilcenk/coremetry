@@ -1724,7 +1724,7 @@ function StateUnifyWizardPanel() {
               </div>
             )}
 
-            {run && (run.running || run.results.length > 0) && (
+            {run && (run.running || (run.results ?? []).length > 0) && (
               <div style={{
                 border: '1px solid var(--border)', borderRadius: 6, padding: 10,
                 marginBottom: 12, background: 'var(--bg2)',

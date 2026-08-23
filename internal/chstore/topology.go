@@ -383,18 +383,34 @@ func (s *Store) GetEdgeInstances(ctx context.Context, parentService, system, kin
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	var sysCol string
+	// v0.9.1318 (entity-model A3 / Ç10) — instance ifadesi ARTIK kind'a
+	// göre seçiliyor.
+	//
+	// Önceden her iki kind da tek basamaklı `coalesce(nullIf(peer_service,
+	// ''), 'unknown')` kullanıyordu. db kenarları için bu, db_summary_5m'in
+	// ALTI basamaklı kimliğinin BİRİNCİ basamağıydı: peer_service'i boş
+	// bırakan her kurulumda (ölçüldü — lokal `clickhouse`, 53.692 span)
+	// panel tek bir 'unknown' kovası gösteriyordu, oysa MV o instance'ı
+	// `coremetry-monolithic` diye adlandırmıştı. Yani "şu db düğümünün
+	// instance'ları" paneli, açıldığı düğümle ÇELİŞİYORDU.
+	//
+	// queue BİLİNÇLİ olarak peer_service'te kalıyor: bir kuyruk kenarının
+	// instance'ı broker'dır ve dbInstanceExpr'in db.host/db.name
+	// basamakları orada anlamsızdır. msgClusterExpr'e geçirmek de yanlış
+	// olurdu — o messaging CLUSTER'ını çözer, broker'ı değil; düğüm adı
+	// zaten cluster'ı taşıyor (topoQueueClusterSQL).
+	var sysCol, instanceExpr string
 	switch kind {
 	case "db":
-		sysCol = "db_system"
+		sysCol, instanceExpr = "db_system", dbInstanceExpr
 	case "queue":
-		sysCol = "msg_system"
+		sysCol, instanceExpr = "msg_system", `coalesce(nullIf(peer_service, ''), 'unknown')`
 	default:
 		return []EdgeInstance{}, nil
 	}
 	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT
-			coalesce(nullIf(peer_service, ''), 'unknown') AS instance,
+			`+instanceExpr+` AS instance,
 			toUInt64(count())                              AS calls,
 			toFloat64(avg(duration)) / 1e6                 AS avg_ms,
 			toFloat64(quantile(0.99)(duration)) / 1e6      AS p99_ms
@@ -473,7 +489,7 @@ func topoNoiseExcludeSQL(col string) string {
 
 // topoQueueClusterSQL — kuyruk düğümünün messaging CLUSTER'ı (v0.9.1025).
 //
-// Zincir TÜRETİLMİYOR: dependencies.go'daki `clusterExpr` sabiti AYNEN
+// Zincir TÜRETİLMİYOR: identity.go'daki `msgClusterExpr` sabiti AYNEN
 // kullanılıyor, çünkü messaging_summary_5m / messaging_caller_summary_5m
 // MV'leri de tam olarak o zinciri materialize ediyor. Ayrışma SESSİZ bir
 // kırılmadır ve bu özelliğin tam kalbinden vurur: topoloji düğümünden
@@ -490,7 +506,7 @@ func topoNoiseExcludeSQL(col string) string {
 // BİREBİR aynı metin yazılıyor, çünkü iki pass'in "MUST mirror"
 // sözleşmesi ancak metin aynıysa test edilebilir.
 func topoQueueClusterSQL() string {
-	return `if(msg_system != '', ` + clusterExpr + `, '')`
+	return `if(msg_system != '', ` + msgClusterExpr + `, '')`
 }
 
 // topoJoinMemBudget — grace-hash spill eşiği (max_bytes_in_join), üç
@@ -659,10 +675,17 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 	// Honeycomb / Dynatrace separate instances of the same DB
 	// system because operationally they're different
 	// destinations — different replicas, different availability,
-	// different latency. Host resolved via the same coalesce
-	// chain db_summary_5m already uses (peer_service →
-	// server.address attr → net.peer.name attr). When all are
-	// empty the node falls back to the flat `db:<system>` form.
+	// different latency.
+	//
+	// v0.9.1318 (A3/Ç10) — bu yorum ÖNCEDEN "db_summary_5m'in
+	// kullandığı AYNI coalesce zinciri" diyordu ve parantez içinde üç
+	// basamak sayıyordu; MV ise ALTI basamak tarıyordu. Sözleşme
+	// iddia edilmiş ama kurulmamıştı — ve tam olarak yorumun vaat
+	// ettiği yerde kırılıyordu. Artık db dalı paylaşılan
+	// dbInstanceExpr sabitini (identity.go) kullanıyor, queue ve
+	// external dalları infra_host'ta KALIYOR: bir Kafka broker'ı ya da
+	// bir HTTP peer'ı db.host/db.name/service_name basamaklarıyla
+	// adlandırmak yanlış olurdu.
 	// External peer hosts keep the prior `ext:<service>` shape
 	// since peer_service IS the canonical external name.
 	// v0.9.186 — analyzer-portable restructure (prod CH 26.2 code 60 fix).
@@ -706,6 +729,33 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 					nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
 					''
 				) AS infra_host,
+				-- v0.9.1318 (entity-model A3 / Ç10) — DB düğümünün instance'ı
+				-- artık dbInstanceExpr'den geliyor, infra_host'tan DEĞİL.
+				--
+				-- infra_host ÜÇ basamak tarar (peer_service → server.address →
+				-- net.peer.name); db_summary_5m'in instance kimliği ALTI
+				-- tarar (+ db.host → db.name → service_name → 'unknown').
+				-- Yukarıdaki v0.5.408 yorumu "aynı coalesce zinciri" diyordu
+				-- ama zincirin yarısını yazıyordu — sözleşme İDDİA edilmiş,
+				-- kurulmamıştı.
+				--
+				-- ÖLÇÜLDÜ (lokal, 24s): clickhouse db_system'i için üç
+				-- basamaklı zincir '' verdi (peer_service/server.address/
+				-- net.peer.name'in ÜÇÜ de boş, 53.692 span), altı basamaklı
+				-- zincir coremetry-monolithic verdi. Düğüm bu yüzden düz
+				-- db:clickhouse yazılıyordu; splitDbNodeName '@' göremeyip
+				-- null döndüğü için düğümden /database'e link KURULAMIYORDU.
+				--
+				-- Değişim KESİNLİKLE EKLEMELİ: peer_service/server.address/
+				-- net.peer.name'den biri doluysa iki zincir AYNI değeri verir
+				-- (ilk üç basamak birebir), yani zaten instance'lı düğümler
+				-- aynı adı korur. Yalnız ÖNCEDEN DÜZ olan — yani linki zaten
+				-- kırık olan — düğümler ad kazanır.
+				--
+				-- db_system guard'ı topoQueueClusterSQL'in guard'ıyla aynı
+				-- gerekçe: infra pass'i HER span'i geçiyor, dört indexOf
+				-- taramasını db olmayan satırlarda koşturmanın anlamı yok.
+				if(db_system != '', `+dbInstanceExpr+`, '') AS db_instance,
 				-- v0.8.448 — leaf-client tespiti (external fallback için):
 				-- server-kind bir child'ı OLAN client span'ın hedefi
 				-- enstrümante bir servistir — o kenarı cross-service pass
@@ -739,10 +789,15 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 					''
 				) AS msg_dest,
 				multiIf(
-					db_system  != '' AND infra_host != '',
-						concat('db:',    db_system, '@', infra_host),
+					-- v0.9.1318 (Ç10) — TEK db dalı. dbInstanceExpr 'unknown'
+					-- terminaline düştüğü için db_instance, db_system doluyken
+					-- ASLA boş olmaz; eski iki-dallı biçimin "instance yok"
+					-- yarısı (düz db:<system>) artık ulaşılamaz bir daldı ve
+					-- çıkmaz linkin ta kendisiydi. dbInstanceExpr yorumunun
+					-- dediği gibi: 'unknown' sentineli özel dal İHTİYACINI
+					-- ortadan kaldırır.
 					db_system  != '',
-						concat('db:',    db_system),
+						concat('db:',    db_system, '@', db_instance),
 					-- v0.5.411 — messaging branch scoped to non-consumer spans only
 					-- (consumer spans get the queue → consumer pass below).
 					-- v0.7.31 — topic-aware: prefer the destination so topics

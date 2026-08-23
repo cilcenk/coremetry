@@ -61,7 +61,7 @@ func mvClusterChain(t *testing.T, body, mvName string) string {
 
 // TestTopoQueueClusterMirrorsMessagingMV — AYNILIK PİNİ.
 //
-// Üç yazım karşılaştırılıyor: paylaşılan `clusterExpr` sabiti (topoloji
+// Üç yazım karşılaştırılıyor: paylaşılan `msgClusterExpr` sabiti (topoloji
 // pass'lerinin kullandığı) ve iki messaging MV'sinin DDL'ine GÖMÜLÜ
 // zincir. Sabit paylaşımı MV tarafında mümkün değil (DDL metni ham
 // backtick), o yüzden garanti derleyiciden değil buradan geliyor.
@@ -72,21 +72,21 @@ func TestTopoQueueClusterMirrorsMessagingMV(t *testing.T) {
 	}
 	body := stripGoLineComments(string(src))
 
-	want := clusterChainKeys(clusterExpr)
+	want := clusterChainKeys(msgClusterExpr)
 	if len(want) != 3 {
-		t.Fatalf("clusterExpr'den 3 anahtar bekleniyordu, %d çıktı (%v) — zincir değiştiyse MV'ler de değişmeli", len(want), want)
+		t.Fatalf("msgClusterExpr'den 3 anahtar bekleniyordu, %d çıktı (%v) — zincir değiştiyse MV'ler de değişmeli", len(want), want)
 	}
 
 	for _, mv := range []string{"messaging_summary_5m", "messaging_caller_summary_5m"} {
 		chain := mvClusterChain(t, body, mv)
 		got := clusterChainKeys(chain)
 		if len(got) != len(want) {
-			t.Fatalf("%s cluster zinciri %d anahtar tarıyor, clusterExpr %d: %v vs %v",
+			t.Fatalf("%s cluster zinciri %d anahtar tarıyor, msgClusterExpr %d: %v vs %v",
 				mv, len(got), len(want), got, want)
 		}
 		for i := range want {
 			if got[i] != want[i] {
-				t.Errorf("%s anahtar %d ayrıştı: MV %q, clusterExpr %q — SIRA da sözleşme; kayan bir rung çekmeceyi SESSİZCE boş açar",
+				t.Errorf("%s anahtar %d ayrıştı: MV %q, msgClusterExpr %q — SIRA da sözleşme; kayan bir rung çekmeceyi SESSİZCE boş açar",
 					mv, i, got[i], want[i])
 			}
 		}
@@ -97,8 +97,8 @@ func TestTopoQueueClusterMirrorsMessagingMV(t *testing.T) {
 			t.Errorf("%s cluster zinciri '(default)' terminaline düşmüyor — tek-cluster kurulumda köprü kırılır", mv)
 		}
 	}
-	if !strings.Contains(clusterExpr, "'(default)'") {
-		t.Error("clusterExpr '(default)' terminaline düşmüyor")
+	if !strings.Contains(msgClusterExpr, "'(default)'") {
+		t.Error("msgClusterExpr '(default)' terminaline düşmüyor")
 	}
 }
 
@@ -111,8 +111,8 @@ func TestTopoQueueClusterMirrorsMessagingMV(t *testing.T) {
 //     koşar).
 func TestTopoQueueClusterGuardedAndShared(t *testing.T) {
 	got := topoQueueClusterSQL()
-	if !strings.Contains(got, clusterExpr) {
-		t.Error("topoQueueClusterSQL clusterExpr sabitini GÖMMÜYOR — messaging MV'siyle ayrışmaya açık")
+	if !strings.Contains(got, msgClusterExpr) {
+		t.Error("topoQueueClusterSQL msgClusterExpr sabitini GÖMMÜYOR — messaging MV'siyle ayrışmaya açık")
 	}
 	if !strings.HasPrefix(got, "if(msg_system != '', ") {
 		t.Errorf("msg_system guard'ı kayboldu: %q", got)

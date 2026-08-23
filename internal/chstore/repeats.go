@@ -18,9 +18,12 @@ import (
 //     downstream call from one upstream request
 //   - Same HTTP route hit 20× → fan-out loop calling itself
 //
-// `Service` + `RootName` carry the originating service and the
-// root operation name so the UI doesn't need a second lookup to
-// label the row.
+// `Service` + `RootName` label the row so the UI doesn't need a
+// second lookup. They deliberately come from two different scopes:
+// Service is the service DOING the repeating (v0.9.1289), RootName
+// is the entry point the repetition hangs off. Read together they
+// are one triage sentence — "portfolio-service is running this N+1,
+// entered via GET /web/portfolio".
 //
 // RootName resolves in two layers (v0.9.1288): the trace's actual
 // root span, or — when that root started before the queried window
@@ -237,6 +240,38 @@ func (s *Store) QueryRepeatedSpans(ctx context.Context, f RepeatedSpanFilter) ([
 //
 // `time` joins the subquery projection for layer 2. It adds no `?`, so
 // the positional bind contract (v0.9.1286) is untouched.
+//
+// v0.9.1289 — the service column had the SAME defect and a different
+// right answer. It read `any(s.service_name)` off the JOINED side,
+// which is the whole trace, so it named an arbitrary participant.
+// Measured live at v0.9.1288 on the 200 rows of
+// groupBy=db.statement over 1h: 110 rows said `forex-service` and 64
+// said `portfolio-service` for repeats whose root is
+// `GET /web/portfolio` — a route served by `web-bff`. Every row was
+// wrong, and once v0.9.1288 made rootName real the UI started
+// rendering the mismatched pair (`service · rootName`) side by side.
+//
+// The product decision is that this column names the service DOING the
+// repeating, not the service that received the request. "portfolio-
+// service · GET /web/portfolio" reads as "portfolio-service is running
+// the N+1, entered via GET /web/portfolio" and carries the triage in
+// one line; resolving it to the root's service would say "web-bff ·
+// GET /web/portfolio", which is self-consistent but names the wrong
+// team.
+//
+// That value only exists on the INNER aggregate — dup_traces already
+// groups exactly the repeating rows — so `svc` is computed there and
+// the outer projection reads `any(d.svc)`. The `any` here is not the
+// v0.9.1288 coin-flip: d contributes ONE row per group and the outer
+// GROUP BY carries that group's full key, so the value is constant
+// across the group by construction. It is also single-valued in the
+// data — measured on the same window, all 200 groups had
+// uniqExact(service_name) = 1, because a repeated statement inside one
+// trace is issued by one service.
+//
+// Reading it from the inner scope rather than the joined one adds no
+// `?`, keeps the outer column count at seven, and leaves the GROUP BY,
+// the GLOBAL join and the HAVING exactly as they were.
 func repeatedSpansSQL(keysArrayLiteral, whereSQL string) string {
 	return `
 		WITH dup_traces AS (
@@ -244,7 +279,8 @@ func repeatedSpansSQL(keysArrayLiteral, whereSQL string) string {
 			       ` + keysArrayLiteral + ` AS group_values,
 			       count()                      AS cnt,
 			       sum(duration) / 1e6          AS total_ms,
-			       min(time)                    AS earliest
+			       min(time)                    AS earliest,
+			       any(service_name)            AS svc
 			FROM spans ` + whereSQL + `
 			GROUP BY trace_id, group_values
 			HAVING cnt >= ? AND arrayExists(x -> x != '', group_values)
@@ -252,7 +288,7 @@ func repeatedSpansSQL(keysArrayLiteral, whereSQL string) string {
 			LIMIT ?
 		)
 		SELECT d.trace_id, d.group_values, d.cnt, d.total_ms, toUnixTimestamp64Nano(d.earliest),
-		       any(s.service_name),
+		       any(d.svc),
 		       if(anyIf(s.name, s.parent_id = '') != '',
 		          anyIf(s.name, s.parent_id = ''),
 		          argMin(s.name, s.time))

@@ -612,7 +612,17 @@ func (s *Store) populateNamespaces(ctx context.Context, derived map[string]strin
 // argMax(val, c)'nin belirsiz tie-break'i tikler arasında değeri
 // sallandırabiliyordu — flapping kaynaklarından biri. Pencere
 // DARALTILMADI (rapor: seyrek servisler geç keşfedilir).
-const deriveMetadataAllSQL = `
+//
+// v0.9.1318 — ns_val artık identity.go'nun PAYLAŞILAN sözlüğünden geliyor
+// (namespaceExpr/namespaceHasGuard); anahtar SIRASI değişmedi
+// (service.namespace önce) ama BİÇİM değişti: multiIf → coalesce+nullIf.
+// Eski multiIf, anahtar VAR ama değeri BOŞ olduğunda boş dize döndürüp
+// sonraki basamakları maskeliyordu — `service.namespace` anahtarını boş
+// yayınlayan bir servis,
+// dolu bir `k8s.namespace.name` taşısa bile namespace'siz görünüyordu.
+// coalesce boşu atlar. ug/sy/dep bacakları multiIf kalıyor: onların
+// paylaşılan bir ikizi YOK, dolayısıyla ayrışma riski de yok.
+var deriveMetadataAllSQL = `
 SELECT service_name, ug_val, sy_val, ns_val, dep_val, count() AS c
 FROM (
   SELECT service_name,
@@ -628,16 +638,7 @@ FROM (
       has(attr_keys, 'sy-team'), attr_values[indexOf(attr_keys, 'sy-team')],
       has(attr_keys, 'sy_team'), attr_values[indexOf(attr_keys, 'sy_team')],
       '') AS sy_val,
-    multiIf(
-      has(res_keys, 'service.namespace'),  res_values[indexOf(res_keys, 'service.namespace')],
-      has(res_keys, 'k8s.namespace.name'), res_values[indexOf(res_keys, 'k8s.namespace.name')],
-      has(res_keys, 'kubernetes.namespace.name'), res_values[indexOf(res_keys, 'kubernetes.namespace.name')],
-      has(res_keys, 'kubernetes.namespace_name'), res_values[indexOf(res_keys, 'kubernetes.namespace_name')],
-      has(attr_keys, 'service.namespace'),  attr_values[indexOf(attr_keys, 'service.namespace')],
-      has(attr_keys, 'k8s.namespace.name'), attr_values[indexOf(attr_keys, 'k8s.namespace.name')],
-      has(attr_keys, 'kubernetes.namespace.name'), attr_values[indexOf(attr_keys, 'kubernetes.namespace.name')],
-      has(attr_keys, 'kubernetes.namespace_name'), attr_values[indexOf(attr_keys, 'kubernetes.namespace_name')],
-      '') AS ns_val,
+    ` + namespaceExpr() + ` AS ns_val,
     multiIf(
       has(res_keys, 'k8s.deployment.name'),  res_values[indexOf(res_keys, 'k8s.deployment.name')],
       has(res_keys, 'kubernetes.deployment.name'), res_values[indexOf(res_keys, 'kubernetes.deployment.name')],
@@ -654,10 +655,7 @@ FROM (
        OR has(res_keys, 'sy-team')  OR has(res_keys, 'sy_team')
        OR has(attr_keys, 'ug-team') OR has(attr_keys, 'ug_team')
        OR has(attr_keys, 'sy-team') OR has(attr_keys, 'sy_team')
-       OR has(res_keys, 'service.namespace')  OR has(res_keys, 'k8s.namespace.name')
-       OR has(res_keys, 'kubernetes.namespace.name') OR has(res_keys, 'kubernetes.namespace_name')
-       OR has(attr_keys, 'service.namespace') OR has(attr_keys, 'k8s.namespace.name')
-       OR has(attr_keys, 'kubernetes.namespace.name') OR has(attr_keys, 'kubernetes.namespace_name')
+       OR ` + namespaceHasGuard() + `
        OR has(res_keys, 'k8s.deployment.name') OR has(attr_keys, 'k8s.deployment.name')
        OR has(res_keys, 'kubernetes.deployment.name') OR has(res_keys, 'kubernetes.deployment_name')
        OR has(res_keys, 'openshift.deployment.name')

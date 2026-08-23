@@ -136,56 +136,12 @@ type MessagingInstance struct {
 	Callers           []string `json:"callers"`
 }
 
-// clusterExpr is the shared CH expression for resolving a
-// messaging cluster identifier. Kept as a constant so the
-// overview, detail, and callers query all use the exact same
-// fallback chain — different expressions would silently group
-// the same physical cluster into different rows in different
-// views.
-//
-// Deliberately NOT falling back to peer_service because that
-// column is also the destination's last-resort source; using
-// it for both would conflate "I don't know the cluster" with
-// "I don't know the destination" into one bucket.
-const clusterExpr = `coalesce(
-	nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
-	nullIf(attr_values[indexOf(attr_keys, 'messaging.kafka.bootstrap.servers')], ''),
-	nullIf(attr_values[indexOf(attr_keys, 'messaging.kafka.cluster.name')], ''),
-	'(default)'
-)`
-
-// dbInstanceExpr reproduces db_summary_5m's own `instance` identity on RAW
-// spans, verbatim (store.go:2494-2502). Kept as a shared constant for the same
-// reason clusterExpr above is: a raw query that spells this chain differently
-// resolves the SAME physical database to a DIFFERENT name, and the two halves
-// of one drawer then disagree.
-//
-// v0.9.274 — the Top-statements scan used to AND `peer_service = ?` here, one
-// rung of the six. Any instance the MV named from a later rung matched zero
-// spans, so the drawer showed a span count and callers (both MV-sourced, hence
-// coalesced) beside an EMPTY Top statements table. Measured live: the
-// clickhouse row's predicate matched 0 spans where the real identity matched
-// 4659. Same defect as the dead row link fixed in v0.9.268, on the backend.
-//
-// The 'unknown' case needs no special branch: when every rung is empty the
-// expression yields the literal 'unknown', which is exactly what the MV stores.
-const dbInstanceExpr = `coalesce(
-	nullIf(peer_service, ''),
-	nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
-	nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
-	nullIf(attr_values[indexOf(attr_keys, 'db.host')], ''),
-	nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''),
-	nullIf(service_name, ''),
-	'unknown'
-)`
-
-// dbNameExpr — db_summary_5m'in `db_name` kimliğinin HAM SPANS ikizi,
-// birebir (store.go db_summary_5m DDL'i). dbInstanceExpr ile aynı
-// gerekçe: bu ifadeyi farklı yazan bir ham sorgu, AYNI mantıksal
-// veritabanını FARKLI bir adla çözer ve tablonun iki yarısı birbiriyle
-// çelişir. 'default' düşüşü de MV ile aynı — db.name yayınlamayan bir
-// instrumentasyon her iki yolda da 'default' kovasına düşer.
-const dbNameExpr = `coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default')`
+// msgClusterExpr / dbInstanceExpr / dbNameExpr — v0.9.1318'de
+// internal/chstore/identity.go'ya TAŞINDI (entity-model A3). Kimlik
+// zincirleri tek dosyada yaşıyor; gerekçeleri ve ölçülmüş arıza
+// emsalleri oradaki yorumlarda. `clusterExpr` sabiti aynı sürümde
+// `msgClusterExpr` oldu — repo.go'daki `func (s *Store) clusterExpr()`
+// ile gölgeleşiyordu ve Go bu çakışmayı UYARMIYOR.
 
 // dbDetailNameFilter — çekmece sorgularının db_name yüklemi + args'ı.
 // SAF (regresyon testi: db_detail_identity_test.go).
@@ -722,7 +678,7 @@ func (s *Store) GetMessagingDetail(
 		SELECT name AS stmt, count(), avg(duration) / 1e6
 		FROM spans
 		WHERE time >= ? AND time <= ? AND msg_system = ?
-		  AND `+clusterExpr+` = ?
+		  AND `+msgClusterExpr+` = ?
 		  AND `+destExpr+` = ?
 		GROUP BY stmt
 		ORDER BY count() DESC

@@ -141,7 +141,7 @@ var msgE2ESQL = fmt.Sprintf(`
 	ORDER BY t
 	LIMIT %[5]d
 	SETTINGS max_execution_time = 10`,
-	clusterExpr, msgDestExpr, msgE2ESpanSideLimit, msgE2EPairLimit, msgE2ESeriesLimit)
+	msgClusterExpr, msgDestExpr, msgE2ESpanSideLimit, msgE2EPairLimit, msgE2ESeriesLimit)
 
 // msgE2EArgs binds msgE2ESQL's placeholders in order: consumer subquery
 // (from, to, system, cluster, dest), producer subquery (from−slack, to,

@@ -20,29 +20,39 @@ import (
 // 1h default window, GROUP BY service_name. service_name is
 // LowCardinality; the indexOf() expressions over res_keys are
 // per-row but cheap. Caps at 5000 services.
+//
+// v0.9.1318 — zincir artık identity.go'nun PAYLAŞILAN sözlüğünden
+// geliyor (namespaceExpr/namespaceHasGuard). Öncesinde bu dosya kendi
+// dört-basamaklı res-only sözlüğünü taşıyordu ve ilk iki basamağı
+// service_metadata.go'nun türeticisine göre TERS sıradaydı —
+// `k8s.namespace.name` önce. Her iki anahtarı da yayınlayan bir servis
+// bu yüzden topoloji kutusunda bir ada, /services facet'inde başka bir
+// ada sahipti. Eski yorum zinciri "deriveNamespaceSQL ile aynı sözlük"
+// diye tarif ediyordu; öyle bir sembol repoda hiç YOKTU.
+//
+// attr_keys basamakları da eklendi (öncesinde yalnız res_keys). Ölçüldü
+// (lokal, 1s pencere): read_bytes 6,85 MiB → 9,79 MiB (+%43), süre
+// 614ms → 388ms. max_execution_time=10 bütçesi içinde; doğru namespace
+// için ödenen bedel.
+// serviceNamespacesSQL — paylaşılan namespace sözlüğünden ÜRETİLİR.
+// Elle yazılmış bir ikizi olamaz: identity_test.go hem ifadenin hem
+// guard'ın buradan geldiğini çiviler.
+var serviceNamespacesSQL = `
+		SELECT service_name,
+		       anyHeavy(` + namespaceExpr() + `) AS ns
+		FROM spans
+		WHERE time >= ?
+		  AND (` + namespaceHasGuard() + `)
+		GROUP BY service_name
+		LIMIT 5000
+		SETTINGS max_execution_time = 10`
+
 func (s *Store) GetServiceNamespaces(ctx context.Context, since time.Duration) (map[string]string, error) {
 	if since <= 0 {
 		since = time.Hour
 	}
 	cutoff := time.Now().Add(-since)
-	// v0.9.53 (B2) — kubernetes.namespace.name / _name yedekleri
-	// (deriveNamespaceSQL ile aynı sözlük; standart anahtarlar önde).
-	rows, err := s.conn.Query(ctx, `
-		SELECT service_name,
-		       anyHeavy(coalesce(
-		         nullIf(res_values[indexOf(res_keys, 'k8s.namespace.name')], ''),
-		         nullIf(res_values[indexOf(res_keys, 'service.namespace')], ''),
-		         nullIf(res_values[indexOf(res_keys, 'kubernetes.namespace.name')], ''),
-		         nullIf(res_values[indexOf(res_keys, 'kubernetes.namespace_name')], ''),
-		         ''
-		       )) AS ns
-		FROM spans
-		WHERE time >= ?
-		  AND (has(res_keys, 'k8s.namespace.name') OR has(res_keys, 'service.namespace')
-		    OR has(res_keys, 'kubernetes.namespace.name') OR has(res_keys, 'kubernetes.namespace_name'))
-		GROUP BY service_name
-		LIMIT 5000
-		SETTINGS max_execution_time = 10`, cutoff)
+	rows, err := s.conn.Query(ctx, serviceNamespacesSQL, cutoff)
 	if err != nil {
 		return nil, err
 	}

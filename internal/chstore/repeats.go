@@ -108,7 +108,25 @@ func (s *Store) QueryRepeatedSpans(ctx context.Context, f RepeatedSpanFilter) ([
 	q := repeatedSpansSQL(keysArrayLiteral, wc.sql())
 	args := repeatedSpansArgs(keyArgs, wc.args, f.MinRepeats, limit, f.From, f.To)
 
-	rows, err := s.conn.Query(ctx, q, args...)
+	// v0.9.1290 — read pool, not the main connection. This is a heavy
+	// telemetry scan (a GROUP BY over raw spans plus a GLOBAL join back
+	// onto spans), exactly the shape topology.go / endpoints_detail.go
+	// already route through the RoundRobin read pool, and repeats.go was
+	// the sibling still coordinating every call on the in-order main
+	// connection — so at 1B spans/day one CH node coordinated every
+	// Explore Repeats query in the fleet.
+	//
+	// Safe by the v0.9.486 rule: the only FROM in this file is spans, so
+	// no state table rides the pool and the node-local-copy hazard that
+	// rule exists for cannot apply.
+	//
+	// Results are unchanged by construction. The pool differs only in
+	// WHICH host coordinates: it round-robins the same configured host
+	// list against the same Distributed table, so any node returns the
+	// same answer. On a single-host install RoundRobin has one host to
+	// pick, and a Store built without New (tests, SQL-shape tooling) has
+	// no pool at all and falls back to s.conn.
+	rows, err := s.telemetryReadConn().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

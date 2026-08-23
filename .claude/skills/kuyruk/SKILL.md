@@ -1,6 +1,6 @@
 ---
 name: kuyruk
-description: Show the prioritised work queue. Use whenever the user types "kuyruk" (Turkish for "queue") — they want a scannable list of pending / in-progress items and a "Hangisi?" prompt to pick from.
+description: Render the operator's prioritised DEVELOPMENT queue — in-progress and pending items grouped bugs > scale > features > polish, at most 7 rows with effort estimates, ending in the literal prompt "Hangisi?" so the operator picks rather than reading analysis. Use when the operator types "kuyruk" or asks what to work on next. Do NOT use for the P1/P2/P3 triage of live Problem rows on Inbox/Topology (incident priority is a different surface), and never invent queue items the operator did not raise.
 ---
 
 # /kuyruk — prioritised work queue
@@ -35,7 +35,7 @@ Group items into 2-4 buckets, in this priority order:
 
 1. **Bugs / regressions** (`bug-fix`, "Operator-reported", "broken
    in prod"). Per CLAUDE.md, these interrupt feature work and
-   ship as `v0.5.X+1` immediately — never batched.
+   ship as `v0.9.X+1` immediately — never batched.
 2. **Scale / perf** — anything violating the CLAUDE.md "Hard
    constraints" (eager pickers, unbounded tables, missing
    `document.hidden` guards, MV-bypass on hot reads, cache-key
@@ -98,7 +98,7 @@ get cut. See [[feedback-terse-responses]] in memory.
 - **Don't add items the user didn't ask for.** Surfacing "you
   should add tests" or "consider refactoring X" when the user
   didn't bring it up is noise.
-- **Don't re-list shipped items.** If v0.5.X just landed, that's
+- **Don't re-list shipped items.** If v0.9.X just landed, that's
   not "queue" — it's history. Skip it.
 - **Don't sort by alphabetical / file path.** Sort by impact:
   bugs > scale > features > polish.

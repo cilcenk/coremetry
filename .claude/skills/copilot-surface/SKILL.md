@@ -1,6 +1,6 @@
 ---
 name: copilot-surface
-description: Add a new AI Copilot "✨ Explain" surface to Coremetry — system prompt, API handler, wrapper, frontend button. Use when the user wants AI explanation behaviour on a new page/panel (e.g. "explain this metric anomaly", "explain this database query"). Routes through `s.copilotExplain(r, …)` so the /ai surface attribution stays accurate.
+description: Add ONE new AI "✨ Explain" affordance to Coremetry — system prompt in internal/copilot/prompts.go, route + handler, the s.copilotExplain(r, …) wrapper that keeps /ai attribution honest, the lib/api.ts client method, and the button. Use when the operator wants a new explain affordance on a page or panel that has none. Do NOT use for the chat/agent runtime, providers, streaming, RAG, tool-calling or RCA verdicts (those live in internal/ai and the rest of internal/copilot), for tuning Copilot settings or models, or for explaining something to the operator yourself.
 ---
 
 # /copilot-surface — add a new AI explain surface

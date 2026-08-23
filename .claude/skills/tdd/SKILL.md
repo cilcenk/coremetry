@@ -1,6 +1,6 @@
 ---
 name: tdd
-description: Test-first feature loop — write the failing test BEFORE the implementation, iterate to green, then release. Use when building a new backend feature/endpoint/pure helper, or when the operator says "tdd ile" / "test-first". Extends the bug-fix regression-test gate (v0.5.447) to FEATURES.
+description: Test-first loop for NEW Coremetry backend work — write the failing table-driven test against a pure seam (SQL builder, decision function, key/format helper) BEFORE the implementation, iterate to green, then ship via /release. Use when building a new backend feature, endpoint or pure helper, or when the operator says "tdd ile" / "test-first"; it extends the bug-fix regression-test gate (v0.5.447) to features. Prefer this repo's stdlib table-driven style over any external testing skill — no testify, goleak or testcontainers. Do NOT use for frontend work (vitest rules live in /frontend-conventions), for a production bug (use /bugfix), or when the change is pure I/O wiring with no testable seam.
 ---
 
 # /tdd — test-first feature loop

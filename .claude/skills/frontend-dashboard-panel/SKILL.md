@@ -1,6 +1,6 @@
 ---
 name: frontend-dashboard-panel
-description: Adding a new dashboard panel type (gauge / heatmap / table / etc) to Coremetry's Grafana-style dashboard system. Reach for this BEFORE editing frontend/src/components/dashboard/, lib/types.ts PanelType union, or adding a *PanelConfig interface. Captures the 7 touchpoints + variable substitution + bundle-fetch + zoom-sync conventions.
+description: Add a new panel TYPE to Coremetry's dashboard system — the PanelType union in lib/types.ts, the *PanelConfig interface, PanelRenderer dispatch, the editor form, variable substitution, bundle-fetch and zoom-sync touchpoints. Use ONLY when introducing a genuinely new panel kind under frontend/src/components/dashboard/; read /frontend-conventions alongside it, since panels still obey the Button/Field atoms, useDataTable and uPlot-only rules. Do NOT use for editing an existing panel's behaviour, for dashboard CRUD/layout/variable work, or for charts outside the dashboard system.
 ---
 
 # /frontend-dashboard-panel — add a new dashboard panel type

@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a Coremetry release — compute next v0.9.X tag, commit, push, kick off docker-up in background. Use when the user says "release", "ship", or finishes a coherent change and wants it shipped. Gates on `go build ./...` (backend) and `cd frontend && npx tsc --noEmit` (frontend) per CLAUDE.md.
+description: Cut a Coremetry release — compute the next v0.9.X tag from git tags, run every gate, stage explicit paths, commit in the CLAUDE.md format, annotate the tag, push, then rebuild the image in the background with `make image` (never `make docker-up` — v0.9.210). Use when the operator explicitly asks to release / ship / tag the current change. All four gates block the tag — `cd frontend && npx tsc --noEmit`, `go build ./...`, `go test ./...`, and `make audit` (🔴 critical stops the tag, 🟡 goes to the operator). On a non-trivial diff run /review-changes first. Do NOT use for a bare "commit this" with no tag, and never fold unrelated changes into one release.
 ---
 
 # /release — ship a Coremetry change
@@ -36,11 +36,12 @@ operator may want them.
 ### 2. Determine the next version
 
 ```
-git tag --sort=-v:refname | grep -E '^v0\.5\.[0-9]+$' | head -1
+git tag --sort=-v:refname | grep -E '^v0\.9\.[0-9]+$' | head -1
 ```
 
-Increment the patch component by 1. Example: previous tag `v0.5.188`
-→ next is `v0.5.189`. The series is monotonic; never re-use a tag.
+Increment the patch component by 1. Example: previous tag `v0.9.1291`
+→ next is `v0.9.1292`. The series is monotonic; never re-use a tag —
+and a gap (a skipped number) is fine, re-using one is not.
 
 ### 3. Type-check + build — the gate
 
@@ -55,7 +56,7 @@ changed:
 If either fails, surface the error and stop — don't try to fix it
 silently. The operator decides whether to fix-forward or abort.
 
-### 3b. `go test ./...` — regression suite gate (v0.5.447)
+### 3a. `go test ./...` — regression suite gate (v0.5.447)
 
 Run after the build gate. The regression-test discipline
 (CLAUDE.md "When you ship" item 11) ships a test per
@@ -68,7 +69,7 @@ catches recurrence of historical bug classes.
 - Skip safely on tags that don't touch Go (`docs/` only,
   `frontend/` only) — but err on the side of running.
 
-### 3a. `make audit` — hard-constraint linter (v0.5.446)
+### 3b. `make audit` — hard-constraint linter (v0.5.446)
 
 Run `make audit` after the type-check/build gate but before
 staging. It greps for the regression patterns from CLAUDE.md's
@@ -159,7 +160,7 @@ that rebuild is running. No multi-paragraph summary — the diff is
 visible in the commit, the operator knows what they shipped.
 
 Example confirmation:
-> v0.5.189 commit/push tamam, rebuild arkada. <release title>
+> v0.9.1292 commit/push tamam, rebuild arkada. <release title>
 
 ## Common pitfalls
 

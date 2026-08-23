@@ -99,7 +99,12 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// ile aynı kaynak, aynı havuz.
 		"endpoints_callers.go": true, // spans
 		"business_dims.go":     true, // spans — kanal/fonksiyon kodu kırılımı (v0.9.511)
-		"trace_count.go":       true, // trace_summary_5m / trace_service_index_5m — tavanlı sayım (v0.9.638)
+		// v0.9.1290 — SAF telemetri: tek FROM'u spans (N+1 bulucunun
+		// GROUP BY taraması + aynı tabloya GLOBAL join). endpoints_detail.go
+		// ile aynı kaynak, aynı havuz; bağlantı seçimi repeats_conn_test.go
+		// ile POZİTİF olarak da pinli (bu liste yalnız tek yönlü kapı).
+		"repeats.go":     true, // spans
+		"trace_count.go": true, // trace_summary_5m / trace_service_index_5m — tavanlı sayım (v0.9.638)
 		// v0.9.814 — SAF telemetri: iki FROM'u messaging_summary_5m ve
 		// messaging_caller_summary_5m (ikisi de AggregatingMergeTree
 		// telemetri MV'si, state tablosu DEĞİL). dependencies.go'daki
@@ -204,7 +209,7 @@ func TestTelemetryReadFilesTouchNoStateTables(t *testing.T) {
 		"summary.go", "repo.go", "topology.go", "dependencies.go", "problem_telemetry.go",
 		"deploys.go", "oracle.go", "profile.go", "spanmetric.go", "dbstmt_detail.go",
 		"db_capacity.go", "endpoints_detail.go", "business_dims.go",
-		"endpoints_callers.go",
+		"endpoints_callers.go", "repeats.go",
 	} {
 		b, err := os.ReadFile(f)
 		if err != nil {

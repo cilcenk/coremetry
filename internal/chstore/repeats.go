@@ -21,6 +21,12 @@ import (
 // `Service` + `RootName` carry the originating service and the
 // root operation name so the UI doesn't need a second lookup to
 // label the row.
+//
+// RootName resolves in two layers (v0.9.1288): the trace's actual
+// root span, or — when that root started before the queried window
+// and so is not in the joined slice — the earliest span still
+// visible. It is therefore best read as "the entry point this
+// repetition hangs off", not strictly "parent_id is empty".
 type RepeatedSpanRow struct {
 	TraceID     string   `json:"traceId"`
 	Service     string   `json:"service"`
@@ -185,6 +191,52 @@ func (s *Store) QueryRepeatedSpans(ctx context.Context, f RepeatedSpanFilter) ([
 // after aggregation, where the tuple actually exists — and therefore
 // before ORDER BY / LIMIT, which is what hands the 200 slots back to
 // real rows.
+//
+// v0.9.1288 — the root-operation column was ALWAYS blank. It used to
+// read
+//
+//	any(if(s.parent_id = '', s.name, ''))
+//
+// and the flaw is that `any` picks an arbitrary row out of the joined
+// set and only THEN asks whether that row was the root. A trace that repeats a
+// statement 40× has ~45 spans and exactly one root, so the arbitrary
+// pick lands on a non-root roughly 44 times out of 45 and the `if`
+// collapses it to the empty string. Measured live on the 2-shard
+// local cluster at v0.9.1287,
+// GET /api/spans/repeats?groupBy=db.statement&minRepeats=5 over 1h:
+// 200 of 200 rows (100%) came back with an empty rootName, so Explore's
+// Repeats table could not tell the operator WHICH entry point was
+// generating the N+1 — the whole point of the column.
+//
+// The filter has to live INSIDE the aggregate, not after it. The fix
+// is two layers, because "the root span" is not guaranteed to be in
+// the joined set:
+//
+//  1. PRIMARY — anyIf, carrying the root test as the aggregate's OWN
+//     condition, picks a row from the subset that actually IS the
+//     root, so it degrades to the empty string only when no root was
+//     joined at all.
+//
+//  2. FALLBACK — the joined subquery is time-bounded by the SAME
+//     window the operator asked for (v0.9.1285 put the bound there on
+//     purpose). A trace that STARTED before `from` and repeated the
+//     statement inside the window is fully legitimate, but its root
+//     span is outside the bound and layer 1 sees nothing. Rather than
+//     widen the scan — which is precisely the unbounded right side
+//     v0.9.1285 removed — fall back to `argMin(s.name, s.time)`, the
+//     earliest span still visible. Same measurement: 35 of the 200
+//     rows (17.5%) resolve through this layer, and they name the real
+//     entry into the visible slice (`session-gateway/Validate`) rather
+//     than nothing.
+//
+// The two layers are spelled inline rather than via SELECT aliases
+// because every item in this SELECT list is a scanned column — the Go
+// side reads exactly seven — so an alias for the intermediate value
+// would add a column the scanner does not expect. ClickHouse folds the
+// repeated `anyIf` itself.
+//
+// `time` joins the subquery projection for layer 2. It adds no `?`, so
+// the positional bind contract (v0.9.1286) is untouched.
 func repeatedSpansSQL(keysArrayLiteral, whereSQL string) string {
 	return `
 		WITH dup_traces AS (
@@ -200,10 +252,13 @@ func repeatedSpansSQL(keysArrayLiteral, whereSQL string) string {
 			LIMIT ?
 		)
 		SELECT d.trace_id, d.group_values, d.cnt, d.total_ms, toUnixTimestamp64Nano(d.earliest),
-		       any(s.service_name), any(if(s.parent_id = '', s.name, ''))
+		       any(s.service_name),
+		       if(anyIf(s.name, s.parent_id = '') != '',
+		          anyIf(s.name, s.parent_id = ''),
+		          argMin(s.name, s.time))
 		FROM dup_traces d
 		GLOBAL LEFT JOIN (
-			SELECT trace_id, service_name, parent_id, name
+			SELECT trace_id, service_name, parent_id, name, time
 			FROM spans
 			WHERE time >= ? AND time <= ?
 		) AS s ON s.trace_id = d.trace_id

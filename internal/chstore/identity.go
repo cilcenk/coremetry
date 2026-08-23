@@ -30,6 +30,76 @@ import "strings"
 // Kural: bir kimlik zincirini ikinci kez YAZMA, buradan İTHAL ET.
 // Yeni bir tüketici zinciri farklı yazarsa identity_test.go kırılır.
 
+// ─── Topoloji düğüm KİMLİĞİ (v0.9.1327) ─────────────────────────────
+//
+// topology_edges_5m'in `parent_service` / `child_node` kolonları İKİ
+// AYRI şey taşıyabilir: düz bir servis adı, ya da agregatörün yazdığı
+// önekli bir altyapı düğümü (`db:`, `queue:`, `ext:` — topology.go'nun
+// üç pass'i). Önek TEK otoriter kaynaktır.
+//
+// `node_kind` bu soruyu CEVAPLAMAZ ve cevaplarmış gibi okumak bu
+// repoda iki kez bug üretti. Kolon üç pass'te de ÇOCUK düğümün
+// kind'ıdır:
+//
+//	cross-service pass  child = servis            → 'service'
+//	infra pass          child = db/queue/external → kind_out
+//	queue→consumer pass child = tüketici servis   → 'service'  (DOĞRU)
+//
+// Üçüncü satır kritik: o kenarın EBEVEYNİ bir kuyruk düğümü
+// (`queue:<sys>:<topic>`) ama satırın node_kind'ı 'service' — çünkü
+// kolon çocuğu tarif ediyor. Yani `WHERE node_kind='service'` yazan
+// bir okuma, ebeveyni HİÇ kısıtlamaz ve kuyruk ID'lerini servis
+// sanarak içeri alır. v0.9.1028 aynı yanılgıyı grafik tarafında
+// düzeltti (servicegraph.go nodeKindFromID gerekçesi); bu blok o
+// kararı verinin en alt katmanına taşıyor ki her okuyucu aynı kuralı
+// paylaşsın.
+//
+// TEK TABLO: bu liste v0.9.1029'da internal/api'de yaşıyordu ve
+// agregatörün yazdığı önekleri ORADAN aynalıyordu. Yazıcı bu paket
+// olduğuna göre sözlüğün evi de burası.
+const (
+	NodeKindService  = "service"
+	NodeKindDB       = "db"
+	NodeKindQueue    = "queue"
+	NodeKindExternal = "external"
+)
+
+// TopologyNodeIDPrefixes — agregatörün yazdığı önekler ve MV
+// sözlüğündeki node_kind karşılıkları. Sıra önemsiz (önekler
+// birbirinin öneki değil) ama liste TEK nüsha olmak zorunda.
+var TopologyNodeIDPrefixes = []struct{ Prefix, Kind string }{
+	{"db:", NodeKindDB},
+	{"queue:", NodeKindQueue},
+	{"ext:", NodeKindExternal},
+}
+
+// TopologyNodeIdentity — bir düğüm ID'sinin KIND'ı ve önekten soyulmuş
+// GÖSTERİM ADI. Öneksiz ID'de kind BOŞ döner ("bilmiyorum") — düz bir
+// servis adı ile öneki tanınmayan bir ID arasındaki farkı çağıran
+// bilir, bu fonksiyon uydurmaz.
+//
+// Kind ve ad BİRLİKTE dönüyor çünkü ayrı türetildiklerinde ayrışıyorlar
+// (v0.9.1029'un ölçtüğü kusur: aynı düğüm hem kind:"service" hem ham
+// `queue:kafka:api.usage` adı taşıyordu).
+func TopologyNodeIdentity(id string) (kind, name string) {
+	for _, p := range TopologyNodeIDPrefixes {
+		if strings.HasPrefix(id, p.Prefix) {
+			return p.Kind, id[len(p.Prefix):]
+		}
+	}
+	return "", id
+}
+
+// TopologyEndpointKind — bir kenar UCUNUN kind'ı. Öneksiz = servis:
+// agregatörün üç pass'i de düz `service_name` yazdığında gerçekten bir
+// servis yazıyor, ve altyapı düğümlerinin HEPSİ önekli.
+func TopologyEndpointKind(id string) string {
+	if k, _ := TopologyNodeIdentity(id); k != "" {
+		return k
+	}
+	return NodeKindService
+}
+
 // nsIdentityKeys — bir servisin NAMESPACE'ini çözen anahtar zinciri,
 // SIRASIYLA. Sıra sözleşmedir: coalesce İLK boş-olmayanı alır, yani
 // basamak kaydırmak namespace'i SESSİZCE yeniden adlandırır.

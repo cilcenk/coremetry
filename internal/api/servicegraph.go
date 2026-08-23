@@ -244,27 +244,17 @@ func neighborhoodKeepSet(edges []chstore.ServiceTopologyEdge, focus string, hops
 // zorunda — ayrışırlarsa aynı düğüm hangi taraftan görüldüğüne göre iki
 // farklı kind alır ve bug'ın kendisi geri gelir. TestNodeKindFromIDMatchesOTel
 // bunu çiviliyor.
-// nodeIDPrefixes — aggregator'ın yazdığı altyapı önekleri ve karşılık
-// gelen MV node_kind değerleri (chstore/topology.go: 'db:', 'queue:',
-// 'ext:'). TEK TABLO: v0.9.1029'da üç ayrı yerde daha (topology.go'nun
-// üç addNode'u) aynı önek listesi elle yazılmıştı ve o kopyalar KIND'ı
-// hiç türetmiyor, yalnız adı soyuyordu — kusurun yarısı tam olarak
-// oradan geliyordu.
-var nodeIDPrefixes = []struct{ prefix, kind string }{
-	{"db:", "db"},
-	{"queue:", "queue"},
-	{"ext:", "external"},
-}
-
 // nodeIDPrefixKind — ham id önekinin MV sözlüğündeki karşılığı
 // ("db" / "queue" / "external"). Öneksiz id → ("", false).
+//
+// v0.9.1327 — önek TABLOSU artık burada değil: chstore.TopologyNodeIDPrefixes
+// (identity.go). Yazan taraf chstore/topology.go olduğuna göre sözlüğün evi
+// de o paket. Buradaki kopya v0.9.1029'da üç el-yazımı listeyi tekleştirmişti;
+// A4 aynı listeyi bir DÖRDÜNCÜ okuyucuya (service_adjacency.go) daha lazım
+// etti ve kopya çoğaltmak yerine liste aşağı indi.
 func nodeIDPrefixKind(id string) (string, bool) {
-	for _, p := range nodeIDPrefixes {
-		if strings.HasPrefix(id, p.prefix) {
-			return p.kind, true
-		}
-	}
-	return "", false
+	k, _ := chstore.TopologyNodeIdentity(id)
+	return k, k != ""
 }
 
 // nodeIdentityFromID — düğümün KIND'ı ve GÖSTERİM ADI, tek kökten
@@ -281,12 +271,11 @@ func nodeIDPrefixKind(id string) (string, bool) {
 // fallbackKind yalnız ÖNEKSİZ id'ler için kullanılır (düz servis
 // adları) — orada çağıranın ipucu doğru tek kaynaktır.
 func nodeIdentityFromID(id, fallbackKind string) (kind, name string) {
-	for _, p := range nodeIDPrefixes {
-		if strings.HasPrefix(id, p.prefix) {
-			return p.kind, id[len(p.prefix):]
-		}
+	k, n := chstore.TopologyNodeIdentity(id)
+	if k == "" {
+		return fallbackKind, id
 	}
-	return fallbackKind, id
+	return k, n
 }
 
 func nodeKindFromID(id string) (string, bool) {

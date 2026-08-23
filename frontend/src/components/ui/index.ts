@@ -72,3 +72,11 @@ export { VirtualTable } from './VirtualTable';
 export { FacetMultiSelect } from './FacetMultiSelect';
 export { PageControls } from './PageControls';
 export { RouteSkeleton } from './RouteSkeleton';
+
+// v0.9.1300 — BEŞİNCİ eksik primitif, aynı mK7 gerekçesiyle. PageShell
+// kullanımda ikinci sıradaki primitif (59 site / 44 dosya) ama barrel'da
+// YOKTU: "bu zaten var mı" diye barrel'a bakan biri onu bulamıyordu.
+// Bu, ölçülen kopya ailelerinin (Stat ×6, Field ×7) doğum mekanizmasının
+// ta kendisi — /frontend-design-system §1 "barrel YETMEZ" uyarısı bunun
+// üzerine yazıldı. Salt EKLEME: mevcut doğrudan import'lar taşınmıyor.
+export { PageShell } from './PageShell';

@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { tracesPivotHref, messagingTracesHref, dbTracesHref, operationTracesHref } from './pivotHref';
+import { tracesPivotHref, messagingTracesHref, dbTracesHref, operationTracesHref,
+  statementTracesHref, STATEMENT_LIKE_PREFIX_LEN } from './pivotHref';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { decodeRange } from './urlState';
 
 // v0.9.213 — the cross-signal pivot into /traces dropped its time window in
@@ -287,5 +290,139 @@ describe('operationTracesHref — K4 ölü ?operation= parametresi', () => {
       window: { preset: '1h' }, operation: weird,
     })).get('filters') ?? '[]');
     expect(back).toEqual([{ k: 'name', op: '=', v: [weird] }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// statementTracesHref — v0.9.1324 (§3.1 K2).
+//
+// Symptom (audit-found): "→ traces" çipi `range=` HİÇ yazmıyordu. Sticky
+// pencereye açılıyor, boş liste geliyor ve boş liste "bu ifade hiç
+// çalışmamış" diye okunuyordu — oysa doğru cevap "yanlış saate baktın".
+// Bu dosyanın var oluş sebebinin (dört kez gemiye giden bug) tekrarıydı ve
+// pencere ZATEN aynı bileşendeydi: bir satır aşağıdaki HostLink onu
+// v0.9.968'den beri taşıyor.
+//
+// Düzeltme kapı değil imza: builder bu aileye taşındı ve `window` zorunlu
+// alan oldu. Aşağıdakiler imzanın ifade edemediklerini pinler.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('statementTracesHref', () => {
+  const SQL = 'SELECT id, name, created_at FROM orders WHERE tenant = :1 AND status = :2 ORDER BY created_at DESC';
+  const p = params(statementTracesHref({ window: { preset: '6h' }, statement: SQL, service: 'oradb-1' }));
+
+  it('pencereyi yazar (K2 bug\'ının kendisi)', () => {
+    expect(decodeRange(p.get('range'), { preset: '30m' })).toEqual({ preset: '6h' });
+  });
+
+  it('mutlak pencere custom olarak kodlanır', () => {
+    const q = params(statementTracesHref({
+      window: { fromNs: 1_700_000_000_000_000_000, toNs: 1_700_000_060_000_000_000 },
+      statement: SQL,
+    }));
+    expect(q.get('range')).toBe('custom:1700000000000-1700000060000');
+  });
+
+  it('LIKE öneki ilk 60 karakter — normalize edilmiş metin tam eşleşmez', () => {
+    const f = JSON.parse(p.get('filters') ?? '[]');
+    expect(f).toEqual([{ k: 'db.statement', op: 'LIKE', v: [SQL.slice(0, 60)] }]);
+    expect(f[0].v[0].length).toBe(60);
+  });
+
+  // Sabiti KENDİSİYLE karşılaştırmak yetmez — mutasyon turunda 60→30
+  // değişikliği yukarıdaki assert'i (STATEMENT_LIKE_PREFIX_LEN okuyordu)
+  // hiç kırmadı. Asıl sözleşme KARDEŞ YÜZEYLE aynı önekte olmak: /slow-queries
+  // aynı LIKE'ı kendi satırından kuruyor ve ikisi ayrışırsa aynı ifade iki
+  // sayfada iki farklı trace kümesi listeler.
+  it('önek kardeş yüzeyle (SlowQueries.tsx) aynı', () => {
+    const sibling = readFileSync(join(__dirname, '..', 'pages', 'SlowQueries.tsx'), 'utf8');
+    expect(sibling, 'SlowQueries.tsx artık slice(0, N) yazmıyor — sözleşmeyi yeniden bul')
+      .toContain(`slice(0, ${STATEMENT_LIKE_PREFIX_LEN})`);
+  });
+
+  it('60 karakterden kısa ifade kırpılmaz', () => {
+    const short = 'SELECT 1';
+    const f = JSON.parse(params(statementTracesHref({ window: { preset: '1h' }, statement: short })).get('filters') ?? '[]');
+    expect(f[0].v[0]).toBe(short);
+  });
+
+  it('rootOnly=false — db.statement ÇOCUK client span\'inde (v0.8.585)', () => {
+    expect(p.get('rootOnly')).toBe('false');
+    expect(p.get('view')).toBe('list');
+  });
+
+  it('service verilirse daraltır, verilmezse filo geneli kalır', () => {
+    expect(p.get('service')).toBe('oradb-1');
+    expect(params(statementTracesHref({ window: { preset: '1h' }, statement: SQL })).has('service')).toBe(false);
+  });
+
+  it('özel karakterli SQL encode edilip aynen geri çözülür', () => {
+    const weird = "SELECT * FROM t WHERE s = 'a&b?c=1#d'";
+    const back = JSON.parse(params(statementTracesHref({
+      window: { preset: '1h' }, statement: weird,
+    })).get('filters') ?? '[]');
+    expect(back[0].v[0]).toBe(weird);
+  });
+});
+
+// Kaynak taraması — dependencies yüzeyinde el-yapımı `/traces?` kalmasın.
+//
+// K2 tam bu boşluktan doğdu: pivotHref ailesi pencereyi tip düzeyinde
+// zorunlu kılarken, `/traces?` dizesini elle kuran bir dosya o zorlamanın
+// TAMAMEN dışındaydı. İmza yalnız kendi çağıranlarını korur; ailenin
+// dışında yazılmış bir dize onu hiç görmez.
+//
+// KAPSAM BİLİNÇLİ DAR. Depo genelinde `/traces?` yazan sekiz dosya daha
+// var — ÖLÇÜLDÜ ve sekizinin de penceresi yerinde (slowTracesHref dahil;
+// o `range` anahtarını p.set ile kuruyor). Onları buraya muafiyet olarak
+// doldurmak, sekiz gerekçe UYDURMAK olurdu; aile göçü ayrı bir dilim.
+// Bu kapı K2'nin yaşadığı yüzeyi kilitler ve orada bir daha doğmasını
+// engeller.
+describe('kaynak taraması — dependencies yüzeyinde el-yapımı /traces? yok', () => {
+  const DIR = join(__dirname, '..', 'features', 'dependencies');
+  const files = (dir: string, rel = ''): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const full = join(dir, e);
+      const r = rel ? `${rel}/${e}` : e;
+      if (statSync(full).isDirectory()) { out.push(...files(full, r)); continue; }
+      if (!/\.tsx?$/.test(e) || /\.test\.tsx?$/.test(e)) continue;
+      out.push(r);
+    }
+    return out;
+  };
+
+  // Yorumda geçen bir örnek CANLI site sayılmasın (backLink.test.ts ile aynı
+  // sınıflandırıcı; satır ORTASINDAKİ /* yorum başlatmaz).
+  const strip = (text: string): string => {
+    let inBlock = false;
+    return text.split('\n').map(l => {
+      const t = l.trim();
+      const opens = !inBlock && (t.startsWith('/*') || t.startsWith('{/*'));
+      const commented = inBlock || opens || t.startsWith('//') || t.startsWith('*');
+      if (opens) inBlock = true;
+      if (inBlock && t.includes('*/')) inBlock = false;
+      return commented ? '' : l;
+    }).join('\n');
+  };
+
+  const HANDROLLED = /[`'"]\/traces\?/;
+
+  it('taranan şekil var (kapı boşa koşmuyor)', () => {
+    const all = files(DIR);
+    expect(all.length).toBeGreaterThan(3);
+    // En az bir dosya AİLE üzerinden /traces'e gidiyor olmalı — hiç trace
+    // pivotu kalmadıysa kapı anlamsızlaşmıştır, sessizce yeşil kalmasın.
+    expect(all.some(f => readFileSync(join(DIR, f), 'utf8').includes('TracesHref'))).toBe(true);
+  });
+
+  it('el-yapımı `/traces?` dizesi yazan dosya yok', () => {
+    const hits = files(DIR)
+      .filter(f => HANDROLLED.test(strip(readFileSync(join(DIR, f), 'utf8'))))
+      .sort();
+    expect(hits, [
+      'Bu dosyalar `/traces?` query string\'ini elle kuruyor ve pencereyi',
+      'düşürebilir — pivotHref ailesinin tip zorlaması onları görmez (§3.1 K2).',
+      'tracesPivotHref / statementTracesHref / messagingTracesHref kullan.',
+    ].join('\n')).toEqual([]);
   });
 });

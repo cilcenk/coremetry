@@ -128,7 +128,7 @@ export function OraclePanel({ instance, range }: { instance: string; range: Time
           )}
 
           {data.topSQL.length > 0 && (
-            <TopSQLTable rows={data.topSQL} instance={instance} />
+            <TopSQLTable rows={data.topSQL} instance={instance} range={range} />
           )}
 
           {data.tablespaces.length > 0 && (

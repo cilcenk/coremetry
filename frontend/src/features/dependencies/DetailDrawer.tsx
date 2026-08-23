@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { messagingTracesHref } from '@/lib/pivotHref';
+import { messagingTracesHref, statementTracesHref } from '@/lib/pivotHref';
 import { Link } from 'react-router-dom';
 import { Spinner } from '@/components/Spinner';
 import { LazyMount } from '@/components/LazyMount';
@@ -8,7 +8,7 @@ import { fmtNum, fmtNs, timeRangeToNs } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, DBDetail, MessagingDetail, SpanMetricSeries, DBOpStat } from '@/lib/types';
-import { Stat, statementTracesHref } from './panels/shared';
+import { Stat } from './panels/shared';
 import { serviceHref } from '@/lib/serviceHref';
 import { OraclePanel } from './panels/OraclePanel';
 import { PostgresPanel } from './panels/PostgresPanel';
@@ -496,7 +496,7 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
                                 operasyon adına göre tam eşleşme — ikisi farklı
                                 sorgu, o yüzden ayrı helper'lar. */}
                             <Link to={kind === 'db'
-                              ? statementTracesHref(o.statement)
+                              ? statementTracesHref({ window: range, statement: o.statement })
                               : messagingTracesHref({
                                 window: range, system, destination: name,
                                 operation: o.statement,

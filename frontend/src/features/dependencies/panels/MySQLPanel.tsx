@@ -100,7 +100,7 @@ export function MySQLPanel({ instance, range }: { instance: string; range: TimeR
           </div>
 
           <div style={{ marginTop: 12 }}>
-            <TopSQLSection rows={data.topSQL} instance={instance}
+            <TopSQLSection rows={data.topSQL} instance={instance} range={range}
               hint="Enable performance_schema statement instrumentation + the receiver's statement scrape to populate." />
           </div>
         </>

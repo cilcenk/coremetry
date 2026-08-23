@@ -183,7 +183,7 @@ func TestGuidedAnswerLinks(t *testing.T) {
 		{Intent: guidedMessagingHealth},
 	}
 	for _, r := range routes {
-		links := guidedAnswerLinks(r)
+		links := guidedAnswerLinks(r, noLinkWindow())
 		if len(links) == 0 {
 			t.Errorf("rota %s/%s: link boş", r.Intent, r.Service)
 		}
@@ -197,7 +197,7 @@ func TestGuidedAnswerLinks(t *testing.T) {
 		}
 	}
 	// Escape pini: boşluklu/aksanlı servis adı href'te ham geçmez.
-	sl := guidedAnswerLinks(guidedRoute{Intent: guidedServiceHealth, Service: "päy ments"})
+	sl := guidedAnswerLinks(guidedRoute{Intent: guidedServiceHealth, Service: "päy ments"}, noLinkWindow())
 	if !strings.Contains(sl[0].Href, "p%C3%A4y+ments") {
 		t.Errorf("servis adı escape edilmeli: %s", sl[0].Href)
 	}

@@ -389,7 +389,10 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			// görünümü (K4-denetimli harita, chat_tool_links.go). Eski FE
 			// alanı yok sayar (links/suggestions ileri-uyum sınıfı).
 			if !tr.IsError {
-				if l, ok := toolCallLink(tc.Name, tc.Input); ok {
+				// v0.9.1321 (§3.1 K6) — köprü çipi tool'un GERÇEKTEN
+				// sorguladığı pencereyi taşır ([now-range_s, now]);
+				// arg'da range_s yoksa pencere yazılmaz.
+				if l, ok := toolCallLink(tc.Name, tc.Input, time.Now()); ok {
 					stepEv["href"] = l.Href
 					loopLinks = mergeToolLinks(loopLinks, l)
 				}

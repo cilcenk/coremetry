@@ -1316,7 +1316,11 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	answer := strings.TrimSpace(raw) + "\n\nKaynak: " + sources
 	// v0.9.419 — rotadan türetilen deterministik derin linkler; frontend
 	// çip olarak çizer (eski frontend'ler yok sayar).
-	links := guidedAnswerLinks(route)
+	// v0.9.1321 (§3.1 K6) — çipler cevabın ÜZERİNDE hesaplandığı pencereyi
+	// taşır. `from`/`to` yukarıda bundle'lara verilen aralığın ta kendisi,
+	// yani link operatöre "bu cevap şu aralıktan çıktı" der; şimdiye
+	// çapalanan bir tahmin değil.
+	links := guidedAnswerLinks(route, linkWindowBetween(from, to))
 	// v0.9.1142 — yapılandırılmış request-ID rotasında köprü çipi
 	// ROTADAN da kurulur: kimliği sunucu biliyor, modelin onu cevapta
 	// tekrar etmesini beklemek gereksiz kırılganlık. Metinden avlanan

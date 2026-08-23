@@ -365,11 +365,25 @@ token'ı, `AdaptRollupDDL` tek `ReplaceAll` ile gerçek adla değiştirir.
 > tasarımın parçasıdır:** `IF NOT EXISTS`, `MODIFY QUERY` tercih, DROP'tan
 > kaçın, ve dosya başına "bu nasıl geri alınır" satırı yaz.
 
-**⚠️ Yapısal kusur (düzeltilmeli):** `alters` dilimindeki 5 `CREATE TABLE`
-boot elemesinden geçmiyor — eleme yalnız `ADD COLUMN IF NOT EXISTS`
-regex'ine uyanı eler. Tıkalı kuyrukta **5×20sn = 100 sn/boot**.
-**Kural: `CREATE TABLE` yalnız `tables` dilimine; `alters` yalnız ALTER/DROP
-taşır.**
+**Boot DDL elemesi dilimden BAĞIMSIZ (v0.9.1302).** Tek giriş noktası
+`planDDL` iki eleyicinin bileşimi: bir ifade hangi dilimde durursa dursun,
+CREATE ise nesne elemesinden, `ADD COLUMN IF NOT EXISTS` ise kolon
+elemesinden geçer. Öncesinde her dilime tek eleyici bağlıydı ve iki yönlü
+kusur üretiyordu — `alters`'ta 5 CREATE (v0.9.1301'de taşındı), `tables`'ta
+7 ADD COLUMN; ikisi de hiç elenmiyordu. Ölçülen kazanç: ertelenen DDL
+52 → 45, `tables` elemesi 49/57 → 56/57.
+
+**Yine de kural: `CREATE TABLE` `tables` dilimine, `alters` ALTER/DROP
+taşır** — artık performans için değil okunabilirlik için; yerleşimi
+`ddl_slice_placement_test.go` (AST gezen) pinliyor.
+
+⚠️ `mvs` dilimine eleyici **bilinçli uygulanmıyor**: ardından ada göre
+drop+recreate yükseltme mantığı koşuyor, orada bir "zaten var" kararı tam
+da tehlikeli yönde hata yapar.
+⚠️ Anlık görüntü tazeliği: `alters` tarafında `system.tables`/`system.columns`
+**yeniden okunur**, `tables`'ınki yeniden kullanılmaz — aradaki DDL nesne
+düşürebilir (`DROP TABLE IF EXISTS feedbacks` `tables` diliminde) ve bayat
+bir kayıt düşürülmüş nesnenin CREATE'ini elerdi.
 
 ## 9. Dağıtık checklist
 
@@ -393,7 +407,7 @@ taşır.**
 | RMT'de değişken partition kolonu | FINAL kopyaları temizleyemez | **hiçbiri** |
 | Shard anahtarı ORDER BY dışında | Kopyalar ayrı shard'da, FINAL birleştiremez | **hiçbiri** |
 | Kolon ifadesi veriyle eşleşmiyor | Sabit boş kolon, sessiz fallback | **hiçbiri** |
-| `alters`'a CREATE TABLE | +100 sn/boot | **hiçbiri** |
+| Yanlış dilime DDL koymak | ~~+20 sn/ifade~~ **v0.9.1302'de kapandı** | `ddl_slice_placement_test.go` (yerleşim) |
 | Cumulative seride `avg()` | Anlamsız sayı | **hiçbiri** |
 | Rezervuar `quantilesState` | Bellek + hata | insan incelemesi |
 
@@ -405,4 +419,4 @@ taşır.**
    satır, "bozuk değil" belgeli. Silinsin mi?
 3. **`root_cause_hypotheses`** Kural P1 ihlali (değişken partition kolonu) —
    bugfix dilimi mi?
-4. **`alters` içindeki 5 CREATE TABLE** — 100 sn/boot; `tables`'a taşınsın mı?
+4. ~~`alters` içindeki 5 CREATE TABLE~~ — **KAPANDI** v0.9.1301 (taşıma) + v0.9.1302 (eleme dilimden bağımsızlaştı).

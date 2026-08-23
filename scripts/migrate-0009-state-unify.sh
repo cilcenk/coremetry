@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # migrate-0009-state-unify.sh — migrations/0009_state_unify.sql'in
-# kendini doğrulayan koşucusu.  v0.9.1310.
+# kendini doğrulayan koşucusu.  v0.9.1310; ADIM 3c v0.9.1311.
 #
 # NEDEN: göç 37 tablo × 3 adım = 111 elle ifade. Elle koşulduğunda
 # sırayı kaçırmak, ADIM 2'nin INSERT'ünü iki replikada koşturmak (T1 —
@@ -264,6 +264,23 @@ if ! grep -q 'replaceOne' "$GEN_SQL" || ! grep -q 'FORMAT TSVRaw' "$GEN_SQL"; th
         "tablo listesini script'e KOPYALAMA (ıraksar)."
 fi
 ok "Üretici sorgu göç dosyasından okundu ($(grep -c . "$GEN_SQL") satır)"
+
+# ADIM 3c sözleşmesi de DOSYADAN okunur (`-- @catchup <t> <zaman> <anahtar>`).
+# Script kendi kopyasını tutmaz; sihirbazın Go tablosu da aynı satırlara
+# karşı test edilir (TestStateCatchUpSpecsMatchMigration).
+CATCHUP_SPEC="${TMPDIR_RUN}/catchup.tsv"
+grep '^-- @catchup ' "$MIGRATION" \
+  | awk '{ printf "%s\t%s\t%s\n", $3, $4, $5 }' > "$CATCHUP_SPEC" || true
+catchup_field() { # <tablo> <1=zaman kolonu|2=anahtar>
+  awk -F'\t' -v t="$1" -v f="$2" '$1 == t { print $(f + 1) }' "$CATCHUP_SPEC"
+}
+CATCHUP_N="$(grep -c . "$CATCHUP_SPEC" || true)"
+if [ "$CATCHUP_N" -gt 0 ]; then
+  ok "ADIM 3c yakalama sözleşmesi: $CATCHUP_N append-only tablo (dosyadan)"
+else
+  warn "Göç dosyasında '-- @catchup' satırı yok — append-only tablolarda"
+  warn "ADIM 2/3 arası saniyelik boşluk KAPATILAMAZ."
+fi
 
 # 0.2 istemci + koordinatör bağlantısı ------------------------------
 command -v "$CLIENT_BIN" >/dev/null 2>&1 \
@@ -673,7 +690,14 @@ print_table_plan() { # <sıra> <tablo> <motor>
       done
       ;;
     *)
-      printf '   ADIM 3b  %-18s ATLANDI — %s MergeTree; yakalama satırları İKİYE KATLARDI (T1)\n' "" "$t"
+      printf '   ADIM 3b  %-18s ATLANDI — %s MergeTree; tam yakalama satırları İKİYE KATLARDI (T1)\n' "" "$t"
+      if [ -n "$(catchup_field "$t" 1)" ]; then
+        printf '   ADIM 3c @%-18s SINIRLI yakalama: kesim = max(%s) @ADIM 2 sonrası,\n' "$CH_HOST" "$(catchup_field "$t" 1)"
+        printf '           %-19s anahtar (%s) pencerede TEKİLSE anti-join ile taşınır,\n' "" "$(catchup_field "$t" 2)"
+        printf '           %-19s değilse ATLANIR ve boşluk raporlanır\n' ""
+      else
+        printf '   ADIM 3c  %-18s SÖZLEŞME YOK — bu tabloda saniyelik boşluk kalabilir\n' ""
+      fi
       ;;
   esac
   printf '   ADIM 4  @%-18s %s host da TEK /state/ yolunda ve AYNI sayıda olmalı — değilse DUR\n' \
@@ -776,6 +800,76 @@ verify_table() { # <tablo> → 0 tamam / 1 değil
   done
 }
 
+# ADIM 3c — append-only tablolarda SINIRLI yakalama.
+#
+# 3b, MergeTree'de koşulamaz (tekrar insert çift satır üretir, hiçbir
+# şey toplamaz). Boşluğu kapatan yol: pencereyi ADIM 2 sonrası kesim
+# noktasına sabitleyip anti-join ile elemek. Düz `>` bir tikin kesime
+# düşen kısmi batch'ini DÜŞÜRÜR, `>=` zaten kopyalananları ÇİFTLER
+# (v0.9.1306: bir batch tek nanosaniyeyi paylaşabiliyor).
+#
+# ⚠ Tekillik VARSAYILMAZ, ölçülür: anahtar tuple'ı pencerede tekil
+# değilse `NOT IN` aynı anahtarlı iki satırın İKİSİNİ birden düşürür —
+# yani yakalama, önlemeye çalıştığı kaybı kendisi üretir. Ölçüldü
+# (2026-08-23): incident_events'te iki satır BAYT BAYT aynı. O yüzden
+# prob tutmazsa yakalama YAPILMAZ ve boşluk operatöre AÇIKÇA söylenir.
+catch_up_append_only() { # <tablo> <kesim>
+  local t="$1" cut="$2" tcol key n u moved h
+  tcol="$(catchup_field "$t" 1)"
+  key="$(catchup_field "$t" 2)"
+  if [ -z "$tcol" ] || [ -z "$key" ]; then
+    CATCHUP_NOTE="YAKALAMA YOK — bu tablo için @catchup sözleşmesi tanımlı değil"
+    warn "ADIM 3c ATLANDI ($t): $CATCHUP_NOTE"
+    warn "  → ADIM 2 ile ADIM 3 arasında yazılmış satırlar ${t}_old'da KALDI."
+    return 0
+  fi
+  if [ -z "$cut" ]; then
+    CATCHUP_NOTE="YAKALAMA YOK — kesim noktası okunamadı"
+    warn "ADIM 3c ATLANDI ($t): $CATCHUP_NOTE"
+    return 0
+  fi
+
+  # Kolon başına backtick. `sed 's/[^,]*/.../g'` BSD'de çalışıyor ama
+  # boş eşleşme davranışı sed lehçeleri arasında değişiyor; tr/paste
+  # her ikisinde de aynı sonucu verir (operatör Linux'ta koşuyor).
+  local tuple
+  # shellcheck disable=SC2016  # backtick SQL kimlik ayracı, kabuk ikamesi değil
+  tuple="$(printf '%s' "$key" | tr ',' '\n' | sed 's/.*/`&`/' | paste -sd, -)"
+
+  # Tekillik probu — penceredeki satır sayısı = tekil anahtar sayısı mı?
+  ch_run "$CH_HOST" \
+    "SELECT toString(count()), toString(uniqExact((${tuple}))) FROM \`${t}_old\` WHERE \`${tcol}\` >= toDateTime64('${cut}', 9)" \
+    "ADIM 3c tekillik probu: $t" "$SINK"
+  n="$(cut -f1 "$SINK")"; u="$(cut -f2 "$SINK")"
+
+  if [ "$n" = "0" ]; then
+    CATCHUP_NOTE="yakalanacak satır yok (pencere boş)"
+    dim "ADIM 3c $CATCHUP_NOTE"
+    return 0
+  fi
+  if [ "$n" != "$u" ]; then
+    CATCHUP_NOTE="YAKALAMA YAPILAMADI — (${key}) pencerede TEKİL DEĞİL ($n satır / $u tekil)"
+    warn "ADIM 3c ATLANDI ($t): $CATCHUP_NOTE"
+    warn "  → anti-join aynı anahtarlı satırların İKİSİNİ birden düşürürdü."
+    warn "  → ADIM 2 ile ADIM 3 arasında yazılmış satırlar ${t}_old'da KALDI;"
+    warn "     bu tabloda saniyelik bir boşluk OLABİLİR. Elle incele:"
+    warn "     SELECT * FROM ${t}_old WHERE ${tcol} >= toDateTime64('${cut}', 9);"
+    return 0
+  fi
+
+  for h in ${INSERT_HOSTS[@]+"${INSERT_HOSTS[@]}"}; do
+    ch_run "$h" \
+      "INSERT INTO \`${t}\` SELECT * FROM \`${t}_old\` WHERE \`${tcol}\` >= toDateTime64('${cut}', 9) AND (${tuple}) NOT IN (SELECT (${tuple}) FROM \`${t}\` WHERE \`${tcol}\` >= toDateTime64('${cut}', 9))" \
+      "ADIM 3c yakalama: $t @ $h" "$SINK"
+  done
+  ch_run "$CH_HOST" \
+    "SELECT toString(count()) FROM \`${t}_old\` WHERE \`${tcol}\` >= toDateTime64('${cut}', 9)" \
+    "ADIM 3c pencere sayısı: $t" "$SINK"
+  moved="$(cat "$SINK")"
+  CATCHUP_NOTE="sınırlı yakalama koştu — pencere $moved satır, anahtar (${key}) tekil"
+  dim "ADIM 3c $CATCHUP_NOTE"
+}
+
 hdr "ADIM 2 + 3 + 4 — tablo başına"
 SUMMARY="${TMPDIR_RUN}/summary.tsv"
 : > "$SUMMARY"
@@ -793,6 +887,19 @@ for idx in $TODO_IDX; do
     dim "ADIM 2  @$h  kopyalandı"
   done
 
+  # ADIM 3c kesim noktası: RENAME'den ÖNCE, `_unified` yalnız
+  # kopyalananları içerirken okunur. RENAME sonrası okunsaydı
+  # uygulamanın yeni yazdıkları max'ı ileri iter ve pencere yanlış
+  # daralırdı.
+  CUT=""
+  CATCHUP_NOTE=""
+  cu_time="$(catchup_field "$t" 1)"
+  if [ -n "$cu_time" ]; then
+    ch_run "$CH_HOST" "SELECT toString(max(\`${cu_time}\`)) FROM \`${t}_unified\`" \
+      "ADIM 3c kesim noktası: $t" "$SINK"
+    CUT="$(cat "$SINK")"
+  fi
+
   ch_run "$CH_HOST" \
     "RENAME TABLE ${t} TO ${t}_old, ${t}_unified TO ${t} ON CLUSTER ${CLUSTER}" \
     "ADIM 3: $t takas" "$SINK"
@@ -805,9 +912,10 @@ for idx in $TODO_IDX; do
         ch_run "$h" "INSERT INTO ${t} SELECT * FROM ${t}_old" "ADIM 3b: $t @ $h" "$SINK"
       done
       dim "ADIM 3b yakalama koştu (RMT, idempotent)"
+      CATCHUP_NOTE="3b tam yakalama (RMT)"
       ;;
     *)
-      dim "ADIM 3b ATLANDI — MergeTree; yakalama satırları ikiye katlardı (T1)"
+      catch_up_append_only "$t" "$CUT"
       ;;
   esac
 
@@ -825,7 +933,7 @@ for idx in $TODO_IDX; do
       "  RENAME TABLE $t TO ${t}_unified, ${t}_old TO $t ON CLUSTER $CLUSTER;" \
       "Düzelttikten sonra --resume ile devam edebilirsin."
   fi
-  printf '%s\t%s\t%s\t%s\t%s\n' "$t" "$VERIFY_COUNT" "${VERIFY_FINAL:--}" "$dt" "$eng" >> "$SUMMARY"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$t" "$VERIFY_COUNT" "${VERIFY_FINAL:--}" "$dt" "${CATCHUP_NOTE:--}" >> "$SUMMARY"
   if [ -n "$VERIFY_FINAL" ]; then
     printf '   %s✓%s ADIM 4  %s host da tek /state/ yolunda · %s ham / %s FINAL satır · %ss\n' \
       "$c_grn" "$c_off" "$CLUSTER_HOSTS" "$VERIFY_COUNT" "$VERIFY_FINAL" "$dt"
@@ -841,10 +949,10 @@ RUN_TOTAL=$((SECONDS - RUN_START))
 snapshot "$AFTER_FILE"
 
 hdr "ÖZET — $N_WORK tablo birleştirildi, toplam ${RUN_TOTAL}s"
-printf '  %-28s %10s %10s %8s  %s\n' "TABLO" "HAM" "FINAL" "SÜRE" "MOTOR"
-printf '  %-28s %10s %10s %8s  %s\n' "----------------------------" "----------" "----------" "--------" "-----"
+printf '  %-24s %9s %9s %7s  %s\n' "TABLO" "HAM" "FINAL" "SÜRE" "ADIM 3b/3c YAKALAMA"
+printf '  %-24s %9s %9s %7s  %s\n' "------------------------" "---------" "---------" "-------" "-------------------"
 while IFS="$(printf '\t')" read -r st sc sf sd se; do
-  printf '  %-28s %10s %10s %7ss  %s\n' "$st" "$sc" "$sf" "$sd" "$se"
+  printf '  %-24s %9s %9s %6ss  %s\n' "$st" "$sc" "$sf" "$sd" "$se"
 done < "$SUMMARY"
 dim "HAM = count() · FINAL = count() FINAL (RMT'de 3b yakalaması geçici tekrar bırakır)"
 

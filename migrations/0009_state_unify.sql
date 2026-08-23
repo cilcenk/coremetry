@@ -215,6 +215,69 @@ FORMAT TSVRaw;
 -- Aşağıda tablo başına üçlü blok var. Bir bloğu bitirmeden sonrakine
 -- geçme: (2) ile (3) arasındaki pencere ne kadar dar olursa o kadar az
 -- satır `_old`'da kalır (T2).
+--
+-- ============================================================
+-- ADIM 3c — APPEND-ONLY TABLOLARDA SINIRLI YAKALAMA
+-- ============================================================
+-- 3b, ReplacingMergeTree'de bedava: aynı satırı tekrar yazmak zararsız,
+-- FINAL toplar. Beş MergeTree tablosunda yakalama YOKTU — tekrar insert
+-- çift satır üretir ve hiçbir şey onları toplamaz. Yani T2'nin kabul
+-- ettiği "saniyelik boşluk" tam olarak burada kalıcı veri kaybıydı:
+-- `audit_log` bir bankada, `incident_events` incident zaman çizelgesi.
+--
+-- Beşinin de zaman kolonu SIRALAMA ANAHTARINDA, yani pencere indeksli
+-- ve ucuz:
+--
+--   audit_log         time        ORDER BY (time, id)
+--   notification_log  sent_at     ORDER BY (sent_at, id)
+--   ai_calls          created_at  ORDER BY (created_at, surface, provider)
+--   incident_events   time        ORDER BY (incident_id, time)
+--   monitor_results   time        ORDER BY (monitor_id, time)
+--
+-- YORDAM. ADIM 2'nin INSERT'ünden HEMEN SONRA kesim noktasını yakala
+-- (henüz RENAME yok, `_unified` yalnız kopyalananları içerir):
+--
+--   SELECT toString(max(<zaman>)) FROM <t>_unified;   -- = <kesim>
+--
+-- ADIM 3'ten (RENAME) sonra yalnız o noktadan yenisini taşı:
+--
+--   INSERT INTO <t> SELECT * FROM <t>_old
+--   WHERE <zaman> >= toDateTime64('<kesim>', 9)
+--     AND (<anahtar>) NOT IN (
+--           SELECT (<anahtar>) FROM <t>
+--           WHERE <zaman> >= toDateTime64('<kesim>', 9));
+--
+-- NEDEN ANTI-JOIN, NEDEN DÜZ `>` DEĞİL. Bu kod tabanında bir tikin
+-- batch'i tek nanosaniyeyi paylaşabiliyor (v0.9.1306 teşhisinde
+-- ölçüldü, 10 id'ye kadar). `>` o batch'in kesim noktasına düşen
+-- yarısını DÜŞÜRÜR; `>=` zaten kopyalanmışları ÇİFTLER. Pencereyi
+-- kesime sabitleyip anti-join yapmak ikisinden de kaçınır. Pencere
+-- yalnız son zaman damgası olduğu için maliyet ihmal edilebilir.
+--
+-- ⚠ TEKİLLİK VARSAYILMAZ, ÖLÇÜLÜR. Anahtar tuple'ı tekil DEĞİLSE
+--   `NOT IN` aynı anahtarlı iki satırın İKİSİNİ birden düşürür — yani
+--   yakalama, önlemeye çalıştığı kaybı KENDİSİ üretir. Bu teorik bir
+--   endişe değil: ölçüldü (2026-08-23) — `incident_events`te 10.425
+--   satırın 2'si BAYT BAYT aynı (aynı incident, aynı nanosaniye, aynı
+--   kind/actor/body/ref_id). Hiçbir tuple onları ayıramaz.
+--
+--   Bu yüzden yakalamayı koşan taraf (sihirbaz ya da scripts/
+--   migrate-0009-state-unify.sh) ÖNCE pencere üzerinde sınar:
+--       SELECT count(), uniqExact((<anahtar>)) FROM <t>_old
+--       WHERE <zaman> >= toDateTime64('<kesim>', 9);
+--   count() = uniqExact() değilse yakalama YAPILMAZ ve operatöre
+--   "bu tabloda N saniyelik boşluk olabilir" diye AÇIKÇA söylenir.
+--   Sessiz kabul YOK.
+--
+-- Aşağıdaki satırlar MAKİNE OKUNAKLI sözleşmedir; hem sihirbaz hem
+-- script bunu buradan okur, kendi kopyasını tutmaz:
+--     -- @catchup <tablo> <zaman kolonu> <anahtar,kolonlar>
+--
+-- @catchup audit_log time time,id
+-- @catchup notification_log sent_at sent_at,id
+-- @catchup ai_calls created_at created_at,id
+-- @catchup incident_events time incident_id,time,kind,ref_id
+-- @catchup monitor_results time monitor_id,time
 
 ------------------------------------------------------------- 1 status_page_config
 INSERT INTO status_page_config_unified SELECT * FROM status_page_config;  -- her shard'da BİR node

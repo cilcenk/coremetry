@@ -590,6 +590,13 @@ var selfHealthRunbooks = map[string]string{
 	"self-disk-eta":       "/admin/stats",
 	"self-ingest-stall":   "/admin/stats",
 	"self-channel-broken": "/settings/channels",
+	// v0.9.1294 — hacim sıçramasının müdahale ekranı kardinalite
+	// panelidir: hangi servis/metrik/attr anahtarı yazma yolunu yiyor
+	// sorusunun cevabı orada. DOĞRUDAN rota yazıldı (/system/cardinality);
+	// üstteki /admin/* biçimleri eski yer imleri için duran bir
+	// yönlendirme (App.tsx AdminRedirect) ve yeni bir girdinin araya bir
+	// atlama koyması için sebep yok.
+	"self-volume-spike": "/system/cardinality",
 }
 
 // EnrichProblemsWithTeams attaches each problem's owning team

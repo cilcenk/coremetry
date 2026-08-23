@@ -84,6 +84,18 @@ type Evaluator struct {
 	diskMu     sync.Mutex
 	diskSeries map[string][]diskSample
 
+	// volCache / volAt — self-volume-spike'ın (v0.9.1294,
+	// selfhealth_volume.go) SON ÖLÇÜMÜ. Ölçüm saatlik, yaşam döngüsü
+	// tik başına: iki tarama arasında bu önbellek yeniden sunulur, yoksa
+	// sweepStaleProblems tazelenmeyen satırı üç dakikada bir kapatır ve
+	// kural her saat yeniden açılıp bildirim yollardı. diskSeries ile
+	// aynı ömür sözleşmesi — bellekte, yalnız liderde; lider değişimi
+	// önbelleği sıfırlar ve bir sonraki tik gerçek bir ölçüm yapar
+	// (kaybı bir MV sorgusu, kazancı sıfır kalıcılık borcu).
+	volMu    sync.Mutex
+	volCache []selfProblem
+	volAt    time.Time
+
 	// watcherFails — ardışık ölçüm hatası sayacı (v0.9.447): bozuk
 	// kaynaklı (silinmiş index, ES yetkisi) watch'ların açık problemi
 	// keep-alive'la ölümsüzleşiyordu. Guarded by watcherMu; girdiler
@@ -1144,6 +1156,14 @@ func (e *Evaluator) escalateStaleProblems(ctx context.Context) {
 	now := time.Now()
 	for i := range problems {
 		p := problems[i]
+		// v0.9.1294 — muaf kurallar yaşlanmayla şiddet kazanmaz
+		// (escalationExempt, selfhealth_volume.go). Kelepçe hem burada
+		// hem tazeleme dalında olmalı: yalnız birinde olsaydı süpürme
+		// yükseltir, tazeleme geri indirir ve v0.8.309'un bildirim seli
+		// geri gelirdi.
+		if escalationExempt(p.RuleID) {
+			continue
+		}
 		openFor := now.Sub(time.Unix(0, p.StartedAt))
 		next := nextSeverity(p.Severity, openFor, esc)
 		if next == "" || next == p.Severity {

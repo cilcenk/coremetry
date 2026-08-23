@@ -62,6 +62,7 @@ var selfHealthRules = map[string]bool{
 	selfSpoolRuleID:   true,
 	selfDiskRuleID:    true,
 	selfChannelRuleID: true,
+	selfVolumeRuleID:  true, // v0.9.1294 — selfhealth_volume.go
 }
 
 // ── Disk ETA serisi ─────────────────────────────────────────────────────
@@ -237,10 +238,15 @@ func channelBrokenDecision(consecFails, threshold int, configured, enabled bool)
 // Reconcile döngüsü bu listeyi snapshot'la kıyaslar; dört kural da aynı
 // açma/tazeleme/kapatma yolunu paylaşsın diye ara tip.
 type selfProblem struct {
-	id          string
-	ruleID      string
-	ruleName    string
-	metric      string
+	id       string
+	ruleID   string
+	ruleName string
+	metric   string
+	// service — v0.9.1294. Dört kural için BOŞ (özne Coremetry'nin
+	// kendisi; sahte bir servis adı uydurmak v0.9.401/402'de düzeltilen
+	// kırık servis bağlantısını geri getirirdi). self-volume-spike'ta
+	// DOLU: orada özne, span yazan gerçek bir servis.
+	service     string
 	comparator  string
 	description string
 	severity    string
@@ -287,6 +293,13 @@ func (e *Evaluator) evaluateSelfHealth(ctx context.Context, snap *chstore.OpenPr
 	}
 	if p, ok := e.selfChannelHealth(ctx, cfg); ok {
 		covered[selfChannelRuleID] = true
+		want = append(want, p...)
+	}
+	// v0.9.1294 — hacim sıçraması. Kendi ölçüm sıklığını (saatlik) içeride
+	// yönetir; her tikte son ölçümü döndürdüğü için yaşam döngüsü
+	// kardeşleriyle aynı hızda koşar.
+	if p, ok := e.selfVolumeSpike(ctx, cfg); ok {
+		covered[selfVolumeRuleID] = true
 		want = append(want, p...)
 	}
 
@@ -637,7 +650,7 @@ func (e *Evaluator) reconcileSelfHealth(ctx context.Context, snap *chstore.OpenP
 				RuleID:      w.ruleID,
 				RuleName:    w.ruleName,
 				Severity:    w.severity,
-				Service:     "", // Coremetry'nin KENDİSİ — sahte bir servis adı uydurmak, v0.9.401/402'de düzelttiğimiz kırık servis bağlantısını geri getirirdi (shared_exception.go emsali).
+				Service:     w.service, // dört kuralda BOŞ (özne Coremetry'nin kendisi — sahte bir servis adı uydurmak v0.9.401/402'de düzelttiğimiz kırık servis bağlantısını geri getirirdi); self-volume-spike'ta span yazan gerçek servis.
 				Metric:      w.metric,
 				Comparator:  w.comparator,
 				Value:       w.value,
@@ -668,8 +681,15 @@ func (e *Evaluator) reconcileSelfHealth(ctx context.Context, snap *chstore.OpenP
 		existing.Threshold = w.threshold
 		existing.Comparator = w.comparator
 		existing.Description = w.description
-		existing.Severity = effectiveSeverity(w.severity,
-			time.Since(time.Unix(0, existing.StartedAt)), e.escalationCfg(ctx))
+		// v0.9.1294 — muaf kurallarda YAŞ KELEPÇESİ YOK: hacim sıçraması
+		// tanımı gereği 24 saat açık kalır ve eskalasyon onu birkaç saat
+		// içinde critical→P1'e taşırdı (escalationExempt'in doc bloğu).
+		if escalationExempt(w.ruleID) {
+			existing.Severity = w.severity
+		} else {
+			existing.Severity = effectiveSeverity(w.severity,
+				time.Since(time.Unix(0, existing.StartedAt)), e.escalationCfg(ctx))
+		}
 		if err := e.store.UpsertProblem(ctx, *existing); err != nil {
 			log.Printf("[evaluator] self-health problemi tazelenemedi %s: %v", w.id, err)
 		}

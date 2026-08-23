@@ -39,17 +39,21 @@ type StateUnifyHostCount struct {
 
 // StateUnifyTable — bir state tablosunun göç öncesi fotoğrafı.
 type StateUnifyTable struct {
-	Name          string                `json:"name"`
-	Engine        string                `json:"engine"`
-	Rows          uint64                `json:"rows"`
-	Split         bool                  `json:"split"`
-	DistinctPaths int                   `json:"distinctPaths"`
-	ZKPath        string                `json:"zkPath"`
-	Hosts         []StateUnifyHostCount `json:"hosts"`
-	HasOld        bool                  `json:"hasOld"`
-	HasUnified    bool                  `json:"hasUnified"`
-	CatchUp       string                `json:"catchUp"`
-	Blocked       string                `json:"blocked,omitempty"`
+	Name          string `json:"name"`
+	Engine        string `json:"engine"`
+	Rows          uint64 `json:"rows"`
+	Split         bool   `json:"split"`
+	DistinctPaths int    `json:"distinctPaths"`
+	// Shards — kümenin shard sayısı, tablo satırına TAŞINIR: çift-sayım
+	// kapısının gerekçesini (cluster() kaç katına çıkarırdı) tablo
+	// bağlamında yazabilmek için.
+	Shards     int                   `json:"shards"`
+	ZKPath     string                `json:"zkPath"`
+	Hosts      []StateUnifyHostCount `json:"hosts"`
+	HasOld     bool                  `json:"hasOld"`
+	HasUnified bool                  `json:"hasUnified"`
+	CatchUp    string                `json:"catchUp"`
+	Blocked    string                `json:"blocked,omitempty"`
 
 	// DDL üreticiden gelir; FE'ye gönderilmez (uzun ve gereksiz).
 	DDL string `json:"-"`
@@ -171,13 +175,19 @@ func (s *Store) StateUnifyPreflight(ctx context.Context) (StateUnifyPreflightRes
 	}
 	cq := quoteCHIdent(res.Cluster)
 
-	// Küme şekli
+	// Küme şekli.
+	//
+	// uniqExact()/count() UInt64 döner ve clickhouse-go bunu *int'e
+	// TARAMAZ ("converting UInt64 to *int is unsupported") — canlı küme
+	// testi yakaladı; birim testlerinde görünmez, çünkü sorgu koşmaz.
+	var shards, hosts uint64
 	if err := s.conn.QueryRow(ctx,
 		"SELECT uniqExact(shard_num), count() FROM system.clusters WHERE cluster = "+cq,
-	).Scan(&res.Shards, &res.Hosts); err != nil {
+	).Scan(&shards, &hosts); err != nil {
 		res.Detail = "Küme topolojisi okunamadı: " + err.Error()
 		return res, nil
 	}
+	res.Shards, res.Hosts = int(shards), int(hosts)
 	if res.Shards == 0 {
 		res.Detail = fmt.Sprintf("'%s' kümesi system.clusters'ta yok.", res.Cluster)
 		return res, nil
@@ -318,6 +328,7 @@ func (s *Store) StateUnifyPreflight(ctx context.Context) (StateUnifyPreflightRes
 		t.ZKPath = pi.path
 		// BÖLÜNMÜŞ MÜ — ölçülen replikasyon şeklinden türetilir, asla
 		// varsayılmaz. Aynı kapı `cluster()` kestirmesini de korur.
+		t.Shards = res.Shards
 		t.Split = clusterReadSafe(pi.distinct, res.Shards)
 		if t.Split {
 			res.SplitCount++
@@ -382,8 +393,8 @@ func (s *Store) StateUnifyMigrateTable(ctx context.Context, cluster string, t St
 	// shard'ların birleşimini verir; birleşik bir tabloda aynı verinin
 	// replikalarını toplar ve satırları shard sayısı kadar KATLAR.
 	if !t.Split {
-		err := fmt.Errorf("'%s' bölünmüş değil (%d farklı zookeeper_path, küme %d shard) — cluster() okuması bu tabloda veriyi %d katına çıkarırdı, INSERT atılmadı",
-			t.Name, t.DistinctPaths, len(t.Hosts), t.DistinctPaths)
+		err := fmt.Errorf("'%s' bölünmüş değil (%d farklı zookeeper_path, küme %d shard) — cluster() okuması bu tabloda satırları %d katına çıkarırdı, INSERT atılmadı",
+			t.Name, t.DistinctPaths, t.Shards, t.Shards)
 		return fail("çift-sayım kapısı", err)
 	}
 	if t.Blocked != "" {

@@ -35,11 +35,30 @@ describe('splitDbNodeName', () => {
       .toEqual({ system: 'postgresql', instance: 'pg@replica-1' });
   });
 
-  it('@ yoksa ya da bir taraf boşsa null', () => {
-    expect(splitDbNodeName('h2')).toBeNull();
+  // ── v0.9.1326 — '@' yok = "instance BİLİNMİYOR", null DEĞİL ────────
+  //
+  // Bu pin TERSİNE DÖNDÜ. Eski hâli (`'h2'` → null) iki AYRI durumu tek
+  // cevaba katlıyordu: "db düğümü değil" ile "db düğümü ama instance'ı
+  // bilinmiyor". İkincisinin gerçek bir hedefi var.
+  it('@ yoksa instance BOŞ — sistem hâlâ biliniyor', () => {
+    expect(splitDbNodeName('h2')).toEqual({ system: 'h2', instance: '' });
+    expect(splitDbNodeName('clickhouse')).toEqual({ system: 'clickhouse', instance: '' });
+    // Sondaki '@' de aynı hâl: instance parçası boş.
+    expect(splitDbNodeName('system@')).toEqual({ system: 'system', instance: '' });
+  });
+
+  it('adlandıracak bir SİSTEM yoksa hâlâ null', () => {
     expect(splitDbNodeName('@instance')).toBeNull();
-    expect(splitDbNodeName('system@')).toBeNull();
     expect(splitDbNodeName('')).toBeNull();
+    expect(splitDbNodeName('   ')).toBeNull();
+  });
+
+  // 'unknown' db_summary_5m'in GERÇEK bir instance değeri
+  // (dbInstanceExpr'in terminal sentineli, internal/chstore/identity.go).
+  // "Bilmiyorum" karşılığı olarak yazmak ÜÇÜNCÜ bir kimlik uydurmak
+  // olurdu ve /database sayfası sessizce boş açılırdı.
+  it("bilinmeyen instance ASLA 'unknown' sentineline çözülmez", () => {
+    expect(splitDbNodeName('clickhouse')?.instance).not.toBe('unknown');
   });
 });
 
@@ -69,8 +88,48 @@ describe('nodeDetailHref', () => {
     expect(href).not.toContain('name=');
   });
 
-  it('instance türetilemeyen DB düğümü → null (link çizilmez)', () => {
-    expect(nodeDetailHref(node({ kind: 'database', name: 'h2', system: 'h2' }))).toBeNull();
+  // ── v0.9.1326 — KARIŞIK KİMLİK PENCERESİNİN dürüst yarısı ─────────
+  //
+  // Belirti: `/service-map` odaklı komşuluğunda bir "db · clickhouse"
+  // düğümünün HİÇBİR linki yoktu. Kök neden v0.9.1318 ÖNCESİNDEKİ MV
+  // yazıcısı: db instance'ını ÜÇ basamakla adlandırıyordu (peer_service →
+  // server.address → net.peer.name), db_summary_5m ise ALTI ile. Lokalde
+  // ölçüldü (v0.9.1318): `clickhouse` için üç basamak da BOŞ (53.692
+  // span), altı basamaklı zincir `coremetry-monolithic` verdi. Düğüm düz
+  // `db:clickhouse` yazıldı, splitDbNodeName '@' göremedi, link kurulmadı.
+  //
+  // 1318 YAZICIYI düzeltti; bu test OKUMA tarafını düzeltiyor. İkisi
+  // ayrı çünkü topology_edges_5m'in TTL'i 14 GÜN (store.go:1954): eski
+  // yazım o pencere boyunca okunmaya devam ediyor ve geçmiş yeniden
+  // YAZILMIYOR (o satırlar instance'ı gerçekten bilmiyor).
+  it('instance BİLİNMEYEN DB düğümü → motora daraltılmış KATALOG', () => {
+    const href = nodeDetailHref(
+      node({ kind: 'database', name: 'clickhouse', system: 'clickhouse' }), { range: '1h' })!;
+    expect(href).toContain('/databases?');
+    expect(href).toContain('dbsys=clickhouse');
+    expect(href).toContain('range=1h');
+    // Detay sayfası KURULMAZ: instance uydurmak sessizce boş sayfa açardı.
+    expect(href).not.toContain('/database?');
+    expect(href).not.toContain('instance=');
+    // Ve özellikle: 'unknown' sentineli YAZILMAZ (ÜÇÜNCÜ kimlik olurdu).
+    expect(href).not.toContain('unknown');
+  });
+
+  // Değişimin EKLEMELİ olduğunun kanıtı: instance'ı ZATEN bilinen düğüm
+  // aynı detay linkini korur. (infra_host'un üç basamağı dbInstanceExpr'in
+  // ilk üç basamağıyla BİREBİR aynı ve aynı sırada — biri doluysa iki
+  // zincir aynı değeri verir, yani 1318 hiçbir mevcut düğümü yeniden
+  // adlandırmadı.)
+  it('instance BİLİNEN düğüm detay sayfasında KALIR — davranış aynen', () => {
+    const href = nodeDetailHref(
+      node({ kind: 'database', name: 'oracle@oracle', system: 'oracle' }), { range: '1h' })!;
+    expect(href).toContain('/database?');
+    expect(href).not.toContain('/databases?');
+  });
+
+  it('adlandıracak sistem yoksa hâlâ link YOK', () => {
+    expect(nodeDetailHref(node({ kind: 'database', name: '', system: '' }))).toBeNull();
+    expect(nodeDetailHref(node({ kind: 'database', name: '@x', system: '' }))).toBeNull();
   });
 
   // v0.9.972 — bu pin TERSİNE DÖNDÜ ve dönmesi doğru. Eski gerekçe

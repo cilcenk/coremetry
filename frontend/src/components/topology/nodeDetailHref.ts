@@ -53,7 +53,9 @@
 // Etiket bu yüzden "topiği aç" DEMEZ: katalogda ilk-200 tavanı var
 // (dependencies.go), yani aranan satır listede olmayabilir.
 
-import { databaseDetailHref, type DatabasePageScope } from '@/pages/databases/databaseParam';
+import {
+  databaseDetailHref, databasesFilterHref, type DatabasePageScope,
+} from '@/pages/databases/databaseParam';
 // v0.9.1026 — çekmece param'ının kodlayıcısı TEK NÜSHADAN geliyor.
 // Elle kurulmuş bir `sys|cluster|dest` dizesi decodeDestinationParam'ın
 // kabul ettiği kaçış kurallarıyla ayrışabilirdi ve ayrışsa çekmece
@@ -67,17 +69,35 @@ import type { GraphNode } from '@/lib/types';
  *
  * İLK '@' ayırıcıdır, sunucu tarafındaki decodeNodeName ile aynı kural
  * (internal/api/servicegraph.go): instance adı '@' içerebilir, sistem
- * adı içeremez. '@' yoksa instance BİLİNMİYOR demektir ve null döner —
- * uydurma bir instance ile sorgulamak hiçbir şeyle eşleşmeyen sessizce
- * boş bir sayfa açardı.
+ * adı içeremez.
+ *
+ * ─── v0.9.1326 — '@' YOKSA artık null DEĞİL ──────────────────────────
+ * `instance: ''` döner, yani "sistem BİLİNİYOR, instance BİLİNMİYOR" —
+ * ayrı ve söylenebilir bir hâl. Eski null hâli iki farklı şeyi tek
+ * cevaba katlıyordu: "bu bir db düğümü değil" ile "bu bir db düğümü ama
+ * hangi instance olduğunu bilmiyorum". İkincisinin GERÇEK bir hedefi
+ * var (motora daraltılmış katalog) ve nodeDetailHref onu artık
+ * kuruyor — `databasesFilterHref`'in "olabildiğinden dar > kendinden
+ * emin yanlış" kuralı, kuyruk düğümünde v0.9.972'de verilmiş aynı
+ * karar.
+ *
+ * 'unknown' DÖNMÜYOR ve bu bilinçli: `unknown` db_summary_5m'in GERÇEK
+ * bir instance değeri — dbInstanceExpr'in terminal sentineli
+ * (internal/chstore/identity.go). Onu "bilmiyorum" karşılığı olarak
+ * yazmak iki AYRI kimliği tek kovaya katlardı ve
+ * `/database?instance=unknown` sayfası sessizce boş açılırdı.
+ *
+ * Sistem adı yoksa (`'@instance'`, `''`) hâlâ null: adlandıracak bir
+ * şey yok.
  */
 export function splitDbNodeName(name: string): { system: string; instance: string } | null {
   const at = name.indexOf('@');
-  if (at <= 0) return null;
-  const system = name.slice(0, at);
-  const instance = name.slice(at + 1);
-  if (!system || !instance) return null;
-  return { system, instance };
+  if (at === 0) return null; // '@instance' — sistem adı yok
+  if (at < 0) {
+    const system = name.trim();
+    return system ? { system, instance: '' } : null;
+  }
+  return { system: name.slice(0, at), instance: name.slice(at + 1) };
 }
 
 /**
@@ -126,6 +146,24 @@ export function nodeDetailHref(node: GraphNode, scope: DatabasePageScope = {}): 
     // instance ile eşleştiriyor ve ikisi ayrışırsa sayfa boş kalır.
     const parts = splitDbNodeName(node.name);
     if (!parts) return null;
+    // v0.9.1326 — instance'sız (düz `db:<system>`) düğüm KATALOĞA gider.
+    //
+    // Bu düğümler v0.9.1318 ÖNCESİNDE yazıldı: MV o zaman db instance'ını
+    // ÜÇ basamaklı bir zincirle (peer_service → server.address →
+    // net.peer.name) adlandırıyordu, db_summary_5m ise ALTI ile. Üçü de
+    // boş olan bir kurulumda düğüm düz `db:clickhouse` oldu ve buradaki
+    // link HİÇ kurulmadı (splitDbNodeName null dönüyordu). 1318 yazıcıyı
+    // düzeltti ama tabloda TTL 14 gün var (store.go topology_edges_5m),
+    // yani eski yazım o pencere boyunca okunmaya devam ediyor.
+    //
+    // Geçmiş YENİDEN YAZILMIYOR: o satırlar instance'ı gerçekten
+    // bilmiyor. Uydurmak yerine soru sahip olunan boyut kadar
+    // daraltılıyor — `/databases?dbsys=<system>`. Operatör oradan gerçek
+    // instance'ı görür ve tıklar; `/database?instance=unknown` ise
+    // db_summary_5m'de BAŞKA bir satırın kimliğidir ve boş sayfa açardı.
+    if (!parts.instance) {
+      return databasesFilterHref({ dbSystem: parts.system }, scope);
+    }
     return databaseDetailHref(
       { system: parts.system, instance: parts.instance, dbName: '', source: 'spans' },
       scope,

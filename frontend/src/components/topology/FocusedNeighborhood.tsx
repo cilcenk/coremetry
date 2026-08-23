@@ -423,7 +423,14 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
           {hoverNode.kind === 'database' && detailHref && (
             <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <Link to={detailHref} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
-                Open instance →
+                {/* v0.9.1326 — etiket LİNKİN NE YAPTIĞINI söyler (v0.9.1026'da
+                    kuyruk tarafında alınan aynı karar). v0.9.1318 öncesi
+                    yazılmış düz `db:<system>` düğümleri instance'ı bilmiyor;
+                    onlar için hedef detay sayfası değil, motora daraltılmış
+                    katalog. "Open instance" demek orada YALAN olurdu. */}
+                {detailHref.startsWith('/databases')
+                  ? 'Veritabanı kataloğunda göster →'
+                  : 'Open instance →'}
               </Link>
             </span>
           )}

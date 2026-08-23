@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { encodeStmtParam, decodeStmtParam, densifyTrend, stmtDetailHref } from './stmtParam';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { encodeStmtParam, decodeStmtParam, densifyTrend, stmtDetailHref, STMT_DETAIL_PATH } from './stmtParam';
 
 // stmtParam.test.ts — v0.8.378 (Stage-2 slice D2). Pins the `?stmt=` URL
 // codec for the /slow-queries statement detail drawer: decimal-string
@@ -107,7 +109,11 @@ describe('stmtDetailHref', () => {
   it('carries the identity and the window', () => {
     const href = stmtDetailHref({ hash: '4242', system: 'postgresql' },
       { fromNs: 1_700_000_000_000_000_000, toNs: 1_700_000_060_000_000_000 })!;
-    expect(href.startsWith('/slow-queries?')).toBe(true);
+    // v0.9.1323 — burası `/slow-queries?` yazıyordu, yani TEST BUG'I
+    // KORUYORDU: üretici yanlış rotayı basıyor, test de onu doğru diye
+    // çiviliyordu. Artık sabit üreticiden geliyor ve aşağıdaki blok o
+    // sabiti App.tsx'in rota listesine karşı doğruluyor.
+    expect(href.startsWith(STMT_DETAIL_PATH + '?')).toBe(true);
     const p = q(href);
     expect(decodeStmtParam(p.get('stmt'))).toEqual({ hash: '4242', system: 'postgresql' });
     expect(p.get('range')).toBe('custom:1700000000000-1700000060000');
@@ -145,5 +151,57 @@ describe('stmtDetailHref', () => {
       expect(p.has('range'), JSON.stringify(w)).toBe(false);
       expect(p.get('stmt')).toBe('9'); // …but the identity still ships
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rota doğrulaması — v0.9.1323 (§3.1 K1).
+//
+// Bug: stmtDetailHref `/slow-queries` basıyordu; gerçek rota
+// `/databases/slow-queries`. Kayıtlı olmayan bir yol App.tsx'in catch-all'ına
+// (`path="*"` → <Navigate to="/" replace />) düşüyor, yani "Detail →" düğmesi
+// operatörü ANA SAYFAYA atıyordu. 404 değil, sessiz yön değişimi.
+//
+// Asıl ders bug'ın kendisi değil: YANLIŞ YAZIM BU DOSYADA ÇİVİLİYDİ
+// (`expect(href.startsWith('/slow-queries?'))`). Yani test bug'ı KORUYORDU —
+// üreticiyi düzeltmek testi kırardı ve "test kırmızı yandı" sinyali insanı
+// düzeltmeden geri döndürürdü. Bir dizeyi kendisiyle karşılaştıran bir test,
+// yalnız "değişmedi" der; "doğru" demez.
+//
+// Bu yüzden aşağıdaki blok üreticiyi TEK HAKİKAT KAYNAĞINA — App.tsx'in rota
+// listesine — karşı doğruluyor. Rota yeniden adlandırılırsa gate kırılır.
+// ─────────────────────────────────────────────────────────────────────────────
+function appRoutePaths(): string[] {
+  const src = readFileSync(join(__dirname, '..', '..', 'App.tsx'), 'utf8');
+  const out: string[] = [];
+  const re = /<Route\b[^>]*?\bpath="([^"]+)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src))) out.push(m[1]);
+  return out;
+}
+
+describe('stmtDetailHref rotası App.tsx.te KAYITLI', () => {
+  const routes = appRoutePaths();
+
+  it('rota listesi okunabildi (gate boşa koşmuyor)', () => {
+    expect(routes.length).toBeGreaterThan(30);
+    expect(routes).toContain('*'); // catch-all — yanlış yolun gittiği yer
+  });
+
+  it('üreticinin yolu gerçek bir rota', () => {
+    expect(routes, [
+      `stmtDetailHref "${STMT_DETAIL_PATH}" basıyor ama App.tsx.te böyle bir rota yok.`,
+      'Kayıtsız yol catch-all.a düşer ve operatör sessizce ANA SAYFAYA gider.',
+    ].join('\n')).toContain(STMT_DETAIL_PATH);
+  });
+
+  it('emitilen href de aynı yola çözülür', () => {
+    const href = stmtDetailHref({ hash: '7' }, { preset: '1h' })!;
+    expect(routes).toContain(href.slice(0, href.indexOf('?')));
+  });
+
+  it('eski yanlış yazım artık bir rota DEĞİL (bug geri gelirse yakala)', () => {
+    expect(routes).not.toContain('/slow-queries');
+    expect(stmtDetailHref({ hash: '7' }, { preset: '1h' })!.startsWith('/slow-queries?')).toBe(false);
   });
 });

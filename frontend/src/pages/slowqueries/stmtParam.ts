@@ -47,6 +47,12 @@ export function encodeStmtParam(ref: StmtRef): string {
 // destination resolves its own range from the URL and falls back to the
 // operator's sticky one, so a detail link without it re-asks the question
 // over a different hour and the drawer's trend/compare answer the wrong one.
+/**
+ * Yavaş-sorgu kataloğunun rotası. App.tsx'teki `<Route path=…>` ile
+ * BİREBİR aynı olmak zorunda — stmtParam.test.ts orayı okuyup pinler.
+ */
+export const STMT_DETAIL_PATH = '/databases/slow-queries';
+
 export function stmtDetailHref(
   ref: { hash?: string; system?: string },
   window: import('@/lib/types').TimeRange | { fromNs: number; toNs: number },
@@ -57,7 +63,13 @@ export function stmtDetailHref(
   q.set('stmt', encodeStmtParam({ hash, system: ref.system ?? '' }));
   const range = windowRangeParam(window);
   if (range) q.set('range', range);
-  return `/slow-queries?${q.toString()}`;
+  // v0.9.1323 — bu satır `/slow-queries` yazıyordu; GERÇEK rota
+  // `/databases/slow-queries` (App.tsx). Kayıtlı olmayan yol catch-all'a
+  // (`path="*"` → <Navigate to="/" replace />) düşüyor, yani "Detail →"
+  // düğmesi operatörü ANA SAYFAYA atıyordu — 404 bile değil, sessiz bir
+  // yön değişimi. Yanlış yazım stmtParam.test.ts'te ÇİVİLİYDİ, yani test
+  // bug'ı koruyordu; artık rota App.tsx'ten doğrulanıyor.
+  return `${STMT_DETAIL_PATH}?${q.toString()}`;
 }
 
 // decodeStmtParam parses a raw `?stmt=` value. Returns null for anything

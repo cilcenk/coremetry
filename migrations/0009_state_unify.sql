@@ -168,6 +168,15 @@ ORDER BY shard_num;
 -- olduğu gibi koştur. Böylece şema store.go ile ıraksayamaz.
 --
 -- Tek bir node'da koşar (ON CLUSTER kümenin tamamına dağıtır).
+--
+-- ⚠ COREMETRY SQL KONSOLUNDAN (/admin/clickhouse) koşacaksan İKİ satırı
+--   çıkar: sondaki `FORMAT TSVRaw;` ve `|| ';'` parçası. Konsolun
+--   çoklu-ifade denetimi TIRNAK İÇİNDEKİ noktalı virgülü de ifade ayracı
+--   sayıyor ve sorguyu reddediyor ("only single SELECT ... allowed").
+--   Yani konsol için son satır: `       ) AS ddl`.
+--   Doğrulandı 2026-08-23: konsolda 37 satır, 37'sinde /state/, 0 tanesinde
+--   /{shard}/. Üretilen DDL'i çalıştırmak yine clickhouse-client işi
+--   (konsol readonly=2).
 
 SELECT replaceOne(
          replaceOne(create_table_query,

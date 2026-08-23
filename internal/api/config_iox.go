@@ -28,6 +28,10 @@ import (
 //   - exception_groups — has runtime triage state (occurrences,
 //     last_seen) interleaved with operator state; a fresh install
 //     rebuilds these from spans, not from an import file
+//   - runbook_executions — the audit record of a past RUN (who ran
+//     what, when, with the steps snapshotted onto it). Historical
+//     evidence, not config; the runbook TEMPLATE below is the part
+//     an operator re-creates by hand after a migration
 var configTables = []string{
 	"system_settings",
 	"service_metadata",
@@ -39,6 +43,13 @@ var configTables = []string{
 	"maintenance_windows",
 	"anomaly_silences",
 	"monitors",
+	// v0.9.1291 — runbooks were missing from this catalogue, so an
+	// install migrated to a clean one silently lost every
+	// operator-authored procedure (Dynatrace-parity report EK A4).
+	// The table is generic-path compatible: ReplacingMergeTree(version)
+	// ORDER BY id, and every column type it uses is already modelled
+	// by coerceForCHType — verified by config_iox_test.go.
+	"runbooks",
 	"service_contracts",
 	"status_page_config",
 	"status_page_components",

@@ -2178,11 +2178,18 @@ func (s *Store) migrate(ctx context.Context) error {
 		s.deferDDL = true
 		log.Printf("[chstore] şema yerinde — kalan DDL arka plana ertelenecek, boot beklemeyecek")
 	}
-	plan, skipped := planDeclarativeDDL(tables, existing)
-	if skipped > 0 {
-		log.Printf("[chstore] %d/%d nesne zaten var — o CREATE'ler gönderilmiyor (dağıtık DDL kuyruğu turu başına ~%d sn)",
-			skipped, len(tables), ddlTaskTimeoutSeconds)
-	}
+	// v0.9.1302 — eleme DİLİMDEN BAĞIMSIZ. Bu dilim CREATE'lerin yanında
+	// yedi `ALTER TABLE … ADD COLUMN IF NOT EXISTS` de taşıyor ve onlar
+	// v0.9.1301'e kadar HİÇ elenmiyordu (planDeclarativeDDL yalnız CREATE
+	// kalıbına bakıyordu). Artık ikisi de planDDL'den geçiyor.
+	//
+	// Kolon kümesi BURADA okunuyor — yani bu dilimin kendi CREATE'lerinden
+	// ÖNCE. Taze kurulumda küme boş olur, hiçbir ALTER elenmez ve davranış
+	// birebir eski kalır; yükseltmede kolon zaten yerinde olduğu için
+	// eleme ısırır. Bayatlık yalnız "fazladan bir no-op gönder" yönünde
+	// hata yapabilir, "gerekeni atla" yönünde değil.
+	plan, skippedObjects, skippedColumns := planDDL(tables, existing, s.existingColumns(ctx))
+	logDDLPlan("tables", len(tables), skippedObjects, skippedColumns)
 	for _, q := range plan {
 		if err := s.execDDL(ctx, q); err != nil {
 			return fmt.Errorf("create table: %w", err)
@@ -2556,11 +2563,19 @@ func (s *Store) migrate(ctx context.Context) error {
 	// MODIFY COLUMN / MODIFY TTL / DELETE ELENMEZ — no-op oldukları
 	// kanıtlanamaz ve yanlış eleme sessizce uygulanmamış bir tip
 	// değişikliği bırakır.
-	alterPlan, alterSkipped := planAlterDDL(alters, s.existingColumns(ctx))
-	if alterSkipped > 0 {
-		log.Printf("[chstore] %d/%d kolon zaten var — o ADD COLUMN'lar gönderilmiyor",
-			alterSkipped, len(alters))
-	}
+	//
+	// v0.9.1302 — bu dilim de artık planDDL'den geçiyor: buraya bir CREATE
+	// düşerse (v0.9.1301'de beş tanesi düşmüştü) sessizce her boot'ta
+	// gönderilmek yerine elenir.
+	//
+	// İKİ ANLIK GÖRÜNTÜ DE BURADA TAZE OKUNUYOR, `tables` diliminin
+	// kümeleri yeniden KULLANILMIYOR: aradaki DDL nesne/kolon yaratmış ya
+	// da DÜŞÜRMÜŞ olabilir (örn. `DROP TABLE IF EXISTS feedbacks`) ve bayat
+	// bir "zaten var" kaydı, düşürülmüş bir nesnenin CREATE'ini eler —
+	// sessiz ve kalıcı kayıp. Taze okuma her zaman güvenli taraf; iki
+	// system-tablosu sorgusunun boot'taki maliyeti ölçülemez.
+	alterPlan, alterObjSkipped, alterColSkipped := planDDL(alters, s.existingObjects(ctx), s.existingColumns(ctx))
+	logDDLPlan("alters", len(alters), alterObjSkipped, alterColSkipped)
 	for _, q := range alterPlan {
 		if err := s.execDDL(ctx, q); err != nil {
 			// Skip-index ALTERs against a Distributed engine return

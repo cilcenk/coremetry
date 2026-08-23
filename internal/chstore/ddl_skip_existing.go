@@ -180,3 +180,54 @@ func planAlterDDL(stmts []string, cols map[string]bool) (send []string, skipped 
 	}
 	return send, skipped
 }
+
+// ── Dilimden bağımsız eleme (v0.9.1302) ──────────────────────────────
+//
+// v0.9.1301 `alters` diliminde duran BEŞ `CREATE TABLE` buldu: o dilim
+// yalnız planAlterDDL'den geçtiği için CREATE eleyicisi onlara hiç
+// bakmıyordu, tablolar aylardır yerinde olsa bile her boot'ta
+// gönderiliyorlardı. Düzeltme ifadeleri `tables`'a taşıdı.
+//
+// AYNI TURDA AYNA KUSUR ÖLÇÜLDÜ: `tables` diliminde de YEDİ
+// `ALTER TABLE … ADD COLUMN IF NOT EXISTS` duruyor (users.last_login_at,
+// dashboards.variables/.tags, root_cause_hypotheses.deep_evidence/
+// .exemplar_trace_id, system_settings.updated_by, ai_feedback.comment) —
+// ve simetrik olarak ALTER eleyicisi onlara hiç bakmıyordu.
+//
+// Yedisini de `alters`'a taşımak (seçenek a) kusuru bir kez kapatırdı ama
+// SINIFI açık bırakırdı: dilim adı, derleyicinin de testin de zorlamadığı
+// bir sözleşme olarak kalır ve sekizinci yanlış yerleşim aynı sessizlikle
+// gelir. Bunun yerine dilimi yük taşıyan olmaktan çıkarıyoruz — her iki
+// eleyici her iki dilime uygulanıyor. Bir ifade nerede durursa dursun,
+// CREATE ise CREATE elemesinden, ADD COLUMN ise ALTER elemesinden geçer;
+// tanınmayan ifade (DROP, MODIFY COLUMN, ALTER DELETE, RENAME…) AYNEN
+// gönderilir.
+//
+// TAZE KURULUM GÜVENLİĞİ DEĞİŞMEDİ: eleme kararının TEK girdisi "bu nesne
+// / bu kolon ŞU AN var mı" ve iki küme de canlı `system.tables` /
+// `system.columns` okumasından geliyor. Var olmayan hiçbir şey elenemez;
+// okuma hata verirse küme BOŞ döner ve hiçbir şey elenmez.
+
+// planDDL — bir DDL dilimini HER İKİ eleyiciden geçirir. SAF.
+//
+// İki mevcut planlayıcının BİLEŞİMİ olarak yazıldı, kopyası olarak değil:
+// böylece "davranış aynı" iddiası kanıt değil, yapı gereği doğru.
+// Sıralama korunur — her iki geçiş de girdiyi sırayla tarar.
+func planDDL(stmts []string, existing, cols map[string]bool) (send []string, skippedObjects, skippedColumns int) {
+	send, skippedObjects = planDeclarativeDDL(stmts, existing)
+	send, skippedColumns = planAlterDDL(send, cols)
+	return send, skippedObjects, skippedColumns
+}
+
+// logDDLPlan — dilim başına tek satır. Sayılar artık birleşik olduğu için
+// hangi kısmın nesne hangi kısmın kolon olduğunu ayrı ayrı yazıyoruz;
+// aksi hâlde v0.9.1301 öncesi boot log'larıyla kıyas imkânsız olurdu.
+func logDDLPlan(slice string, total, skippedObjects, skippedColumns int) {
+	skipped := skippedObjects + skippedColumns
+	if skipped == 0 {
+		return
+	}
+	log.Printf("[chstore] `%s` dilimi: %d/%d DDL gönderilmiyor (%d nesne + %d kolon zaten var; "+
+		"tıkalı dağıtık DDL kuyruğunda ifade başına ~%d sn)",
+		slice, skipped, total, skippedObjects, skippedColumns, ddlTaskTimeoutSeconds)
+}

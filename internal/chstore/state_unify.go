@@ -36,6 +36,37 @@ import (
 // `-- @catchup` satırlarıdır; buradaki tablo ona karşı test edilir
 // (TestStateCatchUpSpecsMatchMigration).
 
+// clusterReadSafe — `cluster()` kestirmesinin O TABLO İÇİN doğru olup
+// olmadığı. ÖLÇÜLEN DEĞER, VARSAYIM DEĞİL.
+//
+// Sihirbaz ADIM 2'yi tek ifadeye indirmek için
+//     INSERT INTO <t>_unified SELECT * FROM cluster(<küme>, db, <t>)
+// yazıyor: `cluster()` shard başına BİR replika okur, yani bölünmüş bir
+// tabloda tam olarak shard'ların birleşimini verir, çift sayım yok.
+//
+// ⚠ GEÇERLİLİK PENCERESİ DAR. Tablo ZATEN birleşikse (dört host tek
+// replikasyon grubunda, hepsinde AYNI veri) `cluster()` yine shard başına
+// bir replika okur — ama artık o replikalar aynı verinin kopyaları, yani
+// sonuç N_shard KATINA çıkar. Ölçüldü (lokal, 2026-08-23): `problems`
+// chc-0=4808, chc-1=4808, `cluster()` = 9616.
+//
+// Bu yüzden karar tabloya gömülemez, tablonun O ANKİ replikasyon şeklinden
+// TÜRETİLİR: veri gerçekten shard'lara bölünmüşse her shard'ın kendi
+// zookeeper_path'i vardır. distinctPaths == shardCount olduğunda ve
+// SADECE o zaman `cluster()` ayrık dilimleri birleştirir.
+//
+//   distinctPaths == 1 && shardCount > 1  → tablo BİRLEŞİK; cluster()
+//       veriyi shardCount katına çıkarır. INSERT ATMA.
+//   distinctPaths < shardCount            → kısmen göç etmiş; bazı
+//       shard'lar aynı grubu paylaşıyor, o pay çiftlenir. INSERT ATMA.
+//   distinctPaths == shardCount           → her shard ayrı grup; güvenli.
+func clusterReadSafe(distinctPaths, shardCount int) bool {
+	if distinctPaths <= 0 || shardCount <= 0 {
+		return false
+	}
+	return distinctPaths == shardCount
+}
+
 // stateCatchUpSpec, bir append-only tablonun sınırlı yakalama sözleşmesi.
 type stateCatchUpSpec struct {
 	// TimeCol pencereyi kuran zaman kolonu. Sıralama anahtarında
@@ -94,17 +125,31 @@ func stateCatchUpCutSQL(sp stateCatchUpSpec, src string) string {
 // penceredeki satır sayısı ile tekil anahtar sayısı. Eşit değilse
 // anti-join veri kaybeder — çağıran yakalamayı atlamalıdır.
 func stateCatchUpProbeSQL(sp stateCatchUpSpec, src string) string {
+	return stateCatchUpProbeFromSQL(sp, backtickIdent(src))
+}
+
+// stateCatchUpProbeFromSQL — kaynağı HAM ifade alan biçim. Sihirbaz
+// `_old`'u `cluster(...)` üzerinden okur (tek node'dan iki shard'ın
+// birleşimi); script tabloyu doğrudan okur.
+func stateCatchUpProbeFromSQL(sp stateCatchUpSpec, srcExpr string) string {
 	return fmt.Sprintf("SELECT count(), uniqExact(%s) FROM %s WHERE %s >= toDateTime64(?, 9)",
-		stateCatchUpKeyTuple(sp), backtickIdent(src), backtickIdent(sp.TimeCol))
+		stateCatchUpKeyTuple(sp), srcExpr, backtickIdent(sp.TimeCol))
 }
 
 // stateCatchUpInsertSQL, ADIM 3'ten sonra kalan satırları taşır.
 // Pencere kesime sabitli, eleme anti-join ile — `>` / `>=` ikilemi yok.
 func stateCatchUpInsertSQL(sp stateCatchUpSpec, dst, src string) string {
+	return stateCatchUpInsertFromSQL(sp, dst, backtickIdent(src))
+}
+
+// stateCatchUpInsertFromSQL — kaynağı HAM ifade alan biçim. Eleme
+// tarafı HER ZAMAN hedef tablodan okunur: hedef RENAME'den sonra zaten
+// birleşiktir, `cluster()` ile okunsa iki kez sayılırdı.
+func stateCatchUpInsertFromSQL(sp stateCatchUpSpec, dst, srcExpr string) string {
 	tc := backtickIdent(sp.TimeCol)
 	key := stateCatchUpKeyTuple(sp)
 	var b strings.Builder
-	fmt.Fprintf(&b, "INSERT INTO %s SELECT * FROM %s", backtickIdent(dst), backtickIdent(src))
+	fmt.Fprintf(&b, "INSERT INTO %s SELECT * FROM %s", backtickIdent(dst), srcExpr)
 	fmt.Fprintf(&b, " WHERE %s >= toDateTime64(?, 9)", tc)
 	fmt.Fprintf(&b, " AND %s NOT IN (", key)
 	fmt.Fprintf(&b, "SELECT %s FROM %s WHERE %s >= toDateTime64(?, 9))",

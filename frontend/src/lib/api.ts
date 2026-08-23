@@ -2997,6 +2997,35 @@ export const api = {
       body: JSON.stringify({ cluster, target }),
       timeoutMs: 210_000,
     }),
+  // ── v0.9.1312 — 0009 state birleştirme sihirbazı ───────────────
+  // Dördü de admin. Rollup'tan farkı: apply SENKRON DEĞİL. 37 tablo ve
+  // prod'da 675k satırlık `problems` hiçbir makul HTTP tavanına
+  // sığmaz, o yüzden apply 202 döner ve ilerleme status'tan yoklanır.
+  /** Ön kontrol — hiçbir şey yazmaz. Makrolar, küme şekli, tablo
+   *  başına host sayıları ve ÖLÇÜLEN "bölünmüş mü" bayrağı. */
+  stateUnifyPreflight: () =>
+    get<import('./types').StateUnifyPreflightResult>('/api/admin/state-unify/preflight'),
+  /** Koşan/bitmiş göçün anlık hâli. Göç sürerken yoklanır. */
+  stateUnifyStatus: () =>
+    get<import('./types').StateUnifyRun>('/api/admin/state-unify/status'),
+  /** Göçü BAŞLATIR (202). Sunucu arka planda tablo tablo ilerler ve
+   *  ilk hatada durur; ilerleme stateUnifyStatus'tan okunur. */
+  stateUnifyApply: (cluster: string, tables?: string[]) =>
+    request<import('./types').StateUnifyRun>('/api/admin/state-unify/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster, tables: tables ?? [] }),
+      timeoutMs: 60_000,
+    }),
+  /** ADIM 5 — `_old` yedeklerini düşürür. GERİ DÖNÜŞÜ YOK; sunucu
+   *  ayrıca hiçbir tablonun bölünmüş kalmadığını doğrular. */
+  stateUnifyCleanup: (tables: string[]) =>
+    request<import('./types').StateUnifyCleanupResult>('/api/admin/state-unify/cleanup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tables }),
+      timeoutMs: 330_000,
+    }),
   chCoordinators: (windowS: number) =>
     get<{
       nodes: Array<{

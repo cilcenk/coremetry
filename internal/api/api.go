@@ -96,6 +96,12 @@ type Server struct {
 	// spoolFlights (v0.9.1191) — Distributed spool runbook'unun flush
 	// uçuş defteri (spool_actions.go). Sıfır değeri kullanılabilir.
 	spoolFlights spoolFlights
+
+	// stateUnify (v0.9.1312) — 0009 state birleştirme sihirbazının
+	// tek-uçuş ilerleme kaydı. Göç 37 tabloyu tek tek gezer ve prod'da
+	// dakikalar sürer; istek bağlamında koşamaz, bu yüzden durum
+	// burada tutulup /api/admin/state-unify/status'tan yoklanır.
+	stateUnify stateUnifyFlight
 	// distQueueState — HİSTEREZİS durumu (v0.9.987). Karar artık iki
 	// ölçümden değil, ÖNCEKİ KARAR + iki ölçümden çıkıyor: durumsuz hâlde
 	// 44.320 → 44.318 (iki dosya) tek başına "degraded → ok" yapıyordu.
@@ -634,6 +640,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// /admin/clickhouse'tan, ön kontrollü. Boot'ta ASLA koşmaz —
 	// tek tetikleyici admin (gerekçe: admin_rollup.go başlığı).
 	s.registerRollupAdminRoutes(mux)
+	s.registerStateUnifyRoutes(mux)
 	mux.HandleFunc("GET /api/correlations", s.getCorrelations)
 	// v0.9.135 (scale-audit 2026-07-20) — admin-only (Redis internals);
 	// only AdminStats reads it, handler had no role check.

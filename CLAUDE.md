@@ -105,7 +105,11 @@ dashboard panel types), `/frontend-conventions` (BEFORE any frontend
 change adding a component/table/filter/drawer/theme/polling loop),
 `/tdd` (test-first loop for new backend features + pure helpers),
 `/perf-triage` (ONE "şu sayfa yavaş" complaint → measured root cause;
-whole-repo sweeps stay with `/scale-audit`).
+whole-repo sweeps stay with `/scale-audit`),
+`/frontend-design-system` (BEFORE writing any UI part — search for the
+existing primitive first; the `ui/` barrel is incomplete),
+`/otlp-converter` (BEFORE touching `internal/otlp/` — field map +
+what silently drops + golden-test obligation).
 
 ## Frontend UI conventions
 

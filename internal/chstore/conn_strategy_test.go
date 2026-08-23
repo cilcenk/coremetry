@@ -7,6 +7,54 @@ import (
 	"testing"
 )
 
+// stateTables — RoundRobin okuma havuzunda ASLA görünmemesi gereken FROM
+// yazımları. İKİ kapı da (dosya-yüzeyi + paket-yüzeyi) bunu okur.
+//
+// v0.9.1306 — liste TEK KAYNAĞA indirildi çünkü iki kopya IRAKSAMIŞTI:
+// paket-yüzeyi testi `FROM anomaly_events`, `FROM service_metadata` ve
+// `FROM ai_calls` satırlarını taşımıyordu. Iraksama önemsiz değildi —
+// beyaz listedeki `anomaly` paketi anomaly_events'i YAZAN pakettir. O
+// paketteki bir okuma RoundRobin havuzuna kayarsa taşıma SELECT'i her
+// çağrıda başka bir shard'a düşer ve started_at'in "asla tazelenmez"
+// sözleşmesi her tikte bozulur (v0.9.1306 teşhisi: aynı arıza saatte bir
+// failover penceresinde bile 185 anomali id'sinin 28'ini kaydırmıştı —
+// partition_dedup_test.go'daki ölçüm bloğu).
+var stateTables = []string{
+	"FROM users", "FROM teams", "FROM system_settings", "FROM alert_rules",
+	"FROM saved_views", "FROM dashboards", "FROM problems", "FROM audit_events",
+	"FROM incidents", "FROM incident_events", "FROM incident_problems",
+	"FROM anomaly_events", "FROM service_metadata", "FROM ai_calls",
+	// v0.9.1306 — anomali durumunun geri kalanı: silences okuma-filtresi,
+	// tracked ise terfi defteri. İkisi de ReplacingMergeTree + FINAL.
+	"FROM anomaly_silences", "FROM anomaly_tracked",
+}
+
+// Tek kaynağa indirgeme, kapıyı SESSİZCE boşaltmanın da yoludur: liste
+// bir yerde budanırsa iki kapı birden kör olur. Bu test listenin kendisini
+// pinler — v0.9.1306'nın eklediği satırlar ve kapının tabanı.
+func TestStateTableGuardListIsIntact(t *testing.T) {
+	for _, must := range []string{
+		"FROM problems", "FROM anomaly_events", "FROM anomaly_silences",
+		"FROM users", "FROM system_settings",
+	} {
+		found := false
+		for _, s := range stateTables {
+			if s == must {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("stateTables listesinden %q düşmüş — iki havuz kapısı da "+
+				"bu tabloyu ölçmeyi bırakır (v0.9.1306)", must)
+		}
+	}
+	if len(stateTables) < 14 {
+		t.Errorf("stateTables yalnız %d satır — liste budanmış görünüyor; "+
+			"kapı kapsamı göçte erimemeli", len(stateTables))
+	}
+}
+
 // v0.9.486 (operator-reported, prod: "/users her refresh'te farklı sayıda
 // kullanıcı — 2, sonra 205") — v0.9.481 RoundRobin'i ANA bağlantıya koydu;
 // admin/state tabloları her kurulumda replicate olmadığından her refresh
@@ -157,11 +205,6 @@ func TestTelemetryReadConnPackageSurface(t *testing.T) {
 		"anomaly":   true, // spans + service_summary_5m — saf telemetri (v0.9.504)
 		"evaluator": true, // spans + service_summary_5m + operation_summary_5m
 	}
-	stateTables := []string{
-		"FROM users", "FROM teams", "FROM system_settings", "FROM alert_rules",
-		"FROM saved_views", "FROM dashboards", "FROM problems", "FROM audit_events",
-		"FROM incidents", "FROM incident_events", "FROM incident_problems",
-	}
 	files, err := filepath.Glob("../*/*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -199,12 +242,6 @@ func TestTelemetryReadConnPackageSurface(t *testing.T) {
 // verilmiş dosyaya sonradan bir state okuması EKLENMESİNİ yakalıyor —
 // asıl sinsi olan bu.
 func TestTelemetryReadFilesTouchNoStateTables(t *testing.T) {
-	stateTables := []string{
-		"FROM users", "FROM teams", "FROM system_settings", "FROM alert_rules",
-		"FROM saved_views", "FROM dashboards", "FROM problems", "FROM audit_events",
-		"FROM incidents", "FROM incident_events", "FROM incident_problems",
-		"FROM anomaly_events", "FROM service_metadata", "FROM ai_calls",
-	}
 	for _, f := range []string{
 		"summary.go", "repo.go", "topology.go", "dependencies.go", "problem_telemetry.go",
 		"deploys.go", "oracle.go", "profile.go", "spanmetric.go", "dbstmt_detail.go",

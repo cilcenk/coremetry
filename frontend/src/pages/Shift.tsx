@@ -9,7 +9,8 @@ import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { tsLong, fmtFixed } from '@/lib/utils';
-import { serviceHref } from '@/lib/serviceHref';
+import { serviceHref, eventLifespanWindow, exceptionGroupWindow } from '@/lib/serviceHref';
+import { SHIFT_WINDOWS, normalizeShiftWindow, shiftWindowNs } from './shift/shiftWindow';
 import type { Problem, ChangedService, ExceptionGroup } from '@/lib/types';
 import { PageShell } from '@/components/ui/PageShell';
 import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
@@ -25,8 +26,6 @@ import { RenderedMarkdown } from '@/components/Markdown';
 // Pencere ?w= URL'de (rung'lu — sunucu tek otorite; SavedViewsBar yok,
 // paylaşılabilir link yeter). AI anlatımı inline panelde (SlowQueries
 // emsali) — tek-atış sonuç, çekmece sohbeti değil.
-
-const WINDOWS = ['8h', '12h', '24h'] as const;
 
 const PROBLEM_COLS: DataTableColumn<Problem>[] = [
   { id: 'prio', label: 'Öncelik', sortValue: p => p.priority ?? 'P9', width: 80 },
@@ -54,8 +53,7 @@ const EXC_COLS: DataTableColumn<ExceptionGroup>[] = [
 
 export default function ShiftPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const rawW = searchParams.get('w') ?? '';
-  const w = (WINDOWS as readonly string[]).includes(rawW) ? rawW : '12h';
+  const w = normalizeShiftWindow(searchParams.get('w'));
   const setW = (next: string) => {
     setSearchParams(prev => {
       const p = new URLSearchParams(prev);
@@ -88,6 +86,13 @@ export default function ShiftPage() {
   const worsened = useMemo(() => q.data?.worsened ?? [], [q.data]);
   const excs = useMemo(() => q.data?.newExceptions ?? [], [q.data]);
 
+  // v0.9.1322 (§3.1 K3) — "en çok kötüleşen" satırının kendi zaman damgası
+  // YOK (ChangedService iki pencerenin kıyası), dürüst penceresi sayfanın
+  // baktığı aralık. Date.now() render'da çağrılmaz — useMemo veri her
+  // tazelendiğinde (dataUpdatedAt) yeniden hesaplar; çıplak bir now()
+  // her render'da yeni href üretirdi (v0.5.184 sınıfının akrabası).
+  const pageWindow = useMemo(() => shiftWindowNs(w), [w, q.dataUpdatedAt]);
+
   const probT = useDataTable({ rows: problems, columns: PROBLEM_COLS, storageKey: 'shift-problems', initialSort: { id: 'opened', dir: 'desc' } });
   const worseT = useDataTable({ rows: worsened, columns: WORSE_COLS, storageKey: 'shift-worsened', initialSort: { id: 'score', dir: 'desc' } });
   const excT = useDataTable({ rows: excs, columns: EXC_COLS, storageKey: 'shift-exceptions', initialSort: { id: 'occ', dir: 'desc' } });
@@ -97,7 +102,7 @@ export default function ShiftPage() {
       <Topbar title="Vardiya özeti" />
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '10px 0 16px' }}>
         <span className="segmented sg-sm">
-          {WINDOWS.map(win => (
+          {SHIFT_WINDOWS.map(win => (
             <button key={win} type="button" className={w === win ? 'active' : ''}
               onClick={() => setW(win)}>Son {win}</button>
           ))}
@@ -152,7 +157,7 @@ export default function ShiftPage() {
                     {probT.sortedRows.map((p: Problem) => (
                       <tr key={p.id} style={p.resolvedAt ? { opacity: 0.45 } : undefined}>
                         <td>{p.priority && <span className={`badge ${p.priority === 'P1' ? 'b-err' : p.priority === 'P2' ? 'b-warn' : 'b-info'}`}>{p.priority}</span>}</td>
-                        <td><Link to={serviceHref(p.service)}>{p.service}</Link></td>
+                        <td><Link to={serviceHref(p.service, { range: eventLifespanWindow(p) })}>{p.service}</Link></td>
                         <td><Link to={`/problems?problem=${encodeURIComponent(p.id)}`}>{p.ruleName}</Link></td>
                         <td className="mono">{tsLong(p.startedAt)}</td>
                         <td>{p.resolvedAt ? `kapandı ${tsLong(p.resolvedAt)}` : p.status}</td>
@@ -180,7 +185,7 @@ export default function ShiftPage() {
                   <tbody>
                     {worseT.sortedRows.map((c: ChangedService) => (
                       <tr key={c.service}>
-                        <td><Link to={serviceHref(c.service)}>{c.service}</Link></td>
+                        <td><Link to={serviceHref(c.service, { range: pageWindow })}>{c.service}</Link></td>
                         <td>{deltaCell(c.baselineErrorRate * 100, c.currentErrorRate * 100, '%', c.errDeltaPct)}</td>
                         <td>{deltaCell(c.baselineP99Ms, c.currentP99Ms, 'ms', c.p99DeltaPct)}</td>
                         <td>{deltaCell(c.baselineRate, c.currentRate, '/s', c.rateDeltaPct)}</td>
@@ -208,7 +213,7 @@ export default function ShiftPage() {
                         <td className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={g.type}>
                           <Link to={`/problems?exc=${encodeURIComponent(g.fingerprint)}`}>{g.type}</Link>
                         </td>
-                        <td><Link to={serviceHref(g.service)}>{g.service}</Link></td>
+                        <td><Link to={serviceHref(g.service, { range: exceptionGroupWindow(g) })}>{g.service}</Link></td>
                         <td className="mono">{tsLong(g.firstSeen)}</td>
                         <td className="mono">{g.occurrences}</td>
                       </tr>

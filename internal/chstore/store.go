@@ -2006,6 +2006,159 @@ func (s *Store) migrate(ctx context.Context) error {
 		// on upgrade; the data was in-app messages with no external
 		// consumer. No compat shims per CLAUDE.md.
 		`DROP TABLE IF EXISTS feedbacks`,
+		// v0.9.1301 — BU BEŞ CREATE TABLE `alters` LİSTESİNDEYDİ, buraya
+		// TAŞINDI. DDL metni AYNEN korundu; değişen tek şey hangi dilimde
+		// durdukları.
+		//
+		// Gerekçe: `alters` planAlterDDL'den geçer ve o eleyici YALNIZ
+		// `ALTER TABLE … ADD COLUMN IF NOT EXISTS` kalıbına bakar
+		// (addColumnRe, ddl_skip_existing.go). Bir CREATE TABLE o regex'e
+		// uymadığı için ELENMİYORDU — tablo aylardır yerinde olsa bile her
+		// boot'ta gönderiliyordu. `tables` ise planDeclarativeDDL'den geçer
+		// ve o eleyici tam olarak `CREATE … IF NOT EXISTS <ad>` kalıbını
+		// tanır (ddlObjectRe): nesne varsa ifade HİÇ gönderilmez.
+		//
+		// Ödenen bedel tıkalı dağıtık DDL kuyruğunda 5 × ddlTaskTimeoutSeconds
+		// ≈ 100 sn — sonucu tanım gereği no-op olan beş kuyruk turu.
+		//
+		// SIRA GÜVENLİ: `tables` dilimi `alters`'tan ÖNCE koşuyor, yani
+		// runbooks CREATE'i kendi iki ADD COLUMN'undan (alters'ta kaldılar)
+		// hâlâ önce gidiyor. Beşi de highVolumeTables'ta DEĞİL, dolayısıyla
+		// adaptDDL'in `_local` + Distributed sarmalayıcı kolu onlara zaten
+		// uygulanmıyordu ve taşıma bunu değiştirmiyor (adaptDDL SQL metnine
+		// bakar, ifadenin hangi dilimden geldiğine değil).
+		// v0.5.244 — Drain-extracted log templates ledger. Puller
+		// goroutine pulls a sample of recent logs every 5min,
+		// runs them through the Drain-3 templater, upserts the
+		// resulting templates here. first_seen is sticky (the
+		// upsert path reads + preserves the earliest value)
+		// so the "new template since X" signal stays meaningful
+		// across restarts.
+		`CREATE TABLE IF NOT EXISTS log_templates (
+			id             String,
+			template       String,
+			first_seen     DateTime64(9),
+			last_seen      DateTime64(9),
+			total_count    UInt64,
+			services       Array(LowCardinality(String)),
+			exception_type LowCardinality(String) DEFAULT '',
+			sample         String,
+			version        UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY id`,
+
+		// v0.5.476 — operator events. Manual time markers
+		// ("deploy v1.2.3", "feature flag X rollout", "incident
+		// #5 started") that surface as vertical lines on every
+		// time-series chart in Coremetry. Datadog Events /
+		// Honeycomb Markers / Grafana Annotations are the
+		// reference primitives — operators have built mental
+		// models around having these everywhere, and the gap
+		// shows up most during incident retros ("what was
+		// happening 4 min before the spike?").
+		//
+		// ORDER BY (time, id) so /api/events?from=X&to=Y prunes
+		// down to the window via the primary index instead of
+		// scanning all events. Service is LowCardinality since
+		// most events scope to one service (or empty = global).
+		`CREATE TABLE IF NOT EXISTS events (
+			id          String,
+			kind        LowCardinality(String),  -- deploy | config | incident | maintenance | custom
+			label       String,                   -- short operator-typed title
+			time        DateTime64(9),            -- when the event happened (operator-supplied)
+			service     LowCardinality(String) DEFAULT '',
+			link        String DEFAULT '',        -- optional URL (PR, ticket, runbook)
+			owner       String,                   -- creator email
+			created_at  DateTime64(9) DEFAULT now64(9),
+			version     UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY (time, id)`,
+
+		// v0.7.0 — Runbooks: operator-authored, executable operational
+		// procedures (OneUptime model). DEDICATED table, NOT saved_views:
+		// a runbook is a first-class SHARED operational entity (same class
+		// as alert_rules / problems — invariant #4), with its own
+		// lifecycle, executions that reference it, and audit coverage — it
+		// is not a per-user VIEW/preset (which is what saved_views /
+		// invariant #5 covers). steps are an ordered JSON blob (no per-step
+		// rows, mirrors OneUptime). See docs/runbooks-agent-design.md.
+		`CREATE TABLE IF NOT EXISTS runbooks (
+			id          String,
+			title       String,
+			description String        DEFAULT '',     -- markdown (the "knowledge")
+			steps_json  String        DEFAULT '[]',   -- ordered []RunbookStep, marshaled
+			enabled     UInt8         DEFAULT 1,
+			labels      Array(LowCardinality(String)),
+			created_by  String        DEFAULT '',     -- creator email
+			notify_on_complete UInt8   DEFAULT 0,     -- v0.7.7 — fire a completion notification
+			notify_channels Array(LowCardinality(String)),  -- v0.7.22 — which channel TYPES (empty = email)
+			created_at  DateTime64(9) DEFAULT now64(9),
+			updated_at  DateTime64(9) DEFAULT now64(9),
+			version     UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY id`,
+
+		// v0.7.0 — Runbook executions: one tracked RUN of a runbook (the
+		// audit record of "who ran what when, which steps executed"). Steps
+		// are SNAPSHOTTED onto the execution at start (step_states_json) so
+		// editing/deleting the template never rewrites a historical run —
+		// audit integrity, and removes the need for a runbook version table.
+		// Low-volume long-retention (operator runs), so PARTITION BY month
+		// (not day) per /clickhouse-schema; no TTL — executions are the
+		// audit trail. completed_at uses an epoch-0 sentinel (not Nullable)
+		// per the no-Nullable rule; 0 = not yet completed.
+		`CREATE TABLE IF NOT EXISTS runbook_executions (
+			id               String,
+			runbook_id       String,
+			title_snapshot   String,
+			status           LowCardinality(String),   -- running|waiting_for_user|completed|failed|cancelled
+			started_by       String        DEFAULT '',
+			started_at       DateTime64(9),
+			completed_at     DateTime64(9) DEFAULT toDateTime64(0, 9),  -- 0 = not completed
+			problem_id       String        DEFAULT '',
+			step_states_json String        DEFAULT '[]',  -- snapshot of steps + live per-step state
+			updated_at       DateTime64(9) DEFAULT now64(9),
+			version          UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		PARTITION BY toYYYYMM(started_at)
+		ORDER BY id`,
+
+		// v0.8.241 — notification dispatch history. Append-only audit
+		// trail of every channel send (email / slack / teams / zoom /
+		// webhook / whatsapp) fanned out by internal/notify — success
+		// AND failure. The row is IMMUTABLE (a send happened at an
+		// instant), so this is a PLAIN MergeTree, NOT ReplacingMergeTree:
+		// there is no state to dedup and reads never need FINAL. Powers
+		// the /events "Notifications sent" surface so an operator can
+		// answer "did the 03:00 page actually go out, and to whom?"
+		// without SSHing into the box.
+		//
+		// target is stored PRE-MASKED by the notifier (email local-part
+		// shortened, webhook URL reduced to host) — the log is an
+		// operational record, not a recipient directory.
+		//
+		// Low-volume long-retention → PARTITION BY month (day would make
+		// near-empty partitions). ORDER BY (sent_at, id) so the
+		// time-bounded /api/notifications/log read prunes via the
+		// primary index. 90-day day-granularity TTL is partition-aligned
+		// (toDate wrap on a DAY interval — the correct form per the
+		// v0.6.36 unit-mixing rule; NEVER wrap a sub-day calc).
+		`CREATE TABLE IF NOT EXISTS notification_log (
+			id            String,
+			sent_at       DateTime64(9) DEFAULT now64(9),
+			channel_kind  LowCardinality(String),           -- email|slack|mattermost|teams|zoomchat|webhook|whatsapp
+			channel_name  String,
+			target        String,                            -- MASKED recipient / webhook host
+			subject       String        DEFAULT '',
+			body_preview  String        DEFAULT '',          -- first ~200 chars of the body
+			related_kind  LowCardinality(String) DEFAULT '', -- problem|incident|alert|monitor|test|runbook
+			related_id    String        DEFAULT '',
+			ok            UInt8         DEFAULT 0,
+			error         String        DEFAULT ''
+		) ENGINE = MergeTree()
+		PARTITION BY toYYYYMM(sent_at)
+		ORDER BY (sent_at, id)
+		TTL toDate(sent_at) + INTERVAL 90 DAY`,
 	}
 
 	// v0.9.607 — ZATEN VAR OLAN nesne için DDL GÖNDERİLMEZ.
@@ -2175,142 +2328,17 @@ func (s *Store) migrate(ctx context.Context) error {
 		// shape as the runbook_url/for_sec ALTERs. Plain String (free
 		// JSON text — never LowCardinality).
 		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS watcher_json String DEFAULT ''`,
-		// v0.5.244 — Drain-extracted log templates ledger. Puller
-		// goroutine pulls a sample of recent logs every 5min,
-		// runs them through the Drain-3 templater, upserts the
-		// resulting templates here. first_seen is sticky (the
-		// upsert path reads + preserves the earliest value)
-		// so the "new template since X" signal stays meaningful
-		// across restarts.
-		`CREATE TABLE IF NOT EXISTS log_templates (
-			id             String,
-			template       String,
-			first_seen     DateTime64(9),
-			last_seen      DateTime64(9),
-			total_count    UInt64,
-			services       Array(LowCardinality(String)),
-			exception_type LowCardinality(String) DEFAULT '',
-			sample         String,
-			version        UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
-		) ENGINE = ReplacingMergeTree(version)
-		ORDER BY id`,
-
-		// v0.5.476 — operator events. Manual time markers
-		// ("deploy v1.2.3", "feature flag X rollout", "incident
-		// #5 started") that surface as vertical lines on every
-		// time-series chart in Coremetry. Datadog Events /
-		// Honeycomb Markers / Grafana Annotations are the
-		// reference primitives — operators have built mental
-		// models around having these everywhere, and the gap
-		// shows up most during incident retros ("what was
-		// happening 4 min before the spike?").
+		// v0.9.1301 — `runbooks` CREATE TABLE buradan `tables` dilimine
+		// taşındı (eleme gerekçesi orada). Bu iki ADD COLUMN burada KALIYOR:
+		// planAlterDDL onları zaten eliyor.
 		//
-		// ORDER BY (time, id) so /api/events?from=X&to=Y prunes
-		// down to the window via the primary index instead of
-		// scanning all events. Service is LowCardinality since
-		// most events scope to one service (or empty = global).
-		`CREATE TABLE IF NOT EXISTS events (
-			id          String,
-			kind        LowCardinality(String),  -- deploy | config | incident | maintenance | custom
-			label       String,                   -- short operator-typed title
-			time        DateTime64(9),            -- when the event happened (operator-supplied)
-			service     LowCardinality(String) DEFAULT '',
-			link        String DEFAULT '',        -- optional URL (PR, ticket, runbook)
-			owner       String,                   -- creator email
-			created_at  DateTime64(9) DEFAULT now64(9),
-			version     UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
-		) ENGINE = ReplacingMergeTree(version)
-		ORDER BY (time, id)`,
-
-		// v0.7.0 — Runbooks: operator-authored, executable operational
-		// procedures (OneUptime model). DEDICATED table, NOT saved_views:
-		// a runbook is a first-class SHARED operational entity (same class
-		// as alert_rules / problems — invariant #4), with its own
-		// lifecycle, executions that reference it, and audit coverage — it
-		// is not a per-user VIEW/preset (which is what saved_views /
-		// invariant #5 covers). steps are an ordered JSON blob (no per-step
-		// rows, mirrors OneUptime). See docs/runbooks-agent-design.md.
-		`CREATE TABLE IF NOT EXISTS runbooks (
-			id          String,
-			title       String,
-			description String        DEFAULT '',     -- markdown (the "knowledge")
-			steps_json  String        DEFAULT '[]',   -- ordered []RunbookStep, marshaled
-			enabled     UInt8         DEFAULT 1,
-			labels      Array(LowCardinality(String)),
-			created_by  String        DEFAULT '',     -- creator email
-			notify_on_complete UInt8   DEFAULT 0,     -- v0.7.7 — fire a completion notification
-			notify_channels Array(LowCardinality(String)),  -- v0.7.22 — which channel TYPES (empty = email)
-			created_at  DateTime64(9) DEFAULT now64(9),
-			updated_at  DateTime64(9) DEFAULT now64(9),
-			version     UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
-		) ENGINE = ReplacingMergeTree(version)
-		ORDER BY id`,
 		// v0.7.7 — runbook completion notifications: existing installs backfill.
 		`ALTER TABLE runbooks ADD COLUMN IF NOT EXISTS notify_on_complete UInt8 DEFAULT 0`,
 		// v0.7.22 — per-runbook notification channel TYPES (empty = email only).
 		`ALTER TABLE runbooks ADD COLUMN IF NOT EXISTS notify_channels Array(LowCardinality(String))`,
 
-		// v0.7.0 — Runbook executions: one tracked RUN of a runbook (the
-		// audit record of "who ran what when, which steps executed"). Steps
-		// are SNAPSHOTTED onto the execution at start (step_states_json) so
-		// editing/deleting the template never rewrites a historical run —
-		// audit integrity, and removes the need for a runbook version table.
-		// Low-volume long-retention (operator runs), so PARTITION BY month
-		// (not day) per /clickhouse-schema; no TTL — executions are the
-		// audit trail. completed_at uses an epoch-0 sentinel (not Nullable)
-		// per the no-Nullable rule; 0 = not yet completed.
-		`CREATE TABLE IF NOT EXISTS runbook_executions (
-			id               String,
-			runbook_id       String,
-			title_snapshot   String,
-			status           LowCardinality(String),   -- running|waiting_for_user|completed|failed|cancelled
-			started_by       String        DEFAULT '',
-			started_at       DateTime64(9),
-			completed_at     DateTime64(9) DEFAULT toDateTime64(0, 9),  -- 0 = not completed
-			problem_id       String        DEFAULT '',
-			step_states_json String        DEFAULT '[]',  -- snapshot of steps + live per-step state
-			updated_at       DateTime64(9) DEFAULT now64(9),
-			version          UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
-		) ENGINE = ReplacingMergeTree(version)
-		PARTITION BY toYYYYMM(started_at)
-		ORDER BY id`,
-
-		// v0.8.241 — notification dispatch history. Append-only audit
-		// trail of every channel send (email / slack / teams / zoom /
-		// webhook / whatsapp) fanned out by internal/notify — success
-		// AND failure. The row is IMMUTABLE (a send happened at an
-		// instant), so this is a PLAIN MergeTree, NOT ReplacingMergeTree:
-		// there is no state to dedup and reads never need FINAL. Powers
-		// the /events "Notifications sent" surface so an operator can
-		// answer "did the 03:00 page actually go out, and to whom?"
-		// without SSHing into the box.
-		//
-		// target is stored PRE-MASKED by the notifier (email local-part
-		// shortened, webhook URL reduced to host) — the log is an
-		// operational record, not a recipient directory.
-		//
-		// Low-volume long-retention → PARTITION BY month (day would make
-		// near-empty partitions). ORDER BY (sent_at, id) so the
-		// time-bounded /api/notifications/log read prunes via the
-		// primary index. 90-day day-granularity TTL is partition-aligned
-		// (toDate wrap on a DAY interval — the correct form per the
-		// v0.6.36 unit-mixing rule; NEVER wrap a sub-day calc).
-		`CREATE TABLE IF NOT EXISTS notification_log (
-			id            String,
-			sent_at       DateTime64(9) DEFAULT now64(9),
-			channel_kind  LowCardinality(String),           -- email|slack|mattermost|teams|zoomchat|webhook|whatsapp
-			channel_name  String,
-			target        String,                            -- MASKED recipient / webhook host
-			subject       String        DEFAULT '',
-			body_preview  String        DEFAULT '',          -- first ~200 chars of the body
-			related_kind  LowCardinality(String) DEFAULT '', -- problem|incident|alert|monitor|test|runbook
-			related_id    String        DEFAULT '',
-			ok            UInt8         DEFAULT 0,
-			error         String        DEFAULT ''
-		) ENGINE = MergeTree()
-		PARTITION BY toYYYYMM(sent_at)
-		ORDER BY (sent_at, id)
-		TTL toDate(sent_at) + INTERVAL 90 DAY`,
+		// v0.9.1301 — `runbook_executions` + `notification_log` CREATE
+		// TABLE'ları `tables` dilimine taşındı (gerekçe orada).
 
 		// v0.5.209 — triage assignee. Populated from service
 		// metadata's owner_team when the problem opens, then

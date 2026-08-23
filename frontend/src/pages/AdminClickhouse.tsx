@@ -10,6 +10,7 @@ import { makeBaseline, nodeWorkView, type Baseline, type NodeWorkRow } from '@/l
 import { Button, Modal } from '@/components/ui';
 import type {
   RollupActionResult, RollupPreflightResult, RollupTableStatus, RollupTarget,
+  StateUnifyPreflightResult, StateUnifyRun, StateUnifyTable,
 } from '@/lib/types';
 
 // AdminClickhouse — v0.5.329. Datadog-style CH self-stats:
@@ -717,6 +718,12 @@ export default function AdminClickhousePage() {
                 tıkalı bir DDL kuyruğuna 19 ifade daha göndermek en
                 kötü sıralama olurdu. */}
             <RollupWizardPanel />
+
+            {/* v0.9.1312 — 0009 state birleştirme sihirbazı. Rollup'ın
+                hemen ALTINDA: ikisi de ON CLUSTER DDL gönderiyor ve bu
+                göç 37 tablo × RENAME, yani kuyruğu en çok o meşgul
+                eder. Operatör önce DDL kuyruğunun boş olduğunu görmeli. */}
+            <StateUnifyWizardPanel />
 
             <Section title="Slow queries (>500ms, last 1h)">
               {(!data.slowQueries || data.slowQueries.length === 0)
@@ -1571,6 +1578,292 @@ function MiniStat({ label, value, hint, cls }: {
         <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>{hint}</div>
       )}
     </div>
+  );
+}
+
+// ── v0.9.1312 — 0009 state birleştirme sihirbazı ───────────────────
+//
+// Küme kipinde uygulama HER Replicated tabloyu `<prefix>/{shard}/<ad>`
+// yoluna kuruyordu. Telemetri için doğru; state tabloları (problems,
+// alert_rules, users…) için değil — onların Distributed sarmalayıcısı
+// yok, yani her shard AYRI bir replikasyon grubu oluyor ve operatör
+// hangi host'a düşerse farklı bir Inbox görüyor.
+//
+// Sihirbaz göç dosyasının (migrations/0009_state_unify.sql) yordamını
+// koşar. Tüm durum LOKAL useState — URL'ye YAZILMAZ: önceden kurulmuş
+// bir onay içeren paylaşılabilir link tehlikeli olurdu (rollup emsali).
+function StateUnifyWizardPanel() {
+  const [pre, setPre] = useState<StateUnifyPreflightResult | null>(null);
+  const [run, setRun] = useState<StateUnifyRun | null>(null);
+  const [busy, setBusy] = useState<'preflight' | 'apply' | 'cleanup' | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<null | 'apply' | 'cleanup'>(null);
+  const [cleanupArmed, setCleanupArmed] = useState(false);
+  const pollRef = useRef<number | null>(null);
+
+  async function runPreflight() {
+    setBusy('preflight'); setErr(null);
+    try { setPre(await api.stateUnifyPreflight()); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  }
+
+  // Göç sürerken durum yoklanır. 2s: bu bir kontrol yüzeyi, sayfa
+  // görünürken operatör ilerlemeyi izliyor demektir. document.hidden'da
+  // durur (CLAUDE.md) — arkada koşan göç zaten sunucuda ilerliyor.
+  function startPolling() {
+    if (pollRef.current !== null) return;
+    pollRef.current = window.setInterval(async () => {
+      if (document.hidden) return;
+      try {
+        const st = await api.stateUnifyStatus();
+        setRun(st);
+        if (!st.running) {
+          if (pollRef.current !== null) { window.clearInterval(pollRef.current); pollRef.current = null; }
+          void runPreflight();
+        }
+      } catch { /* geçici hata: bir sonraki tik tekrar dener */ }
+    }, 2000);
+  }
+
+  async function doApply() {
+    setConfirm(null); setBusy('apply'); setErr(null);
+    try {
+      setRun(await api.stateUnifyApply(pre?.cluster ?? ''));
+      startPolling();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  }
+
+  async function doCleanup() {
+    setConfirm(null); setBusy('cleanup'); setErr(null);
+    try {
+      const names = backups.map(t => t.name);
+      const res = await api.stateUnifyCleanup(names);
+      if (!res.ok) setErr(res.steps.filter(s => s.err).map(s => `${s.step}: ${s.err}`).join(' · '));
+      await runPreflight();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); setCleanupArmed(false); }
+  }
+
+  const split = pre ? pre.tables.filter(t => t.split) : [];
+  const backups = pre ? pre.tables.filter(t => t.hasOld && !t.split) : [];
+  const canApply = !!pre?.supported && !busy && !run?.running;
+  const pct = run && run.total > 0 ? Math.round((run.done / run.total) * 100) : 0;
+
+  return (
+    <Section title="State birleştirme (göç 0009)">
+      <div style={{
+        border: '1px solid var(--border)', borderRadius: 6,
+        background: 'var(--bg1)', padding: 14,
+      }}>
+        <p style={{ fontSize: 12, color: 'var(--text3)', margin: '0 0 12px', lineHeight: 1.6 }}>
+          Küme kipinde state tabloları (problems, alert_rules, users, system_settings…)
+          shard başına AYRI bir replikasyon grubuna kuruluyordu; uygulama hangi host'a
+          bağlanırsa onun dilimini görüyor. Bu sihirbaz onları tek gruba taşır.
+          Yedekler (<code>_old</code>) SİLİNMEZ — temizlik ayrı bir adım.
+        </p>
+
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+          <Button variant="secondary" size="sm" onClick={() => void runPreflight()} disabled={busy !== null}>
+            {busy === 'preflight' ? 'Ön kontrol koşuyor…' : 'Ön kontrol'}
+          </Button>
+          <Button variant="primary" size="sm" onClick={() => setConfirm('apply')} disabled={!canApply}>
+            {run?.running ? 'Göç sürüyor…' : `Birleştir${split.length ? ` (${split.length} tablo)` : ''}`}
+          </Button>
+        </div>
+
+        {err && (
+          <div className="badge b-err" style={{ display: 'block', marginBottom: 12, padding: '8px 10px', fontSize: 12 }}>
+            {err}
+          </div>
+        )}
+
+        {!pre && busy === 'preflight' && <Spinner />}
+        {!pre && busy !== 'preflight' && (
+          <EmptyNote text="Ön kontrol koşulmadı. Neyin değişeceğini görmeden birleştirme başlatılamaz." />
+        )}
+
+        {pre && (
+          <>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+              <KPI label="Küme" value={pre.cluster || '—'} sub={`${pre.shards} shard · ${pre.hosts} host`} />
+              <KPI label="Bölünmüş" value={String(pre.splitCount)} sub="taşınacak tablo"
+                   cls={pre.splitCount > 0 ? 'b-err' : 'b-ok'} />
+              <KPI label="Birleşik" value={String(pre.doneCount)} sub="zaten tek grupta" />
+              <KPI label="Makrolar" value={pre.macrosUnique ? 'benzersiz' : 'ÇAKIŞIYOR'}
+                   sub="{shard}-{replica}" cls={pre.macrosUnique ? 'b-ok' : 'b-err'} />
+            </div>
+
+            <div style={{
+              padding: '8px 10px', borderRadius: 6, marginBottom: 12, fontSize: 12,
+              background: 'var(--bg2)', border: '1px solid var(--border)',
+              color: pre.supported ? 'var(--text2)' : 'var(--warn)',
+            }}>{pre.detail}</div>
+
+            {pre.macros.length > 0 && (
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 12 }}>
+                {pre.macros.map(m => (
+                  <div key={m.host}>
+                    <code>{m.host}</code> → shard <code>{m.shard || '—'}</code>,
+                    replica <code>{m.replica || '—'}</code> → <code>{m.uniq}</code>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {run && (run.running || run.results.length > 0) && (
+              <div style={{
+                border: '1px solid var(--border)', borderRadius: 6, padding: 10,
+                marginBottom: 12, background: 'var(--bg2)',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                  <strong>
+                    {run.running
+                      ? `Göç sürüyor — ${run.done}/${run.total}${run.current ? ` · şu an: ${run.current}` : ''}`
+                      : run.error ? 'Göç DURDU' : 'Göç bitti'}
+                  </strong>
+                  <span style={{ color: 'var(--text3)' }}>{pct}%</span>
+                </div>
+                <div style={{ height: 4, background: 'var(--bg3)', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%', width: `${pct}%`, borderRadius: 2,
+                    background: run.error ? 'var(--err)' : 'var(--ok)',
+                  }} />
+                </div>
+                {run.error && (
+                  <div className="badge b-err" style={{ display: 'block', marginTop: 8, padding: '6px 8px', fontSize: 11 }}>
+                    {run.error} — kalan tablolara DOKUNULMADI. Yedek duruyor, geri alma tek ifade.
+                  </div>
+                )}
+                {run.results.length > 0 && (
+                  <div style={{ marginTop: 8, maxHeight: 220, overflowY: 'auto', fontSize: 11 }}>
+                    {run.results.map(r => (
+                      <div key={r.table} style={{
+                        display: 'flex', justifyContent: 'space-between', gap: 8,
+                        padding: '3px 0', borderBottom: '1px solid var(--border)',
+                      }}>
+                        <span style={{ color: r.ok ? 'var(--ok)' : 'var(--err)' }}>
+                          {r.ok ? '✓' : '✗'} {r.table}
+                        </span>
+                        <span style={{ color: 'var(--text3)', textAlign: 'right', flex: 1, minWidth: 0 }}>
+                          {r.ok ? `${fmtNum(r.rows)} satır · ${(r.durationMs / 1000).toFixed(1)}s · ${r.catchUp}` : r.err}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="table-wrap is-fit" style={{ maxHeight: 320, overflowY: 'auto' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left' }}>Tablo</th>
+                    <th style={{ textAlign: 'left' }}>Durum</th>
+                    <th style={{ textAlign: 'left' }}>Host başına satır</th>
+                    <th style={{ textAlign: 'left' }}>Yakalama</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pre.tables.map(t => <StateUnifyRow key={t.name} t={t} />)}
+                </tbody>
+              </table>
+            </div>
+
+            {backups.length > 0 && (
+              <div style={{
+                marginTop: 12, padding: 10, borderRadius: 6,
+                border: '1px solid var(--border)', background: 'var(--bg2)',
+              }}>
+                <div style={{ fontSize: 12, marginBottom: 6 }}>
+                  <strong>Yedekler:</strong> {backups.length} tablonun <code>_old</code> kopyası duruyor.
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 8px', lineHeight: 1.6 }}>
+                  Bunları düşürmek GERİ ALINAMAZ. Uygulama en az birkaç gün sorunsuz
+                  çalıştıktan sonra sil; o zamana dek geri alma tablo başına tek ifade.
+                </p>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, marginBottom: 8 }}>
+                  <input type="checkbox" checked={cleanupArmed}
+                         onChange={e => setCleanupArmed(e.target.checked)} />
+                  Anladım: yedekleri silmek geri alınamaz.
+                </label>
+                <Button variant="ghost-danger" size="sm"
+                        disabled={!cleanupArmed || busy !== null || pre.splitCount > 0}
+                        onClick={() => setConfirm('cleanup')}>
+                  {busy === 'cleanup' ? 'Siliniyor…' : `Yedekleri sil (${backups.length})`}
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {confirm === 'apply' && (
+        <Modal open title="State tablolarını birleştir" onClose={() => setConfirm(null)} footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setConfirm(null)}>Vazgeç</Button>
+            <Button variant="primary" size="sm" onClick={() => void doApply()}>Birleştir</Button>
+          </>
+        }>
+          <p style={{ fontSize: 12, lineHeight: 1.6 }}>
+            <strong>{split.length}</strong> tablo küçükten büyüğe tek tek taşınacak.
+            Her tablo için: birleşik tablo kurulur, shard'ların birleşimi kopyalanır,
+            atomik RENAME yapılır ve dört host aynı sayıyı verene kadar doğrulanır.
+          </p>
+          <p style={{ fontSize: 12, lineHeight: 1.6 }}>
+            Bir tablo tutmazsa göç <strong>orada durur</strong> ve kalanına dokunulmaz.
+            Eski tablolar <code>_old</code> olarak KALIR — bu sihirbaz onları silmez.
+          </p>
+          <p style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--text3)' }}>
+            Uygulamanın yeniden başlatılması gerekmez: v0.9.1308+ ZK yolunu kümeden okur.
+          </p>
+        </Modal>
+      )}
+
+      {confirm === 'cleanup' && (
+        <Modal open title="Yedekleri sil — geri dönüşü yok" onClose={() => setConfirm(null)} footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setConfirm(null)}>Vazgeç</Button>
+            <Button variant="danger" size="sm" onClick={() => void doCleanup()}>Sil</Button>
+          </>
+        }>
+          <p style={{ fontSize: 12, lineHeight: 1.6 }}>
+            {backups.length} adet <code>_old</code> tablosu düşürülecek. Bu adımdan sonra
+            göçü geri almanın yolu YOKTUR.
+          </p>
+        </Modal>
+      )}
+    </Section>
+  );
+}
+
+// Bir state tablosunun ön kontrol satırı. "Bölünmüş" bir hüküm değil
+// ÖLÇÜM: tablonun küme genelinde kaç farklı zookeeper_path'i var.
+function StateUnifyRow({ t }: { t: StateUnifyTable }) {
+  const counts = t.hosts.map(h => h.rows);
+  const uneven = counts.length > 1 && counts.some(c => c !== counts[0]);
+  return (
+    <tr>
+      <td style={{ whiteSpace: 'nowrap' }}>
+        <code>{t.name}</code>
+        {t.hasOld && <span style={{ color: 'var(--text3)', fontSize: 10 }}> +_old</span>}
+      </td>
+      <td>
+        {t.blocked
+          ? <span className="badge b-err" title={t.blocked}>incele</span>
+          : t.split
+            ? <span className="badge b-err">bölünmüş ({t.distinctPaths} grup)</span>
+            : <span className="badge b-ok">birleşik</span>}
+      </td>
+      <td style={{ fontSize: 11, color: uneven ? 'var(--err)' : 'var(--text3)' }}>
+        {t.hosts.length === 0 ? '—' : t.hosts.map(h => `${h.host}: ${fmtNum(h.rows)}`).join(' · ')}
+      </td>
+      <td style={{ fontSize: 11, color: t.catchUp === 'YOK' ? 'var(--warn)' : 'var(--text3)' }}>
+        {t.catchUp}
+      </td>
+    </tr>
   );
 }
 

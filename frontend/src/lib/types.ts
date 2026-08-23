@@ -5483,3 +5483,51 @@ export interface ServiceChartsExplain {
    */
   error?: string;
 }
+
+// --- 0009 state birleştirme sihirbazı (v0.9.1312) -----------------
+// Backend: internal/api/admin_state_unify.go + chstore/state_unify_admin.go
+export interface StateUnifyMacro {
+  host: string; shard: string; replica: string; uniq: string;
+}
+export interface StateUnifyHostCount { host: string; rows: number }
+export interface StateUnifyTable {
+  name: string;
+  engine: string;
+  rows: number;
+  /** ÖLÇÜLEN değer: her shard kendi replikasyon grubunda mı. Bu bayrak
+   *  aynı zamanda `cluster()` okumasının çift saymadığının kapısıdır. */
+  split: boolean;
+  distinctPaths: number;
+  zkPath: string;
+  hosts: StateUnifyHostCount[];
+  hasOld: boolean;
+  hasUnified: boolean;
+  catchUp: string;
+  blocked?: string;
+}
+export interface StateUnifyPreflightResult {
+  cluster: string;
+  clusters: string[];
+  database: string;
+  shards: number;
+  hosts: number;
+  macros: StateUnifyMacro[];
+  macrosUnique: boolean;
+  tables: StateUnifyTable[];
+  splitCount: number;
+  doneCount: number;
+  supported: boolean;
+  detail: string;
+  generated: number;
+}
+export interface StateUnifyStep { step: string; ok: boolean; note?: string; err?: string }
+export interface StateUnifyTableResult {
+  table: string; ok: boolean; rows: number; finalRows: number;
+  durationMs: number; catchUp: string; steps: StateUnifyStep[]; err?: string;
+}
+export interface StateUnifyRun {
+  running: boolean; cluster: string; startedBy: string;
+  startedAt: number; doneAt: number; total: number; done: number;
+  current: string; results: StateUnifyTableResult[]; error?: string;
+}
+export interface StateUnifyCleanupResult { steps: StateUnifyStep[]; ok: boolean }

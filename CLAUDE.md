@@ -103,7 +103,9 @@ file, never api.go), `/mcp-tools`
 (BEFORE MCP server changes), `/frontend-dashboard-panel` (BEFORE new
 dashboard panel types), `/frontend-conventions` (BEFORE any frontend
 change adding a component/table/filter/drawer/theme/polling loop),
-`/tdd` (test-first loop for new backend features + pure helpers).
+`/tdd` (test-first loop for new backend features + pure helpers),
+`/perf-triage` (ONE "şu sayfa yavaş" complaint → measured root cause;
+whole-repo sweeps stay with `/scale-audit`).
 
 ## Frontend UI conventions
 

@@ -3719,6 +3719,83 @@ func (s *Store) migrate(ctx context.Context) error {
 		   trace_id, span_id, linked_trace_id, linked_span_id,
 		   time, service_name, attr_keys, attr_values
 		 FROM span_links`,
+
+		// service_seen — v0.9.1317, entity-model slice A2
+		// (docs/audit/entity-model-audit-2026-08-23.md §7.2). The service
+		// LIFECYCLE pair: first_seen / last_seen, Dynatrace's
+		// firstSeenTms/lastSeenTms equivalent. Until this MV, the only
+		// answer to "was this service here yesterday?" was "does it have a
+		// row in the window", which cannot distinguish a service that
+		// never existed from one that died.
+		//
+		// NO time dimension in the key. ORDER BY (service_name) alone, so
+		// the table collapses to ONE row per service ever seen — thousands
+		// of rows, not millions. Shape precedent: metric_catalog
+		// (v0.8.396), the other catalogue-sized MV here with no PARTITION
+		// BY and no TTL. State precedent: service_version_5m (v0.9.249),
+		// which already uses minState(time) — and for the same reason
+		// v0.9.250 spells out: the state's own min is EXACT, while a
+		// bucket label would round every birth to a 5-minute grid.
+		//
+		// NO TTL and NO PARTITION BY, deliberately and load-bearing. A
+		// disappeared service MUST stay in this table — "which services
+		// vanished" is precisely the question the MV exists to answer, and
+		// a row that ages out takes the answer with it. Bucketing by time
+		// and adding a TTL would silently redefine first_seen as "first
+		// seen within the retention window": a number that reads like a
+		// fact, is a lie, and that an operator would act on.
+		//
+		// The growth that buys: one row per distinct service.name ever
+		// observed. Two 8-byte DateTime64(9) aggregate states plus a
+		// LowCardinality name — call it ~50 B/row with part overhead, so
+		// 10k services ≈ 500 KB and even 100k (10x the design ceiling)
+		// ≈ 5 MB. Cardinality carries no NEW risk either: service_summary_5m
+		// is already keyed on service_name, so a fleet that could blow this
+		// up would have broken that MV first. The one honest difference is
+		// that service_summary_5m sheds names at its 90-day TTL and this
+		// table does not — a fleet that churns service NAMES (svc-v1,
+		// svc-v2, ...) accumulates here forever. At ~50 B/row that is a
+		// rounding error against a single day of spans.
+		//
+		// Insert-side cost, which is the number that actually matters at
+		// 1B spans/day: this MV emits one row per distinct service IN THE
+		// INCOMING BLOCK, which is the same per-block row count
+		// service_summary_5m already emits (that one groups by service +
+		// bucket, and a single block spans one or two buckets). So the
+		// write amplification is a proven quantity here, not an estimate —
+		// and unlike its sibling this MV's merge target collapses to N
+		// rows instead of N x buckets, so the steady state it settles into
+		// is strictly SMALLER than the MV beside it.
+		//
+		// NO kind filter, unlike every RED-metric MV in this file. The
+		// entry-span principle (kind IN ('server','consumer')) governs
+		// METRICS — throughput, error rate, latency — because those need a
+		// consistent population. Existence is not a metric: any span a
+		// service emits proves it was alive, including a purely internal
+		// one. Borrowing the server+consumer filter here would make a
+		// worker that only ever emits internal spans look like it was
+		// never born.
+		//
+		// NO countState(). Nothing reads it — a lifetime span count over
+		// an unbounded window is not a number any surface asks for — and
+		// min/max are the only states whose cross-shard merge is
+		// idempotent by construction, so keeping the column set to exactly
+		// what a read consumes is also the safest set.
+		//
+		// Registered in highVolumeTables + defaultShardPolicy +
+		// tablesWithoutTraceID day one (the v0.5.426 / v0.8.375 rule that
+		// v0.8.185 and v0.8.186 both broke prod by skipping). Shard key
+		// cityHash64(service_name) is inside ORDER BY, so rule O5 holds.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS service_seen
+		 ENGINE = AggregatingMergeTree
+		 ORDER BY (service_name)
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   minState(time)  AS first_seen_state,
+		   maxState(time)  AS last_seen_state
+		 FROM spans
+		 GROUP BY service_name`,
 	}
 	// v0.5.361 — bug-fix: the spanmetrics_hist_5m MV (added in
 	// v0.5.359) references metric_points.bucket_counts. On an

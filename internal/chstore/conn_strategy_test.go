@@ -135,7 +135,12 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// okumuyor (aşağıdaki FROM testi de pinliyor).
 		"correlation_ids.go": true, // spans'ten örnek request_id/correlation_id'ler
 		// v0.9.508 dilim 5 — yedisi de saf telemetri, FROM listeleri tek tek doğrulandı:
-		"deploys.go":          true, // service_version_5m / spans
+		"deploys.go": true, // service_version_5m / spans
+		// v0.9.1317 — SAF telemetri: tek FROM'u service_seen
+		// (AggregatingMergeTree telemetri MV'si, spans'ten beslenir; state
+		// tablosu DEĞİL). deploys.go'nun service_version_5m okumasıyla aynı
+		// sınıf, aynı havuz. Aşağıdaki pozitif test de pinliyor.
+		"service_seen.go":     true,
 		"oracle.go":           true, // metric_points
 		"profile.go":          true, // profiles (yazma yarısı ingest havuzunda)
 		"spanmetric.go":       true, // service_summary_5m / operation_summary_5m / spans
@@ -246,7 +251,7 @@ func TestTelemetryReadFilesTouchNoStateTables(t *testing.T) {
 		"summary.go", "repo.go", "topology.go", "dependencies.go", "problem_telemetry.go",
 		"deploys.go", "oracle.go", "profile.go", "spanmetric.go", "dbstmt_detail.go",
 		"db_capacity.go", "endpoints_detail.go", "business_dims.go",
-		"endpoints_callers.go", "repeats.go",
+		"endpoints_callers.go", "repeats.go", "service_seen.go",
 	} {
 		b, err := os.ReadFile(f)
 		if err != nil {

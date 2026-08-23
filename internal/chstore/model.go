@@ -235,6 +235,22 @@ type ServiceSummary struct {
 	PriorErrorRate float64 `json:"priorErrorRate,omitempty"`
 	PriorAvgMs     float64 `json:"priorAvgMs,omitempty"`
 	PriorP99Ms     float64 `json:"priorP99Ms,omitempty"`
+	// v0.9.1317 (entity-model A2) — lifecycle pair from the service_seen
+	// MV, joined in the api layer from a process-wide cached snapshot.
+	// Both unix ns. NOT in service_summary_5m and not sortable server-side
+	// for that reason.
+	//
+	// LastSeen is set whenever the MV knows the service at all.
+	//
+	// FirstSeen is set ONLY when it is a real observation of the service's
+	// birth. An MV populates forward only, so on the release that adds it
+	// every service's earliest datum is just "when we deployed this" —
+	// FirstSeenIsKnown rejects those and this field stays zero, which
+	// omitempty turns into an ABSENT json key. That is deliberate: the
+	// wire format carries no date the UI could mistake for a fact, so the
+	// honest branch cannot be lost to a rendering change downstream.
+	LastSeen  int64 `json:"lastSeen,omitempty"`
+	FirstSeen int64 `json:"firstSeen,omitempty"`
 }
 
 // ── Exception aggregate (Errors page) ────────────────────────────────────────

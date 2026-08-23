@@ -294,7 +294,10 @@ var tablesWithoutTraceID = map[string]bool{
 	"metric_catalog": true,
 	// v0.9.249 — service/version rollup: (service_name, version,
 	// time_bucket) + min/count states. No trace_id projected.
-	"service_version_5m":   true,
+	"service_version_5m": true,
+	// v0.9.1317 — service lifecycle MV: (service_name) + min/max time
+	// states. No trace_id projected.
+	"service_seen":         true,
 	"topology_edges_5m":    true,
 	"topology_op_edges_5m": true,
 	// v0.5.435 — MVs/aggregates that join highVolumeTables in
@@ -416,6 +419,13 @@ var defaultShardPolicy = map[string]string{
 	// service_name is the honest key even though the MV's own writes
 	// land shard-local via the insert trigger.
 	"service_version_5m": "cityHash64(service_name)",
+	// v0.9.1317 — service lifecycle MV. ORDER BY is (service_name) and
+	// nothing else, so the shard key sits INSIDE the sort key (rule O5):
+	// the two versions of one service's row can never strand on separate
+	// shards where a merge could not reach them. minMerge/maxMerge are
+	// idempotent across shards regardless, which is the second reason the
+	// column set stops at min/max.
+	"service_seen": "cityHash64(service_name)",
 	// v0.5.435 — remaining sharded MVs/aggregates. For MVs the
 	// shard key is largely decorative (auto-triggered writes land
 	// local, reads always fan-out via Distributed) but is honest
@@ -967,6 +977,12 @@ var highVolumeTables = map[string]bool{
 	// never renamed it to `_local`, no Distributed wrapper was emitted,
 	// and every bare-name read returned ONE shard's slice.
 	"service_version_5m": true,
+	// v0.9.1317 — service lifecycle MV, an MV reading FROM spans like its
+	// siblings above. Same day-one registration in all three registries;
+	// without this one adaptDDL leaves it bare-name and every read serves
+	// ONE shard's services, which for a LIFECYCLE table is worse than an
+	// undercount — a service living on another shard reads as "never seen".
+	"service_seen": true,
 	// v0.5.435 — remaining sharded MVs/aggregates the post-v0.5.426
 	// /scale-audit revealed. Same gap shape: bare-name Replicated
 	// per shard, no Distributed wrapper → cluster reads silently

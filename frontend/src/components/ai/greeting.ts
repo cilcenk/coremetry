@@ -14,6 +14,8 @@
 //     değer operatörün daha soruyu yazmadan durumu görmesi. Sayı
 //     zaten sohbet penceresinin poll ettiği veriden gelir.
 
+import { agoTR } from '@/lib/utils';
+
 export interface GreetingP1 {
   service?: string;
   startedAt: number; // unix ns
@@ -53,13 +55,9 @@ export function newestP1(p1s: GreetingP1[]): GreetingP1 {
 
 
 /**
- * Türkçe göreli zaman. lib/utils'teki fmtAgoNs "12m ago" üretir —
- * karşılama Türkçe olduğu için ayrı.
+ * Türkçe göreli zaman. v0.9.1317'de lib/utils.ts'e TAŞINDI (orada
+ * fmtDurShort/fmtAgoNs/tsRel ile aynı evde; v0.8.463 konsolidasyonu).
+ * Buradan re-export ediliyor: bu modülün kendi kullanımı (greetStatus)
+ * ve greeting.test.ts'in './greeting' importu aynen çalışsın diye.
  */
-export function agoTR(unixNs: number, nowMs = Date.now()): string {
-  const s = Math.max(0, (nowMs - unixNs / 1e6) / 1000);
-  if (s < 60) return 'az önce';
-  if (s < 3600) return `${Math.round(s / 60)} dk önce`;
-  if (s < 86400) return `${Math.round(s / 3600)} sa önce`;
-  return `${Math.round(s / 86400)} gün önce`;
-}
+export { agoTR };

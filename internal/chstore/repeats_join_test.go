@@ -442,6 +442,126 @@ func TestRepeatedSpansSQLResolvesRealRootName(t *testing.T) {
 	}
 }
 
+// v0.9.1289 — the service column named an arbitrary participant in the
+// trace. It read `any(s.service_name)` off the JOINED side, and the
+// joined side is the WHOLE trace, so the pick ranged over every service
+// the request touched. Measured live at v0.9.1288 on the 200 rows of
+// groupBy=db.statement over 1h: 110 said forex-service, 64 said
+// portfolio-service, for repeats whose root is GET /web/portfolio — a
+// route served by web-bff. Every row was wrong, and v0.9.1288 made it
+// visible by giving rootName a real value to be mismatched against.
+//
+// The fix is a scope change, not a "pick better from the join": the
+// column is sourced from the INNER aggregate, which groups exactly the
+// repeating rows. The product decision behind that is deliberate and is
+// the thing this test protects — Service names the service DOING the
+// repeating, NOT the root's service. Resolving it to the root would
+// give "web-bff · GET /web/portfolio": self-consistent, and useless for
+// triage, because it names the front door instead of the culprit.
+//
+// So the plausible-looking regressions are BOTH failures here:
+// reverting to any(s.service_name), and "fixing" it to an
+// anyIf(s.service_name, ...) on the root predicate. The joined alias
+// must not supply service at all.
+func TestRepeatedSpansSQLTakesServiceFromInnerGroup(t *testing.T) {
+	cases := []struct {
+		name      string
+		keysArray string
+		whereSQL  string
+	}{
+		{
+			name:      "default db.statement — the shape the operator hit",
+			keysArray: "[toString(db_statement)]",
+			whereSQL:  "WHERE time >= ? AND time <= ?",
+		},
+		{
+			name:      "attr-array key (carries a bind arg)",
+			keysArray: "[toString(attr_values[indexOf(attr_keys, ?)])]",
+			whereSQL:  "WHERE time >= ? AND time <= ? AND service_name = ?",
+		},
+		{
+			name:      "multi-key group-by",
+			keysArray: "[toString(name), toString(peer_service)]",
+			whereSQL:  "WHERE time >= ? AND time <= ?",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sql := repeatedSpansSQL(tc.keysArray, tc.whereSQL)
+
+			innerStart := strings.Index(sql, "WITH dup_traces AS (")
+			outer := strings.Index(sql, "SELECT d.trace_id")
+			fromDup := strings.Index(sql, "FROM dup_traces d")
+			if innerStart < 0 || outer < 0 || fromDup < 0 || outer < innerStart || fromDup < outer {
+				t.Fatalf("cannot locate the inner CTE / outer projection spans\n--- SQL ---\n%s", sql)
+			}
+			inner := sql[innerStart:outer]
+			projection := sql[outer:fromDup]
+
+			// (1) The value is computed in the INNER scope, over the rows
+			// that actually repeat. Note the absence of an `s.` prefix:
+			// inside the CTE there is no join, so this can only be the
+			// repeating group's own column.
+			if !strings.Contains(inner, "any(service_name)") {
+				t.Errorf("inner aggregate no longer derives the repeating group's own "+
+					"service; sourcing it from the join names an arbitrary "+
+					"participant in the trace (v0.9.1289 — 174/200 rows misattributed)"+
+					"\n--- INNER ---\n%s", inner)
+			}
+
+			// (2) The joined alias must not supply service in the outer
+			// projection — in EITHER spelling. The bare revert and the
+			// tempting "resolve it to the root's service" are both wrong,
+			// the second one silently so.
+			for _, bad := range []string{
+				"any(s.service_name)",
+				"anyIf(s.service_name",
+				"argMin(s.service_name",
+			} {
+				if strings.Contains(projection, bad) {
+					t.Errorf("service is sourced from the joined side via %q. The joined "+
+						"side is the whole trace: `any` names a random participant, and "+
+						"an `anyIf` on the root predicate names the front door (web-bff) "+
+						"instead of the service doing the repeating (v0.9.1289)"+
+						"\n--- PROJECTION ---\n%s", bad, projection)
+				}
+			}
+
+			// (3) The layers are wired: the outer projection actually reads
+			// the inner alias. Without this, (1) and (2) could both hold
+			// while the column was dropped entirely.
+			if !strings.Contains(projection, "any(d.svc)") {
+				t.Errorf("outer projection does not read the inner service alias; "+
+					"QueryRepeatedSpans scans it as column 6\n--- PROJECTION ---\n%s",
+					projection)
+			}
+
+			// The Go scanner reads exactly 7 columns and the outer
+			// projection carries no aliases — re-asserted because this
+			// change moves a column's SOURCE, and the count is the thing
+			// that must NOT move with it.
+			if n := strings.Count(projection, " AS "); n != 0 {
+				t.Errorf("outer projection introduced %d alias(es); every SELECT item "+
+					"is a scanned column and QueryRepeatedSpans reads exactly 7"+
+					"\n--- PROJECTION ---\n%s", n, projection)
+			}
+
+			// The inner alias must not have introduced a placeholder.
+			gotPlaceholders := strings.Count(sql, "?")
+			wantPlaceholders := strings.Count(tc.keysArray, "?") +
+				strings.Count(tc.whereSQL, "?") +
+				2 + // HAVING cnt >= ?, LIMIT ?
+				2 //  the joined subquery's from/to
+			if gotPlaceholders != wantPlaceholders {
+				t.Errorf("placeholder count = %d, want %d — the inner service alias must "+
+					"bind NO argument or every arg after it shifts a slot (v0.9.1286)"+
+					"\n--- SQL ---\n%s", gotPlaceholders, wantPlaceholders, sql)
+			}
+		})
+	}
+}
+
 // v0.9.1287 — the arg-order contract, re-asserted against the SQL that
 // now carries the empty-tuple exclusion. TestRepeatedSpansArgsMatchPlaceholderOrder
 // already pins the builder, but it pins repeatedSpansArgs against

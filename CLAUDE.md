@@ -97,7 +97,9 @@ cause, 72 cols, operator bugs start "Operator-reported: …") +
 file changes), `/kuyruk`, `/scale-audit` (quarterly),
 `/clickhouse-schema` (BEFORE any CH table/query/MV change),
 `/helm-chart-coremetry` (BEFORE `charts/coremetry/` changes),
-`/otel-conventions` (BEFORE OTel-shaped data changes), `/mcp-tools`
+`/otel-conventions` (BEFORE OTel-shaped data changes), `/api-route`
+(BEFORE adding/moving any `/api/*` route — new endpoints get their own
+file, never api.go), `/mcp-tools`
 (BEFORE MCP server changes), `/frontend-dashboard-panel` (BEFORE new
 dashboard panel types), `/frontend-conventions` (BEFORE any frontend
 change adding a component/table/filter/drawer/theme/polling loop),
@@ -192,7 +194,7 @@ Decision log (architectural calls, v0.5.208 → v0.6.8):
 
 ## Backend (Go)
 - Veri yazma işlemlerinde ClickHouse Async Insert (`async_insert=1`) mekanizmasını bozma.
-- Her yeni eklenen API endpoint'i için mutlaka `internal/api/api.go` içine tip güvenli rota ekle.
+- Her yeni API endpoint'i tip güvenli rota olarak kaydedilir — ama `api.go` İÇİNE DEĞİL: kendi `internal/api/<domain>.go` dosyasında `registerXxxRoutes(mux)` metoduyla, `api.go` yalnız tek satır çağrıyla büyür (`/api-route`). api.go 11.8k satır; oraya route eklemek bu dosyayı büyütmenin tek yolu.
 - Arka plan işçilerinde lider kilidini (Leader Lock) korumak için mutlaka Redis mutex yapısını kullan.
 
 ## Frontend (TypeScript/React)

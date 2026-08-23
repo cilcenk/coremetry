@@ -5505,6 +5505,11 @@ export interface StateUnifyTable {
   catchUp: string;
   blocked?: string;
 }
+/** Üç durumlu ölçüm sonucu. `unknown` = ÖLÇÜLEMEDİ (nötr göster) —
+ *  `bad` ile karıştırılmamalı: biri "bilmiyoruz", diğeri "ölçtük ve
+ *  bozuk". v0.9.1312'de bool sıfır değeri yüzünden okunamayan makrolar
+ *  "ÇAKIŞIYOR" diye gösterildi. */
+export type StateUnifyVerdict = 'unknown' | 'ok' | 'bad';
 export interface StateUnifyPreflightResult {
   cluster: string;
   clusters: string[];
@@ -5512,7 +5517,9 @@ export interface StateUnifyPreflightResult {
   shards: number;
   hosts: number;
   macros: StateUnifyMacro[];
-  macrosUnique: boolean;
+  topologyVerdict: StateUnifyVerdict;
+  macrosVerdict: StateUnifyVerdict;
+  tablesVerdict: StateUnifyVerdict;
   tables: StateUnifyTable[];
   splitCount: number;
   doneCount: number;

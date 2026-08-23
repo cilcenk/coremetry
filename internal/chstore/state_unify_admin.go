@@ -23,6 +23,47 @@ import (
 // tam olarak shard'ların birleşimini verir. Bu kestirme YALNIZ tablo
 // gerçekten bölünmüşken doğru — kapı clusterReadSafe(), gerekçesi orada.
 
+// StateUnifyVerdict — ÜÇ DURUMLU ölçüm sonucu: bilinmiyor / tamam /
+// sorunlu.
+//
+// Neden bool değil: ön kontrolün herhangi bir sorgusu hata verdiğinde
+// kod erken dönüyor ve ölçülemeyen alanlar SIFIR DEĞERİNDE kalıyordu.
+// `bool` için sıfır değer `false`, arayüzde de "ÇAKIŞIYOR" demek —
+// yani okuyamadığımız bir makro kümesi için operatöre "ölçtüm ve
+// bozuk" diyorduk. Prod'da tam olarak bu oldu (v0.9.1312): topoloji
+// sorgusu UInt64 tarama hatası verdi, makro kontrolü hiç koşmadı ve
+// ekran "MAKROLAR: ÇAKIŞIYOR" bastı — oysa makrolar benzersizdi.
+//
+// Fail-closed davranış DOĞRUYDU (göç bloklanmalı); yalan söyleyen şey
+// ETİKETTİ. Sıfırı bilinmezlikten ayırmak bu kod tabanının zaten
+// kayıtlı dersi (RestartsUnknown deseni, v0.9.371).
+//
+// SIFIR DEĞERİ BİLİNMİYOR'dur ve bu bilinçlidir: yeni bir alan
+// eklendiğinde ölçülmeyi unutulursa "tamam" değil "bilinmiyor" görünür.
+type StateUnifyVerdict string
+
+const (
+	// VerdictUnknown — ölçülemedi. Sıfır değer.
+	VerdictUnknown StateUnifyVerdict = ""
+	// VerdictOK — ölçüldü, sorun yok.
+	VerdictOK StateUnifyVerdict = "ok"
+	// VerdictBad — ÖLÇÜLDÜ ve sorun bulundu.
+	VerdictBad StateUnifyVerdict = "bad"
+)
+
+// Known — alan gerçekten ölçülebildi mi?
+func (v StateUnifyVerdict) Known() bool { return v == VerdictOK || v == VerdictBad }
+
+// MarshalJSON — tel üzerinde boş dize YOKTUR; bilinmiyor açıkça
+// "unknown" gider. Arayüzün `”` ile `undefined` arasında tahmin
+// yürütmesi gerekmesin.
+func (v StateUnifyVerdict) MarshalJSON() ([]byte, error) {
+	if !v.Known() {
+		return []byte(`"unknown"`), nil
+	}
+	return []byte(`"` + string(v) + `"`), nil
+}
+
 // StateUnifyMacro — bir host'un makro üçlüsü.
 type StateUnifyMacro struct {
 	Host    string `json:"host"`
@@ -61,19 +102,25 @@ type StateUnifyTable struct {
 
 // StateUnifyPreflightResult — ön kontrol ekranının tamamı.
 type StateUnifyPreflightResult struct {
-	Cluster      string            `json:"cluster"`
-	Clusters     []string          `json:"clusters"`
-	Database     string            `json:"database"`
-	Shards       int               `json:"shards"`
-	Hosts        int               `json:"hosts"`
-	Macros       []StateUnifyMacro `json:"macros"`
-	MacrosUnique bool              `json:"macrosUnique"`
-	Tables       []StateUnifyTable `json:"tables"`
-	SplitCount   int               `json:"splitCount"`
-	DoneCount    int               `json:"doneCount"`
-	Supported    bool              `json:"supported"`
-	Detail       string            `json:"detail"`
-	Generated    int64             `json:"generated"`
+	Cluster    string            `json:"cluster"`
+	Clusters   []string          `json:"clusters"`
+	Database   string            `json:"database"`
+	Shards     int               `json:"shards"`
+	Hosts      int               `json:"hosts"`
+	Macros     []StateUnifyMacro `json:"macros"`
+	Tables     []StateUnifyTable `json:"tables"`
+	SplitCount int               `json:"splitCount"`
+	DoneCount  int               `json:"doneCount"`
+	Supported  bool              `json:"supported"`
+	Detail     string            `json:"detail"`
+	Generated  int64             `json:"generated"`
+
+	// Üç durumlu ölçüm sonuçları. Okunamayan alan "bilinmiyor" kalır ve
+	// arayüz onu NÖTR gösterir; sayılar (Shards/Hosts/SplitCount) ancak
+	// ilgili verdict Known() ise anlamlıdır.
+	TopologyVerdict StateUnifyVerdict `json:"topologyVerdict"`
+	MacrosVerdict   StateUnifyVerdict `json:"macrosVerdict"`
+	TablesVerdict   StateUnifyVerdict `json:"tablesVerdict"`
 }
 
 // StateUnifyStep — tek bir ifadenin sonucu (ilerleme ekranı için).
@@ -188,14 +235,16 @@ func (s *Store) StateUnifyPreflight(ctx context.Context) (StateUnifyPreflightRes
 		return res, nil
 	}
 	res.Shards, res.Hosts = int(shards), int(hosts)
+	res.TopologyVerdict = VerdictOK
 	if res.Shards == 0 {
+		res.TopologyVerdict = VerdictBad
 		res.Detail = fmt.Sprintf("'%s' kümesi system.clusters'ta yok.", res.Cluster)
 		return res, nil
 	}
 
 	// Makrolar — '{shard}-{replica}' benzersiz mi? Birleşik yolda iki host
 	// aynı replika adını iddia ederse ikincisi REPLICA_ALREADY_EXISTS alır.
-	res.MacrosUnique = true
+	macrosOK := true
 	seen := map[string]bool{}
 	mrows, err := s.conn.Query(ctx,
 		"SELECT hostName() AS h, anyIf(substitution, macro = 'shard') AS s, anyIf(substitution, macro = 'replica') AS r "+
@@ -211,12 +260,18 @@ func (s *Store) StateUnifyPreflight(ctx context.Context) (StateUnifyPreflightRes
 		}
 		m.Uniq = m.Shard + "-" + m.Replica
 		if m.Shard == "" || m.Replica == "" || seen[m.Uniq] {
-			res.MacrosUnique = false
+			macrosOK = false
 		}
 		seen[m.Uniq] = true
 		res.Macros = append(res.Macros, m)
 	}
 	mrows.Close()
+	// Makrolar GERÇEKTEN ölçüldü; ancak buradan sonra 'ok'/'bad' denebilir.
+	if macrosOK {
+		res.MacrosVerdict = VerdictOK
+	} else {
+		res.MacrosVerdict = VerdictBad
+	}
 
 	// ADIM 1 üreticisi — tablo listesi + DDL, küçükten büyüğe.
 	drows, err := s.conn.Query(ctx, stateUnifyGeneratorSQL(res.Cluster))
@@ -238,7 +293,14 @@ func (s *Store) StateUnifyPreflight(ctx context.Context) (StateUnifyPreflightRes
 	}
 	drows.Close()
 	if len(order) == 0 {
-		res.Detail = "Üretici hiç state tablosu döndürmedi — bu veritabanında Replicated state tablosu yok."
+		// SIFIR SATIR BELİRSİZDİR, "tablo yok" DEĞİL. Bağlanılan node
+		// yeniden başlıyorsa system.tables henüz doludur ama Replicated
+		// tablolar iliştirilmemiştir; sorgu hata VERMEDEN boş döner.
+		// Lokalde ölçüldü (2026-08-23): chc-1 OOM sonrası boot ederken
+		// ön kontrol "bu veritabanında Replicated state tablosu yok"
+		// diyordu — oysa 37 tablo yerindeydi. İki olasılığı da adıyla
+		// söyle, TablesVerdict bilinmiyor kalsın, göç bloklu kalsın.
+		res.Detail = "Hiç Replicated state tablosu görünmüyor. Ya bağlanılan node henüz hazır değil (yeniden başlıyor olabilir), ya da bu kurulum tek-node — o durumda bu göç zaten GEREKMEZ. Göç bloklu."
 		return res, nil
 	}
 
@@ -343,9 +405,14 @@ func (s *Store) StateUnifyPreflight(ctx context.Context) (StateUnifyPreflightRes
 		}
 	}
 	res.Tables = order
+	res.TablesVerdict = VerdictOK
 
 	switch {
-	case !res.MacrosUnique:
+	case !res.MacrosVerdict.Known() || !res.TopologyVerdict.Known() || !res.TablesVerdict.Known():
+		// Ölçemediğimiz bir alan var. Göç BLOKLU kalır (Supported=false),
+		// ama gerekçe "bozuk" değil "bilinmiyor" der.
+		res.Detail = "Ön kontrol tamamlanamadı — bazı ölçümler okunamadı. Göç bloklu; okunamayan alanlar 'bilinmiyor' olarak işaretlendi."
+	case res.MacrosVerdict == VerdictBad:
 		res.Detail = "'{shard}-{replica}' host'lar arasında benzersiz DEĞİL (ya da bir makro tanımsız). Birleşik yolda iki host aynı replika adını iddia eder ve ikincisi REPLICA_ALREADY_EXISTS alır. Makroları düzeltmeden göç başlatma."
 	case res.SplitCount == 0:
 		res.Detail = fmt.Sprintf("Bölünmüş tablo yok — %d state tablosunun hepsi zaten tek replikasyon grubunda. Göç tamamlanmış.", len(res.Tables))

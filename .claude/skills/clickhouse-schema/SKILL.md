@@ -93,7 +93,34 @@ sessizce tek-node kalır.
 > **Kural P1 (en pahalı):** RMT'de PARTITION BY kolonu ORDER BY'da değilse
 > **ve yeniden-yazımda değişiyorsa, FINAL kopyaları asla temizleyemez.**
 > `ai_feedback`/`rca_verdicts` bunu partition'ı düşürerek çözüyor;
-> `root_cause_hypotheses` çözmüyor → bilinen canlı bug (§11).
+> `root_cause_hypotheses` v0.9.1304'te aynı yola geçti.
+
+**P1'in ölçülmüş şekli — doğruluk bir SUNUCU AYARINA asılı.** CH 24.8'de
+aynı anchor iki partition'dayken (v0.9.1304 ölçümü):
+
+| Kol | Sonuç |
+|---|---|
+| `OPTIMIZE … FINAL` sonrası fiziksel satır | **2** — birleşmez, kopya TTL'e kadar ölümsüz |
+| `SELECT … FINAL` (varsayılan) | 1, doğru satır |
+| `SELECT … FINAL SETTINGS do_not_merge_across_partitions_select_final=1` | **2** — bayat + taze birlikte |
+
+Yani veri "bugün doğru" olabilir ama doğruluğu yaygın bir FINAL-hızlandırma
+vidasının kapalı olmasına bağlıdır. Okuma tarafı sürüm karşılaştırması
+yapmıyorsa (`out[id] = h` gibi son-yazan-kazanır) o vida açıldığı an
+**sessizce bayat satır** servis edilir. `LIMIT 1`'li tekil okuma maskeler,
+batch okuma maskelemez.
+
+**Sicil + test:** `tables` dilimindeki her RMT için PARTITION BY kolonları
+ORDER BY'da olmalı ya da gerekçeli sicile yazılmalı — `partition_dedup_test.go`
+bunu tarıyor (v0.9.1304). Kural İKİ koşullu (ORDER BY'da değil **VE**
+yeniden yazımda değişiyor); tarama yalnız birincisini mekanik görür, ikincisi
+gerekçeyle sicile yazılır.
+
+⚠️ **Açık bulgu (v0.9.1304 ölçümü, düzeltilmedi):** `problems` 4560 id'nin
+**21'i**, `anomaly_events` 185'in **28'i** birden çok gün-partition'ında.
+`started_at` bir yerlerde yeniden yazılıyor. Doğru düzeltme oralarda
+PARTITION BY'ı düşürmek DEĞİL, **yazıcının `started_at`'i yeniden yazmasını
+durdurmak** — ayrı dilim.
 
 **P2.** `toDate()`'i saatlik/dakikalık matematiğin etrafına **sarma**
 (v0.6.36 birim-karıştırma tuzağı; `retention_test.go`).

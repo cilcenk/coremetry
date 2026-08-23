@@ -103,6 +103,23 @@ export function inboxItemWindow(
   return { fromNs: start - INBOX_LEAD_NS, toNs: last + INBOX_TRAIL_NS };
 }
 
+// exceptionGroupWindow — v0.9.1322. An exception group's observation span.
+//
+// ExceptionGroup spells its edges firstSeen/lastSeen rather than
+// startedAt/lastSeen, so every caller was one adapter object away from
+// inboxItemWindow — and two callers writing that object by hand is how the
+// same concept ends up with two pads. Both edges are REAL observations here
+// (unlike an open problem, which has no end), so the inbox pads are the right
+// ones and eventLifespanWindow's "runs to now" rule would be wrong: a group
+// that stopped firing at 02:10 must not open a window ending now — the link
+// would show a healthy service and read as "nothing is wrong".
+export function exceptionGroupWindow(
+  g: { firstSeen?: number; lastSeen?: number } | undefined | null,
+): { fromNs: number; toNs: number } | undefined {
+  if (!g) return undefined;
+  return inboxItemWindow({ startedAt: g.firstSeen, lastSeen: g.lastSeen });
+}
+
 // pointEventWindow — v0.9.966. A window around an instant.
 //
 // Several rows carry ONE timestamp, not a span: a deploy chip (timeUnixNs), an

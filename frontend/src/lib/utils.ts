@@ -153,6 +153,24 @@ export function fmtAgoNs(unixNs: number): string {
   return `${fmtDurShort((Date.now() - unixNs / 1e6) / 1000)} ago`;
 }
 
+// agoTR — fmtAgoNs'in Türkçe kardeşi. v0.9.1317'de components/ai/greeting.ts
+// içinden BURAYA taşındı: yukarıdaki v0.8.463 notu bu dosyayı "ne kadar önce"
+// yardımcılarının tek evi ilan ediyor, ve agoTR o konsolidasyonun dışında
+// kalmış beşinci kopyaydı. İkinci bir tüketici (/services "Son görülme"
+// kolonu) eklerken onu bir özellik klasöründe bırakmak tam da v0.8.463'ün
+// temizlediği şekli geri getirirdi. greeting.ts onu buradan re-export eder,
+// böylece kendi testi ve çağrı yeri aynen çalışır.
+//
+// Giriş birimi adında AÇIK (unixNs), fmtAgoNs ile aynı sözleşme. nowMs
+// enjekte edilebilir — testler sabit saatle koşar.
+export function agoTR(unixNs: number, nowMs = Date.now()): string {
+  const s = Math.max(0, (nowMs - unixNs / 1e6) / 1000);
+  if (s < 60) return 'az önce';
+  if (s < 3600) return `${Math.round(s / 60)} dk önce`;
+  if (s < 86400) return `${Math.round(s / 3600)} sa önce`;
+  return `${Math.round(s / 86400)} gün önce`;
+}
+
 export function fmtNs(ns: number): string {
   const us = ns / 1e3, ms = ns / 1e6, s = ns / 1e9;
   if (s >= 1) return s.toFixed(2) + 's';

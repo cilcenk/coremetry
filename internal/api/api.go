@@ -74,6 +74,10 @@ type Server struct {
 	// 30s process-geneli cache'i (v0.8.533, getServices audit fix B);
 	// getServices + /service-map paylaşır.
 	problemCounts *problemCountsCache
+	// serviceSeen — service_seen MV'sinin (v0.9.1317, entity-model A2)
+	// süreç-geneli 5dk anlık görüntüsü + MV'nin kendi taban zamanı.
+	// Sayfa/filtre/aralık-değişmez; getServices onu satırlara damgalar.
+	serviceSeen *serviceSeenCache
 	// svcRuntimes — /api/services-runtimes'ın merge+stale katmanı
 	// (v0.9.46): 15m taramalar birikir, CH hatasında son harita
 	// servis edilir; rozetler toptan sönmez.
@@ -406,6 +410,7 @@ func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, logs logst
 		stats:         newCacheStats(),
 		meUsers:       newMeCache(30 * time.Second),
 		problemCounts: newProblemCountsCache(30 * time.Second),
+		serviceSeen:   newServiceSeenCache(5 * time.Minute),
 		subRateBy:     map[string]int64{},
 		// Buffered audit channel. 1024 entries ≈ 30s of headroom
 		// at the highest sustained admin-mutation rate we've
@@ -1978,6 +1983,14 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 				rows[i].Health, rows[i].HealthReason = scoreHealth(&rows[i], c)
 			}
 		}
+		// v0.9.1317 (entity-model A2) — lifecycle pair onto the same page.
+		// This rides the existing response rather than a second endpoint:
+		// the rows are already here, already cached, and already enriched
+		// from a whole-fleet cached map one line above, so the marginal
+		// cost is a map lookup per row. A dedicated /api/services/seen
+		// would have re-paginated the same service list to deliver one
+		// column, and the page would have to join them client-side.
+		s.applyServiceSeen(ctx, rows)
 		resp := map[string]any{
 			"services": rows,
 			"hasMore":  hasMore,

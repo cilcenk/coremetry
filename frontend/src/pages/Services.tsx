@@ -19,7 +19,7 @@ import {
 import { useAllServiceRuntimes, useServicesMetadata } from '@/lib/queries';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
-import { fmtNum, fmtFixed, timeRangeToNs, rowClickHandlers } from '@/lib/utils';
+import { fmtNum, fmtFixed, timeRangeToNs, rowClickHandlers, tsLong, agoTR } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
@@ -642,7 +642,8 @@ export default function ServicesPage() {
           </PageControls>
         )}
 
-        {data === undefined && <TableSkeleton rows={10} cols={7} />}
+        {/* cols, SERVICE_COLS uzunluğunu izler (v0.9.1317'de 7 → 8). */}
+        {data === undefined && <TableSkeleton rows={10} cols={SERVICE_COLS.length} />}
         {/* v0.9.858 (UX denetimi K6) — BU sayfanın hata dalı denetimin en
             pahalı örneğiydi: /api/services hatası "No services yet — point
             your OTLP exporter…" basıyordu. Backend arızası INSTRUMENTATION
@@ -737,6 +738,8 @@ export default function ServicesPage() {
                       <td className="mono" style={{ textAlign: 'right' }}>
                         <ApdexBadge value={agg.apdex} />
                       </td>
+                      {/* Son görülme — sayfa toplamının yaşam döngüsü yok. */}
+                      <td />
                     </tr>
                   )}
                   {sorted.map((s, i) => {
@@ -849,6 +852,20 @@ export default function ServicesPage() {
                         </td>
                         <td className="mono" style={{ textAlign: 'right' }}>
                           <ApdexBadge value={s.apdex} />
+                        </td>
+                        {/* v0.9.1317 — service_seen MV'sinden Son görülme.
+                            firstSeen YOKSA "bilinmiyor" yazar: MV yalnız
+                            ileri doldurduğu için henüz doğumunu görmediği
+                            servisler var, ve backend o durumda alanı hiç
+                            göndermiyor — burada uydurulacak bir tarih yok. */}
+                        <td className="mono" style={{ textAlign: 'right' }}>
+                          {s.lastSeen
+                            ? <span title={`Son görülme: ${tsLong(s.lastSeen)}\nİlk görülme: ${
+                                s.firstSeen ? tsLong(s.firstSeen) : 'bilinmiyor (bu servis, kayıt başlamadan önce de çalışıyordu)'}`}>
+                                {agoTR(s.lastSeen)}
+                              </span>
+                            : <span style={{ color: 'var(--text3)' }}
+                                title="Yaşam döngüsü kaydı henüz yok — service_seen MV'si bu servisi ilk span'ından itibaren doldurur">—</span>}
                         </td>
                       </tr>
                     );

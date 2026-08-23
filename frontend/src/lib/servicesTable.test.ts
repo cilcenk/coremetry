@@ -15,22 +15,41 @@ import {
 //    ORDER BY.
 
 describe('SERVICE_COLS — server-sort column contract', () => {
-  it('keeps the exact pre-migration ?sort= keys (+ p99Delta, v0.9.1111)', () => {
+  it('keeps the exact pre-migration ?sort= keys (+ p99Delta v0.9.1111, lastSeen v0.9.1317)', () => {
     expect(SERVICE_COLS.map(c => c.id))
-      .toEqual(['name', 'spanCount', 'errorRate', 'avg', 'p99', 'p99Delta', 'apdex']);
+      .toEqual(['name', 'spanCount', 'errorRate', 'avg', 'p99', 'p99Delta', 'apdex', 'lastSeen']);
   });
   it('keeps the pre-migration natural directions (NATURAL_DIR parity)', () => {
     // name alphabetical asc; apdex asc (worst services first); the
     // volume/latency columns default desc (biggest first); p99Delta
-    // desc = the most-worsened service first (v0.9.1111).
+    // desc = the most-worsened service first (v0.9.1111). lastSeen has
+    // no natural direction that matters — it is not click-sortable.
     const dirs = Object.fromEntries(SERVICE_COLS.map(c => [c.id, c.naturalDir ?? 'desc']));
     expect(dirs).toEqual({
       name: 'asc', spanCount: 'desc', errorRate: 'desc',
       avg: 'desc', p99: 'desc', p99Delta: 'desc', apdex: 'asc',
+      lastSeen: 'desc',
     });
   });
-  it('marks every column click-sortable (sortValue present) so DataTableHead renders the arrows', () => {
-    expect(SERVICE_COLS.every(c => !!c.sortValue)).toBe(true);
+
+  // v0.9.1317 — this used to assert `every(c => !!c.sortValue)`. The fear it
+  // encoded was never "all columns must be sortable" for its own sake; it was
+  // that a column whose id the BACKEND cannot turn into an ORDER BY must not
+  // look sortable, because servicesAggSortExpr's whitelist silently falls
+  // through to `spans DESC` and the operator gets a table that claims one
+  // ordering and serves another. So the assertion is narrowed rather than
+  // dropped: the sortable set must be exactly the backend's key set, and
+  // lastSeen — joined in Go AFTER pagination, absent from service_summary_5m
+  // — must stay out of it.
+  const BACKEND_SORT_KEYS = ['name', 'spanCount', 'errorRate', 'avg', 'p99', 'p99Delta', 'apdex'];
+
+  it('marks exactly the backend-sortable columns click-sortable (sortValue present)', () => {
+    expect(SERVICE_COLS.filter(c => !!c.sortValue).map(c => c.id)).toEqual(BACKEND_SORT_KEYS);
+  });
+  it('leaves lastSeen non-sortable — the backend cannot ORDER BY it', () => {
+    const lastSeen = SERVICE_COLS.find(c => c.id === 'lastSeen');
+    expect(lastSeen).toBeDefined();
+    expect(lastSeen!.sortValue).toBeUndefined();
   });
 });
 
@@ -52,6 +71,13 @@ describe('decodeLegacyServicesSort — old ?sort=&dir= link bridge', () => {
     expect(decodeLegacyServicesSort('?range=30m&cluster=prod')).toBeNull();
     expect(decodeLegacyServicesSort('?sort=bogusCol&dir=asc')).toBeNull();
   });
+  it('returns null for a column that exists but is NOT sortable (v0.9.1317)', () => {
+    // A hand-edited link naming the lifecycle column must not seed the
+    // hook's sort state — sanitizeServicesSort would drop it anyway, and
+    // in between the header would render as an active sort that the
+    // backend never honoured.
+    expect(decodeLegacyServicesSort('?sort=lastSeen&dir=desc')).toBeNull();
+  });
   it('coexists with unrelated params on the same URL', () => {
     expect(decodeLegacyServicesSort('?cluster=prod&sort=avg&dir=asc&range=1h'))
       .toEqual({ id: 'avg', dir: 'asc' });
@@ -71,5 +97,13 @@ describe('sanitizeServicesSort — dt.sort → backend ORDER BY pair', () => {
   it('falls back for a null id (no active sort persisted)', () => {
     expect(sanitizeServicesSort({ id: null, dir: 'asc' }))
       .toEqual({ sort: DEFAULT_SERVICES_SORT.id, dir: DEFAULT_SERVICES_SORT.dir });
+  });
+  it('falls back for a column that EXISTS but the backend cannot sort (v0.9.1317)', () => {
+    // The regression this guards: `lastSeen` reaching servicesAggSortExpr,
+    // matching no case, and being served as `spans DESC` under a header
+    // that says "Son görülme". Membership in SERVICE_COLS is no longer
+    // sufficient — sortability is the gate.
+    expect(sanitizeServicesSort({ id: 'lastSeen', dir: 'desc' }))
+      .toEqual({ sort: 'spanCount', dir: 'desc' });
   });
 });

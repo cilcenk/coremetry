@@ -20,6 +20,19 @@ export interface Service {
   priorErrorRate?: number;
   priorAvgMs?: number;
   priorP99Ms?: number;
+  // v0.9.1317 (entity-model A2) — service_seen MV'sinden yaşam döngüsü
+  // çifti, ikisi de unix ns.
+  //
+  // lastSeen: MV servisi tanıyorsa hep gelir.
+  //
+  // firstSeen: YALNIZ gerçek bir doğum gözlemi olduğunda gelir. Bir MV
+  // yalnız ileri doldurur, dolayısıyla onu ekleyen sürümde her servisin
+  // en eski verisi aslında "bunu ne zaman deploy ettik" demektir; backend
+  // o durumda alanı HİÇ yazmaz. Yani "bilinmiyor" burada `undefined`
+  // olarak temsil edilir — uydurma bir tarih alıp gösterme ihtimali
+  // tipte yok.
+  lastSeen?: number;
+  firstSeen?: number;
 }
 
 // Topology view (v0.5.100) — operation-level call graph rooted at

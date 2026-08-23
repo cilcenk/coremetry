@@ -12,6 +12,7 @@ package chstore
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestPatchSelfHealth(t *testing.T) {
@@ -26,22 +27,26 @@ func TestPatchSelfHealth(t *testing.T) {
 			name: "tamamen boş blob → varsayılanlar",
 			in:   SelfHealthConfig{},
 			want: SelfHealthConfig{
-				IngestStallMin:     d.IngestStallMin,
-				SpoolMaxFiles:      d.SpoolMaxFiles,
-				SpoolMaxBytes:      d.SpoolMaxBytes,
-				DiskEtaDays:        d.DiskEtaDays,
-				ChannelConsecFails: d.ChannelConsecFails,
+				IngestStallMin:      d.IngestStallMin,
+				SpoolMaxFiles:       d.SpoolMaxFiles,
+				SpoolMaxBytes:       d.SpoolMaxBytes,
+				DiskEtaDays:         d.DiskEtaDays,
+				ChannelConsecFails:  d.ChannelConsecFails,
+				VolumeSpikeFactor:   d.VolumeSpikeFactor,
+				VolumeSpikeMinSpans: d.VolumeSpikeMinSpans,
 			},
 		},
 		{
 			name: "kısmi blob → yalnız yazılan alan geçer",
 			in:   SelfHealthConfig{SpoolMaxFiles: 50_000},
 			want: SelfHealthConfig{
-				IngestStallMin:     d.IngestStallMin,
-				SpoolMaxFiles:      50_000,
-				SpoolMaxBytes:      d.SpoolMaxBytes,
-				DiskEtaDays:        d.DiskEtaDays,
-				ChannelConsecFails: d.ChannelConsecFails,
+				IngestStallMin:      d.IngestStallMin,
+				SpoolMaxFiles:       50_000,
+				SpoolMaxBytes:       d.SpoolMaxBytes,
+				DiskEtaDays:         d.DiskEtaDays,
+				ChannelConsecFails:  d.ChannelConsecFails,
+				VolumeSpikeFactor:   d.VolumeSpikeFactor,
+				VolumeSpikeMinSpans: d.VolumeSpikeMinSpans,
 			},
 		},
 		{
@@ -49,13 +54,16 @@ func TestPatchSelfHealth(t *testing.T) {
 			in: SelfHealthConfig{
 				IngestStallMin: -5, DiskEtaDays: -1, ChannelConsecFails: 0,
 				SpoolMaxFiles: 0, SpoolMaxBytes: 0,
+				VolumeSpikeFactor: -2, VolumeSpikeMinSpans: 0,
 			},
 			want: SelfHealthConfig{
-				IngestStallMin:     d.IngestStallMin,
-				SpoolMaxFiles:      d.SpoolMaxFiles,
-				SpoolMaxBytes:      d.SpoolMaxBytes,
-				DiskEtaDays:        d.DiskEtaDays,
-				ChannelConsecFails: d.ChannelConsecFails,
+				IngestStallMin:      d.IngestStallMin,
+				SpoolMaxFiles:       d.SpoolMaxFiles,
+				SpoolMaxBytes:       d.SpoolMaxBytes,
+				DiskEtaDays:         d.DiskEtaDays,
+				ChannelConsecFails:  d.ChannelConsecFails,
+				VolumeSpikeFactor:   d.VolumeSpikeFactor,
+				VolumeSpikeMinSpans: d.VolumeSpikeMinSpans,
 			},
 		},
 		{
@@ -63,10 +71,12 @@ func TestPatchSelfHealth(t *testing.T) {
 			in: SelfHealthConfig{
 				Enabled: selfHealthBoolPtr(true), IngestStallMin: 30, SpoolMaxFiles: 5,
 				SpoolMaxBytes: 7, DiskEtaDays: 3.5, ChannelConsecFails: 9,
+				VolumeSpikeFactor: 12, VolumeSpikeMinSpans: 4242,
 			},
 			want: SelfHealthConfig{
 				Enabled: selfHealthBoolPtr(true), IngestStallMin: 30, SpoolMaxFiles: 5,
 				SpoolMaxBytes: 7, DiskEtaDays: 3.5, ChannelConsecFails: 9,
+				VolumeSpikeFactor: 12, VolumeSpikeMinSpans: 4242,
 			},
 		},
 	}
@@ -77,8 +87,92 @@ func TestPatchSelfHealth(t *testing.T) {
 				got.SpoolMaxFiles != tt.want.SpoolMaxFiles ||
 				got.SpoolMaxBytes != tt.want.SpoolMaxBytes ||
 				got.DiskEtaDays != tt.want.DiskEtaDays ||
-				got.ChannelConsecFails != tt.want.ChannelConsecFails {
+				got.ChannelConsecFails != tt.want.ChannelConsecFails ||
+				got.VolumeSpikeFactor != tt.want.VolumeSpikeFactor ||
+				got.VolumeSpikeMinSpans != tt.want.VolumeSpikeMinSpans {
 				t.Fatalf("patchSelfHealth = %+v, beklenen %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// v0.9.1294 — GERİYE UYUM: hacim vidaları aileye BEŞ kural sonra eklendi,
+// yani sahadaki her kayıtlı blob onlarsız. Alanların eksik olduğu bir
+// blob'un varsayılana düşmesi teorik bir incelik değil: düşmezse
+// VolumeSpikeFactor 0 kalır, volumeSpikeDecision "kural kapalı" der ve
+// v0.9.1279'da ayar kaydetmiş HER kurulum yeni kuralı SESSİZCE kapalı
+// alır. Enabled pointer'ının kapattığı sınıfın aynısı, sayısal tarafta.
+func TestSelfHealthVolumeFieldsBackfill(t *testing.T) {
+	d := DefaultSelfHealth()
+	// v0.9.1279'un yazdığı biçimin birebir kendisi (hacim alanları YOK).
+	const legacy = `{"enabled":true,"ingestStallMin":10,"spoolMaxFiles":100000,` +
+		`"spoolMaxBytes":10737418240,"diskEtaDays":7,"channelConsecFails":3}`
+
+	var c SelfHealthConfig
+	if err := json.Unmarshal([]byte(legacy), &c); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got := patchSelfHealth(c, d)
+	if got.VolumeSpikeFactor != d.VolumeSpikeFactor {
+		t.Fatalf("eski blob'da volumeSpikeFactor = %v, varsayılan %v bekleniyordu",
+			got.VolumeSpikeFactor, d.VolumeSpikeFactor)
+	}
+	if got.VolumeSpikeMinSpans != d.VolumeSpikeMinSpans {
+		t.Fatalf("eski blob'da volumeSpikeMinSpans = %d, varsayılan %d bekleniyordu",
+			got.VolumeSpikeMinSpans, d.VolumeSpikeMinSpans)
+	}
+	// Eski alanlar da AYNEN geçmeli — geriye uyum tek yönlü değildir.
+	if got.IngestStallMin != 10 || got.ChannelConsecFails != 3 || got.DiskEtaDays != 7 {
+		t.Fatalf("eski blob'un kendi değerleri bozuldu: %+v", got)
+	}
+	if !got.SelfHealthOn() {
+		t.Fatal("eski blob okununca aile kapandı")
+	}
+}
+
+// v0.9.1294 — "P1 OLMASIN" DİREKTİFİNİN PİNİ.
+//
+// Öncelik yazılamaz, OKUMA ANINDA türer (severity + oran + comparator).
+// Kural bu yüzden tek bir şeyi seçebiliyor: severity="warning". Bu test
+// o seçimin gerçekten yettiğini ölçüyor — merdivenin warning dalı hiçbir
+// oranda, hiçbir yaşta P1 üretmemeli. Üretirse maliyet uyarısı gerçek
+// kesintilerin arasına karışır.
+func TestVolumeSpikePriorityLadder(t *testing.T) {
+	cfg := NormalizeProblemPriority(DefaultProblemPriority())
+	now := time.Now().UnixNano()
+	day := now - int64(24*time.Hour)
+	week := now - int64(7*24*time.Hour)
+
+	tests := []struct {
+		name             string
+		value, threshold float64
+		startedAt        int64
+		want             string
+	}{
+		// Eşiği yeni geçmiş sıçrama: P3 (rahat vakitte).
+		{"5.7× / eşik 4 → P3", 5.714, 4, now, "P3"},
+		{"tam eşik 4× / 4 → P3", 4, 4, now, "P3"},
+		// Eşiğin BigBreachRatio katı: P2. Sınır vidada (varsayılan 2×),
+		// kuralda değil — emitter yalnız çifti taşır.
+		{"8× / eşik 4 (2.0 oran) → P2", 8, 4, now, "P2"},
+		{"32× / eşik 4 → P2", 32, 4, now, "P2"},
+		// YAŞ: bir gün ve bir hafta açık kalsa da P1 YOK. (Stale-critical
+		// terfisi yalnız critical'a uygulanır; warning'in P1 kapısı yok.)
+		{"5.7× bir gündür açık → hâlâ P3", 5.714, 4, day, "P3"},
+		{"32× bir haftadır açık → hâlâ P2", 32, 4, week, "P2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := Problem{
+				RuleID: "self-volume-spike", Severity: "warning", Status: "open",
+				Value: tt.value, Threshold: tt.threshold, StartedAt: tt.startedAt,
+			}
+			got, reason := computePriority(p, now, cfg)
+			if got == "P1" {
+				t.Fatalf("MALİYET UYARISI P1 OLDU (%s) — direktif ihlali", reason)
+			}
+			if got != tt.want {
+				t.Fatalf("öncelik = %s (%s), beklenen %s", got, reason, tt.want)
 			}
 		})
 	}
@@ -150,7 +244,8 @@ func TestDiskKey(t *testing.T) {
 // müdahale adımları üründe olduğu hâlde ulaşılmaz kalır.
 func TestSelfHealthRunbooksCoverEveryRule(t *testing.T) {
 	for _, rule := range []string{
-		"self-ingest-stall", "self-spool-depth", "self-disk-eta", "self-channel-broken",
+		"self-ingest-stall", "self-spool-depth", "self-disk-eta",
+		"self-channel-broken", "self-volume-spike",
 	} {
 		u, ok := selfHealthRunbooks[rule]
 		if !ok || u == "" {
@@ -160,8 +255,8 @@ func TestSelfHealthRunbooksCoverEveryRule(t *testing.T) {
 			t.Fatalf("%s runbook'u ürün içi bir rota değil: %q", rule, u)
 		}
 	}
-	if len(selfHealthRunbooks) != 4 {
-		t.Fatalf("harita %d girdi taşıyor, 4 bekleniyordu (yeni kural eklendiyse runbook'u da ekleyin)", len(selfHealthRunbooks))
+	if len(selfHealthRunbooks) != 5 {
+		t.Fatalf("harita %d girdi taşıyor, 5 bekleniyordu (yeni kural eklendiyse runbook'u da ekleyin)", len(selfHealthRunbooks))
 	}
 }
 

@@ -48,6 +48,18 @@ type SelfHealthConfig struct {
 	// ChannelConsecFails — bir bildirim kanalını ÖLÜ saymak için gereken
 	// ardışık başarısız gönderim.
 	ChannelConsecFails int `json:"channelConsecFails"`
+	// VolumeSpikeFactor / VolumeSpikeMinSpans — v0.9.1294, hacim
+	// sıçraması kuralı (self-volume-spike). Factor: son 24 saatlik span
+	// hacmi önceki 24 saatin kaç katına çıkarsa sıçrama sayılır.
+	// MinSpans: TABAN GÜRÜLTÜ KAPISI — küçük serviste 3 span → 30 span
+	// 10×'tir ama hiçbir şey ifade etmez; güncel pencere bu mutlak
+	// hacme ulaşmadan kural hiç konuşmaz.
+	//
+	// Eksik alan (bu sürümden ÖNCE kaydedilmiş her blob) patchSelfHealth
+	// ile varsayılana düşer — kısmi blob'un aileyi bozmaması Enabled
+	// pointer'ıyla aynı sözleşme.
+	VolumeSpikeFactor   float64 `json:"volumeSpikeFactor"`
+	VolumeSpikeMinSpans uint64  `json:"volumeSpikeMinSpans"`
 }
 
 // DefaultSelfHealth — kodda yaşayan varsayılanlar.
@@ -65,15 +77,26 @@ type SelfHealthConfig struct {
 //   - 7 gün: bir haftalık koşu payı, retention/disk büyütme kararını
 //     mesai içinde vermeye yeter.
 //   - 3 ardışık hata: tek bir ağ blip'i kanalı ölü ilan etmesin.
+//   - 4× / 100k span: v0.9.1294 sıçrama kuralı, ikisi de CANLI ÖLÇÜMLE
+//     kalibre edildi (101 servislik yerel demo, iki 24s penceresi):
+//     meşru büyüme 1.19-1.30× bandında, en yüksek meşru değer 2.42×
+//     (pencerenin ortasında doğan servis). 4×, ölçülen en kötü meşru
+//     değerin 1.65 katı. Hacim tabanı: yerel demoda EN BÜYÜK servis 24
+//     saatte 115.936 span üretiyor, yani 100k tabanı bu kurulumda tek
+//     bir servisi bile konuşturmuyor; 1 milyar span/gün'lük hedef
+//     ölçekte 100k = %0,01 ve o büyüklükteki bir sıçrama ne diski
+//     doldurur ne kardinaliteyi patlatır.
 func DefaultSelfHealth() SelfHealthConfig {
 	on := true
 	return SelfHealthConfig{
-		Enabled:            &on,
-		IngestStallMin:     10,
-		SpoolMaxFiles:      100_000,
-		SpoolMaxBytes:      10 << 30, // 10 GiB
-		DiskEtaDays:        7,
-		ChannelConsecFails: 3,
+		Enabled:             &on,
+		IngestStallMin:      10,
+		SpoolMaxFiles:       100_000,
+		SpoolMaxBytes:       10 << 30, // 10 GiB
+		DiskEtaDays:         7,
+		ChannelConsecFails:  3,
+		VolumeSpikeFactor:   4.0,
+		VolumeSpikeMinSpans: 100_000,
 	}
 }
 
@@ -118,6 +141,12 @@ func patchSelfHealth(c, d SelfHealthConfig) SelfHealthConfig {
 	}
 	if c.ChannelConsecFails <= 0 {
 		c.ChannelConsecFails = d.ChannelConsecFails
+	}
+	if c.VolumeSpikeFactor <= 0 {
+		c.VolumeSpikeFactor = d.VolumeSpikeFactor
+	}
+	if c.VolumeSpikeMinSpans == 0 {
+		c.VolumeSpikeMinSpans = d.VolumeSpikeMinSpans
 	}
 	return c
 }

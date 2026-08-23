@@ -8479,14 +8479,28 @@ func (s *Server) putSelfHealth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "channelConsecFails 2-100 aralığında olmalı", http.StatusBadRequest)
 		return
 	}
+	// v0.9.1294 — hacim sıçraması vidaları. Alt sınırlar ÖLÇÜLMÜŞ:
+	// 101 servislik yerel demoda meşru büyümenin tepesi 2.42× (pencere
+	// ortasında doğan servis), yani 2'nin altındaki bir katsayı normal
+	// gün-içi dalgayı alarma çevirir. 1000 span'in altındaki bir hacim
+	// tabanı da kapıyı işlevsiz kılar — kural o noktada yeniden bir
+	// yanlış-pozitif fabrikasıdır.
+	if c.VolumeSpikeFactor != 0 && (c.VolumeSpikeFactor < 2 || c.VolumeSpikeFactor > 1000) {
+		http.Error(w, "volumeSpikeFactor 2-1000 aralığında olmalı", http.StatusBadRequest)
+		return
+	}
+	if c.VolumeSpikeMinSpans != 0 && c.VolumeSpikeMinSpans < 1000 {
+		http.Error(w, "volumeSpikeMinSpans en az 1000 olmalı", http.StatusBadRequest)
+		return
+	}
 	if err := s.store.SaveSelfHealth(r.Context(), c); err != nil {
 		writeErr(w, err)
 		return
 	}
 	s.audit(r, "settings.self_health.update", "settings", "self_health",
-		fmt.Sprintf(`{"enabled":%v,"ingestStallMin":%d,"spoolMaxFiles":%d,"spoolMaxBytes":%d,"diskEtaDays":%v,"channelConsecFails":%d}`,
+		fmt.Sprintf(`{"enabled":%v,"ingestStallMin":%d,"spoolMaxFiles":%d,"spoolMaxBytes":%d,"diskEtaDays":%v,"channelConsecFails":%d,"volumeSpikeFactor":%v,"volumeSpikeMinSpans":%d}`,
 			c.SelfHealthOn(), c.IngestStallMin, c.SpoolMaxFiles, c.SpoolMaxBytes,
-			c.DiskEtaDays, c.ChannelConsecFails))
+			c.DiskEtaDays, c.ChannelConsecFails, c.VolumeSpikeFactor, c.VolumeSpikeMinSpans))
 	writeJSON(w, s.store.GetSelfHealth(r.Context()))
 }
 

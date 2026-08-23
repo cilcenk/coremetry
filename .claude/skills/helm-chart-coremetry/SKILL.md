@@ -1,6 +1,6 @@
 ---
 name: helm-chart-coremetry
-description: Coremetry-specific Helm chart guardrails — OpenShift restricted-v2 SCC compatibility, global.imageRegistry air-gapped rewrite, external ClickHouse / Redis config, monolithic vs distributed deployment.mode (v0.6.2), MCP/SSE session affinity (v0.6.21), Reset-schema hook, Route vs Ingress decision, version-bump rules. Use BEFORE any change under `charts/coremetry/`, `examples/openshift/`, or anything that touches the chart's deploy / ingress / OpenShift Route shape. Triggers on words like "helm", "values.yaml", "deployment.mode", "OpenShift", "SCC", "global.imageRegistry", "external ClickHouse", "external Redis", "Route", "Ingress", "reset-schema", "Chart.yaml", "session affinity", "sticky session".
+description: Coremetry Helm chart guardrails — OpenShift restricted-v2 SCC compatibility, global.imageRegistry air-gapped rewrite, external ClickHouse/Redis wiring, monolithic vs distributed deployment.mode, MCP/SSE session affinity, the reset-schema hook, Route vs Ingress, and the Chart.yaml version/appVersion bump rules. Use BEFORE any change under charts/coremetry/ or examples/openshift/; when the chart changes, the app tag and the chart appVersion ship together via /release. Do NOT use for local minikube deploys of an unchanged chart (helm upgrade is poisonous there — use kubectl set image) or for generic Kubernetes/Helm questions unrelated to this chart.
 ---
 
 # /helm-chart-coremetry — Coremetry chart guardrails

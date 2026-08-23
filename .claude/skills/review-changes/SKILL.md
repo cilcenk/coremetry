@@ -1,6 +1,6 @@
 ---
 name: review-changes
-description: Pre-commit review of the working-tree diff against the Coremetry architect-grade CLAUDE.md — hard constraints, performance budgets, architectural invariants, the 10-step "when you ship a new feature" checklist. Catches debug residue, commented-out blocks, picker / MV / cache-key / wrapper drift. Run before invoking /release on a non-trivial change.
+description: Pre-commit review of the CURRENT working-tree diff against Coremetry's CLAUDE.md — hard constraints, performance budgets, architectural invariants, the ship checklist. Catches debug residue, commented-out blocks, eager-picker / MV-bypass / cache-key / copilotExplain-wrapper drift. Run after the code is written and BEFORE /release on a non-trivial change. This skill outranks the generic code-review / simplify / security-review skills here, because only it knows this repo's own bug classes. Do NOT use for a whole-repo survey (use /scale-audit) or for a one-line change.
 ---
 
 # /review-changes — second pair of eyes before /release

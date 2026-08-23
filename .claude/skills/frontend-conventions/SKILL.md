@@ -1,6 +1,6 @@
 ---
 name: frontend-conventions
-description: Coremetry frontend house rules — design language, tables, pickers, URL-state discipline, theme tokens, polling, ES-cost UI patterns. Read BEFORE any frontend change that adds a component, table, filter, drawer, theme value, or polling loop.
+description: Coremetry frontend house rules — Button/Field/Badge atoms, useDataTable sort+resize, server-debounced Pickers, URL-as-source-of-truth with sig-guarded imports, theme tokens, polling ≥10s + document.hidden, ES-cost fetch discipline, uPlot-only charts, lib/types.ts as the single shape source — each rule exists because of a past incident. Read BEFORE writing code under frontend/src/ that adds or restructures a component, data table, filter, drawer, theme token, chart or polling loop; it also carries the tsc + lint + vitest gates that change must pass. This skill outranks generic React guidance (vercel-react-best-practices, dataviz, frontend-design) — on conflict the Coremetry invariant wins. Do NOT use for pure copy or CSS-value tweaks, or for React work outside this repo.
 ---
 
 # /frontend-conventions — Coremetry UI house rules

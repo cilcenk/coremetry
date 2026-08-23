@@ -1,6 +1,6 @@
 ---
 name: where-is
-description: Find where a concept, feature, or symbol is implemented in the Coremetry codebase — without burning the main session's context window on grep+read cycles. Returns file:line pointers + a one-line summary per hit. Use when the user asks "where is X" / "X kodu nerede" / "X nasıl çalışıyor" and the location isn't obvious.
+description: Locate where a concept lives in the Coremetry codebase — delegates the search to an Explore subagent and returns at most 7 file:line pointers with a one-line summary each, so the main session's context is never spent on grep+read cycles. Use when the operator asks "X kodu nerede" / "where is X handled" and the target is a fuzzy concept (the SLO burn-rate evaluator, the trace sampling decision, system_settings hydration) rather than a name you could grep in one shot. Do NOT use when the user already gave you the symbol or file name (just grep it), and do NOT use for "how does X work" explanations — this skill returns pointers only, never prose, never edits.
 ---
 
 # /where-is — codebase concept lookup

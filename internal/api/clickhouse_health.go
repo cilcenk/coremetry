@@ -479,9 +479,18 @@ func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
 		// idle pods; non-zero during burst = coalescence
 		// working. Available on CH 22.10+; silently empty on
 		// older builds.
+		//
+		// v0.9.1314 (operatör-bildirimi: prod trace'inde code 47).
+		// Kolon `entries.bytes_count` DEĞİL `entries.bytes` — CH 24.8'de
+		// doğrulandı (`Maybe you meant: ['entries.bytes']`). Eski ifade
+		// HER çağrıda hata veriyordu ve `err == nil` kapısı yüzünden panel
+		// SESSİZCE boş kalıyordu: "async insert yok" ile "sorgu patladı"
+		// ayırt edilemiyordu. İstenen sayı entry ADEDİ olduğu için doğru
+		// ifade dizinin uzunluğu; `[1]` indeksi zaten ilk entry'nin
+		// bayt sayısını verirdi, adedi değil.
 		if rows, err := s.store.Conn().Query(ctx, `
 			SELECT database, table,
-			       total_bytes, entries.bytes_count[1] AS entries_count,
+			       total_bytes, length(entries.bytes) AS entries_count,
 			       dateDiff('millisecond', first_update, now64()) AS first_update_ms_ago
 			FROM system.asynchronous_inserts
 			ORDER BY total_bytes DESC

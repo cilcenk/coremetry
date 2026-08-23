@@ -50,6 +50,15 @@ type Store struct {
 	deferDDL    bool
 	deferredDDL []string
 
+	// v0.9.1308 — state tablolarının kümede GÖZLENEN ZK yolları
+	// (state_replication.go). adaptDDL buradan okur; sıfır değeri
+	// "probe koşmadı" = eski (shard'lı) yol = v0.9.1308 öncesi
+	// davranışın birebir aynısı.
+	//
+	// YALNIZ boot/migrate goroutine'inden yazılır — deferDDL ile aynı
+	// sözleşme; okuma da aynı zincirden (execDDL → adaptDDL).
+	stateObs stateObservation
+
 	// metricExclusions (v0.9.797) — operatörün route dışlama kuralları,
 	// DERLENMİŞ hâlde. Okuma yolları (buildMetricQuerySQL, queryRateFrom,
 	// route-tier) her sorguda buradan okur, yani bir CH okuması sıcak
@@ -2182,6 +2191,19 @@ func (s *Store) migrate(ctx context.Context) error {
 		TTL toDate(sent_at) + INTERVAL 90 DAY`,
 	}
 
+	// v0.9.1308 — state tablolarının ZK yolu KODDAN değil KÜMEDEN
+	// okunur (state_replication.go). Bu boot'un İLK DDL'inden ÖNCE
+	// koşmak ZORUNDA: hemen aşağıdaki repartition da bir state
+	// tablosunu (root_cause_hypotheses) execDDL→adaptDDL üzerinden
+	// yeniden kurar ve ona bir ZK yolu yazar.
+	s.resolveStateReplicaPaths(ctx)
+
+	// v0.9.1304 — root_cause_hypotheses'in PARTITION BY'sız yeniden kurulumu
+	// (Kural P1; gerekçe rootcause_repartition.go). Anlık görüntüden ÖNCE ve
+	// deferDDL kararından ÖNCE: müdahale SENKRON koşmalı, ve `existing`
+	// bundan sonra okunduğu için sonuç ne olursa olsun tutarlı kalır.
+	s.repartitionRootCauseHypotheses(ctx, tableDDLByName(tables, "root_cause_hypotheses"))
+
 	// v0.9.607 — ZATEN VAR OLAN nesne için DDL GÖNDERİLMEZ.
 	//
 	// Hepsi `IF NOT EXISTS`, yani nesne varsa ifadenin etkisi ZATEN
@@ -2190,12 +2212,6 @@ func (s *Store) migrate(ctx context.Context) error {
 	// doluyor. 158 ifade × 20 sn ≈ 53 dakika: pod ölmüyor ama hiç
 	// hazır olmuyor (operator-reported, prod).
 	//
-	// v0.9.1304 — root_cause_hypotheses'in PARTITION BY'sız yeniden kurulumu
-	// (Kural P1; gerekçe rootcause_repartition.go). Anlık görüntüden ÖNCE ve
-	// deferDDL kararından ÖNCE: müdahale SENKRON koşmalı, ve `existing`
-	// bundan sonra okunduğu için sonuç ne olursa olsun tutarlı kalır.
-	s.repartitionRootCauseHypotheses(ctx, tableDDLByName(tables, "root_cause_hypotheses"))
-
 	// Taze kurulumda hiçbir şey elenmez; davranış birebir aynı kalır.
 	existing := s.existingObjects(ctx)
 	// v0.9.614 — şema yerindeyse (küme modu + spans mevcut) kalan TÜM

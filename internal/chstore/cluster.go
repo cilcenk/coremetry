@@ -1049,10 +1049,7 @@ func (s *Store) adaptDDL(sql string) []string {
 	}
 
 	on := s.onCluster()
-	zkPrefix := strings.TrimRight(s.cfg.ReplicaPath, "/")
-	if zkPrefix == "" {
-		zkPrefix = "/clickhouse/tables"
-	}
+	zkPrefix := s.zkPrefix()
 
 	// Find the table or MV name being created / altered.
 	name, kind := identifyDDLTarget(sql)
@@ -1066,6 +1063,16 @@ func (s *Store) adaptDDL(sql string) []string {
 	target := name
 	if hv {
 		target = name + "_local"
+	}
+
+	// v0.9.1308 — state tabloları TEK replikasyon grubuna gider
+	// (state_replication.go). Telemetri dalı değişmez; `unified`
+	// yalnız CREATE TABLE + shard kayıtlarında ADI GEÇMEYEN hedefler
+	// için true olabilir ve o zaman bile kümenin gözlenen hâli
+	// (split-brain muhafızı) son sözü söyler.
+	unified := false
+	if stateTableDDL(name, kind) {
+		unified, _ = useUnifiedStatePath(s.stateObs, zkPrefix, name)
 	}
 
 	rewritten := sql
@@ -1098,7 +1105,7 @@ func (s *Store) adaptDDL(sql string) []string {
 			parts := reEngine.FindStringSubmatch(m)
 			base := parts[1]
 			argList := strings.TrimSpace(parts[2]) // includes parens or empty
-			zkPath := fmt.Sprintf("'%s/{shard}/%s', '{replica}'", zkPrefix, name)
+			zkPath := replicatedArgs(zkPrefix, name, unified)
 			// Splice the ZK args in front of any existing args.
 			var newArgs string
 			switch {

@@ -305,6 +305,143 @@ func TestRepeatedSpansSQLDropsAllEmptyGroupTuple(t *testing.T) {
 	}
 }
 
+// v0.9.1288 — the Repeats table's "root" column was blank on EVERY
+// row. Measured live on the 2-shard local cluster at v0.9.1287,
+// GET /api/spans/repeats?groupBy=db.statement&minRepeats=5 over 1h:
+// 200 of 200 rows carried rootName = "". The operator could see THAT a
+// statement ran 40× in one trace but not WHICH entry point produced
+// the N+1, which is the column's entire job.
+//
+// The old projection was
+//
+//	any(if(s.parent_id = '', s.name, ''))
+//
+// `any` resolves FIRST and picks an arbitrary row from the joined set;
+// the root-test runs afterwards on whatever it happened to grab. A
+// trace with a 40× repeat holds ~45 spans and exactly one root, so the
+// arbitrary pick is a non-root ~44 times in 45 and the `if` collapses
+// to "". The predicate has to be inside the aggregate.
+//
+// Re-running the same window with the fix: 0 of 200 empty, and 35 of
+// the 200 (17.5%) resolved through the SECOND layer — traces that
+// began before `from`, whose root span is outside the bound the
+// joined subquery carries by design (v0.9.1285 put it there to stop a
+// full-table scan, and widening it back is not on the table). Those
+// rows name the earliest still-visible span instead of nothing.
+//
+// Both layers are pinned because either one alone still ships a bug:
+// drop layer 1 and every row is arbitrary again; drop layer 2 and
+// 17.5% of rows go back to blank.
+func TestRepeatedSpansSQLResolvesRealRootName(t *testing.T) {
+	cases := []struct {
+		name      string
+		keysArray string
+		whereSQL  string
+	}{
+		{
+			name:      "default db.statement — the shape the operator hit",
+			keysArray: "[toString(db_statement)]",
+			whereSQL:  "WHERE time >= ? AND time <= ?",
+		},
+		{
+			name:      "attr-array key (carries a bind arg)",
+			keysArray: "[toString(attr_values[indexOf(attr_keys, ?)])]",
+			whereSQL:  "WHERE time >= ? AND time <= ?",
+		},
+		{
+			name:      "multi-key group-by",
+			keysArray: "[toString(name), toString(peer_service)]",
+			whereSQL:  "WHERE time >= ? AND time <= ? AND service_name = ?",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sql := repeatedSpansSQL(tc.keysArray, tc.whereSQL)
+
+			// Isolate the outer SELECT projection and assert against
+			// THAT. The inner CTE also aggregates over spans, so a
+			// whole-query match would let an inner-scope coincidence
+			// satisfy a check about the outer root-name column.
+			outer := strings.Index(sql, "SELECT d.trace_id")
+			fromDup := strings.Index(sql, "FROM dup_traces d")
+			if outer < 0 || fromDup < 0 || fromDup < outer {
+				t.Fatalf("cannot locate the outer SELECT projection\n--- SQL ---\n%s", sql)
+			}
+			projection := sql[outer:fromDup]
+
+			// (1) PRIMARY LAYER — the root test must be an argument OF
+			// the aggregate, not a filter applied to its result. This is
+			// the exact regression: `any(if(...))` evaluates `any` first.
+			if !strings.Contains(projection, "anyIf(s.name, s.parent_id = '')") {
+				t.Errorf("root name is not resolved with anyIf over the root "+
+					"predicate; an aggregate that picks a row BEFORE testing "+
+					"parent_id returns a non-root ~44 times in 45 and the row "+
+					"renders blank (v0.9.1288 — 200/200 rows empty)"+
+					"\n--- PROJECTION ---\n%s", projection)
+			}
+			if strings.Contains(projection, "any(if(s.parent_id") {
+				t.Errorf("the v0.9.1288 defect is back verbatim: `any` resolves "+
+					"before the root predicate, so the predicate tests an "+
+					"arbitrary span\n--- PROJECTION ---\n%s", projection)
+			}
+
+			// (2) FALLBACK LAYER — an independent property. The joined
+			// subquery is time-bounded (v0.9.1285), so a trace older than
+			// the window has no root inside it and layer 1 alone leaves
+			// 17.5% of rows blank. argMin over the time column names the
+			// earliest span that IS visible.
+			if !strings.Contains(projection, "argMin(s.name, s.time)") {
+				t.Errorf("no fallback for the window-overhang case: when a trace "+
+					"started before `from` its root is outside the joined "+
+					"subquery's bound and the primary layer yields the empty "+
+					"string (v0.9.1288 — 35 of 200 rows measured)"+
+					"\n--- PROJECTION ---\n%s", projection)
+			}
+			// The two layers have to be WIRED to each other. Both
+			// expressions being present but only one projected would pass
+			// the checks above.
+			if !strings.Contains(projection, "if(anyIf(s.name, s.parent_id = '') != '',") {
+				t.Errorf("the layers are not composed: the fallback must be the "+
+					"else-branch of an emptiness test on the primary layer"+
+					"\n--- PROJECTION ---\n%s", projection)
+			}
+
+			// argMin reads `time`, so the joined subquery has to project
+			// it. Without this the fallback would not compile at all —
+			// and a text-only pin would not have noticed.
+			if !strings.Contains(sql, "SELECT trace_id, service_name, parent_id, name, time") {
+				t.Errorf("joined subquery does not project `time`; argMin(s.name, "+
+					"s.time) has nothing to order by\n--- SQL ---\n%s", sql)
+			}
+
+			// The Go scanner reads exactly seven columns
+			// (QueryRepeatedSpans). Aliasing the intermediate layers would
+			// project extra columns and break the scan, so the outer
+			// projection must stay at seven top-level items.
+			if n := strings.Count(projection, " AS "); n != 0 {
+				t.Errorf("outer projection introduced %d alias(es); every SELECT "+
+					"item is a scanned column and QueryRepeatedSpans reads "+
+					"exactly 7\n--- PROJECTION ---\n%s", n, projection)
+			}
+
+			// Neither layer may bind an argument — the v0.9.1286
+			// positional-drift defect sits one slot away.
+			gotPlaceholders := strings.Count(sql, "?")
+			wantPlaceholders := strings.Count(tc.keysArray, "?") +
+				strings.Count(tc.whereSQL, "?") +
+				2 + // HAVING cnt >= ?, LIMIT ?
+				2 //  the joined subquery's from/to
+			if gotPlaceholders != wantPlaceholders {
+				t.Errorf("placeholder count = %d, want %d — the root-name layers "+
+					"must bind NO argument or every arg after them shifts a "+
+					"slot (v0.9.1286)\n--- SQL ---\n%s",
+					gotPlaceholders, wantPlaceholders, sql)
+			}
+		})
+	}
+}
+
 // v0.9.1287 — the arg-order contract, re-asserted against the SQL that
 // now carries the empty-tuple exclusion. TestRepeatedSpansArgsMatchPlaceholderOrder
 // already pins the builder, but it pins repeatedSpansArgs against

@@ -1,5 +1,6 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { navHref } from '@/lib/navHref';
 import { encodeRange } from '@/lib/urlState';
 import { Topbar } from '@/components/Topbar';
 import { DrillButton } from '@/components/DrillButton';
@@ -396,7 +397,9 @@ function ServiceDetailInner() {
           </div>
         )}
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
-          <Link to="/services" className="sec" style={{
+          {/* v0.9.1320 — geri linki pencereyi + env'i taşır (navHref);
+              çıplak `/services` operatörü sticky pencereye düşürüyordu. */}
+          <Link to={navHref('/services', searchParams.toString())} className="sec" style={{
             padding: '5px 12px', border: '1px solid var(--border)',
             borderRadius: 6, fontSize: 12, color: 'var(--text)', textDecoration: 'none',
           }}>← All services</Link>

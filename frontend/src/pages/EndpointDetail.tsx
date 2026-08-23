@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { navHref } from '@/lib/navHref';
 import { Topbar } from '@/components/Topbar';
 import { Card, LinkButton } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -122,7 +123,7 @@ export default function EndpointDetailPage() {
         <PageShell>
           <Empty icon="⚠" title="No endpoint in this link">
             The URL is missing <code>service</code> or <code>path</code>.
-            {' '}<Link to="/endpoints">Back to Endpoints →</Link>
+            {' '}<Link to={navHref('/endpoints', search)}>Back to Endpoints →</Link>
           </Empty>
         </PageShell>
       </>
@@ -134,7 +135,8 @@ export default function EndpointDetailPage() {
       <Topbar title="Endpoint" range={range} onRangeChange={setRange} envApplies />
       <PageShell>
         <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 8 }}>
-          <Link to="/endpoints">Endpoints</Link> › endpoint detail
+          {/* v0.9.1320 — kırıntı linki pencereyi + env'i taşır (navHref). */}
+          <Link to={navHref('/endpoints', search)}>Endpoints</Link> › endpoint detail
         </div>
 
         {/* Identity header — method, route, service, the scope it was

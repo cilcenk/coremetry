@@ -38,17 +38,75 @@ import (
 // yeniden yazmadığını kontrol ettim" demektir.
 //
 // 2026-08-23'te chc-0 üzerinde ÖLÇÜLDÜ (aynı id'nin kaç farklı partition'a
-// düştüğü). Sonuçlar gerekçelerde; ikisi sıfır değil ve bilinçli olarak
-// AÇIK BULGU olarak kaydedildi — bu sürümün kapsamı dışında.
+// düştüğü). Sonuçlar gerekçelerde.
+//
+// ── v0.9.1306 TEŞHİSİ: anomaly_events + problems kayması ─────────────────
+// v0.9.1304'ün açık bıraktığı iki bulgu kovalandı. Sonuç: YAZICI SUÇSUZ.
+// Hiçbir yazma yolu started_at'i taşımayı unutmuyor; kök neden TOPOLOJİ.
+//
+// Mekanizma (ölçülmüş, lokal 2-shard küme):
+//
+//	problems / anomaly_events — ve 34 state tablosu daha — shard-YEREL
+//	Replicated*MergeTree; telemetri tablolarının aksine Distributed
+//	sarmalayıcıları YOK. Uygulama ise COREMETRY_CH_ADDR'deki İKİ host'a
+//	birden bağlanıyor. Ana havuz bilinçli ConnOpenInOrder (v0.9.486), ama
+//	in-order yalnız SAĞLIKLI ilk host'a pinler: chc-0 kısa süre düşünce
+//	bağlantılar chc-1'e (shard 02) kayıyor ve ConnMaxLifetime=1h onları
+//	orada bir saate kadar tutuyor.
+//
+//	O pencerede UpsertAnomalyEvents'in taşıma SELECT'i (anomaly_event.go
+//	:153) chc-1'e düşüyor. Sorgu HATA VERMİYOR — shard'da satır olmadığı
+//	için dürüstçe 0 satır dönüyor. mergeAnomalyCarry exists=false görüyor
+//	ve started_at'i TAZELİYOR; sonraki INSERT chc-0'a düşünce taze değer
+//	eski satırın YANINA, BAŞKA bir partition'a yazılıyor.
+//
+// Kanıt: 23 sıfırlama anının 23'ü de chc-1'e yazım penceresiyle çakışıyor
+// (medyan <1 dk). Bir tikin tüm batch'i tek nanosaniyeyi paylaşıyor (bir
+// anda 10 id'ye kadar) — tek tek değil, toplu sıfırlanıyorlar.
+//
+// problems tarafı %100 TÜREV: kayan 21 id'nin 21'i `anomaly-auto:`, ve o
+// id'lerin 50 satırının 50'sinin started_at'i nanosaniyesine kadar bir
+// anomaly_events değeri. evaluator.go:1323 açık problem bulamayınca
+// startedAt = ev.StartedAt alıyor; FindOpenProblem de aynı yanlış shard'a
+// düştüğü için hem "yeniden aç" hem de "sıfırlanmış başlangıcı miras al"
+// aynı anda oluyor. problems'ın anomaly DIŞI 4476 id'sinde kayma SIFIR.
+//
+// Bu kozmetik DEĞİL: started_at hem P1 açık-saat eşiğini hem
+// effectiveSeverity'nin yaş tabanlı yükseltmesini besliyor (evaluator.go
+// :1330). Sıfırlanan başlangıç, yaşlanmış bir problemi sessizce GERİ
+// indiriyor.
+//
+// v0.9.1304'ün çaresi (PARTITION BY'ı SÖKMEK) buraya TAŞINMIYOR: o çare
+// DROP+CREATE ile geliyordu, bu iki tablo ise geri getirilemez operatör
+// durumu taşıyor (ack, assignee, AI özeti, 30 günlük anomali geçmişi).
+// Retention BLOKÖR DEĞİL — doğrulandı: EnforceRetention yalnız spans /
+// logs / metric_points / profiles / exemplars / span_links{,_reverse}
+// partition'larını DROP ediyor, bu ikisine dokunmuyor. Yani partition
+// düşürülebilir, ama veri KORUYAN bir repartition göçüyle (CREATE yeni +
+// INSERT SELECT + RENAME) — bir sürümün değil, bir spec'in işi.
+//
+// Doğruluk bugün AYAKTA ama tek frene asılı: FINAL'in partition'lar arası
+// birleştirmesi. ÖLÇÜLDÜ — aynı sorgu
+// do_not_merge_across_partitions_select_final=1 ile tek problem id'si
+// için ÜÇ satır döndürüyor. Kural P1'in tam olarak uyardığı yer.
+//
+// Operatör kararı bekleyen iki çare: (1) state tablolarını shard'dan
+// bağımsız kıl (ortak replica path / Distributed + id sharding key) —
+// asıl düzeltme; (2) state havuzunu tek host'a pinle — tutarlılığı alır,
+// HA'yı verir. İkisi de prod etkili, ikisi de bu dilimin dışında.
 var partitionNotInOrderBy = map[string]string{
-	"anomaly_events": "started_at = olayın BAŞLANGICI, tam-satır replace'te " +
-		"taşınır (recorder last_seen'i günceller, started_at'i değil). " +
-		"ÖLÇÜM 2026-08-23: 185 id'nin 28'i yine de >1 gün partition'ına " +
-		"düşmüş — yazma yollarından biri started_at'i kaydırıyor. AÇIK " +
-		"BULGU, ayrı bir dilim (kapsam: v0.9.1304 değil).",
+	"anomaly_events": "started_at = olayın BAŞLANGICI ve mergeAnomalyCarry " +
+		"onu ASLA tazelememeye söz veriyor. ÖLÇÜM 2026-08-23: 185 id'nin " +
+		"28'i yine de >1 gün partition'ında. TEŞHİS v0.9.1306: yazıcı değil " +
+		"TOPOLOJİ — taşıma SELECT'i satırı taşımayan shard'a düşünce 0 satır " +
+		"dönüyor, exists=false oluyor, started_at taze basılıyor. Yukarıdaki " +
+		"blokta tam gerekçe; çare veri koruyan repartition göçü (spec).",
 	"problems": "started_at = problemin BAŞLANGICI; problemInsertArgs onu " +
 		"mevcut satırdan taşır. ÖLÇÜM 2026-08-23: 4560 id'nin 21'i >1 gün " +
-		"partition'ında. AÇIK BULGU, ayrı dilim.",
+		"partition'ında. TEŞHİS v0.9.1306: %100 TÜREV — 21/21 kayan id " +
+		"`anomaly-auto:`, 50/50 satırın started_at'i bir anomaly_events " +
+		"değerine nanosaniyesine kadar eşit. anomaly_events düzelince bu da " +
+		"düzelir; bağımsız bir yazıcı hatası YOK (anomaly dışı 4476 id: 0).",
 	"incidents": "started_at operatörün açtığı olayın başlangıcı, güncelleme " +
 		"yollarında taşınıyor. ÖLÇÜM 2026-08-23: 2861 id, 0 çoklu-partition.",
 	"runbook_executions": "started_at bir koşumun başlangıcı — koşum başına " +

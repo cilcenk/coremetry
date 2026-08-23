@@ -1713,9 +1713,9 @@ function StateUnifyWizardPanel() {
               color: pre.supported ? 'var(--text2)' : 'var(--warn)',
             }}>{pre.detail}</div>
 
-            {pre.macros.length > 0 && (
+            {(pre.macros ?? []).length > 0 && (
               <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 12 }}>
-                {pre.macros.map(m => (
+                {(pre.macros ?? []).map(m => (
                   <div key={m.host}>
                     <code>{m.host}</code> → shard <code>{m.shard || '—'}</code>,
                     replica <code>{m.replica || '—'}</code> → <code>{m.uniq}</code>
@@ -1748,9 +1748,9 @@ function StateUnifyWizardPanel() {
                     {run.error} — kalan tablolara DOKUNULMADI. Yedek duruyor, geri alma tek ifade.
                   </div>
                 )}
-                {run.results.length > 0 && (
+                {(run.results ?? []).length > 0 && (
                   <div style={{ marginTop: 8, maxHeight: 220, overflowY: 'auto', fontSize: 11 }}>
-                    {run.results.map(r => (
+                    {(run.results ?? []).map(r => (
                       <div key={r.table} style={{
                         display: 'flex', justifyContent: 'space-between', gap: 8,
                         padding: '3px 0', borderBottom: '1px solid var(--border)',
@@ -1779,7 +1779,7 @@ function StateUnifyWizardPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pre.tables.map(t => <StateUnifyRow key={t.name} t={t} />)}
+                  {(pre.tables ?? []).map(t => <StateUnifyRow key={t.name} t={t} />)}
                 </tbody>
               </table>
             </div>
@@ -1854,7 +1854,11 @@ function StateUnifyWizardPanel() {
 // Bir state tablosunun ön kontrol satırı. "Bölünmüş" bir hüküm değil
 // ÖLÇÜM: tablonun küme genelinde kaç farklı zookeeper_path'i var.
 function StateUnifyRow({ t }: { t: StateUnifyTable }) {
-  const counts = t.hosts.map(h => h.rows);
+  // Sunucu artık boş dilim gönderiyor (v0.9.1315), ama tek bir null alan
+  // TÜM sayfayı hata sınırına düşürdüğü için burada da savunma var:
+  // bu panel bir göç yüzeyi, çökmesi operatörü göçün ortasında kör bırakır.
+  const hosts = t.hosts ?? [];
+  const counts = hosts.map(h => h.rows);
   const uneven = counts.length > 1 && counts.some(c => c !== counts[0]);
   return (
     <tr>
@@ -1870,7 +1874,7 @@ function StateUnifyRow({ t }: { t: StateUnifyTable }) {
             : <span className="badge b-ok">birleşik</span>}
       </td>
       <td style={{ fontSize: 11, color: uneven ? 'var(--err)' : 'var(--text3)' }}>
-        {t.hosts.length === 0 ? '—' : t.hosts.map(h => `${h.host}: ${fmtNum(h.rows)}`).join(' · ')}
+        {hosts.length === 0 ? '—' : hosts.map(h => `${h.host}: ${fmtNum(h.rows)}`).join(' · ')}
       </td>
       <td style={{ fontSize: 11, color: t.catchUp === 'YOK' ? 'var(--warn)' : 'var(--text3)' }}>
         {t.catchUp}

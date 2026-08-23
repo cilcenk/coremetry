@@ -95,7 +95,10 @@ func (f *stateUnifyFlight) snapshot() stateUnifyRun {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := f.run
-	out.Results = append([]chstore.StateUnifyTableResult(nil), f.run.Results...)
+	// append([]T(nil), boş...) NIL döner — ilk sayfa açılışında `results`
+	// JSON'da `null` gidip FE'de `.length` patlatıyordu (v0.9.1315).
+	out.Results = make([]chstore.StateUnifyTableResult, 0, len(f.run.Results))
+	out.Results = append(out.Results, f.run.Results...)
 	return out
 }
 
@@ -118,6 +121,8 @@ func (s *Server) getStateUnifyPreflight(w http.ResponseWriter, r *http.Request) 
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Nil dilim JSON'da `null` olur ve FE `.length`/`.map()` üstünde patlar.
+	res.Normalize()
 	writeJSON(w, res)
 }
 

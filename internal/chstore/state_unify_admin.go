@@ -123,6 +123,39 @@ type StateUnifyPreflightResult struct {
 	TablesVerdict   StateUnifyVerdict `json:"tablesVerdict"`
 }
 
+// Normalize — JSON'a çıkmadan ÖNCE nil dilimleri boş dilime çevirir.
+//
+// v0.9.1315 (operatör-bildirimi: /system/clickhouse "Something went
+// wrong" ile TÜM sayfa çöküyordu). Go'da nil dilim JSON'a `null`
+// yazılır ve frontend `x.length` / `x.map()` üstünde patlar; React hata
+// sınırı yalnız paneli değil SAYFAYI alır.
+//
+// Asıl kaynak Macros/Tables DEĞİLDİ — ikisi de struct literalinde boş
+// dilime kuruluyor. Kaynak SATIRI OLMAYAN TABLOLARDI: host sayıları
+// `GROUP BY host` ile toplanıyor ve 0 satırlı bir tablo HİÇ GRUP
+// ÜRETMEZ, yani `hostCounts[ad]` map'te bulunamıyor ve `Hosts` nil
+// kalıyor. Lokalde ölçüldü: `anomaly_silences` (0 satır) tam olarak bu
+// şekli üretiyor ve tek başına sayfayı çökertiyordu.
+//
+// Tek çıkış noktası: handler her dönüşte bunu çağırır, böylece store'a
+// eklenen yeni bir erken dönüş dalı kuralı bir daha kıramaz.
+func (r *StateUnifyPreflightResult) Normalize() {
+	if r.Macros == nil {
+		r.Macros = []StateUnifyMacro{}
+	}
+	if r.Clusters == nil {
+		r.Clusters = []string{}
+	}
+	if r.Tables == nil {
+		r.Tables = []StateUnifyTable{}
+	}
+	for i := range r.Tables {
+		if r.Tables[i].Hosts == nil {
+			r.Tables[i].Hosts = []StateUnifyHostCount{}
+		}
+	}
+}
+
 // StateUnifyStep — tek bir ifadenin sonucu (ilerleme ekranı için).
 type StateUnifyStep struct {
 	Step string `json:"step"`

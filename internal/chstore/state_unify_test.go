@@ -348,3 +348,47 @@ func TestStateUnifyVerdictKnown(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.1315 — hiçbir dilim alanı JSON'a `null` gitmemeli.
+//
+// Orijinal semptom (operatör-bildirimi): /system/clickhouse sayfası
+// "Something went wrong" ile TAMAMEN çöküyordu. Ön kontrol yanıtında
+// 0 satırlı tabloların `hosts` alanı `null` gidiyor, frontend
+// `t.hosts.length` üstünde TypeError atıyor ve React hata sınırı yalnız
+// paneli değil sayfayı alıyordu. Kaynak: host sayıları `GROUP BY host`
+// ile toplanıyor ve 0 satırlı tablo HİÇ GRUP ÜRETMİYOR, yani map'te
+// bulunamayıp nil kalıyor.
+func TestStateUnifyPreflightNeverMarshalsNullSlices(t *testing.T) {
+	// Ön koşulu birebir kur: bir tablo var ama satırı yok, yani host
+	// sayıları map'ten gelmedi ve Hosts nil.
+	res := StateUnifyPreflightResult{
+		Tables: []StateUnifyTable{{Name: "anomaly_silences", Engine: "ReplicatedReplacingMergeTree"}},
+	}
+	if res.Tables[0].Hosts != nil {
+		t.Fatal("kurgu hatalı: Hosts nil olmalıydı")
+	}
+
+	res.Normalize()
+
+	b, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("marshal hatası: %v", err)
+	}
+	got := string(b)
+	for _, field := range []string{"hosts", "macros", "tables", "clusters"} {
+		if strings.Contains(got, `"`+field+`":null`) {
+			t.Errorf("%q alanı JSON'a null gitti — FE .length/.map() üstünde patlar:\n%s", field, got)
+		}
+	}
+
+	// Sıfır değerli sonuç (her erken dönüş dalının şekli) de temiz olmalı.
+	var zero StateUnifyPreflightResult
+	zero.Normalize()
+	zb, err := json.Marshal(zero)
+	if err != nil {
+		t.Fatalf("marshal hatası: %v", err)
+	}
+	if strings.Contains(string(zb), ":null") {
+		t.Errorf("sıfır değerli ön kontrol null dilim içeriyor:\n%s", zb)
+	}
+}

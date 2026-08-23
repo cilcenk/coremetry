@@ -247,6 +247,46 @@ export function dbTracesHref(p: {
 }
 
 
+// statementTracesHref — v0.7.67'de doğdu, v0.9.1324'te bu aileye TAŞINDI
+// (§3.1 K2). "Bu ifadeyi çalıştıran trace'leri göster."
+//
+// Neden taşındı: eski hâli features/dependencies/panels/shared.tsx'te elle
+// query string kuruyordu ve `range=` HİÇ yazmıyordu — yani bu dosyanın var
+// oluş sebebinin (yukarıdaki dört-kez-gemiye-giden bug) birebir tekrarıydı.
+// Daha da anlamlısı: aynı bileşen bir satır aşağıda HostLink'e pencereyi
+// veriyordu (shared.tsx, v0.9.968), yani pencere ELDEYDİ, sadece bu linke
+// ulaşmıyordu. Pencereyi zorunlu argüman yapmak o sınıfı imza düzeyinde
+// kapatır.
+//
+// LIKE-öneki BİLİNÇLİ (v0.5.200 emsali, SlowQueries.tsx): Oracle V$SQL
+// metni normalize edilmiş gelir, span'deki db.statement ise sürücünün
+// bastığı ham metindir — tam eşleşme boş döner. İlk 60 karakter, en uzun
+// güvenilir ortak önek. rootOnly=false çünkü db.statement'ı TAŞIYAN span
+// çocuk CLIENT span'idir; /traces'in rootOnly varsayılanı hiçbir şey
+// listelemezdi (v0.8.585 sınıfı).
+//
+// service isteğe bağlı: DetailDrawer'ın top-ops satırı DB tarafının
+// toplamıdır ve tek bir servise ait değildir; orada kapsam yalnız
+// ifadedir.
+export const STATEMENT_LIKE_PREFIX_LEN = 60;
+
+export function statementTracesHref(p: {
+  window: TracesPivot['window'];
+  statement: string;
+  service?: string;
+}): string {
+  return tracesPivotHref({
+    window: p.window,
+    service: p.service,
+    filters: encodeFilters([
+      { k: 'db.statement', op: 'LIKE', v: [p.statement.slice(0, STATEMENT_LIKE_PREFIX_LEN)] },
+    ]),
+    view: 'list',
+    rootOnly: false,
+  });
+}
+
+
 // repeatsExploreHref — v0.9.1277 (Dynatrace-parite #6). Pivot into
 // Explore's "Repeats" result mode: "hangi trace'lerde bu çağrı N+ kez
 // tekrarlıyor".

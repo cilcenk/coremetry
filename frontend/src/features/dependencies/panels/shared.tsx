@@ -7,6 +7,7 @@ import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
 import type { FilterExpr } from '@/lib/types';
 import { serviceHref } from '@/lib/serviceHref';
+import { statementTracesHref } from '@/lib/pivotHref';
 import { metricCatalogueHref } from '@/pages/explore/urlCodec';
 import { Button } from '@/components/ui/Button';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -293,9 +294,13 @@ export function OracleMetricDrillModal({ drill, range, instance, engine, onClose
 // Complementary to the span-derived "Top statements" further
 // down: V$SQL sees everything the DB executes, traces only see
 // what the application emits.
-export function TopSQLTable({ rows, instance }: {
+export function TopSQLTable({ rows, instance, range }: {
   rows: TopSQLRow[];
   instance: string;
+  // v0.9.1324 (§3.1 K2) — the statement→/traces exemplar link was the last
+  // windowless pivot in this file; HostLink next to it has carried the
+  // window since v0.9.968.
+  range: TimeRange;
 }) {
   const dt = useDataTable<TopSQLRow>({
     storageKey: 'deps-topsql', columns: TOPSQL_COLS, rows,
@@ -331,7 +336,7 @@ export function TopSQLTable({ rows, instance }: {
                             by the receiver instance as service +
                             rootOnly=false (db.statement lives on the
                             child DB span). */}
-                        <Link to={statementTracesHref(r.sql, instance)}
+                        <Link to={statementTracesHref({ window: range, statement: r.sql, service: instance })}
                           onClick={e => e.stopPropagation()}
                           title="Find traces running this statement (LIKE-prefix, best-effort)"
                           style={{
@@ -366,13 +371,14 @@ export function TopSQLTable({ rows, instance }: {
 // the rest of the panel. When rows exist we delegate to the same
 // TopSQLTable the Oracle panel uses, so the v0.7.67 statement→
 // /traces exemplar link is shared across all three engines.
-export function TopSQLSection({ rows, instance, hint }: {
+export function TopSQLSection({ rows, instance, hint, range }: {
   rows: { sql: string; elapsedSec: number; executions: number; avgElapsedMs: number }[];
   instance: string;
   hint: string;
+  range: TimeRange;
 }) {
   if (rows.length > 0) {
-    return <TopSQLTable rows={rows} instance={instance} />;
+    return <TopSQLTable rows={rows} instance={instance} range={range} />;
   }
   return (
     <div style={{ marginBottom: 14 }}>
@@ -410,21 +416,6 @@ export function fmtDuration(sec: number): string {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m`;
   return `${Math.floor(sec)}s`;
-}
-
-// statementTracesHref — trace-exemplar link for one heavy
-// statement. Mirrors the SlowQueries.tsx pattern (v0.5.200):
-// LIKE-prefix the first 60 chars of db.statement and disable
-// rootOnly so the DB child spans (which actually carry
-// db.statement) match. Oracle V$SQL text is normalised so the
-// prefix LIKE is best-effort. service is optional — the
-// DetailDrawer top-ops case has no per-statement service, so
-// we scope on db.statement alone and leave service blank.
-export function statementTracesHref(statement: string, service?: string): string {
-  const snippet = statement.slice(0, 60);
-  const f = encodeFilters([{ k: 'db.statement', op: 'LIKE', v: [snippet] }]);
-  const svc = service ? `&service=${encodeURIComponent(service)}` : '';
-  return `/traces?view=list&rootOnly=false${svc}&filters=${encodeURIComponent(f)}`;
 }
 
 // PanelHeader is the engine-tile chrome shared by Postgres /

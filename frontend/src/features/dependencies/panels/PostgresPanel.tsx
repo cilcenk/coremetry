@@ -152,7 +152,7 @@ export function PostgresPanel({ instance, range }: { instance: string; range: Ti
             </div>
           )}
 
-          <TopSQLSection rows={data.topSQL} instance={instance}
+          <TopSQLSection rows={data.topSQL} instance={instance} range={range}
             hint="Enable the pg_stat_statements extension + the receiver's statement scrape to populate." />
         </>
       )}

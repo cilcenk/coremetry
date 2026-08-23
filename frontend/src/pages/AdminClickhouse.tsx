@@ -1687,12 +1687,24 @@ function StateUnifyWizardPanel() {
         {pre && (
           <>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-              <KPI label="Küme" value={pre.cluster || '—'} sub={`${pre.shards} shard · ${pre.hosts} host`} />
-              <KPI label="Bölünmüş" value={String(pre.splitCount)} sub="taşınacak tablo"
-                   cls={pre.splitCount > 0 ? 'b-err' : 'b-ok'} />
-              <KPI label="Birleşik" value={String(pre.doneCount)} sub="zaten tek grupta" />
-              <KPI label="Makrolar" value={pre.macrosUnique ? 'benzersiz' : 'ÇAKIŞIYOR'}
-                   sub="{shard}-{replica}" cls={pre.macrosUnique ? 'b-ok' : 'b-err'} />
+              {/* ÜÇ DURUM. Okunamayan alan 'bilinmiyor' (nötr) gösterilir;
+                  '0 tablo' ya da 'ÇAKIŞIYOR' yazmak ölçmediğimiz bir şeyi
+                  ölçmüş gibi sunar (v0.9.1312 prod olayı). */}
+              <KPI label="Küme" value={pre.cluster || '—'}
+                   sub={pre.topologyVerdict === 'ok' ? `${pre.shards} shard · ${pre.hosts} host` : 'topoloji okunamadı'}
+                   cls={pre.topologyVerdict === 'bad' ? 'b-err' : undefined} />
+              <KPI label="Bölünmüş"
+                   value={pre.tablesVerdict === 'ok' ? String(pre.splitCount) : '—'}
+                   sub={pre.tablesVerdict === 'ok' ? 'taşınacak tablo' : 'bilinmiyor'}
+                   cls={pre.tablesVerdict === 'ok' ? (pre.splitCount > 0 ? 'b-err' : 'b-ok') : undefined} />
+              <KPI label="Birleşik"
+                   value={pre.tablesVerdict === 'ok' ? String(pre.doneCount) : '—'}
+                   sub={pre.tablesVerdict === 'ok' ? 'zaten tek grupta' : 'bilinmiyor'} />
+              <KPI label="Makrolar"
+                   value={pre.macrosVerdict === 'ok' ? 'benzersiz'
+                        : pre.macrosVerdict === 'bad' ? 'ÇAKIŞIYOR' : 'bilinmiyor'}
+                   sub={pre.macrosVerdict === 'unknown' ? 'ölçülemedi' : '{shard}-{replica}'}
+                   cls={pre.macrosVerdict === 'ok' ? 'b-ok' : pre.macrosVerdict === 'bad' ? 'b-err' : undefined} />
             </div>
 
             <div style={{

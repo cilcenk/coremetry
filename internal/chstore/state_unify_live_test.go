@@ -19,8 +19,8 @@ import (
 // yakınsaması taklit edilemez. Bu yüzden test CI'da koşmaz; operatör ya
 // da geliştirici lokal dağıtık kümeye açıkça yönlendirir:
 //
-//   COREMETRY_LIVE_CH=localhost:9100 COREMETRY_LIVE_CLUSTER=coremetry \
-//   COREMETRY_LIVE_DB=coremetry go test ./internal/chstore/ -run Live -v
+//	COREMETRY_LIVE_CH=localhost:9100 COREMETRY_LIVE_CLUSTER=coremetry \
+//	COREMETRY_LIVE_DB=coremetry go test ./internal/chstore/ -run Live -v
 //
 // SALT OKUNUR: bu test HİÇBİR ŞEY YAZMAZ. Ön kontrolü koşar ve
 // ölçümlerin kendi içinde tutarlı olduğunu doğrular. Göçün gerçekten
@@ -65,8 +65,8 @@ func TestLiveStateUnifyPreflight(t *testing.T) {
 	if len(pre.Tables) == 0 {
 		t.Fatal("ön kontrol hiç state tablosu döndürmedi")
 	}
-	if !pre.MacrosUnique {
-		t.Errorf("makrolar benzersiz değil: %+v", pre.Macros)
+	if pre.MacrosVerdict != VerdictOK {
+		t.Errorf("makro hükmü %q, beklenen ok: %+v", pre.MacrosVerdict, pre.Macros)
 	}
 	if pre.SplitCount+pre.DoneCount != len(pre.Tables) {
 		t.Errorf("bölünmüş(%d) + birleşik(%d) != toplam(%d)", pre.SplitCount, pre.DoneCount, len(pre.Tables))

@@ -1,6 +1,7 @@
 package chstore
 
 import (
+	"encoding/json"
 	"os"
 	"reflect"
 	"sort"
@@ -275,6 +276,75 @@ func TestStateUnifyTableFromDDL(t *testing.T) {
 	for _, tc := range tests {
 		if got := stateUnifyTableFromDDL(tc.in); got != tc.want {
 			t.Errorf("stateUnifyTableFromDDL(%q) = %q, beklenen %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// v0.9.1314 — okunamayan alan "bilinmiyor" olmalı, "sorunlu" DEĞİL.
+//
+// Orijinal semptom (prod, v0.9.1312): topoloji sorgusu UInt64 tarama
+// hatası verdi, ön kontrol erken döndü, makro kontrolü HİÇ KOŞMADI ve
+// `MacrosUnique bool` sıfır değerinde (false) kaldı. Arayüz bunu
+// "MAKROLAR: ÇAKIŞIYOR" diye bastı — oysa prod'daki makrolar
+// benzersizdi (01-node1, 01-node2, 02-node1, 02-node2). Fail-closed
+// davranış doğruydu; YALAN SÖYLEYEN ETİKETTİ.
+//
+// Sabitlenen sözleşme: her verdict alanının SIFIR DEĞERİ bilinmiyordur.
+// Erken dönen her yol, ölçemediği alanı otomatik olarak bilinmiyor
+// bırakır — ayrıca "unknown yaz" demeyi unutmak mümkün değil.
+func TestStateUnifyZeroValueVerdictsAreUnknown(t *testing.T) {
+	// Ön kontrolün her erken dönüşü tam olarak bu şekli üretir: alanlar
+	// hiç yazılmamıştır.
+	var res StateUnifyPreflightResult
+
+	fields := map[string]StateUnifyVerdict{
+		"TopologyVerdict": res.TopologyVerdict,
+		"MacrosVerdict":   res.MacrosVerdict,
+		"TablesVerdict":   res.TablesVerdict,
+	}
+	for name, v := range fields {
+		if v.Known() {
+			t.Errorf("%s sıfır değeri Known() — ölçülmemiş alan kesin bir hüküm bildiriyor (%q)", name, v)
+		}
+		if v == VerdictBad {
+			t.Errorf("%s sıfır değeri 'bad' — okunamayan alan 'ölçtüm ve bozuk' diye raporlanır", name)
+		}
+	}
+
+	// Fail-closed korunmalı: bilinmiyorken göç BAŞLATILAMAZ.
+	if res.Supported {
+		t.Error("ölçüm yapılmamış ön kontrol Supported=true — göç bloklanmalıydı")
+	}
+
+	// Tel üzerinde boş dize olmamalı; arayüz '' ile undefined arasında
+	// tahmin yürütmek zorunda kalmasın.
+	b, err := json.Marshal(res.MacrosVerdict)
+	if err != nil {
+		t.Fatalf("marshal hatası: %v", err)
+	}
+	if string(b) != `"unknown"` {
+		t.Errorf("bilinmiyor JSON'da %s, beklenen \"unknown\"", b)
+	}
+}
+
+func TestStateUnifyVerdictKnown(t *testing.T) {
+	tests := []struct {
+		v        StateUnifyVerdict
+		known    bool
+		wantJSON string
+	}{
+		{VerdictUnknown, false, `"unknown"`},
+		{VerdictOK, true, `"ok"`},
+		{VerdictBad, true, `"bad"`},
+		{StateUnifyVerdict("çöp"), false, `"unknown"`},
+	}
+	for _, tc := range tests {
+		if got := tc.v.Known(); got != tc.known {
+			t.Errorf("%q.Known() = %v, beklenen %v", tc.v, got, tc.known)
+		}
+		b, _ := json.Marshal(tc.v)
+		if string(b) != tc.wantJSON {
+			t.Errorf("%q JSON = %s, beklenen %s", tc.v, b, tc.wantJSON)
 		}
 	}
 }

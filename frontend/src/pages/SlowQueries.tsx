@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from 'react';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { Link, useSearchParams } from 'react-router-dom';
+import { navHref } from '@/lib/navHref';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
@@ -198,7 +199,8 @@ export default function SlowQueriesPage() {
             <Button variant="secondary" size="sm"
               onClick={() => { setDbSystem(''); setDbName(''); }}>Clear</Button>
           )}
-          <Link to="/databases" className="sec"
+          {/* v0.9.1320 — geri linki pencereyi + env'i taşır (navHref). */}
+          <Link to={navHref('/databases', sqParams.toString())} className="sec"
             style={{ marginLeft: 'auto', fontSize: 11, padding: '4px 10px', textDecoration: 'none' }}>
             ← Database overview
           </Link>

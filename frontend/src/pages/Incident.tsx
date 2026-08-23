@@ -1,6 +1,7 @@
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Link } from 'react-router-dom';
+import { navHref } from '@/lib/navHref';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, AlertTriangle, Bell, Check, MessageSquare, Zap, Paperclip, PenLine } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
@@ -184,7 +185,8 @@ function Inner() {
       <PageShell>
         {/* Detail bar — back · status · severity · (spacer) · actions */}
         <div className="rb-bar">
-          <Link to="/incidents" className="sec" style={{
+          {/* v0.9.1320 — geri linki pencereyi + env'i taşır (navHref). */}
+          <Link to={navHref('/incidents', sp.toString())} className="sec" style={{
             padding: '5px 12px', border: '1px solid var(--border)', borderRadius: 6,
             fontSize: 12, color: 'var(--text)', textDecoration: 'none',
             display: 'inline-flex', alignItems: 'center', gap: 6,

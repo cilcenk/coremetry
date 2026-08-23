@@ -1,5 +1,6 @@
 import { lazy, Suspense, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { navHref } from '@/lib/navHref';
 import { useQuery } from '@tanstack/react-query';
 import { Turtle } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
@@ -157,7 +158,7 @@ export default function DatabaseDetailPage() {
         <PageShell>
           <Empty icon="⚠" title="No database in this link">
             The URL is missing <code>system</code> or <code>instance</code>.
-            {' '}<Link to="/databases">Back to Databases →</Link>
+            {' '}<Link to={navHref('/databases', search)}>Back to Databases →</Link>
           </Empty>
         </PageShell>
       </>
@@ -173,7 +174,12 @@ export default function DatabaseDetailPage() {
       <Topbar title="Database" range={range} onRangeChange={setRange} />
       <PageShell>
         <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 8 }}>
-          <Link to="/databases">Databases</Link> › database detail
+          {/* v0.9.1320 — geri/kırıntı linkleri pencereyi ve env'i TAŞIR.
+              Bare bir `/databases` linki, olay penceresiyle bu sayfaya
+              inen operatörü sticky pencereye düşürüyordu; bir geri
+              linkinin bağlamı değiştirmesi, geri linki olmaktan çıkması
+              demek (Pod.tsx:206-209, v0.9.965). */}
+          <Link to={navHref('/databases', search)}>Databases</Link> › database detail
         </div>
 
         <div style={{
@@ -235,7 +241,7 @@ export default function DatabaseDetailPage() {
         {d === null && (
           <Empty icon="⚠" title="Detail query failed">
             The /api/databases/detail request errored.
-            {' '}<Link to="/databases">Back to the overview →</Link>
+            {' '}<Link to={navHref('/databases', search)}>Back to the overview →</Link>
           </Empty>
         )}
 

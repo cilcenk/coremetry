@@ -1291,12 +1291,34 @@ func (s *Store) migrate(ctx context.Context) error {
 		// anomaly_events above, NOT the saved_views catch-all (invariant #5
 		// is for USER state). ReplacingMergeTree(version) keeps the latest
 		// synthesis per anchor; reads use FINAL. ORDER BY is the dedup key
-		// ONLY: (anchor_kind, anchor_id). Low volume (one row per open
-		// anchor) → monthly partition like anomaly_events. candidates is a
-		// JSON String blob (the small ScoredCause list, read whole, never
-		// queried by sub-field) — no nested/Array-of-Tuple schema. TTL drops
-		// stale syntheses 30d after compute, partition-aligned on the
-		// DateTime64 column (toDateTime64 row → toDate → + INTERVAL N DAY).
+		// ONLY: (anchor_kind, anchor_id). candidates is a JSON String blob
+		// (the small ScoredCause list, read whole, never queried by
+		// sub-field) — no nested/Array-of-Tuple schema.
+		//
+		// PARTITION BY YOK ve bu bilinçli (v0.9.1304 — Kural P1 ihlaliydi;
+		// emsal ai_feedback / rca_verdicts). Tablo v0.9.1303'e kadar
+		// `PARTITION BY toYYYYMM(computed_at)` taşıyordu ve computed_at
+		// ORDER BY'da DEĞİL: her tik satırı `now` ile yeniden yazıyor, yani
+		// ay sınırını geçen her AÇIK anchor ikinci bir satır kazanıyordu.
+		// ReplacingMergeTree'nin arka plan birleştirmesi partition SINIRINI
+		// AŞMAZ → o kopya fiziksel olarak ÖLÜMSÜZ (TTL'e kadar), ve
+		// doğruluğu ayakta tutan tek şey `SELECT … FINAL`'in sorgu anında
+		// partition'lar arası birleştirme yapması. Bu bir SUNUCU AYARINA
+		// bağlı: `do_not_merge_across_partitions_select_final=1` (yaygın bir
+		// FINAL hızlandırma vidası) kurulduğu anda FINAL iki satırı da
+		// döndürür ve GetHypotheses'in map yazımı son satırı kazandırır —
+		// ribbon SESSİZCE bayat şüpheli gösterirdi. Ölçüm için CH 24.8.14'te
+		// iki kol da doğrulandı.
+		//
+		// Bedeli yok: hiçbir okuma zamanla budamıyor (iki okuma da ORDER BY
+		// anahtarına eşitlikle giriyor), retention_enforce.go bu tabloyu
+		// yönetmiyor, ve satır sayısı açık anchor sayısıyla sınırlı.
+		//
+		// TTL 30g artık partition-hizalı değil, SATIR düzeyinde (merge
+		// sırasında) uygulanır — ai_feedback/rca_verdicts'in 90g TTL'iyle
+		// aynı şekil. toDate(...) + INTERVAL N DAY formu korunuyor: gün
+		// granülünde sarmalamak v0.6.36 birim-karıştırma kuralına UYGUN
+		// (yasak olan sub-day matematiğin etrafına toDate koymak).
 		`CREATE TABLE IF NOT EXISTS root_cause_hypotheses (
 			anchor_kind   LowCardinality(String),     -- anomaly | problem
 			anchor_id     String,                      -- AnomalyEvent.id OR Problem.id
@@ -1311,7 +1333,6 @@ func (s *Store) migrate(ctx context.Context) error {
 			exemplar_trace_id String    DEFAULT '',  -- v0.9.1057: temsilî trace (Faz 1.2)
 			version       UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
-		PARTITION BY toYYYYMM(computed_at)
 		ORDER BY (anchor_kind, anchor_id)
 		TTL toDate(computed_at) + INTERVAL 30 DAY`,
 		// v0.9.516 — mevcut kurulumlar için in-place kolon ekleme. Taze
@@ -2169,6 +2190,12 @@ func (s *Store) migrate(ctx context.Context) error {
 	// doluyor. 158 ifade × 20 sn ≈ 53 dakika: pod ölmüyor ama hiç
 	// hazır olmuyor (operator-reported, prod).
 	//
+	// v0.9.1304 — root_cause_hypotheses'in PARTITION BY'sız yeniden kurulumu
+	// (Kural P1; gerekçe rootcause_repartition.go). Anlık görüntüden ÖNCE ve
+	// deferDDL kararından ÖNCE: müdahale SENKRON koşmalı, ve `existing`
+	// bundan sonra okunduğu için sonuç ne olursa olsun tutarlı kalır.
+	s.repartitionRootCauseHypotheses(ctx, tableDDLByName(tables, "root_cause_hypotheses"))
+
 	// Taze kurulumda hiçbir şey elenmez; davranış birebir aynı kalır.
 	existing := s.existingObjects(ctx)
 	// v0.9.614 — şema yerindeyse (küme modu + spans mevcut) kalan TÜM

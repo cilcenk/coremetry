@@ -1,3 +1,6 @@
+import { encodeRange } from './urlState';
+import type { TimeRange } from './types';
+
 // logsUrl — pure filter ⇄ URL mapping for /logs (v0.8.546).
 //
 // Extracted so the round-trip is testable without a DOM. The page keeps a
@@ -127,4 +130,122 @@ export function parseDocParam(raw: string | null | undefined): { ts: number; id:
   const id = Number(raw.slice(dot + 1));
   if (!Number.isFinite(ts) || !Number.isFinite(id) || ts <= 0) return null;
   return { ts, id };
+}
+
+// ── logsHref — v0.9.1347 ──────────────────────────────────────────────────
+//
+// The single builder for a `/logs?…` deep link. Lives HERE, next to
+// readLogsParams, because readLogsParams is the consumer contract: a producer
+// in another file drifts from it, and "drifted from the reader" is the whole
+// history of this page's links.
+//
+// THE WINDOW IS REQUIRED, unlike traceHref's. /logs QUERIES by window —
+// it takes it from `?range=` and nowhere else (readLogsParams above has no
+// from/to). A link that drops it lands on the sticky window, and an old
+// trace's logs come back empty: "no logs" for logs that exist. That is
+// operator-reported and it has shipped repeatedly — v0.8.484 (SpanDetail sent
+// `&from=&to=`, params /logs does not read), v0.9.853 (Trace detail's main
+// "≡ Logs" button had no window at all), v0.9.862 (the log-pattern anomaly
+// link carried `q` only). Making it a required argument is the only fix that
+// does not depend on the next author remembering.
+//
+// `null` is an explicit DECLINE, not a default: a surface with no window
+// (a saved log search on /alerts belongs to a rule, not to a moment) says so
+// in one greppable token. You cannot forget the window; you can only refuse
+// it on the record.
+//
+// ── TWO WAYS TO SCOPE TO A SERVICE, AND BOTH ARE CORRECT ─────────────────
+//
+// `service` is the page's service FILTER (an exact column match).
+// `q` is the free-text search box, where `service.name:"x"` is a query_string
+// clause the backend resolves against the column.
+//
+// They are not interchangeable, and the difference is load-bearing:
+// v0.8.521 (operator-reported) moved SpanDetail's trace pivot OFF the exact
+// `traceId` filter and ONTO `q`, because installations whose trace id appears
+// only in the log BODY got an empty "filtered to trace" list from the column
+// match — the server matches an id-shaped `q` against the column AS WELL, so
+// `q` finds both worlds. A later tidy-up that "normalises" those call sites
+// onto the exact filter would re-open that bug. Hence both keys are offered
+// and neither is presented as the canonical one.
+export interface LogsPivot {
+  /**
+   * REQUIRED. The window /logs will query. Absolute ns bounds for an event
+   * (a spike, a trace's span extent), a TimeRange or an already-encoded
+   * `range=` string for the page's own window, or `null` to decline on the
+   * record when the surface genuinely has no moment attached.
+   */
+  window: TimeRange | { fromNs: number; toNs: number } | string | null;
+  /** Exact service-column filter. */
+  service?: string;
+  cluster?: string;
+  /** Free-text search box (`q=`). See the service/q note above. */
+  q?: string;
+  /** OTel severity-number FLOOR; 0/undefined = all levels (13 = warn). */
+  severity?: number;
+  /** Exact trace-id column filter. See the service/q note above. */
+  traceId?: string;
+  spanId?: string;
+  hasTrace?: boolean;
+  /** Pre-encoded FilterExpr[] JSON. */
+  filters?: string;
+  /** Pre-encoded column list. */
+  cols?: string;
+  /** Env scope — keeps a SHARED link honest. */
+  env?: string | null;
+  /**
+   * Symmetric ns padding for an ABSOLUTE window: ingest lag and clock skew
+   * routinely put a log a minute either side of the span that caused it.
+   * Ignored for a preset or a pre-encoded string, where it has no meaning.
+   */
+  padNs?: number;
+}
+
+function pivotRangeParam(w: LogsPivot['window'], padNs: number): string {
+  if (!w) return '';
+  // Already-encoded values pass through. A bare 'custom' is the one token
+  // that would survive decodeRange while carrying no bounds — timeRangeToNs
+  // then resolves it to a silent 24h (utils.ts:17-25), so drop it instead.
+  if (typeof w === 'string') return w === 'custom' ? '' : w;
+  if ('preset' in w) {
+    if (w.preset === 'custom' && !(w.fromMs && w.toMs)) return '';
+    return encodeRange(w);
+  }
+  // The ns branch goes through logsRangeParam, which owns the floor/ceil rule
+  // and the decodeRange acceptance test. Note Math.round is NOT equivalent:
+  // rounding the low edge UP or the high edge DOWN narrows the window below
+  // what the caller asked for, which is the v0.9.963 rule.
+  return logsRangeParam(w.fromNs, w.toNs, padNs);
+}
+
+export function logsHref(p: LogsPivot): string {
+  const q = new URLSearchParams();
+  // Key names and their empty-value handling mirror writeLogsParams above —
+  // `q` (never the legacy `search`), `hasTrace=1`, severity written only when
+  // it is a real floor.
+  if (p.service) q.set('service', p.service);
+  if (p.cluster) q.set('cluster', p.cluster);
+  if (p.q) q.set('q', p.q);
+  if (p.severity && p.severity > 0) q.set('severity', String(p.severity));
+  if (p.traceId) q.set('traceId', p.traceId);
+  if (p.spanId) q.set('spanId', p.spanId);
+  if (p.hasTrace) q.set('hasTrace', '1');
+  if (p.filters) q.set('filters', p.filters);
+  if (p.cols) q.set('cols', p.cols);
+  if (p.env) q.set('env', p.env);
+  const range = pivotRangeParam(p.window, p.padNs ?? 0);
+  if (range) q.set('range', range);
+  return `/logs?${q.toString()}`;
+}
+
+// serviceLogQuery — the `q=` spelling of "scope to this service".
+//
+// Two surfaces (the anomaly drawer and the problem detail page) built this
+// clause by hand, character for character, including the quote escape. A
+// third copy is how one of them ends up not escaping. Kept separate from
+// logsHref's `service` option because choosing between the exact filter and
+// the free-text clause is the CALLER's decision (see the note above), not
+// something a builder should quietly make for them.
+export function serviceLogQuery(service: string): string {
+  return `service.name:"${service.replace(/"/g, '\\"')}"`;
 }

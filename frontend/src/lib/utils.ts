@@ -156,10 +156,15 @@ export function fmtAgoNs(unixNs: number): string {
 // agoTR — fmtAgoNs'in Türkçe kardeşi. v0.9.1317'de components/ai/greeting.ts
 // içinden BURAYA taşındı: yukarıdaki v0.8.463 notu bu dosyayı "ne kadar önce"
 // yardımcılarının tek evi ilan ediyor, ve agoTR o konsolidasyonun dışında
-// kalmış beşinci kopyaydı. İkinci bir tüketici (/services "Son görülme"
-// kolonu) eklerken onu bir özellik klasöründe bırakmak tam da v0.8.463'ün
-// temizlediği şekli geri getirirdi. greeting.ts onu buradan re-export eder,
-// böylece kendi testi ve çağrı yeri aynen çalışır.
+// kalmış beşinci kopyaydı. greeting.ts onu buradan re-export eder, böylece
+// kendi testi ve çağrı yeri aynen çalışır.
+//
+// v0.9.1329 — taşımayı gerekçelendiren ikinci tüketici (/services "Son
+// görülme" kolonu) İngilizceye alındığı için ARTIK YOK; agoTR bugün yine
+// tek tüketicili. Buradan geri taşımıyoruz: v0.8.463'ün kuralı "tüketici
+// sayısı" değil "bu dosya bu yardımcıların tek evi". Bu şerh, yukarıdaki
+// gerekçenin bayatladığını açıkça söylemek için duruyor — sessiz bıraksak
+// yorum var olmayan bir tüketiciye atıf yapmaya devam ederdi.
 //
 // Giriş birimi adında AÇIK (unixNs), fmtAgoNs ile aynı sözleşme. nowMs
 // enjekte edilebilir — testler sabit saatle koşar.

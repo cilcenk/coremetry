@@ -42,12 +42,17 @@ export const SERVICE_COLS: DataTableColumn<Service>[] = [
   // MV'de yok — ayrı bir tablodan, sayfalama BİTTİKTEN sonra Go tarafında
   // damgalanıyor. Kolonu tıklanabilir yapsaydık servicesAggSortExpr
   // bilinmeyen anahtarı sessizce `spans DESC`'e düşürürdü (whitelist'in
-  // varsayılan dalı): başlıkta "Son görülme"ye göre sıralı görünen ama
+  // varsayılan dalı): başlıkta "Last seen"e göre sıralı görünen ama
   // aslında hacme göre sıralı bir tablo. Sıralanamayan kolon, yalan
   // söyleyen sıralamadan iyidir. (lib/dataTable.ts:12 — sortValue'suz
   // kolon zaten tıklanamaz; Endpoints 'trend'/'traces', Clusters, LogTable
   // 'time' aynı sınıf.)
-  { id: 'lastSeen',  label: 'Son görülme', width: 130, align: 'right' },
+  //
+  // v0.9.1329 — başlık 'Son görülme' iken bu sayfanın DİĞER YEDİ başlığı
+  // İngilizceydi (Service/Spans/Error rate/Avg/P99/P99 Δ/Apdex). Operatör
+  // kararı: tek Türkçe başlık tutarsızlık, 'Last seen' olsun. Hücre gövdesi
+  // de agoTR → fmtAgoNs (aynı dosyadaki İngilizce kardeş; yeni kopya YOK).
+  { id: 'lastSeen',  label: 'Last seen', width: 130, align: 'right' },
 ];
 
 // SORTABLE_SERVICE_COL_IDS — backend'in ?sort= olarak KABUL ETTİĞİ id'ler,

@@ -101,9 +101,41 @@ describe('sanitizeServicesSort — dt.sort → backend ORDER BY pair', () => {
   it('falls back for a column that EXISTS but the backend cannot sort (v0.9.1317)', () => {
     // The regression this guards: `lastSeen` reaching servicesAggSortExpr,
     // matching no case, and being served as `spans DESC` under a header
-    // that says "Son görülme". Membership in SERVICE_COLS is no longer
+    // that says "Last seen". Membership in SERVICE_COLS is no longer
     // sufficient — sortability is the gate.
     expect(sanitizeServicesSort({ id: 'lastSeen', dir: 'desc' }))
       .toEqual({ sort: 'spanCount', dir: 'desc' });
+  });
+});
+
+// v0.9.1329 — /services başlıkları TEK DİL. v0.9.1317 buraya 'Son görülme'
+// koydu ve sayfanın diğer yedi başlığı İngilizceydi; operatör kararı
+// İngilizce oldu. Bu gate string eşitliği DEĞİL (kırılgan olurdu, her
+// yeniden adlandırma testi kırardı) — Türkçeye ÖZGÜ harf arıyor.
+//
+// ⚠ İlk yazımı "non-ASCII" idi ve KENDİ TESTİM YAKALADI: 'P99 Δ' (Yunan
+// deltası) düştü. Δ meşru bir matematik simgesi, Türkçe değil — yani
+// "non-ASCII" ile "Türkçe" aynı şey değil ve fazla geniş bir yüklem
+// doğru başlığı suçluyordu. Yüklem artık ç/ğ/ı/İ/ö/ş/ü ailesine bakıyor;
+// Δ, µ, ° gibi simgeler serbest.
+//
+// Kapsam bilinçli olarak yalnız SERVICE_COLS: bu sayfanın başlıkları
+// İngilizce, ürünün geri kalanı (Settings, AnomalyTab…) Türkçe ve orada
+// aynı kural GEÇERSİZ. Gate'i genişletmek yanlış olur.
+const TURKISH_LETTERS = /[çÇğĞıİöÖşŞüÜ]/;
+
+describe('SERVICE_COLS başlık dili', () => {
+  it('hiçbir başlıkta Türkçeye özgü harf yok', () => {
+    const turkish = SERVICE_COLS
+      .filter(c => TURKISH_LETTERS.test(c.label))
+      .map(c => `${c.id}: ${c.label}`);
+    expect(turkish).toEqual([]);
+  });
+
+  it('matematik simgeleri serbest — yüklem fazla geniş değil', () => {
+    // Negatif kontrol: gate'in Δ'ya ısırmadığını AÇIKÇA çiviler, yoksa
+    // biri onu "non-ASCII" diye geri genişletir ve P99 Δ yine düşer.
+    expect(TURKISH_LETTERS.test('P99 Δ')).toBe(false);
+    expect(TURKISH_LETTERS.test('Son görülme')).toBe(true);
   });
 });

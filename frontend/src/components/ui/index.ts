@@ -80,3 +80,8 @@ export { RouteSkeleton } from './RouteSkeleton';
 // ta kendisi — /frontend-design-system §1 "barrel YETMEZ" uyarısı bunun
 // üzerine yazıldı. Salt EKLEME: mevcut doğrudan import'lar taşınmıyor.
 export { PageShell } from './PageShell';
+
+// v0.9.1364 — bölüm-içi yokluk satırı. İki BAYT BAYT aynı yerel nüshanın
+// (endpoints/detailSections + slowqueries/StmtDetailDrawer) tek eve
+// çekilmişi; `sectionAtomsGate.test.ts` üçüncüsünün doğmasını engelliyor.
+export { SectionUnavailable } from './SectionUnavailable';

@@ -33,21 +33,27 @@ export const FIXED_COLS = ['time', 'service', 'operation', 'duration', 'spans', 
  * truth) → localStorage (per-browser continuity) → this default. The
  * 8-column ceiling and ColumnManager behaviour are untouched.
  *
- *   • 2026-08-24, operatör isteği: `function_id` DA varsayılan olsun.
- *     Operatörün canlı oturumu şu dördünü taşıyordu — cluster /
- *     channel_code / function_code / function_id — yani `http.status_code`
- *     fiilen elle DÜŞÜRÜLMÜŞTÜ. "da" denildiği için BEŞ olarak bırakıldı;
- *     `http.status_code`'u da istemiyorsan onu çıkarmak tek satır.
+ *   • 2026-08-24, operatör isteği (iki adımda): `function_id` EKLENDİ,
+ *     `http.status_code` ÇIKARILDI. Küme yine dört ve artık operatörün
+ *     canlı oturumunda fiilen kullandığının aynısı — v0.9.1360'ta "da"
+ *     denildiği için status_code korunmuştu, operatör aynı gün açıkça
+ *     çıkarılmasını istedi.
  *
- *     ⚠ Genişlik bütçesi bu ekleme İÇİN yeniden dağıtıldı — bkz.
- *     Traces.tsx COL_W şerhi. Beşinci kolon bedavaya gelmiyor.
+ *     Gerekçe kayda değer: bu deployment'ta satırı TANIMLAYAN alanlar
+ *     cluster/channel/function üçlüsü; `http.status_code` ise satırın
+ *     SONUCU ve o bilgi zaten Status kolonunda var (OK/ERROR rozeti).
+ *     Yani ikinci kez, daha dar bir biçimde gösteriliyordu.
+ *
+ *     ⚠ Genişlik bütçesi: beş kolon için Traces.tsx COL_W yeniden
+ *     dağıtılmıştı (v0.9.1360); dörde inince o kısıntı GERİ ALINMADI —
+ *     kısıntılar içeriğe bakılarak yapılmıştı (duration 104 "44.36ms"e,
+ *     spans 58 tek haneye yeter) ve dört kolonla artık rahat pay var.
  */
 export const DEFAULT_TRACE_COLUMNS: string[] = [
   'openshift.cluster.name',
   'channel_code',
   'function_code',
   'function_id',
-  'http.status_code',
 ];
 
 /**

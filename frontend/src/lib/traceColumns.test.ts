@@ -75,13 +75,13 @@ describe('traceColumnOrder', () => {
 
 describe('DEFAULT_TRACE_COLUMNS', () => {
   it('is the operator-requested set, in the requested order', () => {
-    // v0.9.1360 — `function_id` eklendi (operatör isteği 2026-08-24).
-    // `http.status_code` KORUNDU: istek "function_id DA gelsin"di, yani
-    // ekleme; operatörün canlı oturumunda status_code elle düşürülmüş
-    // olsa da bu KARAR olarak alınmadı.
+    // v0.9.1360 `function_id` ekledi; v0.9.1361 aynı gün operatör
+    // isteğiyle `http.status_code`'u ÇIKARDI. Küme yine dört ve
+    // operatörün fiilen kullandığının aynısı. status_code'un satırdaki
+    // bilgisi zaten Status kolonunda (OK/ERROR) — ikinci kez, daha dar
+    // biçimde gösteriliyordu.
     expect(DEFAULT_TRACE_COLUMNS).toEqual([
-      'openshift.cluster.name', 'channel_code', 'function_code',
-      'function_id', 'http.status_code',
+      'openshift.cluster.name', 'channel_code', 'function_code', 'function_id',
     ]);
   });
 

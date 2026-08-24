@@ -17,23 +17,41 @@ import type { TimeRange } from '@/lib/types';
 /**
  * tracesLink — /traces filtered to this endpoint.
  *
- * search matches span.name OR attrs; with rootOnly=false and the
- * service filter, this returns every trace that includes a call on the
- * endpoint.
- *
  * v0.9.307 — env/cluster ride the pivot. Without them a row read under
  * env=uat opened an UNFILTERED trace list: the pivot silently widened
  * the question it was launched from.
+ *
+ * v0.9.1372 — iki değişiklik, ikisi de operatör isteği:
+ *
+ * (a) `search=<path>` YERİNE yapısal `http.route = <path>` filtresi.
+ *     `search` bir SERBEST METİN eşleşmesi: span adında VEYA
+ *     özniteliklerde geçen her şeyi tutuyordu, yani `/api/v1/pay`
+ *     araması `/api/v1/payment-retry`i de getiriyordu ve pivot,
+ *     başlatıldığı satırdan farklı bir soru soruyordu. Doğru kodlama
+ *     zaten bu dosyada, on satır aşağıda duruyordu (exploreLink'in
+ *     `http.route` filtresi) — iki pivot aynı satırdan çıkıp farklı
+ *     evrene gidiyordu.
+ *
+ * (b) `rootOnly=false` YERİNE `rootOnly=auto`. Operatör root seçili bir
+ *     liste istiyor (endpoint'in trace'i = onu çağıran akışın tamamı),
+ *     ama bu deployment'ta bir kısım endpoint root span DEĞİL — mesaj
+ *     tüketicilerinin ve iç servislerin ortasında yaşıyorlar ve root
+ *     filtresi onlarda her zaman sıfır döndürür. `auto` niyeti taşıyor,
+ *     kararı /traces sonuca bakarak veriyor (`traces/rootOnlyFallback`).
  */
 export function tracesLink(
   r: { service: string; path: string }, range: TimeRange, env?: string, cluster?: string,
 ): string {
-  return `/traces?service=${encodeURIComponent(r.service)}` +
-    `&search=${encodeURIComponent(r.path)}` +
-    `&range=${encodeURIComponent(encodeRange(range))}` +
-    (env ? `&env=${encodeURIComponent(env)}` : '') +
-    (cluster ? `&cluster=${encodeURIComponent(cluster)}` : '') +
-    `&view=list&rootOnly=false`;
+  const filters = encodeFilters([{ k: 'http.route', op: '=', v: [r.path] }]);
+  return `/traces?${buildQuery([
+    ['service', r.service],
+    ['filters', filters],
+    ['range', encodeRange(range)],
+    ['env', env ?? ''],
+    ['cluster', cluster ?? ''],
+    ['view', 'list'],
+    ['rootOnly', 'auto'],
+  ])}`;
 }
 
 /**

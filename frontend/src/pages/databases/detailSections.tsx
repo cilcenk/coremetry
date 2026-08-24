@@ -109,14 +109,18 @@ export function DatabaseIdentityHeader({ refObj, env, range }: {
           </span>
         )}
         {/* v0.9.1210 — EndpointDetail ile aynı bağlantı-düğme tedavisi
-            (kardeş detay sayfası; operatör bildirimi "belli olmuyor"). */}
+            (kardeş detay sayfası; operatör bildirimi "belli olmuyor").
+            v0.9.1372 — operatör isteği ("Traces top statements mavi
+            olsun"), yine EndpointDetail ile aynı adımda: `.sec` → `.accent`.
+            İki sayfa aynı anda taşınıyor; birini bırakmak, kardeş detay
+            sayfalarını farklı görsel dile ayırırdı. */}
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, fontSize: 12 }}>
-          <Link className="sec" style={{ fontSize: 12, padding: '3px 10px' }}
+          <Link className="accent" style={{ fontSize: 12, padding: '3px 10px' }}
             to={dbTracesHref({
               window: range, system: refObj.system,
               instance: refObj.instance, dbName: refObj.dbName || undefined,
             })}>Traces →</Link>
-          <Link className="sec" style={{ fontSize: 12, padding: '3px 10px', gap: 5 }}
+          <Link className="accent" style={{ fontSize: 12, padding: '3px 10px', gap: 5 }}
             to={`/databases/slow-queries?dbsys=${encodeURIComponent(refObj.system)}`
               + (refObj.dbName ? `&dbname=${encodeURIComponent(refObj.dbName)}` : '')}>
             <Turtle size={13} strokeWidth={1.75} /> Top statements →

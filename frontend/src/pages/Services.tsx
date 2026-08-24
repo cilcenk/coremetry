@@ -22,6 +22,7 @@ import { api } from '@/lib/api';
 import { fmtNum, fmtFixed, timeRangeToNs, rowClickHandlers, tsLong, fmtAgoNs } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
+import { servicesFilterSearch } from '@/lib/servicesFilterParams';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { getItem, setItem } from '@/lib/storage';
@@ -190,6 +191,46 @@ export default function ServicesPage() {
   // the Search button — so clicking the dropdown doesn't fan a
   // ClickHouse query out per keystroke.
   const [committedFilter, setCommittedFilter] = useState('');
+
+  // v0.9.1336 (denetim K5) — FİLTRELER URL'E YAZILIYOR.
+  //
+  // Öncesi: dördü (ownerTeam/sreTeam/cluster/namespace) URL'den yalnız
+  // MOUNT'ta okunuyordu ve geri HİÇ yazılmıyordu; dördü (arama, errors-only,
+  // minSpans, minP99) hiç URL görmüyordu. Sonuç: Copy link ve yenileme
+  // operatörün kurduğu daraltmayı kaybediyordu. Bu, bu deponun tek-yön-okuma
+  // sınıfı ve ÜÇ KEZ gemiye gitti (v0.8.256 problems, v0.8.265 service-map,
+  // v0.8.267 anomalies); üstelik yukarıdaki v0.9.1135 şerhi kendi vakasını
+  // zaten "ölü-param sınıfı" diye adlandırmış.
+  //
+  // Yazım `rebuildPreserving` ile: efekt YALNIZ kendi sekiz parametresine
+  // sahip, tanımadığı her şeyi (page, sort `s_*`, ai, env, range) olduğu gibi
+  // taşır. `page` bilhassa önemli — setPage onu ham `window.location.search`
+  // üzerinden yazıyor ve bu efekt onu sahiplenmediği için silmiyor.
+  //
+  // `window.location.search` okunuyor, router'ın `prev`i DEĞİL: aynı
+  // gerekçe satır 119-123'te yazılı — ham yazımlardan sonra `prev` bayat bir
+  // alt küme olabiliyor ve yabancı paramları sessizce silerdi.
+  //
+  // KAPSAM, açıkça: bu tek YÖNLÜ eksiği kapatıyor (state → URL). URL → state
+  // geri-import'u (tarayıcı ileri/geri tuşları filtreleri geri yüklesin)
+  // BİLİNÇLİ olarak dışarıda: onun için sig-guard gerekiyor (Logs.tsx
+  // `urlSig`/`lastUrlSigRef`, v0.8.253) yoksa alakasız bir range yazımı
+  // yerel filtreleri siler. Bugünkü davranış geri tuşunda da aynı kalıyor,
+  // yani regresyon yok — eksik olan Copy link/yenileme ve o kapandı.
+  // Parametre haritası lib/servicesFilterParams.ts'te ve SAF — burada satır
+  // içi bir kopya tutmak, testin ürünü değil kendi ikizini koruması demekti
+  // (v0.9.1334'te düzeltilen "test edilmiş ama ulaşılamaz" sınıfı).
+  useEffect(() => {
+    const next = servicesFilterSearch(window.location.search, {
+      committedFilter, errorsOnly, minSpans, minP99,
+      ownerTeam, sreTeam, cluster, namespace,
+    });
+    // Karşılaştırma ŞART: efekt her render'da koşuyor ve setSearchParams'ı
+    // koşulsuz çağırmak sonsuz döngü kurardı.
+    if (next === window.location.search.replace(/^\?/, '')) return;
+    setSearchParams(() => new URLSearchParams(next), { replace: true });
+  }, [committedFilter, errorsOnly, minSpans, minP99,
+      ownerTeam, sreTeam, cluster, namespace, setSearchParams]);
 
   // Sort runs server-side via ?sort/&dir; this only applies
   // local display filters (errors-only / min-spans / min-p99

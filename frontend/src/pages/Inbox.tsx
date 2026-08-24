@@ -30,6 +30,7 @@ import type { InboxItem, InboxKind } from '@/lib/types';
 import { stripMarkdown } from '@/components/Markdown';
 import { serviceHref, inboxItemWindow } from '@/lib/serviceHref';
 import { SubjectLink } from '../components/SubjectLink';
+import type { SubjectLane } from '@/lib/types';
 
 // Facet vocab + defaults (v0.8.291) — both defaults are what the URL codec
 // omits so a fresh link stays clean.
@@ -77,6 +78,17 @@ const isExcFamily = (it: InboxItem): boolean =>
 // Ayrı bir pivot olması bilinçli: susturmak kasıtlı bir eylem, o satırları
 // günlük 'all' görünümüne geri dökmek operatörün sustuğu gürültüyü geri
 // getirirdi.
+// v0.9.1342 (operatör kararı) — ÖZNE ŞERİDİ. DB problemleri servis
+// problemleriyle AYNI listede yarışmasın: kendi şeritleri olsun.
+//
+// `SubjectLane` ile `InboxKind` KARIŞTIRILMAZ. InboxKind satırın KAYNAĞI
+// (problem/exception/anomaly), SubjectLane satırın NEYİ anlattığı. İkisi
+// de string olsaydı derleyici karışıklığı yakalayamazdı — v0.9.1339 tam
+// olarak o çakışmadan bir bug üretti ve çözümü ayrı ada taşımaktı.
+const SUBJECT_LANES: readonly SubjectLane[] = ['service', 'db'];
+const SUBJECT_LABEL: Record<SubjectLane, string> = {
+  service: 'Servisler', db: 'Veritabanları',
+};
 type InboxStatus = 'open' | 'all' | 'ignored';
 const STATUS_PIVOTS: readonly InboxStatus[] = ['open', 'all', 'ignored'];
 
@@ -226,6 +238,13 @@ export default function InboxPage() {
     const raw = searchParams.get('since') ?? '';
     return SINCE_OPTS.some(o => o.v === raw) ? raw : '';
   })();
+  // v0.9.1342 — özne şeridi. Kapalı sözlük + varsayılan 'service':
+  // sunucunun normalizeInboxSubject'iyle BİREBİR aynı sözleşme, yoksa
+  // elle düzenlenmiş bir link burada bir şerit, orada başkasını açardı.
+  const subjectLane: SubjectLane =
+    searchParams.get('subject') === 'db' ? 'db' : 'service';
+  const setSubjectLane = (s: SubjectLane) =>
+    setParam('subject', s === 'service' ? null : s);
 
   // Drawer selection is one more URL-backed facet (v0.8.292): ?item=<inboxId>.
   // Deep-linking /inbox?item=<id> opens the drawer; closing deletes the key.
@@ -334,7 +353,19 @@ export default function InboxPage() {
     // "Queue clear" over 2,144 real items.
     kind: [...kindSet].join(','),
     prio: [...prioSet].join(','),
+    // v0.9.1342 — özne şeridi de SUNUCU filtresi (SQL'de, LIMIT'ten
+    // önce). db şeridinde sunucu `kind`i ["problem"]e ZORLAR: db özneli
+    // satır yalnız problems kaynağında var ve sayfanın tür varsayılanı
+    // ['exception'] — zorlanmasaydı şerit boş açılırdı.
+    subject: subjectLane,
   });
+
+  // Şerit çipinin sayısı SUNUCUDAN gelir (tek COUNT, cap'ten ÖNCE).
+  // Dönen sayfadan saymak "Exceptions 0" yalanının aynısı olurdu: servis
+  // şeridindeyken db satırları o sayfada zaten YOK, yani sayfadan
+  // türetilen her sayı 0 çıkardı. undefined = sunucu henüz cevap
+  // vermedi; 0 = ölçüldü ve yok — ikisi farklı ve çip öyle gösteriyor.
+  const dbLaneCount = inboxQ.data?.dbSubjectCount;
   const data: InboxItem[] | null | undefined =
     inboxQ.isPending ? undefined : inboxQ.isError ? null : inboxQ.data?.items ?? [];
   // v0.9.221 — the server caps the queue; say so rather than letting 300 rows
@@ -595,6 +626,29 @@ export default function InboxPage() {
             ))}
           </span>
 
+          {/* v0.9.1342 (operatör kararı) — ÖZNE şeridi. Durum pivotuyla
+              aynı dil: tek-seçim çip grubu, URL'de ?subject=.
+
+              Neden ayrı bir ŞERİT ve bir facet DEĞİL: bir facet seçimi
+              satırları aynı listede birleştirir ve db problemleri servis
+              problemleriyle öncelik sırasında YARIŞIRDI. Operatörün
+              istemediği tam olarak bu.
+
+              Sayı yalnız Veritabanları çipinde: o şerit TEK kaynaklı
+              (problems), yani sayı TAM. Servis şeridi dört kaynaklı ve
+              tek bir COUNT ile dürüstçe ifade edilemez — sunucu onu
+              iddia etmiyor, ekran da uydurmuyor. */}
+          <span className="facet-grp">
+            <span className="gl">Özne</span>
+            {SUBJECT_LANES.map(l => (
+              <span key={l} onClick={() => setSubjectLane(l)}
+                className={`facet${subjectLane === l ? ' on' : ''}`}>
+                {SUBJECT_LABEL[l]}
+                {l === 'db' && dbLaneCount !== undefined && ` (${dbLaneCount})`}
+              </span>
+            ))}
+          </span>
+
           {/* v0.9.357 (mockup C, operatör: "C daha uygun bizim kuruma") —
               çip grupları sayılı multi-select dropdown'lara döndü; Owner/SRE
               select'leriyle tek dil. v0.9.356'nın "sadece"/"tümü" jestleri
@@ -606,12 +660,19 @@ export default function InboxPage() {
             selected={prioSet}
             onToggle={togglePrio} onSolo={soloPrio} onAll={allPrio} />
 
-          <FacetMultiSelect label="Tür"
-            options={KIND_ALL.map(k => ({
-              value: k, label: KIND_LABEL[k], count: counts[k] ?? 0 }))}
-            selected={kindSet as Set<string>}
-            onToggle={k => toggleKind(k as InboxKind)}
-            onSolo={k => soloKind(k as InboxKind)} onAll={allKind} />
+          {/* v0.9.1342 — db şeridinde Tür facet'i GİZLİ ve bu bir
+              gizleme değil dürüstlük: o şeritte sunucu `kind`i
+              ["problem"]e zorluyor (db özneli satır yalnız problems
+              kaynağında var). Açık bırakmak, tıklandığında hiçbir şey
+              değiştirmeyen bir kontrol göstermek olurdu. */}
+          {subjectLane === 'service' && (
+            <FacetMultiSelect label="Tür"
+              options={KIND_ALL.map(k => ({
+                value: k, label: KIND_LABEL[k], count: counts[k] ?? 0 }))}
+              selected={kindSet as Set<string>}
+              onToggle={k => toggleKind(k as InboxKind)}
+              onSolo={k => soloKind(k as InboxKind)} onAll={allKind} />
+          )}
 
           {/* v0.9.525 — first-seen penceresi. Küçük sabit küme → düz
               <select> (frontend-conventions: ≤10 değer picker istemez). */}

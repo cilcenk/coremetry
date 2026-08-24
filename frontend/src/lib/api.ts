@@ -2020,6 +2020,12 @@ export const api = {
     kind?: string; prio?: string;
     // v0.9.525 — first-seen penceresi (2h/24h/7d); boş = hepsi.
     since?: string;
+    // v0.9.1342 — ÖZNE ŞERİDİ ('service' varsayılan | 'db'). `kind` ile
+    // KARIŞTIRILMAZ: kind satırın KAYNAĞI (problem/exception/anomaly),
+    // subject satırın NEYİ anlattığı (servis mi, db örneği mi). İkisi de
+    // string olduğu için TypeScript çakışmayı yakalayamaz — tek koruma
+    // ayrı ad (v0.9.1339 dersi).
+    subject?: import('./types').SubjectLane;
   } = {}) =>
     // v0.9.221 — was a bare array; the page had no way to tell a full queue
     // from the top slice of a truncated one.
@@ -2028,6 +2034,10 @@ export const api = {
       total: number; limit: number; truncated: boolean; scanCapped?: boolean;
       minOcc?: number; hiddenByMinOcc?: number;
       counts?: Record<string, number>;
+      // v0.9.1342 — db şeridindeki toplam. `counts`tan AYRI alan: orası
+      // kind/prio evreni, bu özne evreni.
+      dbSubjectCount?: number;
+      subject?: import('./types').SubjectLane;
     } | null>(`/api/inbox?${qs(params)}`),
   // v0.8.288 — the single triage badge total (not-resolved problems + open
   // exception groups + active anomalies). COUNT-only, 10s server cache.

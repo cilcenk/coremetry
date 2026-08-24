@@ -878,6 +878,21 @@ type ProblemFilter struct {
 	// nothing (a team with no members must return an empty page, never an
 	// unfiltered one).
 	Services []string
+	// SubjectKind (v0.9.1342) — ÖZNE TÜRÜ süzgeci: "service" | "db".
+	// Boş = kısıt yok.
+	//
+	// Adı bilerek `Kind` DEĞİL. InboxItem.Kind bu kod tabanında BAŞKA bir
+	// şey (satırın KAYNAĞI: problem/exception/anomaly) ve ikisi de string;
+	// v0.9.1339'da tam bu çakışma bir bug üretti, çözümü de ayrı bir ada
+	// (subjectKind) taşımaktı. Aynı ayrım burada da korunuyor.
+	//
+	// SQL'e İNER — ve inmesi şart: /inbox'ın db şeridi bir
+	// `WHERE kind = 'db'` sorgusudur. Go tarafında yeniden normalize
+	// etmek (ProblemSubjectKind ile) bu kapıyı LIMIT'ten sonraya taşır ve
+	// v0.9.322 sınıfını geri getirir. Geçmiş satırların doğru şeritte
+	// kalmasını CH'nin `DEFAULT 'service'`i garanti eder —
+	// TestProblemKindColumnDefaultsToService o garantiyi pinler.
+	SubjectKind string
 	// Env (v0.8.387 — env-separation Phase 3) narrows to problems
 	// whose SERVICE ran in the given deployment environment within
 	// the last hour, per the 60s-cached service→env map. Problems
@@ -1175,6 +1190,14 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 	}
 	if f.RuleID != "" {
 		wc.add("rule_id = ?", f.RuleID)
+	}
+	// v0.9.1342 — özne türü şeridi, SQL'de (LIMIT'ten ÖNCE).
+	if sql, arg, ok := problemSubjectConjunct(f.SubjectKind, s.hasProblemKindCol); ok {
+		if arg == nil {
+			wc.add(sql)
+		} else {
+			wc.add(sql, arg)
+		}
 	}
 	s.envScopeProblems(ctx, &wc, f.Env) // v0.8.387 — service-scoped env narrowing (env_members.go)
 	if f.Limit == 0 {

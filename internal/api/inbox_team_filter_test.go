@@ -90,7 +90,7 @@ func TestTeamAxesAreNotInterchangeable(t *testing.T) {
 
 func TestInboxListKeyCarriesTeam(t *testing.T) {
 	key := func(owner, sre, team string) string {
-		return inboxListKey("open", "", "", owner, sre, team, "", 200, "priority", "desc", 0, nil, nil)
+		return inboxListKey("open", "", "", owner, sre, team, "", 200, "priority", "desc", 0, nil, nil, inboxSubjectService)
 	}
 	base := key("", "", "")
 

@@ -42,6 +42,13 @@ const ATOMS: { name: string; home: string; since: string }[] = [
     since: 'v0.9.1364 — endpoints/detailSections + slowqueries/StmtDetailDrawer '
       + 'nüshaları BAYT BAYT aynıydı, tek eve çekildi.',
   },
+  {
+    name: 'PanelTitle',
+    home: 'components/ui/PanelTitle.tsx',
+    since: 'v0.9.1365 — iki nüsha BAYT BAYT DEĞİLDİ: pages/DatabaseDetail.tsx '
+      + 'kopyası `right` yuvasını kaybetmişti. Terfi gelişmiş sürüme yapıldı; '
+      + 'kapı üçüncüsünün doğmasını engelliyor.',
+  },
 ];
 
 /**

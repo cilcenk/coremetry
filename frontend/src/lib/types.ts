@@ -5566,3 +5566,68 @@ export interface StateUnifyRun {
   current: string; results: StateUnifyTableResult[]; error?: string;
 }
 export interface StateUnifyCleanupResult { steps: StateUnifyStep[]; ok: boolean }
+
+// --- 0010 partition sökme sihirbazı (v0.9.1341) -------------------
+// Backend: internal/api/admin_state_repartition.go +
+//          chstore/state_repartition_admin.go
+//
+// 0009 ile aynı üç-durumlu verdict sözleşmesini ve StateUnifyStep /
+// StateUnifyHostCount tiplerini PAYLAŞIR — yeniden bildirilmez.
+/** Tablonun 0010 üzerindeki yeri. ÖLÇÜLÜR (partition_key + zk yolu +
+ *  yedek varlığı), varsayılmaz. */
+export type StateRepartStage = 'A' | 'B' | 'cleanup' | 'done';
+export interface StateRepartTable {
+  name: string;
+  engine: string;
+  rows: number;
+  /** Boş = PARTITION BY sökülmüş. Aşamanın birinci girdisi. */
+  partitionKey: string;
+  sortingKey: string;
+  zkPath: string;
+  distinctPaths: number;
+  hosts: StateUnifyHostCount[];
+  /** ADIM 0d — FİZİKSEL bölünme (FINAL YOK). */
+  ids: number;
+  splitIds: number;
+  /** ADIM 0e / 4a — kusurun canlı kanıtı. rowsNoMerge > rowsFinal ise
+   *  bugün servis edilen doğruluk bir SUNUCU AYARINA asılı. */
+  rowsFinal: number;
+  rowsNoMerge: number;
+  /** İki sayının düz cümlesi — sunucuda üretilir ki ekran SQL
+   *  yorumlamasın. */
+  finalNote: string;
+  hasOld: boolean;
+  hasRepart: boolean;
+  hasPathfix: boolean;
+  hasPathfixOld: boolean;
+  stage: StateRepartStage;
+  blocked?: string;
+}
+export interface StateRepartPreflightResult {
+  cluster: string;
+  database: string;
+  shards: number;
+  hosts: number;
+  tables: StateRepartTable[];
+  stage: StateRepartStage;
+  /** ÜÇ AYRI kapı — hiçbiri diğerini ima etmez. */
+  supported: boolean;      // AŞAMA A koşulabilir
+  finalizeReady: boolean;  // ADIM 5 + AŞAMA B koşulabilir (YIKICI)
+  cleanupReady: boolean;   // `_pathfix_old` düşürülebilir
+  detail: string;
+  generated: number;
+  topologyVerdict: StateUnifyVerdict;
+  unifiedVerdict: StateUnifyVerdict;
+  hostsVerdict: StateUnifyVerdict;
+  defectVerdict: StateUnifyVerdict;
+}
+export interface StateRepartTableResult {
+  table: string; phase: string; ok: boolean;
+  rowsBefore: number; rowsAfter: number; durationMs: number;
+  steps: StateUnifyStep[]; err?: string;
+}
+export interface StateRepartRun {
+  running: boolean; phase: string; cluster: string; startedBy: string;
+  startedAt: number; doneAt: number; total: number; done: number;
+  current: string; results: StateRepartTableResult[]; error?: string;
+}

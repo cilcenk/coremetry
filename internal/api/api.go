@@ -106,6 +106,10 @@ type Server struct {
 	// dakikalar sürer; istek bağlamında koşamaz, bu yüzden durum
 	// burada tutulup /api/admin/state-unify/status'tan yoklanır.
 	stateUnify stateUnifyFlight
+	// stateRepart (v0.9.1341) — 0010 partition sökme sihirbazının
+	// tek-uçuş ilerleme kaydı. Aynı gerekçe: `problems` tablosunun
+	// tamamı kopyalanır, istek bağlamında koşamaz.
+	stateRepart stateRepartFlight
 	// distQueueState — HİSTEREZİS durumu (v0.9.987). Karar artık iki
 	// ölçümden değil, ÖNCEKİ KARAR + iki ölçümden çıkıyor: durumsuz hâlde
 	// 44.320 → 44.318 (iki dosya) tek başına "degraded → ok" yapıyordu.
@@ -646,6 +650,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// tek tetikleyici admin (gerekçe: admin_rollup.go başlığı).
 	s.registerRollupAdminRoutes(mux)
 	s.registerStateUnifyRoutes(mux)
+	s.registerStateRepartRoutes(mux)
 	mux.HandleFunc("GET /api/correlations", s.getCorrelations)
 	// v0.9.135 (scale-audit 2026-07-20) — admin-only (Redis internals);
 	// only AdminStats reads it, handler had no role check.

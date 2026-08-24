@@ -11,6 +11,7 @@ import { Button, Modal } from '@/components/ui';
 import type {
   RollupActionResult, RollupPreflightResult, RollupTableStatus, RollupTarget,
   StateUnifyPreflightResult, StateUnifyRun, StateUnifyTable,
+  StateRepartPreflightResult, StateRepartRun, StateRepartTable,
 } from '@/lib/types';
 
 // AdminClickhouse — v0.5.329. Datadog-style CH self-stats:
@@ -724,6 +725,13 @@ export default function AdminClickhousePage() {
                 göç 37 tablo × RENAME, yani kuyruğu en çok o meşgul
                 eder. Operatör önce DDL kuyruğunun boş olduğunu görmeli. */}
             <StateUnifyWizardPanel />
+
+            {/* v0.9.1341 — 0010 partition sökme sihirbazı. 0009'un
+                hemen ALTINDA ve bu SIRA anlamlı: 0010'un önkoşulu
+                0009'un uygulanmış olması (ZK yolu /state/, tek grup).
+                Operatör yukarıdaki panelin yeşil olduğunu görmeden
+                buraya geçmemeli. */}
+            <StateRepartWizardPanel />
 
             <Section title="Slow queries (>500ms, last 1h)">
               {(!data.slowQueries || data.slowQueries.length === 0)
@@ -1848,6 +1856,429 @@ function StateUnifyWizardPanel() {
         </Modal>
       )}
     </Section>
+  );
+}
+
+// ── v0.9.1341 — 0010 partition sökme sihirbazı ─────────────────────
+//
+// `problems` ve `anomaly_events` ORDER BY id ile dedup eder ama
+// PARTITION BY toDate(started_at) ile bölünür. ReplacingMergeTree yalnız
+// partition İÇİNDE dedup ettiği için bir id'nin started_at'i başka bir
+// güne kayarsa eski satır ÖLÜMSÜZ bir kopya olur; doğruluğu ayakta tutan
+// tek şey `SELECT … FINAL`'in sorgu anındaki partition-arası
+// birleştirmesi, yani bir SUNUCU AYARI.
+//
+// v0.9.1335 göç dosyasını yazdı ama sihirbazı bilinçli atladı (2 tablo ×
+// 4 ifade). Operatör 0009'u sihirbazdan koştu ve 0010'u da öyle koşmak
+// istiyor; SQL konsolu bu işi YAPAMAZ (yalnız SELECT/SHOW/DESCRIBE/
+// EXPLAIN/WITH + readonly=2, ve o kapı gevşetilmez).
+//
+// İKİ AYRI KAPI, bilinçli olarak ayrı: AŞAMA A tek eylemde güvenli ve
+// hiçbir şey silmez. ADIM 5 + AŞAMA B YIKICI ve tetiği bir HÜKÜM ("7 gün
+// geçti mi, doğrulama hâlâ yeşil mi") — düğme bunu veremez, o yüzden
+// ADIM 4'ün TAZE ölçümü düğmenin YANINDA durur ve onay istenir.
+function StateRepartWizardPanel() {
+  const [pre, setPre] = useState<StateRepartPreflightResult | null>(null);
+  const [run, setRun] = useState<StateRepartRun | null>(null);
+  const [busy, setBusy] = useState<'preflight' | 'apply' | 'finalize' | 'cleanup' | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<null | 'apply' | 'finalize' | 'cleanup'>(null);
+  const [armed, setArmed] = useState(false);
+  const pollRef = useRef<number | null>(null);
+
+  async function runPreflight() {
+    setBusy('preflight'); setErr(null);
+    try { setPre(await api.stateRepartPreflight()); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  }
+
+  // 2s — 0009 sihirbazının emsali. Kontrol yüzeyi: sayfa görünürken
+  // operatör ilerlemeyi İZLİYOR demektir. document.hidden'da durur.
+  function startPolling() {
+    if (pollRef.current !== null) return;
+    pollRef.current = window.setInterval(async () => {
+      if (document.hidden) return;
+      try {
+        const st = await api.stateRepartStatus();
+        setRun(st);
+        if (!st.running) {
+          if (pollRef.current !== null) { window.clearInterval(pollRef.current); pollRef.current = null; }
+          void runPreflight();
+        }
+      } catch { /* geçici hata: bir sonraki tik tekrar dener */ }
+    }, 2000);
+  }
+
+  async function doApply() {
+    setConfirm(null); setBusy('apply'); setErr(null);
+    try { setRun(await api.stateRepartApply(pre?.cluster ?? '')); startPolling(); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  }
+
+  async function doFinalize() {
+    setConfirm(null); setBusy('finalize'); setErr(null);
+    try { setRun(await api.stateRepartFinalize(pre?.cluster ?? '')); startPolling(); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); setArmed(false); }
+  }
+
+  async function doCleanup() {
+    setConfirm(null); setBusy('cleanup'); setErr(null);
+    try {
+      const res = await api.stateRepartCleanup(pre?.cluster ?? '', backups.map(t => t.name));
+      if (!res.ok) setErr(res.steps.filter(s => s.err).map(s => `${s.step}: ${s.err}`).join(' · '));
+      await runPreflight();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); setArmed(false); }
+  }
+
+  const tables = pre?.tables ?? [];
+  const backups = tables.filter(t => t.hasPathfixOld);
+  const pending = (stage: string) => tables.filter(t => t.stage === stage && !t.blocked);
+  const running = !!run?.running;
+  const pct = run && run.total > 0 ? Math.round((run.done / run.total) * 100) : 0;
+
+  const STAGE_LABEL: Record<string, string> = {
+    A: 'AŞAMA A bekliyor', B: 'ADIM 5 + AŞAMA B bekliyor',
+    cleanup: 'Yedek temizliği bekliyor', done: 'Tamamlandı',
+  };
+
+  return (
+    <Section title="Partition sökme (göç 0010)">
+      <div style={{
+        border: '1px solid var(--border)', borderRadius: 6,
+        background: 'var(--bg1)', padding: 14,
+      }}>
+        <p style={{ fontSize: 12, color: 'var(--text3)', margin: '0 0 12px', lineHeight: 1.6 }}>
+          <code>problems</code> ve <code>anomaly_events</code> <code>ORDER BY id</code> ile
+          dedup ediyor ama <code>PARTITION BY toDate(started_at)</code> ile bölünüyor.
+          ReplacingMergeTree yalnız partition İÇİNDE dedup ettiği için bir id'nin
+          <code> started_at</code>'i başka bir güne kayarsa eski satır ölümsüz bir kopya olur.
+          Bu sihirbaz partition'ı söker; dedup anahtarı (<code>ORDER BY id</code>) DEĞİŞMEZ.
+        </p>
+
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+          <Button variant="secondary" size="sm" onClick={() => void runPreflight()} disabled={busy !== null}>
+            {busy === 'preflight' ? 'Ön kontrol koşuyor…' : 'Ön kontrol'}
+          </Button>
+          <Button variant="primary" size="sm"
+                  onClick={() => setConfirm('apply')}
+                  disabled={!pre?.supported || busy !== null || running}>
+            {running && run?.phase === 'A'
+              ? 'AŞAMA A sürüyor…'
+              : `AŞAMA A — partition'ı sök${pending('A').length ? ` (${pending('A').length} tablo)` : ''}`}
+          </Button>
+        </div>
+
+        {err && (
+          <div className="badge b-err" style={{ display: 'block', marginBottom: 12, padding: '8px 10px', fontSize: 12 }}>
+            {err}
+          </div>
+        )}
+
+        {!pre && busy === 'preflight' && <Spinner />}
+        {!pre && busy !== 'preflight' && (
+          <EmptyNote text="Ön kontrol koşulmadı. Neyin değişeceğini ve kusurun bugün ısırıp ısırmadığını görmeden göç başlatılamaz." />
+        )}
+
+        {pre && (
+          <>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+              {/* ÜÇ DURUM (0009 sözleşmesi): okunamayan alan 'bilinmiyor'
+                  ve NÖTR gösterilir — ölçmediğimiz bir şeyi ölçmüş gibi
+                  sunmak v0.9.1312 prod olayıydı. */}
+              <KPI label="Küme" value={pre.cluster || '—'}
+                   sub={pre.topologyVerdict === 'ok' ? `${pre.shards} shard · ${pre.hosts} host` : 'topoloji okunamadı'}
+                   cls={pre.topologyVerdict === 'bad' ? 'b-err' : undefined} />
+              <KPI label="Aşama" value={STAGE_LABEL[pre.stage] ?? pre.stage}
+                   sub={pre.stage === 'done' ? 'yapılacak bir şey yok' : 'sıradaki adım'} />
+              <KPI label="0009 (birleştirme)"
+                   value={pre.unifiedVerdict === 'ok' ? 'uygulanmış'
+                        : pre.unifiedVerdict === 'bad' ? 'UYGULANMAMIŞ' : 'bilinmiyor'}
+                   sub="ZK yolu /state/ · tek grup"
+                   cls={pre.unifiedVerdict === 'ok' ? 'b-ok' : pre.unifiedVerdict === 'bad' ? 'b-err' : undefined} />
+              <KPI label="Host'lar"
+                   value={pre.hostsVerdict === 'ok' ? 'hemfikir'
+                        : pre.hostsVerdict === 'bad' ? 'AYRIŞIYOR' : 'bilinmiyor'}
+                   sub="host başına satır sayısı"
+                   cls={pre.hostsVerdict === 'ok' ? 'b-ok' : pre.hostsVerdict === 'bad' ? 'b-err' : undefined} />
+              <KPI label="Kusur"
+                   value={pre.defectVerdict === 'ok' ? 'bugün ısırmıyor'
+                        : pre.defectVerdict === 'bad' ? 'CANLI' : 'bilinmiyor'}
+                   sub="ADIM 0e — FINAL ↔ do_not_merge"
+                   cls={pre.defectVerdict === 'ok' ? 'b-ok' : pre.defectVerdict === 'bad' ? 'b-err' : undefined} />
+            </div>
+
+            <div style={{
+              padding: '8px 10px', borderRadius: 6, marginBottom: 12, fontSize: 12,
+              background: 'var(--bg2)', border: '1px solid var(--border)',
+              color: pre.supported || pre.finalizeReady || pre.cleanupReady ? 'var(--text2)' : 'var(--warn)',
+            }}>{pre.detail}</div>
+
+            {/* ADIM 0e / 4a — KARARIN KENDİSİ. Operatör SQL okumadan
+                anlasın diye cümle sunucuda üretilir. */}
+            <div style={{
+              border: '1px solid var(--border)', borderRadius: 6, padding: 10,
+              marginBottom: 12, background: 'var(--bg2)',
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                ADIM 0e — kusurun canlı kanıtı
+              </div>
+              <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 8px', lineHeight: 1.6 }}>
+                Aynı sayım, tek ayar farkı: soldaki <code>count() FINAL</code>, sağdaki aynısı
+                <code> do_not_merge_across_partitions_select_final = 1</code> ile. Sağ sayı
+                büyükse bugün servis edilen doğruluk O AYARA asılı demektir.
+              </p>
+              {tables.map(t => (
+                <div key={t.name} style={{ fontSize: 11, marginBottom: 4 }}>
+                  <span style={{ color: t.rowsNoMerge === t.rowsFinal ? 'var(--text2)' : 'var(--err)' }}>
+                    {t.finalNote}
+                  </span>
+                  {t.splitIds > 0 && (
+                    <span style={{ color: 'var(--warn)' }}>
+                      {' '}· {fmtNum(t.splitIds)}/{fmtNum(t.ids)} id fiziksel olarak birden çok gün-partition'ında
+                    </span>
+                  )}
+                </div>
+              ))}
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                Ölçüm: {fmtDateTime(pre.generated)}
+              </div>
+            </div>
+
+            {run && (running || (run.results ?? []).length > 0) && (
+              <div style={{
+                border: '1px solid var(--border)', borderRadius: 6, padding: 10,
+                marginBottom: 12, background: 'var(--bg2)',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                  <strong>
+                    {running
+                      ? `${run.phase === 'A' ? 'AŞAMA A' : 'AŞAMA B'} sürüyor — ${run.done}/${run.total}${run.current ? ` · şu an: ${run.current}` : ''}`
+                      : run.error ? 'Göç DURDU' : 'Göç bitti'}
+                  </strong>
+                  <span style={{ color: 'var(--text3)' }}>{pct}%</span>
+                </div>
+                <div style={{ height: 4, background: 'var(--bg3)', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%', width: `${pct}%`, borderRadius: 2,
+                    background: run.error ? 'var(--err)' : 'var(--ok)',
+                  }} />
+                </div>
+                {run.error && (
+                  <div className="badge b-err" style={{ display: 'block', marginTop: 8, padding: '6px 8px', fontSize: 11 }}>
+                    {run.error} — kalan tablolara DOKUNULMADI.
+                  </div>
+                )}
+                {(run.results ?? []).length > 0 && (
+                  <div style={{ marginTop: 8, maxHeight: 240, overflowY: 'auto', fontSize: 11 }}>
+                    {(run.results ?? []).map(r => (
+                      <div key={`${r.phase}:${r.table}`} style={{ padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ color: r.ok ? 'var(--ok)' : 'var(--err)' }}>
+                            {r.ok ? '✓' : '✗'} {r.table} <span style={{ color: 'var(--text3)' }}>({r.phase})</span>
+                          </span>
+                          <span style={{ color: 'var(--text3)', textAlign: 'right', flex: 1, minWidth: 0 }}>
+                            {r.ok
+                              ? `${fmtNum(r.rowsBefore)} → ${fmtNum(r.rowsAfter)} satır · ${(r.durationMs / 1000).toFixed(1)}s`
+                              : r.err}
+                          </span>
+                        </div>
+                        {(r.steps ?? []).map((st, i) => (
+                          <div key={i} style={{ color: st.ok ? 'var(--text3)' : 'var(--err)', paddingLeft: 14 }}>
+                            {st.ok ? '·' : '✗'} {st.step}{st.note ? ` — ${st.note}` : ''}{st.err ? ` — ${st.err}` : ''}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="table-wrap is-fit" style={{ maxHeight: 320, overflowY: 'auto' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left' }}>Tablo</th>
+                    <th style={{ textAlign: 'left' }}>Aşama</th>
+                    <th style={{ textAlign: 'left' }}>PARTITION BY</th>
+                    <th style={{ textAlign: 'left' }}>ZK yolu</th>
+                    <th style={{ textAlign: 'left' }}>Host başına satır</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tables.map(t => <StateRepartRow key={t.name} t={t} />)}
+                </tbody>
+              </table>
+            </div>
+
+            {pre.stage === 'B' && (
+              <div style={{
+                marginTop: 12, padding: 10, borderRadius: 6,
+                border: '1px solid var(--warn)', background: 'var(--bg2)',
+              }}>
+                <div style={{ fontSize: 12, marginBottom: 6 }}>
+                  <strong>Sıradaki adım YIKICI:</strong> ADIM 5 (<code>_old</code> yedeklerini
+                  düşür) + AŞAMA B (kanonik ZK yolunu geri al). İkisi AYNI eylemde koşar —
+                  <code> RENAME</code> znode'u taşımadığı için kanonik yol ancak <code>_old</code>
+                  düşünce boşalır.
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 8px', lineHeight: 1.6 }}>
+                  Göç dosyası <strong>en az 7 gün</strong> beklemeyi öneriyor: 0010 dedup
+                  DAVRANIŞINI değiştirdiği için yanlış bir sonuç ancak bir id'nin
+                  <code> started_at</code>'i kaydığında — günler sonra — yüzeye çıkar. Yukarıdaki
+                  ADIM 0e/4a ölçümü TAZE; hâlâ eşitse ve süre dolduysa devam et. Canlı veri
+                  kaybolmaz (canlı tablo AŞAMA A'dan beri doğru şemada), kaybolan 0010 ÖNCESİNE
+                  dönme imkânıdır.
+                </p>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, marginBottom: 8 }}>
+                  <input type="checkbox" checked={armed} onChange={e => setArmed(e.target.checked)} />
+                  Anladım: <code>_old</code> yedekleri kalıcı olarak düşecek, 0010 geri alınamaz.
+                </label>
+                <Button variant="danger" size="sm"
+                        disabled={!armed || !pre.finalizeReady || busy !== null || running}
+                        onClick={() => setConfirm('finalize')}>
+                  {running && run?.phase === 'B' ? 'AŞAMA B sürüyor…' : `ADIM 5 + AŞAMA B (${pending('B').length} tablo)`}
+                </Button>
+              </div>
+            )}
+
+            {backups.length > 0 && (
+              <div style={{
+                marginTop: 12, padding: 10, borderRadius: 6,
+                border: '1px solid var(--border)', background: 'var(--bg2)',
+              }}>
+                <div style={{ fontSize: 12, marginBottom: 6 }}>
+                  <strong>Yedekler:</strong> {backups.length} tablonun <code>_pathfix_old</code> kopyası duruyor.
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 8px', lineHeight: 1.6 }}>
+                  Önce uygulamayı bir kez yeniden başlat ve boot logunda
+                  <code> state ZK yolu probe'u: … (N birleşik, 0 eski)</code> gördüğünü doğrula.
+                  Ancak ondan sonra sil — silmek geri alınamaz.
+                </p>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, marginBottom: 8 }}>
+                  <input type="checkbox" checked={armed} onChange={e => setArmed(e.target.checked)} />
+                  Anladım: yedekleri silmek geri alınamaz.
+                </label>
+                <Button variant="ghost-danger" size="sm"
+                        disabled={!armed || !pre.cleanupReady || busy !== null || running}
+                        onClick={() => setConfirm('cleanup')}>
+                  {busy === 'cleanup' ? 'Siliniyor…' : `Yedekleri sil (${backups.length})`}
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {confirm === 'apply' && (
+        <Modal open title="AŞAMA A — partition'ı sök" onClose={() => setConfirm(null)} footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setConfirm(null)}>Vazgeç</Button>
+            <Button variant="primary" size="sm" onClick={() => void doApply()}>Başlat</Button>
+          </>
+        }>
+          <p style={{ fontSize: 12, lineHeight: 1.6 }}>
+            <strong>{pending('A').length}</strong> tablo küçükten büyüğe tek tek taşınacak.
+            Her tablo için: canlı DDL'den PARTITION BY'sız kopya üretilir, veri kopyalanır,
+            atomik RENAME yapılır, yakalama koşar ve <code>ORDER BY id</code> + host eşitliği +
+            FINAL sayımı doğrulanır.
+          </p>
+          <p style={{ fontSize: 12, lineHeight: 1.6 }}>
+            Şema ELLE yazılmaz — canlı <code>create_table_query</code>'den türetilir, yani
+            <code> ai_summary</code>/<code>comparator</code>/<code>kind</code> gibi kolonlar
+            kaybolamaz. PARTITION BY sökülmemiş bir DDL çalıştırılmadan reddedilir.
+          </p>
+          <p style={{ fontSize: 12, lineHeight: 1.6 }}>
+            Bu aşama <strong>hiçbir şey silmez</strong>: eski tablolar <code>_old</code> olarak
+            kalır ve geri alma tablo başına tek <code>RENAME</code>. Bir tablo tutmazsa göç
+            orada DURUR.
+          </p>
+        </Modal>
+      )}
+
+      {confirm === 'finalize' && (
+        <Modal open title="ADIM 5 + AŞAMA B — geri dönüşü yok" onClose={() => setConfirm(null)} footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setConfirm(null)}>Vazgeç</Button>
+            <Button variant="danger" size="sm" onClick={() => void doFinalize()}>Koştur</Button>
+          </>
+        }>
+          <p style={{ fontSize: 12, lineHeight: 1.6 }}>
+            Sırayla: <code>_old</code> yedekleri düşürülür (kanonik ZK yolu boşalır), tablo
+            kanonik yolda yeniden kurulur, veri taşınır ve doğrulanır. Yeni bir yedek
+            (<code>_pathfix_old</code>) bırakılır.
+          </p>
+          <div style={{
+            border: '1px solid var(--border)', borderRadius: 6, padding: 8,
+            fontSize: 11, background: 'var(--bg2)', margin: '8px 0',
+          }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>Doğrulamanın TAZE hâli:</div>
+            {tables.map(t => (
+              <div key={t.name} style={{ color: t.rowsNoMerge === t.rowsFinal ? 'var(--ok)' : 'var(--err)' }}>
+                {t.finalNote}
+              </div>
+            ))}
+          </div>
+          <p style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--text3)' }}>
+            Bu pencerede yeni bir state TABLOSU getiren sürümü deploy etme ve kümeye node
+            ekleme — ara durumda böyle bir tablo eski yola kurulur.
+          </p>
+        </Modal>
+      )}
+
+      {confirm === 'cleanup' && (
+        <Modal open title="Yedekleri sil — geri dönüşü yok" onClose={() => setConfirm(null)} footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setConfirm(null)}>Vazgeç</Button>
+            <Button variant="danger" size="sm" onClick={() => void doCleanup()}>Sil</Button>
+          </>
+        }>
+          <p style={{ fontSize: 12, lineHeight: 1.6 }}>
+            {backups.length} adet <code>_pathfix_old</code> tablosu düşürülecek.
+          </p>
+        </Modal>
+      )}
+    </Section>
+  );
+}
+
+// Bir tablonun 0010 ön kontrol satırı. Aşama bir hüküm değil ÖLÇÜM:
+// partition_key + zookeeper_path + yedek varlığından türer.
+function StateRepartRow({ t }: { t: StateRepartTable }) {
+  const hosts = t.hosts ?? [];
+  const counts = hosts.map(h => h.rows);
+  const uneven = counts.length > 1 && counts.some(c => c !== counts[0]);
+  const badge = t.blocked
+    ? <span className="badge b-err" title={t.blocked}>incele</span>
+    : t.stage === 'A' ? <span className="badge b-err">partition duruyor</span>
+    : t.stage === 'B' ? <span className="badge b-warn">geçici ZK yolu</span>
+    : t.stage === 'cleanup' ? <span className="badge b-warn">yedek duruyor</span>
+    : <span className="badge b-ok">tamam</span>;
+  return (
+    <tr>
+      <td style={{ whiteSpace: 'nowrap' }}>
+        <code>{t.name}</code>
+        {t.hasOld && <span style={{ color: 'var(--text3)', fontSize: 10 }}> +_old</span>}
+        {t.hasPathfixOld && <span style={{ color: 'var(--text3)', fontSize: 10 }}> +_pathfix_old</span>}
+      </td>
+      <td>{badge}</td>
+      <td style={{ fontSize: 11, color: t.partitionKey ? 'var(--err)' : 'var(--text3)' }}>
+        {t.partitionKey || 'yok ✓'}
+      </td>
+      <td style={{
+        fontSize: 11, color: 'var(--text3)', maxWidth: 260,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }} title={t.zkPath}>
+        {t.zkPath || '—'}
+      </td>
+      <td style={{ fontSize: 11, color: uneven ? 'var(--err)' : 'var(--text3)' }}>
+        {hosts.length === 0 ? '—' : hosts.map(h => `${h.host}: ${fmtNum(h.rows)}`).join(' · ')}
+      </td>
+    </tr>
   );
 }
 

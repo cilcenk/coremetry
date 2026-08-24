@@ -3026,6 +3026,44 @@ export const api = {
       body: JSON.stringify({ tables }),
       timeoutMs: 330_000,
     }),
+
+  // ── v0.9.1341 — 0010 partition sökme sihirbazı ─────────────────
+  // Beşi de admin. apply/finalize SENKRON DEĞİL: `problems` tablosunun
+  // TAMAMI kopyalanır, hiçbir makul HTTP tavanına sığmaz → 202 döner ve
+  // ilerleme status'tan yoklanır.
+  /** Ön kontrol — hiçbir şey yazmaz. ADIM 0a-0e: küme şekli, 0009
+   *  uygulanmış mı, host'lar hemfikir mi, fiziksel bölünme ve kusurun
+   *  CANLI kanıtı (FINAL sayımı ↔ do_not_merge ayarıyla FINAL sayımı). */
+  stateRepartPreflight: () =>
+    get<import('./types').StateRepartPreflightResult>('/api/admin/state-repart/preflight'),
+  /** Koşan/bitmiş göçün anlık hâli. */
+  stateRepartStatus: () =>
+    get<import('./types').StateRepartRun>('/api/admin/state-repart/status'),
+  /** AŞAMA A (202). Hiçbir şey SİLMEZ — `_old` yedeği kalır. */
+  stateRepartApply: (cluster: string) =>
+    request<import('./types').StateRepartRun>('/api/admin/state-repart/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster, tables: [] }),
+      timeoutMs: 120_000,
+    }),
+  /** ADIM 5 + AŞAMA B (202). YIKICI: `_old` yedekleri düşer ve kanonik
+   *  ZK yolu geri alınır. `acknowledged` sunucu tarafında da zorunlu. */
+  stateRepartFinalize: (cluster: string) =>
+    request<import('./types').StateRepartRun>('/api/admin/state-repart/finalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster, tables: [], acknowledged: true }),
+      timeoutMs: 120_000,
+    }),
+  /** AŞAMA B'nin `_pathfix_old` yedeklerini düşürür. */
+  stateRepartCleanup: (cluster: string, tables: string[]) =>
+    request<import('./types').StateUnifyCleanupResult>('/api/admin/state-repart/cleanup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster, tables, acknowledged: true }),
+      timeoutMs: 330_000,
+    }),
   chCoordinators: (windowS: number) =>
     get<{
       nodes: Array<{

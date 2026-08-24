@@ -13,8 +13,8 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { encodeRange } from '@/lib/urlState';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { timeRangeToNs } from '@/lib/utils';
-import { StmtDetailDrawer } from '@/pages/slowqueries/StmtDetailDrawer';
-import { decodeStmtParam, encodeStmtParam } from '@/pages/slowqueries/stmtParam';
+import { stmtDetailHref } from '@/pages/slowqueries/stmtParam';
+import { useStmtParamRedirect } from '@/pages/slowqueries/useStmtParamRedirect';
 import type { SlowQueryRow } from '@/lib/types';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -116,29 +116,21 @@ export default function DatabasesPage() {
     }),
     staleTime: 30_000,
   });
-  const stmtRef = useMemo(() => decodeStmtParam(sp.get('stmt')), [sp]);
   const stmtDt = useDataTable<SlowQueryRow>({
     storageKey: 'databases-top-statements', columns: DB_STMT_COLS,
     rows: stmtsQ.data ?? [], initialSort: { id: 'total', dir: 'desc' },
   });
 
+  // Eski `?stmt=` linkleri (yer imi / paylaşılmış URL) sayfaya taşınır.
+  useStmtParamRedirect(range);
+  // v0.9.1374 — satır tıklaması ÇEKMECE değil SAYFA açıyor
+  // (operatör bildirimi: "top statements çekmece açıyor bir satır
+  // üzerine basınca"). Kimlik grameri aynı: stmtDetailHref pencereyi
+  // de taşır, yoksa hedef kendi sticky penceresine düşer.
   const openStmt = (r: SlowQueryRow) => {
-    if (!r.stmtHash) return;
-    setSp(prev => {
-      const next = new URLSearchParams(prev);
-      next.set('stmt', encodeStmtParam({ hash: r.stmtHash!, system: r.dbSystem }));
-      return next;
-    }, { replace: true });
+    const href = stmtDetailHref({ hash: r.stmtHash, system: r.dbSystem }, range);
+    if (href) navigate(href);
   };
-  const closeStmt = () => setSp(prev => {
-    const next = new URLSearchParams(prev);
-    next.delete('stmt');
-    next.delete('stmtcmp');
-    return next;
-  }, { replace: true });
-  const stmtRow = useMemo(
-    () => (stmtsQ.data ?? []).find(r => r.stmtHash === stmtRef?.hash),
-    [stmtsQ.data, stmtRef]);
   // v0.9.821 — GLOBAL ENV FİLTRESİ. Bu sayfa Topbar'ın env seçimini
   // SESSİZCE YOK SAYIYORDU: operatör env=uat seçince /endpoints ve
   // /services daralıyor, /databases ise tüm ortamların veritabanlarını
@@ -449,14 +441,6 @@ export default function DatabasesPage() {
               )}
             </div>
           </>
-        )}
-        {stmtRef && (
-          <StmtDetailDrawer
-            refObj={stmtRef}
-            row={stmtRow}
-            range={range}
-            onClose={closeStmt}
-          />
         )}
       </PageShell>
     </>

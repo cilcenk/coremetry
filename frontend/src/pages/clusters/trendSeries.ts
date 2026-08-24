@@ -77,10 +77,18 @@ export function namedSeriesToSeries(
 ): SpanMetricSeries[] {
   return series
     .filter(s => s.points.length > 0)
-    .map(s => ({
-      groupKey: [shortSeriesLabel(s.name, fallbackLabel, trimPrefix)],
-      points: s.points.map(p => ({ time: p.bucket * 1e9, value: p.value })),
-    }));
+    .map(s => {
+      const short = shortSeriesLabel(s.name, fallbackLabel, trimPrefix);
+      const full = (s.name || '').trim();
+      return {
+        groupKey: [short],
+        // v0.9.1369 (operatör-bildirimi: "Pod isimleri Thanos'tan
+        // çekerken kırpılıyor") — kırpma YALNIZ lejantta kalsın diye tam
+        // ad da taşınır. Kırpma olmadıysa alan yazılmaz.
+        ...(full && full !== short ? { fullKey: [full] } : {}),
+        points: s.points.map(p => ({ time: p.bucket * 1e9, value: p.value })),
+      };
+    });
 }
 
 // shortSeriesLabel — saf, tablo-testli. Önek YALNIZ tam segment

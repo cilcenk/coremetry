@@ -254,6 +254,16 @@ export interface CorePanelProps {
   viz?: 'line' | 'bars' | 'area' | 'stacked' | 'stacked-bars';
 }
 
+/** fullNameOf — frame'in kısaltılmamış seri adı (v0.9.1369).
+ *  Kırpma yapılmamış panellerde undefined döner ve çağıran kısa ada
+ *  düşer, yani davranış değişmez. `meta.custom` Grafana'nın serbest
+ *  alanı; okuma dar tutuldu ki tip zorlaması (as any) gerekmesin. */
+function fullNameOf(frame: { meta?: { custom?: Record<string, unknown> } } | undefined):
+  string | undefined {
+  const v = frame?.meta?.custom?.fullName;
+  return typeof v === 'string' && v ? v : undefined;
+}
+
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
@@ -877,8 +887,13 @@ export function CorePanel({
         const v = visRef.current[i] === false ? null
           : ((rawRef.current[i + 1] as (number | null)[] | undefined)?.[si] ?? null);
         const disp = framesRef.current[i]?.fields[1].display;
+        // v0.9.1369 — tooltip TAM adı gösterir (lejant kısa kalır).
+        // Renk KISA addan çözülür: tam ada geçseydi aynı seri lejantta
+        // ve grafikte farklı renk alırdı (seriesRoleColor etiketi
+        // hash'liyor).
+        const full = fullNameOf(framesRef.current[i]);
         return {
-          label,
+          label: full || label,
           color: resolveVar(seriesRoleColor(label, roles?.[i] ?? 'data')),
           value: v,
           // display processor varsa text'i o üretir; TooltipRow.text'i
@@ -1310,7 +1325,11 @@ export function CorePanel({
                         background: resolveVar(seriesRoleColor(s.name, roles?.[i] ?? 'data')),
                         marginRight: 6,
                       }} />
-                      {s.name}
+                      {/* v0.9.1369 — tam ad title'da: lejant Grafana
+                          yoğunluğunda kısa kalır (v0.9.539 operatör
+                          isteği) ama operatör pod adını üzerine gelerek
+                          okuyabilir/kopyalayabilir. */}
+                      <span title={fullNameOf(frames[i]) || undefined}>{s.name}</span>
                     </td>
                     <td className="num">{fmtCell(i, s.stat.last)}</td>
                     <td className="num">{fmtCell(i, s.stat.min)}</td>

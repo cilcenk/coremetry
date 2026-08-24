@@ -2417,6 +2417,12 @@ export interface ServiceMetricThroughput {
 export interface SpanMetricSeries {
   groupKey: string[];                  // raw tuple, joined for label
   points: { time: number; value: number }[]; // time = unix nanoseconds
+  // v0.9.1369 — KISALTILMAMIŞ etiket. groupKey lejantta okunabilirlik
+  // için kırpılmış olabilir (bkz. namedSeriesToSeries/shortSeriesLabel);
+  // fullKey doluysa tooltip ve lejant title'ı BUNU gösterir. Operatörün
+  // kubectl'e yapıştıracağı ad kaybolmasın diye var — kırpma yoksa
+  // alan hiç doldurulmaz ve davranış bayt-bayt eskisi.
+  fullKey?: string[];
 }
 
 // SpanMetricResult — /api/spans/metric envelope (v0.8.x). The backend trims a

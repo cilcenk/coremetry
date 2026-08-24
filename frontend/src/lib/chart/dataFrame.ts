@@ -136,6 +136,13 @@ export function spanSeriesToFrames(
       name,
       fields: [timeField, valueField],
       length: times.length,
+      // v0.9.1369 — KISALTILMAMIŞ etiket frame'in meta'sında yolculuk
+      // eder. Ayrı bir prop MultiLineChart → CorePanelMulti → CorePanel
+      // boyunca üç imza değiştirirdi; frame zaten paneli baştan sona
+      // geçen tek taşıyıcı ve seri kimliğiyle indeks-hizalı.
+      ...(s.fullKey?.length
+        ? { meta: { custom: { fullName: s.fullKey.join(' · ') } } }
+        : {}),
     };
     return frame;
   });

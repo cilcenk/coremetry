@@ -985,3 +985,38 @@ function formatValueBody(src: string): string | null {
   }
   return null;
 }
+
+
+// ---------------------------------------------------------------------------
+// v0.9.1369 — kırpılmış pod adı (operatör-bildirimi: "Pod isimleri
+// Thanos'tan çekerken kırpılıyor").
+//
+// Kırpma v0.9.539'da BİLİNÇLİ eklendi (lejant genişliği) ama tek etiket
+// kanalını EZİYORDU — tooltip de kısayı gösteriyordu ve operatör kubectl'e
+// yapıştıracağı adı hiçbir yerde göremiyordu. Sözleşme artık: lejant KISA,
+// tooltip TAM, renk kısa addan (hash stabil kalsın).
+// ---------------------------------------------------------------------------
+describe('CorePanel tam seri adı (v0.9.1369)', () => {
+  const src = readFileSync(
+    resolve(__dirname, './CorePanel.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('🔴 tooltip TAM adı gösterir, renk KISA addan çözülür', () => {
+    expect(src).toMatch(/const full = fullNameOf\(framesRef\.current\[i\]\);/);
+    expect(src).toMatch(/label: full \|\| label,/);
+    // Renk hâlâ kısa etiketten — tam ada kayarsa lejant/çizgi rengi ayrışır.
+    expect(src).toMatch(/seriesRoleColor\(label, roles\?\.\[i\] \?\? 'data'\)/);
+    expect(src).not.toMatch(/seriesRoleColor\(full/);
+  });
+
+  it('🔴 lejant hücresi tam adı title olarak taşır', () => {
+    expect(src).toMatch(/title=\{fullNameOf\(frames\[i\]\) \|\| undefined\}/);
+  });
+
+  it('🔴 tam ad okuması TİP GÜVENLİ — as any yok', () => {
+    const m = /function fullNameOf\([\s\S]*?\n\}/.exec(src);
+    expect(m, 'fullNameOf bulunamadı').toBeTruthy();
+    expect(m![0]).not.toMatch(/as any/);
+    expect(m![0]).toMatch(/typeof v === 'string'/);
+  });
+});

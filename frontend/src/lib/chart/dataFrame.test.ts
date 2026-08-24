@@ -380,3 +380,25 @@ describe('v0.9.1368 — tick etiketleri ölçekli birimde ayrışır', () => {
     expect(new Set(labels).size).toBe(labels.length);
   });
 });
+
+// v0.9.1369 — kısaltılmamış seri adı frame'in meta'sında taşınır.
+describe('spanSeriesToFrames — fullKey → meta.custom.fullName', () => {
+  const pts = [{ time: 1e9, value: 1 }];
+  it('fullKey varsa meta taşınır', () => {
+    const [f] = spanSeriesToFrames(
+      [{ groupKey: ['546cc47b6d-gslcw'], fullKey: ['cm-get-service-546cc47b6d-gslcw'], points: pts }],
+      { unit: 'bytes' });
+    expect(f.meta?.custom?.fullName).toBe('cm-get-service-546cc47b6d-gslcw');
+    // frame ADI kısa kalır — lejant yoğunluğu v0.9.539'daki gibi.
+    expect(f.name).toBe('546cc47b6d-gslcw');
+  });
+  it('fullKey yoksa meta hiç yazılmaz', () => {
+    const [f] = spanSeriesToFrames([{ groupKey: ['pod-a'], points: pts }], { unit: 'bytes' });
+    expect(f.meta?.custom?.fullName).toBeUndefined();
+  });
+  it('çok anahtarlı fullKey lejant ayracıyla birleşir', () => {
+    const [f] = spanSeriesToFrames(
+      [{ groupKey: ['a'], fullKey: ['ns', 'full-pod'], points: pts }], {});
+    expect(f.meta?.custom?.fullName).toBe('ns · full-pod');
+  });
+});

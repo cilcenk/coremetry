@@ -215,3 +215,20 @@ describe('dashboard katlaması (v0.9.946)', () => {
     expect(dash).toMatch(/isOthersSeries\(s0\)/);
   });
 });
+
+// v0.9.1369 — "others" katlaması bir pod DEĞİL: tail[0]'ın tam adını
+// miras alsaydı tooltip katlanmış çizgiye rastgele bir pod adı yazardı.
+describe('foldTopN — others fullKey taşımaz (v0.9.1369)', () => {
+  it('katlanan seri tail[0].fullKey\'i MİRAS ALMAZ', () => {
+    const mk = (k: string, v: number) => ({
+      groupKey: [k], fullKey: [`deploy-${k}`],
+      points: [{ time: 1, value: v }, { time: 2, value: v }],
+    });
+    const out = foldTopN([mk('a', 100), mk('b', 50), mk('c', 1), mk('d', 1)], '', 2);
+    const others = out[out.length - 1];
+    expect(others.groupKey).toEqual([OTHERS_KEY]);
+    expect(others.fullKey).toBeUndefined();
+    // korunan seriler tam adlarını KAYBETMEZ
+    expect(out[0].fullKey).toEqual(['deploy-a']);
+  });
+});

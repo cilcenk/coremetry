@@ -32,6 +32,7 @@ import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer'
 // clipboard copies (it alone fell back when writeText rejected). That
 // version is now lib/clipboard, and the two local functions are gone.
 import { copyToClipboard } from '@/lib/clipboard';
+import { traceHref } from '@/lib/traceHref';
 import { PageShell } from '@/components/ui/PageShell';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
@@ -502,7 +503,7 @@ function TraceDetailInner() {
             {/* v0.8.332 (pivot Phase 3) — OTel span links, both directions.
                 Renders NOTHING for the (vast) majority of traces that carry
                 no links; see LinkedTracesSection. */}
-            <LinkedTracesSection id={id} />
+            <LinkedTracesSection id={id} pageRange={range} />
             <div style={{ marginBottom: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {/* v0.9.477 — satır-içi panel yerine tek sağ-kenar AI
                   çekmecesi (?ai=trace:<id>); kanıt span'leri window
@@ -725,7 +726,11 @@ function TabBtn({ active, onClick, children }: {
 // NOTHING until data arrives AND at least one link exists — most traces
 // carry no links and the header must not grow a permanent empty section
 // (no spinner either, for the same reason).
-function LinkedTracesSection({ id }: { id: string }) {
+// `pageRange` v0.9.1350 — bu şerit trace→trace atlıyor ve hedef yine bir
+// /trace sayfası; operatörün İÇİNDE DURDUĞU pencere (sayfanın range'i)
+// taşınır, bağlantılı trace'in kendi süresi DEĞİL. traceHref'in imzası
+// zaten olay-penceresi şeklini reddediyor (lib/traceHref.ts).
+function LinkedTracesSection({ id, pageRange }: { id: string; pageRange: TimeRange }) {
   const q = useQuery({
     queryKey: ['trace-links', id],
     queryFn: () => api.traceLinks(id),
@@ -787,7 +792,7 @@ function LinkedTracesSection({ id }: { id: string }) {
             title={r.dir === 'out' ? 'This trace links to' : 'Linked from another trace'}>
             {r.dir === 'out' ? '→ links to' : '← linked from'}
           </span>
-          <Link to={`/trace?id=${r.other}`}
+          <Link to={traceHref(r.other, { pageRange })}
             style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
             {r.other.slice(0, 8)}…
           </Link>

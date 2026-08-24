@@ -59,6 +59,7 @@ import { mergeTraceExtras, missingExtraKeys } from '@/lib/traceExtrasMerge';
 import { DEFAULT_TRACE_COLUMNS, traceColumnOrder } from '@/lib/traceColumns';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, FilterGroup, SpanMetricSeries } from '@/lib/types';
+import { traceHref } from '@/lib/traceHref';
 
 import { VolumeChart } from '@/components/traces/VolumeChart';
 import { LatencyScatter } from '@/components/traces/LatencyScatter';
@@ -642,7 +643,7 @@ function TracesPageInner() {
   // picker auto-commit race).
   const apply = (overrideService?: string) => {
     const tid = draft.traceId.trim().toLowerCase();
-    if (/^[0-9a-f]{32}$/.test(tid)) { navigate(`/trace?id=${tid}`); return; }
+    if (/^[0-9a-f]{32}$/.test(tid)) { navigate(traceHref(tid, { pageRange: range })); return; }
     const next = overrideService != null ? { ...draft, service: overrideService } : draft;
     setPage(0);
     if (overrideService != null) setDraft(next);
@@ -772,7 +773,7 @@ function TracesPageInner() {
   // Reset transient state on a new query / page.
   useEffect(() => { setExpanded(null); }, [page, filter, advFilters, advGroupParam, range, view]);
 
-  const openTrace = (t: TraceRow) => navigate(`/trace?id=${t.traceId}`);
+  const openTrace = (t: TraceRow) => navigate(traceHref(t.traceId, { pageRange: range }));
 
   // v0.9.430 — TAM geri-yığını (audit kriteri 1): eski tek-slot
   // brushPrev yalnız İLK brush öncesini tutuyordu, ardışık zoom

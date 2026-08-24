@@ -6,6 +6,7 @@ import { readState } from '@/lib/readState';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { fmtNum, tsLong } from '@/lib/utils';
 import type { RepeatedSpanRow } from '@/lib/types';
+import { traceHref } from '@/lib/traceHref';
 import { repeatCols } from './presets';
 
 // RepeatsResult — the Explore "Repeats" result-mode table (N+1 /
@@ -50,7 +51,7 @@ export function RepeatsResult({
     columns: cols,
     rows: repeats ?? [],
     initialSort: { id: 'count', dir: 'desc' },
-    onOpen: r => navigate(`/trace?id=${r.traceId}`),
+    onOpen: r => navigate(traceHref(r.traceId)),
   });
 
   return (
@@ -84,10 +85,10 @@ export function RepeatsResult({
               <tbody>
                 {repeatsDt.sortedRows.map((r, i) => (
                   <tr key={`${r.traceId}|${i}`} {...repeatsDt.rowProps(i)}
-                      onClick={() => navigate(`/trace?id=${r.traceId}`)}
+                      onClick={() => navigate(traceHref(r.traceId))}
                       style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' }}>
                     <td>
-                      <Link to={`/trace?id=${r.traceId}`}
+                      <Link to={traceHref(r.traceId)}
                             onClick={e => e.stopPropagation()}
                             style={{ fontFamily: 'monospace', fontSize: 11 }}>
                         {r.traceId.slice(0, 12)}…

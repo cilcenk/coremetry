@@ -12,6 +12,7 @@ import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { fmtNs } from '@/lib/utils';
 import type { SpanRow, TraceDetailResponse } from '@/lib/types';
+import { traceHref } from '@/lib/traceHref';
 
 type CompareTab = 'split' | 'diff';
 
@@ -109,7 +110,7 @@ function Inner() {
         <div className="controls" style={{ marginBottom: 12, alignItems: 'center' }}>
           <span style={{ fontSize: 12, color: 'var(--text2)' }}>
             Trace A:{' '}
-            <Link to={`/trace?id=${encodeURIComponent(a)}`}
+            <Link to={traceHref(a)}
                   style={{ fontFamily: 'monospace' }}>
               {a.slice(0, 12)}…
             </Link>
@@ -226,7 +227,7 @@ function TraceSide({ label, id, q, otherQ }: {
         display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap',
       }}>
         <span style={{ fontSize: 14, fontWeight: 700 }}>Trace {label}</span>
-        <Link to={`/trace?id=${encodeURIComponent(id)}`}
+        <Link to={traceHref(id)}
               style={{ fontFamily: 'monospace', fontSize: 11 }}>
           {id.slice(0, 12)}…
         </Link>

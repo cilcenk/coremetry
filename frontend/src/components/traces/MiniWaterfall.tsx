@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { spanHasError } from '@/lib/otel';
 import type { SpanRow } from '@/lib/types';
+import { traceHref } from '@/lib/traceHref';
 import { svcColor, fmtDur } from './shared';
 
 const TOP_N = 8;
@@ -86,7 +87,7 @@ export function MiniWaterfall({
         );
       })}
       <div style={{ marginTop: 6 }}>
-        <a href={`/trace?id=${traceId}`}
+        <a href={traceHref(traceId)}
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpen(); }}
           style={{ color: 'var(--accent2)', fontSize: 11.5, fontWeight: 600, textDecoration: 'none' }}>
           Open trace →

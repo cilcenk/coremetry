@@ -181,7 +181,7 @@ export default function DatabaseDetailPage() {
               display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
               gap: 12,
             }}>
-              <DatabaseCallersSection callers={d.callers ?? []} range={range} />
+              <DatabaseCallersSection callers={d.callers ?? []} range={range} env={env} />
 
               {/* TOP STATEMENTS — v0.9.846 moved up into the grid, taking
                   the cell "Waits & locks" used to hold. The operator does

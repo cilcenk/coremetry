@@ -173,17 +173,19 @@ export default function EndpointDetailPage() {
             </span>
           )}
           {/* v0.9.1210 (operatör bildirimi) — pivotlar düz link değil
-              bağlantı-düğme: "çok belli olmuyordu". a.sec = button.sec
-              anatomisi (globals.css). */}
+              bağlantı-düğme: "çok belli olmuyordu". v0.9.1372 (operatör
+              isteği: "Traces Explore ve Service butonları mavi olabilir")
+              onları `.sec`ten `.accent`e taşıdı — a.accent = button.accent
+              yüzeyi + a.sec anatomisi (globals.css). */}
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, fontSize: 12 }}>
-            <Link className="sec" style={{ fontSize: 12, padding: '3px 10px' }}
+            <Link className="accent" style={{ fontSize: 12, padding: '3px 10px' }}
               to={tracesLink(refObj, range, env, cluster)}>Traces →</Link>
-            <Link className="sec" style={{ fontSize: 12, padding: '3px 10px' }}
+            <Link className="accent" style={{ fontSize: 12, padding: '3px 10px' }}
               to={exploreLink(refObj, range, 'p99', env, cluster)}
               title="Open this route's p99 in Explore — charted from the metric rollups, where you can add dimensions or compare against another query.">
               Explore →
             </Link>
-            <Link className="sec" style={{ fontSize: 12, padding: '3px 10px' }}
+            <Link className="accent" style={{ fontSize: 12, padding: '3px 10px' }}
               to={serviceHref(refObj.service, { range, env })}>Service →</Link>
           </span>
         </div>

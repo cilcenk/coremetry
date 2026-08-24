@@ -556,6 +556,21 @@ a.sec {
   text-decoration: none; transition: background .15s;
 }
 a.sec:hover { background: var(--bg2); }
+/* a.accent — `.sec` ikizinin accent kardeşi (v0.9.1372).
+   v0.9.1210'un dersi bir varyant sonra aynen tekrarlanacaktı: `.accent`
+   yalnız `button.accent` olarak tanımlıydı, dolayısıyla bir <Link>'e
+   className="accent" vermek SESSİZCE hiçbir şey yapmazdı — buton mavi
+   olmaz, düz `.sec` gibi kalırdı ve kimse hata görmezdi. Yüzey
+   `button.accent`ten birebir devralınıyor (ölçülmüş AA kontrastları
+   orada belgeli), kutu anatomisi `a.sec`ten. */
+a.accent {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--accent-bg); color: var(--accent2);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: var(--radius-sm); padding: 5px 14px; font-size: 13px;
+  text-decoration: none; transition: background .15s, border-color .12s;
+}
+a.accent:hover { border-color: var(--accent); }
 button.danger { background: var(--err); color: var(--on-accent); }
 button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--err) 88%, white); }
 button.ghost { background: transparent; color: var(--text2); border: 1px solid transparent; }

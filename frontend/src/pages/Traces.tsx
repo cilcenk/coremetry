@@ -39,6 +39,7 @@ import type { DataTable } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { formatSortParam } from '@/lib/dataTable';
 import { type AggSort, toAggSort, decodeLegacyAggSort } from './traces/aggSort';
+import { parseRootOnlyParam, rootOnlyUrlValue, shouldDropRootOnly } from './traces/rootOnlyFallback';
 import { api, isCanceled } from '@/lib/api';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
@@ -264,10 +265,16 @@ function TracesPageInner() {
     // /traces + service/operation returned zero rows. URL stays source of
     // truth: an explicit ?rootOnly=true keeps it on; ?rootOnly=false (the
     // existing deep-links) and absence both mean off.
-    rootOnly: searchParams.get('rootOnly') === 'true',
+    rootOnly: parseRootOnlyParam(searchParams.get('rootOnly')).rootOnly,
     requireServices: (searchParams.get('services') ?? '').split(',').map(s => s.trim()).filter(Boolean),
   }));
   const [draft, setDraft] = useState(filter);
+  // v0.9.1372 — sessiz root geri dönüşü KURULUMU. `?rootOnly=auto` ile gelen
+  // pivotlar (endpoint / database) root seçili açılır; liste boş dönerse
+  // filtre kendiliğinden düşer. Kurulum tek kullanımlık, aşağıdaki efekt
+  // tetiklendiğinde iniyor.
+  const [rootOnlyAuto, setRootOnlyAuto] = useState(
+    () => parseRootOnlyParam(searchParams.get('rootOnly')).auto);
   const [advFilters, setAdvFilters] = useState<FilterExpr[]>(() => decodeFilters(searchParams.get('filters')));
   // v0.8.x gap-2 — grouped AND/OR builder. null = flat chip mode (the DEFAULT,
   // and what every existing saved view / shared URL decodes to). Non-null only
@@ -389,7 +396,7 @@ function TracesPageInner() {
       // Default is OFF now, so only serialize when explicitly ON. buildQuery
       // drops '' → a fresh (off) session keeps the URL clean; ?rootOnly=true
       // round-trips back to the reader above (=== 'true').
-      ['rootOnly', filter.rootOnly ? 'true' : ''],
+      ['rootOnly', rootOnlyUrlValue(filter.rootOnly)],
       ['services', filter.requireServices.join(',')],
       // Grouped (OR / nested) → filterGroup param; flat → legacy filters param.
       // Never both: a non-empty filterGroup suppresses filters so the URL has a
@@ -768,6 +775,26 @@ function TracesPageInner() {
     return () => { cancelled = true; ctl.abort(); };
   }, [showTotal, view, listRangeNs, filter.service, filter.minMs, filter.maxMs,
       filter.hasError, filter.rootOnly, env, clusterScope, advFilters, advGroupParam]);
+  // v0.9.1372 — sessiz geri dönüş. Koşul, aşağıdaki "no traces found" boş
+  // durumunun GÖRÜNME koşuluyla aynı: liste görünümü, hata yok, veri geldi,
+  // sıfır satır. Operatör o boşluğu görüp root kutusunu elle kaldıracaktı;
+  // ürün onun yerine yapıyor ve sonucu gösteriyor — uyarı şeridi YOK
+  // (operatör direktifi: "geri dönüş sessiz olsun").
+  useEffect(() => {
+    if (!shouldDropRootOnly({
+      auto: rootOnlyAuto,
+      rootOnly: filter.rootOnly,
+      loaded: view === 'list' && !!data,
+      errored: !!listErr,
+      rowCount: traces.length,
+    })) return;
+    setRootOnlyAuto(false);
+    setFilter(f => ({ ...f, rootOnly: false }));
+    // Taslak da inmeli, yoksa kutu açık görünür ama sorgu kapalı koşar —
+    // ekranın kendi hakkında yalan söylediği hâl.
+    setDraft(d => ({ ...d, rootOnly: false }));
+  }, [rootOnlyAuto, filter.rootOnly, view, data, listErr, traces.length]);
+
   const hasMore = data?.hasMore ?? false;
 
   // Quick-filter chips narrow the CURRENT page client-side (instant).

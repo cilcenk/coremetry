@@ -20,6 +20,7 @@ import {
 import type { InboxItem, ExceptionGroupState } from '@/lib/types';
 import { serviceHref, inboxItemWindow } from '@/lib/serviceHref';
 import { tracesPivotHref } from '@/lib/pivotHref';
+import { SubjectLink } from './SubjectLink';
 
 // InboxTriageDrawer — v0.8.292 (Option B slice 3): the /inbox row-click opens
 // this right-side drawer so the operator triages WITHOUT leaving the inbox,
@@ -62,10 +63,8 @@ export function InboxTriageDrawer({ item, onClose, onOpenSource }: {
         {item?.service && (
           /* v0.9.860 (UX denetimi K1) — öğenin kendi penceresi (başlangıç →
              son görülme, ±tampon) linke biner. */
-          <Link to={serviceHref(item.service, { range: inboxItemWindow(item) })}
-            style={{ fontWeight: 700, fontSize: 14 }}>
-            {item.service}
-          </Link>
+          <SubjectLink service={item.service} subjectKind={item.subjectKind} href={serviceHref(item.service, { range: inboxItemWindow(item) })}
+            style={{ fontWeight: 700, fontSize: 14 }} />
         )}
         {item?.assignee && (
           <span className="badge b-info" style={{ fontSize: 10 }}>

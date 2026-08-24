@@ -47,6 +47,7 @@ import { PageShell } from '@/components/ui/PageShell';
 // v0.9.1133 (AI Faz 2.3) — satır-altı insight kartının yuvası; şerit
 // RootCauseRibbon ile BİRLEŞİK (iki ayrı kanıt yüzeyi değil).
 import { useInsightRow, InsightRowChip, InsightRowSlot } from '@/components/ai/insightRow';
+import { SubjectLink } from '../../components/SubjectLink';
 
 // Problems-specific severity + priority ordering.
 const SEV_RANK: Record<string, number> = { critical: 3, warning: 2, info: 1 };
@@ -631,11 +632,10 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                             pencere ŞİMDİye kadar uzuyor — onset±40dk, hâlâ
                             yanan bir olayda hiçbir şeyin bozuk olmadığı bir
                             ana bakmak demekti. */}
-                        <Link to={serviceHref(p.service, { range: eventLifespanWindow(p) })}
+                        <SubjectLink service={p.service} subjectKind={p.kind}
+                          href={serviceHref(p.service, { range: eventLifespanWindow(p) })}
                           onClick={e => e.stopPropagation()}
-                          style={{ fontWeight: 600 }}>
-                          {p.service}
-                        </Link>
+                          style={{ fontWeight: 600 }} />
                         <ClusterChips clusters={p.clusters} />
                       </td>
                       <td className="mono">{p.metric}</td>

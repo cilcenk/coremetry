@@ -36,6 +36,7 @@ import type {
   LogPatternAnomaly, TraceOpAnomaly, Problem, AnomalyEvent,
   AnomalySilence,
 } from '@/lib/types';
+import { SubjectLink } from '../../components/SubjectLink';
 
 // AnomalyStreams renders all five anomaly sections in their canonical
 // order. Each section is independently driven by its own React
@@ -226,9 +227,8 @@ function MetricSection({ items }: { items: Problem[] | undefined }) {
               </Badge>
               <span style={{ fontWeight: 600, fontSize: 12 }}>{p.metric}</span>
               <span style={{ flex: 1 }} />
-              <Link to={serviceHref(p.service, { range: eventLifespanWindow(p) })} style={{ fontSize: 11, color: 'var(--accent2)' }}>
-                {p.service} ↗
-              </Link>
+              <SubjectLink service={p.service} subjectKind={p.kind} href={serviceHref(p.service, { range: eventLifespanWindow(p) })}
+                style={{ fontSize: 11, color: 'var(--accent2)' }} />
             </Row>
             <div style={{ fontSize: 11, color: 'var(--text2)' }}>
               {p.description || <>value <span className="mono">{p.value.toFixed(2)}</span> vs threshold <span className="mono">{p.threshold.toFixed(2)}</span></>}

@@ -111,3 +111,30 @@ export function subjectTitle(service: string): string | undefined {
   }
   return undefined;
 }
+
+/**
+ * derivedTeamTitle — TÜRETİLMİŞ sahipliğin çekincesi (v0.9.1345).
+ *
+ * Bir db konusunun katalogda satırı yok, o yüzden takımı "bu veritabanını
+ * EN ÇOK ÇAĞIRAN servisin takımı" kuralıyla türetiliyor (operatör kararı
+ * 2026-08-24, backend chstore/db_ownership.go).
+ *
+ * Metin İKİ şeyi birden söylemek zorunda ve ikisi de gerekli:
+ *
+ *  1. KANIT — hangi servis üzerinden türetildi. Operatör cevabı tartabilsin.
+ *  2. SINIR — çözüm veritabanı SİSTEMİ düzeyinde yapılıyor, tekil örnek
+ *     düzeyinde DEĞİL (iki kimlik uzayı kesişmiyor; backend'deki ölçülmüş
+ *     uyarı). Yani aynı sistemden iki küme farklı takımlara aitse ikisi de
+ *     aynı takıma yazılır.
+ *
+ * (2) olmadan bu metin kesin bir atıf gibi okunur. Bu repoda kendinden
+ * emin görünen yanlış cevap, çekinceli cevaptan kötüdür.
+ */
+export function derivedTeamTitle(via: string, service?: string): string {
+  const db = service ? parseDbSubject(service) : null;
+  const what = db ? `${db.system} veritabanını` : 'bu veritabanını';
+  return `Türetilmiş sahiplik (kesin atıf değil) — ${what} en çok çağıran ` +
+    `servis "${via}" olduğu için onun katalog takımı gösteriliyor. ` +
+    `Çözüm veritabanı SİSTEMİ düzeyinde yapılır, tekil örnek düzeyinde değil: ` +
+    `aynı sistemden birden çok küme varsa hepsi bu takıma yazılır.`;
+}

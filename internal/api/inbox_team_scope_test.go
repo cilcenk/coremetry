@@ -40,7 +40,26 @@ func TestInboxTeamFilterReachesEverySource(t *testing.T) {
 		//     than overwrite them; overwriting would silently WIDEN a page
 		//     the operator had already narrowed.
 		{"team axis (union) resolution", "teamServices = intersectServices(teamServices, servicesForUserTeam(ta, mdMap, team))"},
-		{"problems", "Services: teamServices,\n\t\t\t\tLimit:    srcLimit,"},
+		// v0.9.1345 — bu parça ESKİDEN iki BİTİŞİK satırı pinliyordu
+		// ("Services: teamServices,\n\t\t\t\tLimit:    srcLimit,"). Araya
+		// yeni bir alan (ServicesAllowDBSubjects) girince gate ısırdı ama
+		// GARANTİ bozulmamıştı — yalnız YAZIM değişmişti. Bitişiklik
+		// sözleşmenin parçası değil; kontrol edilen şey allowlist'in bu
+		// kaynağa ULAŞMASI. Alan sırasına bağlı bir gate, ilk gofmt
+		// hizalamasında yanlış alarm verir (v0.9.1285/1286 sınıfı).
+		//
+		// Ayrım hâlâ gerekli: `Services: teamServices` inbox.go'da birden
+		// çok kez geçiyor. Bu yüzden problems kaynağını AYIRT EDEN alan
+		// (srcLimit) ayrı bir parça olarak pinleniyor.
+		{"problems", "Services: teamServices,"},
+		{"problems (LIMIT allowlist'ten sonra)", "srcLimit,"},
+		// v0.9.1345 — db öznelerinin kaçış kapısı: sahiplikleri
+		// TÜRETİLİYOR ama servis-adı allowlist'inde olamazlar, o yüzden
+		// SQL daraltmasını geçip Go'daki kesin takım eşleştirmesine
+		// ulaşmaları gerekiyor. Bu satır düşerse operatör
+		// owner=core-banking seçtiğinde Oracle satırı KAYBOLUR — üstelik
+		// kendi çipi "core-banking" yazarken.
+		{"problems (db özne kaçışı)", "ServicesAllowDBSubjects: true,"},
 		{"exceptions (above floor)", "MinOccurrences: minOcc,\n\t\t\t\tServices:       teamServices,"},
 		{"exceptions (below floor)", "MaxOccurrences: minOcc,\n\t\t\t\t\tServices:       teamServices,"},
 		{"anomalies", "ActiveOnly: statusFilter == \"open\",\n\t\t\t\t// v0.9.353 — nil = no constraint; empty = match nothing.\n\t\t\t\tServices: teamServices,"},

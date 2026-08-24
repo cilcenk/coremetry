@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseDbSubject, subjectKind, subjectLabel, subjectIsLinkable, subjectTitle,
+  derivedTeamTitle,
 } from './problemSubject';
 
 // problemSubject.test.ts — v0.9.1339.
@@ -115,5 +116,41 @@ describe('subjectTitle', () => {
   });
   it('servis öznesinde title YOK (gereksiz tooltip gürültüsü)', () => {
     expect(subjectTitle('checkout')).toBeUndefined();
+  });
+});
+
+// derivedTeamTitle — v0.9.1345. TÜRETİLMİŞ sahipliğin çekincesi.
+//
+// Operatör kuralı: bir db öznesinin sahibi, onu en çok çağıran servisin
+// takımıdır. Ama çözüm db SİSTEMİ düzeyinde yapılıyor (iki kimlik uzayı
+// kesişmiyor — backend identity.go), yani bir YAKLAŞIKLIK.
+//
+// Bu testlerin ağırlığı ÇEKİNCENİN KENDİSİNDE: metin kanıtı (hangi
+// servis) VE sınırı (sistem düzeyi) birlikte söylemezse kesin bir atıf
+// gibi okunur, ve o hâlde ürün kendinden emin bir yanlış cevap verir.
+describe('derivedTeamTitle', () => {
+  const t = derivedTeamTitle('account-service', 'db:oracle@corebank-scan.prod');
+
+  it('KANITI söyler — takım hangi servis üzerinden türetildi', () => {
+    expect(t).toContain('account-service');
+  });
+  it('kesin atıf OLMADIĞINI açıkça söyler', () => {
+    expect(t).toContain('Türetilmiş');
+    expect(t).toContain('kesin atıf değil');
+  });
+  it('SINIRI söyler — çözüm sistem düzeyinde, tekil örnek düzeyinde değil', () => {
+    // Bu cümle düşerse iki Oracle kümesi olan bir filoda operatör,
+    // ikisinin de aynı takıma yazıldığını HİÇBİR yerde göremez.
+    expect(t).toContain('SİSTEMİ düzeyinde');
+    expect(t).toContain('birden çok küme');
+  });
+  it('db sistemini adlandırır', () => {
+    expect(t).toContain('oracle');
+  });
+  it('özne verilmezse de çekince tam kalır (yalnız ad genelleşir)', () => {
+    const bare = derivedTeamTitle('account-service');
+    expect(bare).toContain('account-service');
+    expect(bare).toContain('kesin atıf değil');
+    expect(bare).toContain('SİSTEMİ düzeyinde');
   });
 });

@@ -1634,6 +1634,12 @@ export interface InboxItem {
   // group. Either / both can be empty when no catalog row.
   ownerTeam?: string;
   sreTeam?: string;
+  // teamsVia (v0.9.1345) — Problem.teamsVia ile AYNI anlam: takımlar
+  // DOLAYLI çözüldüyse hangi servisin katalog satırından geldikleri.
+  // Yalnız db konularında dolar; dolduğunda rozet çekince koymak
+  // zorunda (türetim veritabanı SİSTEMİ düzeyinde, tekil örnek
+  // düzeyinde değil).
+  teamsVia?: string;
   status: string;
   clusters?: string[];
   // v0.9.255 — enrichment sonuçları. Backend bunları ZATEN hesaplıyordu
@@ -2923,6 +2929,20 @@ export interface Problem {
   // inbox + Services pattern.
   ownerTeam?: string;
   sreTeam?: string;
+  // teamsVia (v0.9.1345) — takımlar DOLAYLI çözüldüyse, hangi servisin
+  // katalog satırından geldikleri. BOŞ = doğrudan (özne bir servis ve
+  // takımlar kendi satırından geliyor).
+  //
+  // Yalnız db konularında dolar (kind='db'): onların `service` alanı bir
+  // `db:<system>@<instance>` kimliği ve kataloğda satırı YOK, o yüzden
+  // sahiplik "bu veritabanını EN ÇOK ÇAĞIRAN servisin takımı" kuralıyla
+  // türetilir (operatör kararı 2026-08-24).
+  //
+  // Alan dolduğunda YÜZEY ÇEKİNCE KOYMAK ZORUNDA: türetim veritabanı
+  // SİSTEMİ düzeyinde yapılıyor, tekil örnek düzeyinde değil, yani aynı
+  // sistemden birden çok küme varsa hepsi aynı takıma yazılır. Yalnız
+  // takım adını göstermek bunu kesin bir atıf gibi gösterirdi.
+  teamsVia?: string;
   // Most recent service.version deploy observed in the 30 min
   // before this problem opened, or undefined. Surfaced as a
   // "deployed v1.2 · 6m before" tag so operators see the

@@ -10092,6 +10092,14 @@ func (s *Server) listProblemBuckets(w http.ResponseWriter, r *http.Request) {
 		if ownerTeam != "" || sreTeam != "" {
 			if mds, err := s.store.ListServiceMetadata(ctx); err == nil {
 				f.Services = servicesForTeam(s.teamAliasesCtx(ctx), mds, ownerTeam, sreTeam)
+				// v0.9.1345 — listedeki kardeşiyle AYNI istisna: db
+				// özneleri servis-adı listesinde olamaz, sahiplikleri
+				// türetiliyor, o yüzden SQL daraltmasından geçip
+				// aşağıdaki kesin eşleştirmeye ulaşmalılar. Bayrak
+				// olmadan chip'ler db problemlerini SAYMAZ ama liste
+				// GÖSTERİR — v0.9.474'ün kapattığı "chip ile satır
+				// ıraksıyor" kusurunun aynısı, db tarafında.
+				f.ServicesAllowDBSubjects = true
 			}
 		}
 		if clusterFilter != "" {
@@ -10111,6 +10119,22 @@ func (s *Server) listProblemBuckets(w http.ResponseWriter, r *http.Request) {
 		probs, err := s.store.ListProblems(ctx, f)
 		if err != nil {
 			return nil, err
+		}
+		// v0.9.1345 — SQL daraltması db öznelerini GEVŞETİYOR (yukarıdaki
+		// bayrak), yani kesin eşleştirme burada yapılmak ZORUNDA. Listenin
+		// ikinci geçişiyle birebir aynı: zenginleştir, sonra
+		// matchesTeamFilter. Aksi hâlde chip'ler BAŞKA takımların db
+		// problemlerini de sayardı.
+		if ownerTeam != "" || sreTeam != "" {
+			probs = s.store.EnrichProblemsWithTeams(ctx, probs)
+			ta := s.teamAliasesCtx(ctx)
+			keep := probs[:0]
+			for _, p := range probs {
+				if matchesTeamFilter(ta, p.OwnerTeam, p.SRETeam, ownerTeam, sreTeam) {
+					keep = append(keep, p)
+				}
+			}
+			probs = keep
 		}
 		// Priority depends on RecentDeploy (fresh-deploy bump), so
 		// the deploys enrich must run before the priority enrich.
@@ -10209,6 +10233,14 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 		if ownerTeam != "" || sreTeam != "" {
 			if mds, err := s.store.ListServiceMetadata(ctx); err == nil {
 				scan.Services = servicesForTeam(s.teamAliasesCtx(ctx), mds, ownerTeam, sreTeam)
+				// v0.9.1345 — db özneleri bu listede OLAMAZ (liste servis
+				// adlarından kuruluyor, onların `service` alanı bir
+				// DBSubjectID). Sahiplikleri artık TÜRETİLİYOR, o yüzden
+				// SQL daraltmasından geçmeliler; kesin eşleştirmeyi
+				// aşağıdaki matchesTeamFilter geçişi yapıyor. Bu satır
+				// olmadan satırın çipi "core-banking" yazarken
+				// owner=core-banking süzgeci onu SESSİZCE gizlerdi.
+				scan.ServicesAllowDBSubjects = true
 			}
 		}
 		if clusterFilter != "" {

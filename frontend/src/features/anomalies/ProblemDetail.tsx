@@ -30,7 +30,7 @@ import { latencyThresholdMs, slowTracesHref } from '@/features/anomalies/slowTra
 import { problemWindowNs, topOffenders } from '@/features/anomalies/problemOffenders';
 import { operationTracesHref } from '@/lib/pivotHref';
 import { SubjectLink } from '../../components/SubjectLink';
-import { subjectKind } from '../../lib/problemSubject';
+import { subjectKind, derivedTeamTitle } from '../../lib/problemSubject';
 
 // ProblemDetail — Variant B (Dynatrace problem feed) full-page details.
 // Two surfaces share one skeleton: a top triage bar (badges + ID +
@@ -235,6 +235,48 @@ function TeamChips({ service }: { service: string }) {
     <>
       {ug && <span className="chip"><span className="k">ug-team</span><b className="mono">{ug}</b></span>}
       {sy && <span className="chip"><span className="k">sy-team</span><b className="mono">{sy}</b></span>}
+    </>
+  );
+}
+
+// ProblemTeamChips — bir PROBLEMİN ekip rozetleri (v0.9.1345).
+//
+// TeamChips'ten ayrı, çünkü kaynağı farklı ve o fark GÖRÜNÜR olmak
+// zorunda. TeamChips kataloğu SERVİS ADIYLA sorar; bir db konusunun
+// (`db:oracle@corebank-scan.prod`) kataloğda satırı yok, dolayısıyla o
+// bileşen db problemlerinde SESSİZCE hiçbir şey çizmiyordu — ekibi olan
+// bir alarm sahipsiz görünüyordu.
+//
+// Sıra bilinçli:
+//  1. Problemin KENDİ alanları (sunucuda EnrichProblemsWithTeams
+//     dolduruyor; db konularında türetilerek, servis konularında
+//     doğrudan katalogdan). Tek sorgu, satırla birlikte gelmiş.
+//  2. Yedek: katalog. Zenginleştirme geçici olarak düşerse servis
+//     problemleri bugünkü davranışını korur.
+//
+// problem.teamsVia doluysa değer TÜRETİLMİŞTİR ve çekince hem GÖRÜNÜR
+// (≈ öneki) hem de title'da yazılıdır — yalnız tooltip'e saklamak,
+// üstüne gelmeyen operatör için kesin bir atıftan farksız olurdu.
+function ProblemTeamChips({ problem }: { problem: Problem }) {
+  const fallback = useServiceTeams(problem.service);
+  const via = problem.teamsVia || '';
+  const ug = problem.ownerTeam || (via ? '' : fallback.ug) || '';
+  const sy = problem.sreTeam || (via ? '' : fallback.sy) || '';
+  if (!ug && !sy) return null;
+  const title = via ? derivedTeamTitle(via, problem.service) : undefined;
+  const mark = via ? '≈ ' : '';
+  return (
+    <>
+      {ug && (
+        <span className="pb-pill" title={title}>
+          <span className="dot" /> ug <span className="mono">{mark}{ug}</span>
+        </span>
+      )}
+      {sy && (
+        <span className="pb-pill" title={title}>
+          <span className="dot" /> sy <span className="mono">{mark}{sy}</span>
+        </span>
+      )}
     </>
   );
 }
@@ -757,9 +799,14 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
                 className={`pb-pill${problem.status === 'open' ? ' err' : ''}`}
                 style={{ textDecoration: 'none', color: 'var(--accent2)' }} />
               {/* v0.9.740 (operatör): ug/sy ekip rozetleri problem
-                  detayında da — katalogdan; Problem.ownerTeam alanı
-                  boş kalabildiği için tek kaynak katalog. */}
-              <TeamChips service={problem.service} />
+                  detayında da.
+                  v0.9.1345 — kaynak DEĞİŞTİ. Eskiden tek kaynak katalogdu
+                  ("Problem.ownerTeam boş kalabiliyor" gerekçesiyle), ama
+                  katalog SERVİS ADIYLA anahtarlı: db konularının orada
+                  satırı yok, dolayısıyla db alarmları sahipsiz görünüyordu.
+                  Artık problemin kendi alanı önce (sunucuda türetiliyor),
+                  katalog yalnız yedek. Türetilmiş değer ≈ ile işaretli. */}
+              <ProblemTeamChips problem={problem} />
               {/* v0.9.401 (operator-reported) — runtime pod problemleri artık
                   gerçek servis adı taşıyor; pod kimliği deterministik ID'nin
                   son segmentinde (runtime:<check>:<svc>:<pod> — evaluator

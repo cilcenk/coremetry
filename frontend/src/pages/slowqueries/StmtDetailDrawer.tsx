@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Drawer } from '@/components/ui';
+import { Drawer, SectionUnavailable } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Sparkline } from '@/components/Sparkline';
 import { TrendDelta } from '@/components/TrendDelta';
@@ -158,13 +158,8 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-function SectionUnavailable({ what }: { what: string }) {
-  return (
-    <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-      {what} unavailable for this window.
-    </div>
-  );
-}
+// v0.9.1364 — SectionUnavailable BURADAN TAŞINDI (`components/ui`). Nüsha
+// `endpoints/detailSections.tsx:57` ile BAYT BAYT aynıydı.
 
 function HeaderStat({ label, tone, children }: {
   label: string; tone?: 'err' | 'warn'; children: React.ReactNode;

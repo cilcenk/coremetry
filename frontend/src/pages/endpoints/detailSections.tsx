@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Card } from '@/components/ui';
+import { Card, SectionUnavailable } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { useEndpointSplit, useEndpointDownstream, useEndpointCallers } from '@/lib/queries';
@@ -54,13 +54,9 @@ export function PanelTitle({ children, sub, right }: {
   );
 }
 
-function SectionUnavailable({ what }: { what: string }) {
-  return (
-    <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-      {what} unavailable for this window.
-    </div>
-  );
-}
+// v0.9.1364 — SectionUnavailable BURADAN TAŞINDI (`components/ui`). Nüsha
+// `slowqueries/StmtDetailDrawer.tsx:161` ile BAYT BAYT aynıydı; iki kopyanın
+// tek eve çekilmesi çıktıyı değiştirmiyor.
 
 // fmtMsShort — log-bin axis labels: µs under 1ms, one decimal under
 // 10ms, whole ms to 1s, seconds above.

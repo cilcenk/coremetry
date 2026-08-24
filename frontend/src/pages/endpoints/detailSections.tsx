@@ -549,7 +549,10 @@ const CALLER_COLS: DataTableColumn<EndpointCaller>[] = [
   { id: 'calls',     label: 'Calls',   sortValue: r => r.calls,     numeric: true, width: 80 },
   { id: 'errorRate', label: 'Err %',   sortValue: r => r.errorRate, numeric: true, width: 72 },
   { id: 'p95Ms',     label: 'P95',     sortValue: r => r.p95Ms,     numeric: true, width: 80 },
-  { id: 'sharePct',  label: 'Impact',  sortValue: r => r.sharePct,  numeric: true, width: 80 },
+  // v0.9.1376 — 'Impact' → 'Time %'. Kardeş tabloyla (databases) aynı
+  // başlık, çünkü ikisi de aynı TÜRDEN büyüklük: zamandan alınan pay.
+  // Paydaları farklı ve bu hücre başlıklarında yazılı.
+  { id: 'sharePct',  label: 'Time %',  sortValue: r => r.sharePct,  numeric: true, width: 80 },
 ];
 
 // CallersSection — "Who calls this" (v0.9.839, operator ask).
@@ -630,7 +633,9 @@ export function CallersSection({ refObj, from, to, env, cluster }: {
                       </span>
                     </td>
                     <td className="num mono">{r.p95Ms.toFixed(1)} ms</td>
-                    <td className="num mono">{r.sharePct.toFixed(1)}%</td>
+                    <td className="num mono"
+                      title="Bu çağıranın bu rotanın toplam süresinden aldığı pay. Sunucudan geliyor; payda rotanın kendi toplamı (databases tarafındaki kardeşinin paydası yüklenmiş satırlar).">
+                      {r.sharePct.toFixed(1)}%</td>
                   </tr>
                 );
               })}

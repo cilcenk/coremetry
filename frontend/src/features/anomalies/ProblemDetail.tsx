@@ -27,6 +27,7 @@ import { copyToClipboard } from '@/lib/clipboard';
 import { QueryErrorInline } from '@/components/QueryError';
 import { serviceHref, eventLifespanWindow } from '@/lib/serviceHref';
 import { logsHref, serviceLogQuery } from '@/lib/logsUrl';
+import { tracesPivotHref } from '@/lib/pivotHref';
 import { latencyThresholdMs, slowTracesHref } from '@/features/anomalies/slowTracesHref';
 import { problemWindowNs, topOffenders } from '@/features/anomalies/problemOffenders';
 import { operationTracesHref } from '@/lib/pivotHref';
@@ -679,13 +680,14 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
   // page falls back to the same shape anchored on the end it does know.
   const probWindow = eventLifespanWindow(problem)
     ?? { fromNs: endNs - 60 * 60 * 1e9, toNs: endNs + 10 * 60 * 1e9 };
-  const logsFrom = Math.round(probWindow.fromNs / 1e6);
-  const logsTo = Math.round(probWindow.toNs / 1e6);
-  // v0.9.1348 — el-yapımı link logsHref üreticisine indi. logsFrom/logsTo
-  // Math.round'du: yuvarlama pencereyi DARALTABİLİR ve problemin ilk/son
-  // milisaniyesindeki log pivottan düşer. Üretici probWindow'u floor/ceil
-  // ile kodlar. (logsFrom/logsTo aşağıdaki /traces linkinde hâlâ kullanımda
-  // — o link ayrı bir kalem, tracesPivotHref'e ait.)
+  // v0.9.1348 — el-yapımı log linki logsHref üreticisine indi; v0.9.1356 —
+  // el-yapımı /traces linki de tracesPivotHref'e indi. Aradaki `logsFrom` /
+  // `logsTo` (ms) ara değişkenleri BUNUNLA BİRLİKTE SİLİNDİ: ikisi de
+  // Math.round'du ve yuvarlama pencereyi İKİ UÇTAN daraltabiliyordu, yani
+  // problemin ilk/son milisaniyesindeki log ya da trace pivottan düşerdi.
+  // Her iki üretici de probWindow'u DOĞRUDAN alıp floor/ceil uyguluyor,
+  // dolayısıyla ms'e önceden çevrilmiş bir ara değere hiç ihtiyaç yok —
+  // o değişkenlerin varlığı kusurun kendisiydi.
   //
   // `q=` bilinçli, `service=` değil — v0.8.521 gerekçesi logsUrl.ts'te.
   const logsLink = logsHref({ window: probWindow, q: serviceLogQuery(problem.service) });
@@ -801,7 +803,7 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
                   Gece 03:14 alarmının "Blast radius" pill'i servis sayfasını
                   sticky "şimdi" penceresiyle açıyordu: alarm anının izi yok,
                   "sorun geçmiş" yanılgısı. Pencere AYNI bileşende
-                  (logsFrom/logsTo) zaten hesaplı, yalnız logs/traces
+                  (probWindow) zaten hesaplı, yalnız logs/traces
                   linklerine konuyordu. */}
               <SubjectLink service={problem.service} subjectKind={problem.kind}
                 href={serviceHref(problem.service, { range: probWindow })}
@@ -872,8 +874,17 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
             {/* v0.8.585 — Operator-reported: rootOnly default'u TRUE
                 olduğundan hata izleri (çoğu non-root span) boş
                 listeleniyordu; hasError linki root filtresini kapatır. */}
-            <SignalLink to={`/traces?service=${encodeURIComponent(problem.service)}&hasError=true&rootOnly=false&range=${encodeURIComponent(`custom:${logsFrom}-${logsTo}`)}`}
-              label="⋮ Error traces" sub="service, problem window" />
+            {/* v0.9.1356 — el-yapımı `custom:` dizesi aile üreticisine indi.
+                Pencere PROBLEMİN penceresi (probWindow), yani bu sayfanın
+                öznesinin penceresi — kardeş üç link (Logs / Slow traces /
+                Service) zaten aynısını taşıyor. Yan etkisi bir kusuru da
+                kapattı: elle kurulan hâl logsFrom/logsTo'yu Math.round ile
+                üretiyordu ve yuvarlama pencereyi İKİ UÇTAN yarım ms
+                daraltabiliyordu; üretici floor/ceil uyguluyor. */}
+            <SignalLink to={tracesPivotHref({
+              window: probWindow, service: problem.service,
+              hasError: true, rootOnly: false,
+            })} label="⋮ Error traces" sub="service, problem window" />
             {/* v0.9.961 (UX denetimi G4/Ö7) — GECİKME alarmının kendi
                 pivotu. Tek trace linki `hasError=true` sabitliydi ve bir
                 p99-eşik alarmında yavaşlık çoğu zaman HATASIZ span'lerde

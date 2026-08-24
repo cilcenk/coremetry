@@ -32,6 +32,18 @@ export type TracesPivot = {
    * both and letting the page pick.
    */
   filterGroup?: string;
+  /**
+   * Gecikme bandı, ms. /traces ikisini de okur (pages/Traces.tsx:238-239).
+   * v0.9.1356 — heatmap kutu-seçimi pivotları için eklendi; onlar olmadan
+   * aileye taşınamıyorlardı.
+   *
+   * ⚠ `!== undefined` ile yazılıyor, doğruluk (truthiness) ile DEĞİL:
+   * `minMs: 0` GEÇERLİ ve anlamlı bir alt sınır (heatmap kutusu negatif
+   * bandı 0'a kelepçeliyor). Doğruluk kontrolü onu sessizce düşürür ve
+   * operatörün seçtiği bandı ALT UÇTAN genişletirdi.
+   */
+  minMs?: number;
+  maxMs?: number;
   hasError?: boolean;
   /**
    * /traces defaults rootOnly to TRUE, but most error spans and most
@@ -75,6 +87,8 @@ export function tracesPivotHref(p: TracesPivot): string {
   // Mutually exclusive by /traces' contract — never emit both.
   if (p.filterGroup) q.set('filterGroup', p.filterGroup);
   else if (p.filters) q.set('filters', p.filters);
+  if (p.minMs !== undefined) q.set('minMs', String(p.minMs));
+  if (p.maxMs !== undefined) q.set('maxMs', String(p.maxMs));
   if (p.hasError) q.set('hasError', 'true');
   q.set('rootOnly', p.rootOnly ? 'true' : 'false');
   if (p.view) q.set('view', p.view);

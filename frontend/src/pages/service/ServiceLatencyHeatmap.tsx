@@ -8,6 +8,7 @@ import { Spinner } from '@/components/Spinner';
 import { raceGuard } from '@/lib/raceGuard';
 import { DisclosureButton } from '@/components/ui';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
+import { tracesPivotHref } from '@/lib/pivotHref';
 import { heatmapFilters } from './heatmapFilters';
 import { HeatmapCellExemplars } from '@/components/HeatmapCellExemplars';
 import { BubbleUpPanel } from '@/components/BubbleUpPanel';
@@ -193,11 +194,28 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
                 const tFmt = (ns: number) => fmtClock(ns / 1e6);
                 const lo = Math.max(0, Math.floor(boxSel.lowDurMs));
                 const hi = Math.ceil(boxSel.highDurMs);
-                const tracesHref = `/traces?service=${encodeURIComponent(service)}`
-                  + (operation ? `&search=${encodeURIComponent(operation)}` : '')
-                  + `&minMs=${lo}&maxMs=${hi}`
-                  + `&range=custom:${Math.floor(boxSel.timeFromNs / 1e6)}-${Math.ceil(boxSel.timeToNs / 1e6)}`
-                  + `&view=list&rootOnly=false`;
+                // v0.9.1356 — el-yapımı `custom:` dizesi aile üreticisine
+                // indi (tracesPivotHref → windowRangeParam): floor/ceil VE
+                // kabul kuralı artık tek dosyada. Pencere KUTUDAN geliyor
+                // ve bu doğru — operatörün sürüklediği bant sorunun
+                // kendisi, sayfanın geniş penceresine yaymak seçimi
+                // anlamsızlaştırırdı (heatmapPivot.ts ile aynı gerekçe).
+                //
+                // ⚠ `search=` KASITLI olarak aynen korundu. Operasyon
+                // kapsamı için doğrusu KESİN isim filtresi
+                // (operationTracesHref, v0.8.488 operatör raporu) ve bu
+                // site o sınıfın hâlâ açık bir örneği — ama üretici göçü
+                // davranışı DEĞİŞTİRMEMELİ, yoksa çıkan regresyon göçe mi
+                // yoksa semantiğe mi ait bilinemez. Ayrı dilim.
+                const tracesHref = tracesPivotHref({
+                  window: { fromNs: boxSel.timeFromNs, toNs: boxSel.timeToNs },
+                  service,
+                  search: operation || undefined,
+                  minMs: lo,
+                  maxMs: hi,
+                  view: 'list',
+                  rootOnly: false,
+                });
                 return (
                   <div style={{
                     display: 'flex', gap: 10, alignItems: 'center', marginTop: 8,

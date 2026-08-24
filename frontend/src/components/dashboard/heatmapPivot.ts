@@ -21,6 +21,8 @@
 //
 // SAF — tablo testleri heatmapPivot.test.ts.
 
+import { tracesPivotHref } from '@/lib/pivotHref';
+
 // Süre birimleri: histogramHeatmap.ts'in ms'e çevirdiği ('s'/'seconds')
 // yazımlar + zaten ms olanlar. Liste ORAYLA aynı hizada tutulmalı: oradaki
 // `toMs` çarpanı hangi yazımları tanıyorsa, pivot da onları tanımalı.
@@ -39,23 +41,32 @@ export function heatmapPivotable(unit: string | undefined): boolean {
 /**
  * heatmapTracesHref — kutu seçiminden /traces pivotu.
  *
- * Pencere `custom:` ms aralığı olarak yazılıyor (sayfa aralığı DEĞİL):
- * operatörün sürüklediği kutu SORUNUN KENDİSİ, onu sayfanın geniş
- * penceresine yaymak seçimi anlamsızlaştırırdı.
+ * Pencere KUTUDAN geliyor (sayfa aralığından DEĞİL): operatörün
+ * sürüklediği kutu SORUNUN KENDİSİ, onu sayfanın geniş penceresine
+ * yaymak seçimi anlamsızlaştırırdı. Bu, v0.9.1347'nin uyardığı
+ * "exemplar'ın kendi dar penceresini ileri linke çivileme" tuzağı
+ * DEĞİL: bir trace milisaniyeler sürer ve o pencere yanlışlıkla
+ * taşınır; kutu ise operatörün AÇIKÇA çizdiği dakikalar-ölçekli bir
+ * seçim ve pivotun bütün konusu o.
  *
  * service boşsa servis çipi HİÇ yazılmaz — "tüm servisler" bir değer
  * değil, yokluk.
+ *
+ * v0.9.1356 — `custom:` dizesi elle kuruluyordu; artık aile üreticisi
+ * (tracesPivotHref → windowRangeParam) kuruyor, yani floor/ceil VE
+ * kabul kuralı tek dosyada. Elle kurulan hâli kabul kuralını hiç
+ * taşımıyordu: bozuk bir kutu, decodeRange'in reddedeceği bir token
+ * basardı.
  */
 export function heatmapTracesHref(box: {
   timeFromNs: number; timeToNs: number; lowDurMs: number; highDurMs: number;
 }, service?: string): string {
-  const lo = Math.max(0, Math.floor(box.lowDurMs));
-  const hi = Math.ceil(box.highDurMs);
-  const fromMs = Math.floor(box.timeFromNs / 1e6);
-  const toMs = Math.ceil(box.timeToNs / 1e6);
-  return '/traces?'
-    + (service ? `service=${encodeURIComponent(service)}&` : '')
-    + `minMs=${lo}&maxMs=${hi}`
-    + `&range=custom:${fromMs}-${toMs}`
-    + '&view=list&rootOnly=false';
+  return tracesPivotHref({
+    window: { fromNs: box.timeFromNs, toNs: box.timeToNs },
+    service: service || undefined,
+    minMs: Math.max(0, Math.floor(box.lowDurMs)),
+    maxMs: Math.ceil(box.highDurMs),
+    view: 'list',
+    rootOnly: false,
+  });
 }

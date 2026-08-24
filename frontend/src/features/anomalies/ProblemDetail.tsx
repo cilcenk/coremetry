@@ -30,6 +30,7 @@ import { logsHref, serviceLogQuery } from '@/lib/logsUrl';
 import { latencyThresholdMs, slowTracesHref } from '@/features/anomalies/slowTracesHref';
 import { problemWindowNs, topOffenders } from '@/features/anomalies/problemOffenders';
 import { operationTracesHref } from '@/lib/pivotHref';
+import { traceHref } from '@/lib/traceHref';
 import { SubjectLink } from '../../components/SubjectLink';
 import { subjectKind, derivedTeamTitle } from '../../lib/problemSubject';
 
@@ -620,7 +621,7 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
                     className={isEv ? 'wf-evidence' : undefined}
                     title={isEv ? 'Explain kanıtı — kök neden bu trace üzerinden soruşturuldu' : undefined}
                     style={{ cursor: s.traceId ? 'pointer' : 'default' }}
-                    onClick={() => s.traceId && navigate(`/trace?id=${encodeURIComponent(s.traceId)}`)}>
+                    onClick={() => s.traceId && navigate(traceHref(s.traceId))}>
                     <td className="mono" style={{ paddingLeft: 14 }}>
                       <span style={{ color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: 150 }}>
                         {s.traceId ? s.traceId.slice(0, 16) + '…' : '—'}

@@ -11,6 +11,7 @@ import type {
 import { RCAVerdictPanel } from './RCAVerdictPanel';
 import { fmtDurShort, fmtDateTime } from '@/lib/utils';
 import { serviceHref } from '@/lib/serviceHref';
+import { traceHref } from '@/lib/traceHref';
 
 // RootCauseRibbon (rc #3) — the in-page "Root cause: <suspect> (NN%) ▸" chip on
 // each /anomalies + /problems row. The COLLAPSED chip renders straight from the
@@ -262,7 +263,7 @@ function ExpandedBody({ rc, window: win }: {
       {rc.exemplar && (
         <div>
           <Label>Exemplar trace</Label>
-          <Link to={`/trace?id=${encodeURIComponent(rc.exemplar.traceId)}`}
+          <Link to={traceHref(rc.exemplar.traceId)}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
               padding: '6px 10px', borderRadius: 6, textDecoration: 'none',

@@ -33,6 +33,7 @@ import { fmtNum, tsLong } from '@/lib/utils';
 import { logsHref, serviceLogQuery } from '@/lib/logsUrl';
 import { AnomalyDetailDrawer } from './AnomalyDetailDrawer';
 import { serviceHref, inboxItemWindow, pointEventWindow, eventLifespanWindow } from '@/lib/serviceHref';
+import { traceHref } from '@/lib/traceHref';
 import type {
   LogPatternAnomaly, TraceOpAnomaly, Problem, AnomalyEvent,
   AnomalySilence,
@@ -154,7 +155,7 @@ function TraceOpsSection({ items, onMute, canEdit }: {
                 {a.operation || '(unnamed)'}
               </span>
               {a.sampleTraceId && (
-                <Link to={`/trace?id=${a.sampleTraceId}`}
+                <Link to={traceHref(a.sampleTraceId)}
                       style={{ fontSize: 11, color: 'var(--accent2)', flexShrink: 0 }}>
                   trace ↗
                 </Link>

@@ -17,6 +17,7 @@ import {
   type Action, type ParamValues, type SuggestItem,
 } from '@/lib/actions';
 import { toast } from '@/lib/toast';
+import { traceHref } from '@/lib/traceHref';
 import { Button, LinkButton } from '@/components/ui';
 
 // CommandPalette — global Cmd-K / Ctrl-K spotlight (v0.5.162).
@@ -411,7 +412,9 @@ export function CommandPalette() {
     // emails into this kind of search box.
     if (q && TRACE_ID_RE.test(q)) {
       scored = [
-        { kind: 'trace', label: q, hint: 'Open trace', to: `/trace?id=${encodeURIComponent(q)}`, score: 999 },
+        // PENCERESİZ, mkSvc ile aynı gerekçe (L282-288): palet sonuçları
+        // navHref üzerinden gidiyor ve pencere katmanı ORADA.
+        { kind: 'trace', label: q, hint: 'Open trace', to: traceHref(q), score: 999 },
         ...scored,
       ];
     }

@@ -6,6 +6,7 @@ import { aiErrorHint } from '@/lib/aiErrors';
 import { IconSparkles } from './icons';
 import type { ServiceAnalysisResponse, KibanaSettings } from '@/lib/types';
 import { buildKibanaURL, buildKQLFromFilter } from '@/lib/kibanaLink';
+import { traceHref } from '@/lib/traceHref';
 import { Button } from '@/components/ui/Button';
 // canRateVerdict — kimlik yoksa soru sorulmaz. Kapı tek yerde
 // (rcaVerdictView.ts) ve vitest ile pinli; ikinci bir kopya yazmak
@@ -197,7 +198,7 @@ function Result({ res, fb, setFb, showCtx, setShowCtx, kibanaHref, service }: {
             <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
               <span style={{ fontSize: 11, color: 'var(--text3)' }}>İlgili izler:</span>
               {ctx.topErrors.filter(e => e.sampleTraceId).slice(0, 4).map(e => (
-                <Link key={e.sampleTraceId} className="mono" style={evLink} to={`/trace?id=${e.sampleTraceId}`}
+                <Link key={e.sampleTraceId} className="mono" style={evLink} to={traceHref(e.sampleTraceId)}
                   title={`${e.type || e.message} ×${e.count}`}>
                   {(e.type || e.message || 'trace').slice(0, 22)} →
                 </Link>

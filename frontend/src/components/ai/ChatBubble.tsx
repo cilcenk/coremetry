@@ -4,6 +4,7 @@ import { api } from '@/lib/api';
 import { escapeHTML } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import type { ChatTurn, ChatStepDetail } from '@/lib/types';
+import { traceHref } from '@/lib/traceHref';
 import { CosreChart, type CosreChartSpec } from '@/components/CosreChart';
 import { parseChatBlocks, type ChatBlock } from './chatMarkdown';
 import { parseStepPreview, fmtPreviewBytes } from './stepPreview';
@@ -24,7 +25,11 @@ import { parseStepPreview, fmtPreviewBytes } from './stepPreview';
 // tireleri container'ın white-space:pre-wrap'ıyla korunur.
 export function mdLite(raw: string): string {
   return escapeHTML(raw)
-    .replace(/\b[0-9a-f]{32}\b/g, '<a href="/trace?id=$&" data-nav="1">$&</a>')
+    // v0.9.1352 — href traceHref üreticisinden. Girdi zaten 32-hex'e
+    // kısıtlı (injection yüzeyi yok, v0.9.419), yani bu bir güvenlik
+    // düzeltmesi DEĞİL: amaç, depoda /trace yolunu heceleyen tek yerin
+    // üretici olması — kaynak-tarama kapısı buna yaslanıyor.
+    .replace(/\b[0-9a-f]{32}\b/g, m => `<a href="${traceHref(m)}" data-nav="1">${m}</a>`)
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
 }

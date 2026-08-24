@@ -328,6 +328,32 @@ describe('operationTracesHref — K4 ölü ?operation= parametresi', () => {
     })).get('filters') ?? '[]');
     expect(back).toEqual([{ k: 'name', op: '=', v: [weird] }]);
   });
+
+  // v0.9.1372 — süre bandı. ServiceLatencyHeatmap'in bant seçimi kapsamı
+  // minMs/maxMs ile daraltıyordu ve o site KENDİ linkini kuruyordu
+  // (`search: operation`), yani düzeltilmiş kardeşin yanında hatalı bir
+  // ikiz olarak yaşıyordu. Parametre buraya alınınca ikiz silindi.
+  it('süre bandını taşır', () => {
+    const bp = params(operationTracesHref({
+      window: { preset: '1h' }, operation: 'GET /cart', minMs: 250, maxMs: 500,
+    }));
+    expect(bp.get('minMs')).toBe('250');
+    expect(bp.get('maxMs')).toBe('500');
+    // Bandı taşırken kapsamı GEVŞETMEMELİ: isim filtresi yerinde kalır.
+    expect(bp.has('search')).toBe(false);
+    expect(JSON.parse(bp.get('filters') ?? '[]'))
+      .toEqual([{ k: 'name', op: '=', v: ['GET /cart'] }]);
+  });
+
+  it('band verilmediğinde minMs/maxMs YAZILMAZ', () => {
+    // Ayırt edici vaka: `0` geçerli bir alt sınır. Kurucu
+    // `if (p.minMs !== undefined)` diyor; truthy denetimine kayarsa
+    // 0 ms'lik taban sessizce düşer ve liste beklenenden geniş gelir.
+    expect(p.has('minMs')).toBe(false);
+    expect(params(operationTracesHref({
+      window: { preset: '1h' }, operation: 'GET /cart', minMs: 0, maxMs: 40,
+    })).get('minMs')).toBe('0');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

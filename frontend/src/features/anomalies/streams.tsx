@@ -30,6 +30,7 @@ import {
   useBulkDeleteAnomalySilences,
 } from '@/lib/queries';
 import { fmtNum, tsLong } from '@/lib/utils';
+import { logsHref, serviceLogQuery } from '@/lib/logsUrl';
 import { AnomalyDetailDrawer } from './AnomalyDetailDrawer';
 import { serviceHref, inboxItemWindow, pointEventWindow, eventLifespanWindow } from '@/lib/serviceHref';
 import type {
@@ -686,10 +687,9 @@ function logsLinkForPattern(a: LogPatternAnomaly): string {
   // instead. Cleaner state for the operator to widen/narrow
   // without first clearing the picker. Lucene/KQL on the Logs
   // page already handles service.name:"X" natively.
-  const params = new URLSearchParams();
   const clauses: string[] = [];
   if (a.service) {
-    clauses.push(`service.name:"${a.service.replace(/"/g, '\\"')}"`);
+    clauses.push(serviceLogQuery(a.service));
   }
   const toks = a.tokens ?? [];
   if (toks.length > 0) {
@@ -698,18 +698,22 @@ function logsLinkForPattern(a: LogPatternAnomaly): string {
       ? quoted[0]
       : `(${quoted.join(' OR ')})`);
   }
-  if (clauses.length > 0) {
-    params.set('q', clauses.join(' AND '));
-  }
+
   // v0.9.862 (UX denetimi Ö2) — PENCERE. Bu link yalnız `q` yazıyordu:
   // birkaç saat önceki bir anomaliden /logs'a geçen operatör sticky
   // pencerede boş sonuç görüyor, "loglar silinmiş" sanıyordu. Kardeş yüzey
   // (AnomalyDetailDrawer) spike penceresini v0.9.213'ten beri taşıyor;
   // aynı lead-in formülü burada da: desenin son görülmesi etrafında
   // 30 dk öncesi + 10 dk sonrası, karşılaştırılacak bir taban kalsın.
-  const win = patternLogWindow(a.lastSeenNs);
-  if (win) params.set('range', win);
-  return `/logs?${params.toString()}`;
+  //
+  // v0.9.1349 — el-yapımı query string logsHref üreticisine indi.
+  // patternLogWindow zaten kodlanmış bir `custom:` token'ı döndürüyor ve
+  // damga bozuksa '' — `|| null` onu üreticinin AÇIK reddetmesine çevirir,
+  // yani "pencere yok" bir unutkanlık değil, kayda geçmiş bir karar.
+  return logsHref({
+    window: patternLogWindow(a.lastSeenNs) || null,
+    q: clauses.length > 0 ? clauses.join(' AND ') : undefined,
+  });
 }
 
 // patternLogWindow — v0.9.862. lastSeenNs etrafındaki /logs penceresi,

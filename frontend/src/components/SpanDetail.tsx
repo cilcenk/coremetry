@@ -6,7 +6,7 @@ import { selfTimeMs } from '@/lib/selfTime';
 import { tsLong, tsShort, sevName, sevClass, displaySpanName } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { getRaw, setRaw } from '@/lib/storage';
-import { logsRangeParam } from '@/lib/logsUrl';
+import { logsRangeParam, logsHref } from '@/lib/logsUrl';
 import { serviceHref } from '@/lib/serviceHref';
 import { IconFlame, IconSparkles } from './icons';
 import { CopyButton } from './CopyButton';
@@ -358,8 +358,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
             {/* v0.9.853 — ns→ms dönüşümü artık tek üreticide
                 (lib/logsUrl.ts logsRangeParam); bu dosya doğru kopyaydı,
                 Trace.tsx'in hiç yoktu (K3). */}
-            <Link to={`/logs?q=${span.traceId}` +
-                      (logsLinkRange ? `&range=${logsLinkRange}` : '')}
+            <Link to={logsHref({ window: logsLinkRange || null, q: span.traceId })}
               style={{ marginLeft: 8, fontSize: 10, fontWeight: 400, color: 'var(--accent2)' }}>
               open in Logs ↗
             </Link>

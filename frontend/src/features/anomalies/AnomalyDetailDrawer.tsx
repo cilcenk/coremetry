@@ -9,6 +9,7 @@ import { fmtNum, tsLong } from '@/lib/utils';
 import { tracesPivotHref } from '@/lib/pivotHref';
 import type { AnomalyEvent, BehaviorChangeDetails } from '@/lib/types';
 import { serviceHref } from '@/lib/serviceHref';
+import { logsHref, serviceLogQuery } from '@/lib/logsUrl';
 
 // AnomalyDetailDrawer — v0.8.267, operator-requested: "Anomalies
 // sayfasında üzerine tıklayınca ne zaman spike oldu ve benzeri
@@ -170,20 +171,27 @@ export function AnomalyDetailDrawer({ event, onClose }: {
     service: event.service, search: '', severity: 0, traceId: '', spanId: '',
   }), [event.service]);
 
-  // /logs deep link scoped to the service + the spike window (range
-  // rides the URL per useUrlRange's custom encoding).
-  const logsHref = useMemo(() => {
-    const p = new URLSearchParams();
-    if (event.service) p.set('q', `service.name:"${event.service.replace(/"/g, '\\"')}"`);
-    p.set('range', `custom:${Math.round(chartRange.from / 1e6)}-${Math.round(chartRange.to / 1e6)}`);
-    return `/logs?${p.toString()}`;
-  }, [event.service, chartRange]);
+  // /logs deep link scoped to the service + the spike window.
+  //
+  // v0.9.1348 — el-yapımı `custom:` kopyası logsHref üreticisine indi. Bu
+  // site pencereyi Math.round ile kodluyordu: yuvarlama İKİ kenarı da
+  // içeri çekebilir, yani kodlanmış pencere istenenden DAR olabilir ve
+  // spike'ın ilk/son milisaniyesindeki log pivottan düşer. Üretici
+  // floor/ceil kullanır (urlState.ts:28 kuralı), pencere asla daralmaz.
+  //
+  // `q=` bilinçli, `service=` değil: v0.8.521'de operatör bildirdi ki
+  // sunucu serbest-metin sorgusunu kolonla DA eşliyor, tam-kolon filtresi
+  // ise id/adı yalnız gövdede taşıyan kurulumlarda boş dönüyordu.
+  const logsLink = useMemo(() => logsHref({
+    window: { fromNs: chartRange.from, toNs: chartRange.to },
+    q: event.service ? serviceLogQuery(event.service) : undefined,
+  }), [event.service, chartRange]);
 
   // v0.9.213 — the error-traces pivot used to carry only the service, so
   // /traces opened on the operator's sticky range (useUrlRange) instead of
   // the spike. On an anomaly older than that range the list came back EMPTY,
   // which reads as "no error traces" rather than "wrong window". Same spike
-  // bounds as logsHref above.
+  // bounds as logsLink above.
   const tracesHref = useMemo(() => tracesPivotHref({
     window: { fromNs: chartRange.from, toNs: chartRange.to },
     service: event.service,
@@ -293,7 +301,7 @@ export function AnomalyDetailDrawer({ event, onClose }: {
                 yeri zaten burası. */}
             <CopilotExplain kind="anomaly" id={event.id} label="✨ Explain this anomaly" />
             {isLogKind && event.service && (
-              <Link to={logsHref} className="sec"
+              <Link to={logsLink} className="sec"
                 style={{ fontSize: 12, padding: '4px 10px', textDecoration: 'none' }}
                 title="Open /logs scoped to the service + spike window">
                 ≡ Logs in spike window ↗

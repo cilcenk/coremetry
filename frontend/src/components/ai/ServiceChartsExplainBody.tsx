@@ -10,6 +10,7 @@ import { api } from '@/lib/api';
 import { chartScopeLabel, type ChartScope } from '@/lib/aiSubject';
 import { operationTracesHref, tracesPivotHref } from '@/lib/pivotHref';
 import { fmtClock } from '@/lib/utils';
+import { logsHref } from '@/lib/logsUrl';
 import type { ServiceChartsExplain, OpDelta } from '@/lib/types';
 
 // ServiceChartsExplainBody — AI çekmecesinin `charts` öznesi için gövde
@@ -183,8 +184,7 @@ function ChartsAnswer({ data, service, fromNs, toNs, busy, onRegenerate }: {
             title="Hatalı izleri aç"
             note={`/traces · ${topOp ?? 'servis geneli'} · hasError`} />
           <CtaLink
-            to={`/logs?service=${encodeURIComponent(service)}&severity=13`
-              + `&range=${encodeURIComponent(`custom:${Math.floor(fromNs / 1e6)}-${Math.ceil(toNs / 1e6)}`)}`}
+            to={logsHref({ window: { fromNs, toNs }, service, severity: 13 })}
             title="Logları aç"
             note="/logs · ≥warn · aynı pencere" />
           {sg.problems?.[0] && (

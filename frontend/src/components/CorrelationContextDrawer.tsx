@@ -8,6 +8,7 @@ import { ServiceTimeline } from '@/components/traces/ServiceTimeline';
 import { TraceLogList, severityBuckets } from '@/components/traces/TraceLogList';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
+import { logsHref } from '@/lib/logsUrl';
 import { servicePivotHref } from '@/pages/explore/urlCodec';
 import type {
   PivotAnchor,
@@ -336,12 +337,12 @@ function LogsLens({ ctx, onReAnchor }: { ctx: CorrelationContext; onReAnchor: (a
             {logs.length >= 500 ? '+' : ''}
           </span>
           {traceId ? (
-            <Link to={`/logs?traceId=${traceId}&range=custom:${Math.floor(ctx.anchor.fromNs / 1e6)}-${Math.ceil(ctx.anchor.toNs / 1e6)}`}
+            <Link to={logsHref({ window: { fromNs: ctx.anchor.fromNs, toNs: ctx.anchor.toNs }, traceId })}
               style={{ color: 'var(--accent2)' }}>
               Widen to /logs →
             </Link>
           ) : ctx.anchor.service ? (
-            <Link to={`/logs?service=${encodeURIComponent(ctx.anchor.service)}&range=custom:${Math.floor(ctx.anchor.fromNs / 1e6)}-${Math.ceil(ctx.anchor.toNs / 1e6)}`}
+            <Link to={logsHref({ window: { fromNs: ctx.anchor.fromNs, toNs: ctx.anchor.toNs }, service: ctx.anchor.service })}
               style={{ color: 'var(--accent2)' }}>
               Widen to /logs →
             </Link>

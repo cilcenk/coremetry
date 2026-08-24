@@ -308,14 +308,38 @@ export function ColResizeHandle<T>({ dt, colId }: { dt: DataTable<T>; colId: str
 // kalır — sığdırma saf çekirdekte, tablo-güdümlü testle.
 export function DataTableColgroup<T>({ dt, leading, trailing }: { dt: DataTable<T>; leading?: number[]; trailing?: number[] }) {
   const ref = useRef<HTMLTableColElement | null>(null);
-  const [fitPx, setFitPx] = useState(0); // 0 = ölçüm yok / kap kaydırıyor
+  const [fitPx, setFitPx] = useState(0); // 0 = ölçüm yok (fail-open)
   useEffect(() => {
     const wrap = ref.current?.closest('.table-wrap');
     if (!wrap || typeof ResizeObserver === 'undefined') return;
-    const measure = () => {
-      const scrolls = getComputedStyle(wrap).overflowX !== 'visible';
-      setFitPx(scrolls ? 0 : wrap.clientWidth);
-    };
+    // v0.9.1334 — MUHAFAZA KALDIRILDI, sığdırma her kapta ölçülüyor.
+    //
+    // Eskisi `getComputedStyle(wrap).overflowX !== 'visible'` ise
+    // sığdırmayı KAPATIYORDU. O gün (v0.9.1030) doğruydu: sığdırma
+    // `is-fit` kaplar için yazılmıştı ve onlar masaüstünde
+    // `overflow: visible` taşıyordu. Ama v0.9.1078'de (operatör kararı,
+    // yüzen şeritler) `is-fit`in `overflow: visible` kaçışı SÖKÜLDÜ ve
+    // artık HER `.table-wrap` `overflow-x: auto` (globals.css:1157).
+    // Yani muhafaza o günden beri HER ZAMAN kapatıyor: fitColumnWidths
+    // üretimde ULAŞILAMAZ hale geldi. dataTableFit.test.ts saf çekirdeği
+    // yeşil tutuyordu — hiçbir şey onun ULAŞILDIĞINI pinlemiyordu.
+    //
+    // Operatör aynı şikâyeti İKİ KEZ bildirdi: v0.9.1030 ("/inbox iframe
+    // gibi") ve 2026-08-24 ("neden sayfa yatayda kayıyor"). İkincisinin
+    // sebebi birincinin çaresinin kapatılmasıydı.
+    //
+    // NİYE GÜVENLİ: fitColumnWidths sığan tabloya DOKUNMUYOR — toplam
+    // kaba sığıyorsa `null` döner (lib/dataTable.ts:332) ve çağıran beyan
+    // edilen genişlikleri aynen kullanır. Yani etki alanı yalnız ŞU AN
+    // TAŞAN tablolar. Ölçüm yoksa (jsdom, ilk mount) yine `null`:
+    // fail-open.
+    //
+    // İKİ MEKANİZMA BESTELENİYOR: min genişlikler bile sığmazsa fonksiyon
+    // tabanları döndürüyor (:338) — taşma sınırlı kalır ve kabın
+    // `overflow-x: auto`su güvenlik ağı olarak devreye girer. Eski
+    // muhafaza aslında "ağ var mı" sorusunun vekiliydi; ağ varken de
+    // sığdırmak daha iyi ilk cevap.
+    const measure = () => setFitPx(wrap.clientWidth);
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(wrap);

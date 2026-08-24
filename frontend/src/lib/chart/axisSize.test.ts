@@ -3,7 +3,7 @@ import {
   AXIS_TICK_SIZE, AXIS_GAP, AXIS_MAX_GUTTER_RATIO,
   niceIncr, maxTicksFor, axisTickPlan, decimalsForIncr,
   estimateLabelWidthPx, axisGutterPx, widestLabelPx,
-  seriesExtent, paddedExtent,
+  seriesExtent, paddedExtent, decimalsForScaledIncr, displayScaleOf, scaleRefTick,
 } from './axisSize';
 
 // v0.9.799 — İKİ operatör-bildirimli kusurun saf çekirdeği:
@@ -170,5 +170,93 @@ describe('seriesExtent / paddedExtent', () => {
   it('düz seri (min === max) sıfır genişlikli aralık üretmez', () => {
     const [lo, hi] = paddedExtent([5, 5]);
     expect(hi).toBeGreaterThan(lo);
+  });
+});
+
+// ── v0.9.1368 — tick ondalığı ADIMDAN gelir, büyüklükten değil ────────────
+//
+// Operatör-bildirimi: "Clusters altında memory hep aynı değeri
+// gösteriyor" — dört y tick'i de "6.85 TiB", tooltip de öyle, çizgi ise
+// gözle görülür oynuyor. 6.85 TiB'de 2 ondalık ≈ 10 GiB çözünürlük.
+//
+// Değer+birim şablonu → CLAUDE.md unit-mixing disiplini: HER birim
+// ailesi ayrı satır (bytes/ms/s/req-s), hem ölçekli hem ölçeksiz.
+describe('decimalsForScaledIncr', () => {
+  const KiB = 1024, MiB = 1024 ** 2, GiB = 1024 ** 3, TiB = 1024 ** 4;
+  const cases: [string, number, number, number][] = [
+    // [ad, ham tick adımı, ölçek (ham/gösterilen), beklenen ondalık]
+    // — bytes ailesi: adım TiB'ye küçülünce ondalık BÜYÜR (bug'ın özü)
+    ['bytes: 2 GiB adım, TiB ekseni', 2 * GiB, TiB, 3],
+    ['bytes: 512 MiB adım, TiB ekseni', 512 * MiB, TiB, 4],
+    ['bytes: 256 GiB adım, TiB ekseni', 256 * GiB, TiB, 1],
+    ['bytes: 1 TiB adım, TiB ekseni', TiB, TiB, 0],
+    ['bytes: 2 TiB adım, TiB ekseni', 2 * TiB, TiB, 0],
+    ['bytes: 128 MiB adım, GiB ekseni', 128 * MiB, GiB, 1],
+    ['bytes: 64 KiB adım, MiB ekseni', 64 * KiB, MiB, 2],
+    ['bytes: 1 KiB adım, B ekseni (ölçek yok)', KiB, 1, 0],
+    // — süre ailesi: ns→ms, ms→s
+    ['ms: 250 ms adım, s ekseni', 250, 1000, 1],
+    ['ms: 5 ms adım, s ekseni', 5, 1000, 3],
+    ['ns: 1e6 ns adım, ms ekseni', 1e6, 1e6, 0],
+    // — oran ailesi: ölçek 1, v0.9.799 ekseni AYNEN korunur
+    ['req/s: 0.05 adım, ölçeksiz', 0.05, 1, 2],
+    ['req/s: 60 adım, ölçeksiz', 60, 1, 0],
+    ['req/s: 0.1 adım, ölçeksiz', 0.1, 1, 1],
+    ['percent: 0.25 adım, ölçeksiz', 0.25, 1, 2],
+  ];
+  it.each(cases)('%s', (_n, incr, scale, want) => {
+    expect(decimalsForScaledIncr(incr, scale)).toBe(want);
+  });
+
+  it('ondalık ASLA düşmez — her vakada decimalsForIncr tabanı korunur', () => {
+    for (const [, incr, scale] of cases) {
+      expect(decimalsForScaledIncr(incr, scale)).toBeGreaterThanOrEqual(decimalsForIncr(incr));
+    }
+  });
+
+  it('bozuk girdi bugünkü davranışa düşer (taban), patlamaz', () => {
+    expect(decimalsForScaledIncr(0, 1024)).toBe(0);
+    expect(decimalsForScaledIncr(NaN, 1024)).toBe(0);
+    expect(decimalsForScaledIncr(Infinity, 1024)).toBe(0);
+    expect(decimalsForScaledIncr(0.05, 0)).toBe(2);
+    expect(decimalsForScaledIncr(0.05, -1)).toBe(2);
+    expect(decimalsForScaledIncr(0.05, NaN)).toBe(2);
+  });
+
+  it('tavan var — mikroskobik adım etiketi sonsuza uzatmaz', () => {
+    expect(decimalsForScaledIncr(1, 1e30)).toBe(6);
+  });
+});
+
+describe('displayScaleOf', () => {
+  it('ölçeği biçimli metinden geri okur', () => {
+    expect(displayScaleOf(6.85 * 1024 ** 4, '6.85')).toBeCloseTo(1024 ** 4, -6);
+    expect(displayScaleOf(1500, '1.5')).toBeCloseTo(1000, 6);
+  });
+  it('binlik ayraç ölçeği 1000 kat yanıltmaz', () => {
+    expect(displayScaleOf(1024, '1,024')).toBeCloseTo(1, 6);
+  });
+  it('ayrıştırılamayan/sıfır girdi → 1 (ölçek yok, davranış değişmez)', () => {
+    expect(displayScaleOf(100, 'N/A')).toBe(1);
+    expect(displayScaleOf(100, '0')).toBe(1);
+    expect(displayScaleOf(0, '0')).toBe(1);
+  });
+});
+
+
+describe('scaleRefTick', () => {
+  it('mutlak değerce en büyük tick — eksenin hâkim birimini o belirler', () => {
+    expect(scaleRefTick([994, 996, 998, 1000])).toBe(1000);
+    expect(scaleRefTick([0, 1024, 2048])).toBe(2048);
+  });
+  it('negatif tabanlı eksende işareti KORUR', () => {
+    expect(scaleRefTick([-8000, -2000, 1000])).toBe(-8000);
+  });
+  it('ilk tick DEĞİL — küçük birimden ölçek okunması bug\'ın ta kendisi', () => {
+    expect(scaleRefTick([994, 1000])).not.toBe(994);
+  });
+  it('boş/bozuk küme → 0 (çağıran ölçeği 1 sayar)', () => {
+    expect(scaleRefTick([])).toBe(0);
+    expect(scaleRefTick([NaN, Infinity])).toBe(0);
   });
 });

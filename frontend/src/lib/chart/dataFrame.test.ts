@@ -9,6 +9,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { guessDecimals, roundDecimals } from '@grafana/data';
 import {
+  axisTickPlan, seriesExtent, paddedExtent, decimalsForScaledIncr, displayScaleOf,
+  scaleRefTick,
+} from './axisSize';
+import {
   spanSeriesToFrames, framesToAligned, maxPointsForWidth, stepSecondsFor,
   chartTheme, NS_PER_MS,
 } from './dataFrame';
@@ -283,5 +287,96 @@ describe('köprü tekeli', () => {
       }
     }
     expect(offenders, 'köprü dışında frame/display kuran dosya').toEqual([]);
+  });
+});
+
+// ── v0.9.1368 regresyonu — ölçekli eksende tick'ler AYRIŞIR ──────────────
+//
+// Operatör-bildirimi: "Clusters altında memory hep aynı değeri
+// gösteriyor." Dört y tick'i de "6.85 TiB", tooltip de "6.85 TiB", çizgi
+// ise gözle görülür oynuyordu.
+//
+// Bu test SAF çekirdeği değil GERÇEK YOLU koşar: @grafana/data'nın
+// binaryPrefix('B') display processor'ı + bizim tick planımız + ondalık
+// kuralımız. Saf birim testi (axisSize.test.ts) kuralın kendisini
+// çiviler; bu test kuralın DOĞRU BİÇİMLENDİRİCİYE bağlandığını çiviler —
+// ikisi ayrı kusur sınıfı (v0.9.1363 dersi: parametre olarak geçen
+// sonda kablolama testsiz kalır).
+describe('v0.9.1368 — tick etiketleri ölçekli birimde ayrışır', () => {
+  const TiB = 1024 ** 4;
+  const GiB = 1024 ** 3;
+
+  /** Panelin gerçek eksen etiketlerini üretir (CorePanel'in yaptığı sıra). */
+  function axisLabels(values: number[], unit: string, heightPx = 180): string[] {
+    const frames = spanSeriesToFrames(
+      [{ groupKey: ['pod'], points: values.map((v, i) => ({ time: i * 60e9, value: v })) }],
+      { unit },
+    );
+    const disp = frames[0].fields[1].display!;
+    const ext = seriesExtent([values]);
+    const [lo, hi] = paddedExtent(ext!);
+    const plan = axisTickPlan(lo, hi, Math.max(40, heightPx - 34), false);
+    const ref = scaleRefTick(plan.ticks);
+    const dec = decimalsForScaledIncr(plan.incr, displayScaleOf(ref, disp(ref).text));
+    return plan.ticks.map(v => {
+      const d = disp(v, dec > 0 ? dec : undefined);
+      return `${d.text}${d.suffix ?? ''}`;
+    });
+  }
+
+  it('6.85 TiB civarında ~10 GiB genişliğinde bant — her tick FARKLI', () => {
+    const base = 6.85 * TiB;
+    const vals = [base, base + 3 * GiB, base + 6 * GiB, base + 10 * GiB];
+    const labels = axisLabels(vals, 'bytes');
+    expect(labels.length).toBeGreaterThan(1);
+    expect(new Set(labels).size).toBe(labels.length);
+    // ve gerçekten TiB okunuyor (birim kaybolmadı)
+    expect(labels.every(l => l.endsWith('TiB'))).toBe(true);
+  });
+
+  it('BUG İSPATI: büyüklükten türeyen ondalık (2) aynı dizeyi üretirdi', () => {
+    const base = 6.85 * TiB;
+    const frames = spanSeriesToFrames(
+      [{ groupKey: ['pod'], points: [{ time: 0, value: base }] }], { unit: 'bytes' });
+    const disp = frames[0].fields[1].display!;
+    // Eski yol: ondalık VERİLMEZ → @grafana/data büyüklükten türetir
+    // (getDecimalsForValue, tavan 2) → 6.85 TiB'de ≈10 GiB çözünürlük.
+    const old = [base, base + 2 * GiB, base + 4 * GiB]
+      .map(v => { const d = disp(v); return `${d.text}${d.suffix ?? ''}`; });
+    expect(old).toEqual(['6.85 TiB', '6.85 TiB', '6.85 TiB']); // ← operatörün gördüğü
+    // Yeni yol AYNI değerleri ayrıştırır.
+    const fixed = axisLabels([base, base + 2 * GiB, base + 4 * GiB], 'bytes');
+    expect(new Set(fixed).size).toBe(fixed.length);
+  });
+
+  it('geniş bant (0 → 8 TiB) gereksiz ondalık ÜRETMEZ', () => {
+    const labels = axisLabels([0, 2 * TiB, 5 * TiB, 8 * TiB], 'bytes');
+    expect(new Set(labels).size).toBe(labels.length);
+    // Ondalık SAYININ kendisinden sayılır — birim eki dahil edilirse
+    // "1.82 TiB" altı ondalıklı görünür (bu testin ilk hâlinin kusuru).
+    const decimalsOf = (l: string) => (/^-?\d+\.(\d+)/.exec(l)?.[1] ?? '').length;
+    expect(Math.max(...labels.map(decimalsOf))).toBeLessThanOrEqual(2);
+  });
+
+  it('ölçeksiz birim (req/s) bugünkü davranışta kalır', () => {
+    const labels = axisLabels([0, 100, 200, 300], 'reqps');
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels.every(l => !l.includes('.'))).toBe(true);
+  });
+
+  it('ms→s ölçeğinde dar bant da ayrışır', () => {
+    const labels = axisLabels([1000, 1005, 1010, 1015], 'ms');
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+
+  // Ölçek EN BÜYÜK tick'ten okunmalı. Biçimlendirici birimi DEĞER BAŞINA
+  // seçiyor, yani bir eksen "994 ms" ile "1 s"i aynı anda taşıyabilir.
+  // Ölçek en küçük tick'ten okunsaydı burada ms (×1) bulunur, adım büyük
+  // görünür ve ondalık 0 çıkardı — dört etiketin ÜÇÜ çakışırdı. Bu vaka
+  // mutasyon turunda `plan.ticks[0]` sapmasının ISIRMADIĞINI gösterdiği
+  // için eklendi (v0.9.1368 self-review).
+  it('birim sınırını AŞAN bant — ölçek en büyük tick\'ten okunur', () => {
+    const labels = axisLabels([995, 1000, 1005, 1010], 'ms');
+    expect(new Set(labels).size).toBe(labels.length);
   });
 });

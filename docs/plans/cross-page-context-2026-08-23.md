@@ -461,7 +461,19 @@ kararı + tüm okuma/UI hattı). §3.4'ün entity-kind bulgusuna bağlı. "Oracl
 doldu → onu kullanan 15 servis tek incident" vaadi buranın çıktısıdır, A4'ün
 değil. `/clickhouse-schema` + dağıtık-güvenlik kapıları burada da geçerli.
 
-### Faz 5 — B1: `deploy_env` boyutu (2-3 hafta, 🔴)
+### ~~Faz 5 — B1: `deploy_env` boyutu~~ ⚠ DÜŞÜRÜLDÜ (2026-08-24)
+
+**Bu faz KOŞULMAYACAK.** Aşağıdaki "emsal kararlar" bölümü zaten gerginliği
+işaret ediyordu; operatöre sunulduğunda gerginlik gerginlik olmaktan çıkıp
+karar oldu: **prod tek-env** (*"prod'ta herkes prod env zaten"*, 2026-07-18)
+ve **G6'daki MV-cerrahisi reddi** birlikte B1'in değer önermesini
+çürütüyor. Gerekçenin tamamı: `docs/audit/entity-model-audit-2026-08-23.md`
+§7.3. İhtiyaç doğarsa yol ham-spans (`env_members.go`, v0.9.1041 emsali) —
+hafta değil gün.
+
+Metin aşağıda **arşiv olarak** duruyor; kuyruğa alma.
+
+
 
 Denetimin en pahalı dört tutarsızlığının kökü. Gezinme açısından tek cümlelik
 faydası: `env` gerçek bir global eksen olur, "taşınıyor ama uygulanmıyor"

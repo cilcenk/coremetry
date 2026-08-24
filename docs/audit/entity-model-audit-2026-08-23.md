@@ -441,14 +441,36 @@ Sıra **operatörün kendi kuyruk kuralına** (bugs > perf > HA > features) gör
 
 ### 7.3 Ardından operatör kararı bekleyen iki büyük kalem
 
-- **B1 — MV ailesine `deploy_env` boyutu** (entity-cost raporunun Faz 5'i): Ç1 hariç **Ç3+Ç4+Ç5+Ç6**'yı ve S4'ü tek kalemde çözer; 6-8 MV DROP+RECREATE veya inner `ALTER`+`MODIFY QUERY`, rolling deploy'da okuma-hatası penceresi, geçmiş veri `deploy_env=''` kalır. **+2-3 hafta, 🔴.** — *Bu, entity katmanından daha yüksek değerli ve daha net tanımlı bir mimari kalemdir; sıraya entity'den ÖNCE girmelidir.*
+- **B1 — MV ailesine `deploy_env` boyutu** (entity-cost raporunun Faz 5'i): Ç1 hariç **Ç3+Ç4+Ç5+Ç6**'yı ve S4'ü tek kalemde çözer; 6-8 MV DROP+RECREATE veya inner `ALTER`+`MODIFY QUERY`, rolling deploy'da okuma-hatası penceresi, geçmiş veri `deploy_env=''` kalır. **+2-3 hafta, 🔴.**
+
+  ⚠ **DÜŞÜRÜLDÜ — 2026-08-24.** Bu satır önceden *"entity katmanından daha
+  yüksek değerli ve daha net tanımlı bir mimari kalemdir; sıraya entity'den
+  ÖNCE girmelidir"* diyordu. **YANLIŞTI** — daha doğrusu jenerikti ve bu
+  kurulum için yanlıştı. İki ölçülmüş operatör kararı çürütüyor:
+
+  - **prod TEK-ENV.** Operatörün kendi sözleri (2026-07-18): *"prod'ta
+    herkes prod env zaten"* — bir env dilimi tam bu gerekçeyle iptal
+    edilmişti. Filo ortamları zaten servis adı ekiyle ayırıyor
+    (`-int/-uat/-prep`). Tek-env bir prod'a `deploy_env` boyutu eklemek
+    için 2-3 hafta MV cerrahisi, değeri olmayan bir maliyet.
+  - **G6 reddi.** `/database` instance için MV cerrahisi (90 günlük
+    statement geçmişini feda etme) operatör tarafından *"bugünkü kapsamla
+    yaşa"* denerek REDDEDİLDİ. B1 tam olarak o maliyet sınıfı, sadece daha
+    geniş bir MV ailesinde.
+
+  Ve emsal zaten depoda: **env(a) v0.9.1039-1041'de ham-spans yoluyla, MV
+  cerrahisi OLMADAN** çözüldü. İhtiyaç doğarsa yol o (`env_members.go`
+  deseni) — hafta değil gün.
+
+  **Sonuç:** B1 yeniden kuyruğa ALINMAZ. §7.4'ün 1. koşulu da bununla
+  birlikte düştü.
 - **B2 — `service_metadata` + `aliases Array(String)`** (§6.3'ün karşı-kanıtına cevap): rename'in sahiplik/ekip/runbook yarısını kurtarır, `env_suffix.go`'nun elle listesini veriye taşır. **~1 gün, 🟢.** Dürüst sınır: MV geçmişini birleştirmez — ama entity tablosu da birleştirmez.
 
 ### 7.4 Karar kriterleri — hangi koşulda fikir DEĞİŞİR
 
 Entity tablosu, aşağıdaki **beş koşulun hepsi** sağlandığında doğru karar olur:
 
-1. **ÖNCE B1 (env boyutu) biter.** En pahalı 4 çakışmanın kökü orada; entity onların yerine geçemez, ancak sonrasına gelir.
+1. ~~**ÖNCE B1 (env boyutu) biter.**~~ ⚠ **DÜŞTÜ — 2026-08-24 operatör kararı.** Bu koşul "En pahalı 4 çakışmanın kökü orada; entity onların yerine geçemez, ancak sonrasına gelir" diyordu. B1'in kendisi düşürüldüğü için (bkz. §7.3) bu kapı da kalktı — entity tablosunun önünde artık dört koşul var, beş değil.
 2. **Eklemeli olur:** doğal anahtar her yerde birincil kalır; `entity_id` **hiçbir** ORDER BY'a, **hiçbir** shard anahtarına, **hiçbir** önbellek anahtarına girmez (aksi hâlde K1 ve v0.5.187 çapraz-zehirlenme sınıfı devreye girer).
 3. **Tek kavramla başlar ve `db_stmt_hash` şeklindedir:** içerik-hash veya saf fonksiyon kimliği, parity/pin testli, probe'lu **ham yedek yol**. İlk aday **DB instance** (S2 en keskin boşluk, `db_caller_summary_5m` verisi hazır).
 4. **"Çözümlenemedi" dalı bugünkü davranışın birebir aynısıdır** ve bir testle çivilenir (`'unknown'` sentinel disiplini, `quantile_ordinal_test.go:303-305` emsali). Entity çözümlemesi **hiçbir zaman satır düşürmez, hiçbir zaman yanlış varlığa yazmaz**.

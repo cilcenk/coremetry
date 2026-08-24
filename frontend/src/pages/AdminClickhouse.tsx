@@ -2036,10 +2036,36 @@ function StateRepartWizardPanel() {
                   <span style={{ color: t.rowsNoMerge === t.rowsFinal ? 'var(--text2)' : 'var(--err)' }}>
                     {t.finalNote}
                   </span>
+                  {/* v0.9.1346 — OPERATÖR RAPORU (prod, AŞAMA A'dan SONRA):
+                      bu satır "…id fiziksel olarak birden çok gün-partition'ında"
+                      diyordu ve göç bittikten sonra da AYNEN kalıyordu — oysa
+                      artık partition YOK. Sayı doğru, etiket bayattı ve
+                      "hâlâ bir sorun var" diye okunuyordu.
+
+                      Ölçüm her iki hâlde de aynı: id başına kaç FARKLI
+                      toDate(started_at) var. Anlamı ise partition anahtarına
+                      GÖRE değişiyor:
+                        · partition VARKEN → kusurun ta kendisi. FINAL
+                          partition sınırını aşamıyor, bayat satır kazanabilir.
+                        · partition YOKKEN → yalnız bir olgu. Aynı id'nin
+                          sürümleri farklı günlere yayılmış (started_at kayması
+                          sürüyor: UpsertAnomalyEvents'in hatada boş dönen
+                          carry'si + deterministik id'li problemin yeniden
+                          açılışı, v0.9.1335 ölçümü) ama FINAL artık hepsini
+                          birleştirdiği için ZARARSIZ.
+
+                      Renk de buna bağlı: uyarı yalnız gerçekten uyarıyken. */}
                   {t.splitIds > 0 && (
-                    <span style={{ color: 'var(--warn)' }}>
-                      {' '}· {fmtNum(t.splitIds)}/{fmtNum(t.ids)} id fiziksel olarak birden çok gün-partition'ında
-                    </span>
+                    t.partitionKey ? (
+                      <span style={{ color: 'var(--warn)' }}>
+                        {' '}· {fmtNum(t.splitIds)}/{fmtNum(t.ids)} id fiziksel olarak birden çok gün-partition'ında
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--text3)' }}
+                        title="started_at kayması sürüyor (yazıcı tarafı), ama partition kalktığı için FINAL tüm sürümleri birleştiriyor — dedup'a zararı yok.">
+                        {' '}· {fmtNum(t.splitIds)}/{fmtNum(t.ids)} id'nin sürümleri birden çok güne yayılıyor — partition kalktığı için zararsız
+                      </span>
+                    )
                   )}
                 </div>
               ))}

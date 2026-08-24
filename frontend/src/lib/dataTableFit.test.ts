@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { fitColumnWidths, type FitColumnInput } from './dataTable';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // v0.9.1030 regresyonu — operatör bildirimi: /inbox'ta Assignee tarafında
 // tablo "bozuluyor", sayfa iframe gibi iç-kaydırmalı görünüyor.
@@ -65,5 +67,51 @@ describe('fitColumnWidths (v0.9.1030)', () => {
   it('genişlikler tamsayı (colgroup px değerleri)', () => {
     const out = fitColumnWidths([c('a', 333), c('b', 334)], 0, 500)!;
     for (const v of Object.values(out)) expect(Number.isInteger(v)).toBe(true);
+  });
+});
+
+// ── ULAŞILABİLİRLİK — v0.9.1334 ─────────────────────────────────────────
+//
+// Yukarıdaki yedi test `fitColumnWidths`in DOĞRU HESAPLADIĞINI çiviliyor
+// ve v0.9.1030'dan beri yeşil. Ama hiçbiri fonksiyonun ÇAĞRILDIĞINI
+// söylemiyordu — ve v0.9.1078'den 2026-08-24'e kadar çağrılmıyordu.
+//
+// Olan şu: `DataTableColgroup` sığdırmayı
+// `getComputedStyle(wrap).overflowX !== 'visible'` ise KAPATIYORDU. O gün
+// doğruydu (is-fit kaplar masaüstünde `overflow: visible` taşıyordu), ama
+// v0.9.1078 operatör kararıyla o kaçış söküldü ve her `.table-wrap`
+// `overflow-x: auto` oldu → muhafaza her zaman kapatır → ölü kod. Testler
+// yeşil kaldığı için sessiz; `git log` çarenin gemide olduğunu söylüyordu.
+//
+// Operatör aynı şikâyeti bu yüzden İKİ KEZ bildirdi (v0.9.1030 "iframe
+// gibi", 2026-08-24 "neden sayfa yatayda kayıyor").
+//
+// jsdom'da gerçek bir render bunu yakalayamaz: `ResizeObserver` yok ve
+// `clientWidth` 0 — kod ikisinde de fail-open. Yani ölçülebilir tek şey
+// KAYNAK. Zayıf bir gate, ama arıza tam olarak "bir muhafaza bir
+// özelliği sessizce kapattı" şekliydi ve kaynak gate'i tam onu görür.
+describe('fitColumnWidths ULAŞILABİLİR (v0.9.1334)', () => {
+  it('DataTableColgroup ölçümü overflow/computed-style muhafazasına BAĞLAMIYOR', () => {
+    const src = readFileSync(
+      resolve(__dirname, '..', 'components', 'DataTable.tsx'), 'utf8');
+    // Yorumları soy: bu dosyanın şerhleri tarihi anlatmak için
+    // `overflowX` ve `getComputedStyle` kelimelerini KULLANIYOR.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(code).not.toContain('overflowX');
+    expect(code).not.toContain('getComputedStyle');
+    // Ve ölçüm gerçekten kabın genişliğini alıyor olmalı.
+    expect(code).toContain('setFitPx(wrap.clientWidth)');
+  });
+
+  // ⚠ İlk yazımı `expect(src).toContain('fitColumnWidths(')` idi ve
+  // MUTASYON YAKALADI: `return null && fitColumnWidths(...)` gate'i
+  // geçiyordu, çünkü dizgi hâlâ ORADA. Varlık ≠ kullanım. Yüklem artık
+  // ŞEKLE bakıyor: çağrı `return`un hemen ardında, önünde kısa-devre
+  // yok. Bu, "gate mevcudiyeti ölçüyor, etkiyi değil" sınıfının aynısı.
+  it('çağrı kısa-devreye alınmamış (return doğrudan fitColumnWidths)', () => {
+    const src = readFileSync(
+      resolve(__dirname, '..', 'components', 'DataTable.tsx'), 'utf8');
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(code).toMatch(/return\s+fitColumnWidths\(/);
   });
 });

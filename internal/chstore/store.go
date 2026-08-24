@@ -1266,6 +1266,38 @@ func (s *Store) migrate(ctx context.Context) error {
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY id`,
 
+		// PARTITION BY YOK ve bu bilinçli (v0.9.1335, Kural P1 — emsal
+		// root_cause_hypotheses/v0.9.1304, ai_feedback, rca_verdicts).
+		// Tablo v0.9.1334'e dek `PARTITION BY toDate(started_at)`
+		// taşıyordu ve started_at ORDER BY'da DEĞİL. mergeAnomalyCarry
+		// started_at'i taşımaya söz veriyor ama sözü tutamadığı İKİ dal
+		// var ve ikisi de bugün canlı:
+		//   (a) taşıma SELECT'i hata verirse `prev` boş kalır (yumuşak
+		//       düşüş, anomaly_event.go) → o tikin TÜM olayları "ilk
+		//       görülme" gibi yazılır, started_at TAZELENİR;
+		//   (b) satır 30 günlük TTL ile düştükten sonra aynı parmak izi
+		//       yeniden ateşlerse started_at yeni pencereden gelir.
+		// İkisinde de aynı id ikinci bir GÜN partition'ına düşer ve
+		// ReplacingMergeTree'nin arka plan birleştirmesi partition
+		// sınırını AŞMAZ → kopya TTL'e kadar ölümsüz. Doğruluk tek bir
+		// SUNUCU AYARINA asılı kalır: do_not_merge_across_partitions_
+		// select_final=1 açıldığı an FINAL iki satırı da döndürür.
+		//
+		// ÖLÇÜM (lokal chc-0, 2026-08-24, 0009 birleştirmesi SONRASI):
+		// 186 id'nin 32'si hâlâ >1 gün-partition'ında. v0.9.1306'nın
+		// shard-kayması teşhisi 0009 ile KAPANDI (birleştirmeden bu yana
+		// yeni bölünme 0), ama yukarıdaki iki dal topolojiden bağımsız.
+		//
+		// TTL 30g artık partition-hizalı değil, SATIR düzeyinde (merge
+		// sırasında) — root_cause_hypotheses ile aynı şekil. toDate(...)
+		// + INTERVAL N DAY formu korunuyor: gün granülünde sarmalamak
+		// v0.6.36 birim-karıştırma kuralına UYGUN.
+		//
+		// MEVCUT KURULUM KENDİLİĞİNDEN DÜZELMEZ: `CREATE TABLE IF NOT
+		// EXISTS` var olan tabloya dokunmaz. Göç operatörde —
+		// migrations/0010_state_repartition.sql. Boot'ta yalnız SALT
+		// OKUNUR bir uyarı basılır (state_repartition.go).
+		//
 		// anomaly_events: persistent record of detected log-pattern
 		// + trace-op anomalies. ReplacingMergeTree(version) keeps
 		// only the latest row per id; the recorder upserts on every
@@ -1286,7 +1318,6 @@ func (s *Store) migrate(ctx context.Context) error {
 			sample        String        DEFAULT '',
 			version       UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
-		PARTITION BY toDate(started_at)
 		ORDER BY id
 		TTL toDate(started_at) + INTERVAL 30 DAY`,
 
@@ -1375,6 +1406,31 @@ func (s *Store) migrate(ctx context.Context) error {
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY id`,
 
+		// PARTITION BY YOK ve bu bilinçli (v0.9.1335, Kural P1 — aynı
+		// gerekçe anomaly_events'te uzun uzun yazılı). problems'ın kendi
+		// yeniden-yazım dalı AYRI ve anomaly'den bağımsız: problem id'si
+		// birçok dedektörde DETERMİNİSTİK (fatalExcProblemID,
+		// capacityProblemID, runtimeProblemID, sharedBurstProblemID,
+		// `anomaly-auto:<fp>:<servis>`), yani KAPANIP sonra yeniden AÇILAN
+		// bir problem AYNI id'yi geri alır — ama açılış dalı started_at'i
+		// o anki `now`/`FirstSeen` ile yazar (evaluator/fatal_exception.go,
+		// db_capacity.go, runtime_vm.go, selfhealth.go). Kapanış ile
+		// yeniden açılış arasına bir gece sıkıştığı an aynı id ikinci bir
+		// gün-partition'ına düşer ve FINAL onları asla birleştiremez.
+		// (Rastgele id üreten ana kural yolu — evaluator.go `newID()` —
+		// bu sınıfa girmez: yeni id, yeni satır, çakışma yok.)
+		//
+		// started_at kozmetik DEĞİL: P1 açık-saat eşiğini ve
+		// effectiveSeverity'nin yaş tabanlı yükseltmesini besliyor.
+		// Bayat bir satırın kazanması yaşlanmış bir problemi sessizce
+		// GERİ indirir.
+		//
+		// ÖLÇÜM (lokal chc-0, 2026-08-24): 4819 id'nin 21'i >1
+		// gün-partition'ında. TTL YOK — partition düşmesi zaten hiçbir
+		// şeyi temizlemiyordu (EnforceRetention bu tabloyu yönetmiyor),
+		// yani partition'ı sökmenin retention maliyeti SIFIR.
+		//
+		// Göç operatörde: migrations/0010_state_repartition.sql.
 		`CREATE TABLE IF NOT EXISTS problems (
 			id           String,
 			rule_id      String,
@@ -1393,7 +1449,6 @@ func (s *Store) migrate(ctx context.Context) error {
 			updated_at   DateTime64(9) DEFAULT now64(9),
 			version      UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
-		PARTITION BY toDate(started_at)
 		ORDER BY id`,
 
 		// ── Synthetic monitoring ─────────────────────────────────────
@@ -2203,6 +2258,12 @@ func (s *Store) migrate(ctx context.Context) error {
 	// deferDDL kararından ÖNCE: müdahale SENKRON koşmalı, ve `existing`
 	// bundan sonra okunduğu için sonuç ne olursa olsun tutarlı kalır.
 	s.repartitionRootCauseHypotheses(ctx, tableDDLByName(tables, "root_cause_hypotheses"))
+
+	// v0.9.1335 — problems + anomaly_events SALT OKUNUR teşhisi. Bu iki
+	// tablo geri getirilemez operatör durumu taşıyor, o yüzden yukarıdaki
+	// gibi yeniden KURULMAZLAR; göç migrations/0010 ile operatörde. Boot
+	// yalnız eski şemayı görürse söyler (state_repartition.go).
+	s.warnStatePartitionDrift(ctx)
 
 	// v0.9.607 — ZATEN VAR OLAN nesne için DDL GÖNDERİLMEZ.
 	//

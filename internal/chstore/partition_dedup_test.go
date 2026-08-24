@@ -94,19 +94,16 @@ import (
 // bağımsız kıl (ortak replica path / Distributed + id sharding key) —
 // asıl düzeltme; (2) state havuzunu tek host'a pinle — tutarlılığı alır,
 // HA'yı verir. İkisi de prod etkili, ikisi de bu dilimin dışında.
+// ── v0.9.1335: anomaly_events + problems SİCİLDEN ÇIKTI ──────────────────
+// İkisinin de PARTITION BY'ı SÖKÜLDÜ (store.go). v0.9.1306'nın teşhisi
+// (shard kayması) 0009 birleştirmesiyle KAPANDI ve ÖLÇÜLDÜ: birleştirmeden
+// bu yana yeni bölünme 0. Ama iki tablonun da topolojiden BAĞIMSIZ yeniden
+// yazım dalı var (anomaly: taşıma SELECT'inin yumuşak düşüşü + TTL sonrası
+// yeniden ateşleme; problems: determinist id'li bir problemin kapanıp
+// ertesi gün yeniden açılması) — yani muafiyet gerekçesi "yazıcı taşıyor"
+// ARTIK DOĞRU DEĞİLDİ. Mevcut kurulumlar migrations/0010 ile göç eder;
+// sicile geri yazılmalarını aşağıdaki iki muhafız engelliyor.
 var partitionNotInOrderBy = map[string]string{
-	"anomaly_events": "started_at = olayın BAŞLANGICI ve mergeAnomalyCarry " +
-		"onu ASLA tazelememeye söz veriyor. ÖLÇÜM 2026-08-23: 185 id'nin " +
-		"28'i yine de >1 gün partition'ında. TEŞHİS v0.9.1306: yazıcı değil " +
-		"TOPOLOJİ — taşıma SELECT'i satırı taşımayan shard'a düşünce 0 satır " +
-		"dönüyor, exists=false oluyor, started_at taze basılıyor. Yukarıdaki " +
-		"blokta tam gerekçe; çare veri koruyan repartition göçü (spec).",
-	"problems": "started_at = problemin BAŞLANGICI; problemInsertArgs onu " +
-		"mevcut satırdan taşır. ÖLÇÜM 2026-08-23: 4560 id'nin 21'i >1 gün " +
-		"partition'ında. TEŞHİS v0.9.1306: %100 TÜREV — 21/21 kayan id " +
-		"`anomaly-auto:`, 50/50 satırın started_at'i bir anomaly_events " +
-		"değerine nanosaniyesine kadar eşit. anomaly_events düzelince bu da " +
-		"düzelir; bağımsız bir yazıcı hatası YOK (anomaly dışı 4476 id: 0).",
 	"incidents": "started_at operatörün açtığı olayın başlangıcı, güncelleme " +
 		"yollarında taşınıyor. ÖLÇÜM 2026-08-23: 2861 id, 0 çoklu-partition.",
 	"runbook_executions": "started_at bir koşumun başlangıcı — koşum başına " +
@@ -241,11 +238,19 @@ func TestReplacingMergeTreePartitionColumnsAreInOrderBy(t *testing.T) {
 		}
 	}
 
-	// v0.9.1304'ün kendisi: düzeltilen tablo sicile GERİ yazılarak
-	// "düzeltilmiş" sayılamaz.
-	if _, ok := partitionNotInOrderBy["root_cause_hypotheses"]; ok {
-		t.Error("root_cause_hypotheses sicile eklenmiş — v0.9.1304 düzeltmesi " +
-			"PARTITION BY'ı SÖKMEKTİ, muafiyet yazmak değil")
+	// Düzeltilen tablo sicile GERİ yazılarak "düzeltilmiş" sayılamaz.
+	// Muafiyet yazmak, taramayı susturur ama bug'ı yerinde bırakır — ve
+	// tam olarak bu üç tabloda gerekçe metni bir kez zaten YANLIŞ çıktı
+	// ("yazıcı started_at'i taşıyor" — taşımıyordu).
+	for _, fixed := range []struct{ table, release string }{
+		{"root_cause_hypotheses", "v0.9.1304"},
+		{"anomaly_events", "v0.9.1335"},
+		{"problems", "v0.9.1335"},
+	} {
+		if _, ok := partitionNotInOrderBy[fixed.table]; ok {
+			t.Errorf("%s sicile eklenmiş — %s düzeltmesi PARTITION BY'ı "+
+				"SÖKMEKTİ, muafiyet yazmak değil", fixed.table, fixed.release)
+		}
 	}
 }
 

@@ -24,6 +24,7 @@ import { Button, Card, Drawer, DrawerSection, IconButton, LinkButton } from '@/c
 import { api } from '@/lib/api';
 import { useClusters } from '@/lib/queries';
 import { timeRangeToNs, fmtBytes, fmtNum } from '@/lib/utils';
+import { clampThanosWindow, clampSuffix } from '@/lib/thanosWindow';
 import { useUrlRange, rememberRange } from '@/lib/useUrlRange';
 import { encodeRange } from '@/lib/urlState';
 import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
@@ -325,12 +326,12 @@ export default function ClustersPage() {
   const { from: rangeFrom, to: rangeTo, netClamped } = useMemo(() => {
     void liveTick; // v0.9.43 — live pencere ilerletici, yalnız tetikleyici
     const { from, to } = timeRangeToNs(range);
-    // v0.9.21 — sunucu 6h'e SESSİZCE clamp'liyordu; geniş sayfa
-    // range'inde grafik başlıksız yanıltıyordu. İstemci de clamp'ler
-    // ve başlığa "(last 6h)" düşer — eksen artık yalan söylemez.
-    const sixH = 6 * 3600 * 1e9;
-    if (to - from > sixH) return { from: to - sixH, to, netClamped: true };
-    return { from, to, netClamped: false };
+    // v0.9.21 — sunucu pencereyi SESSİZCE kelepçeliyordu; geniş sayfa
+    // range'inde grafik başlıksız yanıltıyordu. İstemci de kelepçeler
+    // ve başlığa ek düşer — eksen artık yalan söylemez. Kural tek
+    // gövdede (lib/thanosWindow, v0.9.1370).
+    const { cFrom, cTo, clamped } = clampThanosWindow(from, to);
+    return { from: cFrom, to: cTo, netClamped: clamped };
     // liveTick: v0.9.43 — live modda pencereyi 60s'de bir ilerletir.
   }, [range, liveTick]);
   // v0.9.1042 (operator-reported: eksen 3h pencerede 00:00–21:00) —
@@ -1161,7 +1162,7 @@ export default function ClustersPage() {
                 {/* v0.9.10 — throughput grafiği: yalnız seri geldiyse
                     (node_network erişilemezse bölüm hiç görünmez). */}
                 {section === 'overview' && (netTrendQ.data?.trend?.length ?? 0) > 0 && (
-                  <Card header={`Network throughput${netClamped ? ' (last 6h)' : ''}`} style={{ marginTop: 14 }}>
+                  <Card header={`Network throughput${clampSuffix(netClamped)}`} style={{ marginTop: 14 }}>
                     {/* Madde 4 sweep — eksen/tooltip byte birimi (değerler
                         Bps; seri etiketleri "(B/s)" taşır) + drag-zoom
                         global range'e, çift-tık geri-yığınına. */}

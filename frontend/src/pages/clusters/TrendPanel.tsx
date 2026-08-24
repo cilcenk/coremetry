@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { THANOS_MAX_WINDOW_NS } from '@/lib/thanosWindow';
 import { useQuery } from '@tanstack/react-query';
 import { MultiLineChart, type DeployMarker } from '@/components/MultiLineChart';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -14,6 +15,10 @@ export const TREND_WINDOWS = [
   { key: '15m', label: '15m', ns: 15 * 60 * 1e9 },
   { key: '1h', label: '1h', ns: 3600 * 1e9 },
   { key: '6h', label: '6h', ns: 6 * 3600 * 1e9 },
+  // v0.9.1370 — 24h basamağı. Bu liste 6h'te bitiyordu çünkü sunucu
+  // pencereyi zaten oraya kelepçeliyordu; tavan 24h'e çıkınca daha geniş
+  // bir rung SEÇİLEBİLİR hâle geldi. Tavanın kendisi lib/thanosWindow'da.
+  { key: '24h', label: '24h', ns: THANOS_MAX_WINDOW_NS },
 ] as const;
 
 // ThanosTrendPanel — Thanos trend grafiklerinin YERLEŞİM-BAĞIMSIZ

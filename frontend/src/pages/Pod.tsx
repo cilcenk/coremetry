@@ -6,6 +6,7 @@ import { panelMaxDataPoints } from '@/lib/chartStep';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
 import { timeRangeToNs, fmtBytes } from '@/lib/utils';
+import { clampThanosWindow, THANOS_MAX_WINDOW_LABEL } from '@/lib/thanosWindow';
 import { Topbar } from '@/components/Topbar';
 import { Card } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -82,14 +83,11 @@ function PodDetail() {
   // kurduğu desen.
   const podChartSync = `podjmx:${pod}-ms`;
 
-  // Sunucu 6h clamp — Infra/JMX Thanos sorgularıyla aynı dürüstlük (Clusters/
-  // ServiceInfraTab emsali). RED spans tarafında clamp YOK (raw-spans zaten
-  // bounded + auto-sample); yalnız Thanos eksenlerine uygulanır.
-  const { cFrom, cTo, clamped } = useMemo(() => {
-    const sixH = 6 * 3600 * 1e9;
-    if (to - from > sixH) return { cFrom: to - sixH, cTo: to, clamped: true };
-    return { cFrom: from, cTo: to, clamped: false };
-  }, [from, to]);
+  // Sunucu pencere tavanı — Infra/JMX Thanos sorgularıyla aynı dürüstlük
+  // (Clusters/ServiceInfraTab emsali). RED spans tarafında tavan YOK
+  // (raw-spans zaten bounded + auto-sample); yalnız Thanos eksenlerine.
+  const { cFrom, cTo, clamped } = useMemo(
+    () => clampThanosWindow(from, to), [from, to]);
 
   // cluster/namespace çözümü (v0.9.153): Infra/Clusters drill'i cluster'ı
   // taşır (tek fetch); Metrics drill'i YALNIZ service+pod taşır → pod'un
@@ -216,7 +214,7 @@ function PodDetail() {
           {row && <Stat label="CPU" value={fmtCores(row.cpuCores)} />}
           {row && <Stat label="Mem" value={fmtBytes(row.memBytes)} />}
           {row && <Stat label="Restarts" value={row.restartsUnknown ? '—' : String(row.restarts ?? 0)} />}
-          {clamped && <span style={{ fontSize: 11, color: 'var(--text3)' }}>Infra/JVM: son 6h</span>}
+          {clamped && <span style={{ fontSize: 11, color: 'var(--text3)' }}>Infra/JVM: son {THANOS_MAX_WINDOW_LABEL}</span>}
         </div>
 
         {/* RED — servisin kümülatif metrikleri, bu pod'a scope'lu */}

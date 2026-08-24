@@ -1742,7 +1742,11 @@ func (s *Service) NamespacePodsTrend(ctx context.Context, c ClusterConfig, names
 // sorgu-anında güvenilir vermediğinden per-cluster doğrulama yok;
 // gerekirse ClusterConfig'e opsiyonel scrapeIntervalSec alanı eklenir).
 // ClickHouse span-metrik 10s tier'ıyla KARIŞTIRILMAZ — ayrı dünya.
-// Nokta bütçesi ≤~360/seri (tüm trend uçları ≤6h clamp'li):
+// Nokta bütçesi ≤~360/seri. v0.9.1370'e kadar tüm trend uçları
+// ≤6h clamp'liydi, yani 24h ve 7g basamakları ERİŞİLEMEZDİ; tavan
+// artık 24h (clampThanosWindow) ve 24h basamağı CANLI. 7g basamağı
+// hâlâ erişilmez — tavan orada bilinçli duruyor (ham örnek taraması
+// ölçülmedi).
 //
 //	≤1h→15s(240) · ≤3h→30s(360) · ≤6h→60s(360) · ≤24h→300s(288)
 //	· ≤7d→1800s(336) · else→3600s.

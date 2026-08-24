@@ -12,6 +12,7 @@ import { RenderedMarkdown } from '@/components/Markdown';
 import { useAiEvidence } from '@/components/ai/aiEvents';
 import { RootCausePanel } from '@/components/RootCausePanel';
 import { ProblemRunbookPanel } from '@/components/ProblemRunbookPanel';
+import { ProblemNotifyPanel } from './ProblemNotifyPanel';
 import { IconSparkles } from '@/components/icons';
 import { TimeChart } from '@/components/charts/TimeChart';
 import type { ChartTimeRegion } from '@/lib/chart/overlays';
@@ -841,6 +842,14 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
             <SignalLink to={`/service-map?focus=${encodeURIComponent(problem.service)}`}
               label="◉ Service map" sub="focused" />
             </>)}
+          </Sect>
+
+          {/* v0.9.1344 — "bu problemden kimin haberi var?" Triyaj eden
+              operatörün bu soruyu soracağı yer burası; cevabı bugüne
+              kadar YALNIZ /events'te, elle pencere daraltarak
+              bulunabiliyordu — yani pratikte hiç bulunamıyordu. */}
+          <Sect title="Bildirim">
+            <ProblemNotifyPanel problemId={problem.id} />
           </Sect>
 
           <Sect title="Runbook">

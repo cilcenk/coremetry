@@ -1,4 +1,5 @@
 import type { Problem, NotificationLogEntry } from './types';
+import { UNMATCHED_KIND } from './notifyRouting';
 
 // watcherTimeline — pure builders for the /watchers history drawer
 // (v0.9.196). The API hands back one rule's problems + their
@@ -54,6 +55,10 @@ export interface WatcherHistorySummary {
   fires24h: number;
   notifs24h: number;
   notifFails24h: number;
+  // v0.9.1344 — bu pencerede KİMSEYE gitmeyen fire sayısı. notifs24h'in
+  // içinde DEĞİL: hiç denenmemiş bir haberi "gönderildi" saymak, tam da
+  // bu sürümün kapattığı sessiz kaybı ekranda geri açardı.
+  unmatched24h: number;
   lastFire: number; // unix ns; 0 = no fire in the history slice
 }
 
@@ -71,10 +76,22 @@ export function summarizeWatcherHistory(
   }
   let notifs24h = 0;
   let notifFails24h = 0;
+  let unmatched24h = 0;
   for (const n of notifications) {
     if (n.sentAt < cutoff) continue;
+    // v0.9.1344 — sentetik "kimseye gitmedi" işareti bir GÖNDERİM DEĞİL.
+    // notification_log'a ok=0 ile indiği için, elenmeseydi bu şerit hem
+    // "N notifications sent" hem "failed sends" sayısını şişirirdi:
+    // hiç denenmemiş bir şeyi önce gönderilmiş, sonra başarısız
+    // göstermek — iki kere yalan. Kendi kovasında sayılıyor, çünkü
+    // watcher'ının haberi kimseye gitmemesi tam da bu şeridin
+    // söylemesi gereken şey.
+    if (n.channelKind === UNMATCHED_KIND) {
+      unmatched24h++;
+      continue;
+    }
     notifs24h++;
     if (!n.ok) notifFails24h++;
   }
-  return { fires24h, notifs24h, notifFails24h, lastFire };
+  return { fires24h, notifs24h, notifFails24h, unmatched24h, lastFire };
 }

@@ -14,7 +14,7 @@ import type {
 } from '@/lib/types';
 import { SectionHeader, KPI, fmtBytes, fmtRate } from './adminstats/shared';
 import { statusHeadline, Banner, ComponentRow, Legend } from './adminstats/StatusSection';
-import { DropsPanel, BehaviorPanel, CodeFetchPanel, RedisPanel, ApiCachePanel, DistributionQueuePanel } from './adminstats/panels';
+import { DropsPanel, BehaviorPanel, CodeFetchPanel, NotifyRoutingPanel, RedisPanel, ApiCachePanel, DistributionQueuePanel } from './adminstats/panels';
 
 // Row types for the shared sortable + resizable DataTable adoption.
 type TableStatRow = SystemStats['tables'][number];
@@ -255,6 +255,14 @@ export default function AdminStatsPage() {
                 hiçbir ekranda iz bırakmıyordu — toplamda "isabet
                 ediyor mu" sorusunun cevabı yalnız bu kartta. */}
             <CodeFetchPanel code={data.codeFetch} />
+
+            {/* ── Bildirim yönlendirmesi (v0.9.1344) ──────────────────
+                Aynı aile: bu sürecin KENDİ ölçümü. Eşleşmeyen bir
+                problem sessizce düşüyordu; "kaç problem kimseye
+                gitmedi" sorusunun cevabı bir problemi açmadan yalnız
+                burada. `unconfigured` bilinçli olarak AYRI kovada —
+                kanalsız bir kurulum kusurlu değildir. */}
+            <NotifyRoutingPanel routing={data.notifyRouting} />
 
             {/* ── 30-day history ──────────────────────────────────── */}
             <div style={{

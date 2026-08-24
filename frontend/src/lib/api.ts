@@ -827,6 +827,23 @@ export const api = {
   }) =>
     get<NotificationLogEntry[]>(`/api/notifications/log?${qs(params)}`),
 
+  // v0.9.1344 — TEK problemin bildirim geçmişi (problem detayı →
+  // "Bildirim" paneli). Aynı notification_log defteri, related_id ile
+  // daraltılmış.
+  //
+  // İki tür satır gelir: gerçek gönderimler ve channelKind='none' /
+  // channelName='unmatched' işareti — "hiçbir kanal eşleşmedi VE
+  // ekip-yönlendirme de kimseyi bulamadı", gerekçesi `error` alanında.
+  //
+  // BOŞ DİZİ ≠ KAYIP: yapılandırılmamış bir kurulumda işaret hiç
+  // yazılmaz (backend decideRouting), yani boş sonuç "henüz bildirim
+  // yok" demektir. Panel ikisini ayrı çiziyor.
+  //
+  // Talep üzerine çekilir (drawer/sayfa açılışı), asla liste ön-yükleme
+  // ile değil; polling YOK.
+  problemNotifications: (id: string) =>
+    get<NotificationLogEntry[]>(`/api/problems/${encodeURIComponent(id)}/notifications`),
+
   // Fields-panel accordion (v0.8.255): top-5 values of one field
   // in the current slice, with counts for the % bars. Expand-
   // triggered only — never poll this (60s server-side cache).

@@ -803,3 +803,80 @@ function SpoolRunbook() {
     </div>
   );
 }
+
+// NotifyRoutingPanel — v0.9.1344. "Kaç problem KİMSEYE gitmedi?"
+//
+// OPERATÖR RAPORU: hiçbir bildirim kanalıyla eşleşmeyen bir problem
+// sessizce düşüyordu — ne sayaç, ne log, ne işaret. "Oracle doluyor ve
+// kimse haber almıyor" ancak olay olduktan sonra fark ediliyordu.
+//
+// ÜÇ HÂL AYRI ÇİZİLİR ve ayrım özelliğin kendisi kadar önemli:
+//   alan yok / hiç problem yok → "hiç yayın yapılmadı". %0 kayıp demek
+//     yalan olurdu: hiç problem çıkmamış olması ile hepsinin kaybolması
+//     aynı şey değil (CodeFetchPanel'le aynı dürüstlük kuralı).
+//   unmatched > 0             → ⚠ KUSUR. Yol teklif edildi, kimse almadı.
+//   unmatched = 0             → ✓ temiz.
+//
+// `unconfigured` KUSUR SAYILMAZ ve ayrı bir kutuda durur: kanalı hiç
+// olmayan bir kurulumda her problem oraya düşer ve orayı kırmızı
+// yakmak sinyali ilk günden gürültüye çevirirdi.
+//
+// SÜREÇ BAŞLANGICINDAN BERİ (restart sıfırlar) ve YALNIZ BU POD:
+// bildirim funnel'ı lider kilidiyle koşuyor, lider olmayan pod'da
+// sayaçlar sıfır kalır ve bu doğru cevaptır. Kalıcı defter
+// notification_log — /events ve problem detayındaki "Bildirim" paneli.
+export function NotifyRoutingPanel({ routing }: { routing: SystemStats['notifyRouting'] }) {
+  const r = routing;
+  const total = (r?.delivered ?? 0) + (r?.suppressed ?? 0)
+    + (r?.unconfigured ?? 0) + (r?.unmatched ?? 0);
+  const never = !r || total === 0;
+  const lost = r?.unmatched ?? 0;
+  return (
+    <div style={{
+      background: 'var(--bg1)', border: '1px solid var(--border)',
+      borderRadius: 8, padding: 14, marginBottom: 18,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: never ? 0 : 12 }}>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>Bildirim yönlendirmesi</span>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+          problem → kanal eşleşmesi · bu pod · süreç başlangıcından beri
+          (restart sıfırlar)
+        </span>
+        <span style={{ flex: 1 }} />
+        {never
+          ? <span style={{ fontSize: 12, color: 'var(--text3)' }}>hiç yayın yapılmadı</span>
+          : lost > 0
+            ? <span className="err" style={{ fontSize: 12, fontWeight: 700 }}>⚠ {fmtNum(lost)} problem kimseye gitmedi</span>
+            : <span className="ok" style={{ fontSize: 12, fontWeight: 600 }}>✓ kayıp yok</span>}
+      </div>
+      {!never && r && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 }}>
+            <KPI label="Gönderildi" value={fmtNum(r.delivered)} />
+            {/* Bastırıldı = daha önce haber verilmişti (tekrar kapısı).
+                Kayıp DEĞİL; gönderildi ile aynı kovaya koymak tekrar
+                bastırmanın çalışıp çalışmadığını gizlerdi. */}
+            <KPI label="Bastırıldı" value={fmtNum(r.suppressed)} />
+            {/* KUSUR DEĞİL — hiçbir yol teklif edilmedi. Kanalsız bir
+                kurulumda her problem burada toplanır. */}
+            <KPI label="Yapılandırılmamış" value={fmtNum(r.unconfigured)} />
+            <KPI label="Kimseye gitmedi" value={fmtNum(lost)} cls={lost > 0 ? 'err' : undefined}
+                 sub={lost > 0 ? 'yol vardı, kimse almadı' : undefined} />
+          </div>
+          {lost > 0 && (
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 10, lineHeight: 1.7 }}>
+              <b>Son kayıp:</b>{' '}
+              {r.lastUnmatchedService && (
+                <span className="mono" style={{ color: 'var(--text2)' }}>{r.lastUnmatchedService}</span>
+              )}
+              {r.lastUnmatchedUnix > 0 && (
+                <> · {fmtUptime(Math.max(0, Math.floor(Date.now() / 1000) - r.lastUnmatchedUnix))} önce</>
+              )}
+              {r.lastUnmatchedReason && <div style={{ marginTop: 4 }}>{r.lastUnmatchedReason}</div>}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

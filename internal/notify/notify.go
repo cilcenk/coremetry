@@ -490,15 +490,32 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 	// operator-configured channel list — it runs even with zero
 	// channels — and dedupes per problem via notification_log, so a
 	// severity-bump re-fire never re-mails.
+	//
+	// v0.9.1344 — sonucu SAYILIYOR. Daha önce sendTeamMail hiçbir şey
+	// döndürmüyordu; "mail gitti mi" bilgisi çağıranda YOKTU, dolayısıyla
+	// "bu problem kimseye gitmedi" sorusu sorulamıyordu bile.
+	var facts routingFacts
 	if p.Status == "open" {
-		n.sendTeamMail(ctx, p, md)
+		facts.Team = n.sendTeamMail(ctx, p, md)
 	}
+	// relKind yukarı taşındı (v0.9.1344): kanal listesi boş çıktığında da
+	// yönlendirme işareti yazılabilmesi için gerekli. Yalnız p.Metric'i
+	// okur, yer değiştirmesi davranışı değiştirmez.
+	relKind := problemRelatedKind(p)
 	channels, err := n.store.EnabledChannelsForSeverity(ctx, p.Severity)
 	if err != nil {
+		// Kanal listesi OKUNAMADI: yönlendirme kararı verilemez.
+		// Sayaç da işaret de yazılmaz — "kimseye gitmedi" demek, bir CH
+		// hatasını bir eşleşme kusuru gibi göstermek olurdu.
 		log.Printf("[notify] load channels: %v", err)
 		return
 	}
+	facts.ChannelsOffered = len(channels)
 	if len(channels) == 0 {
+		// Hiç kanal teklif edilmedi. Kusur olup olmadığına decideRouting
+		// karar verir: ekip-yönlendirme de devrede değilse bu yalnızca
+		// "yapılandırılmamış" hâlidir, kusur değil.
+		n.recordRouting(ctx, p, relKind, facts)
 		return
 	}
 	// Enrich the in-memory problem with its cluster set so the
@@ -525,7 +542,6 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 		// hesaplandı; kanal döngüsü boyunca sabit.
 		Priority: p.Priority,
 	}
-	relKind := problemRelatedKind(p)
 	// v0.9.587 — çözülme, o problem hakkındaki bastırma durumunu
 	// geçersiz kılar: aynı kimlikle yeniden açılırsa (flap) o meşru bir
 	// haberdir ve ilk açılışın damgası onu yutmamalı.
@@ -534,6 +550,11 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 	}
 	for _, c := range channels {
 		if !c.MatchRules.MatchesProblem(in) {
+			// v0.9.1344 — KUSURUN BİRİNCİ YARISI TAM BURASI. Bu `continue`
+			// sessiz: MatchRules.Services ile daraltılmış bir kanal,
+			// db-konulu bir problemle asla eşleşmez ve bugüne kadar
+			// hiçbir yerde iz bırakmıyordu. Kural DEĞİŞMEDİ (kapsam
+			// kararı); yalnız sayılıyor.
 			continue
 		}
 		// Tekrar tabanı — İKİ KATMAN (v0.9.587, v0.9.825):
@@ -552,6 +573,7 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 		// söndürdüğümüz seli log tarafında yeniden kurardı.
 		ok, n2 := n.allowChannelSend(p.ID, c.ID, p.Status, p.Severity, p.StartedAt)
 		if !ok {
+			facts.Suppressed++
 			if n2 == 1 {
 				log.Printf("[notify] tekrar bastırılıyor — %s · %s (%s): aynı durum 1 sa içinde gitmişti. Bir dedektör aynı problemi her tikte yeniden açıyor ya da ciddiyetini salındırıyor olabilir.",
 					p.ID, c.Name, c.Type)
@@ -562,10 +584,58 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 			log.Printf("[notify] %s · %s (%s): önceki pencerede %d tekrar bastırılmıştı",
 				p.ID, c.Name, c.Type, n2)
 		}
+		// Sends, HATA OLSA DA artar: sayılan şey YÖNLENDİRME, teslimat
+		// değil. Ölü bir SMTP rölesi ayrı bir sinyaldir ve zaten kendi
+		// yolu var (ChannelHealth + self-health "kanal ölü"). Burada
+		// hatayı "kimseye gitmedi" saymak iki farklı arızayı tek kovaya
+		// atardı ve eşleşme kusuru ölü-kanal gürültüsünde kaybolurdu.
+		facts.Sends++
 		if err := n.sendOne(ctx, c, p, relKind, p.ID); err != nil {
 			log.Printf("[notify] %s (%s): %v", c.Name, c.Type, err)
 		}
 	}
+	n.recordRouting(ctx, p, relKind, facts)
+}
+
+// recordRouting — bir SendProblemAlert turunun yönlendirme sonucunu
+// sayar ve gerekiyorsa KALICI işareti yazar (v0.9.1344).
+//
+// İşaretin evi notification_log: yeni tablo AÇILMADI (state için yeni
+// şema yok kuralı). O tablo zaten problem başına anahtarlı
+// (related_id), zaten 90 gün TTL'li, zaten /events'te görünüyor ve
+// "sayfa gitti mi" sorusunun tek defteri. Üçüncü bir cevap eklemek
+// (hiç denenmedi) üçüncü bir ev gerektirmiyor.
+//
+// Yalnız routingUnmatched satır yazar. Diğer üç sonuç yalnız sayaç:
+// bir kurulumun "yapılandırılmamış" olması 90 gün boyunca her problem
+// için bir satır yazmayı hak etmez.
+func (n *Notifier) recordRouting(ctx context.Context, p chstore.Problem, relKind string, f routingFacts) {
+	v := decideRouting(f)
+	var reason string
+	if v == routingUnmatched {
+		reason = routingReason(f)
+	}
+	bumpRouting(v, p.ID, p.Service, reason, time.Now())
+	if v != routingUnmatched {
+		return
+	}
+	// Tekrar tabanı — GERÇEK bir kanalmış gibi, aynı allowChannelSend
+	// kapısından. Olmasaydı aynı problem her evaluator tikinde bir satır
+	// daha yazardı; üstelik tam da kusurun bulunduğu kurulumlarda, yani
+	// gürültü kusurla birlikte büyürdü. Anahtar kanal kimliğini içerdiği
+	// için gerçek kanalların bastırma durumuna karışmaz.
+	if ok, _ := n.allowChannelSend(p.ID, unmatchedChannelID, p.Status, p.Severity, p.StartedAt); !ok {
+		return
+	}
+	log.Printf("[notify] KİMSEYE GİTMEDİ — %s · %s (%s/%s): %s",
+		p.ID, p.Service, p.Severity, p.Status, reason)
+	// Sentetik kanal: recordNotification'ın tamamı yeniden kullanılıyor
+	// (konu satırı, ilişki anahtarı, kopuk-ctx koruması). sendErr dolu
+	// olduğu için satır ok=0 + error=gerekçe olarak iner.
+	n.recordNotification(ctx, chstore.NotificationChannel{
+		Name: chstore.NotifyUnmatchedChannelName,
+		Type: chstore.NotifyUnmatchedChannelKind,
+	}, p, relKind, p.ID, errors.New(reason))
 }
 
 // problemRelatedKind classifies the notification_log related_kind for
@@ -675,18 +745,23 @@ func (n *Notifier) awaitAISummary(ctx context.Context, p chstore.Problem) chstor
 	return p
 }
 
-func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chstore.ServiceMetadata) {
+// v0.9.1344 — SONUÇ DÖNDÜRÜR. Yorumu "kanal yokken bile koşar" diyor ve
+// bu yüzden bir emniyet ağı gibi OKUNUYOR; değil. Alıcıları
+// GetServiceMetadata(p.Service)'ten çözüyor, db-konulu bir problemin
+// (db:oracle@corebank-scan.prod, v0.9.1338) katalog satırı yok → md nil
+// → ekip yok → mail yok. Çağıran bunu bilemiyordu; artık biliyor.
+func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chstore.ServiceMetadata) teamMailOutcome {
 	tc, err := n.store.GetTeamContacts(ctx)
 	if err != nil {
+		// Ayar okunamadı — vidanın açık mı kapalı mı olduğunu BİLMİYORUZ.
+		// teamMailOff en tutucu cevap: tek başına bir kusur iddiası
+		// üretmez (kanal tarafı eşleştiyse sonuç yine "delivered").
 		log.Printf("[notify] team-routing settings: %v", err)
-		return
+		return teamMailOff
 	}
-	if !tc.Enabled || !tc.SeverityAllows(p.Severity) {
-		return
-	}
-	to := resolveTeamRecipients(md, tc)
+	to, reach := teamMailReach(tc, md, p.Severity)
 	if len(to) == 0 {
-		return
+		return reach
 	}
 	// ── v0.9.825 (operatör-raporlu): ÇİFT EKİP-MAİLİ ───────────────
 	//
@@ -712,7 +787,9 @@ func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chst
 	// dedektör/evaluator hatları zaten lider-kilitli (runIfLeader) —
 	// yani aynı problemi iki pod aynı anda açmıyor.
 	if !n.claimTeamMail(p.ID) {
-		return
+		// Başka bir goroutine ŞU AN bu problemin mailini yürütüyor.
+		// "Zaten gidiyor" = kayıp değil.
+		return teamMailAlreadySent
 	}
 	handedOff := false
 	defer func() {
@@ -726,7 +803,7 @@ func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chst
 	// problemRelatedKind keeps the dedup key aligned with what
 	// sendOne records below (watcher problems log kind="watcher").
 	if seen, err := n.store.HasNotification(ctx, problemRelatedKind(p), p.ID, teamRoutingChannelName); err == nil && seen {
-		return
+		return teamMailAlreadySent
 	}
 	// v0.9.196 rollout-transition (review-fix): watcher problem'lerinin
 	// ESKİ bildirimleri related_kind='problem' ile kayıtlı — yalnız yeni
@@ -735,12 +812,14 @@ func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chst
 	// 90g TTL ile aktıkça bu dal doğal ölür.
 	if problemRelatedKind(p) == "watcher" {
 		if seen, err := n.store.HasNotification(ctx, "problem", p.ID, teamRoutingChannelName); err == nil && seen {
-			return
+			return teamMailAlreadySent
 		}
 	}
 	cfg, err := json.Marshal(EmailChannelConfig{Recipients: to})
 	if err != nil {
-		return
+		// Erişilemez (bir []string'in marshal'ı hata vermez). teamMailOff
+		// tutucu seçim: uydurma bir kusur iddiası üretmez.
+		return teamMailOff
 	}
 	ch := chstore.NotificationChannel{
 		Name:   teamRoutingChannelName,
@@ -757,7 +836,7 @@ func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chst
 		// dönerken notification_log satırı yazılmış olur, yani bundan
 		// sonra gelen çağrı kalıcı kapıya takılır.
 		send(ctx, p)
-		return
+		return teamMailSent
 	}
 	// Bekleme ASENKRON: sendTeamMail SendProblemAlert içinde kanal
 	// fan-out'undan ÖNCE çağrılıyor, burada senkron beklemek Slack/webhook
@@ -775,6 +854,10 @@ func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chst
 		defer cancel()
 		send(bg, n.awaitAISummary(bg, p))
 	}()
+	// Gönderim DEVREDİLDİ — alıcılar çözüldü, kapılar geçildi, mail
+	// ≤45sn içinde gidecek. Çağıran açısından bu bir gönderimdir:
+	// "kimseye gitmedi" demek yalan olurdu.
+	return teamMailSent
 }
 
 // claimTeamMail — süreç-içi "bu problemin ekip-maili şu an işleniyor"

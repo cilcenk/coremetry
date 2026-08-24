@@ -200,11 +200,51 @@ func TestBuildChannelHealthQuery_Bounds(t *testing.T) {
 	if strings.Contains(sql, "FINAL") {
 		t.Errorf("notification_log is a plain MergeTree; FINAL must not appear:\n%s", sql)
 	}
-	if len(args) != 2 {
-		t.Fatalf("args = %d, want 2 (since, limit)", len(args))
+	// v0.9.1344 — args artık ÜÇ: (since, sentinel-kind, limit). Sentetik
+	// "kimseye gitmedi" satırı bu okumadan eleniyor (aşağıdaki test).
+	//
+	// Limit SONDAN indeksleniyor: bu test v0.9.1344'te args[1] sabit
+	// indeksi yüzünden KIRILDI ve kırılışı doğruydu — ama "son bağ
+	// argümanı limittir" ifadesi sorgunun şeklinden gelen bir olgu,
+	// pozisyon sayısı ise değil.
+	if len(args) != 3 {
+		t.Fatalf("args = %d, want 3 (since, sentinel kind, limit)", len(args))
 	}
-	if args[1] != channelHealthCap {
-		t.Errorf("limit arg = %v, want %d", args[1], channelHealthCap)
+	if args[len(args)-1] != channelHealthCap {
+		t.Errorf("limit arg = %v, want %d", args[len(args)-1], channelHealthCap)
+	}
+}
+
+// TestBuildChannelHealthQuery_ExcludesUnmatchedSentinel — v0.9.1344.
+//
+// notification_log artık sentetik bir satır da taşıyor: bir problem
+// hiçbir kanalla eşleşmediğinde (kind=none, name=unmatched, ok=0).
+// O satır bir KANAL DEĞİL. Elenmezse Settings → Kanallar listesinde
+// ardışık hatası sürekli artan hayalet bir "none/unmatched" kanalı
+// belirir — ve kanal sağlığı ekranı tam da güvenilmesi gereken yerde
+// uydurma bir arıza gösterir.
+func TestBuildChannelHealthQuery_ExcludesUnmatchedSentinel(t *testing.T) {
+	sql, args := buildChannelHealthQuery(time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC), channelHealthCap)
+
+	if !strings.Contains(sql, "channel_kind != ?") {
+		t.Errorf("sentetik işaret elemesi yok:\n%s", sql)
+	}
+	found := false
+	for _, a := range args {
+		if s, ok := a.(string); ok && s == NotifyUnmatchedChannelKind {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("eleme argümanı %q bağlanmamış: %v", NotifyUnmatchedChannelKind, args)
+	}
+	// Sentinel gerçek bir kanal türüyle çakışamaz: çakışsaydı eleme o
+	// türdeki GERÇEK kanalları da sağlık ekranından silerdi — sessiz
+	// bir körlük, gösterdiği hayaletten beter.
+	for _, real := range []string{"email", "slack", "mattermost", "teams", "zoomchat", "webhook", "whatsapp"} {
+		if NotifyUnmatchedChannelKind == real {
+			t.Fatalf("sentinel %q gerçek bir kanal türü — eleme o kanalları da gizlerdi", real)
+		}
 	}
 }
 
@@ -223,8 +263,9 @@ func TestBuildChannelHealthQuery_LimitClamp(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, args := buildChannelHealthQuery(since, tc.limit)
-			if args[1] != tc.want {
-				t.Errorf("limit = %v, want %d", args[1], tc.want)
+			// Limit SON bağ argümanı (v0.9.1344 not'u yukarıda).
+			if got := args[len(args)-1]; got != tc.want {
+				t.Errorf("limit = %v, want %d", got, tc.want)
 			}
 		})
 	}

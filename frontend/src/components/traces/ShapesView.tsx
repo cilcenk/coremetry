@@ -22,6 +22,7 @@ import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import { timeRangeToNs } from '@/lib/utils';
 import type { TimeRange, TraceRow } from '@/lib/types';
+import { traceHref } from '@/lib/traceHref';
 import { SvcBadge, fmtDur } from './shared';
 
 interface ShapeRow {
@@ -106,7 +107,7 @@ export function ShapesView({ range, service }: { range: TimeRange; service?: str
     columns: COLS,
     rows: shapes,
     initialSort: { id: 'count', dir: 'desc' },
-    onOpen: (r) => { if (r.exemplar) navigate(`/trace?id=${r.exemplar}`); },
+    onOpen: (r) => { if (r.exemplar) navigate(traceHref(r.exemplar, { pageRange: range })); },
   });
 
   if (rows === undefined) return <Spinner label="Sampling traces to cluster by shape…" />;
@@ -134,7 +135,7 @@ export function ShapesView({ range, service }: { range: TimeRange; service?: str
               return (
                 <tr key={r.signature}
                   {...dt.rowProps(i)}
-                  onClick={() => r.exemplar && navigate(`/trace?id=${r.exemplar}`)}
+                  onClick={() => r.exemplar && navigate(traceHref(r.exemplar, { pageRange: range }))}
                   // v0.9.236 — shapes group a 1000-trace sample by
                   // (service, rootName); at 1000s of services × 10000s of
                   // operations that barely collapses, so an unfiltered

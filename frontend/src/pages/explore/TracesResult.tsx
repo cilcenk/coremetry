@@ -8,6 +8,7 @@ import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/Dat
 import { fmtNum, tsLong, rowClickHandlers } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TraceRow } from '@/lib/types';
+import { traceHref } from '@/lib/traceHref';
 import { IconButton } from '@/components/ui/IconButton';
 
 // TracesResult — the Explore "Traces" result-mode table (the block
@@ -86,7 +87,7 @@ export function TracesResult({
     columns,
     rows: traces ?? [],
     initialSort: { id: 'time', dir: 'desc' },
-    onOpen: t => navigate(`/trace?id=${t.traceId}`),
+    onOpen: t => navigate(traceHref(t.traceId)),
   });
 
   return (
@@ -145,11 +146,11 @@ export function TracesResult({
               <tbody>
                 {dt.sortedRows.map((t, i) => (
                   <tr key={t.traceId} {...dt.rowProps(i)}
-                      {...rowClickHandlers(`/trace?id=${t.traceId}`,
-                                           () => navigate(`/trace?id=${t.traceId}`))}
+                      {...rowClickHandlers(traceHref(t.traceId),
+                                           () => navigate(traceHref(t.traceId)))}
                       style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' }}>
                     <td className="mono">
-                      <Link to={`/trace?id=${t.traceId}`}
+                      <Link to={traceHref(t.traceId)}
                             onClick={e => e.stopPropagation()}
                             style={{ fontSize: 11 }}>
                         {t.traceId.slice(0, 12)}…

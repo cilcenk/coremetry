@@ -1,3 +1,11 @@
+// @vitest-environment jsdom
+//
+// v0.9.1359 — CI kırmızıydı, lokal yeşildi. Bu dosya `sessionStorage`/
+// `localStorage` KULLANIYOR ve vitest.config.ts ortamı bilinçli `node`
+// (2000+ saf test jsdom bedelini ödemesin; dosya başına opt-in). Node 25
+// bu global'leri yerleşik taşıyor, CI'ın Node 22.si TAŞIMIYOR — yani test
+// lokalde ÇALIŞMA ZAMANI SÜRÜMÜ sayesinde geçiyordu, kendi hakkıyla değil.
+// jsdom onları sürümden bağımsız sağlar.
 import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
 import { sanitizeRedirect, savePostLoginRedirect, consumePostLoginRedirect } from './postLoginRedirect';
 

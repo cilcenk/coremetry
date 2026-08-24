@@ -11,6 +11,7 @@ import type { TimeRange, ServiceGraphResponse, GraphNode, GraphEdge, ServiceMap 
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
 import { nodeDetailHref } from '@/components/topology/nodeDetailHref';
+import { nodeLinkLabel } from '@/components/topology/nodeLinkLabel';
 import { ExternalPaths } from '@/components/ExternalPaths';
 import { serviceHref } from '@/lib/serviceHref';
 
@@ -423,30 +424,22 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
           {hoverNode.kind === 'database' && detailHref && (
             <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <Link to={detailHref} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
-                {/* v0.9.1326 — etiket LİNKİN NE YAPTIĞINI söyler (v0.9.1026'da
-                    kuyruk tarafında alınan aynı karar). v0.9.1318 öncesi
-                    yazılmış düz `db:<system>` düğümleri instance'ı bilmiyor;
-                    onlar için hedef detay sayfası değil, motora daraltılmış
-                    katalog. "Open instance" demek orada YALAN olurdu. */}
-                {detailHref.startsWith('/databases')
-                  ? 'Veritabanı kataloğunda göster →'
-                  : 'Open instance →'}
+                {/* v0.9.1337 — karar nodeLinkLabel.ts'e taşındı ve TESTLENDİ.
+                    Buradayken hiçbir testi yoktu: v0.9.1326'da ölçüldü,
+                    `/databases` dalını ters çevirmek tüm suite'i yeşil
+                    bırakıyordu. İlke değişmedi (v0.9.1026 + v0.9.1326):
+                    etiket LİNKİN NE YAPTIĞINI söyler. */}
+                {nodeLinkLabel('database', detailHref)}
               </Link>
             </span>
           )}
           {hoverNode.kind === 'queue' && detailHref && (
             <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <Link to={detailHref} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
-                {/* v0.9.1026 — etiket LİNKİN NE YAPTIĞINI söyler, ne
-                    yapmasını istediğimizi değil. Üçlü tamamsa çekmece
-                    doğrudan açılıyor ("Topiği aç"); cluster yoksa
-                    (kolonun inmediği kurulum / eski kova) v0.9.972'nin
-                    daraltılmış kataloğuna düşüyoruz ve etiket bunu
-                    SÖYLÜYOR — v0.9.973'te alınan dürüstlük kararı,
-                    yalnız yönü tersine çevrilmiş hâliyle korunuyor. */}
-                {detailHref.includes('destination=')
-                  ? 'Topiği aç →'
-                  : 'Messaging kataloğunda göster →'}
+                {/* v0.9.1337 — karar nodeLinkLabel.ts'te (db kardeşiyle
+                    aynı dosya, aynı ilke). v0.9.1026'nın dürüstlük kararı
+                    değişmedi, yalnız artık testli. */}
+                {nodeLinkLabel('queue', detailHref)}
               </Link>
             </span>
           )}

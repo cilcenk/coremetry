@@ -1,3 +1,11 @@
+// @vitest-environment jsdom
+//
+// v0.9.1359 — CI kırmızıydı, lokal yeşildi. Bu dosya `sessionStorage`/
+// `localStorage` KULLANIYOR ve vitest.config.ts ortamı bilinçli `node`
+// (2000+ saf test jsdom bedelini ödemesin; dosya başına opt-in). Node 25
+// bu global'leri yerleşik taşıyor, CI'ın Node 22.si TAŞIMIYOR — yani test
+// lokalde ÇALIŞMA ZAMANI SÜRÜMÜ sayesinde geçiyordu, kendi hakkıyla değil.
+// jsdom onları sürümden bağımsız sağlar.
 // useUrlRange.test.ts — öncelik zinciri ve oturum kaydı sözleşmesi.
 //
 // v0.9.937 SÖZLEŞME DEĞİŞİKLİĞİ. Bu dosya v0.8.409'un tersini pinliyordu:

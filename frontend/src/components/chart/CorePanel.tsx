@@ -39,6 +39,7 @@ import type { DataFrame, DecimalCount } from '@grafana/data';
 import { framesToAligned, chartTheme } from '@/lib/chart/dataFrame';
 import {
   AXIS_FONT_SIZE, axisTickPlan, decimalsForIncr, widestLabelPx, axisGutterPx,
+  decimalsForScaledIncr, displayScaleOf, scaleRefTick,
   seriesExtent, paddedExtent,
 } from '@/lib/chart/axisSize';
 import { IconButton } from '@/components/ui/IconButton';
@@ -505,28 +506,60 @@ export function CorePanel({
   // kalan noktalar dahil. uPlot ölçeği onları dışlar, yani oluk gerektiği
   // kadar VEYA biraz daha geniş çıkar. Yön bilinçli: fazla oluk birkaç
   // piksel yer yer, eksik oluk etiketi kırpar (düzelttiğimiz kusur).
-  const yGutterNeeded = useMemo(() => {
-    if (data.state !== 'ready' || frames.length === 0) return 0;
+  // v0.9.1368 — TICK ONDALIĞI (operatör-bildirimi: "Clusters altında
+  // memory hep aynı değeri gösteriyor"). Ondalık, değerin büyüklüğünden
+  // DEĞİL tick adımından türer; adım da GÖSTERİLEN birimde ölçülür.
+  // Gerekçenin tamamı axisSize.ts/decimalsForScaledIncr'de.
+  //
+  // Buradan çıkan sayı eksen + tooltip + lejant hücrelerinin ORTAK
+  // ondalığı: üçü aynı display processor'ı çağırıyor, üçü de aynı
+  // çözünürlükte okunmalı (v0.9.774'ün "tek kaynak" sözleşmesi). 0 ise
+  // hiç geçilmez ve bugünkü Grafana otomatiği aynen sürer.
+  //
+  // Ondalık ve oluk TEK memo'dan çıkar: ikisi de aynı tick planına
+  // dayanıyor ve ayrı memo'lara bölmek planı iki kez kurardı (ayrıca
+  // `frames` üzerinden ikinci bir hook bağımlılığı doğururdu).
+  const yAxisPlan = useMemo((): { px: number; dec: number } => {
+    const none = { px: 0, dec: 0 };
+    if (data.state !== 'ready' || frames.length === 0) return none;
     const ext = seriesExtent(drawData.slice(1) as (number | null)[][]);
-    if (!ext) return 0;
+    if (!ext) return none;
     // Log ölçekte dolgu yok (decade'ler zaten sınırları kapsıyor).
     const [lo, hi] = effLog ? ext : paddedExtent(ext);
     // Çizim yüksekliği ≈ panel yüksekliği − x ekseni şeridi.
     const plan = axisTickPlan(lo, hi, Math.max(40, height - 34), effLog);
-    if (plan.ticks.length === 0) return 0;
-    const dec = decimalsForIncr(plan.incr);
+    if (plan.ticks.length === 0) return none;
     const disp = frames[0]?.fields[1].display;
+    // v0.9.1368 — ondalık TICK ADIMINDAN, gösterilen birimde ölçülerek.
+    // Ölçek en BÜYÜK tick'ten geri okunur: biçimlendirici birimi ona
+    // göre seçiyor ("0" tick'i 6.85 TiB'lik eksende ölçeği ele vermez).
+    const ref = scaleRefTick(plan.ticks);
+    const dec = disp
+      ? decimalsForScaledIncr(plan.incr, displayScaleOf(ref, disp(ref).text))
+      : decimalsForIncr(plan.incr);
     const labels = plan.ticks.map((v) => {
       if (!disp) return fmtSmart(v);
       const d = disp(v, dec > 0 ? dec : undefined);
       return `${d.text}${d.suffix ?? ''}`;
     });
-    return axisGutterPx(
+    // Oluk, ÇİZİLECEK etiketin ondalığıyla ölçülür — aksi hâlde 6.8503
+    // yazan eksen 6.85 genişliğinde oluk alır ve baş rakam kırpılır
+    // (v0.9.799'un düzelttiği kusur sınıfı).
+    const px = axisGutterPx(
       widestLabelPx(labels, `${AXIS_FONT_SIZE}px ${chartTheme().typography.fontFamily}`),
       width);
+    return { px, dec };
     // themeTick: font ailesi temayla değişebilir → ölçüm tazelenir.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.state, frames, drawData, effLog, height, width, themeTick]);
+
+  const yTickDecimals = yAxisPlan.dec;
+  const yGutterNeeded = yAxisPlan.px;
+  // uPlot hook'ları (eksen/tooltip) config kurulduğu anki closure'ı taşır;
+  // ondalık ref'ten CANLI okunur ki veri değişimi grafiği
+  // destroy/recreate ETMESİN (v0.9.704 kimlik dersi, framesRef emsali).
+  const yDecRef = useRef(yTickDecimals);
+  yDecRef.current = yTickDecimals;
 
   // MANDAL — oluk seri kümesi boyunca YALNIZ BÜYÜR. Genişlik config'in bir
   // parçası ve config kimliği değişince UPlotChart uPlot'u
@@ -609,7 +642,12 @@ export function CorePanel({
         const n = typeof v === 'number' ? v : Number(v);
         const disp = framesRef.current[0]?.fields[1].display;
         if (!disp || n == null || !isFinite(n)) return fmtSmart(n);
-        const d = disp(n, decimals);
+        // v0.9.1368 — @grafana/ui'nin ondalığı ile bizimki MAKSİMUMLANIR:
+        // onunki ham tick artışından türüyor (bytes ekseninde hep 0 →
+        // `undefined` geçiyor), bizimki gösterilen birimden. Hassasiyet
+        // hiçbir panelde DÜŞMEZ, yalnız gerektiğinde artar.
+        const dec = Math.max(decimals ?? 0, yDecRef.current);
+        const d = disp(n, dec > 0 ? dec : undefined);
         return `${d.text}${d.suffix ?? ''}`;
       },
       // v0.9.799 — OLUK GENİŞLİĞİ BİZDEN (operatör-bildirimi: "eksende
@@ -847,7 +885,11 @@ export function CorePanel({
           // model kurar ama biz biçimli metni unit alanına gömmüyoruz —
           // fmt override'ı aşağıda satır basarken uygulanıyor.
           unit: undefined,
-          fmt: v != null && disp ? (() => { const d = disp(v); return `${d.text}${d.suffix ?? ''}`; })() : undefined,
+          // v0.9.1368 — eksenle AYNI ondalık: tooltip "6.85 TiB" derken
+          // eksen "6.852 TiB" deseydi operatör iki farklı sayı okurdu.
+          fmt: v != null && disp
+            ? (() => { const d = disp(v, yDecRef.current > 0 ? yDecRef.current : undefined); return `${d.text}${d.suffix ?? ''}`; })()
+            : undefined,
         };
       })));
       if (rows.length === 0) { tt.style.display = 'none'; return; }
@@ -964,7 +1006,9 @@ export function CorePanel({
     if (v == null || !isFinite(v)) return fmtSmart(v);
     const disp = frames[i]?.fields[1].display;
     if (!disp) return fmtSmart(v);
-    const d = disp(v);
+    // v0.9.1368 — lejant Son/Min/Maks sütunları da eksenin ondalığında;
+    // dar bantta hepsi "6.85 TiB" okunuyordu (aynı kök neden).
+    const d = disp(v, yTickDecimals > 0 ? yTickDecimals : undefined);
     return `${d.text}${d.suffix ?? ''}`;
   };
   // TOPLAM yalnız toplanabilir birimde anlamlı — v1 StatsLegend paritesi

@@ -824,9 +824,17 @@ describe('CorePanel eksen + imleç (v0.9.799)', () => {
 
   it('🔴 formatValue ondalığı YUTMAZ — display processor\'a geçer', () => {
     expect(src).toMatch(/formatValue: \(v: unknown, decimals\?: DecimalCount\) =>/);
-    expect(src).toMatch(/const d = disp\(n, decimals\);/);
+    // v0.9.1368 — kapı artık DİZE değil SÖZLEŞME arıyor. Eskiden tam
+    // `disp(n, decimals)` yazımına çivilenmişti; ondalık kuralı
+    // genişleyince (bkz. aşağıdaki v0.9.1368 bloğu) kapı düzeltmeyi
+    // "regresyon" sandı. Sözleşme şu: çağıranın `decimals`'ı
+    // formatValue gövdesinde OKUNUR ve disp'e İKİNCİ argüman gider.
+    const body = formatValueBody(src);
+    expect(body, 'formatValue gövdesi bulunamadı').toBeTruthy();
+    expect(body).toMatch(/\bdecimals\b/);
+    expect(body).toMatch(/disp\(n,[^)]+\)/);
     // Eski (ondalığı düşüren) çağrı geri gelmemeli.
-    expect(src).not.toMatch(/const d = disp\(n\);/);
+    expect(body).not.toMatch(/disp\(n\)/);
   });
 
   it('🔴 oluk genişliği SAF modülden — panel kendi ölçüm kopyasını yazmaz', () => {
@@ -907,3 +915,73 @@ describe('crosshair sync ad alanı (v0.9.945)', () => {
     expect(body).toMatch(/syncKey=\{`podjmx:\$\{pod\}`\}/);
   });
 });
+
+
+// ---------------------------------------------------------------------------
+// v0.9.1368 — tick ondalığı BÜYÜKLÜKTEN değil ADIMDAN (operatör-raporlu:
+// "Clusters altında memory hep aynı değeri gösteriyor").
+//
+// Kural saf modülde (axisSize.decimalsForScaledIncr) ve orada tablo-testli.
+// Bu kapı KABLOLAMAYI çiviler: kuralın panelin ÜÇ okuma yüzeyine de
+// (eksen · tooltip · lejant hücresi) bağlandığını. v0.9.1363 dersi —
+// saf çekirdek yeşilken sonda kablosuz kalabilir.
+// ---------------------------------------------------------------------------
+describe('CorePanel tick ondalığı (v0.9.1368)', () => {
+  const src = readFileSync(
+    resolve(__dirname, './CorePanel.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('🔴 ondalık SAF modülden gelir — panel kendi kuralını yazmaz', () => {
+    expect(src).toMatch(/decimalsForScaledIncr/);
+    expect(src).toMatch(/displayScaleOf/);
+    expect(src).toMatch(/from '@\/lib\/chart\/axisSize'/);
+    // Kural panelde elle yeniden türetilmemeli.
+    expect(src).not.toMatch(/Math\.log10/);
+  });
+
+  it('🔴 eksen ondalığı çağıranınkiyle MAKSİMUMLANIR — hassasiyet düşmez', () => {
+    const body = formatValueBody(src);
+    expect(body).toMatch(/Math\.max\(\s*decimals \?\? 0,\s*yDecRef\.current\s*\)/);
+  });
+
+  it('🔴 tooltip ve lejant hücresi de AYNI ondalığı kullanır', () => {
+    // Tooltip uPlot hook'unun içinde → ref'ten canlı okunur.
+    expect(src).toMatch(/disp\(v, yDecRef\.current > 0 \? yDecRef\.current : undefined\)/);
+    // Lejant hücresi render kapsamında → memo değerinden.
+    expect(src).toMatch(/disp\(v, yTickDecimals > 0 \? yTickDecimals : undefined\)/);
+    // Ondalıksız (büyüklükten türeten) eski çağrıların hiçbiri kalmamalı.
+    expect(src).not.toMatch(/const d = disp\(v\);/);
+    expect(src).not.toMatch(/\{ const d = disp\(v\); return/);
+  });
+
+  it('🔴 oluk ölçümü ÇİZİLEN ondalığı kullanır — etiket kırpılmaz', () => {
+    // Aynı `dec` hem etiket üretiminde hem genişlik ölçümünde.
+    expect(src).toMatch(/const dec = disp\s*\?\s*decimalsForScaledIncr\(/);
+    // Ölçek temsilcisi SAF modülden: panel `plan.ticks[0]`a düşerse
+    // birim sınırını aşan eksende ondalık eksik çıkar (mutasyon turunda
+    // yakalandı — o sapma yalnız bu kapıyla ısırıyor).
+    expect(src).toMatch(/scaleRefTick\(plan\.ticks\)/);
+    expect(src).not.toMatch(/plan\.ticks\[0\]/);
+    expect(src).toMatch(/disp\(v, dec > 0 \? dec : undefined\)/);
+    expect(src).toMatch(/return \{ px, dec \};/);
+  });
+});
+
+/** formatValueBody — eksen formatValue arrow'unun GÖVDESİ.
+ *  Kapı penceresi fonksiyona hapsedilir: `src.slice(i)` dosya sonuna
+ *  kadar arasaydı komşu fonksiyonun kodunu kanıt sayardı (bu dosyanın
+ *  daha önce düştüğü tuzak). Kapanış, açılıştan itibaren süslü parantez
+ *  dengesiyle bulunur. */
+function formatValueBody(src: string): string | null {
+  const m = /formatValue: \(v: unknown, decimals\?: DecimalCount\) => \{/.exec(src);
+  if (!m) return null;
+  let depth = 0;
+  for (let i = m.index + m[0].length - 1; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') {
+      depth--;
+      if (depth === 0) return src.slice(m.index, i + 1);
+    }
+  }
+  return null;
+}

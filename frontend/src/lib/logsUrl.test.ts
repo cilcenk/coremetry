@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { logsUrlSig, writeLogsParams, readLogsParams, logsRangeParam, buildDocPermalink, parseDocParam, type LogsUrlFilter } from './logsUrl';
+import { logsUrlSig, writeLogsParams, readLogsParams, logsRangeParam, buildDocPermalink, parseDocParam, logsHref, serviceLogQuery, type LogsUrlFilter } from './logsUrl';
 import { decodeRange } from './urlState';
 
 // v0.8.546 — /logs `severity` was a live filter that never round-tripped
@@ -203,5 +203,127 @@ describe('doc permalink', () => {
       expect(parseDocParam(bad as string | null)).toBeNull();
     }
     expect(parseDocParam('1.2.3x')).toBeNull();
+  });
+});
+
+// ── logsHref — v0.9.1347 ──────────────────────────────────────────────────
+//
+// 13 hand-written `/logs?…` sites, each re-deriving the key names above and
+// the ns→ms encoding below. The measured divergence at extraction time:
+// two sites used Math.round (which NARROWS the window on both edges, the
+// exact rule logsRangeParam exists to enforce), one carried no window at all,
+// and six carried a hand-inlined `custom:${Math.floor(...)}-${Math.ceil(...)}`.
+//
+// The strongest property here is not any single key — it is that logsHref's
+// output survives readLogsParams unchanged. Producer and consumer live in one
+// file precisely so that agreement is checkable, and these tests check it.
+const lp = (href: string) => new URLSearchParams(href.slice(href.indexOf('?') + 1));
+
+// Realistic Unix-ns timestamps, offset by HALF and FOUR TENTHS of a
+// millisecond. Both offsets are far above the 256ns ULP of a double at 1.7e18
+// (an offset of ±1ns would be literally the same number, and would prove
+// nothing), and both are chosen so floor/ceil disagree with Math.round —
+// which is what makes them a real regression test rather than a tautology.
+const FROM_NS = 1_700_000_000_000_500_000; // .5ms → floor 1700000000000, round would be …001
+const TO_NS   = 1_700_000_900_000_400_000; // .4ms → ceil  1700000900001, round would be …000
+
+describe('logsHref — the window is REQUIRED and never narrows', () => {
+  it('carries a relative preset', () => {
+    expect(lp(logsHref({ window: { preset: '6h' }, service: 'checkout' })).get('range')).toBe('6h');
+  });
+
+  it('encodes an absolute ns window with floor/ceil, not round', () => {
+    const p = lp(logsHref({ window: { fromNs: FROM_NS, toNs: TO_NS } }));
+    expect(p.get('range')).toBe('custom:1700000000000-1700000900001');
+    // The encoded window must CONTAIN the request on both edges. Math.round
+    // fails this on one edge or the other, which is how a log at the very
+    // start or end of a spike disappears from the pivot.
+    const r = decodeRange(p.get('range'), { preset: '30m' });
+    expect(r.fromMs! * 1e6).toBeLessThanOrEqual(FROM_NS);
+    expect(r.toMs! * 1e6).toBeGreaterThanOrEqual(TO_NS);
+  });
+
+  it('padNs widens an absolute window symmetrically', () => {
+    const bare = lp(logsHref({ window: { fromNs: FROM_NS, toNs: TO_NS } })).get('range');
+    const pad = lp(logsHref({ window: { fromNs: FROM_NS, toNs: TO_NS }, padNs: 60e9 })).get('range');
+    expect(pad).not.toBe(bare);
+    const b = decodeRange(bare, { preset: '30m' });
+    const q = decodeRange(pad, { preset: '30m' });
+    expect(q.fromMs).toBe(b.fromMs! - 60_000);
+    expect(q.toMs).toBe(b.toMs! + 60_000);
+  });
+
+  it('padNs is inert on a preset, where it has no meaning', () => {
+    expect(lp(logsHref({ window: { preset: '1h' }, padNs: 60e9 })).get('range')).toBe('1h');
+  });
+
+  it('passes an already-encoded range string through', () => {
+    expect(lp(logsHref({ window: 'custom:1-2' })).get('range')).toBe('custom:1-2');
+  });
+
+  it('emits no range for an explicit decline, and none for an unusable window', () => {
+    expect(lp(logsHref({ window: null })).has('range')).toBe(false);
+    // logsRangeParam's acceptance test: anything decodeRange would reject
+    // must not be emitted as a confident-looking token.
+    expect(lp(logsHref({ window: { fromNs: 0, toNs: 0 } })).has('range')).toBe(false);
+    expect(lp(logsHref({ window: { fromNs: TO_NS, toNs: FROM_NS } })).has('range')).toBe(false);
+  });
+
+  it('drops a bare `custom` rather than pinning a silent 24h', () => {
+    // encodeRange emits the literal 'custom' for a bounds-less custom range;
+    // timeRangeToNs then resolves it to its 86400s fallback (utils.ts:17-25).
+    expect(lp(logsHref({ window: { preset: 'custom' } })).has('range')).toBe(false);
+    expect(lp(logsHref({ window: 'custom' })).has('range')).toBe(false);
+  });
+});
+
+describe('logsHref — agrees with readLogsParams, its own consumer', () => {
+  it('round-trips every filter field', () => {
+    const href = logsHref({
+      window: { preset: '6h' },
+      service: 'checkout', cluster: 'prod-eu', q: 'timeout',
+      severity: 17, traceId: 'abc', spanId: 'def', hasTrace: true,
+    });
+    expect(readLogsParams(lp(href))).toEqual({
+      service: 'checkout', cluster: 'prod-eu', search: 'timeout',
+      severity: 17, traceId: 'abc', spanId: 'def', hasTrace: true,
+    });
+  });
+
+  it('writes `q`, never the legacy `search` alias', () => {
+    const p = lp(logsHref({ window: null, q: 'boom' }));
+    expect(p.get('q')).toBe('boom');
+    expect(p.has('search')).toBe(false);
+  });
+
+  it('omits a zero severity floor rather than writing severity=0', () => {
+    expect(lp(logsHref({ window: null, severity: 0 })).has('severity')).toBe(false);
+    expect(lp(logsHref({ window: null, severity: 13 })).get('severity')).toBe('13');
+  });
+
+  it('writes hasTrace as the `1` readLogsParams tests for', () => {
+    expect(lp(logsHref({ window: null, hasTrace: true })).get('hasTrace')).toBe('1');
+    expect(lp(logsHref({ window: null, hasTrace: false })).has('hasTrace')).toBe(false);
+  });
+
+  it('a bare pivot carries nothing it was not given', () => {
+    expect(logsHref({ window: null })).toBe('/logs?');
+    expect([...lp(logsHref({ window: { preset: '1h' }, service: 'a' })).keys()])
+      .toEqual(['service', 'range']);
+  });
+
+  it('encodes values that need it', () => {
+    const p = lp(logsHref({ window: null, service: 'a b&c', q: 'x=y' }));
+    expect(p.get('service')).toBe('a b&c');
+    expect(p.get('q')).toBe('x=y');
+  });
+});
+
+describe('serviceLogQuery', () => {
+  it('quotes the service name as a query_string clause', () => {
+    expect(serviceLogQuery('checkout')).toBe('service.name:"checkout"');
+  });
+  it('escapes an embedded quote so the clause cannot be broken out of', () => {
+    expect(serviceLogQuery('we"ird')).toBe('service.name:"we\\"ird"');
   });
 });

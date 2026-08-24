@@ -390,6 +390,24 @@ func (s *Store) StateUnifyPreflight(ctx context.Context) (StateUnifyPreflightRes
 	var parts []string
 	for _, t := range order {
 		parts = append(parts, fmt.Sprintf(
+			// ⚠ v0.9.1343 — BURADA DA AYNI KUSUR VAR, bilinçli olarak
+			// DÜZELTİLMEDİ. `count()` ReplacingMergeTree'de replikalar
+			// arasında eşit olmak ZORUNDA DEĞİL (her replika bağımsız
+			// merge eder), yani "host'lar ayrışıyor" verdiği yanlış
+			// pozitif üretebilir — 0010'un panelinde prod'da tam bunu
+			// yaptı ve göçü blokladı (orada `uniqExact(id)`ye geçildi).
+			//
+			// Buraya aynı düzeltme UYGULANAMAZ: 0009 otuz yedi state
+			// tablosunu tarıyor ve hepsinde `id` YOK — ölçüldü
+			// (2026-08-24): system_settings, api_tokens,
+			// service_metadata, ldap_groups id taşımıyor. `uniqExact(id)`
+			// yazmak ön kontrolü "kolon bulunamadı" ile tamamen kırardı.
+			// Doğru düzeltme tablo başına dedup anahtarı ister —
+			// StateUnifyMigrateTable o anahtarı zaten biliyor.
+			//
+			// Şimdilik risk KABUL EDİLDİ: 0009 prod'da TAMAMLANDI, bu ön
+			// kontrol artık yalnız bilgilendirici ve yanlış pozitifi
+			// operatörü yanıltır ama hiçbir şeyi bozmaz.
 			"SELECT '%s' AS tbl, hostName() AS host, count() AS rows FROM clusterAllReplicas(%s, currentDatabase(), %s) GROUP BY host",
 			t.Name, cq, backtickIdent(t.Name)))
 	}

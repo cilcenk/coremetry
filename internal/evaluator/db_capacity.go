@@ -288,8 +288,38 @@ func capacityProblemID(checkID, instance, subkey string) string {
 // problemleriyle AYNI şekilde kırıyordu (listede kırık ad + sahte
 // servise tıklama). Tablespace/keyspace alt-anahtarı problemID'de
 // (per-subkey dedup oradan) ve reason'da yaşar.
+//
+// v0.9.1338 (entity-model Faz 4b) — 402 yarım kalmıştı. Alan artık
+// birleşik ad taşımıyordu ama TAŞIDIĞI ŞEY de bir servis adı değildi:
+// `corebank-scan.prod` hiçbir servis kataloğunda, hiçbir spans satırında
+// yok. UI onu servis sanmaya devam etti, yani "sahte servise tıklama"
+// kusuru bir biçim değişikliğiyle GİZLENDİ, çözülmedi. Özne artık
+// TÜRÜYLE birlikte yazılıyor: DBSubjectID + Problem.Kind = ProblemKindDB.
+//
+// dbsys ÖNEMLİ: capacityCheck.dbsys 'ORACLE' (reason dizgisi büyük harfli
+// okunsun diye), DBSubjectID küçük harfe indirir — tüm span/topoloji
+// tarafı 'oracle' yazıyor ve iki yazım aynı veritabanı için iki ayrı özne
+// üretirdi.
+//
+// Kodlanamayan durum (bir bileşen boş) HAM instance'a düşer: DBSubjectID
+// boş dönerse bu fonksiyon v0.9.402'nin çıktısını bayt-bayt verir ve
+// çağıran Kind'ı da 'service' bırakır — çözülmemiş dal = bugünkü dal.
 func capacityService(instance, _ string) string {
 	return instance
+}
+
+// capacitySubject — (özne dizgisi, özne türü) çifti. Tek fonksiyon
+// çünkü ikisi AYRILDIĞINDA ayrışıyorlar: bir dalda db biçimi yazılıp
+// Kind'ın 'service' kalması, o satırı hem çıkmaz link hem de
+// çözümlenemez ad yapardı — v0.9.1029'un topoloji tarafında ölçtüğü
+// kusurun ta kendisi (aynı düğüm hem kind:"service" hem ham önekli ad).
+//
+// SAF: chstore.DBSubjectID dışında hiçbir şeye dokunmuyor, tablo-testli.
+func capacitySubject(dbsys, instance string) (subject, kind string) {
+	if id := chstore.DBSubjectID(dbsys, instance); id != "" {
+		return id, chstore.ProblemKindDB
+	}
+	return capacityService(instance, ""), chstore.ProblemKindService
 }
 
 // evaluateDBCapacity is the new evaluateAll pass. One bounded read per
@@ -359,7 +389,7 @@ func (e *Evaluator) evaluateDBCapacity(ctx context.Context) {
 // (rule_id, service) via FindOpenProblem + a stable Problem id.
 func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s chstore.CapacitySample, snap *chstore.OpenProblems, etaHours float64, etaOK bool) {
 	ruleID := capacityRuleID(c.id)
-	service := capacityService(s.Instance, s.Subkey)
+	service, kind := capacitySubject(c.dbsys, s.Instance)
 
 	// Look up the open problem FIRST — the decision is hysteresis-aware
 	// (v0.8.320): an open problem holds until pct clears the band.
@@ -385,6 +415,7 @@ func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s ch
 			RuleName:    "DB capacity · " + c.dbsys + " " + c.label,
 			Severity:    sev,
 			Service:     service,
+			Kind:        kind,
 			Metric:      "db.capacity",
 			Value:       pct,
 			Threshold:   capacityThreshold(c, sev),
@@ -415,7 +446,14 @@ func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s ch
 		// page per minute, for hours).
 		// v0.9.402 — service self-heal (401 emsali): eski birleşik satır
 		// gerçek instance adıyla yeniden yazılır.
+		// v0.9.1338 — self-heal artık TÜRÜ de taşıyor. Bu satır olmadan
+		// prod'un AÇIK db-capacity problemleri ham instance adında ve
+		// kind='service'te takılı kalırdı: yeni özne yalnız bir sonraki
+		// AÇILIŞTA görünürdü ve açık bir kapasite problemi günlerce açık
+		// kalabilir. ReplacingMergeTree bütün-satır replace olduğu için
+		// refresh turu iki alanı da yerine oturtuyor.
 		existing.Service = service
+		existing.Kind = kind
 		existing.Value = pct
 		existing.Severity = effectiveSeverity(sev, time.Since(time.Unix(0, existing.StartedAt)), e.escalationCfg(ctx))
 		existing.Threshold = capacityThreshold(c, sev)

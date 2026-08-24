@@ -150,20 +150,40 @@ func TestIsBelowRule(t *testing.T) {
 // yönünü DEFAULT ''e indirir ve öncelik hesabı sessizce eski hatalı
 // davranışa döner (v0.9.445/448'in aynı sınıfı).
 func TestProblemColumnListsAgree(t *testing.T) {
-	for _, withCmp := range []bool{false, true} {
-		cols := strings.Split(problemInsertCols(withCmp), ",")
-		args := problemInsertArgs(Problem{Comparator: "<"}, withCmp)
+	for _, c := range allProblemColCombos() {
+		cols := strings.Split(problemInsertCols(c), ",")
+		args := problemInsertArgs(Problem{Comparator: "<"}, c)
 		if len(cols) != len(args) {
-			t.Fatalf("withComparator=%v: %d kolon, %d argüman — INSERT hizası bozuk",
-				withCmp, len(cols), len(args))
+			t.Fatalf("%+v: %d kolon, %d argüman — INSERT hizası bozuk",
+				c, len(cols), len(args))
 		}
-		if got := strings.Contains(problemInsertCols(withCmp), "comparator"); got != withCmp {
-			t.Errorf("withComparator=%v ama kolon listesi: %s", withCmp, problemInsertCols(withCmp))
+		if got := strings.Contains(problemInsertCols(c), "comparator"); got != c.Comparator {
+			t.Errorf("%+v ama kolon listesi: %s", c, problemInsertCols(c))
+		}
+		// v0.9.1338 — kind kolonu için AYNI simetri. İki bayrak
+		// bağımsız: comparator kapalı + kind açık kombinasyonu prod'da
+		// GERÇEK bir ara durum değil ama tersi (comparator açık, kind
+		// kapalı) tam olarak 1338 deploy'unun ilk boot'u.
+		if got := strings.Contains(problemInsertCols(c), "kind"); got != c.Kind {
+			t.Errorf("%+v ama kolon listesi: %s", c, problemInsertCols(c))
 		}
 	}
-	// Değer gerçekten bağlanıyor mu (son argüman comparator olmalı).
-	args := problemInsertArgs(Problem{Comparator: "<="}, true)
-	if got, ok := args[len(args)-1].(string); !ok || got != "<=" {
-		t.Errorf("son argüman comparator olmalıydı, %v geldi", args[len(args)-1])
+	// Değer gerçekten bağlanıyor mu — kolon SIRASI comparator, sonra kind.
+	args := problemInsertArgs(Problem{Comparator: "<=", Kind: ProblemKindDB},
+		problemCols{Comparator: true, Kind: true})
+	if got, ok := args[len(args)-2].(string); !ok || got != "<=" {
+		t.Errorf("sondan ikinci argüman comparator olmalıydı, %v geldi", args[len(args)-2])
+	}
+	if got, ok := args[len(args)-1].(string); !ok || got != ProblemKindDB {
+		t.Errorf("son argüman kind olmalıydı, %v geldi", args[len(args)-1])
+	}
+	// v0.9.1338 — Kind'ı hiç SET ETMEYEN üretici (18'in 17'si) satıra
+	// açıkça 'service' yazmalı. Boş yazmak LowCardinality kolonda
+	// 'service'ten AYRI üçüncü bir değer olurdu ve okuma tarafındaki
+	// normalizasyonu SQL'de de tekrarlamak gerekirdi.
+	args = problemInsertArgs(Problem{}, problemCols{Kind: true})
+	if got, ok := args[len(args)-1].(string); !ok || got != ProblemKindService {
+		t.Errorf("Kind set edilmemiş problem %q yazdı, %q bekleniyordu",
+			args[len(args)-1], ProblemKindService)
 	}
 }

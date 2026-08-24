@@ -21,14 +21,32 @@ import (
 // yakaladığı hata sınıfını üçe çıkarırdı). Kaynak taraması ikinci
 // aşamada duruyor: elle yazılmış YENİ bir liste yeniden belirirse
 // yakalanmalı.
+//
+// v0.9.1338 — bayrak TEK bool değil, problemCols struct'ı. Döngü DÖRT
+// kombinasyonu da geziyor: kolon-probe'lu bir alan eklendiğinde "yalnız
+// hepsi açıkken" test etmek, ertelenmiş-DDL boot'unun (hepsi kapalı)
+// gövdesini muaf tutardı — bu dosyanın var olma sebebi tam o gövde.
 func TestProblemWritePathsCarryPod(t *testing.T) {
-	for _, withCmp := range []bool{false, true} {
-		cols := problemInsertCols(withCmp)
+	for _, c := range allProblemColCombos() {
+		cols := problemInsertCols(c)
 		if !strings.Contains(cols, "pod") {
-			t.Errorf("problemInsertCols(%v) pod'u atlıyor — bütün-satır replace "+
-				"pod bağlamını siler:\n%s", withCmp, cols)
+			t.Errorf("problemInsertCols(%+v) pod'u atlıyor — bütün-satır replace "+
+				"pod bağlamını siler:\n%s", c, cols)
 		}
 	}
+}
+
+// allProblemColCombos — probe'lu kolon bayraklarının TAM çarpımı.
+// Yeni bir probe'lu kolon gelince BURASI genişler ve tüm pinler onu
+// otomatik olarak her iki durumda dener.
+func allProblemColCombos() []problemCols {
+	var out []problemCols
+	for _, cmp := range []bool{false, true} {
+		for _, kind := range []bool{false, true} {
+			out = append(out, problemCols{Comparator: cmp, Kind: kind})
+		}
+	}
+	return out
 }
 
 // v0.9.448 — v0.5.254'ün "explicit liste ai kolonlarını dışlar,
@@ -37,11 +55,11 @@ func TestProblemWritePathsCarryPod(t *testing.T) {
 // siliyor, explainer boş görüp yeniden üretiyordu. Pin: problems'e
 // yazan HER explicit kolon listesi ai_summary + ai_summary_at taşır.
 func TestProblemWritePathsCarryAISummary(t *testing.T) {
-	for _, withCmp := range []bool{false, true} {
-		cols := problemInsertCols(withCmp)
+	for _, c := range allProblemColCombos() {
+		cols := problemInsertCols(c)
 		if !strings.Contains(cols, "ai_summary") || !strings.Contains(cols, "ai_summary_at") {
-			t.Errorf("problemInsertCols(%v) ai kolonlarını atlıyor — bütün-satır "+
-				"replace explainer çıktısını her refresh'te siler:\n%s", withCmp, cols)
+			t.Errorf("problemInsertCols(%+v) ai kolonlarını atlıyor — bütün-satır "+
+				"replace explainer çıktısını her refresh'te siler:\n%s", c, cols)
 		}
 	}
 }

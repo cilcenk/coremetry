@@ -100,6 +100,88 @@ func TopologyEndpointKind(id string) string {
 	return NodeKindService
 }
 
+// ─── Problem ÖZNE kimliği (v0.9.1338, entity-model Faz 4b) ──────────
+//
+// DBSubjectID bir veritabanı örneğini `problems.service` kolonunda
+// taşınabilir TEK bir dizgiye kodlar. Biçim topoloji MV yazıcısının
+// düğüm adıyla BİREBİR aynı — `db:<system>@<instance>` — ve öneki
+// TopologyNodeIDPrefixes'ten ALIR, ikinci kez YAZMAZ.
+//
+// ⚠️ ÖLÇÜLMÜŞ UYARI — `instance` bileşeni HANGİ kimlik uzayından?
+//
+// Biçim topoloji ile aynı, KİMLİK UZAYI aynı DEĞİL ve bu bilinçli:
+//
+//	topoloji / db_summary_5m / db_caller_summary_5m  → HAT A (span türevi)
+//	    instance = dbInstanceExpr, yani ilk basamak peer_service.
+//	problems (bu fonksiyonun bugünkü tek üreticisi)  → HAT B (receiver metriği)
+//	    instance = db_capacity.go'daki instanceExpr, yani `instance` attr'ı.
+//
+// Lokal ölçüm (2026-08-24, 24s pencere):
+//
+//	HAT B receiver instance'ları : corebank-scan.prod, corebank-dg.prod
+//	HAT A db_caller_summary_5m   : instance='oracle' (peer_service kazandı)
+//	İKİSİNİN KESİŞİMİ            : 0 satır
+//	    (SELECT count() FROM db_caller_summary_5m WHERE instance IN
+//	     ('corebank-scan.prod','corebank-dg.prod') OR host_name IN (…) → 0)
+//
+// Yani fiziksel adres HAT A'da KAYBOLUYOR: aynı span'ın
+// `server.address` attr'ı `corebank-scan.prod:1521` iken dbInstanceExpr
+// birinci basamakta `peer_service='oracle'` görüp orada duruyor.
+// (host_name kolonu da köprü DEĞİL — o ÇAĞIRANIN pod'u:
+// `casemgr-prod-2-r5993`.)
+//
+// Sonuç ve KURAL: bu ID'yi HAT A tablolarına ad eşitliğiyle JOIN ETME.
+// Bir gün gerekirse köprü ayrı bir dilimdir (server.address host kısmı
+// ya da operatör eşlemesi) ve ÖLÇÜLEREK kurulur. Bugün bu ID'nin tek
+// sözü şudur: "öznem `<instance>` adlı `<system>` veritabanıdır" —
+// bir servis olmadığını söyleyebilmesi zaten bugünkü sessiz çıkmaz
+// linkten iyidir.
+//
+// system KÜÇÜK HARFE indiriliyor: capacityCheck.dbsys 'ORACLE' yazıyor,
+// tüm span tarafı 'oracle'. İki yazım aynı veritabanı için iki ayrı özne
+// üretirdi.
+//
+// Boş bileşen → boş ID ("kodlayamıyorum"). Çağıran o zaman bugünkü ham
+// değeri yazar, yani ÇÖZÜLMEMİŞ DAL BAYT-BAYT bugünküyle aynı kalır.
+func DBSubjectID(system, instance string) string {
+	system = strings.ToLower(strings.TrimSpace(system))
+	instance = strings.TrimSpace(instance)
+	if system == "" || instance == "" {
+		return ""
+	}
+	return dbNodePrefix() + system + "@" + instance
+}
+
+// ParseDBSubjectID — DBSubjectID'nin tersi. ok=false: bu dizgi bir db
+// öznesi DEĞİL (öneksiz, ya da '@' taşımıyor, ya da bir yarısı boş).
+//
+// Öneki TopologyNodeIdentity çözüyor — `db:` dizgisi burada İKİNCİ KEZ
+// YAZILMIYOR. Ayırıcı İLK '@': system hiçbir zaman '@' taşımaz, instance
+// (bir host adı) teorik olarak taşıyabilir, o yüzden fazlası instance'a
+// kalır ve gidiş-dönüş bozulmaz.
+func ParseDBSubjectID(id string) (system, instance string, ok bool) {
+	kind, rest := TopologyNodeIdentity(id)
+	if kind != NodeKindDB {
+		return "", "", false
+	}
+	at := strings.Index(rest, "@")
+	if at <= 0 || at == len(rest)-1 {
+		return "", "", false
+	}
+	return rest[:at], rest[at+1:], true
+}
+
+// dbNodePrefix — `db:` öneki, sözlükten OKUNUR. Sabiti burada tekrar
+// yazmak TopologyNodeIDPrefixes'i tek-kaynak olmaktan çıkarırdı.
+func dbNodePrefix() string {
+	for _, p := range TopologyNodeIDPrefixes {
+		if p.Kind == NodeKindDB {
+			return p.Prefix
+		}
+	}
+	return "" // ulaşılamaz: sözlükte db girdisi var (identity_test pinliyor)
+}
+
 // nsIdentityKeys — bir servisin NAMESPACE'ini çözen anahtar zinciri,
 // SIRASIYLA. Sıra sözleşmedir: coalesce İLK boş-olmayanı alır, yani
 // basamak kaydırmak namespace'i SESSİZCE yeniden adlandırır.

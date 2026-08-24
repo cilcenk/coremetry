@@ -35,6 +35,55 @@ func clusterCfgDigest(c thanos.ClusterConfig) string {
 	return fmt.Sprintf("%x", h.Sum64())
 }
 
+// thanosMaxWindow — /clusters trend uçlarının pencere TAVANI.
+//
+// v0.9.1370 (operatör-bildirimi: "Infrastructure'da hangi aralığı
+// seçersem seçeyim hep aynı zamanı gösteriyor — 6 saate kadar takip
+// ediyor, 6 saat ve üstünde son 6 saati gösteriyor") — tavan 6h'ten
+// 24h'e çıktı.
+//
+// Eski 6h bir ÖLÇÜME değil, KOPYAYA dayanıyordu: v0.8.576'da ilk Thanos
+// rotalarıyla birlikte "hosts clampHostWindow simetriği" notuyla
+// geldi. clampHostWindow ise ClickHouse tarafının koruması ve gerekçesi
+// kendi yorumunda yazılı — "envanter sorusu 'şu an nerede ne koşuyor',
+// arkeoloji değil". O gerekçe bir ENVANTER sorgusu için doğru; amacı
+// tarih göstermek olan bir TREND grafiği için değil. Thanos'ta ne
+// timeout, ne runbook kaydı, ne de bir operatör olayı bu tavanı
+// gerekçelendiriyordu (arandı, bulunamadı).
+//
+// Nokta bütçesi tavanı DÜŞÜRÜYOR, yükseltmiyor (thanos.stepForWindow):
+// ≤6h→60s = 360 nokta/seri iken ≤24h→300s = 288 nokta/seri. Merdivenin
+// 24h ve 7g basamakları bugüne dek ERİŞİLEMEZDİ; fonksiyonun kendi
+// yorumu da "tüm trend uçları ≤6h clamp'li" diyerek bunu itiraf
+// ediyordu.
+//
+// DÜRÜST OLARAK BİLİNMEYEN: yanıt boyutu düşse de Thanos pencere
+// boyunca HAM örnek tarar (doQuery max_source_resolution GEÇMİYOR),
+// yani 24h ≈ 4× tarama. Ölçemediğimiz için tavan 24h'te tutuldu, 7g
+// açılmadı. Emniyet: handler başına 10s deadline, 60s cache ve v0.9.363'ten
+// beri GÖRÜNÜR hata — aşırı yük sessiz yanlış grafik değil, okunabilir
+// bir hata üretir. Bugünkü davranış ise sessiz yalan: seçici ölü.
+// Sıradaki adım (ayrı sürüm, ölçüm gerektirir): geniş pencerede
+// max_source_resolution ile downsample'lı blokları kullanmak.
+const thanosMaxWindow = 24 * time.Hour
+
+// clampThanosWindow — tavanı uygulayan TEK gövde.
+//
+// AYNALI KURAL TEK GÖVDE İSTER: bu kural sekiz handler'da satır satır
+// kopyalanmıştı ve istemcide de üç kopyası var. Kopyalar "sürüklenmez"
+// diye bir garanti yok — tavan bir yerde değişip başka yerde kalsaydı
+// aynı sayfanın iki paneli farklı pencere gösterirdi.
+//
+// SPAN kelepçelenir, ÇAPA DEĞİL: dönen aralık her zaman `to`da biter.
+// Operatör geçmişte bir pencere seçtiyse o pencerenin SON 24 saatini
+// görür — "şimdinin son 24 saati"ne kaydırılmaz.
+func clampThanosWindow(from, to time.Time) (time.Time, time.Time, bool) {
+	if to.Sub(from) > thanosMaxWindow {
+		return to.Add(-thanosMaxWindow), to, true
+	}
+	return from, to, false
+}
+
 // getClusterPods — GET /api/clusters/pods?cluster=<name>. Anlık
 // (namespace, pod) CPU+memory; Thanos'a cluster başına 4 sabit
 // sorgu (pod başına asla). TTL 60s (hosts konvansiyonu; tipik 30s
@@ -116,7 +165,7 @@ func (s *Server) getClusterPods(w http.ResponseWriter, r *http.Request) {
 
 // getClusterPodDetail — GET /api/clusters/pods/detail?cluster=&
 // namespace=&pod=&from=&to=. Tek pod'un dakika-bucket'lı trendi
-// (drawer yolu). Pencere hosts gibi ≤6h clamp'lenir.
+// (drawer yolu). Pencere clampThanosWindow ile kelepçelenir.
 func (s *Server) getClusterPodDetail(w http.ResponseWriter, r *http.Request) {
 	if s.thanos == nil || !s.thanos.HasEnabledClusters() {
 		http.Error(w, "no thanos clusters configured", http.StatusNotFound)
@@ -136,9 +185,7 @@ func (s *Server) getClusterPodDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from, to := parseFromTo(r, time.Hour)
-	if to.Sub(from) > 6*time.Hour { // hosts clampHostWindow simetriği
-		from = to.Add(-6 * time.Hour)
-	}
+	from, to, _ = clampThanosWindow(from, to)
 	key := fmt.Sprintf("cluster-pod-detail:%s:%s:%s:%s:%s",
 		name, namespace, pod, clusterCfgDigest(cfg), cacheBucket(from, to))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
@@ -242,9 +289,7 @@ func (s *Server) getClusterNamespaceDetail(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	from, to := parseFromTo(r, time.Hour)
-	if to.Sub(from) > 6*time.Hour {
-		from = to.Add(-6 * time.Hour)
-	}
+	from, to, _ = clampThanosWindow(from, to)
 	key := fmt.Sprintf("cluster-ns-detail:%s:%s:%s:%s",
 		name, namespace, clusterCfgDigest(cfg), cacheBucket(from, to))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
@@ -281,9 +326,7 @@ func (s *Server) getClusterNamespacePodsTrend(w http.ResponseWriter, r *http.Req
 		return
 	}
 	from, to := parseFromTo(r, time.Hour)
-	if to.Sub(from) > 6*time.Hour {
-		from = to.Add(-6 * time.Hour)
-	}
+	from, to, _ = clampThanosWindow(from, to)
 	key := fmt.Sprintf("cluster-ns-pods-trend:%s:%s:%s:%s",
 		name, namespace, clusterCfgDigest(cfg), cacheBucket(from, to))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
@@ -357,9 +400,7 @@ func (s *Server) getClusterResourceTrend(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	from, to := parseFromTo(r, time.Hour)
-	if to.Sub(from) > 6*time.Hour {
-		from = to.Add(-6 * time.Hour)
-	}
+	from, to, _ = clampThanosWindow(from, to)
 	key := fmt.Sprintf("cluster-res-trend:%s:%s:%t:%s:%s",
 		name, metric, byNode, clusterCfgDigest(cfg), cacheBucket(from, to))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
@@ -405,9 +446,7 @@ func (s *Server) getClusterDeployTrend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from, to := parseFromTo(r, time.Hour)
-	if to.Sub(from) > 6*time.Hour {
-		from = to.Add(-6 * time.Hour)
-	}
+	from, to, _ = clampThanosWindow(from, to)
 	key := fmt.Sprintf("cluster-deploy-trend:%s:%s:%s:%s:%t:%s:%s",
 		name, ns, deploy, metric, byPod, clusterCfgDigest(cfg), cacheBucket(from, to))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
@@ -461,9 +500,7 @@ func (s *Server) getClusterHaproxyTrend(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	from, to := parseFromTo(r, time.Hour)
-	if to.Sub(from) > 6*time.Hour {
-		from = to.Add(-6 * time.Hour)
-	}
+	from, to, _ = clampThanosWindow(from, to)
 	key := fmt.Sprintf("cluster-haproxy-trend:%s:%s:%s:%s:%s",
 		name, ns, kind, clusterCfgDigest(cfg), cacheBucket(from, to))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
@@ -544,9 +581,7 @@ func (s *Server) getClusterJMXTrend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from, to := parseFromTo(r, time.Hour)
-	if to.Sub(from) > 6*time.Hour {
-		from = to.Add(-6 * time.Hour)
-	}
+	from, to, _ = clampThanosWindow(from, to)
 	key := fmt.Sprintf("cluster-jmx-trend:%s:%s:%s:%s:%t:%s:%s:%s",
 		name, ns, deploy, metric, byPod, pod, clusterCfgDigest(cfg), cacheBucket(from, to))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
@@ -581,9 +616,7 @@ func (s *Server) getClusterNetworkTrend(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	from, to := parseFromTo(r, time.Hour)
-	if to.Sub(from) > 6*time.Hour {
-		from = to.Add(-6 * time.Hour)
-	}
+	from, to, _ = clampThanosWindow(from, to)
 	key := fmt.Sprintf("cluster-net-trend:%s:%s:%s",
 		name, clusterCfgDigest(cfg), cacheBucket(from, to))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {

@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { clampSuffix } from '@/lib/thanosWindow';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -224,14 +225,14 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
       {((cpuTrendQ.data?.series?.length ?? 0) > 0 || (memTrendQ.data?.series?.length ?? 0) > 0) && (
         <div className="grid-2" style={{ display: 'grid', gap: 14, marginTop: 14 }}>
           <div ref={cpuChartRef} style={flashStyle('cpu')}>
-            <MetricArea title={`CPU (cores) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
+            <MetricArea title={`CPU (cores) · ${chartCluster}${clampSuffix(clamped)}`} byLabel="By pod"
               by={cpuByPod} onToggle={setCpuByPod} onZoom={onZoom} onZoomReset={onZoomReset}
               syncKey={`infra:${service}`} totalSeries={cpuTrendQ.data?.totalSeries}
               labelTrimPrefix={effDeploy}
               series={cpuTrendQ.data?.series} seriesName="CPU" />
           </div>
           <div ref={memChartRef} style={flashStyle('mem')}>
-            <MetricArea title={`Memory · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
+            <MetricArea title={`Memory · ${chartCluster}${clampSuffix(clamped)}`} byLabel="By pod"
               by={memByPod} onToggle={setMemByPod} onZoom={onZoom} onZoomReset={onZoomReset}
               syncKey={`infra:${service}`} totalSeries={memTrendQ.data?.totalSeries}
               labelTrimPrefix={effDeploy}
@@ -253,15 +254,15 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
             </span>
           </h3>
           <div className="grid-2" style={{ display: 'grid', gap: 14 }}>
-            <MetricArea title={`HTTP 2xx (req/s) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`}
+            <MetricArea title={`HTTP 2xx (req/s) · ${chartCluster}${clampSuffix(clamped)}`}
               subtitle="haproxy_backend_http_responses_total{code=2xx} · by route"
               series={hap2xxQ.data?.series} seriesName="2xx"
               onZoom={onZoom} onZoomReset={onZoomReset} syncKey={`infra:${service}`} />
-            <MetricArea title={`HTTP 5xx (req/s) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`}
+            <MetricArea title={`HTTP 5xx (req/s) · ${chartCluster}${clampSuffix(clamped)}`}
               subtitle="haproxy_backend_http_responses_total{code=5xx} · by route"
               series={hap5xxQ.data?.series} seriesName="5xx"
               onZoom={onZoom} onZoomReset={onZoomReset} syncKey={`infra:${service}`} />
-            <MetricArea title={`Backend gecikme (ms) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`}
+            <MetricArea title={`Backend gecikme (ms) · ${chartCluster}${clampSuffix(clamped)}`}
               subtitle="haproxy_backend_http_average_response_latency_milliseconds · by route"
               series={hapLatQ.data?.series} seriesName="latency" unit="ms"
               onZoom={onZoom} onZoomReset={onZoomReset} syncKey={`infra:${service}`} />

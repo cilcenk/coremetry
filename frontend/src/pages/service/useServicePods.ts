@@ -3,6 +3,7 @@ import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useServicesMetadata } from '@/lib/queries';
 import { timeRangeToNs } from '@/lib/utils';
+import { clampThanosWindow } from '@/lib/thanosWindow';
 import { podMatchesService, dominantWorkload, servicePodRegex } from '@/pages/clusters/podWorkload';
 import type { ClusterPodRow, TimeRange } from '@/lib/types';
 
@@ -96,12 +97,11 @@ export function useServicePods(service: string, range: TimeRange) {
   const effDeploy = deploy || dominantWorkload(rows.map(r => r.pod)) || service;
   const effNs = ns || dominantNamespace(rows);
 
-  // Sunucu 6h clamp'i — Clusters Overview'la aynı dürüstlük (v0.9.21).
-  const { cFrom, cTo, clamped } = useMemo(() => {
-    const sixH = 6 * 3600 * 1e9;
-    if (to - from > sixH) return { cFrom: to - sixH, cTo: to, clamped: true };
-    return { cFrom: from, cTo: to, clamped: false };
-  }, [from, to]);
+  // Sunucu pencere tavanı — Clusters Overview'la aynı dürüstlük
+  // (v0.9.21). Kural tek gövdede (lib/thanosWindow), sunucuyla
+  // ayrışması Go testiyle kapalı (v0.9.1370).
+  const { cFrom, cTo, clamped } = useMemo(
+    () => clampThanosWindow(from, to), [from, to]);
 
   // Gate bit'leri (her iki sekme aynı boş/yükleniyor durumlarını gösterir).
   const sourcesPending = sourcesQ.isPending;

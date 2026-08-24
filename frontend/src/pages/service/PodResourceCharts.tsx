@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { clampSuffix } from '@/lib/thanosWindow';
 import { api } from '@/lib/api';
 import { MetricArea } from '@/pages/clusters/MetricArea';
 
@@ -69,7 +70,7 @@ export function PodResourceCharts({ service, cluster, ns, deploy, cFrom, cTo, cl
   // "veri yok" demenin en gürültülü hâli (ServiceInfraTab emsali).
   if (!any) return null;
 
-  const suffix = `${cluster}${clamped ? ' (last 6h)' : ''}`;
+  const suffix = `${cluster}${clampSuffix(clamped)}`;
   return (
     <div style={{ marginTop: 18 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>

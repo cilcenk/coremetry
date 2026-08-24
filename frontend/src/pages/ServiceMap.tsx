@@ -13,6 +13,7 @@ import { DEFAULT_TOPOLOGY_HOPS } from '@/pages/service/topologyHops';
 import { useServiceMap } from '@/lib/queries';
 import { api } from '@/lib/api';
 import { serviceGraphToMap } from '@/lib/serviceGraphAdapter';
+import { serviceMapNodeClick } from '@/lib/serviceMapNodeClick';
 import { fmtNum, rangeToSince, timeRangeToNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { encodeRange } from '@/lib/urlState';
@@ -221,6 +222,20 @@ export default function ServiceMapPage() {
       totalSpans:  data.totalSpans,
     };
   }, [data, clusterPick]);
+
+  // v0.9.1330 — İKİNCİ TIK ÇEKMECEYİ AÇAR. Yukarıdaki v0.9.1112 şerhi bunu
+  // vaat ediyordu ama kablo hiç bağlanmamıştı: `onSelectNode` her tıkta
+  // `commitFocus`'a gidiyordu, `commitNode` ise yalnız drawer'ın kendi
+  // `onClose`'undan `''` ile çağrılıyordu — yani çekmeceye ancak URL'e elle
+  // `?node=` yazarak ulaşılıyordu. Karar mantığı lib/serviceMapNodeClick.ts'te
+  // (saf + testli); buradaki tek iş onu iki commit'e bağlamak.
+  const selectNode = (svc: string) => {
+    switch (serviceMapNodeClick(svc, focus || null, filtered?.nodes ?? [])) {
+      case 'focus':  commitFocus(svc); break;
+      case 'drawer': commitNode(svc);  break;
+      case 'ignore': break;
+    }
+  };
 
   return (
     <>
@@ -450,12 +465,12 @@ export default function ServiceMapPage() {
             focus={focus || null}
             hoverNode={hoverNode}
             onHoverNode={setHoverNode}
-            onSelectNode={commitFocus}
+            onSelectNode={selectNode}
           />
         )}
 
         <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>
-          Click a node to focus on its neighbourhood · auto-refresh 30 s
+          Click a node to focus on its neighbourhood · click it again for details · auto-refresh 30 s
         </div>
         </>)}
 

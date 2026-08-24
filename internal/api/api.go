@@ -892,6 +892,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// DÜŞMEZ. Yetki de liste ucuyla aynı (rol kapısı yok) — aynı veriyi
 	// iki farklı kurala bağlamamak için.
 	mux.HandleFunc("GET    /api/problems/{id}", s.getProblemByID)
+	s.registerProblemNotificationRoutes(mux) // v0.9.1344 — bu probleme kim haber aldı (ve kimse almadıysa o), problem_notifications.go
 	mux.HandleFunc("GET    /api/problems/{id}/rootcause", s.getProblemRootCause)
 	// Copilot prose narration of the persisted problem hypothesis (rc #4) —
 	// problem-anchored sibling of the anomaly explain route. Lazy/opt-in,
@@ -2124,6 +2125,30 @@ func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
 		for _, m := range cobs.Misses {
 			st.CodeFetch.Misses = append(st.CodeFetch.Misses,
 				chstore.CodeFetchMiss{Class: m.Class, Count: m.Count})
+		}
+		// v0.9.1344 — bildirim yönlendirme sonucu. Aynı kablo: süreç-içi
+		// atomikler (chstore, notify'ı import EDEMEZ — ters yön zaten var).
+		//
+		// NEDEN GEREKLİ: hiçbir kanalla eşleşmeyen bir problem SESSİZCE
+		// düşüyordu; ne sayaç ne log ne işaret vardı. Unmatched'in
+		// sıfırdan farklı olması tek başına bir aksiyon çağrısı.
+		// Unconfigured AYRI kova ve bilinçli: kanalsız bir kurulumda her
+		// problem oraya düşer ve bu bir kusur DEĞİLDİR.
+		//
+		// Sayaç süreç-içi olduğu için lider olmayan / worker koşmayan
+		// pod'larda sıfır kalır ve bu DOĞRU cevaptır — kalıcı defter
+		// notification_log'da (bkz. /events ve problem detayındaki
+		// "Bildirim" paneli).
+		robs := notify.RoutingObservability()
+		st.NotifyRouting = chstore.NotifyRoutingStats{
+			Delivered:            robs.Delivered,
+			Suppressed:           robs.Suppressed,
+			Unconfigured:         robs.Unconfigured,
+			Unmatched:            robs.Unmatched,
+			LastUnmatchedUnix:    robs.LastUnmatchedUnix,
+			LastUnmatchedID:      robs.LastUnmatchedID,
+			LastUnmatchedService: robs.LastUnmatchedService,
+			LastUnmatchedReason:  robs.LastUnmatchedReason,
 		}
 		// v0.8.212 — surface the duplicate-worker HA hazard (Redis configured but
 		// the lock fell back to always-leader Noop). main.go owns the lock state;

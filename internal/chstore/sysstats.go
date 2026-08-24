@@ -56,6 +56,20 @@ type SystemStats struct {
 	// filoda kod bağlamını sessizce kapatabilirdi. Toplamda "isabet
 	// ediyor mu" sorusunun cevabı yalnız burada.
 	CodeFetch CodeFetchStats `json:"codeFetch"`
+	// NotifyRouting (v0.9.1344) — bildirim yönlendirmesinin sonucu:
+	// kaç problem gerçekten gönderildi, kaçı bastırıldı, kaçı hiç
+	// yapılandırılmamış bir filoya düştü ve kaçı YAPILANDIRILMIŞ
+	// olmasına rağmen kimseye ulaşmadı. Behavior / CodeFetch ile AYNI
+	// kablo: API getSystemStats handler'ı süreç-içi atomiklerden
+	// doldurur, GetSystemStats (yalnız CH) sıfır bırakır — chstore,
+	// notify paketini import ETMEZ (ters yön: notify zaten chstore'u
+	// import ediyor).
+	//
+	// NEDEN GEREKLİ: eşleşmeyen bir problem SESSİZCE düşüyordu. Ne
+	// sayaç, ne log, ne işaret vardı; "Oracle doluyor ve kimse haber
+	// almıyor" ancak olay olduktan sonra fark ediliyordu. Unmatched'in
+	// sıfırdan farklı olması tek başına bir aksiyon çağrısıdır.
+	NotifyRouting NotifyRoutingStats `json:"notifyRouting"`
 	// DistributionQueue (v0.9.985) — dağıtık kipte Distributed tabloların
 	// spool derinliği. nil = tek-düğüm kurulumu (sorgu hiç çalışmadı) →
 	// alan JSON'da YOK, panel çizilmez. Neden burada: bir INSERT'in "OK"
@@ -110,6 +124,37 @@ type CodeFetchStats struct {
 	// zaman damgası anlatır.
 	LastError     string `json:"lastError,omitempty"`
 	LastErrorUnix int64  `json:"lastErrorUnix,omitempty"`
+}
+
+// NotifyRoutingStats — bildirim yönlendirme sayaçları (v0.9.1344).
+// Alan adları internal/notify.RoutingStats ile birebir; ayrı tip çünkü
+// chstore o paketi import edemez (döngü).
+//
+// Dört kova birbirini dışlar; her SendProblemAlert turu tam olarak
+// birini artırır (bakım penceresi / acknowledged kısa devreleri hariç —
+// onlar bilinçli susturmadır, yönlendirme kararına hiç varılmaz).
+type NotifyRoutingStats struct {
+	// Delivered — en az bir gerçek gönderim denendi.
+	Delivered int64 `json:"delivered"`
+	// Suppressed — eşleşme vardı ama tekrar-bastırma yuttu, ya da
+	// ekip-maili bu problem için zaten gitmişti. Kayıp DEĞİL.
+	Suppressed int64 `json:"suppressed"`
+	// Unconfigured — probleme hiçbir yol TEKLİF EDİLMEDİ (bu ciddiyeti
+	// alan etkin kanal yok + ekip-yönlendirme devrede değil). KUSUR
+	// DEĞİL: yapılandırılmamış bir filoda her problem bunu üretir ve
+	// bu yüzden Unmatched'ten AYRI sayılır — ikisi tek kovada olsaydı
+	// taze bir kurulum ilk günden alarm verir, sinyal ölürdü.
+	Unconfigured int64 `json:"unconfigured"`
+	// Unmatched — yol(lar) teklif edildi, HİÇBİRİ almadı. KUSUR.
+	// Sıfırdan farklıysa bakılacak bir şey var demektir.
+	Unmatched int64 `json:"unmatched"`
+
+	// Son eşleşmeyenin kimliği — operatör /events'i taramadan doğrudan
+	// o probleme gidebilsin diye.
+	LastUnmatchedUnix    int64  `json:"lastUnmatchedUnix"`
+	LastUnmatchedID      string `json:"lastUnmatchedId,omitempty"`
+	LastUnmatchedService string `json:"lastUnmatchedService,omitempty"`
+	LastUnmatchedReason  string `json:"lastUnmatchedReason,omitempty"`
 }
 
 // CodeFetchMiss — tek çıkmaz kovası (sınıf + sayı).

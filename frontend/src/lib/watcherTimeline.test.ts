@@ -92,8 +92,32 @@ describe('summarizeWatcherHistory', () => {
 
   it('never-fired watcher summarises to zeros', () => {
     expect(summarizeWatcherHistory([], [], now)).toEqual({
-      fires24h: 0, notifs24h: 0, notifFails24h: 0, lastFire: 0,
+      fires24h: 0, notifs24h: 0, notifFails24h: 0, unmatched24h: 0, lastFire: 0,
     });
+  });
+
+  // v0.9.1344 — sentetik "kimseye gitmedi" işareti bir GÖNDERİM DEĞİL.
+  // notification_log'a ok=0 ile iniyor, yani elenmeseydi bu şerit onu
+  // ÖNCE "gönderildi" SONRA "başarısız" diye sayardı: hiç denenmemiş bir
+  // haber için iki kere yalan, üstelik operatörü var olmayan bir kanalı
+  // tamir etmeye yollardı.
+  it('işaret satırı gönderim SAYILMAZ, kendi kovasına düşer', () => {
+    const s = summarizeWatcherHistory([], [
+      notif({ id: 'nl-mark', sentAt: now - 1 * h, channelKind: 'none', ok: false, error: 'gerekçe' }),
+      notif({ id: 'nl-real', sentAt: now - 2 * h }),
+    ], now);
+
+    expect(s.notifs24h).toBe(1);      // yalnız gerçek gönderim
+    expect(s.notifFails24h).toBe(0);  // işaret bir teslimat arızası DEĞİL
+    expect(s.unmatched24h).toBe(1);
+  });
+
+  it('pencere dışındaki işaret hiçbir kovaya sayılmaz', () => {
+    const s = summarizeWatcherHistory([], [
+      notif({ id: 'nl-mark', sentAt: now - 30 * h, channelKind: 'none', ok: false }),
+    ], now);
+    expect(s.unmatched24h).toBe(0);
+    expect(s.notifs24h).toBe(0);
   });
 
   // v0.9.196 review-fix pin — lastFire pencereye BAĞLI DEĞİL: tek fire

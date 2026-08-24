@@ -284,6 +284,15 @@ function WatcherHistoryDrawer({ watcher, onClose }: {
         <span>Recent: <b style={{ color: 'var(--text)' }}>{sum ? sum.notifs24h : '…'} notifications</b>
           {sum && sum.notifFails24h > 0 && <span style={{ color: 'var(--err)' }}> ({sum.notifFails24h} failed)</span>}
         </span>
+        {/* v0.9.1344 — "gönderildi" ve "başarısız"tan AYRI üçüncü sayı:
+            hiçbir kanalla eşleşmeyen fire'lar. Diğer ikisine karıştırmak
+            hiç denenmemiş bir haberi denenmiş göstermek olurdu. */}
+        {sum && sum.unmatched24h > 0 && (
+          <span style={{ color: 'var(--err)' }}
+            title="Bu fire'lar hiçbir bildirim kanalıyla eşleşmedi ve ekip-yönlendirme de kimseyi bulamadı — gerekçe problemin Bildirim panelinde">
+            <b>{sum.unmatched24h} fire kimseye gitmedi</b>
+          </span>
+        )}
         <span>Last fire: <b style={{ color: 'var(--text)' }}>
           {watcher.lastFire ? fmtAgoNs(watcher.lastFire) : 'never'}
         </b></span>

@@ -13,6 +13,7 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import { serviceHref, pointEventWindow } from '@/lib/serviceHref';
 import type { NotificationLogEntry } from '@/lib/types';
+import { UNMATCHED_KIND } from '@/lib/notifyRouting';
 import { PageShell } from '@/components/ui/PageShell';
 
 // v0.6.15 — Operator events list/delete UI.
@@ -157,6 +158,12 @@ function NotificationsTab({ from, to }: { from: number; to: number }) {
           <option value="">(all)</option>
           {['email', 'slack', 'mattermost', 'teams', 'zoomchat', 'webhook', 'whatsapp'].map(k =>
             <option key={k} value={k}>{k}</option>)}
+          {/* v0.9.1344 — bir KANAL değil, "hiçbir kanal eşleşmedi"
+              işareti; listenin en değerli süzgeci, çünkü tek başına
+              "hangi problemlerden kimsenin haberi olmadı" sorusunu
+              cevaplıyor. Backend channel_kind üzerinden birebir
+              süzdüğü için ek uç gerekmiyor. */}
+          <option value={UNMATCHED_KIND}>— kimseye gitmedi</option>
         </select>
         <span style={{ fontSize: 12, color: 'var(--text2)' }}>Related:</span>
         <select value={related} onChange={e => setRelated(e.target.value)}
@@ -222,9 +229,17 @@ function NotificationsTab({ from, to }: { from: number; to: number }) {
                     )}
                   </td>
                   <td>
-                    {n.ok
-                      ? <span className="badge b-ok">sent</span>
-                      : <span className="badge b-err" title={n.error}>failed</span>}
+                    {/* v0.9.1344 — ÜÇÜNCÜ HÂL. channelKind='none' satırı bir
+                        gönderim değil, "bu problem hiçbir kanalla eşleşmedi"
+                        işareti. `ok ? sent : failed` ikilisi onu "failed"
+                        diye çizerdi ve operatör ölü bir kanal arardı;
+                        GİTMEDİ ile BAŞARISIZ farklı arızalar, farklı
+                        düzeltmeler. */}
+                    {n.channelKind === UNMATCHED_KIND
+                      ? <span className="badge b-err" title={n.error}>kimseye gitmedi</span>
+                      : n.ok
+                        ? <span className="badge b-ok">sent</span>
+                        : <span className="badge b-err" title={n.error}>failed</span>}
                   </td>
                 </tr>
               ))}

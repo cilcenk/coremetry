@@ -31,6 +31,39 @@ type NotificationLog struct {
 	Error       string `json:"error"`
 }
 
+// ── "Kimseye gitmedi" işareti (v0.9.1344) ───────────────────────────
+//
+// Bir problem hiçbir bildirim kanalıyla eşleşmediğinde internal/notify
+// notification_log'a SENTETİK bir satır yazar: yeni tablo YOK (state
+// için yeni şema açmama kuralı), zaten problem başına anahtarlı
+// (related_id), zaten 90 gün TTL'li ve zaten /events'te görünen tek
+// defter burası. "Sayfa gitti mi" sorusunun evi zaten bu tablo; üçüncü
+// bir cevap (hiç denenmedi) eklemek yeni bir ev gerektirmiyor.
+//
+// Satırın kimliği (kind, name) = (none, unmatched) ve ok = 0.
+//
+// ⚠ BU SATIR ÜÇ OKUYUCUYU YANILTABİLİR — üçü de burada kapatıldı:
+//
+//  1. ChannelHealth (kind, name) ile grupluyor → Settings → Kanallar
+//     listesinde ardışık hatası artan HAYALET bir kanal belirirdi.
+//     buildChannelHealthQuery'de SQL düzeyinde eleniyor (aşağıda).
+//  2. HasNotification `ok = 1` şartı taşıyor → ok=0 olan bu satır
+//     hiçbir dedup kapısını tetikleyemez. Doğrulandı, ek önlem yok.
+//  3. /events satırı `ok ? sent : failed` çiziyordu → işaret "failed"
+//     görünürdü. GİTMEDİ ile BAŞARISIZ farklı şeyler: frontend üçüncü
+//     bir rozet çiziyor (Events.tsx).
+const (
+	// NotifyUnmatchedChannelKind — sentetik işaret satırının
+	// channel_kind'i. LowCardinality(String) sütununa tek bir yeni
+	// değer ekler.
+	NotifyUnmatchedChannelKind = "none"
+	// NotifyUnmatchedChannelName — sentetik işaret satırının
+	// channel_name'i. Gerçek bir kanal adıyla çakışması hâlinde
+	// ChannelHealth elemesi zaten kind üzerinden yapıldığı için
+	// güvenlidir.
+	NotifyUnmatchedChannelName = "unmatched"
+)
+
 // InsertNotificationLog appends one send record. Fire-and-forget from
 // the notify funnel — the caller logs-and-continues on error so a
 // record failure never blocks (or re-fires) the notification itself.
@@ -291,6 +324,14 @@ func (s *Store) ChannelHealth(ctx context.Context) ([]ChannelHealthRow, error) {
 // extracted like the two builders above so the mandatory read bounds
 // (time-bounded WHERE on the sent_at ORDER BY prefix + LIMIT +
 // max_execution_time) are table-testable without a live CH.
+//
+// v0.9.1344 — channel_kind != 'none' ŞART. O kind sentetik
+// "kimseye gitmedi" işaretidir (bkz. NotifyUnmatchedChannelKind), bir
+// kanal DEĞİL. Elenmezse Settings → Kanallar listesinde ardışık hatası
+// sürekli artan hayalet bir "none/unmatched" kanalı belirir; eleme SQL
+// düzeyinde, çünkü ChannelHealth'in TEK okuma noktası burası ve
+// Go tarafındaki fold'a bırakmak yeni bir çağıranın kaçırabileceği
+// bir sözleşme olurdu.
 func buildChannelHealthQuery(since time.Time, limit int) (string, []any) {
 	if limit <= 0 || limit > channelHealthCap {
 		limit = channelHealthCap
@@ -301,10 +342,11 @@ func buildChannelHealthQuery(since time.Time, limit int) (string, []any) {
 		       ok, error
 		FROM notification_log
 		WHERE sent_at >= ?
+		  AND channel_kind != ?
 		ORDER BY sent_at DESC
 		LIMIT ?
 		SETTINGS max_execution_time = 10`
-	return q, []any{since, limit}
+	return q, []any{since, NotifyUnmatchedChannelKind, limit}
 }
 
 // channelHealthFromRows folds raw sends into one row per (kind, name).

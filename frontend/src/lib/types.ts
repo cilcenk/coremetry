@@ -4284,6 +4284,33 @@ export interface SystemStats {
     lastError?: string;
     lastErrorUnix?: number;
   };
+  // v0.9.1344 — bildirim yönlendirmesinin sonucu (backend:
+  // notify.RoutingStats → chstore.NotifyRoutingStats).
+  //
+  // NEDEN VAR: hiçbir kanalla eşleşmeyen bir problem SESSİZCE
+  // düşüyordu. Ne sayaç, ne log, ne işaret; "Oracle doluyor ve kimse
+  // haber almıyor" ancak olay olduktan SONRA fark ediliyordu.
+  //
+  // DÖRT KOVA BİRBİRİNİ DIŞLAR ve `unconfigured` ile `unmatched`
+  // ayrımı özelliğin kendisi kadar önemli:
+  //   unconfigured — probleme hiçbir yol TEKLİF EDİLMEDİ (bu ciddiyeti
+  //     alan etkin kanal yok + ekip-yönlendirme devrede değil). KUSUR
+  //     DEĞİL; kanalsız bir kurulumda her problem buraya düşer.
+  //   unmatched    — yol teklif edildi, HİÇBİRİ almadı. KUSUR.
+  //
+  // TÜM SAYAÇLAR SÜREÇ BAŞLANGICINDAN BERİ; restart sıfırlar. Kalıcı
+  // defter notification_log (bkz. /events + problem detayı → Bildirim).
+  // OPSİYONEL: bu sürümden eski bir backend alanı hiç döndürmez.
+  notifyRouting?: {
+    delivered: number;
+    suppressed: number;
+    unconfigured: number;
+    unmatched: number;
+    lastUnmatchedUnix: number;
+    lastUnmatchedId?: string;
+    lastUnmatchedService?: string;
+    lastUnmatchedReason?: string;
+  };
   // v0.9.985 — dağıtık kipte Distributed tabloların spool derinliği.
   //
   // NEDEN VAR: Distributed motoru INSERT'i diske spool'layıp HEMEN OK

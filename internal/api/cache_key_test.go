@@ -91,10 +91,10 @@ func TestExcludeKeyDigest_LargerSetDistinctness(t *testing.T) {
 // would be served their filtered page — with the badge counting one
 // number and the list showing another.
 func TestInboxListKeyIncludesSearch(t *testing.T) {
-	base := inboxListKey("open", "", "", "", "", "", "", 200, "priority", "desc", 5, nil, nil)
+	base := inboxListKey("open", "", "", "", "", "", "", 200, "priority", "desc", 5, nil, nil, inboxSubjectService)
 
 	t.Run("search term changes the key", func(t *testing.T) {
-		if got := inboxListKey("open", "", "timeout", "", "", "", "", 200, "priority", "desc", 5, nil, nil); got == base {
+		if got := inboxListKey("open", "", "timeout", "", "", "", "", 200, "priority", "desc", 5, nil, nil, inboxSubjectService); got == base {
 			t.Errorf("q=timeout produced the same key as an empty search: %q", got)
 		}
 	})
@@ -102,7 +102,7 @@ func TestInboxListKeyIncludesSearch(t *testing.T) {
 	t.Run("different terms never collide", func(t *testing.T) {
 		seen := map[string]string{}
 		for _, term := range []string{"", "timeout", "OOMKilled", "504", "time", "out"} {
-			k := inboxListKey("open", "", term, "", "", "", "", 200, "priority", "desc", 5, nil, nil)
+			k := inboxListKey("open", "", term, "", "", "", "", 200, "priority", "desc", 5, nil, nil, inboxSubjectService)
 			if prev, dup := seen[k]; dup {
 				t.Errorf("q=%q collides with q=%q on key %q", term, prev, k)
 			}
@@ -114,8 +114,8 @@ func TestInboxListKeyIncludesSearch(t *testing.T) {
 		// `service` and `q` are separate inputs that AND together
 		// server-side; swapping which one carries a value must not
 		// produce the same key.
-		a := inboxListKey("open", "api", "", "", "", "", "", 200, "priority", "desc", 5, nil, nil)
-		b := inboxListKey("open", "", "api", "", "", "", "", 200, "priority", "desc", 5, nil, nil)
+		a := inboxListKey("open", "api", "", "", "", "", "", 200, "priority", "desc", 5, nil, nil, inboxSubjectService)
+		b := inboxListKey("open", "", "api", "", "", "", "", 200, "priority", "desc", 5, nil, nil, inboxSubjectService)
 		if a == b {
 			t.Errorf("service=api and q=api share a key %q — they filter different fields", a)
 		}
@@ -125,23 +125,23 @@ func TestInboxListKeyIncludesSearch(t *testing.T) {
 		seen := map[string]string{}
 		for name, k := range map[string]string{
 			"base":   base,
-			"status": inboxListKey("all", "", "", "", "", "", "", 200, "priority", "desc", 5, nil, nil),
-			"svc":    inboxListKey("open", "api", "", "", "", "", "", 200, "priority", "desc", 5, nil, nil),
-			"owner":  inboxListKey("open", "", "", "team-a", "", "", "", 200, "priority", "desc", 5, nil, nil),
-			"sre":    inboxListKey("open", "", "", "", "sre-a", "", "", 200, "priority", "desc", 5, nil, nil),
-			"env":    inboxListKey("open", "", "", "", "", "", "prod", 200, "priority", "desc", 5, nil, nil),
-			"limit":  inboxListKey("open", "", "", "", "", "", "", 50, "priority", "desc", 5, nil, nil),
+			"status": inboxListKey("all", "", "", "", "", "", "", 200, "priority", "desc", 5, nil, nil, inboxSubjectService),
+			"svc":    inboxListKey("open", "api", "", "", "", "", "", 200, "priority", "desc", 5, nil, nil, inboxSubjectService),
+			"owner":  inboxListKey("open", "", "", "team-a", "", "", "", 200, "priority", "desc", 5, nil, nil, inboxSubjectService),
+			"sre":    inboxListKey("open", "", "", "", "sre-a", "", "", 200, "priority", "desc", 5, nil, nil, inboxSubjectService),
+			"env":    inboxListKey("open", "", "", "", "", "", "prod", 200, "priority", "desc", 5, nil, nil, inboxSubjectService),
+			"limit":  inboxListKey("open", "", "", "", "", "", "", 50, "priority", "desc", 5, nil, nil, inboxSubjectService),
 			// v0.9.319 — sort joins the key. Two operators on the same
 			// filters but different sorts must not share a cached page: the
 			// server ranks BEFORE the cap, so the sort changes which rows
 			// come back, not just their order.
-			"sortCol": inboxListKey("open", "", "", "", "", "", "", 200, "lastSeen", "desc", 5, nil, nil),
-			"sortDir": inboxListKey("open", "", "", "", "", "", "", 200, "priority", "asc", 5, nil, nil),
+			"sortCol": inboxListKey("open", "", "", "", "", "", "", 200, "lastSeen", "desc", 5, nil, nil, inboxSubjectService),
+			"sortDir": inboxListKey("open", "", "", "", "", "", "", 200, "priority", "asc", 5, nil, nil, inboxSubjectService),
 			// v0.9.320 — the occurrence floor changes WHICH rows come back.
 			// "show all" (0) sharing a cached page with the default floor
 			// would hand one operator the other's filtered queue.
-			"minOcc0":  inboxListKey("open", "", "", "", "", "", "", 200, "priority", "desc", 0, nil, nil),
-			"minOcc10": inboxListKey("open", "", "", "", "", "", "", 200, "priority", "desc", 10, nil, nil),
+			"minOcc0":  inboxListKey("open", "", "", "", "", "", "", 200, "priority", "desc", 0, nil, nil, inboxSubjectService),
+			"minOcc10": inboxListKey("open", "", "", "", "", "", "", 200, "priority", "desc", 10, nil, nil, inboxSubjectService),
 		} {
 			if prev, dup := seen[k]; dup {
 				t.Errorf("%s collides with %s on key %q", name, prev, k)

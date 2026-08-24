@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { keys } from './keys';
-import type { InboxItem } from '@/lib/types';
+import type { InboxItem, SubjectLane } from '@/lib/types';
 
 // v0.9.221 — one page of the triage queue. `total` is the pre-cap count, so
 // the UI can say "200 of 912" instead of implying it showed everything.
@@ -26,6 +26,12 @@ export type InboxPage = {
   // set. The chips MUST render from these: counting the returned page is what
   // made prod show "Exceptions 0" on a queue holding thousands of them.
   counts?: Record<string, number>;
+  // v0.9.1342 — db şeridindeki toplam. `counts`tan AYRI: orası kind/prio
+  // evreni, bu özne evreni. Şerit tek kaynaklı (yalnız problems) olduğu
+  // için bu sayı TAM; servis şeridi dört kaynaklı olduğundan tek bir
+  // sayıyla dürüstçe ifade edilemez ve sunucu onu HİÇ iddia etmiyor.
+  dbSubjectCount?: number;
+  subject?: SubjectLane;
 };
 
 // Unified triage inbox (v0.5.211) — Problems + Exception groups +
@@ -51,6 +57,10 @@ export function useInbox(filter: {
   kind?: string; prio?: string;
   // v0.9.525 — first-seen penceresi ('2h' | '24h' | '7d'); boş = hepsi.
   since?: string;
+  // v0.9.1342 — özne şeridi. Sunucu filtresi (SQL'de, LIMIT'ten önce),
+  // yani anahtarın parçası olmak ZORUNDA — filter nesnesi anahtarın
+  // kendisi olduğu için burada olması yeterli.
+  subject?: SubjectLane;
 }) {
   return useQuery<InboxPage>({
     queryKey: ['inbox', 'list', filter],

@@ -235,12 +235,31 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// Sabit basamaklar (2h/24h/7d/boş) — cache anahtarına giren her
 	// parametrenin kardinalitesi sınırlı olmalı (v0.8.270).
 	since := normalizeInboxSince(q.Get("since"))
+	// v0.9.1342 (operatör kararı) — DB özneli problemler AYRI ŞERİT.
+	//
+	// Aynı listede olsalardı öncelik sıralamasında servis problemleriyle
+	// YARIŞIRLARDI; operatör bunu istemiyor. Varsayılan `service`, yani
+	// bugünkü kuyruk aynen kalıyor ve db satırları oradan ÇIKIYOR.
+	//
+	// Param adı bilerek `subject` — `kind` ZATEN başka bir şey demek
+	// (satırın KAYNAĞI: problem/exception/anomaly). İkisi de string
+	// olduğu için TypeScript de Go da karışıklığı yakalayamaz; tek
+	// koruma ayrı ad (v0.9.1339'un aynı çakışmadan çıkardığı ders).
+	subject := normalizeInboxSubject(q.Get("subject"))
+	if subject == inboxSubjectDB {
+		// DB öznesi YALNIZ problems kaynağında var: exception grupları,
+		// anomaliler ve incident'lar yapı gereği servis öznelidir (kind
+		// kolonları yok, uydurulamaz). Tür facet'ini burada ZORLAMAK
+		// şart — sayfanın varsayılanı `['exception']` ve o hâliyle db
+		// şeridi HİÇ problem çekmez, yani boş açılırdı.
+		kinds = []string{"problem"}
+	}
 
 	// v0.9.221 — :v2: marks the response-shape change (bare array → object
 	// with the total). Without the bump a pre-upgrade array could still be
 	// sitting under this key and would deserialize into the new shape as an
 	// empty page.
-	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, team, env, limit, sortID, sortDir, minOcc, kinds, prios) + ":since=" + since
+	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, team, env, limit, sortID, sortDir, minOcc, kinds, prios, subject) + ":since=" + since
 	// v0.9.228 — 10s → 15s. v0.9.220 gave the inbox list a 30s poll; at a 10s
 	// TTL the SWR window is ttl×staleFactor = 30s and the Redis entry expires
 	// at 30s too, so each poll arrived at age = 30s + previous latency —
@@ -352,12 +371,28 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 				// team's rows instead of the newest 2000 of the estate.
 				Services: teamServices,
 				Limit:    srcLimit,
+				// v0.9.1342 — şerit SQL'de daralır, LIMIT'ten ÖNCE. Go'da
+				// daraltmak v0.9.322 sınıfı olurdu: db satırları taramanın
+				// yerini yer, servis şeridi eksik gelir.
+				SubjectKind: subject,
 			})
 			if err != nil {
 				return nil, err
 			}
 			if len(probs) >= srcLimit {
 				scanCapped = true
+			}
+		}
+		// v0.9.1342 — şerit çipinin sayısı. TEK COUNT, iki bucket; her
+		// iki şeritte de döner ki servis şeridindeki operatör "öbür
+		// tarafta bir şey var mı" sorusunu tıklamadan görebilsin.
+		// Sayı YALNIZ problems'ı sayar — db şeridinde başka kaynak yok,
+		// yani orada TAM; servis şeridinde bu sayı gösterilmiyor.
+		subjectCounts := map[string]uint64{}
+		if statusFilter != "ignored" && !teamIsEmpty {
+			if m, err := s.store.CountProblemsBySubject(ctx,
+				pickExcludedStatuses(statusFilter), teamServices); err == nil {
+				subjectCounts = m
 			}
 		}
 		// Same enrichment chain Problems UI runs through, so the
@@ -370,11 +405,15 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			// path's strict team matching drops them — so under an ACTIVE
 			// team filter this chip can overcount by the number of
 			// service-less problems. Without a team filter it is exact.
+			//
+			// v0.9.1342 — sayı artık ŞERİDE göre. Aynı COUNT'un `service`
+			// bucket'ı: şerit db satırlarını listeden çıkarıyorsa çip de
+			// onları saymamalı, yoksa "Problems 41" yazarken 39 satır
+			// gösterir ("Exceptions 0" yalanının aynadaki hâli).
 			if teamIsEmpty {
 				skippedCounts["problem"] = 0
-			} else if n, err := s.store.CountProblemsNotInStatuses(ctx,
-				pickExcludedStatuses(statusFilter), teamServices); err == nil {
-				skippedCounts["problem"] = int(n)
+			} else {
+				skippedCounts["problem"] = int(subjectCounts[subject])
 			}
 		}
 		probs = s.store.EnrichProblemsWithRunbooks(ctx, probs)
@@ -526,8 +565,14 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// ── Anomaly events ───────────────────────────────────────
 		// 24h window matches the Anomalies page default. ListAnomaly
 		// EventsByService isn't a thing — filter client-side.
+		//
+		// v0.9.1342 — db şeridinde HİÇ çekilmez. Anomaliler kindOn'a
+		// bakmayan "hep çekilen" kaynak (ucuz FINAL, zengin sayaç), ama
+		// bir anomali olayının öznesi HER ZAMAN bir servistir; db
+		// şeridinde çekmek iki sorguyu boşa harcayıp facet sayaçlarına
+		// o şeritte ASLA görünemeyecek türleri yazardı.
 		var evs []chstore.AnomalyEvent
-		if statusFilter != "ignored" {
+		if statusFilter != "ignored" && subject == inboxSubjectService {
 			var err error
 			// v0.9.335 — the "open" pivot keeps only ACTIVE events, so say so
 			// in SQL. Dropping cleared ones in Go after the LIMIT spent the
@@ -556,7 +601,9 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// v0.9.321 — the fourth source. Skipped on `ignored` for the same
 		// reason Problems and anomalies are: that pivot is exception-only
 		// (muting a group is a different verb from resolving an incident).
-		if statusFilter != "ignored" {
+		// v0.9.1342 — db şeridinde de atlanır (anomalilerle aynı gerekçe:
+		// incident'ın öznesi servistir).
+		if statusFilter != "ignored" && subject == inboxSubjectService {
 			incLimit := inboxEffectiveLimit(srcLimit, inboxIncStoreMax)
 			incs, err := s.store.ListIncidents(ctx, chstore.IncidentFilter{
 				NotStatuses: pickExcludedStatuses(statusFilter), Limit: incLimit,
@@ -753,6 +800,16 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			// Facet totals over the pre-facet, pre-cap set. The chips render
 			// from these, so they stay truthful about what is being excluded.
 			"counts": counts,
+			// v0.9.1342 — ŞERİT çipinin sayısı, `counts`tan AYRI alan.
+			// counts sözlüğü kind/prio anahtarlarıyla dolu; oraya "db"
+			// koymak iki farklı evreni tek haritada karıştırırdı ve
+			// okuyucu hangisini aldığını bilemezdi.
+			//
+			// Yalnız DB sayısı dönüyor: db şeridi tek kaynaklı olduğu için
+			// bu sayı TAM. Servis şeridi dört kaynaklı, tek bir COUNT ile
+			// dürüstçe ifade edilemez — o yüzden hiç iddia edilmiyor.
+			"dbSubjectCount": subjectCounts[inboxSubjectDB],
+			"subject":        subject,
 		}, nil
 	})
 }
@@ -909,7 +966,7 @@ func inboxSourceLimit(limit int, narrowed bool) int {
 // o okumayı öderdi. Katlama saf ve I/O'suz. Bedeli: aynı takımın iki
 // alias yazımı iki girdi üretir — içerikleri AYNI olduğu için bu bir
 // çapraz-zehirlenme (v0.5.187) değil, yalnız ufak bir tekrar.
-func inboxListKey(status, service, search, ownerTeam, sreTeam, team, env string, limit int, sortID, sortDir string, minOcc uint64, kinds, prios []string) string {
+func inboxListKey(status, service, search, ownerTeam, sreTeam, team, env string, limit int, sortID, sortDir string, minOcc uint64, kinds, prios []string, subject string) string {
 	// v0.9.330 — the facets join the key. They now decide WHICH rows come
 	// back, not just which of the returned ones render, so two operators on
 	// different facets sharing one cached page would be the v0.5.187
@@ -917,9 +974,17 @@ func inboxListKey(status, service, search, ownerTeam, sreTeam, team, env string,
 	// length-based digest is the exact bug that release fixed.
 	// :v6: — v0.9.487 forceNonExceptionP3 satır önceliklerini değiştirdi;
 	// eski cache'lenmiş sayfa yeni sözleşmeymiş gibi servis edilemez.
-	return fmt.Sprintf("inbox:v6:status=%s:svc=%s:q=%s:owner=%s:sre=%s:team=%s:env=%s:limit=%d:sort=%s:dir=%s:minOcc=%d:kind=%s:prio=%s",
+	// :v7: — v0.9.1342 gövdeye dbSubjectCount ekledi (şekil değişikliği).
+	//
+	// `subject` anahtara GİRMEK ZORUNDA ve `kind` onun yerine geçemez:
+	// db şeridi kinds'i ["problem"]e ZORLUYOR, yani servis şeridinde
+	// yalnız "Problems"ı seçen bir operatörle db şeridindeki operatör
+	// aynı kind dizisini üretir. Ayrı bir alan olmasaydı ikisi TEK cache
+	// girdisini paylaşır ve biri diğerinin satırlarını görürdü — v0.5.187
+	// çapraz-zehirlenmesinin birebir şekli.
+	return fmt.Sprintf("inbox:v7:status=%s:svc=%s:q=%s:owner=%s:sre=%s:team=%s:env=%s:limit=%d:sort=%s:dir=%s:minOcc=%d:kind=%s:prio=%s:subject=%s",
 		status, service, search, ownerTeam, sreTeam, chstore.NormTeamName(team), env, limit, sortID, sortDir, minOcc,
-		strings.Join(sortedCopyOf(kinds), "+"), strings.Join(sortedCopyOf(prios), "+"))
+		strings.Join(sortedCopyOf(kinds), "+"), strings.Join(sortedCopyOf(prios), "+"), subject)
 }
 
 // sortedCopyOf returns a sorted copy so the key is order-independent:
@@ -963,6 +1028,27 @@ func (s *Server) invalidateInboxCaches(r *http.Request) {
 // and the page then kept only exceptions out of those 300.
 var inboxKindsAll = []string{"problem", "exception", "httperror", "anomaly", "incident"}
 var inboxPriosAll = []string{"P1", "P2", "P3"}
+
+// v0.9.1342 — ÖZNE şeridi. `kind` (satırın kaynağı) ile KARIŞTIRILMAZ:
+// bu, satırın NEYİ anlattığı — bir servis mi, bir veritabanı örneği mi.
+// Değerler chstore.ProblemKind* ile aynı evren.
+const (
+	inboxSubjectService = "service"
+	inboxSubjectDB      = "db"
+)
+
+// normalizeInboxSubject — kapalı sözlük, varsayılan `service`.
+//
+// Bilinmeyen/boş değer için `service` döner (kuyruğun bugünkü hâli), db
+// DEĞİL: elle düzenlenmiş bir link operatörü tanımadığı bir şeride
+// düşürmemeli. normalizeInboxSet'in "bilinmeyen → tüm küme" duruşuyla
+// aynı gerekçe, tekil alan için yazılmış hâli.
+func normalizeInboxSubject(raw string) string {
+	if strings.TrimSpace(raw) == inboxSubjectDB {
+		return inboxSubjectDB
+	}
+	return inboxSubjectService
+}
 
 // normalizeInboxSet parses a comma-separated facet param against its
 // vocabulary. Absent, empty, or entirely-unknown → the full set, never an

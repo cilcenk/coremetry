@@ -1603,6 +1603,13 @@ export interface KibanaSettings {
 // merged queue never showed: an operator working from /inbox could miss an
 // open incident entirely while the sidebar's own /incidents badge counted it.
 export type InboxKind = 'problem' | 'exception' | 'httperror' | 'anomaly' | 'incident';
+/** v0.9.1342 — ÖZNE ŞERİDİ. `InboxKind` ile aynı şey DEĞİL:
+ *  InboxKind satırın KAYNAĞI, bu satırın NEYİ anlattığı. Ayrı bir tip
+ *  olması bilinçli — ikisi de string olsaydı derleyici karışıklığı
+ *  yakalayamazdı ve v0.9.1339 tam olarak o yüzden bir bug üretti.
+ *  `problemSubject.ts`'in `SubjectKind`i ile aynı evren; orası satır
+ *  SINIFLANDIRIR, bu URL/API şeridini adlandırır. */
+export type SubjectLane = 'service' | 'db';
 export interface InboxItem {
   id: string;             // composite "<kind>:<nativeId>"
   // Satırın KAYNAĞI: problem | exception | anomaly.
@@ -1615,7 +1622,7 @@ export interface InboxItem {
   severity: string;
   // Öznenin TÜRÜ (v0.9.1339): 'service' | 'db'. Boş/yok = service.
   // lib/problemSubject.ts subjectKind() ile sınıflandır.
-  subjectKind?: string;
+  subjectKind?: SubjectLane;
   service: string;
   title: string;
   description: string;

@@ -32,7 +32,10 @@ func TestKindFacetGatesExpensiveSources(t *testing.T) {
 	}
 	// Deselected kinds keep an EXACT chip via COUNT queries — the v0.9.330
 	// contract ("chips report what exists") without the fetch.
-	if !strings.Contains(src, `skippedCounts["problem"] = int(n)`) ||
+	// v0.9.1342 — problems çipinin sayısı artık ŞERİDE göre okunuyor
+	// (subjectCounts[subject]). COUNT yolu aynı, saydığı evren daraldı:
+	// şerit db satırlarını listeden çıkarıyorsa çip de onları saymamalı.
+	if !strings.Contains(src, `skippedCounts["problem"] = int(subjectCounts[subject])`) ||
 		!strings.Contains(src, `skippedCounts["exception"] = int(n)`) ||
 		!strings.Contains(src, `skippedCounts["httperror"] = int(n)`) {
 		t.Error("skipped kinds must still get chip counts from the cheap COUNT path — a zero chip would reintroduce the v0.9.330 'Exceptions 0' lie")
@@ -51,5 +54,22 @@ func TestKindFacetGatesExpensiveSources(t *testing.T) {
 	// same COUNT-query treatment.
 	if strings.Contains(src, `kindOn["anomaly"]`) || strings.Contains(src, `kindOn["incident"]`) {
 		t.Error("anomalies/incidents were gated without moving their chip counts to the COUNT path")
+	}
+
+	// v0.9.1342 — ama ÖZNE ŞERİDİ onları kapatıyor, ve bu AYRI BİR
+	// YAZILIŞ: yukarıdaki kapı `kindOn[...]` arıyor, `subject ==
+	// inboxSubjectService` ona GÖRÜNMEZ. Tek-yazım kör noktası
+	// (v0.9.1285/1286 sınıfı) — kapı burada AÇIKÇA genişletiliyor,
+	// yoksa ikinci bir kapatma sessizce eklenebilirdi.
+	//
+	// Sayaç dürüstlüğü BOZULMUYOR ve bu bir iddia değil, yapısal: bir
+	// anomali olayının ya da incident'ın öznesi HER ZAMAN bir servistir
+	// (kind kolonları yok). db şeridinde çekilselerdi de o şeritte SIFIR
+	// satır üretirlerdi — yani atlamak sayıyı değiştirmiyor, yalnız iki
+	// gereksiz sorguyu kaldırıyor.
+	const subjectGate = `if statusFilter != "ignored" && subject == inboxSubjectService {`
+	if n := strings.Count(src, subjectGate); n != 2 {
+		t.Errorf("özne şerit kapısı %d kaynakta var, 2 bekleniyordu (anomaliler + incident'lar) — "+
+			"db şeridi servis özneli satırlar çekip atardı", n)
 	}
 }

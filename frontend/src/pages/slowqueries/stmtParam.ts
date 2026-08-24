@@ -51,7 +51,7 @@ export function encodeStmtParam(ref: StmtRef): string {
  * Yavaş-sorgu kataloğunun rotası. App.tsx'teki `<Route path=…>` ile
  * BİREBİR aynı olmak zorunda — stmtParam.test.ts orayı okuyup pinler.
  */
-export const STMT_DETAIL_PATH = '/databases/slow-queries';
+export const STMT_DETAIL_PATH = '/databases/statement';
 
 export function stmtDetailHref(
   ref: { hash?: string; system?: string },

@@ -45,6 +45,7 @@ const Hosts             = lazy(() => import('./pages/Hosts'));
 const Clusters          = lazy(() => import('./pages/Clusters'));
 const Pod               = lazy(() => import('./pages/Pod'));
 const SlowQueries       = lazy(() => import('./pages/SlowQueries'));
+const StatementDetail   = lazy(() => import('./pages/StatementDetail'));
 const Messaging         = lazy(() => import('./pages/Messaging'));
 const Dashboards        = lazy(() => import('./pages/Dashboards'));
 const Dashboard         = lazy(() => import('./pages/Dashboard'));
@@ -148,6 +149,7 @@ export default function App() {
             <Route path="/database"       element={<DatabaseDetail />} />
             <Route path="/deploys"        element={<Deploys />} />
             <Route path="/databases/slow-queries" element={<SlowQueries />} />
+            <Route path="/databases/statement" element={<StatementDetail />} />
             <Route path="/external"       element={<External />} />
             <Route path="/hosts"          element={<Hosts />} />
             <Route path="/clusters"       element={<Clusters />} />

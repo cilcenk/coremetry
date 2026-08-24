@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { navHref } from '@/lib/navHref';
 import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
@@ -8,8 +8,8 @@ import { api } from '@/lib/api';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { timeRangeToNs } from '@/lib/utils';
-import { StmtDetailDrawer } from '@/pages/slowqueries/StmtDetailDrawer';
-import { decodeStmtParam, encodeStmtParam } from '@/pages/slowqueries/stmtParam';
+import { stmtDetailHref } from '@/pages/slowqueries/stmtParam';
+import { useStmtParamRedirect } from '@/pages/slowqueries/useStmtParamRedirect';
 import { parseDatabasePageRef } from '@/pages/databases/databaseParam';
 import {
   DatabaseIdentityHeader, DatabaseSignalStrip, DatabaseTrendCards,
@@ -61,7 +61,8 @@ import { PageShell } from '@/components/ui/PageShell';
 // anda AÇILAMAZ; bölümler yine de kabuk hakkında hiçbir şey bilmiyor ki
 // gerekirse iki ayrı kabuğa sarılabilsinler.
 export default function DatabaseDetailPage() {
-  const [params, setParams] = useSearchParams();
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
   const search = params.toString();
   const refObj = useMemo(() => parseDatabasePageRef(search), [search]);
   const [env] = useUrlEnv();
@@ -108,24 +109,13 @@ export default function DatabaseDetailPage() {
     staleTime: 30_000,
   });
 
-  const stmtRef = useMemo(() => decodeStmtParam(params.get('stmt')), [params]);
-  const stmtRow = useMemo(
-    () => (stmtsQ.data ?? []).find(r => r.stmtHash === stmtRef?.hash),
-    [stmtsQ.data, stmtRef]);
+  // Eski `?stmt=` linkleri (yer imi / paylaşılmış URL) sayfaya taşınır.
+  useStmtParamRedirect(range);
+  // v0.9.1374 — çekmece emekli, satır tıklaması sayfaya gidiyor.
   const openStmt = (r: SlowQueryRow) => {
-    if (!r.stmtHash) return;
-    setParams(prev => {
-      const next = new URLSearchParams(prev);
-      next.set('stmt', encodeStmtParam({ hash: r.stmtHash!, system: r.dbSystem }));
-      return next;
-    }, { replace: true });
+    const href = stmtDetailHref({ hash: r.stmtHash, system: r.dbSystem }, range);
+    if (href) navigate(href);
   };
-  const closeStmt = () => setParams(prev => {
-    const next = new URLSearchParams(prev);
-    next.delete('stmt');
-    next.delete('stmtcmp');
-    return next;
-  }, { replace: true });
 
   if (!refObj) {
     return (
@@ -210,14 +200,6 @@ export default function DatabaseDetailPage() {
           </>
         )}
 
-        {stmtRef && (
-          <StmtDetailDrawer
-            refObj={stmtRef}
-            row={stmtRow}
-            range={range}
-            onClose={closeStmt}
-          />
-        )}
       </PageShell>
     </>
   );

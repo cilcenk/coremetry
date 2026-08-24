@@ -74,17 +74,22 @@ describe('ResetLayoutButton adoption', () => {
     // Users v0.9.660'ta aynı çıkmazın ölçüldüğü yer.
     expect(binds).toContain(join('pages', 'Inbox.tsx'));
     expect(binds).toContain(join('pages', 'Users.tsx'));
+    // v0.9.1333 — operatör "Exceptions sayfasına da aynı gözle bak" dedi;
+    // sidebar Exceptions → /problems → features/anomalies/ProblemsSection.
+    // Aynı çıkmaz oradaydı (888px sabit bütçe + esnek `rule`, buton yok).
+    expect(binds).toContain(join('features', 'anomalies', 'ProblemsSection.tsx'));
   });
 
   it('kalan boşluk SESLİ — süpürülmemiş tablo sayısı kayıtlı', () => {
     const { uses, binds } = consumers();
     const gap = uses.length - binds.length;
     // v0.9.1332 ölçümü: 75 kullanıcı / 2 bağlayan → 73 açık.
+    // v0.9.1333: ProblemsSection bağlandı → 72.
     //
     // Bu rakam bir HEDEF değil, bir MUHASEBE. Düştüyse süpürme ilerledi:
     // sayıyı güncelle. ARTTIYSA yeni bir tabloya geri dönüşü olmayan bir
     // sürükleme çıkmazı eklenmiş: butonu bağla, sayıyı güncelleme.
-    expect(gap).toBeLessThanOrEqual(73);
+    expect(gap).toBeLessThanOrEqual(72);
     // Sağlık kontrolü: yürüyüş gerçekten dosya buluyor. Sıfır dönen bir
     // tarayıcı bu testi sessizce yeşil yapardı (boş küme tuzağı).
     expect(uses.length).toBeGreaterThan(50);

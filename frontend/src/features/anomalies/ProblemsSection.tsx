@@ -36,7 +36,7 @@ import { teamOptionsCI } from '@/lib/teamOptions';
 import { getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import { decodeCsvSet, encodeCsvSet } from '@/lib/inboxUrl';
 import { useUrlEnv } from '@/lib/useUrlEnv';
-import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
+import { useDataTable, DataTableColgroup, DataTableHead, ResetLayoutButton } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { Problem } from '@/lib/types';
 import { AlertProblemDetail } from './ProblemDetail';
@@ -536,6 +536,26 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
             }}>
             {bulkBusy ? 'Acknowledging…' : 'Acknowledge'}
           </Button>
+        </div>
+      )}
+      {/* v0.9.1333 — /inbox'ta v0.9.1332 ile kapatılan çıkmazın İKİZİ.
+          Operatör "Exceptions sayfasına da aynı gözle bak" dedi ve sayfa
+          bu (sidebar Exceptions → /problems → burası).
+
+          Aynı primitif, aynı tuzak: sürüklenmiş kolon genişlikleri
+          localStorage'da kalıcı (dt.<key>.widths) ve columnLayoutSig
+          onları yalnız BEYAN EDİLEN bir genişlik değişince atıyor. Tabloyu
+          taşıran bir sürüklemenin geri dönüşü yok. Sabit bütçe burada
+          888px (28+90+90+170+150+110+150+100) + esnek `rule`.
+
+          Kap koşullu: ResetLayoutButton kalıcı genişlik yoksa null
+          döndürüyor, ama sarmalayıcı div koşulsuz olsa boş bir satır
+          6px ölü boşluk bırakırdı. Yüklem butonun içindekiyle aynı ve
+          bilinçli olarak tekrarlanıyor — alternatifi primitife bir
+          sarmalayıcı bileşen eklemek ve 75 dosyayı göç ettirmek. */}
+      {sorted && sorted.length > 0 && Object.keys(dt.colWidths).length > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+          <ResetLayoutButton dt={dt} />
         </div>
       )}
       {sorted && sorted.length > 0 && (

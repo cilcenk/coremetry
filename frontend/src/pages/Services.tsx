@@ -19,7 +19,7 @@ import {
 import { useAllServiceRuntimes, useServicesMetadata } from '@/lib/queries';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
-import { fmtNum, fmtFixed, timeRangeToNs, rowClickHandlers, tsLong, agoTR } from '@/lib/utils';
+import { fmtNum, fmtFixed, timeRangeToNs, rowClickHandlers, tsLong, fmtAgoNs } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
@@ -738,7 +738,7 @@ export default function ServicesPage() {
                       <td className="mono" style={{ textAlign: 'right' }}>
                         <ApdexBadge value={agg.apdex} />
                       </td>
-                      {/* Son görülme — sayfa toplamının yaşam döngüsü yok. */}
+                      {/* Last seen — sayfa toplamının yaşam döngüsü yok. */}
                       <td />
                     </tr>
                   )}
@@ -853,19 +853,21 @@ export default function ServicesPage() {
                         <td className="mono" style={{ textAlign: 'right' }}>
                           <ApdexBadge value={s.apdex} />
                         </td>
-                        {/* v0.9.1317 — service_seen MV'sinden Son görülme.
-                            firstSeen YOKSA "bilinmiyor" yazar: MV yalnız
+                        {/* v0.9.1317 — service_seen MV'sinden "Last seen".
+                            firstSeen YOKSA "unknown" yazar: MV yalnız
                             ileri doldurduğu için henüz doğumunu görmediği
                             servisler var, ve backend o durumda alanı hiç
-                            göndermiyor — burada uydurulacak bir tarih yok. */}
+                            göndermiyor — burada uydurulacak bir tarih yok.
+                            v0.9.1329 — başlık+gövde İngilizceye alındı
+                            (sayfanın diğer yedi başlığıyla tutarlılık). */}
                         <td className="mono" style={{ textAlign: 'right' }}>
                           {s.lastSeen
-                            ? <span title={`Son görülme: ${tsLong(s.lastSeen)}\nİlk görülme: ${
-                                s.firstSeen ? tsLong(s.firstSeen) : 'bilinmiyor (bu servis, kayıt başlamadan önce de çalışıyordu)'}`}>
-                                {agoTR(s.lastSeen)}
+                            ? <span title={`Last seen: ${tsLong(s.lastSeen)}\nFirst seen: ${
+                                s.firstSeen ? tsLong(s.firstSeen) : 'unknown (this service was already running before we started recording)'}`}>
+                                {fmtAgoNs(s.lastSeen)}
                               </span>
                             : <span style={{ color: 'var(--text3)' }}
-                                title="Yaşam döngüsü kaydı henüz yok — service_seen MV'si bu servisi ilk span'ından itibaren doldurur">—</span>}
+                                title="No lifecycle record yet — the service_seen MV fills in from a service's first span onward">—</span>}
                         </td>
                       </tr>
                     );

@@ -10,6 +10,7 @@ import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, DBDetail, MessagingDetail, SpanMetricSeries, DBOpStat } from '@/lib/types';
 import { Stat } from './panels/shared';
 import { serviceHref } from '@/lib/serviceHref';
+import { traceHref } from '@/lib/traceHref';
 import { OraclePanel } from './panels/OraclePanel';
 import { PostgresPanel } from './panels/PostgresPanel';
 import { MySQLPanel } from './panels/MySQLPanel';
@@ -363,7 +364,7 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
               </span>
               {e2e.slowestConsumerTraceId && (
                 <Link
-                  to={`/trace?id=${encodeURIComponent(e2e.slowestConsumerTraceId)}`}
+                  to={traceHref(e2e.slowestConsumerTraceId, { pageRange: range })}
                   title={e2e.slowestProducerTraceId
                     ? `Slowest correlated pair — opens the consumer's trace (producer trace ${e2e.slowestProducerTraceId})`
                     : "Slowest correlated pair — opens the consumer's trace"}

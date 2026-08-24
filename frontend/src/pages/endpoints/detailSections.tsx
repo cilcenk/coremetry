@@ -19,6 +19,7 @@ const FAILING_TRACE_COLS: DataTableColumn<EndpointFailingTrace>[] = [
 ];
 import { trimHistogram, type EndpointRef } from './endpointParam';
 import { serviceHref } from '@/lib/serviceHref';
+import { traceHref } from '@/lib/traceHref';
 
 // detailSections — the /endpoint page's body (v0.9.839).
 //
@@ -268,14 +269,14 @@ export function FailingTracesSection({ detail }: { detail: EndpointDetail }) {
         (ex?.slowTraceId || ex?.errorTraceId) ? (
           <span style={{ fontSize: 11 }}>
             {ex?.slowTraceId && (
-              <Link to={`/trace?id=${encodeURIComponent(ex.slowTraceId)}`}
+              <Link to={traceHref(ex.slowTraceId)}
                 style={{ color: 'var(--warn)', marginRight: 10 }}
                 title="Slowest trace in the window (metrics-rollup exemplar)">
                 ⚡ slowest trace →
               </Link>
             )}
             {ex?.errorTraceId && (
-              <Link to={`/trace?id=${encodeURIComponent(ex.errorTraceId)}`}
+              <Link to={traceHref(ex.errorTraceId)}
                 style={{ color: 'var(--err)' }}
                 title="Slowest ERRORED trace in the window (metrics-rollup exemplar)">
                 ✖ worst error →
@@ -303,7 +304,7 @@ export function FailingTracesSection({ detail }: { detail: EndpointDetail }) {
                     {tsLong(t.timeNs)}
                   </td>
                   <td>
-                    <Link to={`/trace?id=${encodeURIComponent(t.traceId)}`}
+                    <Link to={traceHref(t.traceId)}
                       className="mono" style={{ fontSize: 11, color: 'var(--accent2)' }}
                       title={`Open trace ${t.traceId}`}>
                       {t.traceId.slice(0, 16)}… →

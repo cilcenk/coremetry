@@ -12,6 +12,7 @@ import type { TimeRange, SlowQueryRow, DBStmtDetail, DBStmtCaller } from '@/lib/
 import { densifyTrend, type StmtRef } from './stmtParam';
 import { serviceHref } from '@/lib/serviceHref';
 import { repeatsExploreHref } from '@/lib/pivotHref';
+import { traceHref } from '@/lib/traceHref';
 
 // StmtDetailDrawer — v0.8.378 (Stage-2 slice D2). Row click on
 // /slow-queries opens this right-side drawer (shell mirrors the
@@ -397,14 +398,14 @@ function ExemplarsSection({ detail, range }: { detail: DBStmtDetail; range: Time
       <div style={{ display: 'flex', gap: 16, fontSize: 12, flexWrap: 'wrap',
         marginTop: ex ? 0 : 8 }}>
         {ex?.slowTraceId && (
-          <Link to={`/trace?id=${encodeURIComponent(ex.slowTraceId)}`}
+          <Link to={traceHref(ex.slowTraceId, { pageRange: range })}
             style={{ color: 'var(--accent2)' }}
             title={`Slowest span of this statement class in the window (trace ${ex.slowTraceId})`}>
             slowest →
           </Link>
         )}
         {ex?.errorTraceId && (
-          <Link to={`/trace?id=${encodeURIComponent(ex.errorTraceId)}`}
+          <Link to={traceHref(ex.errorTraceId, { pageRange: range })}
             style={{ color: 'var(--err)' }}
             title={`Slowest ERRORED span of this statement class in the window (trace ${ex.errorTraceId})`}>
             worst error →

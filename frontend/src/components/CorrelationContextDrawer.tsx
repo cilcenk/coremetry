@@ -9,6 +9,7 @@ import { TraceLogList, severityBuckets } from '@/components/traces/TraceLogList'
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
 import { logsHref } from '@/lib/logsUrl';
+import { traceHref } from '@/lib/traceHref';
 import { servicePivotHref } from '@/pages/explore/urlCodec';
 import type {
   PivotAnchor,
@@ -269,7 +270,7 @@ function TraceLens({ ctx }: { ctx: CorrelationContext; onReAnchor: (a: PivotAnch
       title="Trace"
       right={
         t ? (
-          <Link to={`/trace?id=${t.traceId}`} style={{ fontSize: 11, color: 'var(--accent2)' }}>
+          <Link to={traceHref(t.traceId)} style={{ fontSize: 11, color: 'var(--accent2)' }}>
             Open full trace →
           </Link>
         ) : undefined

@@ -252,11 +252,14 @@ export function DatabaseTrendCards({ trend, pending, xRange }: {
  * Üstelik satır MV'den geliyor (`db_caller_summary_5m`) — tahmin değil,
  * ölçüm; yeni sorgu yok, ham `spans` yok, G6'ya dokunulmuyor.
  *
- * ⚠ `Impact` BURADA İSTEMCİ HESABI (satırın payı, sayfadaki toplama göre);
- * `endpoints/detailSections.tsx:572`de aynı başlık SUNUCUDAN gelen
- * `sharePct`. Aynı kelime iki ayrı büyüklük — dört `CallersTable`
- * nüshasının tek gövdeye inmesi bu yüzden bir mockup kararı, mekanik bir
- * birleştirme değil.
+ * ⚠ Zaman payı BURADA İSTEMCİ HESABI (satırın payı, YÜKLENMİŞ satırların
+ * toplamına göre); endpoints tarafında aynı kolon SUNUCUDAN gelen
+ * `sharePct` ve paydası rotanın kendi toplamı. v0.9.1376'ya dek ikisinin
+ * de başlığı `Impact`ti — aynı kelime iki ayrı büyüklüğün üstünde ve
+ * hiçbirinin hangi büyüklük olduğunu söylemeden. Şimdi ikisi de `Time %`
+ * ve PAYDALARI hücre başlıklarında yazılı; dört `CallersTable` nüshasının
+ * tek gövdeye inmesi yine de bir mockup kararı, mekanik birleştirme
+ * değil.
  */
 export function DatabaseCallersSection({ callers, range, env }: {
   callers: DBCallerBreakdown[];
@@ -276,7 +279,7 @@ export function DatabaseCallersSection({ callers, range, env }: {
     initialSort: { id: 'impact', dir: 'desc' },
   });
   return (
-    <Card header={<PanelTitle sub="service · pod, by impact">Who calls this</PanelTitle>}>
+    <Card header={<PanelTitle sub="service · pod, by time share">Who calls this</PanelTitle>}>
       {callers.length === 0 ? (
         <Empty icon="↘" title="No caller in this window">
           No application span reached this database in the selected range —
@@ -330,7 +333,8 @@ export function DatabaseCallersSection({ callers, range, env }: {
                         ? <span style={{ color: 'var(--text3)' }}>—</span>
                         : `${c.p95DurationMs.toFixed(1)} ms`}
                     </td>
-                    <td className="num mono">
+                    <td className="num mono"
+                      title={`Bu çağıranın duvar-saati payı (çağrı × ortalama).\n\nPAYDA YÜKLENMİŞ SATIRLAR: yüzdeler bu tablodaki çağıranların toplamına göre, veritabanının tüm trafiğine göre DEĞİL. Satır sayısı değişirse her yüzde değişir.`}>
                       {total > 0 ? `${((impact / total) * 100).toFixed(1)}%` : '—'}
                     </td>
                   </tr>
@@ -493,7 +497,11 @@ const CALLER_COLS: DataTableColumn<DBCallerBreakdown>[] = [
   { id: 'calls',   label: 'Calls',      sortValue: r => r.spanCount,      numeric: true, width: 80 },
   { id: 'errRate', label: 'Err %',      sortValue: r => r.errorRate,      numeric: true, width: 76 },
   { id: 'p95',     label: 'P95',        sortValue: r => r.p95DurationMs ?? 0, numeric: true, width: 82 },
-  { id: 'impact',  label: 'Impact',     sortValue: r => r.spanCount * r.avgDurationMs, numeric: true, width: 80 },
+  // v0.9.1376 — 'Impact' → 'Time %'. Eski başlık hangi büyüklüğü
+  // gösterdiğini SÖYLEMİYORDU ve aynı kelime endpoints'te BAŞKA bir
+  // sayının üstünde duruyordu. Hücre zaten yüzde basıyor
+  // (impact / total × 100); değer DEĞİŞMEDİ, yalnız adı doğru oldu.
+  { id: 'impact',  label: 'Time %',     sortValue: r => r.spanCount * r.avgDurationMs, numeric: true, width: 80 },
 ];
 
 /** trendSeries — one DBTrend's buckets into the three CorePanel series.

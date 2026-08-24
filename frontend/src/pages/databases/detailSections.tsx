@@ -1,7 +1,7 @@
 import { lazy, Suspense, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Turtle } from 'lucide-react';
-import { Card, PanelTitle } from '@/components/ui';
+import { Card, PanelTitle, StatTile } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { QueryError } from '@/components/QueryError';
 import { TableSkeleton } from '@/components/Skeleton';
@@ -153,20 +153,23 @@ export function DatabaseSignalStrip({ d }: { d: DBDetail }) {
       display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(104px, 1fr))',
       gap: 8, marginBottom: 14,
     }}>
-      <Stat label="Calls" value={fmtNum(d.spanCount)} />
-      <Stat label="Errors" value={fmtNum(d.errorCount)} />
-      <Stat label="Err rate" value={`${d.errorRate.toFixed(2)}%`}
-        tone={d.errorRate > 5 ? 'err' : d.errorRate > 0 ? 'warn' : undefined} />
-      <Stat label="Avg" value={`${d.avgDurationMs.toFixed(1)} ms`} />
-      <Stat label="P50" value={msOrDash(d.p50DurationMs)} />
-      <Stat label="P95" value={msOrDash(d.p95DurationMs)} />
-      <Stat label="P99" value={`${d.p99DurationMs.toFixed(1)} ms`} />
+      <StatTile label="Calls">{fmtNum(d.spanCount)}</StatTile>
+      <StatTile label="Errors">{fmtNum(d.errorCount)}</StatTile>
+      <StatTile label="Err rate"
+        tone={d.errorRate > 5 ? 'err' : d.errorRate > 0 ? 'warn' : undefined}>
+        {`${d.errorRate.toFixed(2)}%`}
+      </StatTile>
+      <StatTile label="Avg">{`${d.avgDurationMs.toFixed(1)} ms`}</StatTile>
+      <StatTile label="P50">{msOrDash(d.p50DurationMs)}</StatTile>
+      <StatTile label="P95">{msOrDash(d.p95DurationMs)}</StatTile>
+      <StatTile label="P99">{`${d.p99DurationMs.toFixed(1)} ms`}</StatTile>
       {/* Total time — the mockup's extra tile, and the number
           that actually ranks a database against its siblings:
           calls × avg is the wall-clock this DB cost the fleet
           inside the window. */}
-      <Stat label="Total time"
-        value={fmtTotal(d.spanCount * d.avgDurationMs)} />
+      <StatTile label="Total time">
+        {fmtTotal(d.spanCount * d.avgDurationMs)}
+      </StatTile>
     </div>
   );
 }
@@ -526,22 +529,4 @@ function fmtTotal(ms: number): string {
   return `${(ms / 3_600_000).toFixed(1)} h`;
 }
 
-function Stat({ label, value, tone }: {
-  label: string; value: string; tone?: 'warn' | 'err';
-}) {
-  return (
-    <div style={{
-      padding: '8px 10px', border: '1px solid var(--border)',
-      borderRadius: 6, background: 'var(--bg1)', minWidth: 0,
-    }}>
-      <div style={{
-        fontSize: 10, color: 'var(--text3)', marginBottom: 2,
-        textTransform: 'uppercase', letterSpacing: 0.4,
-      }}>{label}</div>
-      <div className="mono" style={{
-        fontSize: 15, fontWeight: 600,
-        color: tone === 'err' ? 'var(--err)' : tone === 'warn' ? 'var(--warn)' : 'var(--text)',
-      }}>{value}</div>
-    </div>
-  );
-}
+

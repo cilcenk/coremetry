@@ -29,6 +29,9 @@ export type { DisclosureButtonProps } from './DisclosureButton';
 export { Card } from './Card';
 export type { CardProps } from './Card';
 
+export { StatTile } from './StatTile';
+export type { StatTileProps } from './StatTile';
+
 export { Badge } from './Badge';
 export type { BadgeProps, Tone } from './Badge';
 

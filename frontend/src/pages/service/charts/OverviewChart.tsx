@@ -19,6 +19,7 @@ import {
 } from '@/lib/chart/legendVisibility';
 import { drawThresholds, drawTimeRegions, type ChartThreshold, type ChartTimeRegion } from '@/lib/chart/overlays';
 import { placeTooltip } from '@/lib/chartTooltip';
+import { escapeHTML } from '@/lib/utils';
 
 // OverviewChart (v0.7.94) — the compact RED chart for the Service Overview.
 // A purpose-built uPlot wrapper matching the design handoff: ~150px, clean
@@ -348,7 +349,7 @@ export function OverviewChart({
             const stepSec = xs.length > 1 ? Math.abs(xs[1] - xs[0]) : undefined;
             const ts = fmtTooltipTime(tSec, stepSec);
             tt.innerHTML = `<div class="ov-tt-t">${ts}</div>` + rows.map(r =>
-              `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${r.color}"></i>${r.label}</span><b>${r.text}</b></div>`,
+              `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${escapeHTML(r.color)}"></i>${escapeHTML(r.label)}</span><b>${escapeHTML(r.text)}</b></div>`,
             ).join('');
             tt.style.display = 'block';
             // placeTooltip: flip/clamp so the panel never sits under the cursor

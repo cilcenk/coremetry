@@ -17,6 +17,7 @@ import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/toolti
 import { toggleSeriesVisibility, isolateSeriesVisibility, resetSeriesVisibility } from '@/lib/chart/legendVisibility';
 import { drawThresholds, drawTimeRegions, type ChartThreshold, type ChartTimeRegion } from '@/lib/chart/overlays';
 import { placeTooltip } from '@/lib/chartTooltip';
+import { escapeHTML } from '@/lib/utils';
 
 // TimeChart (v0.8.91) — the ONE time-series primitive. Per-series type
 // (bar | line | area), an optional right (dual) axis, drag-to-brush, deploy
@@ -364,7 +365,7 @@ export function TimeChart({
           })));
           if (rows.length === 0) { tt.style.display = 'none'; return; }
           tt.innerHTML = `<div class="ov-tt-t">${ts}</div>` + rows.map(r =>
-            `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${r.color}"></i>${r.label}</span><b>${r.text}</b></div>`,
+            `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${escapeHTML(r.color)}"></i>${escapeHTML(r.label)}</span><b>${escapeHTML(r.text)}</b></div>`,
           ).join('');
           tt.style.display = 'block';
           // placeTooltip flip/clamp (MLC/TSP parity) — host is the uPlot mount.

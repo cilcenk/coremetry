@@ -13,6 +13,7 @@ import {
 } from '@/lib/queries';
 import { api } from '@/lib/api';
 import type { AlertRule } from '@/lib/types';
+import { logsHref } from '@/lib/logsUrl';
 import {
   METRICS, COMPARATORS, SEVERITIES, WINDOWS, emptyDraft, TEMPLATES,
   type UserPreset,
@@ -684,7 +685,7 @@ export default function AlertsPage() {
                     <td><div className="cell-actions end">
                       {isWatcher && (
                         <Link className="sec"
-                          to={`/logs?q=${encodeURIComponent(r.logQuery || '')}`}
+                          to={logsHref({ window: null, q: r.logQuery || '' })}
                           title="Open the saved log search in /logs"
                           style={{ textDecoration: 'none' }}>
                           ↗ logs

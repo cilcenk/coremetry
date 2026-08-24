@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { encodeRange } from '@/lib/urlState';
+import { logsHref } from '@/lib/logsUrl';
 import { timeRangeToNs, fmtNum, isMessagingDep } from '@/lib/utils';
 import type { TimeRange, LogRow, ServiceMap } from '@/lib/types';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -207,7 +208,7 @@ export function ServiceLogsTab({ service, range, windowNs, onZoom, onZoomReset }
           </span>
         ))}
         <Link className="ov-sub" style={{ marginLeft: 'auto' }}
-          to={`/logs?service=${encodeURIComponent(service)}&range=${rangeParam}`}>Open in Logs →</Link>
+          to={logsHref({ window: rangeParam, service })}>Open in Logs →</Link>
       </div>
 
       {/* Volume histogram — full service volume, stacked by level */}

@@ -251,6 +251,18 @@ type Store struct {
 	// boot'ta probe true okur (ddl_defer.go'nun bilinçli sonucu).
 	hasProblemCmpCol bool
 
+	// hasProblemKindCol — `problems` tablosunda kind kolonu var mı
+	// (v0.9.1338). hasProblemCmpCol ile BİREBİR aynı sınıf ve aynı iki-boot
+	// gerçeği: kolonu ekleyen boot DDL'i arka plana ertelediği için burayı
+	// false okur.
+	//
+	// false hâlinin GÜVENLİ yönü: SELECT/INSERT kolonu atlar, Kind boş
+	// scan edilir ve scanProblemRow onu ProblemKindService'e normalize eder
+	// — yani o boot boyunca ürün bugünkü davranışın birebir aynısını
+	// gösterir (db özneli satır da servis özneli görünür, bugünkü hâl).
+	// Kolon inince bir sonraki boot true okur.
+	hasProblemKindCol bool
+
 	// hasTopoClusterCol — `topology_edges_5m` üstünde queue düğümünün
 	// messaging cluster'ını taşıyan `cluster` kolonu var mı (v0.9.1025).
 	// hasProblemCmpCol ile aynı sınıf ve aynı iki-boot gerçeği: küme
@@ -2389,6 +2401,24 @@ func (s *Store) migrate(ctx context.Context) error {
 		// sınıfındaki _local tehlikesi yok. hasProblemCmpCol probe'u yine de
 		// SELECT/INSERT listelerini dürüst tutuyor (v0.9.614 erteleme).
 		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS comparator LowCardinality(String) DEFAULT ''`,
+		// v0.9.1338 (entity-model Faz 4b) — problemin ÖZNESİ hangi varlık
+		// TÜRÜ. Bugüne dek `service` kolonu sorgusuz bir servis adı sayılıyordu
+		// ve bu YANLIŞTI: db_capacity.go v0.9.402'den beri oraya bir receiver
+		// INSTANCE adı (`corebank-scan.prod`) yazıyor, yani /inbox o satıra
+		// hiçbir şeyle eşleşmeyen bir `/service?name=` linki kuruyordu.
+		//
+		// DEFAULT 'service' BİLİNÇLİ (boş sentinel DEĞİL): var olan 4800+
+		// satır ve — küme kipinde kolonu EKLEYEN boot'un probe'u false
+		// okuduğu için — o boot boyunca yazılan HER satır bugünkü anlamı
+		// birebir korur. "Çözülmemiş dal bayt-bayt bugünküyle aynı" kırmızı
+		// çizgisi tam olarak buradan geçiyor.
+		//
+		// ORDER BY DIŞINDA: dedup anahtarı `id` olarak KALIYOR (varlık
+		// kimliği hiçbir ORDER BY / shard / cache anahtarına girmez —
+		// entity-model §7.4 kırmızı çizgisi). LowCardinality çünkü evren iki
+		// dizgi. `problems` Coremetry'nin kendi state tablosu, dış Distributed
+		// wrapper değil — comparator ALTER'ıyla birebir aynı sınıf.
+		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS kind LowCardinality(String) DEFAULT 'service'`,
 		// v0.9.415 — P1 exception gruplarına proaktif kök-sebep özeti
 		// (ExceptionExplainer, problems ai_summary'nin exception ikizi).
 		`ALTER TABLE exception_groups ADD COLUMN IF NOT EXISTS ai_summary String DEFAULT ''`,
@@ -2748,6 +2778,20 @@ func (s *Store) migrate(ctx context.Context) error {
 	s.hasProblemCmpCol = cmpErr == nil
 	if !s.hasProblemCmpCol {
 		log.Printf("[chstore] `comparator` column not present on problems (%v) — INSERT/SELECT omit it; priority ratio-flip stays OFF (safe direction, no false P1s)", cmpErr)
+	}
+
+	// kind probe (v0.9.1338) — comparator ile birebir aynı şekil. AYRI bir
+	// probe, comparator'a bindirilmedi: iki kolon FARKLI sürümlerde eklendi,
+	// yani prod'da comparator'ı olup kind'ı olmayan bir tablo TAMAMEN
+	// olağan bir ara durum. Tek probe onları birbirine bağlasaydı kind'ın
+	// yokluğu comparator'ı da kapatır ve öncelik hesabını sessizce geri
+	// alırdı (rca_verdicts'in çift-kolon tek-probe'u ancak İKİ kolon AYNI
+	// ALTER turunda gittiği için meşru).
+	kindRows, kindErr := s.conn.Query(ctx, `SELECT kind FROM problems LIMIT 1 SETTINGS max_execution_time = 3`)
+	maybeCloseRows(kindRows, kindErr)
+	s.hasProblemKindCol = kindErr == nil
+	if !s.hasProblemKindCol {
+		log.Printf("[chstore] `kind` column not present on problems (%v) — INSERT/SELECT omit it; every problem reads back as kind=service, i.e. exactly the pre-v0.9.1338 behaviour", kindErr)
 	}
 
 	// topology_edges_5m.cluster probe (v0.9.1025) — comparator ile birebir

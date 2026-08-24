@@ -74,13 +74,52 @@ type AlertRule struct {
 	CreatedAt   int64  `json:"createdAt"` // unix nanoseconds
 }
 
+// Problem ÖZNE TÜRLERİ (v0.9.1338, entity-model Faz 4b).
+//
+// `service` kolonu bugüne dek sorgusuz bir SERVİS ADI sayılıyordu ve bu
+// hiçbir zaman doğru olmadı: db_capacity.go v0.9.402'den beri oraya bir
+// receiver instance adı (`corebank-scan.prod`), monitor/runner.go ise
+// monitor ADINI yazıyor. Otuz küsur okuma yolu o değeri servis sanıp
+// çıkmaz link kuruyor ya da boş kova gösteriyor — hata değil CEVAPSIZLIK.
+// Kind o soruyu YAPISAL olarak cevaplıyor.
+const (
+	// ProblemKindService — özne bir servis. VARSAYILAN: CH kolonu
+	// `DEFAULT 'service'`, boş değer de buraya normalize edilir, yani
+	// 18 üreticinin 17'si ve tüm geçmiş satırlar bugünkü anlamını
+	// birebir korur.
+	ProblemKindService = "service"
+	// ProblemKindDB — özne bir veritabanı örneği; `service` kolonu
+	// DBSubjectID biçiminde (`db:<system>@<instance>`).
+	ProblemKindDB = "db"
+)
+
+// ProblemSubjectKind — bir satırın özne türü, boş değeri normalize eder.
+// Boş İKİ yoldan gelir ve İKİSİ de "servis" demek: (a) kolonun eklendiği
+// boot'ta probe false okur ve SELECT kolonu atlar (iki-boot sözleşmesi),
+// (b) v0.9.1338 öncesi yazılmış satırlar. Okuyucular bu fonksiyona
+// gitsin, `p.Kind == ""` yazmasın — o karşılaştırma üçüncü bir dal doğurur.
+func ProblemSubjectKind(kind string) string {
+	if kind == "" {
+		return ProblemKindService
+	}
+	return kind
+}
+
 type Problem struct {
-	ID        string  `json:"id"`
-	RuleID    string  `json:"ruleId"`
-	RuleName  string  `json:"ruleName"`
-	Severity  string  `json:"severity"`
-	Service   string  `json:"service"`
-	Metric    string  `json:"metric"`
+	ID       string `json:"id"`
+	RuleID   string `json:"ruleId"`
+	RuleName string `json:"ruleName"`
+	Severity string `json:"severity"`
+	// Service — problemin ÖZNESİ. Kind'a göre okunur: kind=service ise
+	// bir servis adı, kind=db ise bir DBSubjectID. Kolonun adı `service`
+	// KALIYOR — özne kimliği hiçbir ORDER BY / shard / cache anahtarına
+	// girmediği gibi, doğal anahtarın yerini de almaz (entity-model §7.4).
+	Service string `json:"service"`
+	// Kind (v0.9.1338) — özne TÜRÜ. Boş = service (bkz.
+	// ProblemSubjectKind). scanProblemRow normalize eder, yani telde
+	// hiçbir zaman boş görünmez.
+	Kind   string `json:"kind,omitempty"`
+	Metric string `json:"metric"`
 	Value     float64 `json:"value"`
 	Threshold float64 `json:"threshold"`
 	// Comparator (v0.9.976) — ihlali TANIMLAYAN yön, kuralın kendisinden
@@ -971,33 +1010,64 @@ func (s *Store) CountProblems(ctx context.Context, f ProblemFilter) (uint64, err
 // kolon henüz yokken okuma yapabilir. Koşulsuz bir SELECT orada her
 // problem okumasını "no such column" ile düşürürdü — v0.8.185/186'nın
 // prod'u iki kez kıran sınıfı, bu kez okuma tarafında.
-func (s *Store) problemSelectExpr() string {
+// problemCols — bu Store'un `problems` tablosunda GERÇEKTEN gördüğü
+// opsiyonel kolonlar. v0.9.1338'de tanıtıldı çünkü ikinci bir probe'lu
+// kolon (kind) gelince eski `scanProblemRow(rows, s.hasProblemCmpCol)` deseni
+// SESSİZ bir hata sınıfı açıyordu: iki bool'u yan yana geçiren dokuz
+// çağrı yerinden birinde sıra karışsa derleyici SUSAR ve satır yanlış
+// kolondan okunur. Tek struct'ta taşımak eşleşmeyi YAPISAL yapıyor —
+// projeksiyonu kuran değer ile scan'i kuran değer AYNI değerdir.
+type problemCols struct {
+	Comparator bool
+	Kind       bool
+}
+
+func (s *Store) problemCols() problemCols {
+	return problemCols{Comparator: s.hasProblemCmpCol, Kind: s.hasProblemKindCol}
+}
+
+func (s *Store) problemSelectExpr() string { return problemSelectExprFor(s.problemCols()) }
+
+func problemSelectExprFor(c problemCols) string {
 	expr := `id, rule_id, rule_name, severity, service, metric,
 		       value, threshold, status, description, assignee, pod,
 		       toUnixTimestamp64Nano(started_at),
 		       resolved_at,
 		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)`
-	if s.hasProblemCmpCol {
+	if c.Comparator {
 		expr += `, comparator`
+	}
+	// v0.9.1338 — comparator'dan SONRA. Sıra scanProblemRow'un append
+	// sırasıyla birebir aynı olmak zorunda (pozisyonel Scan) ve ikisi de
+	// AYNI problemCols değerinden türüyor.
+	if c.Kind {
+		expr += `, kind`
 	}
 	return expr
 }
 
-// scanProblemRow — problemSelectExpr'in ürettiği satırı okur. hasCmp,
-// projeksiyonu kuran bayrakla AYNI olmak zorunda.
+// scanProblemRow — problemSelectExpr'in ürettiği satırı okur. c,
+// projeksiyonu kuran değerle AYNI olmak zorunda (bkz. problemCols).
 //
 // resolved_at: NULL ve sıfır-zaman ikisi de "çözülmemiş" demek. Eskiden
 // FindOpenProblemByID sıfırı eliyordu, diğerleri elemiyordu; tek yerde
 // birleşince en muhafazakâr davranış (ikisini de ele) kaldı — sıfır
 // zamanlı bir ResolvedAt işaretçisi UI'da 1970 damgası demek olurdu.
-func scanProblemRow(sc interface{ Scan(...any) error }, hasCmp bool) (Problem, error) {
+//
+// Kind HER ZAMAN normalize dönüyor (v0.9.1338): kolon yokken de, eski
+// satırda boş gelince de ProblemKindService. Böylece üst katmanların
+// hiçbiri "boş mu service mi" ayrımını taşımaz.
+func scanProblemRow(sc interface{ Scan(...any) error }, c problemCols) (Problem, error) {
 	var p Problem
 	var resolvedAt *time.Time
 	dst := []any{&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
 		&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description,
 		&p.Assignee, &p.Pod, &p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt}
-	if hasCmp {
+	if c.Comparator {
 		dst = append(dst, &p.Comparator)
+	}
+	if c.Kind {
+		dst = append(dst, &p.Kind)
 	}
 	if err := sc.Scan(dst...); err != nil {
 		return Problem{}, err
@@ -1006,6 +1076,7 @@ func scanProblemRow(sc interface{ Scan(...any) error }, hasCmp bool) (Problem, e
 		ns := resolvedAt.UnixNano()
 		p.ResolvedAt = &ns
 	}
+	p.Kind = ProblemSubjectKind(p.Kind)
 	return p, nil
 }
 
@@ -1018,17 +1089,24 @@ func scanProblemRow(sc interface{ Scan(...any) error }, hasCmp bool) (Problem, e
 // bütün-satır replace yapıyor, yani listede olmayan kolon DEFAULT'a iner.
 // Ayrı listeler tutmak bu sınıfı canlı tutuyordu; problem_aisummary_test
 // pinleri artık bu iki fonksiyonu doğruluyor.
-func problemInsertCols(withComparator bool) string {
+func problemInsertCols(c problemCols) string {
 	cols := "id, rule_id, rule_name, severity, service, metric, value, " +
 		"threshold, status, description, assignee, pod, started_at, " +
 		"resolved_at, updated_at, version, ai_summary, ai_summary_at"
-	if withComparator {
+	if c.Comparator {
 		cols += ", comparator"
+	}
+	// v0.9.1338 — kolon YOKKEN listeye girmiyor, yani o boot'ta yazılan
+	// satır CH'nin `DEFAULT 'service'`ini alır. Bir db özneli problem o
+	// pencerede bugünkü gibi servis özneli görünür — bilinçli ve GÜVENLİ
+	// yön (yeni satırın düşmesi değil, eski anlamını koruması).
+	if c.Kind {
+		cols += ", kind"
 	}
 	return cols
 }
 
-func problemInsertArgs(p Problem, withComparator bool) []any {
+func problemInsertArgs(p Problem, c problemCols) []any {
 	startedAt := time.Unix(0, p.StartedAt).UTC()
 	var resolvedAt *time.Time
 	if p.ResolvedAt != nil {
@@ -1040,8 +1118,15 @@ func problemInsertArgs(p Problem, withComparator bool) []any {
 		p.Value, p.Threshold, p.Status, p.Description, p.Assignee, p.Pod,
 		startedAt, resolvedAt, now.UTC(), uint64(now.UnixNano()),
 		p.AISummary, time.Unix(0, p.AISummaryAt).UTC()}
-	if withComparator {
+	if c.Comparator {
 		args = append(args, p.Comparator)
+	}
+	// Yazarken de normalize: bir üretici Kind'ı hiç set etmediyse (18
+	// üreticinin 17'si) satır açıkça 'service' yazar. Boş yazmak
+	// LowCardinality kolonda 'service'ten AYRI üçüncü bir değer olurdu ve
+	// ProblemSubjectKind'ı SQL tarafında da tekrarlamak gerekirdi.
+	if c.Kind {
+		args = append(args, ProblemSubjectKind(p.Kind))
 	}
 	return args
 }
@@ -1119,7 +1204,7 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 
 	var out []Problem
 	for rows.Next() {
-		p, err := scanProblemRow(rows, s.hasProblemCmpCol)
+		p, err := scanProblemRow(rows, s.problemCols())
 		if err != nil {
 			return nil, err
 		}
@@ -1151,7 +1236,7 @@ func (s *Store) FindSimilarResolvedProblems(ctx context.Context, service, ruleID
 	defer rows.Close()
 	var out []Problem
 	for rows.Next() {
-		p, err := scanProblemRow(rows, s.hasProblemCmpCol)
+		p, err := scanProblemRow(rows, s.problemCols())
 		if err != nil {
 			return nil, err
 		}
@@ -1184,7 +1269,7 @@ func (s *Store) ListStaleOpenProblems(ctx context.Context, staleCutoff time.Time
 	defer rows.Close()
 	var out []Problem
 	for rows.Next() {
-		p, err := scanProblemRow(rows, s.hasProblemCmpCol)
+		p, err := scanProblemRow(rows, s.problemCols())
 		if err != nil {
 			return nil, err
 		}
@@ -1306,7 +1391,7 @@ func (s *Store) OpenProblemsSnapshot(ctx context.Context) (*OpenProblems, error)
 	defer rows.Close()
 	out := &OpenProblems{byKey: map[string]*Problem{}, byID: map[string]*Problem{}}
 	for rows.Next() {
-		p, err := scanProblemRow(rows, s.hasProblemCmpCol)
+		p, err := scanProblemRow(rows, s.problemCols())
 		if err != nil {
 			return nil, err
 		}
@@ -1330,7 +1415,7 @@ func (s *Store) FindOpenProblemByID(ctx context.Context, id string) (*Problem, e
 		FROM problems FINAL
 		WHERE id = ? AND status IN ('open', 'acknowledged')
 		ORDER BY started_at DESC LIMIT 1`, id)
-	p, err := scanProblemRow(row, s.hasProblemCmpCol)
+	p, err := scanProblemRow(row, s.problemCols())
 	if err != nil {
 		return nil, err
 	}
@@ -1343,7 +1428,7 @@ func (s *Store) FindOpenProblem(ctx context.Context, ruleID, service string) (*P
 		FROM problems FINAL
 		WHERE rule_id = ? AND service = ? AND status IN ('open', 'acknowledged')
 		ORDER BY started_at DESC LIMIT 1`, ruleID, service)
-	p, err := scanProblemRow(row, s.hasProblemCmpCol)
+	p, err := scanProblemRow(row, s.problemCols())
 	if err != nil {
 		// v0.9.446 — "satır yok" hata DEĞİL (nil/nil, user.go emsali):
 		// monitor keep-alive'ı gerçek okuma hatası ile süpürülmüş-satırı
@@ -1461,7 +1546,7 @@ func (s *Store) GetProblem(ctx context.Context, id string) (*Problem, error) {
 		FROM problems FINAL
 		WHERE id = ?
 		LIMIT 1`, id)
-	p, err := scanProblemRow(row, s.hasProblemCmpCol)
+	p, err := scanProblemRow(row, s.problemCols())
 	if err != nil {
 		if isNoRows(err) {
 			return nil, nil
@@ -1503,11 +1588,11 @@ func (s *Store) UpsertProblem(ctx context.Context, p Problem) error {
 	// yolunun ayrı elle-yazılmış listeleri tam olarak yukarıdaki iki
 	// olayın (pod, ai_summary) sebebiydi.
 	batch, err := s.conn.PrepareBatch(ctx,
-		"INSERT INTO problems ("+problemInsertCols(s.hasProblemCmpCol)+")")
+		"INSERT INTO problems ("+problemInsertCols(s.problemCols())+")")
 	if err != nil {
 		return err
 	}
-	if err := batch.Append(problemInsertArgs(p, s.hasProblemCmpCol)...); err != nil {
+	if err := batch.Append(problemInsertArgs(p, s.problemCols())...); err != nil {
 		return fmt.Errorf("append problem: %w", err)
 	}
 	return batch.Send()
@@ -1538,11 +1623,11 @@ func (s *Store) UpsertProblemAISummary(ctx context.Context, problemID, summary s
 	// satırının hangi pod'a ait olduğu kayboluyor). GetProblem zaten tam
 	// satırı okuyor; taşımamak için hiçbir neden yoktu.
 	batch, err := s.conn.PrepareBatch(ctx,
-		"INSERT INTO problems ("+problemInsertCols(s.hasProblemCmpCol)+")")
+		"INSERT INTO problems ("+problemInsertCols(s.problemCols())+")")
 	if err != nil {
 		return err
 	}
-	if err := batch.Append(problemInsertArgs(*row, s.hasProblemCmpCol)...); err != nil {
+	if err := batch.Append(problemInsertArgs(*row, s.problemCols())...); err != nil {
 		return fmt.Errorf("append problem ai-summary: %w", err)
 	}
 	return batch.Send()

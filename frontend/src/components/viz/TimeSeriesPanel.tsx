@@ -715,9 +715,9 @@ export function TimeSeriesPanel({
               rows.map(r => {
                 const lbl = escapeHTML(r.label);
                 return `<div style="display:flex;gap:8px;align-items:center;line-height:1.5">` +
-                  `<span style="display:inline-block;width:8px;height:8px;background:${r.color};border-radius:2px;flex-shrink:0"></span>` +
+                  `<span style="display:inline-block;width:8px;height:8px;background:${escapeHTML(r.color)};border-radius:2px;flex-shrink:0"></span>` +
                   `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px" title="${lbl}">${lbl}</span>` +
-                  `<span style="font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums">${r.text}</span>` +
+                  `<span style="font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums">${escapeHTML(r.text)}</span>` +
                 `</div>`;
               }).join('');
             tip.style.opacity = '1';

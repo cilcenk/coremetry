@@ -71,6 +71,7 @@ import { fmtSmart } from '@/lib/chartFmt';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button, MenuItem } from '@/components/ui';
 import type { PanelMenuAction } from '@/lib/chart/panelMenu';
+import { escapeHTML } from '@/lib/utils';
 
 // bucketWindowAt (v0.9.789) — sayfa koordinatındaki bir tıkı, tıklanan
 // bucket'ın ns penceresine çevirir. Çizim alanı DIŞINDA (eksen şeridi,
@@ -909,7 +910,7 @@ export function CorePanel({
       })));
       if (rows.length === 0) { tt.style.display = 'none'; return; }
       tt.innerHTML = `<div class="ov-tt-t">${fmtTooltipTime(tMs / 1000, stepSec)}</div>` + rows.map(r =>
-        `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${r.color}"></i>${r.label}</span><b>${r.text}</b></div>`,
+        `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${escapeHTML(r.color)}"></i>${escapeHTML(r.label)}</span><b>${escapeHTML(r.text)}</b></div>`,
       ).join('') + PIN_TIP_HTML;
       tt.style.display = 'block';
       const host = wrapRef.current;

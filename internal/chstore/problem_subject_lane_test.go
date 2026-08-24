@@ -132,3 +132,75 @@ func readLaneSrc(t *testing.T, name string) string {
 	}
 	return string(b)
 }
+
+// TestProblemServicesConjunct — v0.9.1345. Services daraltmasının db
+// istisnası.
+//
+// NEDEN VAR: Services listesi katalogdan SERVİS ADLARIYLA kuruluyor
+// (servicesForTeam). Bir db öznesinin `service` alanı bir DBSubjectID ve
+// o listede ASLA olamaz. v0.9.1345 db problemlerine sahiplik verdiğine
+// göre, istisna olmadan ürün KENDİ KENDİYLE ÇELİŞİRDİ: satırın çipi
+// "core-banking" yazarken owner=core-banking süzgeci onu SESSİZCE
+// gizlerdi.
+//
+// İKİ-BOOT sözleşmesi problemSubjectConjunct ile AYNI: kolonu EKLEYEN
+// boot probe'u false okur ve o boot'ta db özneli SATIR da yoktur
+// (db_capacity.go kolon yokken kind yazmaz), yani istisnayı hiç yazmamak
+// DOĞRU cevaptır — var olmayan bir kolona sorgu göndermek değil.
+func TestProblemServicesConjunct(t *testing.T) {
+	tests := []struct {
+		name    string
+		n       int
+		allowDB bool
+		hasKind bool
+		want    string
+	}{
+		{"bayraksız: bugünkü davranış BAYT-BAYT", 3, false, true,
+			"service IN (?,?,?)"},
+		{"bayraksız + kolon yok: yine bugünkü", 3, false, false,
+			"service IN (?,?,?)"},
+		{"bayraklı: db öznelerine kaçış kapısı", 3, true, true,
+			"(service IN (?,?,?) OR kind = 'db')"},
+		{"bayraklı ama kolon YOK: istisna YAZILMAZ (iki-boot)", 3, true, false,
+			"service IN (?,?,?)"},
+		{"boş küme, bayraksız: hiçbir şey", 0, false, true,
+			"1 = 0"},
+		{"boş küme, bayraksız, kolon yok: hiçbir şey", 0, false, false,
+			"1 = 0"},
+		// Takımın HİÇ servisi yokken SADECE veritabanı sahipliği olması
+		// mümkün bir hâl. `1 = 0` yazmak o satırları da öldürürdü.
+		{"boş küme, bayraklı: YALNIZ db özneleri", 0, true, true,
+			"kind = 'db'"},
+		{"boş küme, bayraklı, kolon yok: hiçbir şey", 0, true, false,
+			"1 = 0"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := problemServicesConjunct(tc.n, tc.allowDB, tc.hasKind)
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestProblemServicesConjunctNeverReturnsUnconstrained — kaçış kapısı
+// asla "kısıt yok"a dönüşmemeli.
+//
+// Çağıran bu fonksiyonu YALNIZ f.Services != nil iken çağırır, yani her
+// dal bir DARALTMA yazmak zorunda. Boş dize dönen bir dal, wc.add'e boş
+// bir yüklem verip sorguyu SESSİZCE filtresiz bırakırdı — v0.8.310'un
+// "empty slice = no constraint" tuzağının aynısı.
+func TestProblemServicesConjunctNeverReturnsUnconstrained(t *testing.T) {
+	for _, n := range []int{0, 1, 5} {
+		for _, allowDB := range []bool{false, true} {
+			for _, hasKind := range []bool{false, true} {
+				got := problemServicesConjunct(n, allowDB, hasKind)
+				if strings.TrimSpace(got) == "" {
+					t.Fatalf("n=%d allowDB=%v hasKind=%v → BOŞ yüklem; "+
+						"sayfa sessizce filtresiz döner", n, allowDB, hasKind)
+				}
+			}
+		}
+	}
+}

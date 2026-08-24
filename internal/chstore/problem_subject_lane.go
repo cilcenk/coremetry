@@ -63,6 +63,44 @@ func problemSubjectConjunct(subjectKind string, hasKindCol bool) (string, any, b
 	}
 }
 
+// problemServicesConjunct — ProblemFilter.Services daraltmasının WHERE
+// parçası (v0.9.1345). SAF: yalnız uzunluk + iki bayrak.
+//
+// n = len(f.Services). Çağıran bu fonksiyonu YALNIZ f.Services != nil
+// iken çağırır; nil "kısıt yok" demektir ve buraya hiç gelmez.
+//
+// allowDB — db özneli satırlar listede olmasalar da GEÇSİN (gerekçe
+// ProblemFilter.ServicesAllowDBSubjects'te). hasKindCol İKİ-BOOT
+// sözleşmesinin girdisi, problemSubjectConjunct ile AYNI mantık: kolonu
+// EKLEYEN boot'ta `kind` yoktur, ve o boot'ta db özneli SATIR da yoktur
+// (db_capacity.go kolon yokken kind'ı hiç yazmaz), dolayısıyla istisnayı
+// hiç yazmamak DOĞRU cevaptır — var olmayan bir kolona sorgu göndermek
+// değil.
+//
+// n == 0 (küme HİÇBİR ŞEYE çözüldü) + allowDB: cevap "yalnız db
+// özneleri". `1 = 0` yazmak burada db satırlarını da öldürürdü — takımın
+// hiç servisi yokken SADECE veritabanı sahipliği olması tam olarak
+// mümkün bir hâl.
+func problemServicesConjunct(n int, allowDB, hasKindCol bool) string {
+	dbEscape := allowDB && hasKindCol
+	if n == 0 {
+		// Resolved to nothing — say so in SQL rather than returning an
+		// unfiltered page.
+		if dbEscape {
+			return "kind = '" + ProblemKindDB + "'"
+		}
+		return "1 = 0"
+	}
+	in := "service IN (" + chPlaceholders(n) + ")"
+	if dbEscape {
+		// Literal GÜVENLİ: ProblemKindDB bir paket sabiti, kullanıcı
+		// girdisi değil. Parametre bağlamak, çağıranın Services
+		// argümanlarıyla sıra bağımlılığı yaratırdı.
+		return "(" + in + " OR kind = '" + ProblemKindDB + "')"
+	}
+	return in
+}
+
 // CountProblemsBySubject — özne türü başına "hâlâ insan bekleyen" sayı.
 //
 // TEK sorgu, iki sayı: /inbox'ın şerit çipi "Veritabanı (N)" yazabilsin

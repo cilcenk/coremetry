@@ -11,6 +11,7 @@ import { useInbox, useServicesMetadata } from '@/lib/queries';
 import { tsLong, fmtFixed, fmtAgoNs } from '@/lib/utils';
 import { IconSparkles } from '@/components/icons';
 import { teamOptionsCI } from '@/lib/teamOptions';
+import { derivedTeamTitle } from '@/lib/problemSubject';
 import { decodeCsvSet, encodeCsvSet, readInboxTeam, INBOX_TEAM_PARAM } from '@/lib/inboxUrl';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { useDataTable, DataTableHead, DataTableColgroup, resolveInitialSort, ResetLayoutButton } from '@/components/DataTable';
@@ -73,6 +74,18 @@ const KIND_LABEL: Record<InboxKind, string> = {
 // (aynı store, aynı fingerprint yolu); drawer/drill-in/toplu-ack ortak.
 const isExcFamily = (it: InboxItem): boolean =>
   (it.kind === 'exception' || it.kind === 'httperror') && !!it.exception;
+
+// teamChipTitle — ekip rozetinin title'ı (v0.9.1345).
+//
+// Rozet TIKLANABİLİR olduğu için title zaten bir süzgeç ipucu taşıyor;
+// takım TÜRETİLMİŞSE (db konuları) çekince o ipucunun ÖNÜNE geçiyor —
+// operatörün önce okuması gereken şey değerin kesin olmadığıdır.
+// Rozette ayrıca görünür bir '≈' var: yalnız tooltip'e saklamak, üstüne
+// gelmeyen operatör için kesin bir atıftan farksız olurdu.
+function teamChipTitle(it: InboxItem, filterHint: string): string {
+  if (!it.teamsVia) return filterHint;
+  return `${derivedTeamTitle(it.teamsVia, it.service)}\n\n${filterHint}`;
+}
 // v0.9.254 — 'ignored' yalnızca exception gruplarını gösterir (problem'ler
 // MUTE'lanır, anomaliler SILENCE'lanır — farklı fiiller, farklı state).
 // Ayrı bir pivot olması bilinçli: susturmak kasıtlı bir eylem, o satırları
@@ -949,10 +962,10 @@ export default function InboxPage() {
                                 e.stopPropagation();
                                 setOwnerFilter(ownerFilter === it.ownerTeam ? '' : (it.ownerTeam ?? ''));
                               }}
-                              title={ownerFilter === it.ownerTeam
+                              title={teamChipTitle(it, ownerFilter === it.ownerTeam
                                 ? `Clear owner filter`
-                                : `Filter inbox to owner ${it.ownerTeam}`}>
-                              <Users size={11} strokeWidth={1.75} /> {it.ownerTeam}
+                                : `Filter inbox to owner ${it.ownerTeam}`)}>
+                              <Users size={11} strokeWidth={1.75} /> {it.teamsVia ? '≈ ' : ''}{it.ownerTeam}
                             </Chip>
                           )}
                           {it.sreTeam && (
@@ -961,10 +974,10 @@ export default function InboxPage() {
                                 e.stopPropagation();
                                 setSreFilter(sreFilter === it.sreTeam ? '' : (it.sreTeam ?? ''));
                               }}
-                              title={sreFilter === it.sreTeam
+                              title={teamChipTitle(it, sreFilter === it.sreTeam
                                 ? `Clear SRE filter`
-                                : `Filter inbox to SRE ${it.sreTeam}`}>
-                              <Shield size={11} strokeWidth={1.75} /> {it.sreTeam}
+                                : `Filter inbox to SRE ${it.sreTeam}`)}>
+                              <Shield size={11} strokeWidth={1.75} /> {it.teamsVia ? '≈ ' : ''}{it.sreTeam}
                             </Chip>
                           )}
                         </div>

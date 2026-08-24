@@ -172,6 +172,12 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// (AggregatingMergeTree telemetri MV'si, state tablosu DEĞİL).
 		// dependencies.go / db_trends.go'daki kardeş okumalarla aynı havuz.
 		"databases_series.go": true,
+		// v0.9.1345 — SAF telemetri: tek FROM'u db_caller_summary_5m
+		// (AggregatingMergeTree telemetri MV'si, state tablosu DEĞİL).
+		// dependencies.go'daki kardeş okumalarla aynı kaynak, aynı havuz.
+		// Sonucu bir katalog okumasıyla (ListServiceMetadata) BİRLEŞTİRİYOR
+		// ama o okuma bu dosyada DEĞİL — state tarafı ana bağlantıda kalır.
+		"db_ownership.go": true,
 		// TAŞINMAZ ÜÇÜNCÜ SINIF: sysstats.go + cluster.go system.* okuyor.
 		// Bunlar NODE-LOKAL tablolar; RoundRobin'e verilirse disk/utilizasyon
 		// panelleri her çağrıda BAŞKA node'u raporlar (SQL konsolunun in-order

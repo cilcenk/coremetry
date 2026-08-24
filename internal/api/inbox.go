@@ -54,7 +54,13 @@ type InboxItem struct {
 	// keeps the column meaningful across kinds.
 	OwnerTeam string `json:"ownerTeam,omitempty"`
 	SRETeam   string `json:"sreTeam,omitempty"`
-	Status    string `json:"status"` // open | acknowledged | resolved (problems);
+	// TeamsVia (v0.9.1345) — Problem.TeamsVia ile AYNI anlam: takımlar
+	// DOLAYLI çözüldüyse hangi servisin katalog satırından geldikleri.
+	// BOŞ = doğrudan. Yalnız db konularında dolar ve yüzeyin çekince
+	// koymasını sağlar — türetim veritabanı SİSTEMİ düzeyindedir, tekil
+	// örnek düzeyinde değil.
+	TeamsVia string `json:"teamsVia,omitempty"`
+	Status   string `json:"status"` // open | acknowledged | resolved (problems);
 	// open | regressed (exceptions); active | cleared (anomalies)
 	Clusters []string `json:"clusters,omitempty"`
 
@@ -370,7 +376,16 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 				// contract, v0.9.342). The enrichers below now run over ONE
 				// team's rows instead of the newest 2000 of the estate.
 				Services: teamServices,
-				Limit:    srcLimit,
+				// v0.9.1345 — /problems ile AYNI istisna: db özneleri
+				// servis-adı listesinde OLAMAZ ama artık türetilmiş bir
+				// sahipleri var, o yüzden SQL daraltmasını geçip
+				// aşağıdaki kesin takım eşleştirmesine (it.OwnerTeam
+				// üzerinden, zenginleştirmeden SONRA) ulaşmalılar.
+				// Bayrak olmadan operatör owner=core-banking seçtiğinde
+				// Oracle satırı kaybolurdu — üstelik kendi çipi
+				// "core-banking" yazarken.
+				ServicesAllowDBSubjects: true,
+				Limit:                   srcLimit,
 				// v0.9.1342 — şerit SQL'de daralır, LIMIT'ten ÖNCE. Go'da
 				// daraltmak v0.9.322 sınıfı olurdu: db satırları taramanın
 				// yerini yer, servis şeridi eksik gelir.
@@ -682,9 +697,44 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 
 		// Team enrichment — reuses the catalog read hoisted to the top of
 		// the closure (v0.9.353); this used to be a second identical query.
+		//
+		// v0.9.1345 — db KONULARI bu eşleşmeden hiç geçemiyordu: mdMap
+		// SERVİS ADIYLA anahtarlı, db satırının Service alanı ise bir
+		// `db:<system>@<instance>` kimliği. Sonuç sessizdi — /inbox'ın db
+		// şeridi (v0.9.1339) takımsız satırlar gösteriyordu ve takım
+		// süzgeci o satırları HİÇBİR takıma vermiyordu.
+		//
+		// Sahiplik /problems ile AYNI kuraldan türetiliyor
+		// (chstore.ResolveDBOwner — "en çok çağıranın takımı"). İki yüzeyin
+		// kuralı ayrı yazılsaydı aynı problem iki sayfada iki farklı takım
+		// gösterebilirdi; kural TEK yerde.
 		if len(mdMap) > 0 {
+			var dbCallers map[string][]chstore.DBCaller
+			for i := range items {
+				if items[i].SubjectKind == chstore.ProblemKindDB {
+					// Soft-fail: okuma düşerse db satırları bugünkü
+					// (takımsız) hâlinde kalır. Yalnız gerçekten db
+					// konusu varsa ödenir.
+					dbCallers, _ = s.store.DBCallersBySystem(ctx)
+					break
+				}
+			}
 			for i := range items {
 				if items[i].Service == "" {
+					continue
+				}
+				if items[i].SubjectKind == chstore.ProblemKindDB {
+					system, _, ok := chstore.ParseDBSubjectID(items[i].Service)
+					if !ok || len(dbCallers[system]) == 0 {
+						continue
+					}
+					own, ok := chstore.ResolveDBOwner(dbCallers[system], mdMap)
+					if !ok {
+						continue
+					}
+					items[i].OwnerTeam = own.OwnerTeam
+					items[i].SRETeam = own.SRETeam
+					items[i].TeamsVia = own.Caller
 					continue
 				}
 				md, ok := mdMap[items[i].Service]

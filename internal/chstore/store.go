@@ -341,6 +341,17 @@ type Store struct {
 	envMapFor time.Duration // the `since` envMapVal was built with
 	envMapVal map[string][]string
 
+	// dbOwn* (v0.9.1345) — db_system → en çok çağıran servisler anlık
+	// görüntüsü, db-konulu problemlerin sahipliğini çözmek için
+	// (db_ownership.go). svcMeta/clusterMap ile AYNI P2-C disiplini:
+	// cevap sayfaya/filtreye/aralığa göre değişmiyor, dolayısıyla
+	// problem başına sormak aynı filo-geneli okumayı N kez yapmaktır.
+	// Tek girdi, TTL'li, değiştirilmeden DEĞİŞTİRİLİR (replace-never-
+	// mutate) ve PAYLAŞILARAK döner — çağıranlar salt-okur.
+	dbOwnMu  sync.RWMutex
+	dbOwnAt  time.Time
+	dbOwnVal map[string][]DBCaller
+
 	deploysMu    sync.Mutex
 	deploysCache map[string]deploysCacheEntry
 }

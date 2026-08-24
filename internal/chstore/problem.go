@@ -177,6 +177,21 @@ type Problem struct {
 	// the owner/SRE team filters on /problems, mirroring the inbox.
 	OwnerTeam string `json:"ownerTeam,omitempty"`
 	SRETeam   string `json:"sreTeam,omitempty"`
+	// TeamsVia (v0.9.1345) — takımlar DOLAYLI çözüldüyse, hangi servisin
+	// katalog satırından geldikleri. BOŞ = doğrudan: özne bir servis ve
+	// takımlar kendi satırından geliyor (bugüne kadarki tek hal).
+	//
+	// Doldurulduğu tek yer db-konulu problemler (kind=db): onların
+	// `service` alanı bir DBSubjectID ve kataloğda satırı YOK, o yüzden
+	// sahiplik "bu veritabanını EN ÇOK ÇAĞIRAN servisin takımı" kuralıyla
+	// türetiliyor (operatör kararı 2026-08-24, chstore/db_ownership.go).
+	//
+	// Alan KANIT taşıdığı için var: türetim db_system KAPSAMINDA yapılıyor
+	// (HAT A/HAT B kimlik uzayları kesişmiyor — identity.go'daki uyarı),
+	// yani bir YAKLAŞIKLIK. Yalnız takım adını göstermek o yaklaşıklığı
+	// görünmez kılar ve kesin bir atıf gibi okunurdu. Yüzey bu adı
+	// kullanarak "en çok çağıran X üzerinden türetildi" diyor.
+	TeamsVia string `json:"teamsVia,omitempty"`
 	// RecentDeploy — most recent observed service.version
 	// transition for this service in the window leading up
 	// to the problem firing, or nil. The AI explain /
@@ -650,6 +665,21 @@ var selfHealthRunbooks = map[string]string{
 // transient CH blip. (v0.8.290 — powers the owner/SRE team filters
 // on /problems, mirroring the inbox enrichment so the two pages
 // agree on which team owns a firing service.)
+// v0.9.1345 — db-konulu problemler (kind=db) bu eşleşmeden HİÇ
+// geçemiyordu: `service` alanları bir DBSubjectID
+// (`db:oracle@corebank-scan.prod`) ve kataloğun anahtarı servis adı, yani
+// mds[...] her zaman ıskalıyordu. Sonuç sessiz: satır takımsız geliyor,
+// /problems takım filtresi onu hiçbir takıma göstermiyor ve ekip-maili
+// alıcı çözemiyor (v0.9.1344'ün ölçtüğü `unmatched` kusurunun yarısı).
+//
+// Sahiplik artık operatörün kuralıyla türetiliyor: "bir db öznesinin
+// sahibi, onu EN ÇOK ÇAĞIRAN servisin takımıdır" (db_ownership.go, orada
+// kapsam/pencere/yaklaşıklık gerekçeleriyle). Türetimin KANITI TeamsVia
+// alanında satırla birlikte gidiyor.
+//
+// Çağıran anlık görüntüsü döngünün DIŞINDA, yalnız gerçekten db konusu
+// varsa alınıyor: db-konulu problemi olmayan bir kurulum bu okumanın
+// bedelini HİÇ ödemez.
 func (s *Store) EnrichProblemsWithTeams(ctx context.Context, problems []Problem) []Problem {
 	if len(problems) == 0 {
 		return problems
@@ -658,13 +688,46 @@ func (s *Store) EnrichProblemsWithTeams(ctx context.Context, problems []Problem)
 	if err != nil || len(mds) == 0 {
 		return problems
 	}
+	var dbCallers map[string][]DBCaller
+	if anyDBSubject(problems) {
+		// Soft-fail, kardeş zenginleştiricilerle aynı: okuma düşerse
+		// db satırları BUGÜNKÜ hâlinde (takımsız) kalır, servis
+		// satırları etkilenmez.
+		dbCallers, _ = s.DBCallersBySystem(ctx)
+	}
 	for i := range problems {
+		if ProblemSubjectKind(problems[i].Kind) == ProblemKindDB {
+			system, _, ok := ParseDBSubjectID(problems[i].Service)
+			if !ok || len(dbCallers[system]) == 0 {
+				continue
+			}
+			own, ok := ResolveDBOwner(dbCallers[system], mds)
+			if !ok {
+				continue
+			}
+			problems[i].OwnerTeam = own.OwnerTeam
+			problems[i].SRETeam = own.SRETeam
+			problems[i].TeamsVia = own.Caller
+			continue
+		}
 		if md, ok := mds[problems[i].Service]; ok {
 			problems[i].OwnerTeam = md.OwnerTeam
 			problems[i].SRETeam = md.SRETeam
 		}
 	}
 	return problems
+}
+
+// anyDBSubject — dilimde en az bir db konusu var mı. Ayrı fonksiyon
+// çünkü tek işi filo-geneli okumayı GEREKSİZ yere tetiklememek ve bu
+// koşul satır-içi yazıldığında ilk refaktörde kaybolur.
+func anyDBSubject(problems []Problem) bool {
+	for i := range problems {
+		if ProblemSubjectKind(problems[i].Kind) == ProblemKindDB {
+			return true
+		}
+	}
+	return false
 }
 
 // ── Alert rules ───────────────────────────────────────────────────────────────
@@ -878,6 +941,24 @@ type ProblemFilter struct {
 	// nothing (a team with no members must return an empty page, never an
 	// unfiltered one).
 	Services []string
+	// ServicesAllowDBSubjects (v0.9.1345) — Services daraltmasına TEK
+	// istisna: db özneli satırlar listede olmasalar da GEÇER.
+	//
+	// NEDEN: Services listesi katalogdan SERVİS ADLARIYLA kuruluyor
+	// (servicesForTeam). Bir db öznesinin `service` alanı ise bir
+	// DBSubjectID (`db:oracle@corebank-scan.prod`) ve o listede ASLA
+	// olamaz. v0.9.1345 db problemlerine sahiplik verdi; bu bayrak
+	// olmadan ürün KENDİ KENDİYLE ÇELİŞİRDİ: satırın çipi
+	// "core-banking" yazarken, owner=core-banking süzgeci o satırı
+	// gizlerdi — üstelik sessizce.
+	//
+	// Kesin eşleştirme Go tarafında (matchesTeamFilter, zenginleştirilmiş
+	// OwnerTeam/SRETeam üzerinde) zaten yapılıyor. Bu bayrak yalnız SQL
+	// daraltmasını gevşetiyor, yani db satırları Go kapısına ULAŞABİLSİN
+	// diye. Servis tarafının daraltması AYNEN duruyor (v0.9.342'nin perf
+	// kazancı korunuyor) ve db satırları az sayıda — özne başına bir
+	// kapasite alarmı.
+	ServicesAllowDBSubjects bool
 	// SubjectKind (v0.9.1342) — ÖZNE TÜRÜ süzgeci: "service" | "db".
 	// Boş = kısıt yok.
 	//
@@ -1174,13 +1255,8 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 		}
 	}
 	if f.Services != nil {
-		if len(f.Services) == 0 {
-			// Resolved to nothing — say so in SQL rather than returning an
-			// unfiltered page.
-			wc.add("1 = 0")
-		} else {
-			wc.add("service IN ("+chPlaceholders(len(f.Services))+")", toAnySlice(f.Services)...)
-		}
+		wc.add(problemServicesConjunct(len(f.Services), f.ServicesAllowDBSubjects, s.hasProblemKindCol),
+			toAnySlice(f.Services)...)
 	}
 	if f.Severity != "" {
 		wc.add("severity = ?", f.Severity)

@@ -496,7 +496,7 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 	// "bu problem kimseye gitmedi" sorusu sorulamıyordu bile.
 	var facts routingFacts
 	if p.Status == "open" {
-		facts.Team = n.sendTeamMail(ctx, p, md)
+		facts.Team = n.sendTeamMail(ctx, p, n.teamMetadata(ctx, p, md))
 	}
 	// relKind yukarı taşındı (v0.9.1344): kanal listesi boş çıktığında da
 	// yönlendirme işareti yazılabilmesi için gerekli. Yalnız p.Metric'i
@@ -652,6 +652,79 @@ func problemRelatedKind(p chstore.Problem) string {
 		return "watcher"
 	}
 	return "problem"
+}
+
+// teamMetadata — ekip-yönlendirmenin alıcı kaynağı (v0.9.1345).
+//
+// v0.9.1344 kusurun ikinci yarısını ÖLÇTÜ ama düzeltmedi: alıcılar
+// GetServiceMetadata(p.Service)'ten çözülüyor, db-konulu bir problemin
+// (`db:oracle@corebank-scan.prod`) katalog satırı YOK → md nil → ekip yok
+// → mail yok. Operatörün cümlesiyle: "Oracle doluyor ve kimse haber
+// almıyor."
+//
+// Artık o hâlde sahiplik türetiliyor: db öznesini EN ÇOK ÇAĞIRAN servisin
+// katalog satırı (operatör kuralı; kapsam/pencere/yaklaşıklık gerekçeleri
+// chstore/db_ownership.go'da).
+//
+// ── Kanal eşleşmesi DEĞİŞMİYOR — bilinçli ───────────────────────────
+//
+// Çağıran `md`'yi AYRICA kanal eşleşme yüklemlerine veriyor
+// (matchInput.Metadata). Türetilmiş satır ORAYA da girseydi, bir kanalın
+// MatchRules'u db problemini ÇAĞIRANIN nitelikleriyle eşleştirmeye
+// başlardı — bu dilimin sormadığı, çok daha geniş bir davranış
+// değişikliği. Türetim yalnız ekip-mailine iniyor; kanal yarısı
+// BAYT-BAYT eskisi gibi.
+//
+// ── İşaret ERİŞİLEBİLİR kalıyor ─────────────────────────────────────
+//
+// Çözülemeyen her hâlde nil dönüyor, yani teamMailReach yine
+// teamMailNoRecipients veriyor ve routingUnmatched yolu AÇIK kalıyor
+// (v0.9.1344'ün testi tam olarak bunu pinliyor). Bu fonksiyon "kimseye
+// gitmedi"yi ULAŞILAMAZ yapmaz; yalnız GERÇEKTEN bir sahibi olan
+// problemleri o kovadan çıkarır.
+// I/O yarısı: CH'ye YALNIZ saf yarı gerçekten gerekli dediğinde gider.
+func (n *Notifier) teamMetadata(ctx context.Context, p chstore.Problem, md *chstore.ServiceMetadata) *chstore.ServiceMetadata {
+	if !needsDerivedTeam(p, md) {
+		return md
+	}
+	own, ok := n.store.DBOwnerForSubject(ctx, p.Service)
+	return derivedTeamMetadata(md, own, ok)
+}
+
+// needsDerivedTeam — SAF: türetime GİRİLMELİ mi.
+//
+// Ayrı fonksiyon çünkü tek işi "CH'ye gitme" demek ve satır-içi
+// yazıldığında bir sonraki düzenlemede kaybolur — kaybolursa her problem
+// açılışı gereksiz bir okuma yapar.
+//
+// Katalog satırı VARSA türetime hiç girilmez: operatörün beyanı kazanır,
+// türetim yalnız BOŞLUĞU doldurur.
+func needsDerivedTeam(p chstore.Problem, md *chstore.ServiceMetadata) bool {
+	return md == nil && chstore.ProblemSubjectKind(p.Kind) == chstore.ProblemKindDB
+}
+
+// derivedTeamMetadata — SAF: türetilmiş sahiplikten ekip-yönlendirmenin
+// okuyacağı sentetik katalog satırı.
+//
+// resolved=false → nil, yani teamMailReach yine teamMailNoRecipients
+// verir ve routingUnmatched yolu AÇIK kalır (v0.9.1344'ün testi tam
+// olarak bunu pinliyor). Bu fonksiyon "kimseye gitmedi"yi ULAŞILAMAZ
+// yapmaz; yalnız GERÇEKTEN bir sahibi olan problemleri o kovadan çıkarır.
+//
+// Sentetik satır yalnız resolveTeamRecipients'ın okuduğu iki alanı +
+// kanıt olarak çağıranın adını taşır. Kataloğa YAZILMAZ, tele çıkmaz.
+func derivedTeamMetadata(md *chstore.ServiceMetadata, own chstore.DBOwner, resolved bool) *chstore.ServiceMetadata {
+	if md != nil {
+		return md
+	}
+	if !resolved {
+		return nil
+	}
+	return &chstore.ServiceMetadata{
+		Service:   own.Caller,
+		OwnerTeam: own.OwnerTeam,
+		SRETeam:   own.SRETeam,
+	}
 }
 
 // teamRoutingChannelName tags team-routing sends in notification_log —

@@ -8,6 +8,7 @@ import { TableSkeleton } from '@/components/Skeleton';
 import { LazyMount } from '@/components/LazyMount';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { dbTracesHref } from '@/lib/pivotHref';
+import { logsHref } from '@/lib/logsUrl';
 import { serviceHref } from '@/lib/serviceHref';
 import { fmtNum } from '@/lib/utils';
 import { OraclePanel } from '@/features/dependencies/panels/OraclePanel';
@@ -217,17 +218,46 @@ export function DatabaseTrendCards({ trend, pending, xRange }: {
  * drawer sorted by: a 200ms call made 10k times outweighs a 5s call made
  * twice for cumulative load on the backend.
  *
+ * ── LOG PİVOTU NEDEN BURADA, BAŞLIKTA DEĞİL (v0.9.1367) ─────────────────
+ *
+ * Brief başlıkta, `dbTracesHref`in yanında bir "Logs →" istiyordu. Kod buna
+ * itiraz ediyor ve itiraz ÖLÇÜLDÜ:
+ *
+ *   1. Bir veritabanının KENDİ logu YOK. Coremetry motor logu ingest etmiyor
+ *      (waits & locks paneli tam bu yüzden v0.9.852'de söküldü). "Bu DB'nin
+ *      logları" ancak "ona konuşanların logları" demek olabilir, ve bunu
+ *      hangi çağırana atfettiğini SÖYLEMEYEN bir link yalan söyler.
+ *   2. Çoklu çağıranı taşıyan taşınabilir bir log kapsamı YOK.
+ *      `logstore.Filter` (internal/logstore/logstore.go:36) TEK bir
+ *      `Service` alanı taşıyor — çoklu-servis kapsamı iki backend'de de
+ *      ifade edilemiyor.
+ *   3. ⚠ `q` ALAN SÖZDİZİMİ ES'E ÖZGÜ. ClickHouse tarafında serbest metin
+ *      `multiSearchAnyCaseInsensitive(body, [?])` (clickhouse.go:310) —
+ *      yani DÜZ BİR ALT DİZE. `q=service.name:"foo"` CH backend'inde
+ *      body'de o literal metni arar ve boş döner. Instance adını `q`ya
+ *      koyan bir başlık linki de aynı sınıfa girer: uygulama o adı log
+ *      satırına yazmıyorsa link ÖLÜDÜR — v0.9.256/268'in iki kez ödenmiş
+ *      hatası.
+ *
+ * Geriye kapsamı BELİRSİZ olmayan tek yer kalıyor: çağıranın kendi satırı.
+ * `service` her iki backend'de de YAPISAL bir kolon yüklemi
+ * (CH `service_name = ?`, ES servis alan fan-out'u), yani link taşınabilir.
+ * Üstelik satır MV'den geliyor (`db_caller_summary_5m`) — tahmin değil,
+ * ölçüm; yeni sorgu yok, ham `spans` yok, G6'ya dokunulmuyor.
+ *
  * ⚠ `Impact` BURADA İSTEMCİ HESABI (satırın payı, sayfadaki toplama göre);
  * `endpoints/detailSections.tsx:572`de aynı başlık SUNUCUDAN gelen
  * `sharePct`. Aynı kelime iki ayrı büyüklük — dört `CallersTable`
  * nüshasının tek gövdeye inmesi bu yüzden bir mockup kararı, mekanik bir
  * birleştirme değil.
  */
-export function DatabaseCallersSection({ callers, range }: {
+export function DatabaseCallersSection({ callers, range, env }: {
   callers: DBCallerBreakdown[];
   // v0.9.967 — the page window, so a caller pill opens the service on the
   // same slice these impact numbers were computed over.
   range: TimeRange;
+  /** v0.9.1367 — paylaşılan log linkini dürüst tutar (env kapsamı taşınır). */
+  env?: string;
 }) {
   const total = useMemo(
     () => callers.reduce((s, c) => s + c.spanCount * c.avgDurationMs, 0),
@@ -262,6 +292,20 @@ export function DatabaseCallersSection({ callers, range }: {
                       <Link to={serviceHref(c.service, { range })}
                         className="mono" style={{ fontSize: 11.5 }}>
                         {c.service}
+                      </Link>
+                      {/* v0.9.1367 — LOG PİVOTU. Trace pivotu sayfanın
+                          başlığında zaten vardı (dbTracesHref); eksik olan
+                          buydu. Kolon EKLENMİYOR: glif, v0.9.257'nin
+                          emsali ("bir tık ötedeki eylem, bir kolon
+                          harcamadan görünür olur"). */}
+                      <Link to={logsHref({ window: range, service: c.service, env })}
+                        aria-label={`${c.service} loglarını aç`}
+                        title={`${c.service} loglarını bu pencerede aç.\n\nBUNLAR ÇAĞIRANIN LOGLARI, veritabanının DEĞİL: Coremetry motor logu ingest etmiyor, dolayısıyla bir veritabanının "kendi" logu yok. Bir DB yavaşladığında sorulan soru zaten bu — hangi istemci, ve o istemci bu pencerede ne yazdı.`}
+                        style={{
+                          marginLeft: 6, fontSize: 10, whiteSpace: 'nowrap',
+                          color: 'var(--accent2)', fontWeight: 500,
+                        }}>
+                        ≡ logs
                       </Link>
                     </td>
                     <td className="mono" style={{

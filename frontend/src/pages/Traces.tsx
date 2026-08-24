@@ -105,16 +105,37 @@ const COL_LABEL: Record<string, string> = {
   time: 'Time', service: 'Service', operation: 'Operation',
   duration: 'Duration', spans: 'Spans', status: 'Status',
 };
-// Default widths are tuned so the fixed columns PLUS two attribute columns
+// Default widths are tuned so the fixed columns PLUS the attribute columns
 // fit a 1440px laptop without horizontal scroll (v0.9.243 — operator-reported:
 // "columns don't fit, I always have to scroll right"). Budget at 1440px:
-// ~220 sidebar + ~40 page padding leaves ~1180. Fixed 864 + 30 leading row-
-// marker + 2×130 attrs = 1154. Every cell already ellipsises with a title
-// tooltip (globals.css tbody td), so narrower never means "silently lost".
-// Widths are user-resizable and persist per browser; these are only the
-// starting points for an operator who has never dragged a column edge.
+// ~220 sidebar + ~40 page padding leaves ~1180, minus 30 leading row-marker
+// = ~1150 for columns.
+//
+// v0.9.1360 — BÜTÇE YENİDEN DAĞITILDI. Operatör `function_id`'yi de
+// varsayılan istedi (DEFAULT_TRACE_COLUMNS artık BEŞ öznitelik) ve "kolonlar
+// sayfaya sığsın" dedi. Eski değerlerle aritmetik tutmuyordu ve zaten
+// tutmuyormuş: şerh "fixed 864 + 2×130 attrs = 1154" diyordu ama varsayılan
+// v0.9.841'den beri DÖRT öznitelik taşıyor → 864+30+520 = 1414, yani bütçeyi
+// 264px aşıyordu. Yani "sığmıyor" şikâyeti yeni değil, ölçülmemiş bir
+// regresyondu.
+//
+// Yeni dağıtım, hepsi İÇERİĞE bakılarak kısıldı (canlı ekran görüntüsünden):
+//   time     168 → 150  "2026-08-24 21:33:32…" zaten kırpılıyor
+//   duration 150 → 104  en uzun değer "44.36ms" / "4.14s"
+//   spans     72 →  58  tek haneli
+//   status    84 →  74  "ERROR" rozeti
+//   operation 260 → 210 "log.servi…" zaten kırpık; kimliği service taşıyor
+// Toplam kazanç 148px. Yeni sabit toplam 716 + 30 + 5×130 = 1396 — hâlâ
+// 1180'in üstünde, AMA v0.9.1334'ün kaba-sığdırması artık CANLI: aşan küme
+// minWidth tabanlarına saygılı oransal küçültmeyle sığdırılıyor, yani
+// yatay kayma yerine sıkışma. Kısıntı o sıkışmanın okunabilir kalması için.
+//
+// Her hücre zaten ellipsis + title tooltip taşıyor (globals.css tbody td),
+// yani dar olmak "sessizce kayboldu" demek DEĞİL. Genişlikler kullanıcı
+// tarafından sürüklenebilir ve tarayıcı başına kalıcı; bunlar yalnız hiç
+// sürüklememiş operatörün başlangıç noktası.
 const COL_W: Record<string, number> = {
-  time: 168, service: 130, operation: 260, duration: 150, spans: 72, status: 84,
+  time: 150, service: 130, operation: 210, duration: 104, spans: 58, status: 74,
 };
 const ATTR_W = 130;
 const EXTRA_COLS_LS_KEY = 'traces-extra-cols';

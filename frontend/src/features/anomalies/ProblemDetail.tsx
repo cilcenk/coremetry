@@ -28,6 +28,8 @@ import { serviceHref, eventLifespanWindow } from '@/lib/serviceHref';
 import { latencyThresholdMs, slowTracesHref } from '@/features/anomalies/slowTracesHref';
 import { problemWindowNs, topOffenders } from '@/features/anomalies/problemOffenders';
 import { operationTracesHref } from '@/lib/pivotHref';
+import { SubjectLink } from '../../components/SubjectLink';
+import { subjectKind } from '../../lib/problemSubject';
 
 // ProblemDetail — Variant B (Dynatrace problem feed) full-page details.
 // Two surfaces share one skeleton: a top triage bar (badges + ID +
@@ -749,11 +751,10 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
                   "sorun geçmiş" yanılgısı. Pencere AYNI bileşende
                   (logsFrom/logsTo) zaten hesaplı, yalnız logs/traces
                   linklerine konuyordu. */}
-              <Link to={serviceHref(problem.service, { range: probWindow })}
+              <SubjectLink service={problem.service} subjectKind={problem.kind}
+                href={serviceHref(problem.service, { range: probWindow })}
                 className={`pb-pill${problem.status === 'open' ? ' err' : ''}`}
-                style={{ textDecoration: 'none', color: 'var(--accent2)' }}>
-                <span className="dot" /> <span className="mono">{problem.service}</span>
-              </Link>
+                style={{ textDecoration: 'none', color: 'var(--accent2)' }} />
               {/* v0.9.740 (operatör): ug/sy ekip rozetleri problem
                   detayında da — katalogdan; Problem.ownerTeam alanı
                   boş kalabildiği için tek kaynak katalog. */}
@@ -791,6 +792,22 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
           </Sect>
 
           <Sect title="Correlated signals">
+            {/* v0.9.1339 (entity-model Faz 4b) — bu bölümün TAMAMI bir
+                SERVİS ADI varsayıyor: /logs `service.name:"…"`, /traces
+                `?service=`, /service-map `?focus=`. Özne bir veritabanı
+                örneğiyse (db-capacity alarmları) üçü de BOŞ açılır ve
+                operatör bunu "olay yok" diye okur — v0.9.1331'in
+                "boş liste yanlış cevaptır" dersinin aynısı.
+                Ölçüldü 2026-08-24: receiver instance'ı hiçbir
+                spans.service_name ile eşleşmiyor (kesişim 0 satır).
+                Çalışmayan dört link yerine NEDEN olmadığını söyleyen tek
+                satır. */}
+            {subjectKind(problem.service, problem.kind) !== 'service' ? (
+              <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                Bu alarmın öznesi bir veritabanı örneği, bir servis değil —
+                log/trace/servis-haritası pivotları bir servis adı gerektiriyor.
+              </div>
+            ) : (<>
             <SignalLink to={logsHref} label="≡ Logs" sub="service, problem window" />
             {/* v0.8.512 (perf raporu #12) — pivot problem penceresini
                 taşır: logs ile aynı custom range, yoksa /traces global
@@ -823,6 +840,7 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
             })()}
             <SignalLink to={`/service-map?focus=${encodeURIComponent(problem.service)}`}
               label="◉ Service map" sub="focused" />
+            </>)}
           </Sect>
 
           <Sect title="Runbook">

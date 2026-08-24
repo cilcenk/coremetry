@@ -33,11 +33,18 @@ type InboxItem struct {
 	PriorityReason string `json:"priorityReason"`
 	Severity       string `json:"severity"` // critical | warning | info
 	Service        string `json:"service"`
-	Title          string `json:"title"` // rule name / exception type / pattern
-	Description    string `json:"description"`
-	StartedAt      int64  `json:"startedAt"` // unix ns
-	LastSeen       int64  `json:"lastSeen"`  // unix ns; for problems == StartedAt
-	Assignee       string `json:"assignee,omitempty"`
+	// SubjectKind (v0.9.1339) — Service alanının NE OLDUĞU: service | db.
+	// ⚠️ Yukarıdaki `Kind` ile KARIŞTIRMA: o satırın KAYNAĞINI söylüyor
+	// (problem | exception | anomaly), bu ise ÖZNENİN TÜRÜNÜ. İkisi de
+	// string olduğu için ne Go ne TypeScript yanlış olanı okumayı
+	// engeller — ayrı JSON adı (`subjectKind`) tek koruma.
+	// Boş = service (exception/anomaly üreticileri gerçek servis yazar).
+	SubjectKind string `json:"subjectKind,omitempty"`
+	Title       string `json:"title"` // rule name / exception type / pattern
+	Description string `json:"description"`
+	StartedAt   int64  `json:"startedAt"` // unix ns
+	LastSeen    int64  `json:"lastSeen"`  // unix ns; for problems == StartedAt
+	Assignee    string `json:"assignee,omitempty"`
 	// OwnerTeam + SRETeam attached server-side from
 	// service_metadata so the inbox can render team chips
 	// without each row firing a per-service lookup. Empty when
@@ -1469,6 +1476,7 @@ func problemToInbox(p chstore.Problem) InboxItem {
 		PriorityReason: p.PriorityReason,
 		Severity:       p.Severity,
 		Service:        p.Service,
+		SubjectKind:    p.Kind, // v0.9.1339 — özne TÜRÜ, Kind (kaynak) DEĞİL
 		Title:          p.RuleName,
 		Description:    p.Description,
 		StartedAt:      p.StartedAt,

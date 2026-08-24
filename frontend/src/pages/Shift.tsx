@@ -15,6 +15,7 @@ import type { Problem, ChangedService, ExceptionGroup } from '@/lib/types';
 import { PageShell } from '@/components/ui/PageShell';
 import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
 import { RenderedMarkdown } from '@/components/Markdown';
+import { SubjectLink } from '../components/SubjectLink';
 
 // Shift.tsx — /shift vardiya özeti (v0.9.1072, Faz 3.2; mockup
 // operatör-onaylı). Vardiya devri bugüne dek 4 sayfa gezilerek
@@ -157,7 +158,7 @@ export default function ShiftPage() {
                     {probT.sortedRows.map((p: Problem) => (
                       <tr key={p.id} style={p.resolvedAt ? { opacity: 0.45 } : undefined}>
                         <td>{p.priority && <span className={`badge ${p.priority === 'P1' ? 'b-err' : p.priority === 'P2' ? 'b-warn' : 'b-info'}`}>{p.priority}</span>}</td>
-                        <td><Link to={serviceHref(p.service, { range: eventLifespanWindow(p) })}>{p.service}</Link></td>
+                        <td><SubjectLink service={p.service} subjectKind={p.kind} href={serviceHref(p.service, { range: eventLifespanWindow(p) })} /></td>
                         <td><Link to={`/problems?problem=${encodeURIComponent(p.id)}`}>{p.ruleName}</Link></td>
                         <td className="mono">{tsLong(p.startedAt)}</td>
                         <td>{p.resolvedAt ? `kapandı ${tsLong(p.resolvedAt)}` : p.status}</td>

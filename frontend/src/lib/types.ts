@@ -1605,11 +1605,17 @@ export interface KibanaSettings {
 export type InboxKind = 'problem' | 'exception' | 'httperror' | 'anomaly' | 'incident';
 export interface InboxItem {
   id: string;             // composite "<kind>:<nativeId>"
+  // Satırın KAYNAĞI: problem | exception | anomaly.
+  // ⚠️ `subjectKind` ile karıştırma — o, `service` alanının NE OLDUĞUNU
+  // söyler. İkisi de string, derleyici ayırt etmez (v0.9.1339).
   kind: InboxKind;
   source: string;         // "Alert rule" | "Exception" | "Anomaly" | "Incident"
   priority: 'P1' | 'P2' | 'P3';
   priorityReason: string;
   severity: string;
+  // Öznenin TÜRÜ (v0.9.1339): 'service' | 'db'. Boş/yok = service.
+  // lib/problemSubject.ts subjectKind() ile sınıflandır.
+  subjectKind?: string;
   service: string;
   title: string;
   description: string;
@@ -2865,7 +2871,16 @@ export interface Problem {
   ruleId: string;
   ruleName: string;
   severity: string;
+  // Problemin ÖZNESİ — `kind`'a göre okunur. kind='service' ise bir
+  // servis adı, kind='db' ise `db:<system>@<instance>` biçiminde bir
+  // veritabanı kimliği. Alanın adı `service` KALDI (v0.9.1338): tel
+  // sözleşmesi geriye dönük, yeni olan tür etiketi.
   service: string;
+  // Özne TÜRÜ (v0.9.1338, entity-model Faz 4b). Alan YOKSA ya da boşsa
+  // 'service' demektir — eski satırlar ve kolonun eklendiği boot bu
+  // daldan geçer. Sınıflandırmayı elle yapma, lib/problemSubject.ts'in
+  // subjectKind()'ını çağır.
+  kind?: string;
   metric: string;
   value: number;
   threshold: number;

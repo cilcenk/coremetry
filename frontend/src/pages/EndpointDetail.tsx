@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { navHref } from '@/lib/navHref';
 import { Topbar } from '@/components/Topbar';
-import { Card, LinkButton } from '@/components/ui';
+import { Card, LinkButton, StatTile } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TrendDelta } from '@/components/TrendDelta';
 import { useEndpoints, useEndpointDetail, useOperatorEvents } from '@/lib/queries';
@@ -306,52 +306,32 @@ function REDStrip({ row, pending, compare, onToggleCompare }: {
         display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(104px, 1fr))',
         gap: 8,
       }}>
-        <Stat label="Calls">
+        <StatTile label="Calls">
           {fmtNum(row.calls)}
           {compare && <TrendDelta cur={row.calls} prior={row.priorCalls} kind="neutral" />}
-        </Stat>
-        <Stat label="Errors" tone={tone}>
+        </StatTile>
+        <StatTile label="Errors" tone={tone}>
           {fmtNum(row.errors)}
           {compare && <TrendDelta cur={row.errors} prior={row.priorErrors} kind="lowerBetter" />}
-        </Stat>
-        <Stat label="Err rate" tone={tone}>{row.errorRate.toFixed(2)}%</Stat>
-        {row.reqPerMin != null && <Stat label="Req/min">{row.reqPerMin.toFixed(1)}</Stat>}
-        <Stat label="Avg">
+        </StatTile>
+        <StatTile label="Err rate" tone={tone}>{row.errorRate.toFixed(2)}%</StatTile>
+        {row.reqPerMin != null && <StatTile label="Req/min">{row.reqPerMin.toFixed(1)}</StatTile>}
+        <StatTile label="Avg">
           {row.avgMs.toFixed(1)} ms
           {compare && <TrendDelta cur={row.avgMs} prior={row.priorAvgMs} kind="lowerBetter" />}
-        </Stat>
-        {row.p50Ms != null && <Stat label="P50">{row.p50Ms.toFixed(0)} ms</Stat>}
-        {row.p95Ms != null && <Stat label="P95">{row.p95Ms.toFixed(0)} ms</Stat>}
-        <Stat label="P99">
+        </StatTile>
+        {row.p50Ms != null && <StatTile label="P50">{row.p50Ms.toFixed(0)} ms</StatTile>}
+        {row.p95Ms != null && <StatTile label="P95">{row.p95Ms.toFixed(0)} ms</StatTile>}
+        <StatTile label="P99">
           {row.p99Ms.toFixed(0)} ms
           {compare && <TrendDelta cur={row.p99Ms} prior={row.priorP99Ms} kind="lowerBetter" />}
-        </Stat>
+        </StatTile>
       </div>
       <LinkButton onClick={onToggleCompare}
         title="Compare each number against the previous window of the same length"
         style={{ fontSize: 11, marginTop: 6 }}>
         {compare ? '✓ comparing to prior window' : 'compare to prior window'}
       </LinkButton>
-    </div>
-  );
-}
-
-function Stat({ label, tone, children }: {
-  label: string; tone?: 'err' | 'warn'; children: React.ReactNode;
-}) {
-  return (
-    <div style={{
-      padding: '8px 10px', border: '1px solid var(--border)',
-      borderRadius: 6, background: 'var(--bg1)', minWidth: 0,
-    }}>
-      <div style={{
-        fontSize: 10, color: 'var(--text3)', marginBottom: 2,
-        textTransform: 'uppercase', letterSpacing: 0.4,
-      }}>{label}</div>
-      <div className="mono" style={{
-        fontSize: 15, fontWeight: 600,
-        color: tone === 'err' ? 'var(--err)' : tone === 'warn' ? 'var(--warn)' : 'var(--text)',
-      }}>{children}</div>
     </div>
   );
 }

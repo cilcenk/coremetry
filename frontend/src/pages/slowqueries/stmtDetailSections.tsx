@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { SectionUnavailable } from '@/components/ui';
+import { SectionUnavailable, StatTile } from '@/components/ui';
 import { Sparkline } from '@/components/Sparkline';
 import { TrendDelta } from '@/components/TrendDelta';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -32,23 +32,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
       fontSize: 12, fontWeight: 700, color: 'var(--text2)',
       margin: '16px 0 8px',
     }}>{children}</div>
-  );
-}
-
-function HeaderStat({ label, tone, children }: {
-  label: string; tone?: 'err' | 'warn'; children: React.ReactNode;
-}) {
-  return (
-    <div style={{
-      padding: '8px 10px', border: '1px solid var(--border)',
-      borderRadius: 6, background: 'var(--bg1)',
-    }}>
-      <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 2 }}>{label}</div>
-      <div className="mono" style={{
-        fontSize: 15, fontWeight: 600,
-        color: tone === 'err' ? 'var(--err)' : tone === 'warn' ? 'var(--warn)' : 'var(--text)',
-      }}>{children}</div>
-    </div>
   );
 }
 
@@ -112,28 +95,28 @@ export function StmtSummarySection({ detail, compare }: {
       display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))',
       gap: 10,
     }}>
-      <HeaderStat label="Calls">
+      <StatTile label="Calls">
         {fmtNum(s.calls)}
         {compare && <TrendDelta cur={s.calls} prior={s.priorCalls} kind="neutral" />}
-      </HeaderStat>
-      <HeaderStat label="Errors" tone={errTone}>
+      </StatTile>
+      <StatTile label="Errors" tone={errTone}>
         {fmtNum(s.errors)}
         {compare && <TrendDelta cur={s.errors} prior={s.priorErrors} kind="lowerBetter" />}
-      </HeaderStat>
-      <HeaderStat label="Avg">
+      </StatTile>
+      <StatTile label="Avg">
         {s.avgMs.toFixed(1)} ms
         {compare && <TrendDelta cur={s.avgMs} prior={s.priorAvgMs} kind="lowerBetter" />}
-      </HeaderStat>
-      <HeaderStat label="P95">
+      </StatTile>
+      <StatTile label="P95">
         {s.p95Ms.toFixed(0)} ms
         {compare && <TrendDelta cur={s.p95Ms} prior={s.priorP95Ms} kind="lowerBetter" />}
-      </HeaderStat>
-      <HeaderStat label="Max">
+      </StatTile>
+      <StatTile label="Max">
         {s.maxMs.toFixed(0)} ms
-      </HeaderStat>
-      <HeaderStat label="Total time">
+      </StatTile>
+      <StatTile label="Total time">
         {fmtTotal(s.totalMs)}
-      </HeaderStat>
+      </StatTile>
     </div>
   );
 }

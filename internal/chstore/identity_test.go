@@ -341,3 +341,379 @@ func TestEdgeInstancesDbUsesSharedIdentity(t *testing.T) {
 			"kaydırılmış olabilir; o zincir kuyruk için YANLIŞ kimlik üretir")
 	}
 }
+
+// ─── dbEntityID parite sözleşmesi (v0.9.1361, F3.1) ─────────────────
+//
+// Emsal db_stmt_hash (dbstmt.go:23-44 "THE PARITY CONTRACT") — ama ders
+// HASH DEĞİL: aynı normalizasyonun İKİ motorda bayt-bayt aynı çıktıyı
+// vermesi ve bunun CANLI veriden yakalanmış vektörlerle pinlenmesi.
+// Burada iki "motor" iki KİMLİK HATTIDIR: HAT A portu adresin içinde
+// taşır (server.address = corebank-scan.prod:1521), HAT B ayrı taşır
+// ya da hiç taşımaz. Fonksiyonun sözü: aynı fiziksel adres hangi hattan
+// gelirse gelsin AYNI kimliğe iner.
+//
+// Vektörlerin KAYNAĞI her satırda yazılı. Prod ölçümünden (2026-08-24,
+// 1s pencere) gelen gerçek şekiller ile testin ihtiyacı için üretilmiş
+// ŞEKİLLER ayrı işaretli — ölçülmemiş bir değeri ölçülmüş gibi
+// göstermek bu dosyanın kapatmaya çalıştığı arıza sınıfının kendisi.
+
+func TestDBEntityIDVectors(t *testing.T) {
+	cases := []struct {
+		name               string
+		system, host, port string
+		want               string
+	}{
+		// ── ÖLÇÜLMÜŞ ŞEKİLLER (prod oracle: 78 ayrı server.address,
+		//    çözünürlük 0,99996; adres portu İÇİNDE taşıyor) ──
+		{"HAT A oracle, port adrese yapışık", "oracle", "corebank-scan.prod:1521", "",
+			"db:oracle@corebank-scan.prod:1521"},
+		{"HAT A ikinci fiziksel oracle", "oracle", "corebank-dg.prod:1521", "",
+			"db:oracle@corebank-dg.prod:1521"},
+		// HAT B receiver instance'ı PORTSUZ gelir (identity.go'daki
+		// 2026-08-24 lokal ölçümü: corebank-scan.prod / corebank-dg.prod).
+		{"HAT B oracle, port ayrı", "oracle", "corebank-scan.prod", "1521",
+			"db:oracle@corebank-scan.prod:1521"},
+		{"HAT B oracle, port hiç yok", "oracle", "corebank-scan.prod", "",
+			"db:oracle@corebank-scan.prod"},
+		// capacityCheck.dbsys BÜYÜK harf yazıyor; adres de büyük gelebilir.
+		{"büyük harf system + adres", "ORACLE", "COREBANK-SCAN.PROD:1521", "",
+			"db:oracle@corebank-scan.prod:1521"},
+		// §3.6'nın ilacı: POSTGRES ile postgresql tek kimliğe iner.
+		{"postgres alias + boşluk", "  PostGres  ", " pg-01.prod ", " 5432 ",
+			"db:postgresql@pg-01.prod:5432"},
+		// FQDN KISALTILMAZ: ayırt edici bilgi son ekte ve önekte.
+		{"db2 uzun FQDN kısaltılmaz", "db2", "db2gw-04.corebank.prod", "50000",
+			"db:db2@db2gw-04.corebank.prod:50000"},
+		// couchbase ÖLÇÜLDÜ: server.address %0, net.peer.name %48,36 —
+		// yani 2. basamak o motor için TEK kaynak. Ad bir ŞEKİL, ölçülen
+		// değer değil; ölçülen olgu basamağın yük taşıdığıdır.
+		{"couchbase 2. basamaktan (ŞEKİL)", "couchbase", "cbnode-1.prod", "",
+			"db:couchbase@cbnode-1.prod"},
+		// clickhouse ÖLÇÜLDÜ: üç basamak da %0 — Coremetry'nin KENDİ
+		// self-telemetrisi. Çözülemeyen dal NORMAL bir yol, kenar vaka
+		// değil: boş ID → çağıran bugünkü ham değeri bayt-bayt yazar.
+		{"clickhouse çözülemez (self-telemetri)", "clickhouse", "", "", ""},
+
+		// ── ŞEKİLLER: bölme kuralının bozmaması gerekenler ──
+		// Çıplak IPv6: son ':'ten sonrası "1" ve TAMAMEN RAKAM, yani
+		// birinci kapı GEÇİLİR. İkinci kapı olmasa adres 2001:db8: + port
+		// 1 diye bölünürdü — "son ':'ten böl"ün klasik off-by-one'ı.
+		{"IPv6 çıplak, bölünmez", "postgresql", "2001:db8::1", "",
+			"db:postgresql@2001:db8::1"},
+		{"IPv6 kısa çıplak, bölünmez", "redis", "::1", "", "db:redis@::1"},
+		{"IPv6 parantezli portsuz", "redis", "[::1]", "", "db:redis@::1"},
+		{"IPv6 parantezli + port", "postgresql", "[2001:db8::1]:5432", "",
+			"db:postgresql@[2001:db8::1]:5432"},
+		{"IPv6 + ayrı port", "postgresql", "2001:db8::1", "5432",
+			"db:postgresql@[2001:db8::1]:5432"},
+		// Bu satır MUTASYONLA kazanıldı: "son ':'ten böl" yerine "İLK
+		// ':'ten böl" yazan bir sürüm yukarıdaki IPv6 vektörlerinin
+		// HİÇBİRİNDE ısırmıyor, çünkü parantezli-portlu biçim bölünmeyen
+		// sürümün SABİT NOKTASI (bölünmeyince host aynen geri yazılıyor).
+		// Ayrışma ancak ÇATIŞAN bir port argümanıyla görünür oluyor:
+		// yanlış sürüm gömülü portu göremediği için argümanı kullanır ve
+		// host'u İKİNCİ KEZ parantezler.
+		{"IPv6 parantezli + port, argüman çatışır", "postgresql", "[::1]:5432", "6432",
+			"db:postgresql@[::1]:5432"},
+		{"çıplak hostname, ':' yok", "mssql", "sqlnode.prod", "",
+			"db:mssql@sqlnode.prod"},
+		// Sondaki ':' port DEĞİLDİR (boş dizge "hepsi rakam" sayılamaz) —
+		// ve host bayt-bayt korunur, kırpılmaz.
+		{"sondaki ':' port değil", "mssql", "sqlnode.prod:", "",
+			"db:mssql@sqlnode.prod:"},
+		{"port rakam değil, düşer", "oracle", "h.prod", "abc", "db:oracle@h.prod"},
+		// Gömülü port ayrı argümanı YENER: host ile gömülü portu TEK bir
+		// instrumentasyon çağrısı yazdı.
+		{"gömülü port argümanı yener", "oracle", "h.prod:1521", "1522",
+			"db:oracle@h.prod:1521"},
+
+		// ── kodlanamayan demetler → boş ID ──
+		{"host yok, yalnız port", "oracle", ":1521", "", ""},
+		{"boş system", "", "corebank-scan.prod", "", ""},
+		{"boş host", "oracle", "", "1521", ""},
+		{"yalnız boşluk", "   ", "   ", "  ", ""},
+		{"boş parantez", "oracle", "[]", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := dbEntityID(tc.system, tc.host, tc.port)
+			if got != tc.want {
+				t.Fatalf("dbEntityID(%q,%q,%q) = %q, %q bekleniyordu",
+					tc.system, tc.host, tc.port, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDBEntityIDHatParity — SÖZLEŞMENİN KENDİSİ.
+//
+// Aynı fiziksel adres HAT A'dan (port adrese yapışık) ve HAT B'den
+// (port ayrı) geldiğinde AYNI kimliğe inmeli. Bu eşitlik bozulursa
+// fonksiyon bir kimlik değil, iki kimlik üretiyor demektir ve F3.2/F3.3
+// üzerine bir köprü kuramaz.
+func TestDBEntityIDHatParity(t *testing.T) {
+	pairs := []struct {
+		name             string
+		aSys, aHost, aPt string
+		bSys, bHost, bPt string
+	}{
+		{"oracle: yapışık vs ayrı",
+			"oracle", "corebank-scan.prod:1521", "",
+			"oracle", "corebank-scan.prod", "1521"},
+		{"oracle: yazım + hat farkı birlikte",
+			"ORACLE", " corebank-scan.prod:1521 ", "",
+			"oracle", "COREBANK-SCAN.PROD", "1521"},
+		{"postgres: alias + hat farkı birlikte",
+			"POSTGRES", "pg-01.prod:5432", "",
+			"postgresql", "pg-01.prod", "5432"},
+		{"IPv6: parantezli-yapışık vs çıplak-ayrı",
+			"postgresql", "[2001:db8::1]:5432", "",
+			"postgresql", "2001:db8::1", "5432"},
+	}
+	for _, p := range pairs {
+		t.Run(p.name, func(t *testing.T) {
+			a := dbEntityID(p.aSys, p.aHost, p.aPt)
+			b := dbEntityID(p.bSys, p.bHost, p.bPt)
+			if a == "" {
+				t.Fatalf("HAT A tarafı boş ID verdi — vektör yanlış kurulmuş")
+			}
+			if a != b {
+				t.Fatalf("parite BOZUK:\n  HAT A (%q,%q,%q) = %q\n  HAT B (%q,%q,%q) = %q",
+					p.aSys, p.aHost, p.aPt, a, p.bSys, p.bHost, p.bPt, b)
+			}
+		})
+	}
+}
+
+// TestDBEntityIDPortFreeFormBridgesHats — AÇIK KALAN SORUYU çivileyen
+// test.
+//
+// HAT B receiver instance'ı bugün PORTSUZ (ölçülü: corebank-scan.prod).
+// HAT A adresi portu İÇİNDE taşıyor. Yani port kimliğe girdiği sürece
+// iki hat AYNI veritabanı için AYRI kimlik üretir — bu dilim bunu
+// çözmüyor ve çözüyormuş gibi de yapmıyor.
+//
+// Köprünün ilkel taşı: adresi splitDBAddress'ten geçir, host yarısını
+// port'suz kodla. port'a "" GEÇMEK YETMEZ — yapışık port yine kazanır,
+// ve bu tam olarak "yanlış görünmeyen" türden bir hatadır.
+func TestDBEntityIDPortFreeFormBridgesHats(t *testing.T) {
+	const hatA = "corebank-scan.prod:1521" // server.address (HAT A)
+	const hatB = "corebank-scan.prod"      // receiver instance (HAT B)
+
+	withPort := dbEntityID("oracle", hatA, "")
+	portless := dbEntityID("oracle", hatB, "")
+	if withPort == portless {
+		t.Fatalf("port kimliğe GİRMİYOR — aynı host'taki iki dinleyici tek\n" +
+			"kimliğe çökerdi (§3.1'in günahı). Karar bilinçliydi: port girer")
+	}
+	if got := dbEntityID("oracle", hatA, ""); got != "db:oracle@corebank-scan.prod:1521" {
+		t.Fatalf("HAT A kimliği %q", got)
+	}
+
+	// port'a "" geçmek port'u DÜŞÜRMEZ:
+	if dbEntityID("oracle", hatA, "") == portless {
+		t.Fatal("beklenmedik")
+	}
+	// Köprü biçimi: önce böl, sonra host yarısını kodla.
+	h, p := splitDBAddress(hatA)
+	if p != "1521" {
+		t.Fatalf("splitDBAddress portu ayıramadı: %q", p)
+	}
+	if bridged := dbEntityID("oracle", h, ""); bridged != portless {
+		t.Fatalf("port-suz biçim HAT B ile buluşmuyor: %q vs %q", bridged, portless)
+	}
+}
+
+// TestDBEntityIDIsIdempotent — çıktının instance yarısı fonksiyona geri
+// verildiğinde AYNI kimlik çıkmalı.
+//
+// Neden ŞART: kimlik bir kolona/URL'e yazılıp geri okunacak. IPv6
+// host'u port varken parantezlemezsek çıktı (::1:5432) kendi bölme
+// kuralına yem olamaz ve ikinci turda BAŞKA bir kimliğe düşer. Ayrıca
+// biçimin ParseDBSubjectID ile uyumlu kaldığını da ölçer.
+func TestDBEntityIDIsIdempotent(t *testing.T) {
+	for _, addr := range []string{
+		"corebank-scan.prod:1521", "corebank-dg.prod", "[2001:db8::1]:5432",
+		"2001:db8::1", "::1", "[::1]", "sqlnode.prod:", "db2gw-04.corebank.prod",
+	} {
+		t.Run(addr, func(t *testing.T) {
+			id := dbEntityID("oracle", addr, "")
+			if id == "" {
+				t.Fatalf("vektör boş ID verdi: %q", addr)
+			}
+			sys, inst, ok := ParseDBSubjectID(id)
+			if !ok {
+				t.Fatalf("%q ParseDBSubjectID ile çözülemedi — biçim db özne\n"+
+					"biçiminden ayrışmış", id)
+			}
+			if again := dbEntityID(sys, inst, ""); again != id {
+				t.Fatalf("idempotent DEĞİL: %q → %q", id, again)
+			}
+		})
+	}
+}
+
+// TestDBEntityHostChainPinned — ÖLÇÜMÜN kendisi test hâlinde.
+//
+// peer_service zincirde YOK: prod'da oracle için 78 ayrı server.address
+// varken YALNIZ 4 ayrı peer_service ölçüldü (2026-08-24). peer_service'i
+// zincire koymak 78 fiziksel örneği 4 ada çökertirdi.
+//
+// Sıra da sözleşme: 1. basamak neredeyse her şeyi çözüyor, 2. basamak
+// couchbase için TEK kaynak (%48,36), 3. basamak sekiz motorda da %0.
+func TestDBEntityHostChainPinned(t *testing.T) {
+	want := []string{"server.address", "net.peer.name", "db.host"}
+	if len(dbEntityHostKeys) != len(want) {
+		t.Fatalf("zincir %d basamak, %d bekleniyordu: %v",
+			len(dbEntityHostKeys), len(want), dbEntityHostKeys)
+	}
+	for i, k := range want {
+		if dbEntityHostKeys[i] != k {
+			t.Errorf("%d. basamak %q, %q bekleniyordu — sıra kaydırmak kimliği\n"+
+				"SESSİZCE yeniden adlandırır", i, dbEntityHostKeys[i], k)
+		}
+	}
+	for _, k := range dbEntityHostKeys {
+		if strings.Contains(k, "peer") && k != "net.peer.name" {
+			t.Errorf("zincire %q girmiş — peer_service ÖLÇÜLEREK dışarıda\n"+
+				"bırakıldı (78 adres → 4 ad)", k)
+		}
+		if k == "peer_service" {
+			t.Error("peer_service zincire girmiş")
+		}
+	}
+}
+
+// TestDBEngineAliasMapIsMeasuredOnly — alias haritası ÖLÇÜLMÜŞ
+// ayrışmaları taşır, spekülatif eşleme taşımaz.
+//
+// postgres→postgresql VAR: db_capacity.go POSTGRES yazıyor, span tarafı
+// postgresql; §3.6'nın ölçülmüş kusuru bu.
+//
+// mariadb→mysql YOK: `mariadb` backend Go kaynağında hiç geçmiyor,
+// prod ölçümünde mysql/mariadb span'i yok, ve frontend mariadb'yi AYRI
+// bir motor sayıyor. Kanıtsız eşleme iki motoru tek kimlik uzayında
+// birleştirirdi.
+func TestDBEngineAliasMapIsMeasuredOnly(t *testing.T) {
+	if got := normalizeDBSystem("  POSTGRES "); got != "postgresql" {
+		t.Errorf("normalizeDBSystem(POSTGRES) = %q, postgresql bekleniyordu —\n"+
+			"§3.6'nın kusuru geri gelmiş", got)
+	}
+	if got := normalizeDBSystem("postgresql"); got != "postgresql" {
+		t.Errorf("kanonik yazım değişmiş: %q", got)
+	}
+	if got := normalizeDBSystem("ORACLE"); got != "oracle" {
+		t.Errorf("ToLower yeterken haritaya girmiş olabilir: %q", got)
+	}
+	if _, ok := dbEngineAliases["mariadb"]; ok {
+		t.Error("mariadb alias'ı eklenmiş — backend kaynağında `mariadb` YOK,\n" +
+			"prod ölçümünde mysql/mariadb span'i YOK ve semconv ikisini AYRI\n" +
+			"db.system değeri sayıyor. Kanıt geldiyse bu testi ölçümle güncelle")
+	}
+	if got := normalizeDBSystem("MariaDB"); got != "mariadb" {
+		t.Errorf("mariadb %q'ye eşlenmiş — iki motor tek kimliğe çöker", got)
+	}
+
+	// §3.6'nın kusuru DBSubjectID'de HÂLÂ AÇIK ve bu bilinçli: onu
+	// aliaslamak canlı problems.service satırlarını yeniden adlandırır
+	// (F1.1'in işi, ayrı dilim). Fark burada GÖRÜNÜR duruyor ki F1.1
+	// kapatırken bu testi bilerek güncellemek zorunda kalsın.
+	if DBSubjectID("POSTGRES", "pg-01.prod") != "db:postgres@pg-01.prod" {
+		t.Error("DBSubjectID alias haritasına bağlanmış — bu F1.1'dir ve AÇIK\n" +
+			"problemlerin service alanını yeniden adlandırır; ayrı dilim olarak\n" +
+			"ölçülmeli (db_capacity.go:448-450 bu sınıfı biliyor)")
+	}
+	if dbEntityID("POSTGRES", "pg-01.prod", "") != "db:postgresql@pg-01.prod" {
+		t.Error("dbEntityID alias haritasını KULLANMIYOR")
+	}
+}
+
+// dbEntityIDCodeRefs — bir Go kaynağındaki dbEntityID/DBEntityID KOD
+// referanslarının sayısı. Yorum satırları elenir (bu dosya ve identity.go
+// fonksiyonu yorumda ONLARCA kez anıyor) ve arama BÜYÜK-KÜÇÜK HARF
+// DUYARSIZ: tek yazım arayan bir kapı, ikizini muaf tutar — bu deponun
+// tekrar eden ders sınıfı.
+func dbEntityIDCodeRefs(src string) int {
+	n := 0
+	for _, line := range strings.Split(src, "\n") {
+		code := line
+		if i := strings.Index(code, "//"); i >= 0 {
+			code = code[:i]
+		}
+		n += strings.Count(strings.ToLower(code), "dbentityid")
+	}
+	return n
+}
+
+// TestDBEntityIDIsWiredNowhere — F3.1'in KENDİ sözleşmesi.
+//
+// Plan birebir: "Fonksiyon yazılır, testlenir, hiçbir okuma yoluna
+// bağlanmaz." Bağlama işi F3.2/F3.3'tür ve biri KARIŞIK-KİMLİK göç
+// penceresi taşır (§3.9: 90 günlük MV boyunca aynı grafikte iki kimlik,
+// topolojide 14 gün iki düğüm, kayıtlı görünümler sessizce boşalır).
+// Yani bu kapı bir üslup tercihi değil, patlama yarıçapı kapısı.
+//
+// F3.2 geldiğinde bu test KIRILIR — doğru davranış budur: yazarı
+// testi bilerek silmek/dönüştürmek zorunda kalır ve §3.9'un
+// "kaydedilmiş görünümler ne olacak" sorusunu cevaplamadan geçemez.
+func TestDBEntityIDIsWiredNowhere(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("paket dizini okunamadı: %v", err)
+	}
+	seen := false
+	for _, e := range entries {
+		n := e.Name()
+		if !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(".", n))
+		if err != nil {
+			t.Fatalf("%s okunamadı: %v", n, err)
+		}
+		refs := dbEntityIDCodeRefs(string(b))
+		if n == "identity.go" {
+			seen = true
+			if refs != 1 {
+				t.Errorf("identity.go'da %d kod referansı var, 1 bekleniyordu\n"+
+					"(yalnız func bildirimi). Fazlası = fonksiyon bir okuma yoluna\n"+
+					"bağlanmış demektir; F3.1 bağlamaz", refs)
+			}
+			continue
+		}
+		if refs != 0 {
+			t.Errorf("%s dbEntityID'yi çağırıyor (%d kez) — F3.1 hiçbir okuma\n"+
+				"yoluna bağlanmaz. Bu F3.2/F3.3 ise testi bilerek güncelle", n, refs)
+		}
+	}
+	if !seen {
+		t.Fatal("identity.go taranmadı — kapı kör kalmış olabilir")
+	}
+}
+
+// TestDBEntityIDCodeRefsDetects — YUKARIDAKİ KAPININ NEGATİF KONTROLÜ.
+//
+// Kapının kendisi ölçülmezse "0 bulundu" ile "hiç aramadım" ayırt
+// edilemez. Bu deponun ölçülmüş dersi: bir kapı yalnız VARLIĞI değil
+// YOKLUĞU da kanıtlamalı.
+func TestDBEntityIDCodeRefsDetects(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"düz çağrı", "\tid := dbEntityID(sys, host, port)\n", 1},
+		{"dışa açık ikiz yazım", "\tid := DBEntityID(sys, host, port)\n", 1},
+		{"fonksiyon değeri olarak", "\tf := dbEntityID\n", 1},
+		{"yorumda anılıyor", "// dbEntityID bir gün bağlanacak\n", 0},
+		{"satır sonu yorumu", "\tx := 1 // dbEntityID\n", 0},
+		{"iki çağrı tek satırda", "a, b := dbEntityID(x), dbEntityID(y)\n", 2},
+		{"alakasız", "\tk := dbEntityHostKeys[0]\n", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dbEntityIDCodeRefs(tc.src); got != tc.want {
+				t.Fatalf("dbEntityIDCodeRefs(%q) = %d, %d bekleniyordu", tc.src, got, tc.want)
+			}
+		})
+	}
+}

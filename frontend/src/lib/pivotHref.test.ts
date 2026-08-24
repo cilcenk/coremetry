@@ -12,6 +12,15 @@ import { decodeRange } from './urlState';
 // possible: the window is never optional and always survives the round trip.
 const params = (href: string) => new URLSearchParams(href.slice(href.indexOf('?') + 1));
 
+// ⚠ BİRİM / ULP TUZAĞI — v0.9.1354, önceli v0.9.1331 (slowTracesHref).
+// Unix-nanosaniye damgaları ~1,7e18; Number.MAX_SAFE_INTEGER'ı (9,007e15)
+// ~190× aşıyor ve o büyüklükte float64'ün adım aralığı 256 ns. Yani `ns + 1`
+// LİTERAL OLARAK aynı sayıdır ve ±1 ns'lik bir iddia hiçbir şey kanıtlamaz.
+// Bu dosyadaki her sub-milisaniye offset YARIM MS'tir — hem ULP'nin hem de
+// (aşağıda anlatılan) bölme hassasiyetinin çok üstünde.
+const FROM_NS = 1_700_000_000_000_000_000; // 2023-11-14T22:13:20Z
+const TO_NS   = 1_700_000_900_000_000_000; // +15 dk
+
 describe('tracesPivotHref', () => {
   it('always emits a range — preset window', () => {
     const p = params(tracesPivotHref({ window: { preset: '6h' }, service: 'checkout' }));
@@ -21,7 +30,7 @@ describe('tracesPivotHref', () => {
 
   it('always emits a range — absolute ns window', () => {
     const href = tracesPivotHref({
-      window: { fromNs: 1_700_000_000_000_000_000, toNs: 1_700_000_900_000_000_000 },
+      window: { fromNs: FROM_NS, toNs: TO_NS },
       service: 'checkout',
     });
     const range = params(href).get('range');
@@ -31,11 +40,39 @@ describe('tracesPivotHref', () => {
     });
   });
 
+  // v0.9.1354 — bu test 1354'e kadar HİÇBİR ŞEY kanıtlamıyordu ve iki ucu
+  // da AYRI AYRI kördü. Eski hâli `from = …_000_999_999`, `to = …_000_000_001`
+  // yazıyordu:
+  //
+  //   • `to` ucu: +1 ns, 1,7e18'de 256 ns'lik ULP'nin altında kaldığı için
+  //     LİTERAL olarak TO_NS'in kendisiydi. Damga zaten tam ms sınırındaydı,
+  //     yani ceil ile floor aynı cevabı veriyordu — mutasyon ısırmazdı.
+  //   • `from` ucu: +999_999 ns ULP'yi aşıyor ama BÖLMEYİ atlatamıyor.
+  //     1_700_000_000_000_999_999 / 1e6 = 1700000000000.999999 ve 1,7e12 ms
+  //     büyüklüğünde float64 adımı 0,000244 ms (≈244 ns), dolayısıyla değer
+  //     1700000000001.0'a yuvarlanıyor: floor ZATEN bir ms yukarı çıkıyordu,
+  //     yani pencere DARALIYORDU. İddia yine de geçiyordu, çünkü
+  //     `fromMs * 1e6 <= fromNs` karşılaştırması 1,7e18'de 1 ns'lik farkı
+  //     göremez. Test ihlali ölçmüyor, ölçemediğini ölçüyordu.
+  //
+  // Çare v0.9.1331'dekiyle aynı: yarım ms offset. Ve asıl iddia artık
+  // eşitsizlik değil TAM DİZE — tamsayı dizesi karşılaştırması bu
+  // büyüklükte körleşemez, eşitsizlik körleşebilir.
   it('never narrows the requested window when ns→ms rounds', () => {
-    // from floors, to ceils: the encoded window must CONTAIN the request.
-    const fromNs = 1_700_000_000_000_999_999;
-    const toNs = 1_700_000_900_000_000_001;
-    const r = decodeRange(params(tracesPivotHref({ window: { fromNs, toNs } })).get('range'), { preset: '30m' });
+    const fromNs = FROM_NS + 500_000; // .5ms → floor AŞAĞIDA kalmalı
+    const toNs = TO_NS + 500_000;     // .5ms → ceil YUKARI taşmalı
+
+    // Meta-kapı: offset float64'te hayatta kalmazsa aşağısı boşa koşar.
+    // Testin ölçebildiğini testin kendisi kanıtlasın (v0.9.1354'ün dersi).
+    expect(fromNs, 'offset float64\'te kayboldu — deltayı büyüt').not.toBe(FROM_NS);
+    expect(toNs, 'offset float64\'te kayboldu — deltayı büyüt').not.toBe(TO_NS);
+    expect(Math.floor(toNs / 1e6), 'bölme sonrası floor/ceil ayrışmıyor')
+      .not.toBe(Math.ceil(toNs / 1e6));
+
+    const range = params(tracesPivotHref({ window: { fromNs, toNs } })).get('range');
+    expect(range).toBe('custom:1700000000000-1700000900001');
+
+    const r = decodeRange(range, { preset: '30m' });
     expect(r.preset).toBe('custom');
     expect(r.fromMs! * 1e6).toBeLessThanOrEqual(fromNs);
     expect(r.toMs! * 1e6).toBeGreaterThanOrEqual(toNs);

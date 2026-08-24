@@ -64,8 +64,29 @@ describe('patternLogWindow — Ö2 düşen spike penceresi', () => {
     // kardeş AnomalyDetailDrawer aynı nedenle lead-in taşıyor.
     const r = decodeRange(patternLogWindow(t0), { preset: '30m' });
     expect(r.preset).toBe('custom');
-    expect(r.fromMs).toBe(Math.floor((t0 - 30 * 60 * 1e9) / 1e6));
-    expect(r.toMs).toBe(Math.ceil((t0 + 10 * 60 * 1e9) / 1e6));
+    expect(r.fromMs).toBe(1_699_998_200_000); // t0 − 30dk, floor
+    expect(r.toMs).toBe(1_700_000_600_000);   // t0 + 10dk, ceil
+  });
+
+  // v0.9.1354 — yukarıdaki iki iddia 1354'e kadar İKİ KEZ boşa koşuyordu ve
+  // mutasyon turunda ölçüldü: patternLogWindow'daki `ceil`i `floor` yapmak
+  // testi HİÇ kırmıyordu.
+  //   1. Beklenti implementasyonun kendi ifadesini (`Math.ceil(…)`) tekrar
+  //      hesaplıyordu — aynayı aynaya tutmak.
+  //   2. t0 tam ms sınırındaydı, yani floor ile ceil zaten aynı cevabı
+  //      veriyordu; ayrım YOKTU, ölçecek bir şey de yoktu.
+  // Ayrım yarım ms offset ile kuruluyor (ns damgaları ~1,7e18, ULP 256 ns;
+  // sub-µs delta ÖLÇÜLEMEZ — bkz. pivotHref.test.ts, v0.9.1331/1354).
+  it('yuvarlama pencereyi DARALTMAZ: from floor, to CEIL', () => {
+    const off = t0 + 500_000; // .5ms
+    expect(off, 'offset float64\'te kayboldu — deltayı büyüt').not.toBe(t0);
+    const r = decodeRange(patternLogWindow(off), { preset: '30m' });
+    // Beklenti implementasyonu tekrar hesaplamıyor: sabit tamsayılar.
+    expect(r.fromMs).toBe(1_699_998_200_000); // floor — AŞAĞIDA kalır
+    expect(r.toMs).toBe(1_700_000_600_001);   // ceil  — YUKARI taşar
+    // Pencere istenen aralığı KAPSAMALI (daralma = en yeni kova kaybı).
+    expect(r.fromMs! * 1e6).toBeLessThanOrEqual(off - 30 * 60 * 1e9);
+    expect(r.toMs! * 1e6).toBeGreaterThanOrEqual(off + 10 * 60 * 1e9);
   });
 
   it('pencere /logs\'un okuduğu kanalda ve decodeRange ile round-trip eder', () => {

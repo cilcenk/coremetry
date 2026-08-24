@@ -332,6 +332,222 @@ const dbInstanceExpr = `coalesce(
 	'unknown'
 )`
 
+// ─── Deterministik DB ENTITY kimliği (v0.9.1361, F3.1) ──────────────
+//
+// dbEntityID bir veritabanı ÖRNEĞİNİ (host, port) fiziksel adresinden
+// adlandırır. Bugün HİÇBİR OKUMA YOLUNA BAĞLI DEĞİL ve bu bilinçli:
+// dilim yalnız fonksiyonu + parite sözleşmesini teslim eder (plan F3.1,
+// docs/audit/database-entity-detail-2026-08-24.md §3.8). Bağlama işi
+// F3.2/F3.3'tür ve onlardan biri KARIŞIK-KİMLİK göç penceresi taşır —
+// bu sürümde bağlamak tam olarak fazlandırmanın kaçındığı patlama
+// yarıçapıdır. Bağlanmadığı TestDBEntityIDIsWiredNowhere ile çivili.
+//
+// ⚠️ §3.8 bir HİPOTEZDİ; ön koşul ölçümü (F3.0) 2026-08-24'te PROD'da
+// koşuldu ve hipotezin iki maddesini değiştirdi. Ölçüm (1s pencere,
+// countIf(attr != '') / count()):
+//
+//	db_system    span sayısı  server.address  net.peer.name  db.host
+//	oracle        38.854.249       0,99996        0,00000044      0
+//	db2           15.347.825       1,0            0               0
+//	redis          2.097.034       0,7766         0,0025          0
+//	couchbase        403.016       0              0,4836          0
+//	mssql            135.717       1,0            0               0
+//	clickhouse        12.525       0              0               0
+//	mongodb               32       1,0            0               0
+//	other_sql              5       0              0               0
+//
+// Ağırlıklı çözünürlük ~%98,8 → kimlik uygulanabilir. Dört sonuç:
+//
+//  1. peer_service ADRES ZİNCİRİNE GİRMEZ. Ölçüm: oracle için 78 ayrı
+//     server.address, YALNIZ 4 ayrı peer_service. §3.8 bu maddeyi
+//     "r_any düşük çıkarsa düşer" diye şarta bağlamıştı; r_any yüksek
+//     çıktı, madde AYAKTA — ve artık demo jeneratörünün sabitine değil
+//     prod enstrümantasyonuna dayanıyor. peer_service kullanmak 78
+//     fiziksel örneği 4 ada çökertirdi: §3.1'in ta kendisi.
+//  2. db.host HİÇBİR MOTORDA HİÇBİR ŞEY ÇÖZMÜYOR (sekiz motorda da 0).
+//     Zincirde simetri için duruyor, ama yük TAŞIMIYOR — bu satır
+//     olmadan bugün tek bir span bile kimliksiz kalmaz. Yük taşıyormuş
+//     gibi duran bir basamağın bu depoyu ısırdığı olmuştur; o yüzden
+//     burada AÇIKÇA yazıyor.
+//  3. net.peer.name TEK BİR MOTOR İÇİN YÜK TAŞIYOR: couchbase (%48,36).
+//     Süs değil — düşerse couchbase %48'den %0'a iner.
+//  4. clickhouse = %0, yani Coremetry'nin KENDİ self-telemetrisi hiç
+//     çözülmüyor. Çözülemeyen dal bu yüzden bir kenar vaka değil,
+//     NORMAL ve TESTLİ bir yoldur (aşağıdaki boş-ID sözleşmesi).
+//
+// KARARLAR (§3.8 tablosu + ölçüm):
+//
+//   - system : küçük harf + alias haritası (dbEngineAliases). §3.6'nın
+//     ilacı; kapsam gereği %100.
+//   - host   : dbEntityHostKeys zincirinden gelen ÇÖZÜLMÜŞ değer. SON
+//     ':'ten bölünür ve YALNIZ kalan kısım tamamen rakamsa; küçük
+//     harf; FQDN KISALTILMAZ — ayırt edici bilgi `.prod` son ekinde ve
+//     `scan`/`dg` önekinde (§3.1).
+//   - port   : AYRI alan. Host dizgisine yapışık gelse de (HAT A) ayrı
+//     gelse de (HAT B) fonksiyon AYNI kimliği üretir — parite
+//     sözleşmesinin çekirdeği budur.
+//   - HASH YOK. db_stmt_hash sınırsız SQL yüzünden hash'liyor; host:port
+//     kısa ve operatörün URL'de OKUMASI gereken bir şey.
+//   - Çözülemeyince BOŞ ID. Çağıran o zaman bugünkü ham değeri bayt-bayt
+//     yazar — DBSubjectID'nin bugünkü sözleşmesi (yukarıda) ve §3.10'un
+//     3. kırmızı çizgisi. Kısmi demeti hash'leyip sahte-kararlı ID
+//     üretmek EN KÖTÜ seçenektir.
+//
+// ⚠️ AÇIK KALAN, BU DİLİMİN ÇÖZMEDİĞİ SORU — PORT ASİMETRİSİ. HAT A
+// portu adresin İÇİNDE taşıyor (corebank-scan.prod:1521), HAT B
+// receiver instance'ı PORTSUZ (corebank-scan.prod). Fonksiyon ikisini
+// aynı kimliğe indirGEMEZ ve indirmiyormuş gibi de davranmıyor: port
+// bilindiğinde kimliğe girer, çünkü aynı host'ta iki dinleyici İKİ
+// veritabanıdır ve onları birleştirmek §3.1'in günahını yeni kimlikte
+// tekrar işlemek olurdu. Port-SUZ biçim isteyen çağıran adresi önce
+// splitDBAddress'ten geçirir ve host yarısını port'suz kodlar — port'a
+// "" geçmek YETMEZ, çünkü adrese yapışık port yine kazanır. İki adım da
+// bu dosyada, yani ikinci bir yazım doğmuyor
+// (TestDBEntityIDPortFreeFormBridgesHats bunu çiviliyor).
+// HAT B'nin port yayınlayıp yayınlayamayacağı ÖLÇÜLMEDİ; köprü F3.3'ün
+// işidir ve bu soruyu ÖNCE cevaplamak zorundadır.
+
+// dbEngineAliases — db.system YAZIM eşlemesi, TEK ev (plan F1.1 bu
+// haritayı buradan devralır).
+//
+// Yalnız ÖLÇÜLMÜŞ bir ayrışma var: evaluator/db_capacity.go:181
+// dbsys olarak POSTGRES yazıyor, span tarafının GROUP BY db_system
+// değeri postgresql. İki yazım aynı veritabanı için iki ayrı kimlik
+// üretir (§3.6; v0.9.1345'in db-sahiplik zenginleştirmesi PostgreSQL
+// kapasite problemlerinde tam bu yüzden sessizce hiç eşleşmiyor).
+//
+// ⚠️ mariadb BİLEREK YOK. §3.8 mariadb→mysql öneriyordu; doğrulandı ki
+// `mariadb` backend Go kaynağında HİÇ GEÇMİYOR (dbsys sabitleri yalnız
+// ORACLE/POSTGRES/MYSQL/REDIS) ve prod ölçümünde ne mysql ne mariadb
+// span'i var. Frontend ise mariadb'yi AYRI bir motor sayıyor: kendi
+// rengi (DependenciesTable.tsx) ve mysql ile paylaştığı panel dalı
+// (DatabaseDetail.tsx, DetailDrawer.tsx). Üstelik semconv'da mariadb ve
+// mysql AYRI db.system değerleridir — postgres/postgresql gibi bir
+// YAZIM ayrışması değil, iki motor. Kanıtsız bir eşleme iki motoru tek
+// kimlik uzayında birleştirirdi; spekülatif alias EKLENMEDİ.
+//
+// ORACLE→oracle gibi vakalar zaten ToLower ile kapanıyor, haritaya
+// girmelerine gerek yok (ve girselerdi harita "büyük harf listesi"
+// gibi görünürdü — o liste sonsuzdur).
+var dbEngineAliases = map[string]string{
+	"postgres": "postgresql",
+}
+
+// dbEntityHostKeys — fiziksel adresi çözen OTel anahtar zinciri,
+// SIRASIYLA. F3.2 SQL ifadesini bu listeden üretir; ikinci kez YAZMAZ
+// (nsIdentityKeys ile aynı sözleşme). Ölçülen çözünürlükler yukarıdaki
+// tabloda; özetle: 1. basamak neredeyse her şeyi çözüyor, 2. basamak
+// YALNIZ couchbase için ama orada TEK kaynak, 3. basamak bugüne dek
+// hiçbir şey çözmedi.
+//
+// peer_service bu listede YOK ve olmayacak (yukarıdaki 1. sonuç).
+var dbEntityHostKeys = []string{
+	"server.address",
+	"net.peer.name",
+	"db.host",
+}
+
+// normalizeDBSystem — motor adının kanonik yazımı. Boş dönerse motor
+// bilinmiyor demektir.
+func normalizeDBSystem(system string) string {
+	s := strings.ToLower(strings.TrimSpace(system))
+	if canon, ok := dbEngineAliases[s]; ok {
+		return canon
+	}
+	return s
+}
+
+// isDBPortDigits — bir dizginin port SAYILIP sayılmayacağı. BOŞ dizge
+// port DEĞİLDİR: "hepsi rakam" testini boş girdide true döndürmek klasik
+// bir tuzak (döngü hiç dönmez) ve `host:` biçimini sessizce `host`a
+// çevirirdi.
+func isDBPortDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// unbracketDBHost — IPv6 literalinin köşeli parantezlerini soyar.
+// [::1] ile ::1 AYNI host'tur; iki yazım iki kimlik üretemez.
+func unbracketDBHost(h string) string {
+	if len(h) >= 2 && h[0] == '[' && h[len(h)-1] == ']' {
+		return h[1 : len(h)-1]
+	}
+	return h
+}
+
+// splitDBAddress — adresin host ve port yarıları. Port bulunamazsa
+// ADRESİN TAMAMI host'tur (bayt-bayt, kısaltmasız).
+//
+// Kural SON ':' üzerinden ve ÜÇ kapıyla:
+//
+//	(1) kalan kısım tamamen rakam olmalı  → `host:abc` port taşımaz
+//	(2) host yarısı ':' taşıyorsa ']' ile BİTMELİ → çıplak IPv6 sağ kalır:
+//	    2001:db8::1'in son ':'inden sonrası "1", yani (1) geçilir; kapı
+//	    (2) olmasa adres `2001:db8:` + port 1 diye BÖLÜNÜRDÜ.
+//	(3) parantezli literal soyulur → [::1]:5432 ve ::1 aynı host'a iner
+//
+// CH'de aynen ifade edilebilir olması ŞART (parite sözleşmesi, F3.2):
+// endsWith + position + match(rest, ^[0-9]+$) üçlüsü yeter.
+func splitDBAddress(addr string) (host, port string) {
+	addr = strings.TrimSpace(addr)
+	i := strings.LastIndex(addr, ":")
+	if i < 0 {
+		return unbracketDBHost(addr), ""
+	}
+	rest := addr[i+1:]
+	if !isDBPortDigits(rest) {
+		return unbracketDBHost(addr), ""
+	}
+	h := addr[:i]
+	if strings.Contains(h, ":") && !strings.HasSuffix(h, "]") {
+		return unbracketDBHost(addr), "" // çıplak IPv6 — bölünmez
+	}
+	return unbracketDBHost(h), rest
+}
+
+// dbEntityID — `db:<system>@<host>[:<port>]`. Boş dönerse "bu demeti
+// kodlayamıyorum" demektir ve çağıran BUGÜNKÜ ham değeri yazar.
+//
+// Adres içinde gelen port, ayrı gelen port argümanını YENER: host ve
+// gömülü portu TEK bir instrumentasyon çağrısı yazdı; birinin host'unu
+// ötekinin portuyla birleştirmek hiç gözlenmemiş bir adres uydururdu.
+// Rakam olmayan port argümanı port DEĞİLDİR ve düşer — kimliğin tamamını
+// reddetmek host bilgisini de çöpe atardı.
+//
+// Port varken IPv6 host'u köşeli paranteze alınır, yoksa çıktı kendi
+// bölme kuralına yem olamazdı (::1 + 5432 → ::1:5432 geri okunamaz).
+// Çıktının instance yarısı fonksiyona geri verildiğinde AYNI kimliği
+// üretir — TestDBEntityIDIsIdempotent bunu çiviliyor.
+func dbEntityID(system, host, port string) string {
+	sys := normalizeDBSystem(system)
+	h, embedded := splitDBAddress(host)
+	h = strings.ToLower(h)
+
+	p := strings.TrimSpace(port)
+	if embedded != "" {
+		p = embedded
+	} else if !isDBPortDigits(p) {
+		p = ""
+	}
+	if sys == "" || h == "" {
+		return ""
+	}
+	if p == "" {
+		return dbNodePrefix() + sys + "@" + h
+	}
+	if strings.Contains(h, ":") {
+		h = "[" + h + "]"
+	}
+	return dbNodePrefix() + sys + "@" + h + ":" + p
+}
+
 // dbNameExpr — db_summary_5m'in `db_name` kimliğinin HAM SPANS ikizi,
 // birebir (store.go db_summary_5m DDL'i). dbInstanceExpr ile aynı
 // gerekçe: bu ifadeyi farklı yazan bir ham sorgu, AYNI mantıksal

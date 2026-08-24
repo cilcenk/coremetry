@@ -8,6 +8,7 @@ import { logsHref } from '@/lib/logsUrl';
 import { ServiceTimeline } from '@/components/traces/ServiceTimeline';
 import { TraceLogList } from '@/components/traces/TraceLogList';
 import type { TraceDetailResponse, LogRow } from '@/lib/types';
+import { traceHref } from '@/lib/traceHref';
 
 // v0.8.484 — /logs pencereyi YALNIZ ?range='ten okur; penceresiz link
 // varsayilan 30 dk acip eski trace'in loglarini "yok" gosteriyordu. Tampon
@@ -123,7 +124,7 @@ export function TracePeekDrawer({
         <div style={{ fontSize: 12, color: 'var(--err)' }}>
           Failed to load trace.
           <div style={{ marginTop: 8 }}>
-            <Link to={`/trace?id=${traceId}`} style={{ color: 'var(--accent2)' }}>
+            <Link to={traceHref(traceId)} style={{ color: 'var(--accent2)' }}>
               Open full trace →
             </Link>
           </div>
@@ -197,7 +198,7 @@ export function TracePeekDrawer({
           </div>
 
           <div style={{ display: 'flex', gap: 12 }}>
-            <Link to={`/trace?id=${traceId}`}
+            <Link to={traceHref(traceId)}
               style={{ fontSize: 12, color: 'var(--accent2)' }}>
               Open full trace →
             </Link>

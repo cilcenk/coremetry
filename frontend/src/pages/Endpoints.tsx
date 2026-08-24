@@ -30,6 +30,7 @@ import {
 import { SearchField } from '@/components/ui/SearchField';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { EndpointRow } from '@/lib/types';
+import { traceHref } from '@/lib/traceHref';
 import { PageControls } from '@/components/ui/PageControls';
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
@@ -852,14 +853,14 @@ export default function EndpointsPage() {
                                 — and a disabled placeholder would imply a
                                 trace exists that we won't show. */}
                             {r.slowTraceId && (
-                              <Link to={`/trace?id=${encodeURIComponent(r.slowTraceId)}`}
+                              <Link to={traceHref(r.slowTraceId, { pageRange: range })}
                                     title="Open the SLOWEST trace of this endpoint in the selected window. Falls outside the window? The trace may have aged past span retention — the MV keeps exemplars longer than the raw spans."
                                     style={{ fontSize: 11, color: 'var(--warn)', textDecoration: 'none' }}>
                                 ⚡
                               </Link>
                             )}
                             {r.errorTraceId && (
-                              <Link to={`/trace?id=${encodeURIComponent(r.errorTraceId)}`}
+                              <Link to={traceHref(r.errorTraceId, { pageRange: range })}
                                     title="Open the slowest ERRORED trace of this endpoint in the selected window."
                                     style={{ fontSize: 11, color: 'var(--err)', textDecoration: 'none' }}>
                                 ✖

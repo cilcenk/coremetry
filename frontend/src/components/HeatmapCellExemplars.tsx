@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { fmtSmart } from '@/lib/chartFmt';
 import { fmtClock, tsLong } from '@/lib/utils';
 import type { TraceRow, FilterExpr } from '@/lib/types';
+import { traceHref } from '@/lib/traceHref';
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
 
@@ -140,7 +141,7 @@ export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, exempl
                 {/* v0.9.393 — ölü uç kapandı: hücrenin sunucu-tarafı temsilci
                     trace'i aramadan bağımsız her zaman elimizde. */}
                 Yine de hücrenin temsilci trace&#39;i elimizde:{' '}
-                <Link className="mono" to={`/trace?id=${exemplarTraceId}`}
+                <Link className="mono" to={traceHref(exemplarTraceId)}
                   style={{ color: 'var(--accent)' }}>
                   ◆ {exemplarTraceId.slice(0, 16)}… (hücredeki en yavaş)
                 </Link>
@@ -153,7 +154,7 @@ export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, exempl
           {exemplarTraceId && (
             <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>
               ◆ temsilci (en yavaş):{' '}
-              <Link className="mono" to={`/trace?id=${exemplarTraceId}`} style={{ color: 'var(--accent)' }}>
+              <Link className="mono" to={traceHref(exemplarTraceId)} style={{ color: 'var(--accent)' }}>
                 {exemplarTraceId.slice(0, 16)}…
               </Link>
             </div>
@@ -173,7 +174,7 @@ export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, exempl
               {traces.map(t => (
                 <tr key={t.traceId}>
                   <td>
-                    <Link to={`/trace?id=${t.traceId}`}
+                    <Link to={traceHref(t.traceId)}
                       onClick={onClose}
                       className="mono"
                       style={{ color: 'var(--accent2)', textDecoration: 'none' }}>

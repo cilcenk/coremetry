@@ -120,17 +120,26 @@ export function tracesPivotHref(p: TracesPivot): string {
 // sibling (OperationsTable) already emits. `rootOnly:false` because an
 // operation is not necessarily the trace root — the /traces default would
 // list nothing (v0.8.585 class).
+// v0.9.1372 — minMs/maxMs eklendi. Latency-heatmap'in bant seçimi bu
+// kapsamı SÜRE ARALIĞIYLA daraltıyor ve o site kendi linkini elle
+// kuruyordu (`search: operation`), yani düzeltilmiş kardeşin yanında
+// hatalı bir ikiz olarak yaşıyordu. Parametreyi buraya almak ikizi
+// siliyor: "operasyon kapsamı" tek yerde tanımlı.
 export function operationTracesHref(p: {
   window: TracesPivot['window'];
   operation: string;
   service?: string;
   hasError?: boolean;
+  minMs?: number;
+  maxMs?: number;
 }): string {
   const filters: FilterExpr[] = [{ k: 'name', op: '=', v: [p.operation] }];
   return tracesPivotHref({
     window: p.window,
     service: p.service,
     hasError: p.hasError,
+    minMs: p.minMs,
+    maxMs: p.maxMs,
     filters: encodeFilters(filters),
     view: 'list',
     rootOnly: false,

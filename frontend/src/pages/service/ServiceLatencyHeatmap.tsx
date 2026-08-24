@@ -8,7 +8,7 @@ import { Spinner } from '@/components/Spinner';
 import { raceGuard } from '@/lib/raceGuard';
 import { DisclosureButton } from '@/components/ui';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
-import { tracesPivotHref } from '@/lib/pivotHref';
+import { tracesPivotHref, operationTracesHref } from '@/lib/pivotHref';
 import { heatmapFilters } from './heatmapFilters';
 import { HeatmapCellExemplars } from '@/components/HeatmapCellExemplars';
 import { BubbleUpPanel } from '@/components/BubbleUpPanel';
@@ -201,21 +201,31 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
                 // kendisi, sayfanın geniş penceresine yaymak seçimi
                 // anlamsızlaştırırdı (heatmapPivot.ts ile aynı gerekçe).
                 //
-                // ⚠ `search=` KASITLI olarak aynen korundu. Operasyon
-                // kapsamı için doğrusu KESİN isim filtresi
-                // (operationTracesHref, v0.8.488 operatör raporu) ve bu
-                // site o sınıfın hâlâ açık bir örneği — ama üretici göçü
-                // davranışı DEĞİŞTİRMEMELİ, yoksa çıkan regresyon göçe mi
-                // yoksa semantiğe mi ait bilinemez. Ayrı dilim.
-                const tracesHref = tracesPivotHref({
-                  window: { fromNs: boxSel.timeFromNs, toNs: boxSel.timeToNs },
-                  service,
-                  search: operation || undefined,
-                  minMs: lo,
-                  maxMs: hi,
-                  view: 'list',
-                  rootOnly: false,
-                });
+                // v0.9.1372 — `search=` BURADA KAPANDI. Yukarıdaki şerh
+                // bu siteyi "o sınıfın hâlâ açık bir örneği" diye
+                // işaretlemiş ve ertelemişti; gerekçe üretici göçüydü
+                // ("regresyon göçe mi semantiğe mi ait bilinemez"). Göç
+                // bitti, bu da o ayrı dilim.
+                //
+                // Kusur: `search=` bir alt-dize aramasıydı ve trace'teki
+                // HERHANGİ bir span'i tutuyordu — operatörün seçtiği
+                // banttan çıkan liste, adı benzeyen başka operasyonlara
+                // dokunan trace'leri de içeriyordu. Doğrusu kesin isim
+                // filtresi (v0.8.488 operatör raporu) ve düzeltilmiş
+                // kardeş `operationTracesHref` zaten onu üretiyordu; bu
+                // site yanında elle kurulmuş hatalı bir ikizdi.
+                //
+                // Operasyon YOKSA (servis geneli ısı haritası) isim
+                // filtresi de olmamalı — kapsam zaten servis + bant.
+                const bandWindow = { fromNs: boxSel.timeFromNs, toNs: boxSel.timeToNs };
+                const tracesHref = operation
+                  ? operationTracesHref({
+                    window: bandWindow, operation, service, minMs: lo, maxMs: hi,
+                  })
+                  : tracesPivotHref({
+                    window: bandWindow, service, minMs: lo, maxMs: hi,
+                    view: 'list', rootOnly: false,
+                  });
                 return (
                   <div style={{
                     display: 'flex', gap: 10, alignItems: 'center', marginTop: 8,

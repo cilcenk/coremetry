@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Card, SectionUnavailable } from '@/components/ui';
+import { Card, PanelTitle, SectionUnavailable } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { useEndpointSplit, useEndpointDownstream, useEndpointCallers } from '@/lib/queries';
@@ -35,25 +35,9 @@ import { traceHref } from '@/lib/traceHref';
 // Every section keeps the drawer's NULL TOLERANCE contract: a failed
 // section renders its own fallback line, never blanks its neighbours.
 
-/** PanelTitle — the mockup's uppercase card head with an optional
- *  lower-case qualifier (the honesty slot: "sampled", "log-bin", …). */
-export function PanelTitle({ children, sub, right }: {
-  children: React.ReactNode; sub?: React.ReactNode; right?: React.ReactNode;
-}) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-      <span style={{
-        fontSize: 11, fontWeight: 700, letterSpacing: 0.4,
-        textTransform: 'uppercase', color: 'var(--text2)',
-      }}>{children}</span>
-      {sub && (
-        <span style={{ fontSize: 10.5, fontWeight: 400, color: 'var(--text3)' }}>{sub}</span>
-      )}
-      {right && <span style={{ marginLeft: 'auto', fontWeight: 400 }}>{right}</span>}
-    </div>
-  );
-}
-
+// v0.9.1365 — PanelTitle BURADAN TAŞINDI (`components/ui`). Bu nüsha `right`
+// yuvasını taşıyan, GELİŞMİŞ olanıydı; `pages/DatabaseDetail.tsx:452`
+// kopyası onu kaybetmişti. Terfi bu sürüme yapıldı.
 // v0.9.1364 — SectionUnavailable BURADAN TAŞINDI (`components/ui`). Nüsha
 // `slowqueries/StmtDetailDrawer.tsx:161` ile BAYT BAYT aynıydı; iki kopyanın
 // tek eve çekilmesi çıktıyı değiştirmiyor.

@@ -53,24 +53,67 @@ describe('components/ui — atomlarda merdivene denk ham sayı yok', () => {
   const PROP = '(fontSize|gap|padding|paddingTop|paddingBottom|paddingLeft|paddingRight'
     + '|margin|marginTop|marginBottom|marginLeft|marginRight)';
 
+  // v0.9.1365 — ONDALIK BASAMAK KUSURU (regresyon).
+  //
+  // Sayı deseni `(\d+)\b` idi. `fontSize: 10.5` üzerinde `\d+` açgözlü
+  // olarak "10"u alıyor, `\b` de "0" ile "." arasında SAĞLANIYOR — yani
+  // 10.5px, merdivenin 10px rung'u (`--fs-2xs`) sanılıp işaretleniyordu.
+  // Oysa 10.5 merdivende YOK; kapının kendi cümlesi "merdivene DENK ham
+  // sayı". Yanlış pozitifin bedeli görünürdü: bir atomu ui/'ye taşımanın
+  // tek yolu 10.5'i 10'a yuvarlamak, yani kapıyı memnun etmek için
+  // GÖRSEL bir değişiklik yapmak olurdu.
+  //
+  // Düzeltme ondalık kısmı da tüketiyor. Yön güvenli: daha kesin ayrıştırma
+  // eşleşmeyi yalnız AZALTABİLİR (10.5 artık 10 okunmuyor); tam sayılar
+  // (`11`, `11.0`) aynen yakalanmaya devam ediyor — aşağıdaki tabloda ikisi
+  // de var.
+  const NUM = '(\\d+(?:\\.\\d+)?)';
+
+  /** Bir kaynak metnindeki merdivene DENK ham geometri sayıları. */
+  function ladderHits(text: string, spVals: Set<number | null>, fsVals: Set<number | null>): string[] {
+    const out: string[] = [];
+    text
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .map(l => l.replace(/^\s*\/\/.*$/, ''))
+      .forEach((line, i) => {
+        const re = new RegExp(`${PROP}:\\s*${NUM}`, 'g');
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(line))) {
+          const n = Number(m[2]);
+          const ladder = m[1] === 'fontSize' ? fsVals : spVals;
+          if (ladder.has(n)) out.push(`${i + 1} ${m[1]}: ${m[2]} → merdiven rung'u var`);
+        }
+      });
+    return out;
+  }
+
   it.each(files)('%s', file => {
     const spVals = new Set(SP.map(px));
     const fsVals = new Set(FS.map(px));
-    const src = readFileSync(join(UI, file), 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .split('\n')
-      .map(l => l.replace(/^\s*\/\/.*$/, ''));
-
-    const bad: string[] = [];
-    src.forEach((line, i) => {
-      const re = new RegExp(`${PROP}:\\s*(\\d+)\\b`, 'g');
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(line))) {
-        const n = Number(m[2]);
-        const ladder = m[1] === 'fontSize' ? fsVals : spVals;
-        if (ladder.has(n)) bad.push(`${file}:${i + 1} ${m[1]}: ${n} → merdiven rung'u var`);
-      }
-    });
+    const bad = ladderHits(readFileSync(join(UI, file), 'utf8'), spVals, fsVals)
+      .map(h => `${file}:${h}`);
     expect(bad).toEqual([]);
+  });
+
+  describe('sayı ayrıştırma — v0.9.1365 ondalık regresyonu', () => {
+    const sp = new Set<number | null>([2, 4, 6, 8, 10, 12, 16, 24]);
+    const fs = new Set<number | null>([9, 10, 11, 12, 13, 14, 18]);
+    const hits = (t: string) => ladderHits(t, sp, fs);
+    it.each([
+      // [kaynak, işaretlenmeli mi, neden]
+      ['fontSize: 10.5,', false, '10.5 merdivende YOK — kusurun ta kendisi'],
+      ['fontSize: 11.5,', false, '11.5 merdivende yok'],
+      ['fontSize: 10,', true, 'tam sayı 10 = --fs-2xs'],
+      ['fontSize: 11,', true, 'tam sayı 11 = --fs-xs'],
+      ['fontSize: 11.0,', true, '11.0 sayısal olarak 11'],
+      ['gap: 8,', true, '8 = --sp-4'],
+      ['gap: 8.5,', false, '8.5 merdivende yok'],
+      ['padding: 80,', false, '80 merdivende yok — ön-ek eşleşmesi olmamalı'],
+      ['gap: 7,', false, '7 merdivende yok'],
+      ['width: 11,', false, 'width geometri listesinde değil (bilinçli)'],
+    ])('%s', (src, flagged) => {
+      expect(hits(src).length > 0).toBe(flagged);
+    });
   });
 });

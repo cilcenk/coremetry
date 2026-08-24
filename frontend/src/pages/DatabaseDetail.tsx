@@ -4,7 +4,7 @@ import { navHref } from '@/lib/navHref';
 import { useQuery } from '@tanstack/react-query';
 import { Turtle } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
-import { Card } from '@/components/ui';
+import { Card, PanelTitle } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { QueryError } from '@/components/QueryError';
 import { TableSkeleton } from '@/components/Skeleton';
@@ -449,19 +449,10 @@ function fmtTotal(ms: number): string {
   return `${(ms / 3_600_000).toFixed(1)} h`;
 }
 
-function PanelTitle({ children, sub }: { children: React.ReactNode; sub?: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-      <span style={{
-        fontSize: 11, fontWeight: 700, letterSpacing: 0.4,
-        textTransform: 'uppercase', color: 'var(--text2)',
-      }}>{children}</span>
-      {sub && (
-        <span style={{ fontSize: 10.5, fontWeight: 400, color: 'var(--text3)' }}>{sub}</span>
-      )}
-    </div>
-  );
-}
+// v0.9.1365 — PanelTitle BURADAN SİLİNDİ (`components/ui`). Bu kopya
+// endpoints nüshasının `right` yuvasını KAYBETMİŞTİ — kopyalandığı gün
+// aynıydılar, sonra biri gelişti. Terfi gelişmiş sürüme yapıldı; bu
+// sayfanın iki çağrı yeri `right` geçmediği için çıktı değişmiyor.
 
 function Stat({ label, value, tone }: {
   label: string; value: string; tone?: 'warn' | 'err';

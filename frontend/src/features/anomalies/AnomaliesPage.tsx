@@ -30,6 +30,7 @@ import { PageControls } from '@/components/ui/PageControls';
 // point at /problems?problem=<id> and that contract is test-locked.
 import { AlertProblemHost } from './ProblemsSection';
 import { serviceHref } from '@/lib/serviceHref';
+import { traceHref } from '@/lib/traceHref';
 import { QueryError, QueryErrorInline } from '@/components/QueryError';
 import { PageShell } from '@/components/ui/PageShell';
 import { stripMarkdown } from '@/components/Markdown';
@@ -779,7 +780,7 @@ function SampleCard({ sample, index }: { sample: ExceptionSample; index: number 
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12 }}>
         <span style={{ color: 'var(--text3)', fontFamily: 'monospace' }}>#{index}</span>
-        <Link to={`/trace?id=${sample.traceId}`} style={{ fontFamily: 'monospace' }}>
+        <Link to={traceHref(sample.traceId)} style={{ fontFamily: 'monospace' }}>
           {sample.traceId.slice(0, 12)}…
         </Link>
         <span style={{ color: 'var(--text2)', fontFamily: 'monospace', fontSize: 11 }}>

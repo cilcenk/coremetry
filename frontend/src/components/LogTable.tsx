@@ -7,6 +7,7 @@ import { podOfLog } from '@/lib/logPod';
 import { tsLong, sevName, sevClass } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { LogRow } from '@/lib/types';
+import { traceHref } from '@/lib/traceHref';
 import { Button, IconButton } from '@/components/ui';
 
 // Column model (Discover revamp step 3): Time is fixed left, Message
@@ -479,7 +480,7 @@ function LogRow({
                 {/* v0.8.332 (pivot Phase 3) — log→trace pivot lands on the
                     exact span: ?span= seeds the waterfall selection and
                     Trace.tsx scrolls the row into view. */}
-                <Link to={`/trace?id=${l.traceId}${l.spanId ? `&span=${l.spanId}` : ''}`}
+                <Link to={traceHref(l.traceId, { span: l.spanId })}
                   onClick={e => e.stopPropagation()}>
                   {l.traceId.slice(0, 8)}…
                 </Link>

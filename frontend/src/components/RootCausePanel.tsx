@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { fmtFixed, fmtDurShort } from '@/lib/utils';
 import type { RootCause, BubbleUpValue } from '@/lib/types';
 import { serviceHref } from '@/lib/serviceHref';
+import { traceHref } from '@/lib/traceHref';
 
 // RootCausePanel — the single "what changed / likely cause" surface for a
 // Problem (v0.7.52, backend bundle shipped v0.7.51). Fetches
@@ -191,7 +192,7 @@ export function RootCausePanel({ problemId, service, window: win }: {
       {/* 5. Exemplar trace. */}
       {rc.exemplar && (
         <Section title="Exemplar trace" subtitle="one representative bad trace from the window">
-          <Link to={`/trace?id=${encodeURIComponent(rc.exemplar.traceId)}`}
+          <Link to={traceHref(rc.exemplar.traceId)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
                   padding: '8px 12px', borderRadius: 6, textDecoration: 'none',

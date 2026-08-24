@@ -24,7 +24,33 @@
 // saniye cinsinden bir eşiği milisaniye sanmak listeyi sessizce
 // 1000× yanlış kıstırırdı.
 
-import type { Problem } from '@/lib/types';
+// ─── v0.9.1331 — BU DOSYA KENDİ DERSİNİ İHLAL EDİYORDU ───────────────
+// Yukarıdaki şerh birim disiplini üzerine bir manifesto, ama imza
+// `window: { fromNs, toNs }` diyip değeri `custom:` yuvasına DÖNÜŞTÜRMEDEN
+// basıyordu. `custom:` ise milisaniye (`lib/urlState.ts:8` — açıkça
+// `custom:<fromMs>-<toMs>`). Yani ad nanosaniye vaat ediyor, kod
+// milisaniye bekliyordu.
+//
+// Çalışma zamanı BUGÜN doğruydu: tek çağıran zaten bölünmüş `logsFrom/
+// logsTo`yu geçiyordu. Yalan yalnız adlardaydı — ve testi (`:52`,
+// `{fromNs: 111}`) o yalanı ÇİVİLİYORDU, yani doğru bir yeniden yazım
+// kırmızı verip regresyon gibi görünürdü.
+//
+// Tehlike ölçülebilir: doğal olanı yapan (`probWindow`'u doğrudan geçen)
+// biri pencereyi ~55 milyon yıl ileriye atardı ve /traces boş dönerdi —
+// "yavaş trace yok" diye okunur. Tam olarak bu dosyanın §BİRİM şerhinin
+// kaçınmak için yazıldığı arıza şekli.
+//
+// Çare ad değiştirmek DEĞİL: `windowRangeParam` (v0.9.963) bir pencerenin
+// `range=`e dönüştüğü TEK yer ve bu dosya onu hiç kullanmıyordu. Ona
+// geçmek üç şeyi birlikte getiriyor: (1) `fromNs` artık gerçekten
+// nanosaniye, (2) `from` floor / `to` CEIL — yuvarlama pencereyi asla
+// DARALTMIYOR (kesilen `to` en yeni kovayı düşürür, operatörün görmeye
+// geldiği yarıyı), (3) `decodeRange`'in reddedeceği pencerede token
+// yerine '' — adres çubuğunda kendinden emin ama yanlış bir pencere
+// yazmıyor. Üçü de elle string kurarken kaybediliyordu.
+import { windowRangeParam } from '@/lib/urlState';
+import type { Problem, TimeRange } from '@/lib/types';
 
 /**
  * latencyThresholdMs — problemin eşiği milisaniye olarak, ya da null
@@ -51,7 +77,8 @@ export function latencyThresholdMs(p: Pick<Problem, 'metric' | 'threshold'>): nu
  * gecikme tarafında aynı tuzak birebir geçerli.
  */
 export function slowTracesHref(
-  service: string, minMs: number, window: { fromNs: number; toNs: number },
+  service: string, minMs: number,
+  window: TimeRange | { fromNs: number; toNs: number },
 ): string {
   const p = new URLSearchParams();
   p.set('service', service);
@@ -59,6 +86,10 @@ export function slowTracesHref(
   // gibi bir eşik URL'de gürültüden başka bir şey değil.
   p.set('minMs', String(Math.round(minMs)));
   p.set('rootOnly', 'false');
-  p.set('range', `custom:${window.fromNs}-${window.toNs}`);
+  // '' = windowRangeParam pencereyi reddetti. Parametreyi ATLIYORUZ, boş
+  // yazmıyoruz — serviceHref'in kuralı (serviceHref.ts:67). Sayfa o
+  // durumda sticky pencereyi çizer; yanlış bir pencere yazmaktan iyidir.
+  const range = windowRangeParam(window);
+  if (range) p.set('range', range);
   return `/traces?${p.toString()}`;
 }

@@ -812,8 +812,11 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
               const thr = latencyThresholdMs(problem);
               if (thr === null) return null;
               return (
+                // v0.9.1331 — probWindow DOĞRUDAN geçiyor (gerçek ns). Önce
+                // logsFrom/logsTo (ms) geçiliyordu ve imza fromNs diyordu:
+                // çalışıyordu ama ad yalan söylüyordu.
                 <SignalLink
-                  to={slowTracesHref(problem.service, thr, { fromNs: logsFrom, toNs: logsTo })}
+                  to={slowTracesHref(problem.service, thr, probWindow)}
                   label="◷ Slow traces"
                   sub={`≥ ${Math.round(thr)} ms (eşik), problem window`} />
               );

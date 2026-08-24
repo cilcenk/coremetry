@@ -1,4 +1,4 @@
-import { encodeRange, encodeFilterGroup, encodeFilters } from '@/lib/urlState';
+import { windowRangeParam, encodeFilterGroup, encodeFilters } from '@/lib/urlState';
 import type { TimeRange, FilterExpr } from '@/lib/types';
 
 // pivotHref — cross-signal deep links that CANNOT drop the time window.
@@ -47,14 +47,24 @@ export type TracesPivot = {
   view?: 'list' | 'aggregate' | 'shapes' | 'relations';
 };
 
-/** Encode a window as the `range=` value /traces understands. */
+/**
+ * Encode a window as the `range=` value /traces understands.
+ *
+ * v0.9.1355 — bu, `windowRangeParam`ın (urlState.ts:28) ELLE YAZILMIŞ
+ * kopyasıydı: floor/ceil kuralını doğru taşıyordu ama kabul kuralını HİÇ
+ * taşımıyordu. Yani /traces ailesinin tamamı — tracesPivotHref ve ondan
+ * türeyen operation/messaging/db/statement üreticileri — deponun tek
+ * pencere→`range=` üreticisinin DIŞINDAYDI. Kopyanın iki somut açığı:
+ *   • sınırsız `{preset:'custom'}` → çıplak `range=custom` → sayfada
+ *     sessizce 24 saat (utils.ts:17-25),
+ *   • epoch-altı / ters pencere → decodeRange'in reddedeceği bir token.
+ * İkisi de "adres çubuğu kendinden emin, sayfa başka pencere" sınıfı.
+ *
+ * Kural artık tek dosyada. '' = pencere REDDEDİLDİ; çağıran paramı hiç
+ * yazmaz (serviceHref.ts:67 / logsUrl.ts:91 ile aynı sözleşme).
+ */
 function rangeParam(w: TracesPivot['window']): string {
-  if ('preset' in w) return encodeRange(w);
-  // Unix ns → ms. Floor/ceil so the window never narrows below what the
-  // caller asked for (a truncated `to` can drop the newest bucket).
-  const fromMs = Math.floor(w.fromNs / 1e6);
-  const toMs = Math.ceil(w.toNs / 1e6);
-  return encodeRange({ preset: 'custom', fromMs, toMs });
+  return windowRangeParam(w);
 }
 
 export function tracesPivotHref(p: TracesPivot): string {
@@ -68,7 +78,10 @@ export function tracesPivotHref(p: TracesPivot): string {
   if (p.hasError) q.set('hasError', 'true');
   q.set('rootOnly', p.rootOnly ? 'true' : 'false');
   if (p.view) q.set('view', p.view);
-  q.set('range', rangeParam(p.window));
+  // '' = pencere reddedildi. `range=` boş yazmak, çıplak `custom` yazmakla
+  // aynı yalanın başka bir hecesi olurdu: paramı ATLIYORUZ.
+  const range = rangeParam(p.window);
+  if (range) q.set('range', range);
   return `/traces?${q.toString()}`;
 }
 
@@ -325,6 +338,7 @@ export function repeatsExploreHref(p: {
   if (filters.length) q.set('filters', encodeFilters(filters));
   q.set('groupBy', (p.groupBy ?? ['db.statement']).join(','));
   q.set('minRepeats', String(p.minRepeats ?? 5));
-  q.set('range', rangeParam(p.window));
+  const range = rangeParam(p.window);
+  if (range) q.set('range', range);
   return `/explore?${q.toString()}`;
 }

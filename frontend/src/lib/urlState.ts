@@ -26,7 +26,18 @@ export function encodeRange(r: TimeRange): string {
 //     Reachable in practice: an event window's lead-in can push `from` below
 //     the epoch on a degenerate timestamp.
 export function windowRangeParam(w: TimeRange | { fromNs: number; toNs: number }): string {
-  if ('preset' in w) return encodeRange(w);
+  if ('preset' in w) {
+    // v0.9.1355 — sınırsız `{preset:'custom'}` DELİĞİ. encodeRange bu şekle
+    // çıplak `'custom'` literalini basıyor (yukarıdaki satır 11 dalına
+    // giremez), decodeRange onu `{preset:'custom'}` olarak GERİ veriyordu ve
+    // timeRangeToNs tanımadığı token'ı 86400 s'ye çözüyor (utils.ts:17-25).
+    // Sonuç: adres çubuğunda kendinden emin bir `?range=custom` dururken
+    // sayfa sessizce 24 SAAT çiziyor — bu fonksiyonun şerhinde tarif edilen
+    // arızanın tam kendisi, ama şerhi yazan dal onu yakalamıyordu.
+    // Reddedilen pencere '' döner ve çağıran paramı hiç yazmaz.
+    if (w.preset === 'custom' && !(w.fromMs && w.toMs)) return '';
+    return encodeRange(w);
+  }
   const fromMs = Math.floor(w.fromNs / 1e6);
   const toMs = Math.ceil(w.toNs / 1e6);
   if (!(fromMs > 0) || !(toMs > fromMs)) return '';
@@ -40,6 +51,19 @@ export function decodeRange(s: string | null | undefined, fallback: TimeRange): 
     if (from > 0 && to > from) return { preset: 'custom', fromMs: from, toMs: to };
     return fallback;
   }
+  // v0.9.1355 — çıplak `custom` (sınırsız). Kodlama tarafını kapatmak YETMEZ:
+  // elle yazılmış / paylaşılmış bir `?range=custom` de aynı sessiz 24 saati
+  // üretiyordu. Ve bu token'ın kaynağı kullanıcı hatası DEĞİL, uygulamanın
+  // kendisi — encodeRange sınırsız bir custom'ı tam olarak buna çeviriyor.
+  // Çözümlenebilir bir pencere olmadığı için fallback'e düşer; okuyucunun
+  // sözleşmesi "çözümlenebilir bir aralık döndür", "token'ı aynen taşı" değil.
+  //
+  // KAPSAM BİLİNÇLİ DAR: tanınmayan DİĞER token'lar (`?range=90m`) aynen
+  // geçmeye devam ediyor — shareUrl.test.ts:74 o toleransı sınanmış davranış
+  // olarak çiviliyor ve ayrı bir karar. Fark şu: `90m` görünür biçimde
+  // yabancı, `custom` ise uygulamanın kendi ürettiği ve geri okuyabildiği
+  // için GEÇERLİ görünen bir token — sessizliği yapan da bu tutarlılık.
+  if (s === 'custom') return fallback;
   return { preset: s };
 }
 

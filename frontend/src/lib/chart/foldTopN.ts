@@ -70,6 +70,10 @@ export function foldTopN(
   const others: SpanMetricSeries = {
     ...tail[0],
     groupKey: [OTHERS_KEY],
+    // v0.9.1369 — tail[0]'ın fullKey'i MİRAS ALINMAZ. Yayılma operatörü
+    // "+N others" çizgisine rastgele bir pod adını tooltip'te yazdırırdı;
+    // katlanmış seri tek bir pod DEĞİL.
+    fullKey: undefined,
     points: [...sumByTime.entries()]
       .sort((a, b) => a[0] - b[0])
       .map(([time, sum]) => ({ time, value: mean ? sum / (cntByTime.get(time) || 1) : sum })),

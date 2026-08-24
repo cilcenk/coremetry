@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { limitThresholds, netTrendToSeries, thanosPodSeriesToSeries, thanosTrendToSeries, shortSeriesLabel } from './trendSeries';
+import { limitThresholds, namedSeriesToSeries, netTrendToSeries, thanosPodSeriesToSeries, thanosTrendToSeries, shortSeriesLabel } from './trendSeries';
 
 // v0.9.4 — Thanos→MultiLineChart dönüşüm sözleşmeleri: saniye→ns,
 // boş trend → boş seri, pod sırası korunur, 0-limit çizgi üretmez.
@@ -101,5 +101,45 @@ describe('shortSeriesLabel (v0.9.539)', () => {
   it('kırpma sonrası boş kalırsa ham ad korunur — etiketsiz seri ayırt edilemez', () => {
     expect(shortSeriesLabel('svc-', 'CPU', 'svc')).toBe('svc-');
     expect(shortSeriesLabel('svc', 'CPU', 'svc')).toBe('svc');
+  });
+});
+
+// ── v0.9.1369 — kırpma LEJANTTA kalır, tam ad kaybolmaz ──────────────────
+//
+// Operatör-bildirimi: "Pod isimleri Thanos'tan çekerken kırpılıyor."
+// Tooltip'te "546cc47b6d-gslcw" görünüyordu; deployment öneki
+// ("cm-get-service-") atılmış, geriye kubectl'e yapıştırılamayan bir
+// hash kalmıştı. Kırpma v0.9.539'da BİLİNÇLİ eklendi (lejant genişliği,
+// operatör isteği) — geri alınmadı, yalnız TAM AD da taşınır oldu.
+describe('namedSeriesToSeries — fullKey (v0.9.1369)', () => {
+  const pts = [{ bucket: 1, value: 1 }];
+
+  it('kırpma olduğunda tam ad fullKey\'de durur', () => {
+    const [s] = namedSeriesToSeries(
+      [{ name: 'cm-get-service-546cc47b6d-gslcw', points: pts }], 'CPU', 'cm-get-service');
+    expect(s.groupKey).toEqual(['546cc47b6d-gslcw']);   // lejant: kısa
+    expect(s.fullKey).toEqual(['cm-get-service-546cc47b6d-gslcw']); // tooltip: tam
+  });
+
+  it('kırpma YOKSA fullKey hiç yazılmaz (davranış değişmez)', () => {
+    const [a] = namedSeriesToSeries([{ name: 'lonely-pod', points: pts }], 'CPU');
+    expect(a.fullKey).toBeUndefined();
+    // önek eşleşmiyor → kırpma yok → fullKey yok
+    const [b] = namedSeriesToSeries(
+      [{ name: 'other-pod-x', points: pts }], 'CPU', 'cm-get-service');
+    expect(b.fullKey).toBeUndefined();
+  });
+
+  it('adsız seri fallback alır ve fullKey taşımaz', () => {
+    const [s] = namedSeriesToSeries([{ name: '', points: pts }], 'CPU', 'cm-get-service');
+    expect(s.groupKey).toEqual(['CPU']);
+    expect(s.fullKey).toBeUndefined();
+  });
+
+  it('kısmi önek çakışması tam adı da BOZMAZ', () => {
+    const [s] = namedSeriesToSeries(
+      [{ name: 'mobile-crmx-1-a', points: pts }], 'CPU', 'mobile-crm');
+    expect(s.groupKey).toEqual(['mobile-crmx-1-a']);
+    expect(s.fullKey).toBeUndefined();
   });
 });

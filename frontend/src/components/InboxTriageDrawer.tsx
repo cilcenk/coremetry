@@ -20,6 +20,7 @@ import {
 import type { InboxItem, ExceptionGroupState } from '@/lib/types';
 import { serviceHref, inboxItemWindow } from '@/lib/serviceHref';
 import { tracesPivotHref } from '@/lib/pivotHref';
+import { logsHref } from '@/lib/logsUrl';
 import { SubjectLink } from './SubjectLink';
 
 // InboxTriageDrawer — v0.8.292 (Option B slice 3): the /inbox row-click opens
@@ -143,10 +144,10 @@ function DrawerBody({ item, onClose, onOpenSource }: {
 
       {item.service && w && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-          {/* Logs: service= + custom range (CorrelationContextDrawer emsali;
-              floor/ceil pencereyi asla daraltmaz). */}
+          {/* Logs: service= + olay penceresi. v0.9.1348 — el-yapımı
+              `custom:` kopyası logsHref üreticisine indi. */}
           <Link className="sec" style={{ textDecoration: 'none' }}
-            to={`/logs?service=${encodeURIComponent(item.service)}&range=custom:${Math.floor(w.fromNs / 1e6)}-${Math.ceil(w.toNs / 1e6)}`}
+            to={logsHref({ window: w, service: item.service })}
             title="Bu pencerede servisin logları">
             Logs
           </Link>

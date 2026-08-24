@@ -4,9 +4,17 @@ import { Modal } from '@/components/ui';
 import { Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
+import { logsHref } from '@/lib/logsUrl';
 import { ServiceTimeline } from '@/components/traces/ServiceTimeline';
 import { TraceLogList } from '@/components/traces/TraceLogList';
 import type { TraceDetailResponse, LogRow } from '@/lib/types';
+
+// v0.8.484 — /logs pencereyi YALNIZ ?range='ten okur; penceresiz link
+// varsayilan 30 dk acip eski trace'in loglarini "yok" gosteriyordu. Tampon
+// trace'in kendi yayilimina simetrik olarak eklenir (ingest gecikmesi + saat
+// kaymasi). v0.9.1348 — el-yapimi `custom:` kopyasi logsHref'e indi; tampon
+// artik ns cinsinden ve tek yerde adlandirilmis (eskiden ms sabitiydi).
+const TRACE_LOG_PAD_NS = 60 * 1e9; // 60 sn
 
 // TracePeekDrawer — v0.5.398. Logs page side-loop drill-in.
 // When the operator clicks the "👁" peek button next to a trace_id
@@ -196,10 +204,10 @@ export function TracePeekDrawer({
             {/* v0.8.484 — pencereyi de taşı: Logs sayfası ?range='ten okur;
                 penceresiz link varsayılan 30 dk açıp eski trace'in loglarını
                 "yok" gösteriyordu (±1 dk tampon, trace-log penceresi kuralı). */}
-            <Link to={`/logs?traceId=${traceId}` +
-                      (summary
-                        ? `&range=custom:${Math.floor(summary.minStart / 1e6) - 60_000}-${Math.ceil(summary.maxEnd / 1e6) + 60_000}`
-                        : '')}
+            <Link to={logsHref({
+              window: summary ? { fromNs: summary.minStart, toNs: summary.maxEnd } : null,
+              traceId, padNs: TRACE_LOG_PAD_NS,
+            })}
               style={{ fontSize: 12, color: 'var(--accent2)' }}>
               Filter /logs to this trace →
             </Link>

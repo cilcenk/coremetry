@@ -26,6 +26,7 @@ import { ShareButton } from '@/components/ShareButton';
 import { copyToClipboard } from '@/lib/clipboard';
 import { QueryErrorInline } from '@/components/QueryError';
 import { serviceHref, eventLifespanWindow } from '@/lib/serviceHref';
+import { logsHref, serviceLogQuery } from '@/lib/logsUrl';
 import { latencyThresholdMs, slowTracesHref } from '@/features/anomalies/slowTracesHref';
 import { problemWindowNs, topOffenders } from '@/features/anomalies/problemOffenders';
 import { operationTracesHref } from '@/lib/pivotHref';
@@ -679,7 +680,14 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
     ?? { fromNs: endNs - 60 * 60 * 1e9, toNs: endNs + 10 * 60 * 1e9 };
   const logsFrom = Math.round(probWindow.fromNs / 1e6);
   const logsTo = Math.round(probWindow.toNs / 1e6);
-  const logsHref = `/logs?q=${encodeURIComponent(`service.name:"${problem.service.replace(/"/g, '\\"')}"`)}&range=${encodeURIComponent(`custom:${logsFrom}-${logsTo}`)}`;
+  // v0.9.1348 — el-yapımı link logsHref üreticisine indi. logsFrom/logsTo
+  // Math.round'du: yuvarlama pencereyi DARALTABİLİR ve problemin ilk/son
+  // milisaniyesindeki log pivottan düşer. Üretici probWindow'u floor/ceil
+  // ile kodlar. (logsFrom/logsTo aşağıdaki /traces linkinde hâlâ kullanımda
+  // — o link ayrı bir kalem, tracesPivotHref'e ait.)
+  //
+  // `q=` bilinçli, `service=` değil — v0.8.521 gerekçesi logsUrl.ts'te.
+  const logsLink = logsHref({ window: probWindow, q: serviceLogQuery(problem.service) });
 
   return (
     <PageShell>
@@ -856,7 +864,7 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
                 log/trace/servis-haritası pivotları bir servis adı gerektiriyor.
               </div>
             ) : (<>
-            <SignalLink to={logsHref} label="≡ Logs" sub="service, problem window" />
+            <SignalLink to={logsLink} label="≡ Logs" sub="service, problem window" />
             {/* v0.8.512 (perf raporu #12) — pivot problem penceresini
                 taşır: logs ile aynı custom range, yoksa /traces global
                 range'iyle açılıp problemle ilgisiz trace gösteriyordu. */}

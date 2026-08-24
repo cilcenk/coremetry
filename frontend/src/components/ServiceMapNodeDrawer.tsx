@@ -5,6 +5,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { serviceHref } from '@/lib/serviceHref';
 import { tracesPivotHref } from '@/lib/pivotHref';
+import { logsHref } from '@/lib/logsUrl';
 import { fmtNum, fmtFixed } from '@/lib/utils';
 import type { TimeRange } from '@/lib/types';
 
@@ -92,7 +93,7 @@ export function ServiceMapNodeDrawer({ service, range, fromNs, toNs, onClose }: 
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <Link className="sec" style={{ textDecoration: 'none' }}
-                to={`/logs?service=${encodeURIComponent(service)}&range=custom:${Math.floor(fromNs / 1e6)}-${Math.ceil(toNs / 1e6)}`}
+                to={logsHref({ window: win, service })}
                 title="Bu pencerede servisin logları">
                 Logs
               </Link>

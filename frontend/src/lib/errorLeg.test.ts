@@ -56,7 +56,12 @@ const CONVERTED: Array<[file: string, release: string, what: string]> = [
   ['pages/Runbook.tsx',                      'v0.9.865', 'Executions + Audit sekmeleri'],
   ['pages/Users.tsx',                        'v0.9.865', '"No users yet / create the first user"'],
   ['pages/settings/MaintenanceTab.tsx',      'v0.9.865', 'aktif pencere varken "No maintenance windows"'],
-  ['pages/DatabaseDetail.tsx',               'v0.9.865', 'Top statements: hata dalı HİÇ YOKTU'],
+  // v0.9.1366 — DOSYA TAŞINDI, SÖZLEŞME TAŞINMADI. Top statements bölümü
+  // `pages/DatabaseDetail.tsx`ten `pages/databases/detailSections.tsx`e
+  // çıkarıldı; hata dalı AYNEN gitti. Kapı dosya adına bağlı olduğu için
+  // taşınma onu kırdı — muhafızın dilim adına bağlanma sınıfı. Girdi
+  // SİLİNMİYOR (sözleşme yaşıyor), YENİ EVE yönlendiriliyor.
+  ['pages/databases/detailSections.tsx',     'v0.9.865', 'Top statements: hata dalı HİÇ YOKTU (v0.9.1366\'da bu dosyaya taşındı)'],
   // ── v0.9.866 (tutarlılık denetimi MT1, özel) ─────────────────────────────
   ['pages/AdminAudit.tsx',                   'v0.9.866', 'yasak ≠ hatalı; null hiçbir dala girmiyordu'],
   ['pages/alerts/NoisyRulesPanel.tsx',       'v0.9.866', 'başlangıç null == hata null, sessiz gizlenme'],

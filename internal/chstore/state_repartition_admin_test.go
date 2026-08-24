@@ -367,3 +367,56 @@ func TestStateRepartPreflightNormalize(t *testing.T) {
 		t.Error("Tables nil kaldı")
 	}
 }
+
+// v0.9.1343 regresyonu — OPERATÖR RAPORU (prod, göç ortasında).
+//
+// `problems` ön kontrolde "AYRIŞIYOR" damgası yiyip 0010'u BLOKLADI, oysa
+// tekilleştirilmiş sayı dört host'ta da birebir aynıydı (637.388). Sorgu
+// `count()` okuyordu; ReplacingMergeTree'de fiziksel satır sayısının
+// replikalar arasında eşit olması BEKLENMEZ (her replika bağımsız merge
+// eder). Prod'da oran ~2,7×'ti ve merge zamanlamasıyla oynuyordu — yani
+// sert durdurma rastgele tetiklenebilen bir kapıydı.
+func TestStateRepartHostCheckCountsIDsNotRows(t *testing.T) {
+	got := stateRepartHostIDCountSQL("problems", "'uptrace_all'")
+
+	// ASIL İDDİA: kimlik sayılıyor.
+	if !strings.Contains(got, "uniqExact(id)") {
+		t.Fatalf("host kontrolü uniqExact(id) kullanmalı, aldım: %s", got)
+	}
+	// Ve ham satır sayımı GERİ GELMEMELİ. `count()` alt dizgisi
+	// `uniqExact(...)` içinde geçmiyor, o yüzden bu ayrım keskin.
+	if strings.Contains(got, "count()") {
+		t.Fatalf("host kontrolü ham count() okumamalı (v0.9.1343 yanlış-pozitifi), aldım: %s", got)
+	}
+	// Şekil: küme sorgusu, host'a göre grup.
+	for _, want := range []string{
+		"hostName() AS host",
+		"clusterAllReplicas('uptrace_all', currentDatabase(), `problems`)",
+		"GROUP BY host",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("eksik parça %q, aldım: %s", want, got)
+		}
+	}
+}
+
+// Ters yön: 0009'un sihirbazı BİLİNÇLİ olarak `count()` okumaya devam
+// ediyor ve bu bir unutma değil. 37 state tablosunun hepsinde `id` YOK
+// (system_settings, api_tokens, service_metadata, ldap_groups — ölçüldü
+// 2026-08-24), yani aynı düzeltme oraya uygulansa ön kontrol "kolon
+// bulunamadı" ile tamamen kırılırdı. Bu test o gerekçenin kaynakta
+// YAZILI kalmasını çiviliyor: biri "tutarlılık" diye 0009'u da
+// değiştirmeye kalkarsa önce bu şerhi okur.
+func TestStateUnifyHostCheckDivergenceIsDocumented(t *testing.T) {
+	src, err := os.ReadFile("state_unify_admin.go")
+	if err != nil {
+		t.Fatalf("kaynak okunamadı: %v", err)
+	}
+	s := string(src)
+	if !strings.Contains(s, "v0.9.1343") {
+		t.Error("0009'un count() kullanımı v0.9.1343 şerhiyle gerekçelendirilmeli")
+	}
+	if !strings.Contains(s, "hepsinde") || !strings.Contains(s, "`id` YOK") {
+		t.Error("gerekçe ölçümü (37 tablonun hepsinde id yok) kaynakta yazılı olmalı")
+	}
+}

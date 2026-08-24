@@ -172,6 +172,28 @@ func stateRepartCheckDDL(ddl string, w stateRepartDDLWant) error {
 	return nil
 }
 
+// stateRepartHostIDCountSQL — ADIM 0c'nin host başına sorgusu, SAF.
+//
+// v0.9.1343 — OPERATÖR RAPORU (prod, göç ortasında): `problems` "AYRIŞIYOR"
+// damgası yiyip 0010'u BLOKLADI, oysa tekilleştirilmiş sayı dört host'ta da
+// birebir aynıydı (637.388). Sebep: bu sorgu `count()` okuyordu.
+//
+// `ReplacingMergeTree`'de FİZİKSEL satır sayısının replikalar arasında eşit
+// olması BEKLENMEZ. Her replika bağımsız merge eder; biri diğerinden daha
+// fazla eski sürümü toplamış olabilir ve bu SAĞLIKLI durumdur, "replikasyon
+// yarım" DEĞİLDİR. Prod'da oran ~2,7×'ti (1,7M fiziksel satır ↔ 637K kimlik)
+// ve o oran merge zamanlamasıyla host'tan host'a oynuyor — yani sert
+// durdurma, kendisi doğruyken bile rastgele tetiklenebilen bir kapıydı.
+//
+// Ayrı fonksiyon olmasının sebebi: satır içi kalsaydı testi ancak kaynak
+// taramasıyla yazabilirdim ve bugün öğrenilen ders, kaynak taramasının
+// VARLIĞI ölçüp KULLANIMI ölçmediğidir.
+func stateRepartHostIDCountSQL(table, clusterQ string) string {
+	return fmt.Sprintf(
+		"SELECT '%s' AS tbl, hostName() AS host, uniqExact(id) AS rows FROM clusterAllReplicas(%s, currentDatabase(), %s) GROUP BY host",
+		table, clusterQ, backtickIdent(table))
+}
+
 // stateRepartFinalSentence — ADIM 0e / 4a çiftinin operatöre YAZILAN
 // cümlesi. Saf fonksiyon: iki sayı → tek cümle. SQL okumadan anlaşılsın.
 func stateRepartFinalSentence(table string, def, noMerge uint64) string {
@@ -444,15 +466,31 @@ func (s *Store) StateRepartPreflight(ctx context.Context) (StateRepartPreflightR
 		pr.Close()
 	}
 
-	// ADIM 0c — host başına satır. Boş bir tablo HİÇ GRUP ÜRETMEZ
+	// ADIM 0c — host başına KİMLİK sayısı. Boş bir tablo HİÇ GRUP ÜRETMEZ
 	// (v0.9.1315), o yüzden eksik anahtar "ölçülemedi" değil "0 satır"
 	// demektir; Hosts boş kalırsa aşağıda hostsKnown false olur.
+	//
+	// ⚠ v0.9.1343 — OPERATÖR RAPORU: prod'da `problems` "AYRIŞIYOR" damgası
+	// yiyip göçü BLOKLADI, oysa tekilleştirilmiş sayı dört host'ta da
+	// birebir aynıydı (637.388). Sebep: burası `count()` okuyordu.
+	//
+	// `ReplacingMergeTree`'de FİZİKSEL satır sayısının replikalar arasında
+	// eşit olması BEKLENMEZ. Her replika bağımsız merge eder; biri
+	// diğerinden daha fazla eski sürümü toplamış olabilir ve bu sağlıklı
+	// durumdur, "replikasyon yarım" DEĞİLDİR. Bu tablolarda id başına
+	// birden çok sürüm normaldir (prod: 1,7M fiziksel satır ↔ 637K kimlik,
+	// yani ~2,7×) ve o oran merge zamanlamasıyla host'tan host'a oynar.
+	//
+	// Replikasyonun sağlığını ölçen büyüklük TEKİL KİMLİK sayısıdır.
+	// Emsal, 0009 göçünün DOĞRULAMA sorgusudur (`uniqExact(id)` — dört
+	// host'ta birebir eşit çıkmıştı ve göçün kanıtı oydu), 0009'un
+	// SİHİRBAZI değil: o da `count()` okuyor ve aynı yanlış-pozitifi
+	// üretebilir. Oraya aynı düzeltme uygulanamadı (37 tablonun hepsinde
+	// `id` yok — ölçüldü); gerekçe `state_unify_admin.go`'da yazılı.
 	hostCounts := map[string][]StateUnifyHostCount{}
 	var parts []string
 	for _, t := range order {
-		parts = append(parts, fmt.Sprintf(
-			"SELECT '%s' AS tbl, hostName() AS host, count() AS rows FROM clusterAllReplicas(%s, currentDatabase(), %s) GROUP BY host",
-			t.Name, cq, backtickIdent(t.Name)))
+		parts = append(parts, stateRepartHostIDCountSQL(t.Name, cq))
 	}
 	if hr, err := s.conn.Query(ctx, "SELECT tbl, host, rows FROM ("+strings.Join(parts, " UNION ALL ")+") ORDER BY tbl, host"); err == nil {
 		for hr.Next() {

@@ -110,25 +110,15 @@ func problemServicesConjunct(n int, allowDB, hasKindCol bool) string {
 //
 // exclude/envServices şekli CountProblemsNotInStatuses ile AYNI ve
 // bilerek: iki sayı aynı evreni saymalı, yoksa çip ile liste ıraksar.
-// Aynı "servisi BOŞ olan (global) satırlar her zaman sayılır" kaçış
-// kapısı da aynen taşınır.
+// Env kaçış kapıları (global satır + v0.9.1358'den beri db öznesi)
+// envScopeConjunct'tan gelir — üç yüzey de aynı dizeyi üretir.
 func (s *Store) CountProblemsBySubject(ctx context.Context, exclude []string, envServices []string) (map[string]uint64, error) {
 	out := map[string]uint64{ProblemKindService: 0, ProblemKindDB: 0}
 
-	args := toAnySlice(exclude)
-	statusSQL := "1"
-	if len(exclude) > 0 {
-		statusSQL = "status NOT IN (" + chPlaceholders(len(exclude)) + ")"
-	}
-	envSQL := ""
-	if envServices != nil {
-		if len(envServices) == 0 {
-			envSQL = " AND service = ''"
-		} else {
-			envSQL = " AND (service = '' OR service IN ?)"
-			args = append(args, envServices)
-		}
-	}
+	// v0.9.1358 — WHERE gövdesi rozetle ORTAK (problemCountWhere). Bu sayı
+	// GROUP BY kind ile db kovasını dolduruyor: env kaçış kapısı burada
+	// eksik kalsaydı çip "Veritabanı (0)" yazarken şerit satır gösterirdi.
+	whereSQL, args := s.problemCountWhere(exclude, envServices)
 
 	if !s.hasProblemKindCol {
 		// Kolon henüz yok: hepsi servis öznesi. Tek COUNT yeter ve db
@@ -144,7 +134,7 @@ func (s *Store) CountProblemsBySubject(ctx context.Context, exclude []string, en
 	rows, err := s.conn.Query(ctx, `
 		SELECT kind, count()
 		FROM problems FINAL
-		WHERE `+statusSQL+envSQL+`
+		WHERE `+whereSQL+`
 		GROUP BY kind
 		SETTINGS max_execution_time = 5`, args...)
 	if err != nil {

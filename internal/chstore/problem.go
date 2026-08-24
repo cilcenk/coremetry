@@ -1029,30 +1029,23 @@ func (s *Store) CountOpenProblemsByRule(ctx context.Context) (map[string]uint64,
 // TEK FINAL taramasında (v0.8.472 perf dalga-1 #2; önceden iki ayrı
 // CountProblems çağrısıydı). Statüler sabit enum, IN bind'li.
 // envServices scopes the count to an environment, mirroring the inbox
-// list's envKeepsRow exactly: a service-LESS (global) row always counts,
-// otherwise the service must be an env member. nil = no env constraint;
+// list's EnvScopeKeepsRow exactly: a service-LESS (global) row always
+// counts, a db-SUBJECT row always counts (v0.9.1358), otherwise the
+// service must be an env member. nil = no env constraint;
 // a non-nil EMPTY slice means the env resolved to no services, so only
-// global rows count — the nil-vs-empty distinction is load-bearing here
-// the same way it is for the team filter (v0.9.219).
+// global (+ db) rows count — the nil-vs-empty distinction is load-bearing
+// here the same way it is for the team filter (v0.9.219).
+//
+// v0.9.1358 — WHERE gövdesi problemCountWhere'e taşındı. Burada elle
+// yazılmış bir env SQL kopyası duruyordu; /problems'ın WHERE'i db kaçış
+// kapısını alırken bu kopya eski hâlinde kalsaydı, operatörün gördüğü
+// ilk şey listenin gösterdiği satırı saymayan bir rozet olurdu.
 func (s *Store) CountProblemsNotInStatuses(ctx context.Context, exclude []string, envServices []string) (uint64, error) {
-	args := toAnySlice(exclude)
-	statusSQL := "1"
-	if len(exclude) > 0 {
-		statusSQL = "status NOT IN (" + chPlaceholders(len(exclude)) + ")"
-	}
-	envSQL := ""
-	if envServices != nil {
-		if len(envServices) == 0 {
-			envSQL = " AND service = ''"
-		} else {
-			envSQL = " AND (service = '' OR service IN ?)"
-			args = append(args, envServices)
-		}
-	}
+	whereSQL, args := s.problemCountWhere(exclude, envServices)
 	row := s.conn.QueryRow(ctx, `
 		SELECT count()
 		FROM problems FINAL
-		WHERE `+statusSQL+envSQL+`
+		WHERE `+whereSQL+`
 		SETTINGS max_execution_time = 5`, args...)
 	var n uint64
 	if err := row.Scan(&n); err != nil {

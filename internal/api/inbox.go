@@ -173,9 +173,10 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// (v0.9.1244 seam'i). İkinci bir uygulama = v0.9.553 sapma sınıfı.
 	team := strings.TrimSpace(q.Get("team"))
 	// v0.8.387 — global ?env= picker, service-scoped semantics shared
-	// with /problems (envKeepsRow): keep rows whose service ran in the
-	// env in the last hour, plus service-less (global) rows. Applied
-	// post-merge so all three sources filter identically.
+	// with /problems (chstore.EnvScopeKeepsRow): keep rows whose service
+	// ran in the env in the last hour, plus service-less (global) rows
+	// and db-subject rows (v0.9.1358). Applied post-merge so all three
+	// sources filter identically.
 	env := strings.TrimSpace(q.Get("env"))
 	// open (default) | all | ignored
 	//
@@ -677,21 +678,16 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// Env filter (v0.8.387) — one cached-map lookup covers the whole
 		// merged list (no per-poll query beyond it). Soft-fails to
 		// UNFILTERED on a map error, matching envScopeProblems: a
-		// transient CH blip must never hide a firing P1. envKeepsRow
-		// pins the row semantics (empty-service rows always survive).
+		// transient CH blip must never hide a firing P1.
+		// chstore.EnvScopeKeepsRow pins the row semantics (empty-service
+		// AND db-subject rows always survive — v0.9.1358).
 		if env != "" {
 			if members, err := s.store.EnvMemberServices(ctx, env); err == nil {
 				memberSet := make(map[string]bool, len(members))
 				for _, m := range members {
 					memberSet[m] = true
 				}
-				filtered := items[:0]
-				for _, it := range items {
-					if envKeepsRow(it.Service, memberSet) {
-						filtered = append(filtered, it)
-					}
-				}
-				items = filtered
+				items = envFilterInboxItems(items, memberSet)
 			}
 		}
 
@@ -1362,8 +1358,9 @@ func (s *Server) computeInboxCount(ctx context.Context) (any, error) {
 }
 
 // computeInboxCountFor scopes the badge to an environment using the SAME
-// semantics as the inbox list (envKeepsRow): a service-less row always
-// counts, otherwise the service must be an env member.
+// semantics as the inbox list (chstore.EnvScopeKeepsRow): a service-less
+// row always counts, a db-subject row always counts (v0.9.1358),
+// otherwise the service must be an env member.
 //
 // On an env-map error the count stays UNFILTERED — identical to the list's
 // soft-fail (inbox.go:184) and for the same reason: a transient CH blip must

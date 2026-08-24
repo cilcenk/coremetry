@@ -65,23 +65,36 @@ func inboxTeamKeepsRow(ta chstore.TeamAliases, rowOwner, rowSRE, want string) bo
 	return ta.TeamEqual(rowOwner, want) || ta.TeamEqual(rowSRE, want)
 }
 
-// envKeepsRow reports whether a triage row — identified by its
-// service — survives the global env filter (v0.8.387, env-separation
-// Phase 3). Semantics mirror chstore.applyEnvServiceScope exactly, so
-// the /inbox merged-list filter and the /problems SQL conjunct cannot
-// drift:
+// envFilterInboxItems narrows the merged /inbox list to the selected
+// environment (v0.8.387, env-separation Phase 3). Filters in place —
+// the caller's slice backs the result, same as the sibling service /
+// search narrows in inbox.go.
 //
-//   - service == "" always survives: global (log-query) monitors are
-//     env-unattributable; hiding a firing global alert because the
-//     operator narrowed to uat is a triage hazard.
-//   - otherwise the service must be a member of the selected env per
-//     the 60s-cached 1h service→env map (multi-env services are
-//     members of every env they run in, so their rows still show).
+// v0.9.1358 — the ROW RULE no longer lives here. It used to be a local
+// `envKeepsRow` whose doc-comment claimed it "cannot drift" from
+// chstore.applyEnvServiceScope — a claim enforced by nothing but that
+// sentence, and when db subjects landed (v0.9.1338) BOTH copies went
+// wrong at once. The rule is now a single body, chstore.EnvScopeKeepsRow,
+// which the SQL conjunct is tested against; this function only walks the
+// slice and hands it the two fields the rule reads.
 //
-// Pure + table-tested. Callers only invoke it when an env IS selected
-// and the member set resolved successfully (error path = unfiltered).
-func envKeepsRow(service string, members map[string]bool) bool {
-	return service == "" || members[service]
+// SubjectKind, not Kind: InboxItem.Kind is the row's SOURCE
+// (problem | exception | anomaly). Passing it here would send "problem"
+// where the rule expects "service" | "db" — every problem row would then
+// miss the db escape and the whole class would still be dropped, exactly
+// the defect this release fixes. Pinned in problems_filter_test.go.
+//
+// Callers only invoke it when an env IS selected and the member set
+// resolved successfully (map error = unfiltered, so a CH blip never
+// hides a firing P1).
+func envFilterInboxItems(items []InboxItem, members map[string]bool) []InboxItem {
+	out := items[:0]
+	for _, it := range items {
+		if chstore.EnvScopeKeepsRow(it.Service, it.SubjectKind, members) {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 // servicesForTeam resolves an owner/SRE team pick to the sorted set of

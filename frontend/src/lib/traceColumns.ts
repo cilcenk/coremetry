@@ -32,11 +32,21 @@ export const FIXED_COLS = ['time', 'service', 'operation', 'duration', 'spans', 
  * Precedence on load is UNCHANGED: URL ?cols= (shareable source of
  * truth) → localStorage (per-browser continuity) → this default. The
  * 8-column ceiling and ColumnManager behaviour are untouched.
+ *
+ *   • 2026-08-24, operatör isteği: `function_id` DA varsayılan olsun.
+ *     Operatörün canlı oturumu şu dördünü taşıyordu — cluster /
+ *     channel_code / function_code / function_id — yani `http.status_code`
+ *     fiilen elle DÜŞÜRÜLMÜŞTÜ. "da" denildiği için BEŞ olarak bırakıldı;
+ *     `http.status_code`'u da istemiyorsan onu çıkarmak tek satır.
+ *
+ *     ⚠ Genişlik bütçesi bu ekleme İÇİN yeniden dağıtıldı — bkz.
+ *     Traces.tsx COL_W şerhi. Beşinci kolon bedavaya gelmiyor.
  */
 export const DEFAULT_TRACE_COLUMNS: string[] = [
   'openshift.cluster.name',
   'channel_code',
   'function_code',
+  'function_id',
   'http.status_code',
 ];
 

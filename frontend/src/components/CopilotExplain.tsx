@@ -297,9 +297,23 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
           border: '1px solid color-mix(in srgb, var(--accent) 25%, transparent)',
           color: 'var(--text)', maxWidth: 'min(720px, 100%)',
         }}>
-          <div style={{ fontSize: 10, color: 'var(--accent2)', marginBottom: 6, fontWeight: 700, letterSpacing: '.5px',
-                        display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <IconSparkles size={11} /> {kind === 'runbook' ? 'RUNBOOK' : 'CoSRE'}
+          {/* v0.9.1380 (operatör: "CoSRE yazısı daha büyük font olabilir
+              burada") — 10→14, ikon 11→13.
+
+              Bu, v0.9.1253'ün İKİZİ. O sürüm operatörün neredeyse aynı
+              cümlesiyle ("CoSRE yazısı biraz daha belirgin, büyük font
+              olabilir") sohbet çekmecesinin başlığını 13→16 yaptı;
+              explain paneli 10px'te kaldı ve marka, ETİKETLEDİĞİ
+              içerikten küçük göründü.
+
+              16 DEĞİL, 14: sohbetteki bir çekmece BAŞLIĞI, burası ise
+              13px'lik bir gövdenin üstündeki bölüm etiketi. 16 yapmak
+              etiketi kendi içeriğinden büyük gösterirdi — operatörün
+              istediği belirginlik değil, ters bir hiyerarşi olurdu.
+              RUNBOOK de aynı etiketi kullanıyor, o da büyüyor. */}
+          <div style={{ fontSize: 14, color: 'var(--accent2)', marginBottom: 6, fontWeight: 700, letterSpacing: '.5px',
+                        display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <IconSparkles size={13} /> {kind === 'runbook' ? 'RUNBOOK' : 'CoSRE'}
           </div>
           {meta && (
             <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, fontStyle: 'italic' }}>

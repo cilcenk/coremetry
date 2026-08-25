@@ -91,6 +91,11 @@ type chatRequest struct {
 		// cevabını alıyordu ve fark görünmüyordu. Açık pencere taşıyan
 		// soru bunu EZER. 0/absent = eski istemci, davranış değişmez.
 		RangeS int64 `json:"rangeS,omitempty"`
+		// ToMs (v0.10.33) — pencerenin BİTİŞ anı, yalnız operatör MUTLAK
+		// bir aralık seçtiğinde (custom/zoom) gönderiliyor. Göreli
+		// aralıkta boş kalır ve sunucu şimdiye çapalar; sabitlemek uzun
+		// bir soruşturmada cevabı DONDURURDU.
+		ToMs int64 `json:"toMs,omitempty"`
 		// Env (v0.9.1259) — Topbar'daki global env seçimi. Soru AÇIK bir
 		// env adı taşımıyorsa guided router bunu varsayılan alır: ekran
 		// uat gösterirken cevabın sessizce başka env'i kapsaması (CoSRE
@@ -220,7 +225,19 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// frontier models; the 2B-class primary target (qwen3.5-2b) can't
 	// drive the 5-round × 11-schema loop reliably at all. No match →
 	// the free tool loop below runs UNCHANGED.
-	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain, req.Context.RangeS, req.Context.Trace, req.Context.Env); handled {
+	// v0.10.33 — ZAMAN ÇIPASI, kademelerden ÖNCE hesaplanıyor: guided de
+	// serbest döngü de aynı pencereyi görmeli, yoksa aynı soru hangi
+	// kademeye düştüğüne göre farklı bir zaman diliminden cevaplanır.
+	anchorTo, anchored := chatAnchorTime(req.Context.ToMs, time.Now())
+	if anchored {
+		// Çıpa sessizce uygulanmamalı: operatör cevabın GEÇMİŞ bir
+		// pencereden geldiğini görebilmeli.
+		emit("step", map[string]string{
+			"label": "pencere: " + anchorTo.UTC().Format("2006-01-02 15:04 UTC") + "'de bitiyor",
+		})
+	}
+
+	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain, req.Context.RangeS, req.Context.Trace, req.Context.Env, anchorTo); handled {
 		emit("done", map[string]bool{"ok": gok})
 		return
 	}
@@ -337,6 +354,8 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		Operation: req.Context.Operation,
 		Env:       req.Context.Env,
 		RangeS:    req.Context.RangeS,
+		AnchorTo:  anchorTo,
+		Anchored:  anchored,
 	}
 	// Bağlam SESSİZCE uygulanmamalı: operatör cevabın neden o kapsamda
 	// olduğunu görebilmeli (v0.9.1259 env şeffaflığının kalan yarısı).

@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // chat_screen_context.go — serbest tool döngüsüne EKRAN BAĞLAMI
@@ -47,6 +48,12 @@ type ChatScreenContext struct {
 	Operation string
 	Env       string
 	RangeS    int64
+	// AnchorTo / Anchored (v0.10.33) — pencerenin BİTİŞ anı ve onun
+	// operatörün MUTLAK seçiminden mi geldiği. Anchored=false iken
+	// AnchorTo yalnız "şimdi"dir ve ilan edilmez: göreli bir pencereyi
+	// mutlakmış gibi yazmak yeni bir yanlış olurdu.
+	AnchorTo time.Time
+	Anchored bool
 }
 
 // Empty — ilan edilecek hiçbir şey yok mu.
@@ -82,6 +89,16 @@ func screenContextPreambleTR(c ChatScreenContext) string {
 		// alır ve küçük model çelişkide genelde İLK gördüğünü izler.
 		fmt.Fprintf(&b, "- zaman aralığı: %s (range_s=%d) — tool çağrılarında "+
 			"varsayılan 1800 YERİNE BUNU kullan\n", fmtRangeTR(c.RangeS), c.RangeS)
+	}
+	if c.Anchored {
+		// ⚠ v0.10.33 — MUTLAK PENCERE. Operatör geçmişe zoom yaptıysa
+		// "son N saat" ifadesi YANILTICI olur: cevap bugünü değil, o
+		// pencereyi anlatmalı. Model bunu bilmeden aynı uzunlukta ama
+		// BUGÜNKÜ veriyi okur ve sayılar gerçek olduğu için hata sessiz
+		// kalır.
+		fmt.Fprintf(&b, "- ⚠ pencere GEÇMİŞE sabitlenmiş: %s'de BİTİYOR, "+
+			"\"şimdi\" DEĞİL. Cevabı o ana göre yaz.\n",
+			c.AnchorTo.UTC().Format("2006-01-02 15:04 UTC"))
 	}
 	b.WriteString("Soru AKSİNİ SÖYLEMEDİKÇE tool argümanlarında bu değerleri kullan; " +
 		"operatör açıkça daha geniş bir kapsam isterse (ör. \"tüm servisler\") onu izle.\n\n")

@@ -54,6 +54,10 @@ export interface ChatThreadOpts {
   // pencere taşımıyorsa sunucu sabit 30dk yerine bunu kullanır; soru
   // pencere taşıyorsa ("son 24 saatte…") soru kazanır.
   rangeS?: number;
+  // toMs (v0.10.33) — MUTLAK pencerenin bitiş anı; yalnız custom/zoom
+  // aralıkta dolu. Göreli aralıkta boş bırakılıyor ki sunucu şimdiye
+  // çapalasın — sabitlemek cevabı dondururdu.
+  toMs?: number;
   // trace (v0.9.537) — EKRANDAKİ trace ID'si (/trace?id=). "bu trace
   // neden yavaş" gibi ID'siz sorular sunucuda buna oturur.
   trace?: string;
@@ -172,7 +176,8 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
           patchLast(t => ({ ...t, pending: false }));
         }
       }, ac.signal, o.service || undefined, o.operation || undefined, o.explain || undefined,
-        o.subject || undefined, o.rangeS || undefined, o.trace || undefined, o.env || undefined);
+        o.subject || undefined, o.rangeS || undefined, o.trace || undefined, o.env || undefined,
+        o.toMs || undefined);
     } catch (err) {
       // v0.10.23 — İPTAL ARIZA DEĞİL. Durdurulan bir fetch AbortError
       // fırlatıyor; ayırmazsak operatörün kasıtlı eylemi kırmızı bir

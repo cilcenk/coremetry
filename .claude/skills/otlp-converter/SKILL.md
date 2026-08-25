@@ -234,7 +234,7 @@ Mevcut testler elle kurulmuş proto struct'ları üzerinden çalışıyor;
 `testdata/` altında kayıtlı payload yok.
 
 ```go
-// convert_golden_test.go — v0.9.X
+// convert_golden_test.go — v0.10.X
 // Girdi: testdata/<vaka>.json (OTLP JSON, gerçek collector çıktısı)
 // Beklenen: TAM chstore.Span literali — alan-alan iddia DEĞİL.
 // Neden tam struct: yeni bir alan eklendiğinde bu test KIRILMAK ZORUNDA;

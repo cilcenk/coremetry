@@ -1,13 +1,13 @@
 ---
 name: bugfix
-description: Coremetry production bug → repro → one-sentence root cause → minimal fix + regression test → shipped as its own v0.9.X+1 via /release. Use when the operator reports a defect they OBSERVED in the running product ("operator-reported X", "X sayfası boş geliyor", "bu grafik yanlış sayı gösteriyor") — the bug becomes the new priority and in-flight feature work is parked. Starts by reading MEMORY.md + feedback-*.md, and verifies the fix against live ClickHouse / curl / the loaded page before tagging. Do NOT use for build, type, lint or test errors coming from your own uncommitted edits, for "why does this code do X" reading questions, or for anything outside this repo.
+description: Coremetry production bug → repro → one-sentence root cause → minimal fix + regression test → shipped as its own v0.10.X+1 via /release. Use when the operator reports a defect they OBSERVED in the running product ("operator-reported X", "X sayfası boş geliyor", "bu grafik yanlış sayı gösteriyor") — the bug becomes the new priority and in-flight feature work is parked. Starts by reading MEMORY.md + feedback-*.md, and verifies the fix against live ClickHouse / curl / the loaded page before tagging. Do NOT use for build, type, lint or test errors coming from your own uncommitted edits, for "why does this code do X" reading questions, or for anything outside this repo.
 ---
 
 # /bugfix — production bug → fix → release
 
 Bug reports interrupt feature work. The workflow per `CLAUDE.md`:
 
-> Bug reports: investigate root cause, write the fix as v0.9.X+1
+> Bug reports: investigate root cause, write the fix as v0.10.X+1
 > *immediately* after the prior release rather than batching.
 
 This skill enforces that discipline: investigate first, fix once
@@ -142,13 +142,13 @@ Investigate more.
   variables, don't reorganise imports.
 - Add a brief code comment if the fix is non-obvious. Reference
   the version that introduced or surfaced the issue if you can
-  trace it: `(v0.9.X — operator-reported: …)`.
+  trace it: `(v0.10.X — operator-reported: …)`.
 - Type-check + build before considering the fix done.
 
 ### 4a. Regression test — bug-fix releases ship with one (v0.5.447)
 
 CLAUDE.md "When you ship a new feature" item 11: every
-`v0.9.X — bug-fix` release ships with a Go test that fails on
+`v0.10.X — bug-fix` release ships with a Go test that fails on
 re-regression. This catches future copy-paste-induced
 re-occurrences of the SAME class of bug.
 
@@ -232,7 +232,7 @@ the bug; the release confirmation already covered that.
   v0.5.447). Step 4a is binding — extract the pure seam and pin the
   bug class. What IS scope creep: back-filling tests for untouched
   code you happened to read on the way.
-- **Don't blame past code.** "v0.9.X introduced this" in the body
+- **Don't blame past code.** "v0.10.X introduced this" in the body
   is fine; "the previous developer should have…" isn't.
 - **Don't over-explain the conversation.** The commit message is
   for future operators reading `git log`. Keep it terse.

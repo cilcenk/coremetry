@@ -1,13 +1,13 @@
 ---
 name: release
-description: Cut a Coremetry release — compute the next v0.9.X tag from git tags, run every gate, stage explicit paths, commit in the CLAUDE.md format, annotate the tag, push, then rebuild the image in the background with `make image` (never `make docker-up` — v0.9.210). Use when the operator explicitly asks to release / ship / tag the current change. All four gates block the tag — `cd frontend && npx tsc --noEmit`, `go build ./...`, `go test ./...`, and `make audit` (🔴 critical stops the tag, 🟡 goes to the operator). On a non-trivial diff run /review-changes first. Do NOT use for a bare "commit this" with no tag, and never fold unrelated changes into one release.
+description: Cut a Coremetry release — compute the next v0.10.X tag from git tags, run every gate, stage explicit paths, commit in the CLAUDE.md format, annotate the tag, push, then rebuild the image in the background with `make image` (never `make docker-up` — v0.9.210). Use when the operator explicitly asks to release / ship / tag the current change. All four gates block the tag — `cd frontend && npx tsc --noEmit`, `go build ./...`, `go test ./...`, and `make audit` (🔴 critical stops the tag, 🟡 goes to the operator). On a non-trivial diff run /review-changes first. Do NOT use for a bare "commit this" with no tag, and never fold unrelated changes into one release.
 ---
 
 # /release — ship a Coremetry change
 
 Use this skill to turn the current working-tree state into a shipped
 Coremetry release. Follows the conventions in `CLAUDE.md` —
-small frequent commits, monotonic v0.9.X tags, push, background
+small frequent commits, monotonic v0.10.X tags, push, background
 rebuild.
 
 ## Args
@@ -36,7 +36,7 @@ operator may want them.
 ### 2. Determine the next version
 
 ```
-git tag --sort=-v:refname | grep -E '^v0\.9\.[0-9]+$' | head -1
+git tag --sort=-v:refname | grep -E '^v0\.10\.[0-9]+$' | head -1
 ```
 
 Increment the patch component by 1. Example: previous tag `v0.9.1291`
@@ -60,7 +60,7 @@ silently. The operator decides whether to fix-forward or abort.
 
 Run after the build gate. The regression-test discipline
 (CLAUDE.md "When you ship" item 11) ships a test per
-`v0.9.X — bug-fix` release, so the suite grows over time and
+`v0.10.X — bug-fix` release, so the suite grows over time and
 catches recurrence of historical bug classes.
 
 - Exit non-zero: STOP. Surface the failing test name to the
@@ -97,13 +97,13 @@ user via `git diff --cached --stat`.
 Format per CLAUDE.md exactly, using a HEREDOC so newlines preserve:
 
 ```
-v0.9.X — <short title, max 70 chars>
+v0.10.X — <short title, max 70 chars>
 
 <body — what changed and why; wrap at 72 chars. If this is a
 bug fix, start the body with "Operator-reported: <one-line
 description of the original report>". Include the root cause
 when it's non-obvious. Keep the body tight — 3-12 lines is
-typical for v0.9.X commits.>
+typical for v0.10.X commits.>
 
 Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
 ```
@@ -120,9 +120,9 @@ git commit -m "$(cat <<'EOF'
 ... message from step 5 ...
 EOF
 )"
-git tag -a v0.9.X -m "v0.9.X — <short title>"
+git tag -a v0.10.X -m "v0.10.X — <short title>"
 git push origin main
-git push origin v0.9.X
+git push origin v0.10.X
 ```
 
 Tag annotation message can be just the title — the full body lives
@@ -170,13 +170,13 @@ Example confirmation:
 - **Don't push --force.** Ever. Even on a tag.
 - **Don't skip the type-check / build.** A red build that ships
   breaks the rebuild cycle and the operator has to revert.
-- **Don't re-use a tag.** If `v0.9.X` exists, the next is X+1, even
+- **Don't re-use a tag.** If `v0.10.X` exists, the next is X+1, even
   if X was a no-op or got reverted.
 - **Don't combine unrelated changes.** If the working tree has two
   logical units of work, do two separate releases — the small
   commit cadence is the workflow.
 - **Bug fix commits go IMMEDIATELY.** Don't batch a bug fix into a
-  feature commit — ship the bug fix as its own v0.9.X+1 right after
+  feature commit — ship the bug fix as its own v0.10.X+1 right after
   the prior release.
 - **Don't `make docker-up` while another rebuild is in flight.**
   BuildKit serialises layer cache; concurrent rebuilds fight and

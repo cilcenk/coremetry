@@ -1137,7 +1137,7 @@ func fmtAgoTR(seconds int64) string {
 // ctxRangeS (v0.9.529) — operatörün EKRANDAKİ zaman aralığı, saniye.
 // 0 = bilgi yok (eski istemci); o hâlde davranış bayt-bayt eskisidir.
 // ctxTrace (v0.9.537) — ekrandaki trace ID'si (/trace?id=), "" = yok.
-func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation, explain string, ctxRangeS int64, ctxTrace, ctxEnv string) (handled, ok bool) {
+func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation, explain string, ctxRangeS int64, ctxTrace, ctxEnv string, anchorTo time.Time) (handled, ok bool) {
 	question := strings.TrimSpace(lastUserText(msgs))
 	if question == "" {
 		return false, false
@@ -1230,7 +1230,15 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 			rangeS = 12 * 3600
 		}
 	}
-	to := time.Now()
+	// v0.10.33 — ÇIPA. Eskiden koşulsuz `time.Now()`du: operatör dün gece
+	// 03:00-04:00'a zoom yapıp soru sorduğunda, sohbet aynı UZUNLUKTA ama
+	// BUGÜNKÜ pencereyi cevaplıyordu. Sayılar gerçek olduğu için hata
+	// sessiz kalıyordu. anchorTo göreli aralıkta zaten `now()`dur
+	// (chat_anchor.go); mutlak seçimde operatörün penceresidir.
+	to := anchorTo
+	if to.IsZero() {
+		to = time.Now()
+	}
 	from := to.Add(-time.Duration(rangeS) * time.Second)
 
 	var evidence, sources string

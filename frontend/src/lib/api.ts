@@ -1861,9 +1861,16 @@ export const api = {
     // v0.9.1259 — Topbar'daki global env seçimi. Soru açık env adı
     // taşımıyorsa guided router bunu varsayılan alır (rangeS aynası).
     contextEnv?: string,
+    // v0.10.33 — MUTLAK pencerenin BİTİŞ anı (ms). Yalnız operatör
+    // custom/zoom aralık seçtiğinde gönderiliyor; göreli aralıkta BOŞ
+    // kalır ve sunucu şimdiye çapalar. Sabitlemek uzun bir soruşturmada
+    // cevabı DONDURURDU ("şimdi nasıl" sorusu hâlâ eski pencereyi
+    // gösterirdi). Pre-fix: dün gece 03:00-04:00'a zoom yapıp soru
+    // sorunca sohbet aynı UZUNLUKTA ama BUGÜNKÜ pencereyi cevaplıyordu.
+    contextToMs?: number,
   ): Promise<void> => {
     const context =
-      contextService || contextOperation || contextExplain || contextSubject || contextRangeS || contextTrace || contextEnv
+      contextService || contextOperation || contextExplain || contextSubject || contextRangeS || contextTrace || contextEnv || contextToMs
         ? {
             ...(contextService ? { service: contextService } : {}),
             ...(contextOperation ? { operation: contextOperation } : {}),
@@ -1872,6 +1879,7 @@ export const api = {
             ...(contextRangeS && contextRangeS > 0 ? { rangeS: contextRangeS } : {}),
             ...(contextTrace ? { trace: contextTrace } : {}),
             ...(contextEnv ? { env: contextEnv } : {}),
+            ...(contextToMs && contextToMs > 0 ? { toMs: contextToMs } : {}),
           }
         : undefined;
     const r = await fetch(API_BASE + '/api/copilot/chat', {

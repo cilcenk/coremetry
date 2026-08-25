@@ -152,13 +152,27 @@ export function CopilotChat() {
     const s = Math.round((to - from) / 1e9);
     return s > 0 ? s : undefined;
   }, [range]);
+  // v0.10.33 — MUTLAK pencerenin BİTİŞ anı. rangeS pencereyi SÜREYE
+  // çökertiyor ve sunucu onu şimdiye yeniden çapalıyordu: dün gece
+  // 03:00-04:00'a zoom yapıp soru sorunca cevap aynı UZUNLUKTA ama
+  // BUGÜNKÜ pencereden geliyordu. Sayılar gerçek olduğu için hata
+  // sessizdi.
+  //
+  // ⚠ YALNIZ custom/zoom aralıkta gönderiliyor. Göreli aralıkta ("son 1
+  // saat") çıpayı sabitlemek, uzun bir soruşturmada cevabı DONDURUR:
+  // operatör yirmi dakika sonra "şimdi nasıl" diye sorduğunda hâlâ
+  // yirmi dakika önceki pencereyi görürdü.
+  const toMs = useMemo(
+    () => (range.preset === 'custom' && range.toMs ? range.toMs : undefined),
+    [range],
+  );
 
   // persist: true — KALICILIK YALNIZ BURADA (v0.9.1139, Faz 4.1).
   // AI çekmecesindeki özne sohbeti efemer kalıyor; gerekçe
   // useChatThread'in dosya başında.
   const { turns, busy, send, stop, rate, clear, load, conversationId, last, showFollowups } =
     useChatThread({
-      service: currentService, operation: currentOp, rangeS, trace: currentTrace, env,
+      service: currentService, operation: currentOp, rangeS, toMs, trace: currentTrace, env,
       persist: true,
     });
 

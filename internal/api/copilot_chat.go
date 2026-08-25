@@ -290,6 +290,10 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	conv := req.Messages
+	// Taşma yeniden denemesi TEK sefer: ikinci bir deneme aynı duvara
+	// bir çağrı daha yakar (kod-explain'in `hb == block` kontrolüyle
+	// aynı gerekçe).
+	overflowRetried := false
 	var totalIn, totalOut uint32
 	var lastErr error
 	var finalText string
@@ -310,6 +314,19 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		turn, err := s.copilot.ChatWithTools(ctx, loopPrompt, conv, specs)
 		totalIn += turn.InputTokens
 		totalOut += turn.OutputTokens
+		// v0.10.26 — BAĞLAM TAŞMASI. isContextOverflowErr yazılı ve
+		// tablo-testliydi ama tek çağrı yeri copilot_code.go'ydu; sohbet
+		// ham İngilizce sağlayıcı gövdesini ekrana basıyordu. Emsalin
+		// aynısı: küçült + BİR KEZ yeniden dene (chat_overflow.go).
+		if err != nil && isContextOverflowErr(err) && !overflowRetried {
+			if shrunk, ok := shrinkConvForRetry(conv); ok {
+				overflowRetried = true
+				conv = shrunk
+				emit("step", map[string]string{"label": "bağlam taştı — geçmiş küçültülüp yeniden deneniyor"})
+				round-- // bu tur sayılmasın: yeniden deneme, ilerleme değil
+				continue
+			}
+		}
 		if err != nil {
 			lastErr = err
 			// Tavan dolduysa ham `context deadline exceeded` metni yanıltır:
@@ -317,8 +334,11 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			// suçlar, oysa olan şey ALIŞVERİŞİN tavana dayanmasıdır — farklı
 			// bir eylem gerektiriyor (soruyu daralt).
 			msg := err.Error()
-			if dctx.Err() != nil {
+			switch {
+			case dctx.Err() != nil:
 				msg = chatDeadlineMessageTR(exchangeMax)
+			case isContextOverflowErr(err):
+				msg = chatOverflowMessageTR(overflowRetried)
 			}
 			emit("error", map[string]string{"error": msg})
 			break

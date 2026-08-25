@@ -2919,8 +2919,12 @@ func (s *Server) getServiceDBQueries(w http.ResponseWriter, r *http.Request) {
 		from = to.Add(-15 * time.Minute)
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	key := fmt.Sprintf("service-db-queries:svc=%s:from=%d:to=%d:limit=%d",
-		name, from.UnixNano(), to.UnixNano(), limit)
+	// v0.10.16 (F0.2a) — anahtar nanosaniye taşıdığı sürece `to`
+	// şimdi-tabanlı olduğu için HER istek benzersizdi: cache'in dört
+	// mekanizması da ölüydü. Pencere ve anahtar aynı dakika kovasından
+	// türetiliyor ki veriyle adı uyuşsun (service_dbqueries_key.go).
+	from, to = serviceDBQueriesWindow(from, to)
+	key := serviceDBQueriesKey(name, from, to, limit)
 	s.serveCached(w, r, key, time.Minute, func(ctx context.Context) (any, error) {
 		return s.store.GetTopDBQueries(ctx, name, from, to, limit)
 	})

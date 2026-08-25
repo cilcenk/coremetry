@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
@@ -13,7 +14,7 @@ import (
 // `/release` skill'i bir sonraki sürümü kaynaktan DEĞİL, git tag'lerinden
 // hesaplıyor ve hesabı bir regex'e dayanıyor:
 //
-//     git tag --sort=-v:refname | grep -E '^v0\.9\.[0-9]+$' | head -1
+//	git tag --sort=-v:refname | grep -E '^v0\.9\.[0-9]+$' | head -1
 //
 // Bu, depoda mevcut zincir yazımını REGEX OLARAK bekleyen tek
 // çalıştırılabilir yer. 1.0 kesildiği gün güncellenmezse kesimden sonraki
@@ -50,6 +51,17 @@ func skillTagPattern(t *testing.T) string {
 	return m[1]
 }
 
+// chainOf — bir desenden ya da tag'den "MAJOR.MINOR" zincirini çıkarır.
+// `^v1\.0\.[0-9]+$` → "01.00" · `v0.9.1386` → "00.09". Sıfır dolgulu,
+// çünkü karşılaştırma dizge üzerinden yapılıyor ve "10" > "9" olmalı.
+func chainOf(s string) string {
+	m := regexp.MustCompile(`v(?:\\)?\.?(\d+)(?:\\)?\.(\d+)`).FindStringSubmatch(s)
+	if m == nil {
+		return ""
+	}
+	return fmt.Sprintf("%02s.%02s", m[1], m[2])
+}
+
 func TestReleaseSkillRegexMatchesTheLiveTagChain(t *testing.T) {
 	pattern := skillTagPattern(t)
 
@@ -75,6 +87,26 @@ func TestReleaseSkillRegexMatchesTheLiveTagChain(t *testing.T) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		t.Fatalf("skill deseni derlenemedi %q: %v", pattern, err)
+	}
+
+	// ⚠ İLK YAZIMIM KESİMİ BLOKLUYORDU (v0.9.1387'de düzeltildi).
+	//
+	// Kapı "en yeni tag desene uymalı" diyordu. Ama kesim commit'inde
+	// desen `^v1\.0\.` olur ve en yeni tag hâlâ `v0.9.X`tir — tag ancak
+	// gate'ler geçtikten SONRA atılır. Yani kapı, korumak için yazıldığı
+	// kesimi imkânsız kılıyordu: tavuk-yumurta.
+	//
+	// Doğru değişmez YÖNLÜ: desen zincirin GERİSİNDE kalamaz. İleri
+	// hamle (desen v1.0, tag hâlâ v0.9) kesim ANIDIR ve meşrudur; geri
+	// kalma (tag v1.0, desen hâlâ v0.9) atlanmış adımdır ve tam da
+	// yakalamak istediğim sessiz çatallanma.
+	pc, tc := chainOf(pattern), chainOf(latest)
+	if pc == "" || tc == "" {
+		t.Fatalf("zincir çıkarılamadı: desen=%q tag=%q", pattern, latest)
+	}
+	if pc > tc {
+		t.Logf("desen zinciri (%s) tag zincirinden (%s) İLERİDE — kesim anı, beklenen durum", pc, tc)
+		return
 	}
 	if !re.MatchString(latest) {
 		t.Errorf(`SÜRÜM ZİNCİRİ ÇATALLANDI.

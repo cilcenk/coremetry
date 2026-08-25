@@ -172,6 +172,29 @@ geçersiz değer FATAL değil WARNING.
 
 ## §4 — Kesim GÜNÜ operatörden gereken cevaplar
 
+### 2026-08-25 kesimi için CEVAPLANDI
+
+| Soru | Cevap | Sonucu |
+|---|---|---|
+| Prod sürümü | **v0.9.1385** | ≥ v0.9.624 → `promoted_attr`ın spans ALTER'ı ATEŞLEMEZ |
+| 0009 | **uygulandı** | state tabloları birleşik |
+| 0010 | **uygulandı**, `_old` silinmesi bekliyor | şema taşındı; cleanup hijyen |
+| Replica | **api 4 · ingest 12 · worker 1** = 16 pod | §1.8'deki boot DDL yarışı TEORİK DEĞİL |
+
+**Ve kesim için belirleyici olan ölçüm:** prod v0.9.1385'te, 1.0.0 ise
+HEAD'den kesiliyor ve `v0.9.1385..HEAD` şema deltası **SIFIR** —
+`internal/chstore/`, `internal/chmigrate/`, `migrations/` altında tek bir
+`CREATE`/`ALTER`/`DROP`/MV satırı yok, değişen dört dosya frontend.
+
+Yani yukarıdaki DDL / göç / MV-penceresi uyarılarının hiçbiri BU kesimde
+taşınacak bir şey bulmuyor. Uyarılar dosyada KALIYOR çünkü bir sonraki
+kesim ESKİ bir sürümden yükseltebilir — ama bugünün riski onlar değil.
+
+⚠ 16 pod hâlâ anlamlı: delta sıfır olsa bile boot idempotent DDL
+gönderiyorsa 16 pod aynı anda DDL kuyruğuna yazar. §1.8'i uygula.
+
+### Bir sonraki kesimde yeniden sorulacaklar
+
 Bunlar repodan OKUNAMAZ; kesimden önce cevaplanmalı:
 
 - **Prod'un koştuğu sürüm ≥ v0.9.624 mü?** Boot yolundaki

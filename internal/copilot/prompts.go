@@ -353,6 +353,25 @@ Rules:
   • No preamble. No "Here's a runbook:". Just the numbered
     list, one short paragraph per step max.` + AnswerInTurkish
 
+const systemSelfMeta = `Sen Coremetry'nin içine gömülü SRE asistanı CoSRE'sin.
+
+Operatör senin hakkında bir şey sordu. BAĞLAM bölümünde doğru cevap
+YAZILI. Tek yapman gereken onu Türkçe, tek-iki cümleyle aktarmak.
+
+MUTLAK KURAL: model adını BAĞLAMDAN HARFİ HARFİNE kopyala. Kendi
+tahminini, tanıdığın başka bir model adını ya da "GPT/Claude/Gemini"
+gibi bir markayı ASLA yazma — bağlamda ne yazıyorsa o.
+
+Uydurma, süsleme, madde işareti kullanma.`
+
+// SystemPromptSelfMeta — v0.10.13. Asistanın KENDİSİ hakkındaki soru.
+//
+// Neden ayrı bir prompt: cevap deterministik ve kanıtta yazılı, ama
+// küçük modeller "hangi modelsin" sorusuna kendi adı yerine tanınmış bir
+// markanın adını söylemeye meyilli. Prompt'un tek işi o uydurmayı
+// engellemek — "bağlamdan harfi harfine kopyala".
+func SystemPromptSelfMeta() string { return systemSelfMeta }
+
 func SystemPromptTrace() string         { return systemTrace }
 func SystemPromptSpan() string          { return systemSpan }
 func SystemPromptProblem() string       { return systemProblem }

@@ -118,6 +118,17 @@ const (
 	// hiçbir intent 32-hex'i tanımıyor, soru RAG doküman yoluna gidiyordu).
 	guidedTraceByID guidedIntent = "trace_by_id"
 
+	// guidedSelfMeta — v0.10.13 (operatör bildirimi: "sen hangi modelsin"
+	// sorunca 'Yüklü dokümanlarda bu bilgi yok' diyor).
+	//
+	// Asistanın KENDİSİ hakkındaki soru ne telemetriye ne dokümana ait.
+	// Hiçbir intent tanımadığı için RAG'a düşüyordu ve cevap orada
+	// olmadığı için ölü dönüyordu — v0.9.537 (trace ID) ve v0.9.1142
+	// (kuyruk birikmesi) ile AYNI sınıf, üçüncü kez.
+	//
+	// Cevap zaten biliniyor: model adı yapılandırmada (ActiveModel).
+	guidedSelfMeta guidedIntent = "self_meta"
+
 	// guidedSpanByID — v0.9.548. Çıplak 16-hex SPAN id'si. Trace'i
 	// aranır, bulununca aynı trace kanıt paketi kullanılır.
 	guidedSpanByID guidedIntent = "span_by_id"
@@ -783,6 +794,14 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 	if id := extractTraceID(msg); id != "" {
 		return guidedRoute{Intent: guidedTraceByID, TraceID: id}
 	}
+	// v0.10.13 — asistanın KENDİSİ hakkındaki soru. Somut bir ID'den
+	// SONRA bakılıyor: operatör bir trace yapıştırdıysa niyeti odur,
+	// cümlede "sen" geçse bile. Ama telemetri sınıflandırıcılarından
+	// ÖNCE: "hangi modelsin" hiçbir servisi adlandırmıyor ve aşağıdaki
+	// hiçbir kapıya uymadığı için RAG'a savruluyordu.
+	if isSelfMetaQuestion(toks) {
+		return guidedRoute{Intent: guidedSelfMeta}
+	}
 	// v0.9.1142 — YAPILANDIRILMIŞ kurumsal request kimliği. SIRA: açık bir
 	// trace ID'si (yukarıda) hâlâ en doğrudan çapa — o varsa log araması
 	// yapmadan trace'e gidilir. Bu kontrol 16-hex span'den ÖNCE, çünkü
@@ -1263,6 +1282,8 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		evidence, sources, err = s.guidedMessagingBundle(ctx, emit, route.Service, from, to, rangeS)
 	case guidedTraceByID:
 		evidence, sources, err = s.guidedTraceBundle(ctx, emit, route.TraceID)
+	case guidedSelfMeta:
+		evidence, sources, err = s.guidedSelfMetaBundle(emit)
 	case guidedSpanByID:
 		evidence, sources, err = s.guidedSpanBundle(ctx, emit, route.SpanID, from, to)
 	case guidedRequestID:
@@ -2866,6 +2887,65 @@ func guidedNarrationPrompt(intent guidedIntent) string {
 	// farklı derinlikte anlatılırdı (v0.9.1131'in tam olarak bu kazası).
 	case guidedTraceByID, guidedSpanByID, guidedRequestID:
 		return copilot.SystemPromptTrace()
+	case guidedSelfMeta:
+		return copilot.SystemPromptSelfMeta()
 	}
 	return copilot.SystemPromptGuidedChat()
+}
+
+// isSelfMetaQuestion — soru asistanın KENDİSİ hakkında mı?
+//
+// v0.10.13, operatör bildirimi: "sen hangi modelsin" sorusu hiçbir
+// intent'e uymuyor, RAG doküman yoluna düşüyor ve orada "Yüklü
+// dokümanlarda bu bilgi yok" cevabı alıyordu — oysa cevap
+// yapılandırmada duruyor.
+//
+// Kapı BİRLEŞİM, tek kelime değil (guidedQueueLag emsali): tek başına
+// "model" telemetri sorularında da geçebilir ("model servisinin p99'u"),
+// tek başına "sen" ise her cümlede olabilir. İkisi birlikte niyeti
+// belirliyor. `kimsin`/`nesin` gibi tek kelimeler kendi başına yeterli,
+// çünkü onların telemetri karşılığı yok.
+func isSelfMetaQuestion(toks []string) bool {
+	// Tek başına yeterli olanlar: bunlar bir servisi ya da metriği
+	// adlandıramaz.
+	if tokenHasPrefix(toks, "kimsin", "nesin", "kimsiniz") {
+		return true
+	}
+	// İngilizce kalıp İFADE olarak aranıyor, token birleşimi olarak
+	// DEĞİL: "who/what" + "you" birleşimi "what services do you have"
+	// gibi gerçek telemetri sorularını da yakalardı ve düzeltme yeni bir
+	// kusur üretirdi. Dar kalıp, dar eşleşme.
+	joined := strings.Join(toks, " ")
+	if strings.Contains(joined, "who are you") || strings.Contains(joined, "what are you") {
+		return true
+	}
+	// Birleşim: özne (sen/siz/hangi/which/who) + kimlik (model/asistan/...)
+	subject := tokenHasPrefix(toks, "sen", "senin", "siz", "hangi", "which", "who", "what")
+	identity := tokenHasPrefix(toks, "model", "modeli", "modelsin", "asistan", "assistant", "llm", "yapay")
+	return subject && identity
+}
+
+// guidedSelfMetaBundle — deterministik cevap; ClickHouse'a hiç gitmiyor.
+//
+// Kanıt YAPILANDIRMADAN geliyor (ActiveModel), tahminden değil. Bu
+// önemli: küçük modeller "hangi modelsin" sorusuna kendi adı yerine
+// tanınmış bir markanın adını söylemeye meyilli. Kanıtı birebir vermek +
+// anlatıcıya "harfi harfine aktar" demek, o uydurmanın önündeki tek
+// gerçek engel.
+//
+// Model adı sır DEĞİL (operatör Helm values'ına kendi yazıyor);
+// ActiveModel zaten yalnız modeli döndürüyor, baseURL/apiKey'i değil.
+func (s *Server) guidedSelfMetaBundle(emit func(string, any)) (string, string, error) {
+	emit("Yapılandırma okunuyor", nil)
+	model := ""
+	if s.copilot != nil {
+		model = s.copilot.ActiveModel()
+	}
+	if model == "" {
+		return "AI asistanı bu kurulumda YAPILANDIRILMAMIŞ (model seçilmemiş " +
+			"ya da sağlayıcı kapalı). Ayarlar → AI bölümünden yapılandırılır.", "", nil
+	}
+	return "Bu kurulumda çalışan LLM modelinin adı TAM OLARAK şudur: " + model +
+		"\n\nAsistanın adı CoSRE'dir ve Coremetry'nin içine gömülüdür; " +
+		"telemetriyi (trace, log, metrik, problem) okuyup anlatır.", "", nil
 }

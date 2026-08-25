@@ -269,9 +269,23 @@ func LogPatternLinks(ev LogPatternEvidence) []Link {
 // SlowQueryLinks — yavaş sorgu kartının çipleri, sıra sabit.
 //
 // PARAM DOĞRULAMASI:
-//   - /slow-queries → `stmt` (decodeStmtParam, SlowQueries.tsx:133) +
-//     `range` (useUrlRange). İfade çekmecesinin TEK kapısı bu; aynı
-//     şekli stmtDetailHref (stmtParam.ts, v0.9.963) da üretiyor.
+//   - /databases/statement → `stmt` (decodeStmtParam) + `range`
+//     (usePageZoomRange → useUrlRange). İfade DETAY SAYFASI; aynı şekli
+//     stmtDetailHref (stmtParam.ts) da üretiyor.
+//
+//     ⚠ v0.9.1377 — bu satır `/slow-queries` yazıyordu ve o yol App.tsx'te
+//     KAYITLI DEĞİL. Kayıtsız yol catch-all'a düşüyor
+//     (`path="*"` → <Navigate to="/" replace />), yani kartın "İfade
+//     detayı" çipi operatörü ANA SAYFAYA atıyordu — 404 bile değil,
+//     sessiz bir yön değişimi. Bu, v0.9.1323'ün BİREBİR aynısı: o sürüm
+//     frontend'deki stmtDetailHref'i düzeltti, buradaki ikizini
+//     bırakmıştı. Üstelik yukarıdaki şerh "aynı şekli stmtDetailHref de
+//     üretiyor" diyerek iki tarafın hizalı olduğunu İDDİA ediyordu; 1323
+//     sonrası bu iddia yanlıştı ve hiçbir şey onu ölçmüyordu.
+//     Artık ölçülüyor: TestServerLinkPathsAreRegisteredRoutes.
+//
+//     Hedef ayrıca v0.9.1374'te taşındı (çekmece → tam sayfa), yani tek
+//     düzeltme iki kusuru birden kapatıyor.
 //   - /databases → `dbsys` + `dbname` (Databases.tsx:80-81) + `range`.
 //   - /trace → `id`; pencere OKUMAZ (nokta nesnesi, links.go üst notu).
 //
@@ -292,7 +306,7 @@ func SlowQueryLinks(ev SlowQueryEvidence) []Link {
 
 	if p := strings.TrimSpace(ev.StmtParam); p != "" && rng != "" {
 		out = append(out, Link{Label: "İfade detayı",
-			Href: href("/slow-queries", kv{"stmt", p}, kv{"range", rng})})
+			Href: href("/databases/statement", kv{"stmt", p}, kv{"range", rng})})
 	}
 	if tid := strings.TrimSpace(ev.SlowTraceID); tid != "" {
 		out = append(out, Link{Label: "En yavaş örnek trace",

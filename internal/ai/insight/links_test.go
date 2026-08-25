@@ -522,8 +522,16 @@ func TestSlowQueryLinks(t *testing.T) {
 		t.Errorf("stmt paramı ÇİFT kodlanmış: %s", det)
 	}
 	u, _ := url.Parse(det)
-	if u.Path != "/slow-queries" {
-		t.Errorf("ifade detayı yolu = %q; /slow-queries (decodeStmtParam okuyan sayfa)", u.Path)
+	// v0.9.1377 — BU İDDİA BUG'I KORUYORDU. `/slow-queries` App.tsx'te
+	// KAYITLI DEĞİL; kayıtsız yol catch-all'a düşüp operatörü ana sayfaya
+	// atıyordu. Test sabit dizgeyi çiviledigi için yıllarca yeşil kaldı.
+	// Aynı patholoji stmtParam.test.ts'te de yaşanmıştı (v0.9.1323 şerhi:
+	// "yanlış yazım testte ÇİVİLİYDİ, yani test bug'ı koruyordu") — üçüncü
+	// tekrarı. Artık beklenen yol SABİT DEĞİL: rotanın App.tsx'te kayıtlı
+	// olması TestServerLinkPathsAreRegisteredRoutes tarafından ayrıca
+	// denetleniyor, burada yalnız hangi sayfaya gittiği pinli.
+	if u.Path != "/databases/statement" {
+		t.Errorf("ifade detayı yolu = %q; /databases/statement (decodeStmtParam okuyan sayfa)", u.Path)
 	}
 
 	// Katalog linki motor filtresi taşır ama db ADI TAŞIMAZ: gruplama
@@ -591,9 +599,14 @@ func TestLinkParamsAreActuallyReadByTheTargetPages(t *testing.T) {
 			note:   "/logs okuyucusu readLogsParams",
 		},
 		{
-			src:   "../../../frontend/src/pages/SlowQueries.tsx",
-			reads: []string{`decodeStmtParam(params.get('stmt'))`, `useUrlRange(`},
-			note:  "/slow-queries `?stmt=` + aralık okuyucusu",
+			// v0.9.1377 — pin TAŞINDI. v0.9.1374 ifade çekmecesini emekli
+			// edip tam sayfaya çıkardı; `?stmt=`i okuyan yer artık burası.
+			// SlowQueries.tsx paramı hâlâ görüyor ama yalnız YÖNLENDİRMEK
+			// için (useStmtParamRedirect), yani kartın hedefi olamaz —
+			// hedef, cevabı GÖSTEREN sayfa olmalı.
+			src:   "../../../frontend/src/pages/StatementDetail.tsx",
+			reads: []string{`decodeStmtParam(params.get('stmt'))`, `usePageZoomRange(`},
+			note:  "/databases/statement `?stmt=` + aralık okuyucusu",
 		},
 		{
 			src:   "../../../frontend/src/pages/Databases.tsx",

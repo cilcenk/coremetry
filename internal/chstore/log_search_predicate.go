@@ -45,43 +45,58 @@ func IsBareHexID(q string) bool {
 	return true
 }
 
-// escapeLikeNeedle — operatörün yazdığı metni LIKE JOKERİNE dönüşmekten
-// korur.
-//
-// `body LIKE '%' || <metin> || '%'` kalıbında metnin içindeki `%` ve `_`
-// SQL jokeridir. Yani `50%` araması "50 ile başlayan her şey", `a_b`
-// araması "a, herhangi bir karakter, b" demek oluyordu — operatörün
-// yazdığı şey değil. Kardeş yol (multiSearchAny) metni LİTERAL alıyor,
-// yani bu aynı zamanda bir hizalama.
-//
-// `\` önce kaçışlanmalı, yoksa sonradan eklenen kaçışlar da kaçışlanır.
-func escapeLikeNeedle(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `%`, `\%`)
-	s = strings.ReplaceAll(s, `_`, `\_`)
-	return s
-}
+// v0.9.1385'in `escapeLikeNeedle`'ı v0.10.2'de SİLİNDİ. Gerekçesi
+// LIKE'ın `%`/`_` jokerleriydi; yüklem artık LIKE değil ve
+// `multiSearchAnyCaseInsensitive` iğneyi LİTERAL alıyor, yani kaçışlanacak
+// bir joker yok. Kusur ortadan kalktı, korunması gereken bir davranış
+// kalmadı — kaçış kodunu bırakmak, çözülmüş bir sorunun bakımını
+// sürdürmek olurdu.
 
 // logSearchConjunct — arama metninin WHERE parçası ve argümanları.
 //
-// HARF DUYARLILIĞI BİLİNÇLİ OLARAK DEĞİŞTİRİLMEDİ (v0.9.1385). Histogram
-// `multiSearchAnyCaseInsensitive` kullanıyor, burası `LIKE` (duyarlı) ve
-// bu gerçek bir tutarsızlık. Hizalamanın YÖNÜ ise ölçüm gerektiriyor:
-// `body` üzerinde `tokenbf_v1` atlama indeksi var (store.go), ClickHouse'un
-// belgelenmiş tokenbf destek listesi `like`i içeriyor ama harf-DUYARSIZ
-// multiSearch varyantlarını içermiyor. Yani listeyi histograma hizalamak
-// (duyarsız yapmak) en sıcak log yolunda atlama indeksini kaybettirebilir;
-// tersi indeksi korur ama histogramı daraltır. Milyar satırlık bir tabloda
-// bu yön tahminle seçilemez — tek bir ad-hoc zamanlama da yalan söyler.
-// Ölçüm yapılana dek DAVRANIŞ KORUNUYOR ve tutarsızlık burada YAZILI.
+// ── HARF DUYARLILIĞI: v0.10.2'de ÖLÇÜLEREK KAPANDI ──────────────────────
+//
+// v0.9.1385 bu kararı ERTELEDİ ve gerekçesi şuydu: "`body` üzerinde
+// tokenbf_v1 atlama indeksi var; listeyi histograma hizalamak (duyarsız
+// yapmak) en sıcak log yolunda indeksi kaybettirebilir." Ölçüm bu
+// gerekçeyi ÇÜRÜTTÜ.
+//
+// Canlı CH 24.8.14, `EXPLAIN indexes=1` (planlayıcının kendi beyanı,
+// zamanlama değil):
+//
+//	hasToken(body, <yok>)                → Granules 0/8   ← TEK etkili
+//	body LIKE '%<yok>%'                  → Granules 7/7   ← budamıyor
+//	multiSearchAny(body, [<yok>])        → Granules 6/6   ← budamıyor
+//	multiSearchAnyCaseInsensitive(...)   → Skip bölümü HİÇ YOK
+//
+// Yani liste yolu indeksten ZATEN yararlanmıyordu: kaybedilecek bir şey
+// yoktu. `hasToken` etkili ama farklı semantik (tam token, alt-dize değil)
+// — drop-in değil, ayrı bir dilim.
+//
+// query_log medyanı, beşer koşum (tek ad-hoc zamanlama yalan söyler):
+//
+//	LIKE          → 93 ms · 8326 satır · 667 KiB · CPU 24.5 ms
+//	msaCI         → 96 ms · 8326 satır · 667 KiB · CPU 17.3 ms
+//
+// Aynı I/O, duvar saati gürültü içinde, CPU DAHA UCUZ — ClickHouse'un
+// SIMD'li çoklu-desen araması `%…%` eşleştiricisinden verimli.
+//
+// ⚠ Ölçüm LOKAL fixture üzerinde (25 MiB · 107 granül · 8326 satır).
+// İndeks bulguları planlayıcı-yapısal, yani ölçekten bağımsız; CPU oranı
+// satır-başı iş olduğu için kabaca doğrusal ölçeklenmeli. Ama prod
+// ölçeğinde ÖLÇÜLMEDİ.
+//
+// Sonuç: liste artık histogramla AYNI yüklemi kullanıyor. Operatörün
+// gördüğü "dolu histogramın altında boş tablo" çelişkisi kapandı; arama
+// da harf duyarsız oldu (sonuç kümesi genişler — kasıtlı).
 func logSearchConjunct(search string) (string, []any) {
 	if IsBareHexID(search) {
 		// v0.8.521 sözleşmesi. Liste yolunda YOKTU — yani "Search'e
 		// trace id yapıştır, bulsun" ekranın yalnız yarısında çalışıyordu:
 		// histogram sayıyordu, tablo göstermiyordu.
 		id := strings.ToLower(strings.TrimSpace(search))
-		return `(body LIKE ? ESCAPE '\\' OR trace_id = ? OR span_id = ?)`,
-			[]any{"%" + escapeLikeNeedle(search) + "%", id, id}
+		return "(multiSearchAnyCaseInsensitive(body, [?]) OR trace_id = ? OR span_id = ?)",
+			[]any{search, id, id}
 	}
-	return `body LIKE ? ESCAPE '\\'`, []any{"%" + escapeLikeNeedle(search) + "%"}
+	return "multiSearchAnyCaseInsensitive(body, [?])", []any{search}
 }

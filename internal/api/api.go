@@ -1435,6 +1435,25 @@ func warmClaim(ctx context.Context, c cache.Cache, ttl time.Duration) bool {
 // Errors are logged but don't stop the loop — a transient
 // CH blip shouldn't disable warming permanently.
 func (s *Server) warmDependenciesCache() {
+	// v0.10.28 — NIL KORUMASI. Bu işçi `registerRoutes`ten goroutine
+	// olarak başlıyor, yani rota kaydının bir YAN ETKİSİ. Alanları sıfır
+	// bir Server ile çağrıldığında (testler böyle yapıyor) ilk SETNX
+	// nil'e dokunup panikliyordu — ve Go'da bir goroutine'deki
+	// yakalanmamış panik TÜM SÜRECİ düşürür.
+	//
+	// Prod'da tetiklenmiyor: main.go cache'i `cache.NewNoop()` ile
+	// kuruyor ve Redis hatası dalında da Noop'ta KALIYOR, yani cacheImpl
+	// asla nil olmuyor. Zarar test tarafındaydı ve sinsiydi: panik
+	// `go test -race ./internal/api/` koşusunu düşürüyordu, yani bu
+	// pakette YARIŞ DEDEKTÖRÜ kullanılamıyordu — üstelik paket sohbetin
+	// eşzamanlı SSE kodunu barındırıyor (v0.10.27 heartbeat'i tam da
+	// orada yaşıyor).
+	//
+	// Guard, api.go:2216'daki mevcut `s.cache == nil` kontrolüyle aynı
+	// sözleşme; orada vardı, burada yoktu.
+	if s == nil || s.cache == nil || s.store == nil {
+		return
+	}
 	const (
 		// v0.8.476 (perf dalga-1 #5) — serbest 25s uyku, cacheBucket'ın
 		// 30s grid'ine göre faz kaydırıyordu: her yeni slotun ortalama

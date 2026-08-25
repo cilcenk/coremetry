@@ -136,7 +136,7 @@ func (s *Store) GetPostgresMetrics(
 	}
 
 	// Counters → rates.
-	rates, errRates := s.queryPgRates(ctx, from, to, instance, hasInstanceFilter, windowSec)
+	rates, errRates := s.queryPgRates(ctx, from, to, instance, hasInstanceFilter)
 	deg.step("rates", errRates)
 	if errRates == nil {
 		out.CommitsPS = rates["postgresql.commits"]
@@ -158,7 +158,7 @@ func (s *Store) GetPostgresMetrics(
 	}
 
 	// Per-database breakdown.
-	dbs, errDatabases := s.queryPgDatabases(ctx, from, to, instance, hasInstanceFilter, windowSec)
+	dbs, errDatabases := s.queryPgDatabases(ctx, from, to, instance, hasInstanceFilter)
 	deg.step("databases", errDatabases)
 	if errDatabases == nil {
 		out.Databases = dbs
@@ -204,16 +204,16 @@ func (s *Store) queryPgGauges(
 }
 
 func (s *Store) queryPgRates(
-	ctx context.Context, from, to time.Time, instance string, withInstance bool, windowSec float64,
+	ctx context.Context, from, to time.Time, instance string, withInstance bool,
 ) (map[string]float64, error) {
 	q := `
-		SELECT metric, (max(value) - min(value)) / ? AS rate
+		SELECT metric, (max(value) - min(value)) / ` + observedSpanSQL + ` AS rate
 		FROM metric_points
 		WHERE time >= ? AND time <= ?
 		  AND startsWith(metric, 'postgresql.')
 		` + pgInstanceClause(withInstance) + `
 		GROUP BY metric` + dbInstanceQuerySettings
-	args := []any{windowSec, from, to}
+	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)
 	}
@@ -221,7 +221,7 @@ func (s *Store) queryPgRates(
 }
 
 func (s *Store) queryPgDatabases(
-	ctx context.Context, from, to time.Time, instance string, withInstance bool, windowSec float64,
+	ctx context.Context, from, to time.Time, instance string, withInstance bool,
 ) ([]PGDatabase, error) {
 	// pg receiver attaches the database name as either
 	// `database` or `postgresql.database.name`. We coalesce
@@ -242,8 +242,8 @@ func (s *Store) queryPgDatabases(
 		)
 		SELECT db,
 		       argMaxIf(value, time, metric = 'postgresql.database.size') AS size_bytes,
-		       (maxIf(value, metric = 'postgresql.commits') - minIf(value, metric = 'postgresql.commits')) / ? AS commits_ps,
-		       (maxIf(value, metric = 'postgresql.rollbacks') - minIf(value, metric = 'postgresql.rollbacks')) / ? AS rb_ps,
+		       (maxIf(value, metric = 'postgresql.commits') - minIf(value, metric = 'postgresql.commits')) / ` + observedSpanSQL + ` AS commits_ps,
+		       (maxIf(value, metric = 'postgresql.rollbacks') - minIf(value, metric = 'postgresql.rollbacks')) / ` + observedSpanSQL + ` AS rb_ps,
 		       argMaxIf(value, time, metric = 'postgresql.backends') AS backends
 		FROM dbattr
 		WHERE db != ''
@@ -255,7 +255,6 @@ func (s *Store) queryPgDatabases(
 	if withInstance {
 		args = append(args, instance, instance)
 	}
-	args = append(args, windowSec, windowSec)
 	rows, err := s.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err

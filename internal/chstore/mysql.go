@@ -127,7 +127,7 @@ func (s *Store) GetMySQLMetrics(
 		}
 		out.Status = "up"
 	}
-	rates, errRates := s.queryMysqlRates(ctx, from, to, instance, hasInstanceFilter, windowSec)
+	rates, errRates := s.queryMysqlRates(ctx, from, to, instance, hasInstanceFilter)
 	deg.step("rates", errRates)
 	if errRates == nil {
 		out.QuestionsPS = rates["mysql.questions"]
@@ -198,16 +198,16 @@ func (s *Store) queryMysqlGauges(
 }
 
 func (s *Store) queryMysqlRates(
-	ctx context.Context, from, to time.Time, instance string, withInstance bool, windowSec float64,
+	ctx context.Context, from, to time.Time, instance string, withInstance bool,
 ) (map[string]float64, error) {
 	q := `
-		SELECT metric, (max(value) - min(value)) / ? AS rate
+		SELECT metric, (max(value) - min(value)) / ` + observedSpanSQL + ` AS rate
 		FROM metric_points
 		WHERE time >= ? AND time <= ?
 		  AND startsWith(metric, 'mysql.')
 		` + mysqlInstanceClause(withInstance) + `
 		GROUP BY metric` + dbInstanceQuerySettings
-	args := []any{windowSec, from, to}
+	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)
 	}

@@ -9,7 +9,7 @@ import { fmtNum, tsLong } from '@/lib/utils';
 import { tracesPivotHref } from '@/lib/pivotHref';
 import type { AnomalyEvent, BehaviorChangeDetails } from '@/lib/types';
 import { serviceHref } from '@/lib/serviceHref';
-import { logsHref, serviceLogQuery } from '@/lib/logsUrl';
+import { logsHref } from '@/lib/logsUrl';
 
 // AnomalyDetailDrawer — v0.8.267, operator-requested: "Anomalies
 // sayfasında üzerine tıklayınca ne zaman spike oldu ve benzeri
@@ -179,12 +179,15 @@ export function AnomalyDetailDrawer({ event, onClose }: {
   // spike'ın ilk/son milisaniyesindeki log pivottan düşer. Üretici
   // floor/ceil kullanır (urlState.ts:28 kuralı), pencere asla daralmaz.
   //
-  // `q=` bilinçli, `service=` değil: v0.8.521'de operatör bildirdi ki
-  // sunucu serbest-metin sorgusunu kolonla DA eşliyor, tam-kolon filtresi
-  // ise id/adı yalnız gövdede taşıyan kurulumlarda boş dönüyordu.
+  // v0.9.1381 — `service=`, `q=` DEĞİL. Eski şerh v0.8.521'i "sunucu
+  // serbest-metin sorgusunu kolonla DA eşliyor" diye genel bir kural gibi
+  // aktarıyordu; o kural yalnız TRACE ID'leri için doğru (CH'de
+  // `isBareHexID` dalı). Servis adı için karşılığı yok: `q` yalnız
+  // gövdede arar ve `service.name:"x"` hiçbir gövdede geçmez.
+  // Ölçüldü: 0 satır → 535.
   const logsLink = useMemo(() => logsHref({
     window: { fromNs: chartRange.from, toNs: chartRange.to },
-    q: event.service ? serviceLogQuery(event.service) : undefined,
+    service: event.service || undefined,
   }), [event.service, chartRange]);
 
   // v0.9.213 — the error-traces pivot used to carry only the service, so

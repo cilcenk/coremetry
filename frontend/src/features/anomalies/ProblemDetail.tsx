@@ -26,7 +26,7 @@ import { ShareButton } from '@/components/ShareButton';
 import { copyToClipboard } from '@/lib/clipboard';
 import { QueryErrorInline } from '@/components/QueryError';
 import { serviceHref, eventLifespanWindow } from '@/lib/serviceHref';
-import { logsHref, serviceLogQuery } from '@/lib/logsUrl';
+import { logsHref } from '@/lib/logsUrl';
 import { tracesPivotHref } from '@/lib/pivotHref';
 import { latencyThresholdMs, slowTracesHref } from '@/features/anomalies/slowTracesHref';
 import { problemWindowNs, topOffenders } from '@/features/anomalies/problemOffenders';
@@ -689,8 +689,19 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
   // dolayısıyla ms'e önceden çevrilmiş bir ara değere hiç ihtiyaç yok —
   // o değişkenlerin varlığı kusurun kendisiydi.
   //
-  // `q=` bilinçli, `service=` değil — v0.8.521 gerekçesi logsUrl.ts'te.
-  const logsLink = logsHref({ window: probWindow, q: serviceLogQuery(problem.service) });
+  // v0.9.1381 — `service=` (yapısal kolon filtresi), `q=` DEĞİL.
+  //
+  // Buradaki eski şerh "q= bilinçli, v0.8.521 gerekçesi logsUrl.ts'te"
+  // diyordu ve o gerekçe YANLIŞ GENELLEŞTİRİLMİŞTİ. v0.8.521 TRACE
+  // ID'leriyle ilgiliydi: sunucunun id-şekilli bir `q`yi kolonla DA
+  // eşlediği doğru (CH tarafında `isBareHexID` dalı, çıplak 32/16-hex
+  // iğneyi trace_id/span_id kolonuna yükseltir). SERVİS ADI için o dalın
+  // karşılığı YOK — `q` yalnız gövdede arar.
+  //
+  // Ölçüldü (lokal CH, 6h): `q=service.name:"x"` → 0 satır (HTTP 200,
+  // hata yok); `service=x` → 535. Yani bu link sessizce boş dönüyordu ve
+  // operatör "log yok" okuyordu. ClickHouse VARSAYILAN arka uç.
+  const logsLink = logsHref({ window: probWindow, service: problem.service });
 
   return (
     <PageShell>

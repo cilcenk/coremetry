@@ -1554,17 +1554,17 @@ func (s *Server) guidedRootCauseBundle(ctx context.Context, emit func(string, an
 	fmt.Fprintf(&b, "SORU ŞEKLİ: nedensellik — %q servisinde NE OLDU değil NEDEN OLDU sorusu.\n\n", service)
 
 	nProb := emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`","status":"open"}`, env))
-	probs, perr := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 10))
+	probs, probTotal, perr := s.guidedProblemsWithTotal(ctx, guidedProblemFilter(service, env, 10))
 	if perr == nil && len(probs) > 0 {
 		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 		// v0.9.1229 — okumanın kanıtı hipotez EKLENMEDEN önceki bloktur;
 		// sıradaki çip aynı listeyi hipotezle gösteriyor, yani
 		// zenginleştirmenin NE KATTIĞI operatörde görünür oluyor.
 		emitGuidedStepResult(emit, nProb, "list_problems",
-			renderProblemsEvidenceTR(probs, service, env, time.Now()), nil)
+			renderProblemsEvidenceTR(probs, service, env, time.Now(), probTotal), nil)
 		nRC := emitGuidedStep(emit, "root_cause_hypotheses", "")
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
-		blk := renderProblemsEvidenceTR(probs, service, env, time.Now())
+		blk := renderProblemsEvidenceTR(probs, service, env, time.Now(), probTotal)
 		emitGuidedStepResult(emit, nRC, "root_cause_hypotheses", blk, nil)
 		b.WriteString(blk)
 	} else {
@@ -1606,7 +1606,7 @@ func (s *Server) guidedRootCauseBundle(ctx context.Context, emit func(string, an
 
 func (s *Server) guidedProblemsBundle(ctx context.Context, emit func(string, any), service, env string) (string, string, error) {
 	nProb := emitGuidedStep(emit, "list_problems", withEnvArg(`{"status":"open"}`, env))
-	probs, err := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 50))
+	probs, probTotal, err := s.guidedProblemsWithTotal(ctx, guidedProblemFilter(service, env, 50))
 	if err != nil {
 		emitGuidedStepResult(emit, nProb, "list_problems", "", err)
 		return "", "", err
@@ -1614,10 +1614,10 @@ func (s *Server) guidedProblemsBundle(ctx context.Context, emit func(string, any
 	probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 	// v0.9.1229 — çipin kanıtı: hipotez eklenmeden ÖNCEKİ liste.
 	emitGuidedStepResult(emit, nProb, "list_problems",
-		renderProblemsEvidenceTR(probs, service, env, time.Now()), nil)
+		renderProblemsEvidenceTR(probs, service, env, time.Now(), probTotal), nil)
 	nRC := emitGuidedStep(emit, "root_cause_hypotheses", "")
 	probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
-	evidence := renderProblemsEvidenceTR(probs, service, env, time.Now())
+	evidence := renderProblemsEvidenceTR(probs, service, env, time.Now(), probTotal)
 	emitGuidedStepResult(emit, nRC, "root_cause_hypotheses", evidence, nil)
 	src := "açık problemler + triage önceliği + kök-neden hipotezleri (canlı)"
 	if env != "" {
@@ -1648,7 +1648,7 @@ func (s *Server) guidedServiceHealthBundle(ctx context.Context, emit func(string
 	}
 	emitGuidedStepResult(emit, nCtx, "service_context", guidedStepSegment(&b, atSnap), nil)
 	nProb := emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`"}`, env))
-	probs, perr := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 10))
+	probs, probTotal, perr := s.guidedProblemsWithTotal(ctx, guidedProblemFilter(service, env, 10))
 	if perr == nil {
 		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
@@ -1656,7 +1656,7 @@ func (s *Server) guidedServiceHealthBundle(ctx context.Context, emit func(string
 		if len(probs) == 0 {
 			b.WriteString("Açık problem yok.\n")
 		} else {
-			b.WriteString(renderProblemsEvidenceTR(probs, service, env, time.Now()))
+			b.WriteString(renderProblemsEvidenceTR(probs, service, env, time.Now(), probTotal))
 		}
 		emitGuidedStepResult(emit, nProb, "list_problems", guidedStepSegment(&b, atProb), nil)
 	} else {
@@ -1703,7 +1703,7 @@ func (s *Server) guidedOperationHealthBundle(ctx context.Context, emit func(stri
 	emitGuidedStepResult(emit, nCtx, "operation_context", guidedStepSegment(&b, atSnap), nil)
 
 	nProb := emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`"}`, env))
-	probs, perr := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 10))
+	probs, probTotal, perr := s.guidedProblemsWithTotal(ctx, guidedProblemFilter(service, env, 10))
 	if perr == nil {
 		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
@@ -1712,7 +1712,7 @@ func (s *Server) guidedOperationHealthBundle(ctx context.Context, emit func(stri
 			b.WriteString("Servis düzeyinde açık problem yok.\n")
 		} else {
 			b.WriteString("Servis düzeyinde açık problemler (operasyon-özel değil):\n")
-			b.WriteString(renderProblemsEvidenceTR(probs, service, env, time.Now()))
+			b.WriteString(renderProblemsEvidenceTR(probs, service, env, time.Now(), probTotal))
 		}
 		emitGuidedStepResult(emit, nProb, "list_problems", guidedStepSegment(&b, atProb), nil)
 	} else {
@@ -1839,14 +1839,14 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 		header+"Çözülen servisler:\n- "+strings.Join(svcs, "\n- ")+"\n", nil)
 	if mode == "problems" {
 		nProb := emitGuidedStep(emit, "list_problems", fmt.Sprintf(`{"status":"open","teamServices":%d}`, len(svcs)))
-		probs, perr := s.store.ListProblems(ctx, chstore.ProblemFilter{Status: "open", Services: svcs, Env: env, Limit: 50})
+		probs, probTotal, perr := s.guidedProblemsWithTotal(ctx, chstore.ProblemFilter{Status: "open", Services: svcs, Env: env, Limit: 50})
 		if perr != nil {
 			emitGuidedStepResult(emit, nProb, "list_problems", "", perr)
 			return "", "", perr
 		}
 		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 		emitGuidedStepResult(emit, nProb, "list_problems",
-			renderProblemsEvidenceTR(probs, "", env, time.Now()), nil)
+			renderProblemsEvidenceTR(probs, "", env, time.Now(), probTotal), nil)
 		nRC := emitGuidedStep(emit, "root_cause_hypotheses", "")
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
 		var b strings.Builder
@@ -1855,7 +1855,7 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 		if len(probs) == 0 {
 			fmt.Fprintf(&b, "Takımın servislerinde açık problem yok.\n")
 		} else {
-			b.WriteString(renderProblemsEvidenceTR(probs, "", env, time.Now()))
+			b.WriteString(renderProblemsEvidenceTR(probs, "", env, time.Now(), probTotal))
 		}
 		emitGuidedStepResult(emit, nRC, "root_cause_hypotheses", guidedStepSegment(&b, atProb), nil)
 		src := fmt.Sprintf("takım: %s (%d servis) — açık problemler + triage önceliği + kök-neden hipotezleri", u.Team, len(svcs)+trimmed)
@@ -2655,7 +2655,7 @@ func guidedScopeTR(service, env string) string {
 	return ", " + strings.Join(parts, ", ")
 }
 
-func renderProblemsEvidenceTR(probs []chstore.Problem, service, env string, now time.Time) string {
+func renderProblemsEvidenceTR(probs []chstore.Problem, service, env string, now time.Time, total problemsTotal) string {
 	scope := ""
 	if sc := guidedScopeTR(service, env); sc != "" {
 		scope = " (" + sc[2:] + ")" // strip the leading ", " — header form
@@ -2675,11 +2675,22 @@ func renderProblemsEvidenceTR(probs []chstore.Problem, service, env string, now 
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Açık problemler%s: toplam %d (kritik %d, warning %d, info %d)\n",
-		scope, len(probs), crit, warn, info)
+	// v0.10.21 — TOPLAM ARTIK len(probs) DEĞİL. `probs` bir SQL LIMIT'inin
+	// çıktısı; uzunluğunu "toplam" diye basmak, 47 problemli bir serviste
+	// modele "toplam 10" vermek demekti (guided_problem_total.go).
+	// Şiddet sayımları GÖSTERİLEN satırlar üzerinden. Liste kırpılmamışsa
+	// bu zaten tam sayımdır ve fazladan açıklama gürültü olur; kırpıldıysa
+	// "toplam 47 (kritik 1, warning 1, info 0)" kendi içinde çelişir, o
+	// yüzden ifşa ŞART.
+	fmt.Fprintf(&b, "Açık problemler%s: %s (kritik %d, warning %d, info %d%s)\n",
+		scope, problemsCountPhraseTR(total, len(probs)), crit, warn, info,
+		problemsBreakdownCaveatTR(total, len(probs)))
+	shown := len(probs)
+	if shown > guidedMaxLines {
+		shown = guidedMaxLines
+	}
 	for i, p := range probs {
 		if i >= guidedMaxLines {
-			fmt.Fprintf(&b, "(ilk %d satır gösteriliyor)\n", guidedMaxLines)
 			break
 		}
 		name := p.RuleName
@@ -2698,6 +2709,11 @@ func renderProblemsEvidenceTR(probs []chstore.Problem, service, env string, now 
 		}
 		b.WriteString("\n")
 	}
+	// v0.10.21 — KIRPMA İFŞASI. Eski dal `i >= guidedMaxLines` idi ve
+	// limit=10 rotalarında YAPISAL OLARAK ULAŞILAMAZDI (döngü 0..9, indeks
+	// hiç 10'a çıkmaz), yani model yanlış toplamı üstüne hiçbir uyarı
+	// almadan alıyordu. İfşa artık GÖSTERİLEN ile TOPLAM farkından çıkıyor.
+	b.WriteString(problemsTruncationNoteTR(total, shown, len(probs)))
 	return b.String()
 }
 

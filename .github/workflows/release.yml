@@ -142,10 +142,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # Chart sürümü `v`SİZ. `helm` job'ındaki "Sync Chart appVersion"
+      # adımı da bunu yapıyor ama O AYRI BİR JOB — env oraya taşınmaz,
+      # `env.VERSION` burada BOŞ olurdu. Aynı hesabı burada tekrarlamak
+      # kopyalamak gibi görünüyor; alternatifi (job output'u) `if: always()`
+      # + `needs:` YOKLUĞU ile çelişirdi: bu job helm job'ı çökse bile
+      # koşmak zorunda, dolayısıyla ondan veri bekleyemez.
+      - name: Chart version (strip leading v)
+        id: chartver
+        run: echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          # ⚠ v0.9.1383 — bu gövde İKİ kez yanlıştı ve her sürüm notunda
+          # operatöre kopyalanabilir bir komut olarak sunuluyordu:
+          #   1. Yol `…/coremetry-chart` diyordu; gerçek push hedefi
+          #      `oci://ghcr.io/<owner>/charts` (yukarıdaki "Push chart to
+          #      OCI" adımı), yani chart `…/charts/coremetry` altına iner.
+          #      Doğru yazım README.md ve templates/NOTES.txt'te ZATEN
+          #      vardı — yanlış olan tek yer burasıydı.
+          #   2. `--version ${{ github.ref_name }}` baştaki `v`yi taşıyordu;
+          #      helm onu kabul etmez ve paketlenen dosya zaten `v`siz
+          #      ("Sync Chart appVersion" adımı `${GITHUB_REF_NAME#v}`
+          #      kullanıyor). Yani sürümü doğru yazsan bile komut patlardı.
+          # Kopyalayan operatör 404 alıyordu; imaj satırı doğruydu, o yüzden
+          # hata "chart yayınlanmamış" gibi okunuyordu.
           body: |
             Docker image: `ghcr.io/${{ github.repository }}:${{ github.ref_name }}`
-            Helm chart:   `helm install coremetry oci://ghcr.io/${{ github.repository_owner }}/coremetry-chart --version ${{ github.ref_name }}`
+            Helm chart:   `helm install coremetry oci://ghcr.io/${{ github.repository_owner }}/charts/coremetry --version ${{ steps.chartver.outputs.v }}`

@@ -6,7 +6,7 @@ Coremetry has been installed.
   Redis / OTel Collector pods. Selector is immutable — you must
   uninstall + reinstall instead of `helm upgrade`:
       helm uninstall {{ .Release.Name }} -n {{ .Release.Namespace }}
-      helm install   {{ .Release.Name }} oci://ghcr.io/cilcenk/charts/coremetry --version 0.1.3 -n {{ .Release.Namespace }} ...
+      helm install   {{ .Release.Name }} oci://ghcr.io/cilcenk/charts/coremetry --version {{ .Chart.Version }} -n {{ .Release.Namespace }} ...
   ClickHouse PVC is preserved by default (StatefulSet pattern), so data
   in CH stays. Verify with: kubectl get pvc -n {{ .Release.Namespace }}
 

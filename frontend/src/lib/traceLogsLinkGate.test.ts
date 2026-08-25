@@ -15,12 +15,23 @@ import { join, resolve } from 'node:path';
 // v0.9.1320 found FOUR spellings of the same back link ('←', 'Back to',
 // <ArrowLeft/>, '›') because the gate that was supposed to cover them looked
 // for one. The same trap is live here: `/trace?id=` is only ONE way to write
-// this route. So the detector below matches a LIST of spellings, and
-// `SPELLINGS` is covered by its own test against synthetic samples — if a new
-// way to spell the route is added to the codebase, the honest fix is a new
-// entry here, and the meta-test makes that entry's absence visible rather
-// than silently green.
+// this route.
+// So the detector below matches a LIST of spellings, and `SPELLINGS`
+// is covered by its own test against synthetic samples.
 //
+// ⚠ v0.10.9 — BU BLOK FAZLA İDDİA EDİYORDU. Eskiden "meta-test yeni bir
+// yazımın eksikliğini görünür kılar" diyordu; bu YANLIŞ. Liste-tabanlı bir
+// dedektör BİLMEDİĞİ bir yazımı göremez — meta-test yalnız BİLİNEN
+// yazımların yakalandığını kanıtlar. Kapının erişim sınırı artık ÖLÇÜLDÜ ve
+// aşağıdaki "erişim sınırı" testinde açıkça yazılı: bir kapının ne
+// YAKALAYAMADIĞINI bilmek, yakaladığını sanmaktan iyidir.
+//
+// Yazımdan BAĞIMSIZ bir tarama denendi ve ATILDI. Rota dizgesi meşru olarak
+// rota kaydında (App.tsx), gezinme kayıtlarında (Sidebar, kısayollar,
+// prefetch), `pathname` karşılaştırmalarında ve arayüz metinlerinde geçiyor —
+// ölçüldü, 23 dosya bayraklanıyordu. Blunt bir kapı, dar bir kapıdan kötüdür.
+// Not: sorgu-dizgesi hâli (`/trace?`, `/logs?`) ZATEN yazımdan bağımsız,
+// çünkü o desen tırnak biçimine hiç bakmıyor.
 // ── LESSON 2: ABSENCE, NOT PRESENCE ─────────────────────────────────────
 //
 // v0.9.1334 shipped a gate that asserted a producer was CALLED, which
@@ -50,10 +61,14 @@ const SPELLINGS: { route: 'trace' | 'logs'; re: RegExp; what: string }[] = [
   { route: 'trace', re: /pathname:\s*['"`]\/trace['"`]/, what: 'router object form ({ pathname: "/trace" })' },
   { route: 'trace', re: /['"`]\/trace['"`]\s*\+/, what: 'string concatenation ("/trace" + …)' },
   { route: 'trace', re: /`\/trace\$\{/, what: 'template interpolation (`/trace${…}`)' },
+  { route: 'trace', re: /['"`]\/trace['"`]\s*\.concat\b/, what: 'concat çağrısı ("/trace".concat(…))' },
   { route: 'logs', re: /\/logs\?/, what: 'query-string form (/logs?…)' },
   { route: 'logs', re: /pathname:\s*['"`]\/logs['"`]/, what: 'router object form ({ pathname: "/logs" })' },
   { route: 'logs', re: /['"`]\/logs['"`]\s*\+/, what: 'string concatenation ("/logs" + …)' },
   { route: 'logs', re: /`\/logs\$\{/, what: 'template interpolation (`/logs${…}`)' },
+  // v0.10.9 — ölçülerek eklendi: `.concat` yazımı bugün KAÇIYORDU
+  // (aşağıdaki "erişim sınırı" testine bak).
+  { route: 'logs', re: /['"`]\/logs['"`]\s*\.concat\b/, what: 'concat çağrısı ("/logs".concat(…))' },
 ];
 
 const ALLOWED: { file: string; why: string }[] = [
@@ -245,6 +260,33 @@ describe('kapının yazım kapsaması', () => {
     ]) {
       expect(matches(line), `yanlış pozitif: ${line}`).toEqual([]);
     }
+  });
+
+  // ── ERİŞİM SINIRI (v0.10.9) ────────────────────────────────────────
+  //
+  // Bu testin işi kapının BAŞARISINI değil, SINIRINI kaydetmek. Başlıktaki
+  // eski iddia ("meta-test yeni bir yazımın eksikliğini görünür kılar")
+  // yanlıştı ve tam da bu boşluğu gizliyordu.
+  //
+  // Aşağıdaki iki biçim ÖLÇÜLDÜ ve KAÇIYOR. Bilerek kovalanmadılar: ikisi de
+  // dataflow analizi ister ve bu bir vitest taraması. Ama yazılı olmaları
+  // şart — bir gün gerçek bir kaçak çıkarsa, ilk bakılacak yer burası.
+  it('KAÇAN biçimler: dolaylılık kapının erişimi dışında', () => {
+    const escapes: [string, string][] = [
+      ["const P = '/trace'; nav(P + '?id=' + id);", 'değişken dolaylılığı'],
+      ["nav(['', 'trace'].join('/') + '?id=' + id);", 'parça birleştirme'],
+    ];
+    for (const [line, label] of escapes) {
+      expect(matches(line), `${label} artık yakalanıyor — bu iyi haber, ` +
+        `ama testi ve başlıktaki sınır notunu güncelle`).toEqual([]);
+    }
+  });
+
+  it('ÖLÇÜLEREK eklenen biçim: .concat artık yakalanıyor', () => {
+    // v0.10.9 öncesi KAÇIYORDU. Ucuz olduğu için eklendi; yukarıdaki ikisi
+    // ucuz olmadığı için eklenmedi. Ayrım kayda geçsin diye ikisi de test.
+    expect(matches(`'/trace'.concat('?id=', id)`)).toContain('concat çağrısı ("/trace".concat(…))');
+    expect(matches(`"/logs".concat('?q=', q)`)).toContain('concat çağrısı ("/logs".concat(…))');
   });
 
   it('yorum satırları site sayılmaz — açıklamayı silmek "düzeltme" olamaz', () => {

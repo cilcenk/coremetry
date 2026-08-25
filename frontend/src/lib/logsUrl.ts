@@ -154,20 +154,42 @@ export function parseDocParam(raw: string | null | undefined): { ts: number; id:
 // in one greppable token. You cannot forget the window; you can only refuse
 // it on the record.
 //
-// ── TWO WAYS TO SCOPE TO A SERVICE, AND BOTH ARE CORRECT ─────────────────
+// ── SERVICE SCOPE GOES IN `service`, NOT `q` (v0.9.1381) ─────────────────
 //
 // `service` is the page's service FILTER (an exact column match).
-// `q` is the free-text search box, where `service.name:"x"` is a query_string
-// clause the backend resolves against the column.
+// `q` is the free-text search box.
 //
-// They are not interchangeable, and the difference is load-bearing:
-// v0.8.521 (operator-reported) moved SpanDetail's trace pivot OFF the exact
-// `traceId` filter and ONTO `q`, because installations whose trace id appears
-// only in the log BODY got an empty "filtered to trace" list from the column
-// match — the server matches an id-shaped `q` against the column AS WELL, so
-// `q` finds both worlds. A later tidy-up that "normalises" those call sites
-// onto the exact filter would re-open that bug. Hence both keys are offered
-// and neither is presented as the canonical one.
+// This block used to say both were correct for scoping to a service, and it
+// justified that with v0.8.521. The justification was real but WRONGLY
+// GENERALISED, and three call sites copied the generalisation.
+//
+// What v0.8.521 actually established: an ID-SHAPED `q` is matched against the
+// column AS WELL as the body, so a trace pivot through `q` finds both the
+// installations that log the id as a field and the ones that only have it in
+// the body. That is still true and still load-bearing — the ClickHouse side
+// implements it in the `isBareHexID` branch (internal/logstore/clickhouse.go),
+// which promotes a bare 32/16-hex needle onto trace_id/span_id.
+//
+// What it did NOT establish: that `q` gets the same treatment for a SERVICE
+// NAME. There is no such branch. On ClickHouse — the DEFAULT log backend
+// (internal/config/config.go, main.go: `case "", "clickhouse"`) — the list
+// path is `body LIKE '%<q>%'` (internal/chstore/repo.go) and the histogram
+// path is `multiSearchAnyCaseInsensitive(body, [<q>])`. Both search the BODY.
+//
+// Measured on a live local CH (24h window, 41.315 rows), one service:
+//     service_name = 'x'                 →  858 rows
+//     body LIKE '%x%'                    →  366 rows
+//     body LIKE '%service.name:"x"%'     →    0 rows
+// and `countIf(body LIKE '%service.name%') = 0` across the whole table: the
+// string cannot match, so the pivot returned HTTP 200 with an empty list and
+// the operator read it as "no logs".
+//
+// Note the middle row too: even the spelling that DOES match is not the same
+// question. 492 of those rows never mention their own service name in the
+// body, so free-text service scoping silently under-reports by ~57%.
+//
+// So: scope to a service with `service`. Keep `q` for what the operator
+// actually typed, and for the id-shaped pivots v0.8.521 was about.
 export interface LogsPivot {
   /**
    * REQUIRED. The window /logs will query. Absolute ns bounds for an event

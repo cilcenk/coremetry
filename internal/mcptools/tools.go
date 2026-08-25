@@ -509,7 +509,7 @@ func listServicesTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:             "list_services",
 		ShortDescription: "Servisleri canlı RED'iyle listele (rps, hata oranı, p99). Olay araştırmasının giriş noktası: 'şu an hangi servis sağlıksız'. env ile tek ortama daralt.",
-		Description:      "List Coremetry services with their current RPS, error rate, and p99 latency. Reads the 5-minute pre-aggregate so it's cheap to call repeatedly. Use this as the entry point when investigating an incident: 'which services are unhealthy right now?'. Pass env to scope the numbers to one deployment environment.",
+		Description:      "List Coremetry services with their current RPS, error rate, and p99 latency. COST: reads the 5-minute pre-aggregate when range_s >= 300 and no env filter is set — cheap, call it freely. With an env filter or a shorter window it falls back to a bounded raw-span scan, which is far more expensive: widen range_s and drop env when you just need the unhealthy-service shortlist. Use this as the entry point when investigating an incident: 'which services are unhealthy right now?'. Pass env to scope the numbers to one deployment environment.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -547,11 +547,13 @@ func listServicesTool(d Deps) mcp.Tool {
 			// v0.8.398 — same read, env-capable variant (GetServicesFiltered
 			// delegates here with env=""; an env-less call stays byte-
 			// identical). Non-empty env adds the typed deploy_env conjunct.
-			rows, err := d.Store.GetServicesFilteredIn(ctx, 0, from, to, a.NameContains, nil, "rps", "desc", limit, 0, "", a.Env)
+			// v0.10.25 — MV yolu. Açıklama "ön-toplam okur" diyordu ama
+			// handler KOŞULSUZ ham spans tarıyordu (services_read.go).
+			rows, src, err := readServices(ctx, d, from, to, a.NameContains, a.Env, limit)
 			if err != nil {
 				return nil, err
 			}
-			res := map[string]any{"services": rows, "count": len(rows)}
+			res := map[string]any{"services": rows, "count": len(rows), "source": src}
 			if a.Env != "" {
 				res["env"] = a.Env // echo the applied narrowing
 			}
@@ -706,7 +708,10 @@ func getServiceHealthTool(d Deps) mcp.Tool {
 			from, to := rangeWindow(a.RangeS)
 			// v0.8.398 — env-capable variant of the same read; env=""
 			// stays byte-identical to the old GetServicesFiltered call.
-			rows, err := d.Store.GetServicesFilteredIn(ctx, 0, from, to, a.Service, nil, "rps", "desc", 1, 0, "", a.Env)
+			// v0.10.25 — aynı MV kapısı; tek servis de olsa okuma yolu
+			// list_services ile AYNI olmalı, yoksa aynı soru iki farklı
+			// maliyetle cevaplanır.
+			rows, _, err := readServices(ctx, d, from, to, a.Service, a.Env, 1)
 			if err != nil {
 				return nil, err
 			}

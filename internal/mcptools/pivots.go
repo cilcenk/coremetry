@@ -312,7 +312,7 @@ func getMetricsForSpanTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:             "get_metrics_for_span",
 		ShortDescription: "Span→metrik pivotu: span'ın anını kuşatan servis RED serileri — 'servis genelinde mi bozuktu, yoksa bu span aykırı mı'. at_unix_ns'i span'ın startTime alanından KOPYALA.",
-		Description:      "The span→metric pivot: the service's RED series (rate, error_rate, p99 latency) bracketing one span's timestamp — 'was the whole service degraded when this span ran, or is this span an outlier?'. COPY at_unix_ns from a get_trace span's startTime field (already unix nanoseconds) — do not construct the timestamp yourself. Reads the 5-minute pre-aggregate, cheap to call. Returns up to three series of {time, value} points covering ±window_s around the anchor. Use after get_trace when deciding whether a slow/error span reflects a service-wide problem.",
+		Description:      "The span→metric pivot: the service's RED series (rate, error_rate, p99 latency) bracketing one span's timestamp — 'was the whole service degraded when this span ran, or is this span an outlier?'. COPY at_unix_ns from a get_trace span's startTime field (already unix nanoseconds) — do not construct the timestamp yourself. COST: reads the 5-minute pre-aggregate only when the resolved step is >= 300s; a tight window around one span usually resolves BELOW that and scans raw spans, so keep window_s modest and do not call this in a loop. Returns up to three series of {time, value} points covering ±window_s around the anchor. Use after get_trace when deciding whether a slow/error span reflects a service-wide problem.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

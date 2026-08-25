@@ -20,6 +20,7 @@ const AdminClickhouse  = lazy(() => import('./AdminClickhouse'));
 const AdminElastic     = lazy(() => import('./AdminElastic'));
 const AdminCluster     = lazy(() => import('./AdminCluster'));
 const AdminCardinality = lazy(() => import('./AdminCardinality'));
+const AdminK8sCoverage = lazy(() => import('./AdminK8sCoverage'));
 const AdminCatalog     = lazy(() => import('./AdminCatalog'));
 const AdminAudit       = lazy(() => import('./AdminAudit'));
 const AdminSql         = lazy(() => import('./AdminSql'));
@@ -47,6 +48,9 @@ const TABS: SysTab[] = [
   { slug: 'elastic',     label: 'Elasticsearch', Comp: AdminElastic,     adminOnly: true },
   { slug: 'cluster',     label: 'Cluster',       Comp: AdminCluster,     adminOnly: true },
   { slug: 'cardinality', label: 'Cardinality',   Comp: AdminCardinality, adminOnly: true },
+  // v0.10.36 — K8s entity katmanı Faz 0. Cardinality'nin yanında, çünkü
+  // ikisi de TEŞHİS yüzeyi: biri "ne kadar seri", diğeri "hangi bağlam".
+  { slug: 'k8s',         label: 'K8s Coverage',  Comp: AdminK8sCoverage, adminOnly: true },
   { slug: 'catalog',     label: 'Catalog',       Comp: AdminCatalog,     adminOnly: true },
   { slug: 'audit',       label: 'Audit Log',     Comp: AdminAudit,       adminOnly: true },
   { slug: 'sql',         label: 'SQL Console',   Comp: AdminSql,         adminOnly: true },

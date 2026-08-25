@@ -183,6 +183,10 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// aynı ve o tarama da bu havuzda; ikisini ayrı havuzlara koymak,
 		// aynı çekmecenin iki yarısını farklı replikadan okumak olurdu.
 		"db_addresses.go": true,
+		// v0.10.36 — SAF telemetri: tek FROM'u ham `spans` (state tablosu
+		// DEĞİL) ve okuma ÖRNEKLEMELİ (iç LIMIT). Kapsama kartı bir teşhis
+		// yüzeyi; kardeş span okumalarıyla aynı havuzda kalması doğru.
+		"k8s_coverage.go": true,
 		// TAŞINMAZ ÜÇÜNCÜ SINIF: sysstats.go + cluster.go system.* okuyor.
 		// Bunlar NODE-LOKAL tablolar; RoundRobin'e verilirse disk/utilizasyon
 		// panelleri her çağrıda BAŞKA node'u raporlar (SQL konsolunun in-order

@@ -5768,3 +5768,29 @@ export interface StateRepartRun {
   startedAt: number; doneAt: number; total: number; done: number;
   current: string; results: StateRepartTableResult[]; error?: string;
 }
+
+// K8sCoverageRow / K8sCoverage (v0.10.36) — K8s bağlam kapsama kartı,
+// entity katmanı Faz 0. Bir servisin hangi k8s resource alanını YAYDIĞI.
+//
+// ⚠ Sayılar bir ÖRNEKLEM üzerinden (sunucu iç LIMIT uyguluyor). `sampled`
+// zarfta çünkü "0 gördüm" ile "örneklem yetmedi" ayrımı operatörün
+// elinde olmalı — kart sonraki fazın kabul testi olacak ve "ölçmedim"i
+// "yok" diye okumak o testi çürütür.
+export interface K8sCoverageRow {
+  service: string;
+  sampled: number;
+  namespace: number;
+  deployment: number;
+  pod: number;
+  podUid: number;
+  node: number;
+  container: number;
+  cluster: number;
+}
+
+export interface K8sCoverage {
+  rows: K8sCoverageRow[];
+  /** İç taramanın tavanı — kapsama yargısının sınırı. */
+  sampleRows: number;
+  windowSec: number;
+}

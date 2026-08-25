@@ -400,6 +400,13 @@ export interface ServiceClusterStat {
 
 // DBDetail / MessagingDetail — full payloads for the drawer
 // behind a /databases or /messaging row click.
+/** v0.10.19 — bkz. DBDetail.physicalAddrs. */
+export interface PhysicalAddrs {
+  probed: boolean;
+  addrs?: string[];
+  capped?: boolean;
+}
+
 export interface DBDetail {
   system: string;
   instance: string;
@@ -414,6 +421,17 @@ export interface DBDetail {
   p99DurationMs: number;
   callers: DBCallerBreakdown[];
   topOps: DBOpStat[];
+  /**
+   * v0.10.19 (F0.8) — bu kimlik KAÇ FİZİKSEL ADRESİ kapsıyor.
+   *
+   * `instance` aslında peer_service; MV aynı peer.service'i paylaşan
+   * farklı server.address değerlerini TEK satıra çöküyor. Çökme kasıtlı
+   * (topolojide çekirdek DB tek düğüm), ama sayfa bunu söylemiyordu.
+   *
+   * probed=false → ölçüm YAPILMADI; hiçbir şey ilan etme. Boş sonucu
+   * "tek adres" diye okumak tekilliği yanlış yere iddia etmek olur.
+   */
+  physicalAddrs?: PhysicalAddrs;
 }
 
 // DBWaitLock (v0.8.391) v0.9.852'de SİLİNDİ — /api/databases/waitlock

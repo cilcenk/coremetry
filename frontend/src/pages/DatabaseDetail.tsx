@@ -147,7 +147,10 @@ export default function DatabaseDetailPage() {
           <Link to={navHref('/databases', search)}>Databases</Link> › database detail
         </div>
 
-        <DatabaseIdentityHeader refObj={refObj} env={env} range={range} />
+        {/* v0.10.19 (F0.8) — adres kapsamı detay yükünden geliyor; `d`
+            henüz yokken beyan da yok (ölçüm olmadan iddia olmaz). */}
+        <DatabaseIdentityHeader refObj={refObj} env={env} range={range}
+          physicalAddrs={d?.physicalAddrs} />
 
         {d === undefined && <Spinner />}
         {d === null && (

@@ -229,6 +229,11 @@ type DBDetail struct {
 	P99Ms   float64             `json:"p99DurationMs"`
 	Callers []DBCallerBreakdown `json:"callers"`
 	TopOps  []DBOpStat          `json:"topOps"`
+	// v0.10.19 (F0.8) — bu kimlik KAÇ FİZİKSEL ADRESİ kapsıyor.
+	// `instance` aslında peer_service; MV aynı peer.service'i paylaşan
+	// farklı adresleri TEK satıra çöküyor ve sayfa bunu söylemiyordu
+	// (db_addresses.go). Probed=false iken arayüz hiçbir şey ilan etmez.
+	PhysicalAddrs DBPhysicalAddrs `json:"physicalAddrs"`
 }
 
 // GetDatabaseDetail returns per-(service, pod) breakdown + top
@@ -410,18 +415,26 @@ func (s *Store) GetDatabaseDetail(
 	// v0.9.821 — ham taramaya da db_name yüklemi: aksi hâlde çekmecenin
 	// üst yarısı tek bir veritabanını, "Top statements" tablosu ise
 	// host'un TÜMÜNÜ anlatırdı — aynı çekmecede iki farklı kapsam.
+	// v0.10.19 — YÜKLEM TEK DEĞİŞKENDE. İfade taraması ile adres probu
+	// aynı kapsamı anlatmak ZORUNDA; iki ayrı dizge, aynı çekmecede iki
+	// farklı kapsam demek olurdu (v0.9.821'in bu dosyada düzelttiği kusur
+	// tam olarak buydu). Tek kaynak, ayrışamaz.
+	whereSQL := `time >= ? AND time <= ? AND db_system = ? AND ` + instancePredicate + rawNameSQL
+	stmtArgs := append([]any{from, to, system}, argIfNeeded(instancePredicate, instanceArg)...)
+	stmtArgs = append(stmtArgs, rawNameArgs...)
+	if len(callerSvcs) > 0 {
+		whereSQL += ` AND service_name IN (?)`
+		stmtArgs = append(stmtArgs, callerSvcs)
+	}
+	// v0.10.19 (F0.8) — ADRES PROBU. Aynı budanmış yüklem;
+	// `db_statement != ''` EKLENMEDEN önce koşuyor çünkü server.address
+	// ifadesi olmayan db span'lerinde de var.
+	out.PhysicalAddrs = s.probeDBAddresses(ctx, whereSQL, append([]any(nil), stmtArgs...))
 	stmtSQL := `
 		SELECT substring(db_statement, 1, 80) AS stmt,
 		       count(), avg(duration) / 1e6
 		FROM spans
-		WHERE time >= ? AND time <= ? AND db_system = ? AND ` + instancePredicate + rawNameSQL
-	stmtArgs := append([]any{from, to, system}, argIfNeeded(instancePredicate, instanceArg)...)
-	stmtArgs = append(stmtArgs, rawNameArgs...)
-	if len(callerSvcs) > 0 {
-		stmtSQL += ` AND service_name IN (?)`
-		stmtArgs = append(stmtArgs, callerSvcs)
-	}
-	stmtSQL += `
+		WHERE ` + whereSQL + `
 		  AND db_statement != ''
 		GROUP BY stmt
 		ORDER BY count() DESC

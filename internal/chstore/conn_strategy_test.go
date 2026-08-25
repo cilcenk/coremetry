@@ -178,6 +178,11 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// Sonucu bir katalog okumasıyla (ListServiceMetadata) BİRLEŞTİRİYOR
 		// ama o okuma bu dosyada DEĞİL — state tarafı ana bağlantıda kalır.
 		"db_ownership.go": true,
+		// v0.10.19 — SAF telemetri: tek FROM'u ham `spans` (state tablosu
+		// DEĞİL). Yüklemi dependencies.go'daki ifade taramasıyla BİREBİR
+		// aynı ve o tarama da bu havuzda; ikisini ayrı havuzlara koymak,
+		// aynı çekmecenin iki yarısını farklı replikadan okumak olurdu.
+		"db_addresses.go": true,
 		// TAŞINMAZ ÜÇÜNCÜ SINIF: sysstats.go + cluster.go system.* okuyor.
 		// Bunlar NODE-LOKAL tablolar; RoundRobin'e verilirse disk/utilizasyon
 		// panelleri her çağrıda BAŞKA node'u raporlar (SQL konsolunun in-order

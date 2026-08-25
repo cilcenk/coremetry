@@ -20,6 +20,8 @@ import type {
   DBCallerBreakdown, DBDetail, DBTrend, SlowQueryRow, SpanMetricSeries, TimeRange,
 } from '@/lib/types';
 import type { DatabaseRef } from './databaseParam';
+import { addressScopeNotice } from './addressScope';
+import type { PhysicalAddrs } from '@/lib/types';
 
 // detailSections — the /database page's body (v0.9.1366).
 //
@@ -75,11 +77,17 @@ const CorePanelMultiLazy = lazy(() =>
  * satırı. Kapsam satırı v0.9.821'in dürüstlüğü: boş bir `db.name` GERÇEK
  * bir hâl ("bu instance üzerindeki her veritabanı"), eksik bir değer değil.
  */
-export function DatabaseIdentityHeader({ refObj, env, range }: {
+export function DatabaseIdentityHeader({ refObj, env, range, physicalAddrs }: {
   refObj: DatabaseRef;
   env: string;
   range: TimeRange;
+  /** v0.10.19 (F0.8) — ölçülmüş fiziksel adres kümesi; yoksa beyan yok. */
+  physicalAddrs?: PhysicalAddrs;
 }) {
+  // v0.10.19 — `instance` bir MAKİNE DEĞİL, peer.service etiketi. Aynı
+  // etiketi paylaşan adresler MV'de tek satıra çöküyor ve Scope satırı
+  // bunu söylemiyordu (addressScope.ts).
+  const addrNotice = addressScopeNotice(physicalAddrs, refObj.instance);
   return (
     <>
       <div style={{
@@ -139,6 +147,17 @@ export function DatabaseIdentityHeader({ refObj, env, range }: {
         {refObj.dbName
           ? <> · database <span className="mono" style={{ color: 'var(--text2)' }}>{refObj.dbName}</span></>
           : <> · <b>every database</b> on this instance (all db.name values)</>}
+        {/* v0.10.19 (F0.8) — ADRES KAPSAMI. Yalnız ÖLÇÜLDÜYSE çıkar;
+            ölçülmemiş bir sonucu "tek adres" diye okumak tekilliği
+            yanlış yere iddia etmek olurdu. */}
+        {addrNotice && (
+          <> · <span
+            className={addrNotice.multiple ? 'badge b-warn' : 'badge b-gray'}
+            style={{ fontSize: 10 }}
+            title={addrNotice.detail}>
+            {addrNotice.label}
+          </span></>
+        )}
       </div>
     </>
   );

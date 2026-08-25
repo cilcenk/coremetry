@@ -2154,6 +2154,11 @@ func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
 		// the lock fell back to always-leader Noop). main.go owns the lock state;
 		// since v0.8.341 the re-probe clears it live, hence the atomic load.
 		st.Health.LockDegraded = s.lockDegraded.Load()
+		// v0.10.4 — imzalama anahtarı zayıfsa operatörün BAKTIĞI yerde söyle.
+		// Yalnız boot logu yeterli değildi: prod'da anahtar bir yer tutucu
+		// değerindeydi ve hiçbir yüzey bunu göstermiyordu. Sebep taşınıyor,
+		// ANAHTAR ASLA.
+		st.Health.JWTSecretWeakReason = s.auth.WeakSecretReason()
 		// v0.8.230 — ES query-failure visibility. The ES logstore counts its
 		// failed queries; non-zero here points the operator at
 		// /admin/elastic → Recent query errors for the exact requests.

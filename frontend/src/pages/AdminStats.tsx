@@ -193,6 +193,29 @@ export default function AdminStatsPage() {
               </div>
             )}
 
+            {/* ── İmzalama anahtarı zayıf (v0.10.4) ─────────────────
+                Prod'da bulundu: anahtar `CHANGE_ME_…` değerindeydi ve
+                hiçbir yüzey bunu söylemiyordu — NewService yalnız BOŞ
+                anahtarı denetliyordu. Şerit en üstte, çünkü diğer iki
+                uyarı "veri eksik/çift" derken bu "kimlik doğrulaması
+                forge edilebilir" diyor. */}
+            {data.health?.jwtSecretWeakReason && (
+              <div style={{
+                border: '1px solid var(--err)', background: 'rgba(220,80,80,0.08)',
+                borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: 'var(--text)',
+              }}>
+                <strong>⚠ JWT imzalama anahtarı zayıf — {data.health.jwtSecretWeakReason}.</strong>{' '}
+                Sunucu token'ları saklamaz, yalnız <strong>imzayı</strong> doğrular. Bu anahtarı bilen
+                biri herhangi bir kullanıcı ve <strong>herhangi bir rol</strong> için geçerli token
+                üretebilir — parola gerekmez, giriş görülmez. Üstelik <code>/api/users</code> uçları
+                admin rolüne açık olduğu için forge edilmiş bir token <strong>kalıcı bir hesaba</strong>
+                {' '}dönüşebilir ve anahtar sonradan döndürülse bile kalır.{' '}
+                Düzeltme: <code>openssl rand -hex 32</code> ile yeni bir anahtar üretip
+                {' '}<code>COREMETRY_JWT_SECRET</code>'e koyun. ⚠ Rotasyon <strong>açık oturumları
+                geçersiz kılar</strong> — bir rollout penceresine denk getirin.
+              </div>
+            )}
+
             {/* ── Volume KPIs ──────────────────────────────────────── */}
             <div style={{
               display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',

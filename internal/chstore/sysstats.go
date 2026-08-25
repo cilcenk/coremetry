@@ -211,6 +211,21 @@ type SystemHealth struct {
 	// (alerts, notifications, topology aggregation, retention) run DUPLICATED.
 	// Populated by the API getSystemStats handler (main.go knows the lock state).
 	LockDegraded bool `json:"lockDegraded"`
+	// JWTSecretWeakReason — non-empty when the JWT signing key is a
+	// placeholder or too short. The REASON, never the key (v0.10.4).
+	//
+	// Why this is a health signal and not a config detail: the server does
+	// not store tokens, it only verifies the SIGNATURE. Anyone who knows the
+	// key can mint a token for any user and any role — no password, no
+	// login. And /api/users (createUser · setUserRole · resetUserPassword)
+	// is admin-gated, so a forged token converts into a DURABLE account that
+	// outlives a later rotation.
+	//
+	// Found in production: the key was literally `CHANGE_ME_…`, and nothing
+	// said so — NewService only guarded the EMPTY case. Populated by the API
+	// getSystemStats handler (chstore does not know the auth config), same
+	// pattern as LockDegraded.
+	JWTSecretWeakReason string `json:"jwtSecretWeakReason,omitempty"`
 	// ESQueryErrors — cumulative failed Elasticsearch queries since process
 	// start (transport + non-2xx), when the logs backend is external ES.
 	// Non-zero = check /admin/elastic → Recent query errors for the exact

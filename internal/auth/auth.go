@@ -120,6 +120,20 @@ func NewService(secret string, ttl time.Duration) *Service {
 		_, _ = rand.Read(b)
 		secret = hex.EncodeToString(b)
 		log.Printf("[auth] no jwt_secret configured — generated ephemeral key (sessions will not survive restarts; set COREMETRY_JWT_SECRET in production)")
+	} else if reason := WeakSecretReason(secret); reason != "" {
+		// v0.10.4 — DOLU ama zayıf anahtar buraya kadar SESSİZCE geliyordu.
+		// Yukarıdaki dal yalnız BOŞU yakalıyor; prod'da imzalama anahtarı
+		// bir yer tutucu değerindeydi ve sistem tamamen sağlıklı görünüyordu.
+		//
+		// Boot DURDURULMUYOR: reddetmek, operatör anahtarı döndürmeden bir
+		// rollout başlattığında prod'u düşürürdü — ve bu kod tam da rollout
+		// sırasında ilk kez koşacak. Uyarı ayrıca /admin/stats'ta görünür
+		// (SystemHealth.JWTSecretWeak), çünkü yalnız log "kimsenin bakmadığı
+		// uyarı" olurdu.
+		log.Printf("[auth] ⚠ GÜVENLİK: jwt_secret %s — bu anahtarı bilen biri "+
+			"HERHANGİ bir kullanıcı ve rol için geçerli token üretebilir (parola "+
+			"gerekmez). `openssl rand -hex 32` ile döndürün; rotasyon açık "+
+			"oturumları geçersiz kılar.", reason)
 	}
 	if ttl == 0 {
 		ttl = 24 * time.Hour

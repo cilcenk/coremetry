@@ -824,17 +824,25 @@ export default function EndpointsPage() {
                                 ? 'color-mix(in srgb, var(--err) 7%, var(--bg0))'
                                 : undefined,
                             }}>
-                          {/* /traces filter on (service, search=path).
-                              The search field matches span.name OR
-                              attrs; combined with rootOnly=false and
-                              the service filter, this returns every
-                              trace that includes a call on this
-                              endpoint. */}
+                          {/* /traces, bu endpoint'e kapsamlı.
+                              ⚠ Bu şerh v0.9.1372'ye kadar "search=path …
+                              rootOnly=false" diyordu ve o sürümde YANLIŞ
+                              hâle geldi: `search` serbest metindi ve
+                              `/api/pay` araması `/api/payment-retry`yi de
+                              getiriyordu. Link artık yapısal
+                              `http.route = <path>` filtresi + `rootOnly=auto`
+                              taşıyor (üretici: endpoints/links.ts). */}
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                             {/* v0.9.1257 (operatör: "Traces butonu çok
                                 belirgin değil, View yazıyor sadece") —
-                                a.sec düğme anatomisi (v0.9.1210 kuralı). */}
-                            <Link to={tracesLink(r, range, env, cluster)} className="sec"
+                                a.sec düğme anatomisi (v0.9.1210 kuralı).
+                                v0.10.6 (operatör: "mavi olabilir Traces
+                                butonu") — `.sec` → `.accent`, v0.9.1372'de
+                                detay sayfalarının pivotlarına yapılanın
+                                aynısı. Komşu ⚡/✖ ANLAMSAL renkte kalıyor
+                                (yavaş/hatalı örnek); onları maviye çevirmek
+                                taşıdıkları bilgiyi silerdi. */}
+                            <Link to={tracesLink(r, range, env, cluster)} className="accent"
                                   style={{ fontSize: 11, padding: '2px 8px' }}>
                               Traces →
                             </Link>

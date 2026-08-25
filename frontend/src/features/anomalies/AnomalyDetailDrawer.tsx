@@ -303,8 +303,11 @@ export function AnomalyDetailDrawer({ event, onClose }: {
                 ESC ikisini birden kapatırdı. Detay çekmecesinde açıklamanın
                 yeri zaten burası. */}
             <CopilotExplain kind="anomaly" id={event.id} label="✨ Explain this anomaly" />
+            {/* v0.10.6 — v0.9.1372'nin İKİZİ. O sürüm detay sayfalarının
+                pivotlarını `.accent`e taşımıştı; bu çekmecedeki aynı türden
+                pivot gözden kaçmıştı. */}
             {isLogKind && event.service && (
-              <Link to={logsLink} className="sec"
+              <Link to={logsLink} className="accent"
                 style={{ fontSize: 12, padding: '4px 10px', textDecoration: 'none' }}
                 title="Open /logs scoped to the service + spike window">
                 ≡ Logs in spike window ↗

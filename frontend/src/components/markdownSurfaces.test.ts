@@ -31,7 +31,7 @@ describe('AI açıklama yüzeyi markdown basıyor', () => {
   const src = read('./CopilotExplain.tsx');
 
   it('RenderedMarkdown kullanıyor', () => {
-    expect(src).toContain('<RenderedMarkdown text={text} />');
+    expect(src).toContain('<RenderedMarkdown text={text}');
   });
 
   it('ham {text} bırakılmadı', () => {

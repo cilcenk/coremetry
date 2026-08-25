@@ -129,7 +129,7 @@ func requestIDLink(id, tpl, env string, loc *time.Location) (guidedAnswerLink, b
 	// tanıdığı adla "Logizleme (Prod)" desin. Ortam adı ASCII env
 	// anahtarı (prod/int/uat/prep) — Türkçe İ kuralı bilerek YOK,
 	// "İnt" garip dururdu.
-	return guidedAnswerLink{Label: "Logizleme (" + capASCIIFirst(env) + ") · " + short, Href: href}, true
+	return guidedAnswerLink{Label: "Logizleme (" + capASCIIFirst(env) + ") · " + short, Href: href, ID: id}, true
 }
 
 // capASCIIFirst — env anahtarının ilk ASCII harfini büyütür (görsel).

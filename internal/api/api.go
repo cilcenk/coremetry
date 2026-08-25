@@ -10504,6 +10504,45 @@ func (s *Server) listAlertRules(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, rules)
 }
 
+// rejectDeadLogQuery — kayıtlı-arama alarmı, koştuğu arka ucun
+// ANLAMADIĞI bir yazımla kaydedilemez (v0.9.1384).
+//
+// `evaluateLogQuery` kuralın metnini logstore.Filter.Search'e veriyor.
+// ClickHouse — VARSAYILAN arka uç — o alanı gövdede arıyor, dolayısıyla
+// `service.name:"x"` gibi bir alan yazımı YAPISAL OLARAK eşleşemez
+// (canlı ölçüm: aynı servis için yapısal filtre 858 satır, bu yazım 0).
+// Sonuç: alarm daima 0 sayar, eşiği asla aşmaz ve HATA DA VERMEZ —
+// operatör kapsandığını sanır. Sessizce ateşlenmeyen bir alarm, hiç
+// kurulmamış olandan kötüdür, çünkü yerini doldurur.
+//
+// Kabul edip uyarmak yerine REDDETMEK bilinçli: uyarı yanıt gövdesinde
+// kalır, kural listede sağlıklı görünür ve altı ay sonra kimse bakmaz.
+// Reddetme, operatörün ÖĞRENDİĞİ tek an.
+//
+// Arka uç çalışma zamanında değişebiliyor (Settings toggle + boot
+// degrade), o yüzden karar O ANKİ arka uca göre veriliyor; ES'e geçen
+// operatör aynı kuralı sorunsuz kaydeder.
+func (s *Server) rejectDeadLogQuery(w http.ResponseWriter, rule chstore.AlertRule) bool {
+	q := strings.TrimSpace(rule.LogQuery)
+	if q == "" || s.logs == nil {
+		return false
+	}
+	backend := s.logs.Backend()
+	if !logstore.LooksLikeFieldQuery(q) || logstore.BackendUnderstandsFieldQuery(backend) {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(w).Encode(map[string]string{
+		"error": fmt.Sprintf(
+			"log query %q uses field:value syntax, which the %s log backend does not parse — "+
+				"it would be searched as literal text in the log body and this rule would never fire. "+
+				"Use plain text (a distinctive substring) instead, or switch the log backend to elasticsearch.",
+			q, backend),
+	})
+	return true
+}
+
 func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 	var rule chstore.AlertRule
 	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
@@ -10524,6 +10563,9 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{
 			"error": fmt.Sprintf("an alert rule with id %q already exists — use PUT /api/alert-rules/%s to update it", rule.ID, rule.ID),
 		})
+		return
+	}
+	if s.rejectDeadLogQuery(w, rule) {
 		return
 	}
 	rule.BuiltIn = false
@@ -10564,6 +10606,12 @@ func (s *Server) updateAlertRule(w http.ResponseWriter, r *http.Request) {
 	// Settings). Watcher rules lose their evaluation source otherwise.
 	if rule.WatcherJSON == "" {
 		rule.WatcherJSON = existing.WatcherJSON
+	}
+	// Create ile AYNI kapı. Yalnız create'i kapatmak, kuralı önce boş
+	// bırakıp sonra düzenleyerek geçilebilir bir kapı olurdu — ve o yol
+	// bir kaçamak değil, düzenlemenin NORMAL akışıdır.
+	if s.rejectDeadLogQuery(w, rule) {
+		return
 	}
 	if err := s.store.UpsertAlertRule(r.Context(), rule); err != nil {
 		writeErr(w, err)

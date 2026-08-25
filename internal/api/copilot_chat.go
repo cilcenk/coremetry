@@ -58,7 +58,6 @@ const (
 	chatMaxMessages   = 40 // cap conversation length fed back to the LLM (token budget)
 )
 
-
 type chatRequest struct {
 	Messages []copilot.ChatMessage `json:"messages"`
 	// Context (v0.9.164) — frontend'in bulunduğu sayfadan geçirdiği ipucu
@@ -177,7 +176,16 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		uid, email = c.UserID, c.Email
 	}
 	exchangeID := newRandID(16)
-	ctx := copilot.WithMeta(r.Context(), copilot.CallMeta{
+	// v0.10.24 — UÇTAN UCA TAVAN. Hiçbir katmanda yoktu: handler yalnız
+	// tool başına 20s taşıyordu, http.Server'da tavan yok (SSE için
+	// DOĞRU — sunucu geneli WriteTimeout her akışı keserdi), istemci ham
+	// fetch. Gerçekten sınırsız olan eksen tur başına tool çağrısı
+	// SAYISIydı; tool bağlamı bu ctx'ten türediği için tek deadline
+	// hepsini kapatıyor (chat_deadline.go).
+	exchangeMax := chatExchangeTimeout(s.copilot.ClientTimeout())
+	dctx, cancelExchange := context.WithTimeout(r.Context(), exchangeMax)
+	defer cancelExchange()
+	ctx := copilot.WithMeta(dctx, copilot.CallMeta{
 		Surface: "chat", UserID: uid, UserEmail: email, ExchangeID: exchangeID,
 	})
 	// v0.9.528 Faz 2 — model kiminle konuştuğunu bilsin: ad (hitap için)
@@ -304,7 +312,15 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		totalOut += turn.OutputTokens
 		if err != nil {
 			lastErr = err
-			emit("error", map[string]string{"error": err.Error()})
+			// Tavan dolduysa ham `context deadline exceeded` metni yanıltır:
+			// operatör bunu "model zaman aşımına uğradı" diye okur ve modeli
+			// suçlar, oysa olan şey ALIŞVERİŞİN tavana dayanmasıdır — farklı
+			// bir eylem gerektiriyor (soruyu daralt).
+			msg := err.Error()
+			if dctx.Err() != nil {
+				msg = chatDeadlineMessageTR(exchangeMax)
+			}
+			emit("error", map[string]string{"error": msg})
 			break
 		}
 		// No tool calls → this turn's text is the final answer (plus any

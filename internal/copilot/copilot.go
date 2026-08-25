@@ -459,6 +459,12 @@ func (s *Service) clientTimeout() time.Duration {
 	return s.clientTimeoutLocked()
 }
 
+// ClientTimeout — çağrı başına ETKİN tavan (yapılandırma ya da
+// varsayılan). v0.10.24: api katmanı uçtan uca sohbet deadline'ını
+// bundan TÜRETİYOR — sabit bir sayı, operatör tavanı 600s'ye çektiğinde
+// tek bir meşru çağrıdan kısa kalır ve çalışan bir kurulumu bozardı.
+func (s *Service) ClientTimeout() time.Duration { return s.clientTimeout() }
+
 // clientTimeoutLocked is the lock-free half — callers already holding
 // s.mu (Configure, ConfigureTuning) use this to avoid re-entering an
 // RWMutex, which deadlocks when a writer is queued.

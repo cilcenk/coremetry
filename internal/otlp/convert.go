@@ -17,6 +17,36 @@ import (
 	"github.com/cilcenk/coremetry/internal/templater"
 )
 
+// ── Resource.entity_refs: ÖLÇÜLDÜ, BUGÜN OKUNMUYOR (v0.10.10) ────────────────
+//
+// `Resource.EntityRefs` (OTLP proto alan 3) vendor'ladığımız sürümde MEVCUT
+// (otlp v1.10.0) ve Coremetry onu okumuyor. Entity modeli yönü için "kimliği
+// icat etmek yerine üreticinin gönderdiğini kullan" diye kuyruğa alınmıştı.
+// Ölçüldü; bugün AKTİF EDİLEBİLİR DEĞİL, gerekçe aşağıda.
+//
+// NE OLDUĞU. EntityRef DEĞER taşımıyor, bir TANIMLAYICI:
+//     SchemaUrl · Type · IdKeys[] · DescriptionKeys[]
+// Yani "bu resource şu tipte bir varlıktır ve kimliği şu öznitelik
+// ADLARIDIR" diyor. Tam olarak Coremetry'nin bugün `internal/chstore/
+// identity.go`da SABİT KODLADIĞI şey (namespace zinciri, dbInstanceExpr'in
+// altı basamağı, msgClusterExpr). Doğru hizalama bu: kural bizim
+// tahminimiz olmaktan çıkıp üreticinin beyanı olur — v0.9.621 CHANNEL_CODE
+// olayının ("kural yanlışsa sessizce yanlış") kaçış yolu.
+//
+// NEDEN BUGÜN DEĞİL. Alanı ÜRETEN yok. Bu kurulumun collector'ı
+// 0.111.0 ve o sürümde entity yayan bir işlemci bulunmuyor; OTel Entities
+// çalışması hâlâ deneysel. Bugün bir okuyucu yazmak, daima boş dönen bir
+// alan için kod ve test bakımı üstlenmek olurdu.
+//
+// NE ZAMAN AÇILIR. Collector entity-farkındalıklı bir sürüme çıktığında
+// (k8sattributes / resourcedetection entity_refs yaymaya başladığında).
+// O gün doğru sıra: ÖNCE bir sayaçla gerçekten geldiğini ölç, SONRA
+// identity.go'nun sabit zincirlerini beyanla değiştir — tersi, ölçülmemiş
+// bir alana kimlik kararı bağlamak olur.
+//
+// ⚠ Bu blok bir TODO değil, kapanmış bir ölçüm. Yeniden açmadan önce
+// collector sürümünü ve alanın gerçekten dolu geldiğini doğrula.
+
 // ── Trace conversion ──────────────────────────────────────────────────────────
 
 // ConvertTraces returns the span rows plus the span-link rows extracted from

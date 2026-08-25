@@ -32,7 +32,9 @@ func listSLOStatusTool(d Deps) mcp.Tool {
 			"live status (SLI, error-budget remaining, burn rate, healthy flag) and a DETERMINISTIC exhaustion forecast " +
 			"(hours_to_exhaust, will_breach_within_24h, safe_burn). Use this to answer 'are we meeting our SLOs / which budget dies first' — " +
 			"never estimate exhaustion yourself, the forecast field is the server's projection. " +
-			"Each SLO costs one bounded pre-aggregate read; cheap at typical SLO counts.",
+			"COST: NOT a pre-aggregate read. Each SLO runs bounded raw-span scans over its own " +
+			"window (up to 30 days), so this fans out with the number of configured SLOs. " +
+			"Call it once per investigation, never in a loop.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

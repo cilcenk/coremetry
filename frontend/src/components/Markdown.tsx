@@ -1,3 +1,4 @@
+import { idLinkPattern, type IdLink, type IdLinkPattern } from '@/components/ai/inlineIdLinks';
 import { normalizeMathEscapes } from './mathEscapes';
 // RenderedMarkdown — a deliberately small markdown renderer extracted
 // from the old Notebook page (v0.7.0, when Notebook was replaced by
@@ -18,7 +19,15 @@ import { normalizeMathEscapes } from './mathEscapes';
 // TEK satır (hata hangi servisten hangisine yayıldı) gürültüye
 // gömülmüştü. `normalizeMathEscapes` girişte bir kez uygulanıyor;
 // gerekçesi ve neden prompt'la çözülmediği o dosyada.
-export function RenderedMarkdown({ text }: { text: string }) {
+export function RenderedMarkdown({ text, idLinks }: {
+  text: string;
+  // v0.10.35 — SUNUCUNUN linklenebilir saydığı kimlikler. Verilirse
+  // metinde geçtikleri yerde satır içi link olurlar. Hangi kimliğin
+  // linklenebilir olduğuna sunucu karar veriyor (anahtar-kelime kapısı,
+  // şablon geçerliliği, ortam); burası yalnız DEKORASYON.
+  idLinks?: IdLink[];
+}) {
+  const idPat = idLinkPattern(idLinks);
   const blocks: React.ReactNode[] = [];
   const lines = normalizeMathEscapes(text).split('\n');
   let i = 0;
@@ -27,7 +36,7 @@ export function RenderedMarkdown({ text }: { text: string }) {
     if (bulletBuf.length === 0) return;
     blocks.push(
       <ul key={blocks.length} style={{ paddingLeft: 20, margin: '6px 0' }}>
-        {bulletBuf.map((b, k) => <li key={k}>{renderInline(b)}</li>)}
+        {bulletBuf.map((b, k) => <li key={k}>{renderInline(b, idPat)}</li>)}
       </ul>
     );
     bulletBuf = [];
@@ -68,7 +77,7 @@ export function RenderedMarkdown({ text }: { text: string }) {
       blocks.push(<div key={blocks.length} style={{ height: 6 }} />);
     } else {
       flushBullets();
-      blocks.push(<p key={blocks.length} style={{ margin: '4px 0' }}>{renderInline(line)}</p>);
+      blocks.push(<p key={blocks.length} style={{ margin: '4px 0' }}>{renderInline(line, idPat)}</p>);
     }
     i++;
   }
@@ -117,13 +126,31 @@ export function stripMarkdown(s: string): string {
 // string once, emitting React fragments. The regex is anchored to
 // each delimiter so unmatched ones (** without closing **) pass
 // through unchanged rather than swallowing the rest of the line.
-function renderInline(s: string): React.ReactNode[] {
+function renderInline(s: string, idPat?: IdLinkPattern | null): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   let rest = s;
   let key = 0;
   // Order matters: link regex before bold/italic so [**bold**](url)
   // doesn't get consumed by the bold pass first.
   const patterns: { re: RegExp; render: (m: RegExpMatchArray) => React.ReactNode }[] = [
+    // v0.10.35 — KİMLİK SATIR İÇİ LİNKİ, markdown desenlerinden ÖNCE:
+    // kimlikler nokta/tire içerebiliyor ve italik/bold geçişleri onları
+    // ortadan bölerdi. href sunucudan geliyor (aynı köprü, çipin
+    // kullandığının aynısı) — burada yeni link mantığı YOK.
+    ...(idPat ? [{
+      re: idPat.re,
+      render: (m: RegExpMatchArray): React.ReactNode => {
+        const l = idPat.byId.get(m[1]);
+        if (!l) return <span key={key++}>{m[1]}</span>;
+        return (
+          <a key={key++} href={l.href} target="_blank" rel="noopener noreferrer"
+             title={l.label}
+             style={{ color: 'var(--accent2)', fontFamily: 'ui-monospace, monospace' }}>
+            {m[1]}
+          </a>
+        );
+      },
+    }] : []),
     { re: /^\[([^\]]+)\]\(([^)]+)\)/,
       render: m => {
         // Scheme allowlist — this markdown is operator-authored and rendered to

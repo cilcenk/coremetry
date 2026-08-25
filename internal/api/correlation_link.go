@@ -11,8 +11,8 @@
 // veriyordu; tık verilebilirdi.
 //
 // ŞABLONLAR AYARDIR, KODA GÖMÜLMEZ. İki sebep:
-//   1. Her kurulumun log sistemi başka; adres kod tabanına ait değil.
-//   2. Bu depo bir müşteri adresi taşımaz.
+//  1. Her kurulumun log sistemi başka; adres kod tabanına ait değil.
+//  2. Bu depo bir müşteri adresi taşımaz.
 //
 // ORTAM BAŞINA ŞABLON: aynı kurulum birden çok ortamın verisini
 // taşıyabiliyor (project-env-separation) ve her ortamın log arayüzü
@@ -269,6 +269,17 @@ func shortCorrValue(v string) string {
 // Hata hâlinde boş harita — link çizilmez. Kırık bir link, link
 // yokluğundan kötüdür.
 func (s *Server) correlationLinkTemplates(ctx context.Context) correlationTemplates {
+	// v0.10.35 — NIL KORUMASI. Şablon okuması v0.10.35'te deliverExplain'e
+	// de bağlandı (15 explain ucu) ve o yol store'suz kurulan Server'larla
+	// da çağrılıyor; korumasız hâli testte nil deref ile PANİKLİYORDU.
+	//
+	// Aynı sınıf bugün v0.10.28'de de çıkmıştı (warmDependenciesCache) —
+	// orada mevcut bir kusuru buldum, burada KENDİM açtım ve mevcut kapı
+	// (TestDeliverExplainStreamFrameSequence) yakaladı. Şablon yoksa link
+	// de yok: bu yolun zaten sessiz-düşüş sözleşmesi var.
+	if s == nil || s.store == nil {
+		return nil
+	}
 	b, err := s.store.GetSetting(ctx, correlationLinkSettingKey)
 	if err != nil || len(b) == 0 {
 		return nil

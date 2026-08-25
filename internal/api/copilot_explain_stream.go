@@ -157,13 +157,33 @@ func (e *sseEmitter) wroteAnything() bool { return e.started }
 // sseEmitter'da (yukarı).
 func (s *Server) deliverExplain(w http.ResponseWriter, r *http.Request, xid string, extra map[string]any, run explainRun) {
 	em, canStream := newSSEEmitter(w)
+	// v0.10.35 — KİMLİK KÖPRÜSÜ TEK NOKTADAN. answerRequestIDLinks beş
+	// sohbet yüzeyinde kabloluydu (chat, drawer, guided, RAG) ama ✨ Explain
+	// yüzeylerinin HİÇBİRİNDE yoktu: operatör cevapta bir request_id
+	// görüyor, log arayüzüne gitmek için elle kopyalıyordu.
+	//
+	// Burada hesaplamak 15 explain ucunun HEPSİNİ birden kazandırıyor
+	// (trace, span, problem, exception…). Servis bilinmiyorsa
+	// templateForService varsayılan şablona düşüyor, yani kırılmıyor.
+	withLinks := func(out string) map[string]any {
+		links := s.answerRequestIDLinks(r.Context(), out, r.URL.Query().Get("service"))
+		if len(links) == 0 {
+			return extra
+		}
+		merged := make(map[string]any, len(extra)+1)
+		for k, v := range extra {
+			merged[k] = v
+		}
+		merged["links"] = links
+		return merged
+	}
 	if !explainWantsStream(r) || !canStream {
 		out, err := run(nil)
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		writeJSON(w, explainBody(out, xid, extra))
+		writeJSON(w, explainBody(out, xid, withLinks(out)))
 		return
 	}
 
@@ -182,6 +202,6 @@ func (s *Server) deliverExplain(w http.ResponseWriter, r *http.Request, xid stri
 		em.emit("done", map[string]bool{"ok": false})
 		return
 	}
-	em.emit("answer", explainAnswerFrame(out, xid, extra))
+	em.emit("answer", explainAnswerFrame(out, xid, withLinks(out)))
 	em.emit("done", map[string]bool{"ok": true})
 }

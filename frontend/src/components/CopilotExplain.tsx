@@ -11,6 +11,7 @@ import type { AICodeContext } from '@/lib/types';
 import { readIncludeCodePref, writeIncludeCodePref } from '@/lib/aiCodePref';
 import { IconSparkles } from './icons';
 import { RenderedMarkdown } from '@/components/Markdown';
+import type { IdLink } from '@/components/ai/inlineIdLinks';
 import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
 
 // CopilotExplain — drop-in Explain button that calls the
@@ -78,6 +79,9 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   const enabled = useCopilotEnabled();
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState<string | null>(null);
+  // v0.10.35 — sunucunun linklenebilir saydığı kimlikler (request_id).
+  // Aynı köprü, çipin kullandığının aynısı; burada SATIR İÇİ çiziliyor.
+  const [links, setLinks] = useState<IdLink[] | undefined>(undefined);
   const [meta, setMeta] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // v0.9.1121 (Faz 0.3b) — cevabın ai_calls kimliği; 👍/👎 buna asılı.
@@ -155,6 +159,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
       if (kind === 'runbook') {
         const r = await api.copilotRunbook(id, opts);
         applyText(r.explanation);
+        setLinks((r as { links?: IdLink[] }).links);
         setExchangeId(r.exchangeId);
         // Surface the "based on N past resolutions" hint so the
         // operator knows whether the steps are grounded in
@@ -166,12 +171,14 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
         const r = kind === 'trace'          ? await api.copilotExplainTrace(id, withCode, opts).then(rr => {
                                                   if (rr.evidenceSpanIds?.length) onEvidence?.(rr.evidenceSpanIds);
                                                   setCode(rr.code ?? null);
+                                                  setLinks((rr as { links?: IdLink[] }).links);
                                                   return rr;
                                                 })
                 : kind === 'exception'      ? await api.copilotExplainException(id, withCode, opts).then(rr => {
                                                   if (rr.evidenceSpanIds?.length) onEvidence?.(rr.evidenceSpanIds);
                                                   if (rr.evidenceTraceIds?.length) onEvidenceTraces?.(rr.evidenceTraceIds);
                                                   setCode(rr.code ?? null);
+                                                  setLinks((rr as { links?: IdLink[] }).links);
                                                   return rr;
                                                 })
                 : kind === 'span'           ? await api.copilotExplainSpan(id, spanId ?? '', opts)
@@ -180,6 +187,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
                 : kind === 'anomaly'        ? await api.copilotExplainAnomaly(id, opts)
                 :                             await api.copilotExplainServiceHealth(id, fromNs ?? 0, toNs ?? 0, opts);
         applyText(r.explanation);
+        setLinks((r as { links?: IdLink[] }).links);
         setExchangeId(r.exchangeId);
       }
     } catch (e: unknown) {
@@ -347,7 +355,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
 
               whiteSpace:'pre-wrap' KALKTI: Markdown kendi blok düzenini
               kuruyor, ikisi birlikte satır aralarını ikiye katlıyordu. */}
-          <RenderedMarkdown text={text} />
+          <RenderedMarkdown text={text} idLinks={links} />
           {/* v0.9.1127 — akan cevabın imleci (ChatBubble'ın `.cm-ai-cursor`
               atomu). Cevap BİTMEDEN de metin görünür olduğu için, bittiğini
               gösteren bir işaret gerekiyor: imleçsiz akan metin yarıda

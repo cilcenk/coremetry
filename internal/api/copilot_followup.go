@@ -218,6 +218,15 @@ func guidedSuggestions(route guidedRoute) []string {
 type guidedAnswerLink struct {
 	Label string `json:"label"`
 	Href  string `json:"href"`
+	// ID (v0.10.35) — linkin türediği HAM kimlik; yalnız kimlik-avlayan
+	// üreticiler dolduruyor (request_id). Arayüz bunu cevap METNİNDE
+	// bulup satır içi link olarak sarıyor.
+	//
+	// ⚠ Neden sunucudan: hangi kimliğin linklenebilir olduğuna karar
+	// veren mantık burada (anahtar-kelime kapısı, şablon geçerliliği,
+	// env seçimi). İstemcide naif bir regex'le yeniden avlamak, aynı
+	// kararı iki yerde vermek olurdu ve ikisi sessizce ayrışırdı.
+	ID string `json:"id,omitempty"`
 }
 
 // inboxTeamExceptionsLink (v0.9.1246) — takım-filtreli exception kuyruğu

@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { chatErrorText } from './chatErrorText';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { escapeHTML } from '@/lib/utils';
@@ -366,7 +367,20 @@ export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | 
           <ToolChips steps={turn.steps} details={turn.stepDetails} hasText={!!turn.text} />
         )}
         {turn.error ? (
-          <span style={{ color: isUser ? '#fff' : 'var(--err)' }}>⚠ {turn.error}</span>
+          /* v0.10.22 — HAM SAĞLAYICI METNİ DEĞİL. Operatör
+             `dial tcp …: connection refused` blob'undan ne yapacağını
+             çıkaramıyordu; aiErrorHint v0.9.200'den beri duruyor ama
+             yalnız AIAnalysisPanel kullanıyordu. Ham metin SİLİNMİYOR,
+             tooltip'e iniyor (chatErrorText.ts). */
+          (() => {
+            const ev = chatErrorText(turn.error);
+            return (
+              <span style={{ color: isUser ? '#fff' : 'var(--err)' }}
+                title={ev.raw ?? undefined}>
+                ⚠ {ev.text}
+              </span>
+            );
+          })()
         ) : isUser ? (
           turn.text
         ) : turn.text ? (

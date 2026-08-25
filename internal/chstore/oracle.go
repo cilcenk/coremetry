@@ -24,6 +24,10 @@ import (
 // reads "37k logical reads/sec" rather than the raw
 // monotonic counter that Oracle exposes.
 type OracleMetrics struct {
+	// v0.10.11 — alt-sorgu hataları yutuluyordu ve sonuç SIFIRLARLA dolu,
+	// "sakin veritabanı" görünümlü bir nesneydi. Degraded true iken
+	// aşağıdaki sayıların hiçbiri güvenilir DEĞİL.
+	EngineHealth
 	Instance      string  `json:"instance"`
 	Synthetic     bool    `json:"synthetic"`
 	WindowSeconds float64 `json:"windowSeconds"`
@@ -171,7 +175,12 @@ func (s *Store) GetOracleMetrics(
 	// argMax(value, time) to grab the freshest reading; that's
 	// the natural read for a gauge-shaped metric. Cumulative
 	// counters get their delta from min/max below.
+	// v0.10.11 — düşen alt-sorgular artık sayılıyor; kısmi veri korunuyor
+	// ama operatöre EKSİK olduğu söyleniyor.
+	var deg degradeTracker
+
 	gauges, err := s.queryOracleGauges(ctx, from, to, instance, hasInstanceFilter)
+	deg.step("gauges", err)
 	if err == nil && len(gauges) > 0 {
 		// NOTE: the faithful oracledb receiver dimensions
 		// oracledb.sessions.usage by session_type + session_status, so a
@@ -201,7 +210,9 @@ func (s *Store) GetOracleMetrics(
 	// Sessions breakdown (active vs inactive) — the Oracle Prom
 	// exporter publishes `oracledb_sessions_value` dimensioned by
 	// status. We mirror that with attr-keyed metric_points reads.
-	if act, inact, err := s.queryOracleSessionsByStatus(ctx, from, to, instance, hasInstanceFilter); err == nil {
+	act, inact, errSess := s.queryOracleSessionsByStatus(ctx, from, to, instance, hasInstanceFilter)
+	deg.step("sessions", errSess)
+	if errSess == nil {
 		if act > 0 || inact > 0 {
 			out.Sessions.Active = act
 			out.Sessions.Inactive = inact
@@ -220,7 +231,9 @@ func (s *Store) GetOracleMetrics(
 	// Prom exporter publishes `oracledb.wait_time.<class>` as
 	// cumulative seconds-waited; we derive perSec exactly like
 	// the other counters.
-	if waits, err := s.queryOracleWaitClasses(ctx, from, to, instance, hasInstanceFilter, windowSec); err == nil && len(waits) > 0 {
+	waits, errWaits := s.queryOracleWaitClasses(ctx, from, to, instance, hasInstanceFilter, windowSec)
+	deg.step("wait_classes", errWaits)
+	if errWaits == nil && len(waits) > 0 {
 		out.WaitClasses = waits
 		// Row-lock waits live under the concurrency class. The OTel
 		// receiver exposes a dedicated metric too — pick the
@@ -239,7 +252,9 @@ func (s *Store) GetOracleMetrics(
 	// total cumulative elapsed seconds. We read it from
 	// metric_points carrying the sql_id / sql_text dimensions
 	// the Prom exporter emits.
-	if top, err := s.queryOracleTopSQL(ctx, from, to, instance, hasInstanceFilter); err == nil && len(top) > 0 {
+	top, errTop := s.queryOracleTopSQL(ctx, from, to, instance, hasInstanceFilter)
+	deg.step("top_sql", errTop)
+	if errTop == nil && len(top) > 0 {
 		out.TopSQL = top
 	}
 
@@ -247,8 +262,9 @@ func (s *Store) GetOracleMetrics(
 	// window divided by windowSec is the OTel-recommended
 	// derivation for monotonic sums when the SDK doesn't
 	// already export deltas.
-	rates, err := s.queryOracleRates(ctx, from, to, instance, hasInstanceFilter, windowSec)
-	if err == nil && len(rates) > 0 {
+	rates, errRates := s.queryOracleRates(ctx, from, to, instance, hasInstanceFilter, windowSec)
+	deg.step("rates", errRates)
+	if errRates == nil && len(rates) > 0 {
 		out.CPUTimeSec = rates["oracledb.cpu_time"] * windowSec // back-multiply: total over window
 		out.LogicalReadsPS = rates["oracledb.logical_reads"]
 		out.PhysicalReadsPS = rates["oracledb.physical_reads"]
@@ -261,8 +277,9 @@ func (s *Store) GetOracleMetrics(
 	}
 
 	// Tablespace breakdown.
-	tspaces, err := s.queryOracleTablespaces(ctx, from, to, instance, hasInstanceFilter)
-	if err == nil && len(tspaces) > 0 {
+	tspaces, errTS := s.queryOracleTablespaces(ctx, from, to, instance, hasInstanceFilter)
+	deg.step("tablespaces", errTS)
+	if errTS == nil && len(tspaces) > 0 {
 		out.Tablespaces = tspaces
 	}
 
@@ -289,6 +306,7 @@ func (s *Store) GetOracleMetrics(
 		out.CacheHitPct = hit * 100
 	}
 
+	out.EngineHealth = deg.health()
 	return out, nil
 }
 

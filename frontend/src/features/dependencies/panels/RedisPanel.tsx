@@ -7,8 +7,7 @@ import type { TimeRange, RedisMetrics } from '@/lib/types';
 import {
   Stat, OracleMetricDrillModal,
   PanelHeader, PanelErr, SubHeader, fmtBytes, fmtDuration,
-  type OracleDrill,
-} from './shared';
+  type OracleDrill, DegradedBand } from './shared';
 
 // RedisPanel — drill-down for one Redis instance.
 // Split out of the DependenciesTable monolith (v0.8.252 refactor)
@@ -36,6 +35,7 @@ export function RedisPanel({ instance, range }: { instance: string; range: TimeR
       {data === null && <PanelErr />}
       {data && (
         <>
+          <DegradedBand reason={data.degradedReason} />
           <div style={{
             display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
             gap: 8, marginBottom: 12,

@@ -499,6 +499,16 @@ export interface MsgE2EPoint {
 // synthetic values and flips synthetic=true so the UI shows a
 // "demo data" badge.
 export interface OracleMetrics {
+  /**
+   * v0.10.11 — okuma BOZULDU. true iken aşağıdaki sayılar EKSİK, "sıfır"
+   * DEĞİL: en az bir alt-sorgu düştü ve backend eskiden bunu sessizce
+   * yutup sıfırlarla dolu, inandırıcı bir ızgara döndürüyordu ("hata →
+   * sakin veritabanı gibi"). Panel bu bayrağı görünce ızgarayı olduğu
+   * gibi çizmemeli.
+   */
+  degraded?: boolean;
+  /** Hangi okumaların düştüğü — tek satır; SQL/host ayrıntısı TAŞIMAZ. */
+  degradedReason?: string;
   instance: string;
   // synthetic: previously flagged demo fallback. Removed in
   // v0.5.8 — backend now returns zeros (and status=down) when
@@ -532,6 +542,16 @@ export interface OracleMetrics {
 // metric_points (`postgresql.*`). Empty receiver = zeros +
 // status="down" (no synthetic fallback).
 export interface PostgresMetrics {
+  /**
+   * v0.10.11 — okuma BOZULDU. true iken aşağıdaki sayılar EKSİK, "sıfır"
+   * DEĞİL: en az bir alt-sorgu düştü ve backend eskiden bunu sessizce
+   * yutup sıfırlarla dolu, inandırıcı bir ızgara döndürüyordu ("hata →
+   * sakin veritabanı gibi"). Panel bu bayrağı görünce ızgarayı olduğu
+   * gibi çizmemeli.
+   */
+  degraded?: boolean;
+  /** Hangi okumaların düştüğü — tek satır; SQL/host ayrıntısı TAŞIMAZ. */
+  degradedReason?: string;
   instance: string;
   status: 'up' | 'down';
   windowSeconds: number;
@@ -566,6 +586,16 @@ export interface PostgresMetrics {
 
 // MySQLMetrics — receiver drill-down for one MySQL instance.
 export interface MySQLMetrics {
+  /**
+   * v0.10.11 — okuma BOZULDU. true iken aşağıdaki sayılar EKSİK, "sıfır"
+   * DEĞİL: en az bir alt-sorgu düştü ve backend eskiden bunu sessizce
+   * yutup sıfırlarla dolu, inandırıcı bir ızgara döndürüyordu ("hata →
+   * sakin veritabanı gibi"). Panel bu bayrağı görünce ızgarayı olduğu
+   * gibi çizmemeli.
+   */
+  degraded?: boolean;
+  /** Hangi okumaların düştüğü — tek satır; SQL/host ayrıntısı TAŞIMAZ. */
+  degradedReason?: string;
   instance: string;
   status: 'up' | 'down';
   windowSeconds: number;
@@ -600,6 +630,16 @@ export interface MySQLMetrics {
 
 // RedisMetrics — receiver drill-down for one Redis instance.
 export interface RedisMetrics {
+  /**
+   * v0.10.11 — okuma BOZULDU. true iken aşağıdaki sayılar EKSİK, "sıfır"
+   * DEĞİL: en az bir alt-sorgu düştü ve backend eskiden bunu sessizce
+   * yutup sıfırlarla dolu, inandırıcı bir ızgara döndürüyordu ("hata →
+   * sakin veritabanı gibi"). Panel bu bayrağı görünce ızgarayı olduğu
+   * gibi çizmemeli.
+   */
+  degraded?: boolean;
+  /** Hangi okumaların düştüğü — tek satır; SQL/host ayrıntısı TAŞIMAZ. */
+  degradedReason?: string;
   instance: string;
   status: 'up' | 'down';
   role: 'master' | 'replica' | 'unknown' | string;

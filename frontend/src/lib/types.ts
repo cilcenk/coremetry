@@ -4247,6 +4247,8 @@ export interface SystemStats {
     // Redis configured but unreachable → always-leader fallback. In a multi-pod
     // deployment every pod becomes leader → duplicate alerts/notifications.
     lockDegraded: boolean;
+    /** v0.10.4 — imzalama anahtarı zayıfsa SEBEBİ; anahtarın kendisi ASLA. */
+    jwtSecretWeakReason?: string;
   };
   // v0.9.936 — davranış motorunun kendi ölçümü. Motorun tek pahalı yanı
   // 28 GÜNLÜK bir MV taraması; süresi görünmezse "vidaları sıkmalı

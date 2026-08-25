@@ -1,3 +1,4 @@
+import { normalizeMathEscapes } from './mathEscapes';
 // RenderedMarkdown — a deliberately small markdown renderer extracted
 // from the old Notebook page (v0.7.0, when Notebook was replaced by
 // Runbooks). Handles the subset operators actually use in incident
@@ -7,10 +8,19 @@
 // operator isn't surprised by silently-stripped content.
 //
 // Kept intentionally dependency-free (no marked / remark) — the input
-// is short, operator-authored, and we never render untrusted HTML.
+// is short and we never render untrusted HTML.
+//
+// ⚠ v0.10.12 — "operator-authored" VARSAYIMI DÜŞTÜ. Bu renderer artık
+// LLM çıktısını da basıyor (CopilotExplain'in "Explain root cause"
+// paneli) ve model operatör değil: küçük yerel modeller LaTeX kaçışı
+// üretiyor. Operatör bildirdi — akış zinciri ekranda
+// `svc-a $\rightarrow$ svc-b` diye görünüyordu, yani okunması gereken
+// TEK satır (hata hangi servisten hangisine yayıldı) gürültüye
+// gömülmüştü. `normalizeMathEscapes` girişte bir kez uygulanıyor;
+// gerekçesi ve neden prompt'la çözülmediği o dosyada.
 export function RenderedMarkdown({ text }: { text: string }) {
   const blocks: React.ReactNode[] = [];
-  const lines = text.split('\n');
+  const lines = normalizeMathEscapes(text).split('\n');
   let i = 0;
   let bulletBuf: string[] = [];
   const flushBullets = () => {

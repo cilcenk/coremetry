@@ -4214,7 +4214,13 @@ func logsWhere(f LogFilter) whereClause {
 		wc.add(logsPodChainSQL+" = ?", f.Pod)
 	}
 	if f.Search != "" {
-		wc.add("body LIKE ?", "%"+f.Search+"%")
+		// v0.9.1385 — yüklem log_search_predicate.go'ya çıktı. İki kusur
+		// birden kapandı: LIKE argümanı artık kaçışlı (operatörün yazdığı
+		// `%`/`_` joker olmuyor) ve v0.8.521'in çıplak-hex kolon dalı
+		// burada da var — o sözleşme ekranın yalnız histogram yarısında
+		// çalışıyordu.
+		expr, args := logSearchConjunct(f.Search)
+		wc.add(expr, args...)
 	}
 	if f.SeverityMin > 0 {
 		wc.add("severity_num >= ?", f.SeverityMin)

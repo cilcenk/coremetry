@@ -25,6 +25,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/cilcenk/coremetry/internal/chstore"
 )
 
 // fallbackBodyMax — gövde JSON parse tavanı; log satırları tipik <8KB,
@@ -231,21 +233,12 @@ func normalizeHexID(v string, wantLen int) string {
 	return strings.ToLower(v)
 }
 
-// isBareHexID reports whether the free-text query is a bare trace/span
-// id (32 or 16 hex chars, optional surrounding whitespace). v0.8.521:
-// Logs'un Search kutusuna yapıştırılan id, id'yi body'ye YAZMAYAN
-// kurulumlarda da bulunsun diye kolon eşleşmesine yükseltilir.
-func isBareHexID(q string) bool {
-	q = strings.TrimSpace(q)
-	if len(q) != 32 && len(q) != 16 {
-		return false
-	}
-	for _, c := range q {
-		switch {
-		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
-		default:
-			return false
-		}
-	}
-	return true
-}
+// isBareHexID — v0.9.1385'te GÖVDESİ chstore'a TAŞINDI
+// (chstore.IsBareHexID). Sebep: aynı yüklem artık liste yolunda da
+// gerekiyor ve o yol chstore.logsWhere'de; logstore chstore'u import
+// ediyor, dolayısıyla ters yön mümkün değil. İkinci bir kopya yazmak
+// ise bu oturumun bütün gün düzelttiği hastalıktı.
+//
+// Bu sarmalayıcı duruyor ki paketin kendi çağrı yerleri ve testi
+// değişmesin.
+func isBareHexID(q string) bool { return chstore.IsBareHexID(q) }

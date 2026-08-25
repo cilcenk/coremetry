@@ -79,7 +79,7 @@ POST/PUT/DELETE `RequireAnyRole`).
 
 ### 6. `api.go`'ya tek satır
 ```go
-s.registerWidgetRoutes(mux) // v0.9.X — widget drill-down, widgets.go
+s.registerWidgetRoutes(mux) // v0.10.X — widget drill-down, widgets.go
 ```
 
 | Yüzey | Nereye |
@@ -112,7 +112,7 @@ her hook ailesinin `signal` geçirdiğini doğrulayan kapı.
 ```go
 package api
 
-// widgets.go — v0.9.XXXX (<hangi brief / hangi sayfa>).
+// widgets.go — v0.10.XXXX (<hangi brief / hangi sayfa>).
 //
 // api.go BÜYÜMEYECEK kuralı (registerVMetricsRoutes emsali): yüzeyin
 // rotaları kendi dosyasında, api.go tek satır register çağrısıyla büyür.

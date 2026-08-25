@@ -1,5 +1,26 @@
 # v1.0.0 Kesim Prosedürü
 
+> **ERTELENDİ — operatör kararı 2026-08-25:** "0.10.1 diye devam edelim,
+> 1'e geçmeyelim." Zincir `v0.9.1388`'de kapandı ve `v0.10.X` olarak
+> sürüyor. Bu dosya SİLİNMEDİ: 2026-08-25'te HEAD'e karşı yeniden
+> ölçüldü, §0.1'in canlı kapıları prod'da KOŞULDU ve altısından beşi
+> geçti — o emek 1.0 günü tekrar harcanmasın.
+>
+> **O gün geçerli kalanlar** (bugün ölçüldü):
+> - DDL kuyruğu temiz (4640 kayıt, hepsi `Finished`), bekleyen mutasyon 0
+> - Altı MV probe'u ve wrapper kayması kontrolü: hepsi GEÇTİ
+> - `v0.9.1385..HEAD` filtresiz delta: kodda tek DDL satırı yok
+>
+> **O gün YENİDEN sorulacaklar:** §0.1'in tamamı (canlı durum bayatlar) ve
+> §4'ün operatör soruları. Ve §0'un kendi uyarısı: ön-durum bloğuna
+> GÜVENME, komutları koştur.
+>
+> **Kapanmamış tek kalem:** prod `coremetry-secret` içindeki `jwtSecret`
+> yer tutucu değerde görüldü (`CHANGE_ME_…`). Hangi ortamda olduğu
+> netleşmedi; JWT imzalama anahtarı olduğu için bilen biri parolasız admin
+> token üretebilir. Rotasyon oturumları düşürür, o yüzden bir rollout
+> penceresine denk getirilmeli.
+
 Amaç: "kes" dendiği gün 1.0'ın TEK oturumda, sürprizsiz çıkması.
 
 > **Bu dosya kesim günü KOŞULUR.** Yani içindeki her yanlış cümle

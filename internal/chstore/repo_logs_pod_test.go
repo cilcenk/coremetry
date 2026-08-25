@@ -93,7 +93,9 @@ func TestLogsWhere_PodComposesWithOtherFilters(t *testing.T) {
 		"service_name = ?",
 		logsEnvChainSQL + " = ?",
 		logsPodChainSQL + " = ?",
-		"body LIKE ?",
+		// v0.10.2 — LIKE gitti: liste yolu artık histogramla AYNI yüklemi
+		// kullanıyor (ölçüm: CH 26.2'de ~3x daha hızlı, aynı satır sayısı).
+		"multiSearchAnyCaseInsensitive(body, [?])",
 		"severity_num >= ?",
 		"time >= ?",
 		"time <= ?",

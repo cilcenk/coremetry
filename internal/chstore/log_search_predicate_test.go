@@ -11,26 +11,11 @@ import (
 // yüklem HTTP 200 ve makul görünen bir liste döndürüyor, yalnız yanlış
 // popülasyondan. Ölçülen belirti "dolu histogramın altında boş tablo"ydu.
 
-func TestEscapeLikeNeedle(t *testing.T) {
-	for _, tc := range []struct{ name, in, want string }{
-		{"düz metin dokunulmaz", "timeout", "timeout"},
-		{"yüzde joker OLMAZ", "50%", `50\%`},
-		{"alt çizgi joker OLMAZ", "a_b", `a\_b`},
-		{"ters bölü kendini kaçışlar", `C:\tmp`, `C:\\tmp`},
-		{"boş", "", ""},
-		// Ayırt edici vaka: `\` ÖNCE kaçışlanmazsa, sonradan eklenen
-		// kaçış karakterleri de kaçışlanır ve `\%` → `\\%` olur, yani
-		// yüzde yeniden joker hâline gelir.
-		{"ters bölü + yüzde sırası", `a\%b`, `a\\\%b`},
-		{"çoklu joker", "%_%", `\%\_\%`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := escapeLikeNeedle(tc.in); got != tc.want {
-				t.Errorf("escapeLikeNeedle(%q) = %q; want %q", tc.in, got, tc.want)
-			}
-		})
-	}
-}
+// v0.10.2 — TestEscapeLikeNeedle SİLİNDİ. Kaçış, LIKE'ın `%`/`_`
+// jokerleri için vardı; yüklem artık LIKE değil ve
+// multiSearchAnyCaseInsensitive iğneyi LİTERAL alıyor. Korunacak bir
+// davranış kalmadı — testi bırakmak, olmayan bir fonksiyonu çivilemek
+// olurdu.
 
 func TestIsBareHexID(t *testing.T) {
 	for _, tc := range []struct {
@@ -56,23 +41,26 @@ func TestIsBareHexID(t *testing.T) {
 }
 
 func TestLogSearchConjunct(t *testing.T) {
-	t.Run("düz metin — tek LIKE, kaçışlı", func(t *testing.T) {
+	t.Run("düz metin — histogramla AYNI yüklem", func(t *testing.T) {
 		expr, args := logSearchConjunct("timeout")
-		if !strings.Contains(expr, "body LIKE ?") {
-			t.Errorf("expr = %q; body LIKE bekleniyordu", expr)
+		if !strings.Contains(expr, "multiSearchAnyCaseInsensitive(body, [?])") {
+			t.Errorf("expr = %q; histogram yolunun yüklemi bekleniyordu", expr)
 		}
-		if !strings.Contains(expr, `ESCAPE '\\'`) {
-			t.Errorf("expr = %q; ESCAPE cümlesi YOK — kaçış karakteri yorumlanmaz ve `\\%%` literal `\\%%` olarak aranır", expr)
+		if strings.Contains(expr, "LIKE") {
+			t.Errorf("expr = %q; LIKE geri gelmiş — tablo ile histogram yine ıraksar", expr)
 		}
-		if len(args) != 1 || args[0] != "%timeout%" {
-			t.Errorf("args = %v; [%%timeout%%] bekleniyordu", args)
+		// İğne LİTERAL: sarmalayıcı yüzde yok, kaçış yok.
+		if len(args) != 1 || args[0] != "timeout" {
+			t.Errorf("args = %v; [timeout] bekleniyordu", args)
 		}
 	})
 
-	t.Run("operatörün yazdığı yüzde JOKER OLMAZ", func(t *testing.T) {
+	t.Run("operatörün yazdığı yüzde ARTIK sorun değil", func(t *testing.T) {
+		// Eski LIKE yolunda `%` jokerdi ve kaçışlanması gerekiyordu.
+		// multiSearchAny iğneyi olduğu gibi arıyor: kaçış kavramı yok.
 		_, args := logSearchConjunct("disk 90%")
-		if args[0] != `%disk 90\%%` {
-			t.Errorf("args[0] = %q; içteki yüzde kaçışlanmalıydı", args[0])
+		if args[0] != "disk 90%" {
+			t.Errorf("args[0] = %q; iğne AYNEN taşınmalıydı", args[0])
 		}
 	})
 
@@ -81,7 +69,7 @@ func TestLogSearchConjunct(t *testing.T) {
 	// histogram sayıyor, tablo göstermiyordu.
 	t.Run("çıplak hex id kolonlara da bakar", func(t *testing.T) {
 		expr, args := logSearchConjunct("4BF92F3577B34DA6A3CE929D0E0E4736")
-		for _, want := range []string{"body LIKE ?", "trace_id = ?", "span_id = ?", " OR "} {
+		for _, want := range []string{"multiSearchAnyCaseInsensitive(body, [?])", "trace_id = ?", "span_id = ?", " OR "} {
 			if !strings.Contains(expr, want) {
 				t.Errorf("expr = %q; %q içermeliydi", expr, want)
 			}
@@ -115,17 +103,20 @@ func TestLogSearchConjunct(t *testing.T) {
 func TestListPathUsesTheSharedPredicate(t *testing.T) {
 	wc := logsWhere(LogFilter{Search: "disk 90%"})
 	joined := strings.Join(wc.conds, " AND ")
-	if !strings.Contains(joined, `ESCAPE '\\'`) {
-		t.Errorf("logsWhere kaçışsız LIKE üretiyor: %q", joined)
+	if !strings.Contains(joined, "multiSearchAnyCaseInsensitive") {
+		t.Errorf("logsWhere histogramla aynı yüklemi kurmuyor: %q", joined)
+	}
+	if strings.Contains(joined, "LIKE") {
+		t.Errorf("logsWhere hâlâ LIKE üretiyor: %q", joined)
 	}
 	var found bool
 	for _, a := range wc.args {
-		if s, ok := a.(string); ok && s == `%disk 90\%%` {
+		if s, ok := a.(string); ok && s == "disk 90%" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("logsWhere argümanları kaçışlı iğne taşımıyor: %v", wc.args)
+		t.Errorf("logsWhere iğneyi aynen taşımıyor: %v", wc.args)
 	}
 
 	hex := logsWhere(LogFilter{Search: "00f067aa0ba902b7"})

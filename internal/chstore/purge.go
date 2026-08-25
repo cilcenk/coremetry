@@ -51,6 +51,19 @@ var telemetryPurgeTables = []string{
 	// that is gone. Clear them from their own surfaces if a fuller reset is
 	// wanted.
 	"anomaly_events", "root_cause_hypotheses", "ai_calls", "monitor_results",
+	// v0.10.17 (F0.4) — beş aile listeden EKSİKTİ. Hepsi telemetriden
+	// türeyen combined-form MV ya da model üretimi; hiçbiri operatör
+	// içeriği taşımıyor, hepsi yeni ingest'ten yeniden doğar. Eksik
+	// olmaları purge'ü sessizce yarım bırakıyordu: operatör "telemetriyi
+	// sil" diyor, /database ve metrik kataloğu eski veriyle duruyordu.
+	//
+	// rca_verdicts'in `source` alanı 'operator' değeri alabiliyor ama bu
+	// "operatör ✨ Explain'e TIKLADI" demek — içerik yine modelin. Zaten
+	// derecelendirdiği ai_calls satırları da purge ediliyor; verdict'i
+	// bırakmak öksüz kayıt üretirdi. Operatörün YAZDIĞI ai_feedback ise
+	// preserve tarafında kalmaya devam ediyor.
+	"db_statement_summary_5m", "metric_catalog", "service_seen",
+	"service_version_5m", "rca_verdicts",
 }
 
 // configPreserveTables is NOT consulted at runtime. It exists so the regression
@@ -70,6 +83,15 @@ var configPreserveTables = []string{
 	// signal; preserved even though the ai_calls rows they rate purge
 	// (the 90d TTL bounds any orphans).
 	"ai_feedback",
+	// v0.10.17 (F0.4) — bunlar zaten purge EDİLMİYORDU (allowlist'te
+	// yoklar) ama hiçbir listede de olmadıkları için güvenlik testi
+	// onları KORUMUYORDU. Yani biri yarın allowlist'e eklese, hiçbir
+	// kapı ısırmazdı. Sözleşme artık açık:
+	//   api_tokens  — operatörün ürettiği erişim jetonları
+	//   ldap_groups — dizin eşlemesi, yapılandırma
+	//   rag_chunks  — operatörün YÜKLEDİĞİ dokümanlar; telemetri değil,
+	//                 yeniden doğmaz, kaybı geri alınamaz
+	"api_tokens", "ldap_groups", "rag_chunks",
 }
 
 // PurgeTelemetry empties every observability-DATA table (telemetryPurgeTables),

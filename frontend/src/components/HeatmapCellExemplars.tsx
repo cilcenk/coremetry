@@ -142,7 +142,7 @@ export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, exempl
                     trace'i aramadan bağımsız her zaman elimizde. */}
                 Yine de hücrenin temsilci trace&#39;i elimizde:{' '}
                 <Link className="mono" to={traceHref(exemplarTraceId)}
-                  style={{ color: 'var(--accent)' }}>
+                  >
                   ◆ {exemplarTraceId.slice(0, 16)}… (hücredeki en yavaş)
                 </Link>
               </div>
@@ -154,7 +154,7 @@ export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, exempl
           {exemplarTraceId && (
             <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>
               ◆ temsilci (en yavaş):{' '}
-              <Link className="mono" to={traceHref(exemplarTraceId)} style={{ color: 'var(--accent)' }}>
+              <Link className="mono" to={traceHref(exemplarTraceId)}>
                 {exemplarTraceId.slice(0, 16)}…
               </Link>
             </div>

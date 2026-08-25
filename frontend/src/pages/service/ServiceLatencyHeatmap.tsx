@@ -237,7 +237,7 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
                     <span style={{ color: 'var(--text3)' }}>
                       {tFmt(boxSel.timeFromNs)}–{tFmt(boxSel.timeToNs)} · {lo}–{hi} ms
                     </span>
-                    <Link to={tracesHref} style={{ color: 'var(--accent)', textDecoration: 'none' }}>Traces →</Link>
+                    <Link to={tracesHref} style={{ textDecoration: 'none' }}>Traces →</Link>
                     <span onClick={() => setShowDiff(v => !v)}
                       title="Bu banttaki span'ları servisin bu penceredeki tamamıyla kıyasla — hangi attribute'lar farklı?"
                       style={{ cursor: 'pointer', color: 'var(--accent)' }}>

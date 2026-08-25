@@ -560,7 +560,7 @@ function Row({ k, v, mono, pre, copyable }: {
       <td style={style}>
         {href
           ? <Link to={href} title={`Open ${v} service page`}
-              style={{ color: 'var(--accent)' }}>{v}</Link>
+              >{v}</Link>
           : v}
         {copyable && v && <CopyButton value={v} title={`Copy ${k.toLowerCase()}`} />}
       </td>

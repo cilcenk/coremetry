@@ -330,7 +330,7 @@ function AnalysisSkeleton() {
 const pStyle: React.CSSProperties = { margin: 0, fontSize: 13, lineHeight: 1.5, color: 'var(--text)' };
 const ulStyle: React.CSSProperties = { margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 };
 const liStyle: React.CSSProperties = { fontSize: 12.5, lineHeight: 1.45, color: 'var(--text2)' };
-const evLink: React.CSSProperties = { fontSize: 11, color: 'var(--accent)', textDecoration: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 7px', whiteSpace: 'nowrap' };
+const evLink: React.CSSProperties = { fontSize: 11, textDecoration: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 7px', whiteSpace: 'nowrap' };
 // v0.9.891 — `fbBtn` kaldırıldı. Seçili durumu opacity + borderColor ile
 // ELLE çiziyordu; IconButton'un `active`i aynı işi `aria-pressed` + `.active`
 // tint'iyle yapıyor, yani durum artık yalnız GÖRÜLMÜYOR, DUYURULUYOR da.

@@ -310,6 +310,9 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// bir çağrı daha yakar (kod-explain'in `hb == block` kontrolüyle
 	// aynı gerekçe).
 	overflowRetried := false
+	// v0.10.29 — döngü boyunca çağrılan araçlar; cevabın altındaki
+	// deterministik "Kaynak:" künyesini besliyor (chat_source_note.go).
+	var calledTools []string
 	var totalIn, totalOut uint32
 	var lastErr error
 	var finalText string
@@ -362,7 +365,11 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		// No tool calls → this turn's text is the final answer (plus any
 		// chart blocks accumulated from earlier render_chart rounds).
 		if len(turn.ToolCalls) == 0 {
-			finalText = appendCharts(turn.Text)
+			// v0.10.29 — KAYNAK KÜNYESİ. Diğer üç kademede vardı, modelin
+			// EN SERBEST olduğu bu yolda yoktu. En değerli hâli araç
+			// listelemek değil: hiç araç çağrılmadıysa cevabın canlı
+			// veriye DAYANMADIĞINI söylemek.
+			finalText = appendCharts(turn.Text) + chatSourceNoteTR(calledTools)
 			// v0.9.709 (operatör-bildirimi) — cevaptaki request_id'ler log
 			// köprüsü çipi olur; altyapı (links + ChatBubble çipleri)
 			// v0.9.419'dan beri hazırdı, yalnız guided yayınlıyordu.
@@ -390,6 +397,10 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			// sayaç istek boyunca tekil.
 			// v0.9.1229 — kimliği sarmalayıcı veriyor (emitStepChip);
 			// döngünün kendi sayacı guided'ın çipleriyle çakışabiliyordu.
+			// v0.10.29 — kaynak künyesi için çağrılan araçlar. Çip zaten
+			// tc.Name basıyor; künye AYNI adı kullanıyor ki cevabın altındaki
+			// atıf ile üstündeki çipler ayrışmasın.
+			calledTools = append(calledTools, tc.Name)
 			stepN = emitStepChip(emit, tc.Name, string(tc.Input))
 			h, found := byName[tc.Name]
 			if !found {

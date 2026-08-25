@@ -28,6 +28,56 @@ grep -c "log.Fatal\|os.Exit" main.go
 git diff v0.9.437..HEAD -- internal/config/ | grep -iE '^\+.*COREMETRY_'
 ```
 
+## §0.1 — CANLI kapılar (kesimden ÖNCE, prod CH üzerinde)
+
+Bunlar repodan okunamaz ve `go test` görmez. Hiçbiri kesimi teknik olarak
+bloklamaz, ama biri kırmızıysa ROLLOUT ertelenmelidir.
+
+**1. DDL kuyruğu boş mu?** Ertelenen ifadeler (24 MV CREATE + ~13 alter,
+pod başına) oraya gider.
+```sql
+SELECT status, count() FROM system.distributed_ddl_queue GROUP BY status;
+SELECT count() FROM system.mutations WHERE NOT is_done;
+```
+Yüzlerce Active/Inactive varsa **ERTELE** — sıradaki gerçek şema
+değişikliğini (0010 ADIM 5, rollup 0005) de geciktirir.
+
+**2. MV drop riskini sıfırla.** Altı probe de DOLU dönmeli; biri eksikse
+o MV'nin upgrade dalı tetiklenir ve `dropCombinedMV` ANINDA drop eder
+(recreate ertelenir → okuma-hatası penceresi):
+`service_summary_5m.apdex_satisfied_state` · `db_summary_5m.db_name` ·
+`db_caller_summary_5m.db_name` · `db_statement_summary_5m.slow_exemplar_state` ·
+`trace_summary_5m.entry_route_state` · `duration_q_state` tipi **TDigest**
+(TDigest OLMAYAN satır dönmemeli).
+
+**3. `db_statement_summary_5m` wrapper kayması.** Bu upgrade defer
+kapısını BYPASS ediyor — her boot senkron `conn.Exec` DROP+CREATE
+(`store.go:4118`). `_local`de kolon VAR ama wrapper'da YOKSA, roll'ün her
+adımında `/slow-queries` UNKNOWN_TABLE penceresi görür. Varsa elle bir kez
+düzelt, sonra deploy.
+
+**4. jwtSecret paylaşılıyor mu? — TEK GERÇEK LATENT HATA.**
+`secret.yaml` tüm dosyayı `{{- if not .Values.secrets.existingSecret -}}`
+ile sarıyor, yani çok-pod `fail` muhafızı existingSecret yolunda HİÇ
+render edilmiyor; `deployment-distributed.yaml` anahtarı `optional: true`
+okuyor ve boşsa her pod EPHEMERAL bir anahtar üretiyor. `sessionAffinity:
+ClientIP` bunu bugüne dek maskeledi — **rollout maskeyi kaldıran olayın ta
+kendisi.**
+```bash
+kubectl -n <ns> get deploy <rel>-api -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="COREMETRY_JWT_SECRET")].valueFrom.secretKeyRef}'
+kubectl -n <ns> get secret <ad> -o jsonpath='{.data.jwt-secret}' | base64 -d | wc -c
+```
+Sıfır/yoksa: 4 api pod'u farklı anahtarla imzalıyor. api loglarında
+`no jwt_secret configured` satırını da ara. **Paylaşılan anahtar
+konmadan rollout BAŞLATMA.**
+
+**5. Filtresiz delta'yı yeniden ölç.** Yol-filtreli `git diff` yetmez —
+DDL üç yolun dışında da var (`api.go` putRetention ALTER TTL,
+`clickhouse_health.go`, `main.go` reset-schema):
+```bash
+git diff <prod-tag>..HEAD | grep -E '^\+.*(ALTER|CREATE|DROP|MATERIALIZED)'
+```
+
 ## §1 — Kesim adımları (sırayla, tek oturum)
 
 1. **§0'ı koştur.** `v1.0*` boş değilse DUR.
@@ -102,7 +152,22 @@ git diff v0.9.437..HEAD -- internal/config/ | grep -iE '^\+.*COREMETRY_'
    - ⚠ **Boot DDL'i lider-kapılı DEĞİL.** `s.migrate(ctx)` `chstore.New`
      içinde koşulsuz; Redis mutex yok. `replicaCount > 1` ya da
      `deployment.mode=distributed` ise her pod aynı ALTER / drop+recreate
-     dizisini bağımsız yürütür. Tek-pod'a indirip yükseltmek en güvenli yol.
+     dizisini bağımsız yürütür.
+
+     ⚠ **TEK-POD'A İNDİRMEYİN.** İlk yazımım bunu "en güvenli yol" diye
+     öneriyordu; bu topolojide (ingest 12 replica) AKTİF ZARARLI: 12→1,
+     `maxUnavailable: 0`'ın önlemek için var olduğu zero-addresses
+     koşuluna ulaşmanın tek yoludur, ve 1→12 dönüşü onbir pod'u aynı anda
+     boot ettirir.
+
+     Yarışı zaten `maxUnavailable: 0` + `maxSurge: 1` sınırlıyor: üç rol
+     ayrı Deployment ve her biri TEK pod rolluyor, yani en fazla üç
+     eşzamanlı yeni pod olur — "16 pod aynı anda" değil.
+
+     Asıl koruma ise DDL'in küme kipinde ERTELENMESİ
+     (`deferMigrationDDL(clusterMode, spansExists)`): ifadeler boot'u
+     bloklamaz, arka planda kuyruğa girer. Bu yüzden aşağıdaki DDL-kuyruk
+     kapısı (§0.1) rollout'tan ÖNCE koşulmalı.
 
 9. **Rollback.** spans üzerindeki DROP COLUMN mutasyonu ve MV inner-drop
    TEK YÖNLÜ. v1.0.0'dan v0.9.X'e dönülürse eski binary'nin ne göreceği
@@ -176,10 +241,10 @@ geçersiz değer FATAL değil WARNING.
 
 | Soru | Cevap | Sonucu |
 |---|---|---|
-| Prod sürümü | **v0.9.1385** | ≥ v0.9.624 → `promoted_attr`ın spans ALTER'ı ATEŞLEMEZ |
+| Prod sürümü | **v0.9.1385** | promotedAttrs **kolon** zinciri ateşlemez ⚠ aşağıdaki düzeltmeye bak |
 | 0009 | **uygulandı** | state tabloları birleşik |
 | 0010 | **uygulandı**, `_old` silinmesi bekliyor | şema taşındı; cleanup hijyen |
-| Replica | **api 4 · ingest 12 · worker 1** = 16 pod | §1.8'deki boot DDL yarışı TEORİK DEĞİL |
+| Replica | **api 4 · ingest 12 · worker 1** = 16 pod | Roll rol-başına TEK pod (maxSurge 1) → en fazla 3 eşzamanlı |
 
 **Ve kesim için belirleyici olan ölçüm:** prod v0.9.1385'te, 1.0.0 ise
 HEAD'den kesiliyor ve `v0.9.1385..HEAD` şema deltası **SIFIR** —
@@ -190,19 +255,38 @@ Yani yukarıdaki DDL / göç / MV-penceresi uyarılarının hiçbiri BU kesimde
 taşınacak bir şey bulmuyor. Uyarılar dosyada KALIYOR çünkü bir sonraki
 kesim ESKİ bir sürümden yükseltebilir — ama bugünün riski onlar değil.
 
-⚠ 16 pod hâlâ anlamlı: delta sıfır olsa bile boot idempotent DDL
-gönderiyorsa 16 pod aynı anda DDL kuyruğuna yazar. §1.8'i uygula.
+⚠ **"Delta sıfır ⇒ boot DDL göndermez" ÇIKARIMI YANLIŞTIR.** Boot git
+diff'e bakmıyor, canlı `system.columns` / `system.tables` probe'larına
+bakıyor. Üstelik `mvs` dilimi `planDDL` elemesinden HİÇ geçmiyor
+(`store.go:3963` doğrudan `execDDL`): store.go'daki 24 adet
+`CREATE MATERIALIZED VIEW IF NOT EXISTS` her boot çıkar. Elenemeyen
+alter'lar da var (5× `spans MODIFY COLUMN`, 4× `spans ADD INDEX`,
+`logs ADD INDEX`, `trace_snapshots MODIFY TTL`, 2× `system_settings
+ALTER … DELETE`) — `ddl_skip_existing.go` yalnız `CREATE … IF NOT EXISTS`
+ve `ADD COLUMN IF NOT EXISTS` kalıplarını tanıyor.
+
+Bunu güvenli kılan şey delta DEĞİL, ERTELEME + rol-başına-tek-pod. Ama
+ertelenen ifadeler DDL kuyruğuna gider, o yüzden §0.1 kapısı şart.
 
 ### Bir sonraki kesimde yeniden sorulacaklar
 
 Bunlar repodan OKUNAMAZ; kesimden önce cevaplanmalı:
 
-- **Prod'un koştuğu sürüm ≥ v0.9.624 mü?** Boot yolundaki
-  `ALTER TABLE spans` yalnız `promotedAttrs` listesi değiştiğinde ateşler;
+- **Prod'un koştuğu sürüm ≥ v0.9.624 mü?** ⚠ Bu sorunun ilk yazımı
+  YANLIŞ bir sonuç çıkarıyordu ("spans'a hiçbir ifade gitmez"). Kod
+  önceki DAĞITILMIŞ sürümü hiç okumuyor; 624 yalnız `promoted_attr.go`
+  içinde bir yorum. `promoted_attr.go:294-296`'daki
+  `ALTER TABLE spans ADD INDEX IF NOT EXISTS` KOŞULSUZ ve `execDDL`
+  üzerinden gidiyor (planDDL elemesine girmiyor). Sürüm bilgisi yalnız
+  `promotedAttrs` KOLON zincirinin ateşleyip ateşlemeyeceğini söyler;
   liste en son v0.9.624/625'te değişti. Prod ≥ 624 ise 1.0 yükseltmesinde
   spans'a hiçbir ifade gitmez. (İlk yazımın "spans'a dokunan ALTER yok"
   cümlesi KOŞULSUZ doğru değil — muhafız prod'un cluster kipini kapsamıyor.)
 - **0009 durumu:** `GET /api/admin/state-unify/status`
-- **0010 AŞAMA A ADIM 5 kapandı mı:** `GET /api/admin/state-repart/status`
+- **0010 AŞAMA A ADIM 5 kapandı mı:** `GET /api/admin/state-repart/preflight`
+  → `stage` alanı (`stage:"B"` = ADIM 5 bekliyor).
+  ⚠ `/status` DEĞİL: o uç süreç-içi bir anlık görüntü döndürüyor
+  (pod-yerel). 4 api replica'da hangi pod'a düştüğüne göre
+  `{"running":false,"total":0}` gelir — yanlış bir "temiz" cevabı.
 - **Prod replica sayısı** — >1 ise §1.8'deki boot DDL yarışı gerçek.
 - v0.9 zincirinin son sürümü ne? (kesim anındaki HEAD)

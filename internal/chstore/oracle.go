@@ -231,7 +231,7 @@ func (s *Store) GetOracleMetrics(
 	// Prom exporter publishes `oracledb.wait_time.<class>` as
 	// cumulative seconds-waited; we derive perSec exactly like
 	// the other counters.
-	waits, errWaits := s.queryOracleWaitClasses(ctx, from, to, instance, hasInstanceFilter, windowSec)
+	waits, errWaits := s.queryOracleWaitClasses(ctx, from, to, instance, hasInstanceFilter)
 	deg.step("wait_classes", errWaits)
 	if errWaits == nil && len(waits) > 0 {
 		out.WaitClasses = waits
@@ -244,7 +244,7 @@ func (s *Store) GetOracleMetrics(
 			}
 		}
 	}
-	if rl, ok := s.queryOracleRowLockWaits(ctx, from, to, instance, hasInstanceFilter, windowSec); ok {
+	if rl, ok := s.queryOracleRowLockWaits(ctx, from, to, instance, hasInstanceFilter); ok {
 		out.RowLockWaitsPS = rl
 	}
 
@@ -262,10 +262,13 @@ func (s *Store) GetOracleMetrics(
 	// window divided by windowSec is the OTel-recommended
 	// derivation for monotonic sums when the SDK doesn't
 	// already export deltas.
-	rates, errRates := s.queryOracleRates(ctx, from, to, instance, hasInstanceFilter, windowSec)
+	rates, observedSec, errRates := s.queryOracleRates(ctx, from, to, instance, hasInstanceFilter)
 	deg.step("rates", errRates)
 	if errRates == nil && len(rates) > 0 {
-		out.CPUTimeSec = rates["oracledb.cpu_time"] * windowSec // back-multiply: total over window
+		// v0.10.15 — GÖZLENEN aralıkla geri çarpım. windowSec ile çarpmak,
+		// payda düzeltildikten sonra toplamı ŞİŞİRİRDİ (rapor bunu
+		// "sessizce yanlışlanabilecek tek satır" diye işaretlemişti).
+		out.CPUTimeSec = rates["oracledb.cpu_time"] * observedSec
 		out.LogicalReadsPS = rates["oracledb.logical_reads"]
 		out.PhysicalReadsPS = rates["oracledb.physical_reads"]
 		out.HardParsesPS = rates["oracledb.hard_parses"]
@@ -353,40 +356,47 @@ func (s *Store) queryOracleGauges(
 }
 
 func (s *Store) queryOracleRates(
-	ctx context.Context, from, to time.Time, instance string, withInstance bool, windowSec float64,
-) (map[string]float64, error) {
-	// For cumulative counters: (max - min) / window seconds.
+	ctx context.Context, from, to time.Time, instance string, withInstance bool,
+) (map[string]float64, float64, error) {
+	// For cumulative counters: (max - min) / GÖZLENEN saniye.
+	//
+	// v0.10.15 — payda artık istenen pencere DEĞİL, verinin gerçekten
+	// kapsadığı aralık. Gözlenen aralık ÇAĞIRANA da dönüyor: CPUTimeSec
+	// oranı toplama geri çarpıyor ve o çarpım AYNI aralığı kullanmak
+	// zorunda, yoksa payda düzeltilirken toplam sessizce şişer.
 	// CH's max - min on monotonic series tolerates one reset
 	// in the window cleanly (rate goes to 0 for that reading,
 	// which is the safer underestimate vs a wrap-around spike).
 	q := `
-		SELECT metric, (max(value) - min(value)) / ? AS rate
+		SELECT metric, ` + rateSelectSQL + `
 		FROM metric_points
 		WHERE time >= ? AND time <= ?
 		  AND startsWith(metric, 'oracledb.')
 		` + oracleInstanceClause(withInstance) + `
 		GROUP BY metric` + dbInstanceQuerySettings
-	args := []any{windowSec, from, to}
+	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)
 	}
 	rows, err := s.telemetryReadConn().Query(ctx, q, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	out := map[string]float64{}
+	var observed float64
 	for rows.Next() {
 		var m string
-		var v float64
-		if err := rows.Scan(&m, &v); err == nil {
+		var v, obs float64
+		if err := rows.Scan(&m, &v, &obs); err == nil {
+			observed = obs
 			if v < 0 {
 				v = 0 // counter reset → suppress
 			}
 			out[m] = v
 		}
 	}
-	return out, nil
+	return out, observed, nil
 }
 
 func (s *Store) queryOracleTablespaces(
@@ -526,20 +536,20 @@ func (s *Store) queryOracleSessionsByStatus(
 // cumulative `oracledb.wait_time.<class>` counters. Sorted
 // descending by perSec — heaviest contention first.
 func (s *Store) queryOracleWaitClasses(
-	ctx context.Context, from, to time.Time, instance string, withInstance bool, windowSec float64,
+	ctx context.Context, from, to time.Time, instance string, withInstance bool,
 ) ([]OracleWaitClass, error) {
 	// Match any metric matching `oracledb.wait_time.*` (OTel) or
 	// `oracledb_wait_time_*` (Prom exporter). The last token is
 	// the class name.
 	q := `
-		SELECT metric, (max(value) - min(value)) / ? AS rate
+		SELECT metric, (max(value) - min(value)) / ` + observedSpanSQL + ` AS rate
 		FROM metric_points
 		WHERE time >= ? AND time <= ?
 		  AND (startsWith(metric, 'oracledb.wait_time.') OR startsWith(metric, 'oracledb_wait_time_'))
 		` + oracleInstanceClause(withInstance) + `
 		GROUP BY metric
 		ORDER BY rate DESC` + dbInstanceQuerySettings
-	args := []any{windowSec, from, to}
+	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)
 	}
@@ -575,15 +585,15 @@ func (s *Store) queryOracleWaitClasses(
 // the receiver emits one. Returns (rate, ok=true) on a hit;
 // callers fall back to the concurrency wait class otherwise.
 func (s *Store) queryOracleRowLockWaits(
-	ctx context.Context, from, to time.Time, instance string, withInstance bool, windowSec float64,
+	ctx context.Context, from, to time.Time, instance string, withInstance bool,
 ) (float64, bool) {
 	q := `
-		SELECT (max(value) - min(value)) / ? AS rate
+		SELECT (max(value) - min(value)) / ` + observedSpanSQL + ` AS rate
 		FROM metric_points
 		WHERE time >= ? AND time <= ?
 		  AND metric IN ('oracledb.row_lock_waits', 'oracledb_row_lock_waits', 'oracledb.enq.tx.row_lock_contention')
 		` + oracleInstanceClause(withInstance) + dbInstanceQuerySettings
-	args := []any{windowSec, from, to}
+	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)
 	}

@@ -119,7 +119,7 @@ func (s *Store) GetRedisMetrics(
 		out.SlowlogEntries = gauges["redis.slowlog.length"]
 		out.Status = "up"
 	}
-	rates, errRates := s.queryRedisRates(ctx, from, to, instance, hasInstanceFilter, windowSec)
+	rates, errRates := s.queryRedisRates(ctx, from, to, instance, hasInstanceFilter)
 	deg.step("rates", errRates)
 	if errRates == nil {
 		out.CommandsPS = rates["redis.commands"]
@@ -182,16 +182,16 @@ func (s *Store) queryRedisGauges(
 }
 
 func (s *Store) queryRedisRates(
-	ctx context.Context, from, to time.Time, instance string, withInstance bool, windowSec float64,
+	ctx context.Context, from, to time.Time, instance string, withInstance bool,
 ) (map[string]float64, error) {
 	q := `
-		SELECT metric, (max(value) - min(value)) / ? AS rate
+		SELECT metric, (max(value) - min(value)) / ` + observedSpanSQL + ` AS rate
 		FROM metric_points
 		WHERE time >= ? AND time <= ?
 		  AND startsWith(metric, 'redis.')
 		` + redisInstanceClause(withInstance) + `
 		GROUP BY metric` + dbInstanceQuerySettings
-	args := []any{windowSec, from, to}
+	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)
 	}

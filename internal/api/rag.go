@@ -369,12 +369,28 @@ func (s *Server) ragChatAnswer(ctx context.Context, emit func(string, any), msgs
 	}
 
 	user := "SORU: " + question + "\n\nBAĞLAM:\n" + b.String()
-	raw, exErr := s.copilotStreamSurface(ctx, "rag-chat", copilot.SystemPromptRAGChat(), user, func(delta string) {
-		emit("delta", map[string]string{"text": delta})
-	})
+	// v0.10.14 — TOKEN AKIŞI BU KADEMEDE KAPALI, bilinçli.
+	//
+	// Cevabın reddetme olup olmadığı ancak TAMAMLANDIĞINDA bilinir; akış
+	// açıkken "Yüklü dokümanlarda bu bilgi yok" ekrana çoktan yazılmış
+	// olur ve ardından serbest döngünün gerçek cevabı gelince operatör
+	// ARKA ARKAYA İKİ CEVAP görür. Bedel: doküman cevapları tek seferde
+	// beliriyor (kısa metinler, fark küçük). Kazanç: cevaplanamayan soru
+	// artık ölü bir cümleyle bitmiyor.
+	raw, exErr := s.copilotStreamSurface(ctx, "rag-chat", copilot.SystemPromptRAGChat(), user, func(string) {})
 	if exErr != nil {
 		emit("error", map[string]string{"error": exErr.Error()})
 		return true, false
+	}
+	// v0.10.14 — RAG cevaplayamadıysa soruyu SAHİPLENMEZ.
+	//
+	// Eskiden buradan koşulsuz `true` dönüyordu, yani "bu bilgi yok"
+	// cevabı SON SÖZ oluyordu ve altındaki serbest tool döngüsü —
+	// operatörün "normal chat" dediği yol — hiç sıra almıyordu.
+	// Operatör bildirimi bunu üçüncü kez gösterdi; ilk ikisinde tek tek
+	// intent eklenmişti (v0.9.537, v0.9.1142), oysa desen buydu.
+	if ragDeclined(raw) {
+		return false, false
 	}
 	emit("answer", map[string]any{
 		"text":       strings.TrimSpace(raw),

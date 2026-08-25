@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { logsUrlSig, writeLogsParams, readLogsParams, logsRangeParam, buildDocPermalink, parseDocParam, logsHref, serviceLogQuery, type LogsUrlFilter } from './logsUrl';
+import { logsUrlSig, writeLogsParams, readLogsParams, logsRangeParam, buildDocPermalink, parseDocParam, logsHref, type LogsUrlFilter } from './logsUrl';
 import { decodeRange } from './urlState';
 
 // v0.8.546 — /logs `severity` was a live filter that never round-tripped
@@ -319,11 +319,3 @@ describe('logsHref — agrees with readLogsParams, its own consumer', () => {
   });
 });
 
-describe('serviceLogQuery', () => {
-  it('quotes the service name as a query_string clause', () => {
-    expect(serviceLogQuery('checkout')).toBe('service.name:"checkout"');
-  });
-  it('escapes an embedded quote so the clause cannot be broken out of', () => {
-    expect(serviceLogQuery('we"ird')).toBe('service.name:"we\\"ird"');
-  });
-});

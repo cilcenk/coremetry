@@ -30,7 +30,7 @@ import {
   useBulkDeleteAnomalySilences,
 } from '@/lib/queries';
 import { fmtNum, tsLong } from '@/lib/utils';
-import { logsHref, serviceLogQuery } from '@/lib/logsUrl';
+import { logsHref } from '@/lib/logsUrl';
 import { AnomalyDetailDrawer } from './AnomalyDetailDrawer';
 import { serviceHref, inboxItemWindow, pointEventWindow, eventLifespanWindow } from '@/lib/serviceHref';
 import { traceHref } from '@/lib/traceHref';
@@ -688,17 +688,26 @@ function logsLinkForPattern(a: LogPatternAnomaly): string {
   // instead. Cleaner state for the operator to widen/narrow
   // without first clearing the picker. Lucene/KQL on the Logs
   // page already handles service.name:"X" natively.
-  const clauses: string[] = [];
-  if (a.service) {
-    clauses.push(serviceLogQuery(a.service));
-  }
+  // v0.9.1386 — SERVİS `service=`e, TOKEN'lar `q=`ye.
+  //
+  // Buradaki v0.5.311 şerhi ("service picker'da ön-seçili gelmesin; KQL'e
+  // gömülsün — Logs sayfası service.name:\"X\"i zaten anlıyor") bir
+  // operatör TERCİHİYDİ ve son cümlesi ClickHouse'da YANLIŞ: CH arama
+  // metnini gövdede arıyor, `service.name:"X"` hiçbir gövdede geçmiyor.
+  // Ölçüm: aynı servis için yapısal filtre 858 satır, bu yazım 0.
+  //
+  // Yani tercih korunduğunda link HİÇBİR ŞEY döndürmüyordu. Tercihin
+  // amacı "operatör kapsamı kolayca genişletip daraltabilsin"di; sıfır
+  // satırlık bir liste o amacın tam tersi. Doğruluk kazandı, ama amaç
+  // korunuyor: servis picker'dan tek tıkla temizlenebilir durumda.
   const toks = a.tokens ?? [];
-  if (toks.length > 0) {
-    const quoted = toks.map(t => `"${t.replace(/"/g, '\\"')}"`);
-    clauses.push(toks.length === 1
-      ? quoted[0]
-      : `(${quoted.join(' OR ')})`);
-  }
+  // TOKEN'lar: CH serbest metni LİTERAL alt-dize olarak arıyor, yani tek
+  // token ÇALIŞIR ama `("a" OR "b")` çalışmaz — o dizge hiçbir gövdede
+  // geçmez ve link yine sıfır döner. Çok token'lı desenlerde bu yüzden
+  // `q` HİÇ yazılmıyor: operatör servisin o penceredeki loglarına iner
+  // (desenden GENİŞ ama DOĞRU), token'lar da geldiği anomali kartında
+  // zaten yazılı. Sessizce ilk token'ı seçmek daraltmayı gizlerdi.
+  const q = toks.length === 1 ? `"${toks[0].replace(/"/g, '\\"')}"` : undefined;
 
   // v0.9.862 (UX denetimi Ö2) — PENCERE. Bu link yalnız `q` yazıyordu:
   // birkaç saat önceki bir anomaliden /logs'a geçen operatör sticky
@@ -713,7 +722,8 @@ function logsLinkForPattern(a: LogPatternAnomaly): string {
   // yani "pencere yok" bir unutkanlık değil, kayda geçmiş bir karar.
   return logsHref({
     window: patternLogWindow(a.lastSeenNs) || null,
-    q: clauses.length > 0 ? clauses.join(' AND ') : undefined,
+    service: a.service || undefined,
+    q,
   });
 }
 

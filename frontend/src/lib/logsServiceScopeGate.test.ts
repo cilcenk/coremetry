@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { logsHref, serviceLogQuery } from './logsUrl';
+import { logsHref } from './logsUrl';
 
 // logsServiceScopeGate — v0.9.1381.
 //
@@ -45,11 +45,15 @@ const SRC = resolve(__dirname, '..');
  * ProblemDetail'de) deseni birebir içeriyor. Kapının kendi gerekçesini
  * ihlal sayması, onu ilk gün muafiyet listesine mahkûm ederdi.
  */
-export function serviceScopeInQ(src: string): string[] {
-  const out: string[] = [];
-  const code = src
+function stripComments(src: string): string {
+  return src
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
+}
+
+export function serviceScopeInQ(src: string): string[] {
+  const out: string[] = [];
+  const code = stripComments(src);
   for (const line of code.split('\n')) {
     // `q:` ya da `q=` argümanına serviceLogQuery(...) veriliyorsa ihlal.
     if (/\bq\s*[:=][^,)\n]*serviceLogQuery\s*\(/.test(line)) out.push(line.trim().slice(0, 90));
@@ -103,13 +107,23 @@ describe('logs servis kapsamı kapısı (v0.9.1381)', () => {
     expect(new URL(href, 'http://x').searchParams.get('service')).toBe('checkout');
   });
 
-  it('serviceLogQuery hâlâ var ama ARTIK KULLANILMIYOR — ölçülen gerçek', () => {
-    // Silinmedi: ES kurulumlarında `q` gerçekten Lucene olarak
-    // ayrıştırılıyor ve bu yazımın orada bir anlamı var. Ama HİÇBİR
-    // yüzey onu bir /logs pivotuna koymuyor; koyan çıkarsa yukarıdaki
-    // kapı bağırır. Bu test yardımcının sözleşmesini korur.
-    expect(serviceLogQuery('checkout')).toBe('service.name:"checkout"');
-    expect(serviceLogQuery('we"ird')).toBe('service.name:"we\\"ird"');
+  it('serviceLogQuery ADI ağaçta HİÇ geçmiyor (v0.9.1386: silindi)', () => {
+    // ⚠ v0.9.1386 — BU KAPI BİR KAÇAĞI GÖZDEN KAÇIRDI. Yüklem yalnız
+    // DOĞRUDAN biçimi (`q: serviceLogQuery(...)`) görüyordu; streams.tsx
+    // ise kapsamı `clauses.push(serviceLogQuery(a.service))` ile bir
+    // diziye koyup sonra `q`ye join'liyordu. Aynı kusur, dolaylı montaj,
+    // ve kapı sessizce yeşil kaldı.
+    //
+    // Ders: yazımın GİTTİĞİ yeri denetlemek yetmiyor, ÜRETİLDİĞİ yeri
+    // denetlemek gerekiyor. Yardımcı silindiği için değişmez artık en
+    // basit hâlinde: adı hiç geçmemeli.
+    const offenders: string[] = [];
+    for (const abs of walk(SRC)) {
+      if (/\bserviceLogQuery\b/.test(stripComments(readFileSync(abs, 'utf8')))) {
+        offenders.push(abs.slice(SRC.length + 1));
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 
   it('ağaç gerçekten tarandı — boş küme tuzağı', () => {

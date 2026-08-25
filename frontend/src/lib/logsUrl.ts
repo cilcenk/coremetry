@@ -260,14 +260,13 @@ export function logsHref(p: LogsPivot): string {
   return `/logs?${q.toString()}`;
 }
 
-// serviceLogQuery — the `q=` spelling of "scope to this service".
+// serviceLogQuery — v0.9.1386'da SİLİNDİ.
 //
-// Two surfaces (the anomaly drawer and the problem detail page) built this
-// clause by hand, character for character, including the quote escape. A
-// third copy is how one of them ends up not escaping. Kept separate from
-// logsHref's `service` option because choosing between the exact filter and
-// the free-text clause is the CALLER's decision (see the note above), not
-// something a builder should quietly make for them.
-export function serviceLogQuery(service: string): string {
-  return `service.name:"${service.replace(/"/g, '\\"')}"`;
-}
+// `service.name:"<servis>"` üretiyordu ve bu yazım ClickHouse'da —
+// VARSAYILAN arka uçta — hiçbir şeye eşleşmiyordu (ölçüm yukarıda).
+// Son çağıranı v0.9.1386'da `service=`e geçince sıfır çağıranla kaldı.
+//
+// Bırakılmadı, çünkü kalsaydı tek işlevi bir sonraki yazarı aynı tuzağa
+// çağırmak olurdu: adı "servise kapsamla" diyor, davranışı varsayılan
+// kurulumda boş liste. Servis kapsamı için `service=` HER İKİ arka uçta
+// da çalışıyor, yani bu yazımın meşru bir geleceği yok.

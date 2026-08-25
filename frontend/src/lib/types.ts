@@ -4678,6 +4678,13 @@ export interface ChatTurn extends ChatMessage {
   stepDetails?: ChatStepDetail[];
   pending?: boolean;
   error?: string;
+  /**
+   * v0.10.23 — kullanıcı akışı DURDURDU. `error` DEĞİL, bilerek: bu bir
+   * arıza değil, operatörün kararı; kırmızı bir hata balonu ona "bir şey
+   * bozuldu" derdi. Akan metin korunuyor (bkz. chatAbort.ts), bayrak
+   * yalnız "cevap yarım" bilgisini taşıyor.
+   */
+  stopped?: boolean;
   exchangeId?: string;
   verdict?: 1 | -1;
   sources?: RagSource[];

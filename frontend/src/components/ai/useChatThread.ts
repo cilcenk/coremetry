@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import type { ChatMessage, ChatTurn } from '@/lib/types';
 import { rateTurn } from './ChatBubble';
+import { isAbortError, settleStoppedTurn } from './chatAbort';
 import {
   PERSIST_DEBOUNCE_MS, hasCompletedExchange, persistMessages, restoreTurns,
 } from './chatPersist';
@@ -173,7 +174,15 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
       }, ac.signal, o.service || undefined, o.operation || undefined, o.explain || undefined,
         o.subject || undefined, o.rangeS || undefined, o.trace || undefined, o.env || undefined);
     } catch (err) {
-      patchLast(t => ({ ...t, error: err instanceof Error ? err.message : String(err), pending: false }));
+      // v0.10.23 — İPTAL ARIZA DEĞİL. Durdurulan bir fetch AbortError
+      // fırlatıyor; ayırmazsak operatörün kasıtlı eylemi kırmızı bir
+      // "⚠ signal is aborted" balonuna dönüşür, yani düzeltme yeni bir
+      // kusur üretir. Akan metin KORUNUYOR (chatAbort.ts).
+      if (isAbortError(err)) {
+        patchLast(settleStoppedTurn);
+      } else {
+        patchLast(t => ({ ...t, error: err instanceof Error ? err.message : String(err), pending: false }));
+      }
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -223,5 +232,14 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
   const last = turns[turns.length - 1];
   const showFollowups = !busy && !!last && last.role === 'assistant' && !last.pending && !last.error && !!last.text;
 
-  return { turns, busy, send, rate, clear, load, conversationId, last, showFollowups };
+  // v0.10.23 — İPTAL AFFORDANCE'I. AbortController zaten kuruluydu ama
+  // yalnız unmount'ta ateşleniyordu ve CopilotChat AppShell'de KALICI
+  // monte, yani çekmeceyi kapatmak bile akışı durdurmuyordu. Tek GPU'da
+  // istenmeyen bir 5-turlu döngü, sıradaki meşru soruyu dakikalarca
+  // tıkıyordu.
+  const stop = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  return { turns, busy, send, stop, rate, clear, load, conversationId, last, showFollowups };
 }

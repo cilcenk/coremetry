@@ -156,7 +156,7 @@ export function CopilotChat() {
   // persist: true — KALICILIK YALNIZ BURADA (v0.9.1139, Faz 4.1).
   // AI çekmecesindeki özne sohbeti efemer kalıyor; gerekçe
   // useChatThread'in dosya başında.
-  const { turns, busy, send, rate, clear, load, conversationId, last, showFollowups } =
+  const { turns, busy, send, stop, rate, clear, load, conversationId, last, showFollowups } =
     useChatThread({
       service: currentService, operation: currentOp, rangeS, trace: currentTrace, env,
       persist: true,
@@ -508,9 +508,22 @@ export function CopilotChat() {
                 background: 'var(--bg)', color: 'var(--text)',
                 border: '1px solid var(--border)', borderRadius: 6,
               }} />
-            <Button variant="primary" type="submit" disabled={!input.trim()} loading={busy}>
-              Gönder
-            </Button>
+            {/* v0.10.23 — DURDUR. AbortController zaten kuruluydu ama
+                hiçbir affordance'a bağlı değildi; yerel gemma4 tek GPU'da
+                koştuğu için istenmeyen bir 5-turlu döngü, operatörün
+                sıradaki meşru sorusunun önünü dakikalarca tıkıyordu.
+                Akarken Gönder'in YERİNİ alıyor: iki düğme yan yana
+                durursa hangisinin etkin olduğu belirsizleşir. */}
+            {busy ? (
+              <Button variant="secondary" type="button" onClick={stop}
+                title="Cevabı durdur — o ana kadar akan metin korunur">
+                Durdur
+              </Button>
+            ) : (
+              <Button variant="primary" type="submit" disabled={!input.trim()}>
+                Gönder
+              </Button>
+            )}
           </form>
         </Drawer>
       )}

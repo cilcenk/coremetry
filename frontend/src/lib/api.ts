@@ -1826,6 +1826,12 @@ export const api = {
   deleteRagDocument: (id: string) =>
     request<{ ok: boolean }>(`/api/rag/documents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
+  // v0.10.36 — K8s bağlam kapsama kartı (entity katmanı Faz 0). rangeS
+  // sunucuda BASAMAĞA oturuyor; serbest değer cache anahtarını patlatır.
+  k8sCoverage: (rangeS?: number, limit?: number) =>
+    request<import('./types').K8sCoverage>(
+      `/api/k8s/coverage?${qs({ rangeS, limit })}`),
+
   copilotChat: async (
     messages: import('./types').ChatMessage[],
     onEvent: (e: import('./types').ChatStreamEvent) => void,

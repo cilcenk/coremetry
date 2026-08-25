@@ -1342,6 +1342,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Tempo-compatible API (Grafana datasource integration)
 	s.registerTempoRoutes(mux)
+	// v0.10.36 — K8s bağlam kapsama kartı (entity katmanı Faz 0), k8scoverage.go
+	s.registerK8sCoverageRoutes(mux)
 
 	// Web UI (embedded Vite static SPA). Custom handler instead of
 	// http.FileServer so we can:

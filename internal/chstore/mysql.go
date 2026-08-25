@@ -21,6 +21,9 @@ import (
 //     → index efficiency proxy
 //   - Replica delay (seconds behind master) → replication health
 type MySQLMetrics struct {
+	// v0.10.11 — alt-sorgu hataları yutuluyordu; Degraded true iken
+	// aşağıdaki sayılar EKSİK, "sıfır" değil.
+	EngineHealth
 	Instance       string          `json:"instance"`
 	Status         string          `json:"status"`
 	WindowSeconds  float64         `json:"windowSeconds"`
@@ -105,7 +108,11 @@ func (s *Store) GetMySQLMetrics(
 	}
 	hasInstanceFilter := instance != "" && instance != "unknown"
 
-	if gauges, err := s.queryMysqlGauges(ctx, from, to, instance, hasInstanceFilter); err == nil && len(gauges) > 0 {
+	// v0.10.11 — düşen okumalar sayılıyor; kısmi veri korunuyor.
+	var deg degradeTracker
+	gauges, errGauges := s.queryMysqlGauges(ctx, from, to, instance, hasInstanceFilter)
+	deg.step("gauges", errGauges)
+	if errGauges == nil && len(gauges) > 0 {
 		out.Threads.Connected = gauges["mysql.threads"]
 		out.Threads.Running = gauges["mysql.threads.running"]
 		out.Connections.Usage = gauges["mysql.connection.count"]
@@ -120,7 +127,9 @@ func (s *Store) GetMySQLMetrics(
 		}
 		out.Status = "up"
 	}
-	if rates, err := s.queryMysqlRates(ctx, from, to, instance, hasInstanceFilter, windowSec); err == nil {
+	rates, errRates := s.queryMysqlRates(ctx, from, to, instance, hasInstanceFilter, windowSec)
+	deg.step("rates", errRates)
+	if errRates == nil {
 		out.QuestionsPS = rates["mysql.questions"]
 		out.SlowQueriesPS = rates["mysql.slow_queries"]
 		out.RowLockWaitsPS = rates["mysql.row_locks"]
@@ -150,7 +159,9 @@ func (s *Store) GetMySQLMetrics(
 
 	// Row-lock total time uses a cumulative counter; convert
 	// to window total here.
-	if t, err := s.queryMysqlRowLockTime(ctx, from, to, instance, hasInstanceFilter); err == nil {
+	t, errRowLockTime := s.queryMysqlRowLockTime(ctx, from, to, instance, hasInstanceFilter)
+	deg.step("row_lock_time", errRowLockTime)
+	if errRowLockTime == nil {
 		out.RowLockTimeSec = t
 	}
 
@@ -159,10 +170,13 @@ func (s *Store) GetMySQLMetrics(
 	// hasn't wired the statement scrape (the common case); panel
 	// renders an empty state. Read source is metric_points (see
 	// db_topsql.go), never raw spans.
-	if top, err := s.GetMySQLTopSQL(ctx, instance, from, to); err == nil && len(top) > 0 {
+	top, errTopSql := s.GetMySQLTopSQL(ctx, instance, from, to)
+	deg.step("top_sql", errTopSql)
+	if errTopSql == nil && len(top) > 0 {
 		out.TopSQL = top
 	}
 
+	out.EngineHealth = deg.health()
 	return out, nil
 }
 

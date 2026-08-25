@@ -622,3 +622,34 @@ export function WaitClassesBar({ waits, onClickClass }: {
     </div>
   );
 }
+
+/**
+ * DegradedBand — "bu sayılar EKSİK" şeridi (v0.10.11).
+ *
+ * Neden ayrı bir durum: dört motor okuyucusu alt-sorgu hatalarını
+ * yutuyor ve KOŞULSUZ başarı döndürüyordu. Bir ClickHouse hatasında
+ * panel eksik değil, SIFIRLARLA DOLU çiziliyordu — yani hata, sakin
+ * boştaki bir veritabanından ayırt edilemiyordu. Operatörün paged
+ * olduğunda baktığı ilk gösterge yanlış YÖNDE yalan söylüyordu.
+ *
+ * Şerit ızgaranın ÜSTÜNDE ve ızgara yine çiziliyor: kısmi veri hâlâ
+ * işe yarar, yeter ki eksik olduğu söylensin. Izgarayı gizlemek,
+ * bugünkü sessizliği gürültülü bir boşlukla değiştirmek olurdu.
+ *
+ * `reason` backend'den geliyor ve SQL/host ayrıntısı taşımıyor
+ * (chstore/engine_degraded.go sözleşmesi).
+ */
+export function DegradedBand({ reason }: { reason?: string }) {
+  if (!reason) return null;
+  return (
+    <div style={{
+      border: '1px solid var(--warn)',
+      background: 'color-mix(in srgb, var(--warn) 10%, transparent)',
+      borderRadius: 6, padding: '7px 11px', marginBottom: 10,
+      fontSize: 12, color: 'var(--text)', lineHeight: 1.45,
+    }}>
+      <strong>⚠ Bu paneldeki sayılar eksik.</strong>{' '}{reason}.{' '}
+      Sıfır görünen alanlar “veri yok” anlamına GELMEZ — okunamadılar.
+    </div>
+  );
+}

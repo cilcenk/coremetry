@@ -19,6 +19,9 @@ import (
 //   - Persistence: changes_since_last_save → durability risk
 //   - Role (master/replica) → topology awareness
 type RedisMetrics struct {
+	// v0.10.11 — alt-sorgu hataları yutuluyordu; Degraded true iken
+	// aşağıdaki sayılar EKSİK, "sıfır" değil.
+	EngineHealth
 	Instance       string       `json:"instance"`
 	Status         string       `json:"status"`
 	Role           string       `json:"role"` // master / replica / unknown
@@ -95,7 +98,11 @@ func (s *Store) GetRedisMetrics(
 	}
 	hasInstanceFilter := instance != "" && instance != "unknown"
 
-	if gauges, err := s.queryRedisGauges(ctx, from, to, instance, hasInstanceFilter); err == nil && len(gauges) > 0 {
+	// v0.10.11 — düşen okumalar sayılıyor; kısmi veri korunuyor.
+	var deg degradeTracker
+	gauges, errGauges := s.queryRedisGauges(ctx, from, to, instance, hasInstanceFilter)
+	deg.step("gauges", errGauges)
+	if errGauges == nil && len(gauges) > 0 {
 		out.UptimeSec = gauges["redis.uptime"]
 		out.Clients.Connected = gauges["redis.clients.connected"]
 		out.Clients.Blocked = gauges["redis.clients.blocked"]
@@ -112,7 +119,9 @@ func (s *Store) GetRedisMetrics(
 		out.SlowlogEntries = gauges["redis.slowlog.length"]
 		out.Status = "up"
 	}
-	if rates, err := s.queryRedisRates(ctx, from, to, instance, hasInstanceFilter, windowSec); err == nil {
+	rates, errRates := s.queryRedisRates(ctx, from, to, instance, hasInstanceFilter, windowSec)
+	deg.step("rates", errRates)
+	if errRates == nil {
 		out.CommandsPS = rates["redis.commands"]
 		if out.CommandsPS == 0 {
 			out.CommandsPS = rates["redis.commands.processed"]
@@ -138,15 +147,20 @@ func (s *Store) GetRedisMetrics(
 
 	// Role: redis receiver emits redis.role as a string-valued
 	// gauge sometimes; otherwise look for a dedicated metric.
-	if r, err := s.queryRedisRole(ctx, from, to, instance, hasInstanceFilter); err == nil && r != "" {
+	r, errRole := s.queryRedisRole(ctx, from, to, instance, hasInstanceFilter)
+	deg.step("role", errRole)
+	if errRole == nil && r != "" {
 		out.Role = r
 	}
 
 	// Per-keyspace key counts.
-	if ks, err := s.queryRedisKeyspaces(ctx, from, to, instance, hasInstanceFilter); err == nil {
+	ks, errKeyspaces := s.queryRedisKeyspaces(ctx, from, to, instance, hasInstanceFilter)
+	deg.step("keyspaces", errKeyspaces)
+	if errKeyspaces == nil {
 		out.Keyspaces = ks
 	}
 
+	out.EngineHealth = deg.health()
 	return out, nil
 }
 

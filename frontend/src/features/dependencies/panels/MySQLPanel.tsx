@@ -6,8 +6,7 @@ import type { TimeRange, MySQLMetrics } from '@/lib/types';
 import {
   Stat, GaugeStat, OracleMetricDrillModal, TopSQLSection,
   PanelHeader, PanelErr, SubHeader,
-  type OracleDrill,
-} from './shared';
+  type OracleDrill, DegradedBand } from './shared';
 
 // MySQLPanel — drill-down for one MySQL/MariaDB instance.
 // Split out of the DependenciesTable monolith (v0.8.252 refactor)
@@ -34,6 +33,7 @@ export function MySQLPanel({ instance, range }: { instance: string; range: TimeR
       {data === null && <PanelErr />}
       {data && (
         <>
+          <DegradedBand reason={data.degradedReason} />
           <div style={{
             display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
             gap: 8, marginBottom: 12,

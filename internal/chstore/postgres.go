@@ -22,6 +22,9 @@ import (
 // the operator reads "847 commits/sec" not the raw monotonic
 // counter pg exposes.
 type PostgresMetrics struct {
+	// v0.10.11 — alt-sorgu hataları yutuluyordu; Degraded true iken
+	// aşağıdaki sayılar EKSİK, "sıfır" değil.
+	EngineHealth
 	Instance      string         `json:"instance"`
 	Status        string         `json:"status"` // up / down
 	WindowSeconds float64        `json:"windowSeconds"`
@@ -119,7 +122,11 @@ func (s *Store) GetPostgresMetrics(
 	hasInstanceFilter := instance != "" && instance != "unknown"
 
 	// Gauges — current values.
-	if gauges, err := s.queryPgGauges(ctx, from, to, instance, hasInstanceFilter); err == nil && len(gauges) > 0 {
+	// v0.10.11 — düşen okumalar sayılıyor; kısmi veri korunuyor.
+	var deg degradeTracker
+	gauges, errGauges := s.queryPgGauges(ctx, from, to, instance, hasInstanceFilter)
+	deg.step("gauges", errGauges)
+	if errGauges == nil && len(gauges) > 0 {
 		out.Backends.Usage = gauges["postgresql.backends"]
 		out.Backends.Limit = gauges["postgresql.connection.max"]
 		out.WALAgeSec = gauges["postgresql.wal.age"]
@@ -129,7 +136,9 @@ func (s *Store) GetPostgresMetrics(
 	}
 
 	// Counters → rates.
-	if rates, err := s.queryPgRates(ctx, from, to, instance, hasInstanceFilter, windowSec); err == nil {
+	rates, errRates := s.queryPgRates(ctx, from, to, instance, hasInstanceFilter, windowSec)
+	deg.step("rates", errRates)
+	if errRates == nil {
 		out.CommitsPS = rates["postgresql.commits"]
 		out.RollbacksPS = rates["postgresql.rollbacks"]
 		out.DeadlocksPS = rates["postgresql.deadlocks"]
@@ -149,12 +158,16 @@ func (s *Store) GetPostgresMetrics(
 	}
 
 	// Per-database breakdown.
-	if dbs, err := s.queryPgDatabases(ctx, from, to, instance, hasInstanceFilter, windowSec); err == nil {
+	dbs, errDatabases := s.queryPgDatabases(ctx, from, to, instance, hasInstanceFilter, windowSec)
+	deg.step("databases", errDatabases)
+	if errDatabases == nil {
 		out.Databases = dbs
 	}
 
 	// Lock breakdown by mode.
-	if locks, err := s.queryPgLocks(ctx, from, to, instance, hasInstanceFilter); err == nil {
+	locks, errLocks := s.queryPgLocks(ctx, from, to, instance, hasInstanceFilter)
+	deg.step("locks", errLocks)
+	if errLocks == nil {
 		out.Locks = locks
 	}
 
@@ -163,10 +176,13 @@ func (s *Store) GetPostgresMetrics(
 	// the statement scrape (the common case); the panel renders
 	// an empty state. Read source is metric_points (see
 	// db_topsql.go), never raw spans.
-	if top, err := s.GetPostgresTopSQL(ctx, instance, from, to); err == nil && len(top) > 0 {
+	top, errTopSql := s.GetPostgresTopSQL(ctx, instance, from, to)
+	deg.step("top_sql", errTopSql)
+	if errTopSql == nil && len(top) > 0 {
 		out.TopSQL = top
 	}
 
+	out.EngineHealth = deg.health()
 	return out, nil
 }
 

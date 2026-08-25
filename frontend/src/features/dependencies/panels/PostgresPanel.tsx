@@ -29,8 +29,7 @@ const PG_DB_COLS: DataTableColumn<PGDatabase>[] = [
 import {
   Stat, GaugeStat, OracleMetricDrillModal, TopSQLSection,
   PanelHeader, PanelErr, SubHeader, fmtBytes,
-  type OracleDrill,
-} from './shared';
+  type OracleDrill, DegradedBand } from './shared';
 
 // PostgresPanel — drill-down for one Postgres instance, mirrors
 // OraclePanel's shape (status badge + KPI tiles + per-DB table).
@@ -62,6 +61,7 @@ export function PostgresPanel({ instance, range }: { instance: string; range: Ti
       {data === null && <PanelErr />}
       {data && (
         <>
+          <DegradedBand reason={data.degradedReason} />
           <div style={{
             display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
             gap: 8, marginBottom: 12,

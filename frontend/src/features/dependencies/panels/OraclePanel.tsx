@@ -6,8 +6,7 @@ import type { TimeRange, OracleMetrics, FilterExpr } from '@/lib/types';
 import {
   Stat, GaugeStat, OracleMetricDrillModal, TopSQLTable, HostLink, fmtBytes,
   WaitClassesBar,
-  type OracleDrill,
-} from './shared';
+  type OracleDrill, DegradedBand } from './shared';
 
 // OraclePanel renders the OracleDB-receiver drill-down. Fetches
 // `/api/databases/oracle?instance=…` and shows a KPI grid +
@@ -74,6 +73,7 @@ export function OraclePanel({ instance, range }: { instance: string; range: Time
       )}
       {data && (
         <>
+          <DegradedBand reason={data.degradedReason} />
           <div style={{
             display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
             gap: 8, marginBottom: 12,

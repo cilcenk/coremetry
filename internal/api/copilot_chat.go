@@ -327,7 +327,24 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	var loopLinks []guidedAnswerLink
 	// v0.9.528 Faz 2 — serbest döngünün sistem prompt'u da kiminle
 	// konuşulduğunu taşır. Ön-söz boşsa sabitin aynısı.
-	loopPrompt := withAddressee(addressee, copilot.SystemPromptChat())
+	// v0.10.32 — EKRAN BAĞLAMI. İlk üç kademe req.Context.* alıyordu,
+	// serbest döngü HİÇBİRİNİ almıyordu; üstelik prompt "aksini
+	// söylemedikçe 1800 (30 dk) kullan" diyor. Ekranda checkout-service
+	// açık ve 6 saatlik pencere seçiliyken sorulan soru filo geneline ve
+	// 30 dakikaya gidiyordu (chat_screen_context.go).
+	screenCtx := ChatScreenContext{
+		Service:   req.Context.Service,
+		Operation: req.Context.Operation,
+		Env:       req.Context.Env,
+		RangeS:    req.Context.RangeS,
+	}
+	// Bağlam SESSİZCE uygulanmamalı: operatör cevabın neden o kapsamda
+	// olduğunu görebilmeli (v0.9.1259 env şeffaflığının kalan yarısı).
+	if chip := screenContextChipTR(screenCtx); chip != "" {
+		emit("step", map[string]string{"label": chip})
+	}
+	loopPrompt := screenContextPreambleTR(screenCtx) +
+		withAddressee(addressee, copilot.SystemPromptChat())
 
 	for round := 0; round < chatMaxToolRounds; round++ {
 		turn, err := s.copilot.ChatWithTools(ctx, loopPrompt, conv, specs)

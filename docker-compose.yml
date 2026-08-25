@@ -1,6 +1,6 @@
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8-alpine
+    image: clickhouse/clickhouse-server:26.2.4.23-alpine  # prod paritesi (v0.10.2)
     container_name: coremetry-clickhouse
     # Ports exposed to the host for local dev convenience. When deploying
     # publicly via Cloudflare Tunnel, comment these two out — the coremetry

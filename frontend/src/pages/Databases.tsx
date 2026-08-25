@@ -8,6 +8,7 @@ import { TableSkeleton } from '@/components/Skeleton';
 import { Button } from '@/components/ui/Button';
 import { DependenciesTable, type DepRow } from '@/components/DependenciesTable';
 import { databaseDetailHref, legacyDatabaseRowTarget } from '@/pages/databases/databaseParam';
+import { receiverHorizonNotice, spanHorizonNotice } from '@/pages/databases/horizonNotice';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { encodeRange } from '@/lib/urlState';
@@ -102,6 +103,7 @@ export default function DatabasesPage() {
   // and the table refetches on every paint.
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
+
   // v0.9.763 (mockup dilim 2) — EN PAHALI İFADELER sayfanın İÇİNDE:
   // "slow queries için ayrı sayfaya gidiyorum" akışı bitiyor. Mevcut
   // dbsys/dbname filtreleri kapsamı daraltır; satır tıkı URL-first
@@ -181,6 +183,24 @@ export default function DatabasesPage() {
       systems: [...sysSet].sort(), dbNames: [...nameSet].sort(),
     };
   }, [ov, dbsys, dbname]);
+
+  // v0.10.18 (F0.9a) — İKİ PANELİN VERİ UFKU FARKLI ve söylenmiyordu.
+  // Ufuk sayıları SUNUCUDAN geliyor: etkin saklama system_settings'ten
+  // okunuyor, burada sabit yazmak operatör onu değiştirdiği an yalan
+  // olurdu. Karar saf bir yardımcıda (horizonNotice.ts) ki testlenebilsin.
+  //
+  // ⚠ timeRangeToNs zaten memoize; windowSec de onun türevi olduğu için
+  // aynı memo zincirinde kalmalı (bare hesap = her render yeni değer).
+  const windowSec = useMemo(() => (to - from) / 1e9, [from, to]);
+  const receiverNotice = useMemo(
+    () => receiverHorizonNotice(windowSec, ov?.receiverHorizonDays, receiverRows.length),
+    [windowSec, ov?.receiverHorizonDays, receiverRows.length],
+  );
+  const spanNotice = useMemo(
+    () => (ov?.source === 'raw' ? spanHorizonNotice(windowSec, ov?.spanHorizonDays) : null),
+    [windowSec, ov?.source, ov?.spanHorizonDays],
+  );
+
 
   // openDatabasePage — satır tıkının ve klavye Enter/o'sunun TEK
   // hedefi. Kimlik ÜÇLÜ (system, instance, dbName) ve ETİKETTEN
@@ -308,6 +328,21 @@ export default function DatabasesPage() {
             (sıralama datapoint hacmine göre, alfabetik değil).
           </HonestyStrip>
         )}
+        {/* v0.10.18 (F0.9a) — UFUK BEYANLARI. İki panel farklı saklamadan
+            okuyor ve bu hiçbir yerde söylenmiyordu; operatör ?range=30d
+            seçtiğinde üstteki dolu, alttaki boş çıkıyor ve nedenini
+            okumuyordu. Şerit yalnız pencere ufku GERÇEKTEN aştığında
+            çıkar — her zaman duran bir uyarı okunmayan bir uyarıdır. */}
+        {spanNotice && (
+          <HonestyStrip tone="var(--warn)">
+            {spanNotice.text}
+          </HonestyStrip>
+        )}
+        {receiverNotice?.kind === 'declares-limit' && (
+          <HonestyStrip tone="var(--warn)">
+            {receiverNotice.text}
+          </HonestyStrip>
+        )}
         {q.isPending && <TableSkeleton rows={8} cols={11} wideFirst />}
         {q.isError && (
           <div style={{ color: 'var(--err)', fontSize: 12 }}>
@@ -367,7 +402,14 @@ export default function DatabasesPage() {
                       ? `env=${env} filtresi açıkken receiver keşfi hiç çalışmıyor (metric_points deploy_env taşımıyor) — bu panel "boş" değil, SORULMADI.`
                       : dbsys
                         ? 'No receiver instances match the current filter.'
-                        : 'No receiver-detected instances in this window. Point an OpenTelemetry database receiver (oracledb / postgresql / mysql / redis) at one of your databases and the discovered instance will appear here.'}
+                        /* v0.10.18 (F0.9a) — SIRA ÖNEMLİ. Pencere saklama
+                           ufkunu aşıyorsa boş panelin sebebi kurulum DEĞİL,
+                           TTL. Eski metin ("receiver kur") o durumda yanlış
+                           teşhis veriyor ve operatörü var olmayan bir kurulum
+                           sorununu kovalamaya gönderiyordu. */
+                        : receiverNotice?.kind === 'explains-empty'
+                          ? receiverNotice.text
+                          : 'No receiver-detected instances in this window. Point an OpenTelemetry database receiver (oracledb / postgresql / mysql / redis) at one of your databases and the discovered instance will appear here.'}
                   </EmptyHint>
                 ) : (
                   <DependenciesTable rows={receiverRows.map(toRow)} kind="db" range={range} onRowNavigate={openDatabasePage} />

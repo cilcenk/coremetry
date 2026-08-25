@@ -271,7 +271,7 @@ With this set, all images resolve from the mirror, e.g.:
 
 ```
 docker.internal.bank.example.com/cilcenk/coremetry:0.7.18
-docker.internal.bank.example.com/clickhouse/clickhouse-server:24.8-alpine
+docker.internal.bank.example.com/clickhouse/clickhouse-server:26.2.4.23-alpine
 docker.internal.bank.example.com/library/redis:7-alpine
 docker.internal.bank.example.com/otel/opentelemetry-collector-contrib:0.111.0
 ```

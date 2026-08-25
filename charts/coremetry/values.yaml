@@ -13,7 +13,7 @@
 #
 # Mirrors expected at:
 #   docker.artifacthub.registry.example.com/cilcenk/coremetry:0.1.4
-#   docker.artifacthub.registry.example.com/clickhouse/clickhouse-server:24.8-alpine
+#   docker.artifacthub.registry.example.com/clickhouse/clickhouse-server:26.2.4.23-alpine
 #   docker.artifacthub.registry.example.com/library/redis:7-alpine
 #   docker.artifacthub.registry.example.com/otel/opentelemetry-collector-contrib:0.111.0
 #
@@ -325,7 +325,20 @@ clickhouse:
   image:
     registry: ""                                 # empty = docker.io
     repository: clickhouse/clickhouse-server
-    tag: "24.8-alpine"
+    # v0.10.2 — PROD'UN KOŞTUĞU SÜRÜMÜN TAM AYNISI (operatör isteği).
+    #
+    # 24.8-alpine idi; prod ise 26.2.4.23 koşuyor (prod'un CH'si DIŞ, yani
+    # bu pin onu yönetmiyor — yalnız lokal/dev/compose'u belirliyor). İki
+    # major sürümlük bu boşluk gerçek bir hata sınıfı üretti: lokalde
+    # geçen bir sorgu prod'da CH 26'nın yeni analizöründe alias çakışması
+    # (code 47) verdi. Lokalde göremediğim bir şeyi prod'da bulmak, bu
+    # ortamın var olma sebebinin tam tersi.
+    #
+    # Floating minor (`26.2-alpine`) DEĞİL, tam patch: o etiket bugün
+    # 26.2.19.43'e çözülüyor ve "eşit olsun" isteğini yarım bırakırdı.
+    # Patch'ler artık bilinçli bir bump ile gelir — bir banka kurulumunda
+    # zaten istenen davranış.
+    tag: "26.2.4.23-alpine"
     pullPolicy: IfNotPresent
   storage:
     size: 20Gi

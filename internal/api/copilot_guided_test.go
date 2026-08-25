@@ -407,7 +407,7 @@ func TestRenderProblemsEvidenceTR(t *testing.T) {
 			StartedAt: now.Add(-2 * time.Hour).UnixNano(), Priority: "P2",
 		},
 	}
-	out := renderProblemsEvidenceTR(probs, "", "", now)
+	out := renderProblemsEvidenceTR(probs, "", "", now, problemsTotal{n: 2, known: true})
 	for _, want := range []string{
 		"toplam 2 (kritik 1, warning 1, info 0)",
 		"[P1] payment-service — High error rate",
@@ -426,14 +426,14 @@ func TestRenderProblemsEvidenceTR(t *testing.T) {
 	if strings.Count(out, "kök-neden şüphelisi") != 1 {
 		t.Fatalf("root-cause fragment count wrong:\n%s", out)
 	}
-	if got := renderProblemsEvidenceTR(nil, "checkout-service", "", now); !strings.Contains(got, "Açık problem yok (servis: checkout-service)") {
+	if got := renderProblemsEvidenceTR(nil, "checkout-service", "", now, problemsTotal{known: true}); !strings.Contains(got, "Açık problem yok (servis: checkout-service)") {
 		t.Fatalf("empty render = %q", got)
 	}
 	// v0.8.398 — env scope lands in the header (populated + empty).
-	if got := renderProblemsEvidenceTR(probs, "", "uat", now); !strings.Contains(got, "Açık problemler (ortam: uat):") {
+	if got := renderProblemsEvidenceTR(probs, "", "uat", now, problemsTotal{n: 2, known: true}); !strings.Contains(got, "Açık problemler (ortam: uat):") {
 		t.Fatalf("env scope missing in header: %q", got)
 	}
-	if got := renderProblemsEvidenceTR(nil, "checkout-service", "uat", now); !strings.Contains(got, "Açık problem yok (servis: checkout-service, ortam: uat)") {
+	if got := renderProblemsEvidenceTR(nil, "checkout-service", "uat", now, problemsTotal{known: true}); !strings.Contains(got, "Açık problem yok (servis: checkout-service, ortam: uat)") {
 		t.Fatalf("env scope missing in empty render: %q", got)
 	}
 }

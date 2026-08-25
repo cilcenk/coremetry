@@ -70,8 +70,45 @@ func IsBareHexID(q string) bool {
 //	multiSearchAnyCaseInsensitive(...)   → Skip bölümü HİÇ YOK
 //
 // Yani liste yolu indeksten ZATEN yararlanmıyordu: kaybedilecek bir şey
-// yoktu. `hasToken` etkili ama farklı semantik (tam token, alt-dize değil)
-// — drop-in değil, ayrı bir dilim.
+// yoktu.
+//
+// ── `hasToken` DİLİMİ ARAŞTIRILDI VE REDDEDİLDİ (v0.10.5) ─────────────
+//
+// Yukarıdaki tablo `hasToken`i "tek etkili" gösterdiği için ayrı bir
+// hızlandırma dilimi olarak kuyruğa alınmıştı. Ölçüldü ve KAPANDI —
+// sayılar tavsiyeyi tersine çevirdi.
+//
+// query_log medyanı, SEKİZER koşum, 24s pencere, CH 26.2:
+//   hasToken('timeout')       → 11.5 ms · 29.795 satır · CPU 11.6 ms
+//   hasToken(<nadir token>)   → 12.0 ms ·      0 satır · CPU 11.0 ms
+//   multiSearchAnyCaseInsens  → 22.0 ms · 29.812 satır · CPU 16.3 ms
+//
+// İki okuma, ikisi de dilimin aleyhine:
+//
+//  1. hasToken ~2x hızlı ama İNDEKS YÜZÜNDEN DEĞİL — aynı satırları
+//     tarıyor (29.795 ≈ 29.812). Kazanç satır-başı işin ucuzluğundan;
+//     atlama indeksinin bu kazançta payı yok.
+//  2. Nadir token'da indeks HER ŞEYİ buduyor (0 satır) ama duvar saati
+//     yine 12 ms — bu boyutta sabit maliyet baskın. Mükemmel budama bile
+//     ölçülebilir getiri vermiyor.
+//
+// Üstelik budama yalnız NADİR token'larda çalışıyor: `'timeout'` için
+// 9 granülün ancak 5'i eleniyor. Operatörün aradığı kelimeler yaygın
+// olanlar — yani indeksin en zayıf olduğu yer.
+//
+// Bedeli ise KOŞULSUZ: alt-dize araması gider ("Order" artık
+// "OrderService"i bulmaz) ve harf duyarsızlığı gider —
+// `hasTokenCaseInsensitive` indeksi HİÇ kullanmıyor (ölçüldü: Skip
+// bölümü yok). "Duyarsız + alt-dize + indeksli" üçlüsü aynı anda mümkün
+// değil; tokenbf tam token saklıyor.
+//
+// Bu değişikliği yapmak, v0.10.3'te ÖLÇEREK kazanılmış bir tutarlılığı
+// ölçülmemiş bir hız vaadi için takas etmek olurdu.
+//
+// ⚠ PROD ÖLÇEĞİNDE FARKLI OLABİLİR: milyarlarca satırda nadir-token
+// budaması gerçek kazanç verebilir. Ama semantik bedel ölçekten
+// BAĞIMSIZ. Bir gün istenirse doğru biçim varsayılanı sessizce
+// daraltmak değil, OPSİYONEL bir "tam token" arama kipi olur.
 //
 // query_log medyanı, beşer koşum (tek ad-hoc zamanlama yalan söyler):
 //

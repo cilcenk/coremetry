@@ -974,13 +974,28 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 	}
 }
 
-// evaluateLogQuery handles a saved-search alert (v0.5.242). The
-// rule's LogQuery is a KQL clause; we count matches in the
-// window via the logstore and compare to Threshold. Open /
-// resolve mirrors the metric path so the existing
-// notification + incident-attach + cooldown machinery still
-// applies. Service is left empty on the resulting Problem —
-// the KQL itself can scope to one service via service.name:"X".
+// evaluateLogQuery handles a saved-search alert (v0.5.242). The rule's
+// LogQuery is a search string; we count matches in the window via the
+// logstore and compare to Threshold. Open / resolve mirrors the metric
+// path so the existing notification + incident-attach + cooldown
+// machinery still applies.
+//
+// ⚠ v0.9.1384 — BU ŞERH BİR REÇETEYDİ VE YANLIŞTI. Eskiden şöyle
+// bitiyordu: "Service is left empty on the resulting Problem — the KQL
+// itself can scope to one service via service.name:\"X\"." Yani kod, kendi
+// dokümantasyonunda, ClickHouse'da HİÇBİR ŞEYE eşleşmeyen bir yazımı
+// ÖNERİYORDU.
+//
+// ClickHouse — varsayılan arka uç — Search alanını gövdede arıyor
+// (`body LIKE '%…%'`). Canlı ölçüm, tek servis, 24s: yapısal filtre 858
+// satır, `service.name:"x"` yazımı 0 satır, ve tüm tabloda
+// `countIf(body LIKE '%service.name%') = 0`. Böyle bir kural daima 0
+// sayar, eşiği asla aşmaz ve hata da vermez.
+//
+// İki taraflı savunma: yeni kurallar API'de reddediliyor
+// (`rejectDeadLogQuery`), ZATEN KAYITLI olanlar burada sesli hâle
+// getiriliyor — kural bu sürümden önce kaydedilmiş ya da ES'teyken
+// kaydedilip arka uç CH'ye çevrilmiş olabilir.
 func (e *Evaluator) evaluateLogQuery(ctx context.Context, r chstore.AlertRule) {
 	if e.logs == nil {
 		log.Printf("[evaluator] log_query %s: logs backend not wired", r.ID)
@@ -995,6 +1010,18 @@ func (e *Evaluator) evaluateLogQuery(ctx context.Context, r chstore.AlertRule) {
 	// the process-lifetime ctx (no-op on CH; bounds the ES hang).
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	// Sessizliği bitir: bu kural bu arka uçta ASLA ateşlenemez.
+	// Değerlendirmeyi yine de koşturuyoruz — sonucu uydurmak, sessizce
+	// sıfır saymaktan farklı bir yalan olurdu; yapılan tek şey durumu
+	// SÖYLEMEK. Tick başına bir satır: evaluator dakikada bir koşuyor ve
+	// operatör bu satırı gördüğünde kuralı düzeltecek, susturmayacak.
+	if logstore.LooksLikeFieldQuery(r.LogQuery) &&
+		!logstore.BackendUnderstandsFieldQuery(e.logs.Backend()) {
+		log.Printf("[evaluator] log_query %s: ALARM ÖLÜ — sorgu %q alan:değer yazımı, "+
+			"%s arka ucu bunu ayrıştırmaz ve gövdede literal arar; eşleşme yapısal olarak "+
+			"imkânsız, bu kural asla ateşlenmeyecek. Düz metin kullanın ya da log arka ucunu "+
+			"elasticsearch'e alın.", r.ID, r.LogQuery, e.logs.Backend())
+	}
 	now := time.Now()
 	page, err := e.logs.Search(ctx, logstore.Filter{
 		Search: r.LogQuery,

@@ -69,11 +69,12 @@ var mvCostClaims = map[string]string{
 	"list_problem_window_events": "ListProblemWindowEvents → FROM problems — teknik olarak " +
 		"bir ön-toplam DEĞİL, küçük bir state tablosu; ama MALİYET iddiası (ucuz) doğru " +
 		"ve pin guided_parity_test.go'da",
-	// ⚠ TEK DOĞRUDAN İZLENMEYEN. GetMessaging'in FROM'u dolaylı; MV
-	// kataloğunda messaging_summary_5m var ve tool onun üstünde duruyor,
-	// ama SQL'e kadar inilmedi. Kayıt bunu saklamıyor.
-	"get_messaging_health": "ReadMessagingHealth → GetMessaging; messaging_summary_5m " +
-		"olduğu KUVVETLE muhtemel ama SQL'e kadar doğrulanmadı (v0.10.25)",
+	// v0.10.31 — 10.25'te "SQL'e kadar doğrulanmadı" notuyla girmişti;
+	// izlendi ve iddia DOĞRU çıktı. Ham dal YOK: GetDatabases'in env
+	// süzgecinde ham spans'e düşen koşullu şekli burada bulunmuyor.
+	"get_messaging_health": "ReadMessagingHealth → GetMessaging → getMessaging → " +
+		"FROM messaging_summary_5m + messaging_caller_summary_5m (ikisi de MV, " +
+		"koşulsuz; doğrudan izlendi v0.10.31)",
 	"search_traces": "trace_summary_5m ön-toplamı UYGUN OLDUĞUNDA; açıklama ham " +
 		"taramaya düştüğünü ZATEN söylüyordu — koşullu ve dürüst",
 }

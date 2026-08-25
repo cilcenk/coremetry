@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/ai/assemble"
@@ -148,8 +149,14 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
+	// v0.10.27 — YAZIM KİLİDİ. Heartbeat goroutine'i aynı ResponseWriter'a
+	// yazıyor ve http.ResponseWriter eşzamanlı yazıma GÜVENLİ DEĞİL;
+	// paylaşılmayan bir kilit yarışı engellemez, bozuk çerçeve üretir.
+	var wmu sync.Mutex
 	emit := func(event string, payload any) {
 		b, _ := json.Marshal(payload)
+		wmu.Lock()
+		defer wmu.Unlock()
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
 		flusher.Flush()
 	}
@@ -159,6 +166,15 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// çalışır); ayrı sayaçlar aynı `i`yi iki kez üretir ve frontend
 	// kanıtı `i` ile eşlediği için YANLIŞ çipe yapıştırırdı.
 	emit = withStepIDs(emit)
+
+	// v0.10.27 — HEARTBEAT. Serbest döngü buffered; ilk LLM çağrısı
+	// bitene kadar (180s'e kadar) tek bayt gitmeyebiliyor ve sessiz bir
+	// bağlantı proxy arkasında koparıldığında operatör hiçbir hata
+	// görmüyordu — balon "yazıyor…"da asılı, `done` hiç gelmiyor.
+	// Stop() SENKRON: handler döndükten sonra yazılan bir ping,
+	// ResponseWriter'ı ömrünün dışında kullanmak olurdu.
+	hb := startSSEHeartbeat(&wmu, w, flusher, sseHeartbeatEvery)
+	defer hb.Stop()
 
 	// Attribution: tag ctx so RecordUsage attributes the exchange to
 	// the "chat" surface on the /ai page.

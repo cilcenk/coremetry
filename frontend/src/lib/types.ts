@@ -747,6 +747,18 @@ export interface DatabasesOverview {
   source?: string;
   /** Receiver paneli neden hiç doldurulmadı ("env"). Boş = doldu. */
   receiversSkipped?: string;
+  /**
+   * v0.10.18 (F0.9a) — İKİ PANELİN VERİ UFKU FARKLI.
+   *
+   * receiverHorizonDays: ham metric_points saklaması (ayarlanabilir).
+   * spanHorizonDays: MV modunda 90 (sabit), env/raw modunda spans saklaması.
+   *
+   * Sunucudan geliyor çünkü etkin değer system_settings'ten okunuyor;
+   * burada sabit yazmak operatör saklamayı değiştirdiği an yalan olurdu.
+   * 0/undefined = BİLİNMİYOR → hiçbir şey ilan etme.
+   */
+  receiverHorizonDays?: number;
+  spanHorizonDays?: number;
 }
 
 // BreakdownPoint — one bucket of the Elastic-APM-style "span

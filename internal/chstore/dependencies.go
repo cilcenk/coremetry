@@ -702,7 +702,7 @@ func (s *Store) GetMessagingDetail(
 // argIfNeeded returns []any{arg} when the predicate contains a
 // "?" placeholder, otherwise nil. Lets the detail queries share
 // one SQL string between "instance = ?" and the special
-// "(peer_service = '' OR IS NULL)" no-arg branch.
+// "(peer_service = ” OR IS NULL)" no-arg branch.
 func argIfNeeded(predicate string, arg string) []any {
 	if strings.Contains(predicate, "?") {
 		return []any{arg}
@@ -766,6 +766,15 @@ type DatabasesOverview struct {
 	// ReceiversSkipped — receiver paneli neden hiç doldurulmadı.
 	// Boş = doldu. Şu an tek sebep var: "env".
 	ReceiversSkipped string `json:"receiversSkipped,omitempty"`
+	// v0.10.18 (F0.9a) — İKİ PANELİN UFKU FARKLI ve bu hiçbir yerde
+	// söylenmiyordu. Sayılar sunucuda hesaplanıyor çünkü etkin değer
+	// `system_settings`'ten geliyor; arayüzde sabit yazmak, operatör
+	// saklamayı değiştirdiği an yalan olurdu (db_horizon.go).
+	//
+	// 0 = bilinmiyor → arayüz hiçbir şey ilan etmez. Yanlış bir sayı
+	// basmaktansa susmak doğru.
+	ReceiverHorizonDays int `json:"receiverHorizonDays,omitempty"`
+	SpanHorizonDays     int `json:"spanHorizonDays,omitempty"`
 }
 
 // DatabasesQuery — /databases genel bakış girdileri (v0.9.821).
@@ -922,6 +931,10 @@ func (s *Store) GetDatabases(ctx context.Context, q DatabasesQuery) (*DatabasesO
 		RowsCapped:    dbOverviewCapped(len(out)),
 		RowLimit:      dbOverviewRowLimit,
 		ReceiverLimit: dbReceiverLimit,
+		// v0.10.18 — zarfın İÇİNDE, çünkü hemen altta `len(out) == 0`
+		// erken dönüşü var ve beyan tam da o boş durumda gerekli.
+		ReceiverHorizonDays: s.receiverHorizonDays(ctx),
+		SpanHorizonDays:     s.spanHorizonDays(ctx, false),
 	}
 	if len(out) == 0 {
 		return ov, nil
@@ -1101,6 +1114,10 @@ func (s *Store) getDatabasesRaw(
 		RowLimit:         dbOverviewRowLimit,
 		Source:           "raw",
 		ReceiversSkipped: "env",
+		// Bu dalda receiver paneli zaten sorulmuyor (env), ama üst panel
+		// MV'yi bırakıp ham spans'e düştüğü için ufku 90 DEĞİL.
+		ReceiverHorizonDays: s.receiverHorizonDays(ctx),
+		SpanHorizonDays:     s.spanHorizonDays(ctx, true),
 	}
 	if len(out) == 0 || !q.IncludeCallers {
 		return ov, nil

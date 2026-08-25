@@ -17,6 +17,22 @@ import (
 // yazıyor (corebank-scan.prod + corebank-dg.prod) ve peer.service'i
 // bilerek "oracle"a çöküyor. Yani sayı fixture, MEKANİZMA değil —
 // çökmeyi yapan store.go'daki MV anahtarı.
+//
+// ── ÇALIŞMA-ANI DOĞRULAMASI (v0.10.20) ──────────────────────────────────
+//
+// v0.10.19 kesilirken lokal minikube çökmüştü (apiserver crashloop,
+// bellek %98.7) ve üretilen SQL canlıda KOŞTURULAMAMIŞTI; commit bunu
+// açıkça yazdı. Ortam kurtarıldıktan sonra prob aynen çalıştırıldı ve
+// kodun beklediği şekli döndürdü:
+//
+//	SELECT groupUniqArray(6)(attr_values[indexOf(attr_keys,'server.address')])
+//	FROM spans WHERE … AND service_name IN (…) SETTINGS max_execution_time = 5
+//	→ ['corebank-dg.prod:1521','corebank-scan.prod:1521']
+//
+// Yani doğrulanmamış tek parça (groupUniqArray sarmalı) artık doğrulandı;
+// 5s tavanı da yetti. Bu not, git geçmişinde duran "koşturulamadı"
+// iddiasının düzeltmesidir — bir denetim reçetesi gibi, yanlış kalan bir
+// kayıt da bir gün olduğu gibi uygulanır.
 
 func TestAddrProbeIsCapped(t *testing.T) {
 	if dbAddrProbeCap < 2 {

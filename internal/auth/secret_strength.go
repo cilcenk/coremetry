@@ -22,11 +22,18 @@ import "strings"
 //
 // TASARIM: tespit BOOT'U DURDURMUYOR. Reddetmek, operatör anahtarı
 // döndürmeden bir rollout başlattığında prod'u düşürürdü — ve bu kod
-// tam da rollout sırasında ilk kez koşacak. Onun yerine iki kanal:
-// yüksek sesli boot logu VE /admin/stats'ta görünür bir şerit. Yalnız
-// log yeterli değil; v0.9.1384'te "uyarı yanıt gövdesinde kalır, kimse
-// bakmaz" diye reddetmeyi seçmiştim, burada reddedemediğim için uyarıyı
-// operatörün BAKTIĞI yere koyuyorum.
+// tam da rollout sırasında ilk kez koşacak.
+//
+// v0.10.4 bunu İKİ kanala vermişti: boot logu + /admin/stats şeridi.
+// v0.10.7'de ŞERİT KALDIRILDI (operatör isteği). Gerekçe bu kurulumun
+// kendi kararı: anahtar rotasyonu reddedildi, dolayısıyla şerit kalıcı
+// olarak kırmızı kalacaktı — ve sürekli duran bir kırmızı, yanındaki
+// gerçek sağlık uyarılarını da görmezden gelmeyi öğretir.
+//
+// Boot logu KALDI. O, bu kurulum hakkında bir dırdır değil: başka bir
+// yere Coremetry kuran birinin yer-tutucu anahtarla ayağa kalktığında
+// görmesi gereken tek satır. Ürün dürüst kalıyor, operatör rahatsız
+// edilmiyor.
 
 // weakSecretMarkers — yer tutucu olduğunu ilan eden dizgeler.
 //
@@ -73,17 +80,4 @@ func WeakSecretReason(secret string) string {
 		return "çok kısa (< 32 karakter)"
 	}
 	return ""
-}
-
-// WeakSecretReason (metot) — servisin KENDİ anahtarı hakkındaki teşhis.
-//
-// Anahtar Service'in özel alanı ve öyle kalmalı; dışarıya çıkarmak yerine
-// servis kendisi hakkında rapor veriyor. Boş-anahtar dalında NewService
-// rastgele bir anahtar üretmiş olur, dolayısıyla burası doğru biçimde ""
-// döner — o durumun kendi logu var, iki kez raporlanmaz.
-func (s *Service) WeakSecretReason() string {
-	if s == nil {
-		return ""
-	}
-	return WeakSecretReason(string(s.secret))
 }

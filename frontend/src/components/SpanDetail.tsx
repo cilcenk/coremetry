@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { getRaw, setRaw } from '@/lib/storage';
 import { logsRangeParam, logsHref } from '@/lib/logsUrl';
 import { serviceHref } from '@/lib/serviceHref';
+import { spanAttrHref, spanEndpointHref, type SpanLinkCtx } from './spanEntityLinks';
 import { IconFlame, IconSparkles } from './icons';
 import { CopyButton } from './CopyButton';
 import { AIExplainButton } from './ai/AIExplainButton';
@@ -106,7 +107,19 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
     window: logsFromBound && logsToBound
       ? { fromNs: logsFromBound, toNs: logsToBound }
       : undefined,
-  }), [serviceLinks, logsFromBound, logsToBound]);
+    // v0.10.34 — ENDPOINT KENARI. Endpoint kimliği (servis, şablonlanmış
+    // yol) İKİLİSİ; tek bir attribute değeri yetmiyor, o yüzden span'in
+    // kendi servisi ve sunucunun çözdüğü route bağlama giriyor. kind de
+    // şart: endpoint yalnız giriş span'lerinde var (giriş-span ilkesi).
+    service: span.serviceName,
+    kind: span.kind,
+    httpRoute: span.httpRoute,
+  }), [serviceLinks, logsFromBound, logsToBound, span.serviceName, span.kind, span.httpRoute]);
+  // INFO bölümündeki "Endpoint" satırı — attribute listesinden BAĞIMSIZ:
+  // span http.route attribute'unu taşımasa bile sunucu route'u çözmüş
+  // olabilir (ingest'teki http.target fallback'i) ve o durumda da
+  // endpoint'e gidilebilmeli.
+  const endpointLink = useMemo(() => spanEndpointHref(spanLinkCtx), [spanLinkCtx]);
   const [spanLogs, setSpanLogs] = useState<LogRow[]>([]);
   // v0.9.461 (dürüstlük A5) — zarf düşürülmesin: degraded/hata "log yok"
   // gibi OKUNMASIN (ES brownout'ta emin bir "No logs attached" basılıyordu);
@@ -255,6 +268,23 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
         <Section title="Info">
           <KV>
             <Row k="Service" v={span.serviceName} copyable />
+            {/* v0.10.34 (operatör isteği) — ENDPOINT, servisin hemen
+                yanında ve servis gibi TIKLANABİLİR. Endpoint kendi
+                sayfası olan bir varlık (RED, baseline, trace listesi);
+                trace'ten oraya kenar yoktu. Yalnız giriş span'lerinde ve
+                yalnız ŞABLONLANMIŞ yol varken çıkıyor — ham yoldan
+                (url.path) kurulan bir link var olmayan bir endpoint'e
+                götürürdü (spanEntityLinks.ts). */}
+            {endpointLink && (
+              <tr>
+                <td>Endpoint</td>
+                <td style={{ wordBreak: 'break-all' }}>
+                  <Link to={endpointLink.href} title="Bu endpoint'in sayfasını aç">
+                    {endpointLink.label}
+                  </Link>
+                </td>
+              </tr>
+            )}
             <Row k="Kind" v={span.kind} copyable />
             <Row k="Duration" v={`${span.durationMs.toFixed(3)} ms`} copyable />
             {/* v0.9.1273 — öz süre: çocukların kapsamadığı kısım. %'si
@@ -541,7 +571,7 @@ function serviceAttrHref(
 // that service's sticky "now" page is the K1 failure in its purest form: the
 // operator is looking at a specific millisecond and the destination answers
 // about a different hour.
-const ServiceLinkCtx = createContext<{
+const ServiceLinkCtx = createContext<SpanLinkCtx & {
   on: boolean;
   window?: { fromNs: number; toNs: number };
 }>({ on: true });
@@ -553,7 +583,8 @@ function Row({ k, v, mono, pre, copyable }: {
   if (mono) style.wordBreak = 'break-all';
   if (pre) style.whiteSpace = 'pre-wrap';
   const links = useContext(ServiceLinkCtx);
-  const href = links.on ? serviceAttrHref(k, v, links.window) : null;
+  // v0.10.34 — servis + endpoint tek çözücüde (spanEntityLinks.ts).
+  const href = spanAttrHref(k, v, links);
   return (
     <tr>
       <td>{k}</td>

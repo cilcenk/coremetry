@@ -395,7 +395,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
           )}
           {hoverNode.kind === 'service' && (
             <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <Link to={serviceHref(hoverNode.name, { range })} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>Open service →</Link>
+              <Link to={serviceHref(hoverNode.name, { range })} style={{ fontSize: 11, textDecoration: 'none' }}>Open service →</Link>
               {/* v0.9.381 (D5) — kenar pivotunun düğüm hali: odak VE bu
                   komşuyu birlikte İÇEREN trace'ler (Traces'ın mevcut
                   ?services= requireServices filtresi). Etiket bilerek
@@ -404,7 +404,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
                 <Link
                   to={`/traces?services=${encodeURIComponent(focus)},${encodeURIComponent(hoverNode.name)}&range=${encodeRange(range)}&view=list&rootOnly=false`}
                   title="İki servisi birlikte içeren trace'ler — doğrudan kenar garantisi değil"
-                  style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+                  style={{ fontSize: 11, textDecoration: 'none' }}>
                   Traces ({focus} ∧ {hoverNode.name}) →
                 </Link>
               )}
@@ -423,7 +423,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
               satır listede olmayabilir. */}
           {hoverNode.kind === 'database' && detailHref && (
             <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <Link to={detailHref} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+              <Link to={detailHref} style={{ fontSize: 11, textDecoration: 'none' }}>
                 {/* v0.9.1337 — karar nodeLinkLabel.ts'e taşındı ve TESTLENDİ.
                     Buradayken hiçbir testi yoktu: v0.9.1326'da ölçüldü,
                     `/databases` dalını ters çevirmek tüm suite'i yeşil
@@ -435,7 +435,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
           )}
           {hoverNode.kind === 'queue' && detailHref && (
             <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <Link to={detailHref} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+              <Link to={detailHref} style={{ fontSize: 11, textDecoration: 'none' }}>
                 {/* v0.9.1337 — karar nodeLinkLabel.ts'te (db kardeşiyle
                     aynı dosya, aynı ilke). v0.9.1026'nın dürüstlük kararı
                     değişmedi, yalnız artık testli. */}
@@ -463,7 +463,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
                 />
               )}
               <Link to={`/external?host=${encodeURIComponent(extHost)}&range=${encodeRange(range)}`}
-                style={{ fontSize: 10.5, color: 'var(--accent)', textDecoration: 'none' }}>
+                style={{ fontSize: 10.5, textDecoration: 'none' }}>
                 Dış bağımlılık detayı →
               </Link>
             </div>

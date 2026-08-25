@@ -170,7 +170,7 @@ export default function MessagingPage() {
           {/* v0.9.405 — çakışan yüzey artık birbirine bağlı: consumer
               span'leri endpoint (giriş) perspektifiyle de listelenir. */}
           {' '}Consumer'ları giriş-noktası görünümünde incelemek için{' '}
-          <Link to="/endpoints?entry=rpc" style={{ color: 'var(--accent)' }}>Endpoints · RPC →</Link>
+          <Link to="/endpoints?entry=rpc">Endpoints · RPC →</Link>
         </div>
         {/* v0.9.405 — URL-state taşıyan sayfa görünüm kaydedebilmeli
             (saved_views şeması hazır; Endpoints emsali). */}

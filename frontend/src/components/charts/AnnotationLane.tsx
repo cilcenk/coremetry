@@ -171,8 +171,8 @@ export function AnnotationLane({ items, fromNs, toNs, onZoomTo }: {
                   {KIND_GLYPH[it.kind] ?? '•'} {it.title}
                   {href && (
                     href.startsWith('/')
-                      ? <Link to={href} style={{ color: 'var(--accent)', marginLeft: 5 }}>aç →</Link>
-                      : <a href={href} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', marginLeft: 5 }}>aç →</a>
+                      ? <Link to={href} style={{ marginLeft: 5 }}>aç →</Link>
+                      : <a href={href} target="_blank" rel="noreferrer" style={{ marginLeft: 5 }}>aç →</a>
                   )}
                 </span>
               );

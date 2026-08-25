@@ -99,7 +99,7 @@ export function DetailsPropsStrip({ service, range }: { service: string; range: 
         <Prop k="Version">
           <span className="mono">{version}</span>
           {last && (
-            <a href="#deploys" style={{ ...chip, marginLeft: 6, color: 'var(--accent)', textDecoration: 'none' }}
+            <a href="#deploys" style={{ ...chip, marginLeft: 6, textDecoration: 'none' }}
               title="Recent rollouts panel">
               deployed {tsRel(last.timeUnixNs)}
             </a>

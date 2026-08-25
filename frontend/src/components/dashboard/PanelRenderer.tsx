@@ -524,7 +524,7 @@ function HeatmapPanel({ cfg, range, refreshTick, height }: {
               }}>
                 <b>{boxSel.count.toLocaleString()} örnek</b>
                 <Link to={heatmapTracesHref(boxSel, cfg.service)}
-                  style={{ color: 'var(--accent)', textDecoration: 'none' }}>Traces →</Link>
+                  style={{ textDecoration: 'none' }}>Traces →</Link>
                 <span onClick={() => setBoxSel(null)}
                   style={{ cursor: 'pointer', color: 'var(--text3)' }}>✕</span>
               </div>

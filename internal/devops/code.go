@@ -141,6 +141,14 @@ type CodeWindow struct {
 	// (AppFrames en derini başa alır) ama modele bu SIRA hiç
 	// söylenmiyordu — üç pencereyi eşit ağırlıkta okuyordu.
 	Segment int `json:"segment,omitempty"`
+	// Resource (v0.10.73) — bu pencere bir STACK FRAME'inden değil, hata
+	// metninin ANDIĞI kaynak dosyadan geliyor (mapper XML'i, SQL parçası).
+	//
+	// Ayrı bayrak, çünkü modele söylenmesi gereken şey farklı: frame
+	// penceresi "hata BURADA atıldı" der, kaynak penceresi "hatanın andığı
+	// tanım BU" der. İkisini aynı etiketle sunmak, modelin XML'de bir
+	// "hata satırı" aramasına yol açardı.
+	Resource bool `json:"resource,omitempty"`
 }
 
 // CodeContext — bir stacktrace için toplanan tüm kod bağlamı.
@@ -363,7 +371,9 @@ func evictOldest(m map[string]treeEntry) {
 // eklemek, on beşinci eklendiğinde sessizce eksik kalırdı. Sınıfı
 // atamayan bir dal "other" kovasına düşer — görünür bir eksik, sessiz
 // bir "ok" değil.
-func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, frames []stackparse.Frame) (out CodeContext) {
+// refs (v0.10.73) — hata METNİNİN andığı kaynak dosya adayları
+// (stackparse.ResourceRefs). Boş geçilebilir: kaynak avı atlanır.
+func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, frames []stackparse.Frame, refs []stackparse.ResourceRef) (out CodeContext) {
 	class := CodeOther
 	// v0.9.1243 — sınıf sayaca GİDERKEN bağlamın kendisine de yazılır.
 	// Aynı defer BİLİNÇLİ: on dört çıkışın sınıfı zaten burada tek
@@ -466,6 +476,20 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 		func(c context.Context, p string) (string, error) {
 			return fetchItemContent(c, cli, cfg, ver, repo, branch, p)
 		})
+
+	// v0.10.73 — HATA METNİNİN ANDIĞI KAYNAK DOSYALAR.
+	//
+	// Frame'ler yalnız .java veriyor; bir sorgu hatasında asıl kanıt çoğu
+	// zaman mapper XML'i ya da SQL parçasıdır. Adaylar hata METNİNDEN
+	// çıkarıldı (stackparse.ResourceRefs); burada ağaçta aranıp çekiliyor.
+	//
+	// ⚠ FRAME AVINDAN SONRA ve AYRI bir bütçeyle: kod pencereleri asıl
+	// kanıttır ve kaynak avı onların bütçesini yiyemez. Ağaçta eşleşme
+	// yerel ve bedava; yalnız ÇEKİM sayılıyor (v0.10.71'in aynı kuralı).
+	hunt.windows = append(hunt.windows, huntResources(ctx, refs, paths,
+		func(c context.Context, pth string) (string, error) {
+			return fetchItemContent(c, cli, cfg, ver, repo, branch, pth)
+		})...)
 
 	windows, trimmed := ClampCodeWindows(hunt.windows, codeBudgetRunes)
 	out.Windows = windows
@@ -1614,6 +1638,16 @@ func (c CodeContext) PromptBlock() string {
 	b.WriteString("). Satır başındaki sayı GERÇEK dosya satırıdır; " +
 		frameMarker + " ile işaretli satır stack'in gösterdiği hata satırıdır — analizini oradan başlat:")
 	for i, w := range c.Windows {
+		if w.Resource {
+			// v0.10.73 — KAYNAK PENCERESİ AYRI SUNULUYOR.
+			//
+			// Bu dosya bir çağrı yığınından gelmiyor: hata METNİ onu andı.
+			// İçinde "hata satırı" YOK ve öyle sunulursa model XML'de
+			// olmayan bir satırı suçlar. Etiket bunu açıkça söylüyor.
+			fmt.Fprintf(&b, "\n\nkaynak %d/%d — hata metninin ANDIĞI dosya (stack buraya işaret etmiyor)\n%s (ilk %d satır)\n```%s\n%s\n```",
+				i+1, len(c.Windows), w.Path, w.ToLine, fenceLang(w.Path), w.Content)
+			continue
+		}
 		fmt.Fprintf(&b, "\n\npencere %d/%d%s\n%s (satır %d-%d) — %s\n```%s\n%s\n```",
 			i+1, len(c.Windows), segmentLabel(w.Segment, deepest),
 			w.Path, w.FromLine, w.ToLine, w.Frame,
@@ -1831,4 +1865,81 @@ func refNames(body []byte) ([]string, bool) {
 		names = append(names, r.Name)
 	}
 	return names, true
+}
+
+// resourceFetchLimit — kaynak dosya çekim tavanı.
+//
+// 2: mapper + şema gibi bir çift yeter ve kod pencerelerinin prompt
+// bütçesini yemesin. Kod asıl kanıt; kaynak onu DESTEKLER.
+const resourceFetchLimit = 2
+
+// resourceWindowLines — kaynak dosyadan alınacak ilk N satır.
+//
+// Kaynak dosyada "hata satırı" YOK (stack oraya işaret etmiyor), o yüzden
+// pencere kaydırılamıyor; baştan sabit bir dilim alınıyor. 200 satır bir
+// mapper'ın statement'larını kapsamaya yetiyor ve bütçeyi patlatmıyor.
+const resourceWindowLines = 200
+
+// huntResources — aday kaynak adlarını ağaçta bulup çeker.
+//
+// SAF DEĞİL (ağ), ama kararların tamamı yerel: eşleşme ağaç listesinde
+// yapılıyor, yalnız eşleşenler çekiliyor.
+func huntResources(
+	ctx context.Context,
+	refs []stackparse.ResourceRef,
+	paths []string,
+	fetch func(context.Context, string) (string, error),
+) []CodeWindow {
+	if len(refs) == 0 || len(paths) == 0 {
+		return nil
+	}
+	var out []CodeWindow
+	seen := map[string]bool{}
+	for _, r := range refs {
+		if len(out) >= resourceFetchLimit {
+			break
+		}
+		if ctx.Err() != nil {
+			return out
+		}
+		p := bestPathForResource(paths, r)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		body, err := fetch(ctx, p)
+		if err != nil || strings.TrimSpace(body) == "" {
+			continue
+		}
+		w := WindowAround(body, 1, resourceWindowLines)
+		if w.Content == "" {
+			continue
+		}
+		w.Path, w.Resource = p, true
+		// Frame YOK: bu pencere bir çağrı yığınından gelmiyor. Alan boş
+		// bırakılıyor ki prompt onu "hata burada" diye sunmasın.
+		out = append(out, w)
+	}
+	return out
+}
+
+// bestPathForResource — ağaçta adaya en iyi eşleşen yol.
+//
+// Taban ad BİREBİR eşleşmeli: "OrderMapper" için "OrderMapper.xml" evet,
+// "OrderMapperTest.xml" hayır. Gevşek eşleşme yanlış dosyayı kanıt diye
+// sunardı — kanıt yokluğundan kötü.
+func bestPathForResource(paths []string, r stackparse.ResourceRef) string {
+	exts := []string{r.Ext}
+	if r.Ext == "" {
+		exts = stackparse.ResourceExts()
+	}
+	for _, ext := range exts {
+		want := "/" + r.Base + ext
+		for _, p := range paths {
+			if strings.HasSuffix(p, want) {
+				return p
+			}
+		}
+	}
+	return ""
 }

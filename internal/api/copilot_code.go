@@ -103,7 +103,14 @@ func (s *Server) buildCodeContext(ctx context.Context, service, stack string) de
 	// (v0.9.1240) ya da servis önekinden türetilen ad (bsa-… → BSA).
 	// FetchCode onu yalnız ayardaki Project boşken kullanır; öneri boşsa
 	// içindeki Reason çıkmazı üç kaynak üzerinden anlatır.
-	cc := s.devops.FetchCode(ctx, res.Repo, res.Project, stackparse.ParseJava(stack))
+	// v0.10.73 — HATA METNİNİN ANDIĞI KAYNAK DOSYALAR da aday.
+	//
+	// Frame'ler yalnız .java veriyor; bir sorgu hatasında asıl kanıt
+	// çoğu zaman mapper XML'i ya da SQL parçasıdır. Adaylar HAM stack
+	// metninden çıkarılıyor (ParseJava frame olmayan satırları atıyor,
+	// oysa mesaj tam orada).
+	cc := s.devops.FetchCode(ctx, res.Repo, res.Project,
+		stackparse.ParseJava(stack), stackparse.ResourceRefs(stack))
 	cc.Source = res.Source
 	return cc
 }

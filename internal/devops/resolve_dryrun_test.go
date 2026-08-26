@@ -270,7 +270,7 @@ func TestResolveDryRunDoesNotTouchCodeCounters(t *testing.T) {
 	}
 
 	// Sayaç GERÇEK yolda çalışıyor mu? (kapının kendisi ölçülüyor)
-	svc.FetchCode(ctx, "core-service", ProjectHint{}, nil)
+	svc.FetchCode(ctx, "core-service", ProjectHint{}, nil, nil)
 	if st := svc.CodeObservability(); st.Attempts != 1 {
 		t.Fatalf("FetchCode sayacı=%d, istenen 1 — sayaç zaten ölüyse üstteki sıfır bir şey kanıtlamaz", st.Attempts)
 	}

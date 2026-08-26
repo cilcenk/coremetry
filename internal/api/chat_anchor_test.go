@@ -217,7 +217,7 @@ func TestGuidedDeployBundleHonorsTheAnchor(t *testing.T) {
 	}
 	// Yaş etiketleri de aynı ana göre: doğru veriye yanlış etiket koymak,
 	// yanlış veriden daha ikna edici bir hatadır.
-	if !strings.Contains(src, "deployRenderNow(anchorTo)") {
+	if !strings.Contains(src, "evidenceAsOf(anchorTo)") {
 		t.Error("\"kaç saat önce\" hesabı hâlâ GERÇEK şimdiye göre — çıpalı " +
 			"pencerede doğru veriye yanlış yaş etiketi konur")
 	}
@@ -235,4 +235,42 @@ func TestGuidedDeployBundleHonorsTheAnchor(t *testing.T) {
 			t.Errorf("çağrı yeri çıpasız: %s", call)
 		}
 	}
+}
+
+// TestEvidenceAgesFollowTheWindow — v0.10.65.
+//
+// v0.10.64 deploy penceresini çıpaladı ama YAŞ etiketlerinin çoğu hâlâ
+// gerçek şimdiye göre hesaplanıyordu: `renderProblemsEvidenceTR(...,
+// time.Now(), ...)` sekiz yerde, `renderDeployEvidenceTR` iki yerde daha.
+//
+// ⚠ Bunlar sorgu penceresi kurmuyor — veri DOĞRU. Yanlış olan ETİKET:
+// çıpalı bir pencerede "4 saattir açık" cümlesi saatlerce kayıyor. Doğru
+// veriye yanlış etiket koymak, yanlış veriden daha ikna edici bir hatadır:
+// operatör sayıyı sorgulamaz, çünkü sayı doğru.
+//
+// Kural tek ve tek yardımcıda: kanıtın yaşı, kanıtın PENCERESİNE göre.
+func TestEvidenceAgesFollowTheWindow(t *testing.T) {
+	src := stripGoCommentsAPI(readSourceFile(t, "copilot_guided.go"))
+
+	for _, renderer := range []string{"renderProblemsEvidenceTR", "renderDeployEvidenceTR"} {
+		for _, line := range strings.Split(src, "\n") {
+			if strings.Contains(line, renderer+"(") && strings.Contains(line, "time.Now()") {
+				t.Errorf("%s hâlâ GERÇEK şimdiyi kullanıyor:\n    %s\n"+
+					"Çıpalı pencerede yaş etiketi kayar — evidenceAsOf(...) kullan.",
+					renderer, strings.TrimSpace(line))
+			}
+		}
+	}
+	// ⚠ SINIRINI YAZIYORUM. Buraya bir de "evidenceAsOf tek kez tanımlı"
+	// iddiası koymuştum; mutasyon denemesinde onu DERLEYİCİ yakaladı (Go
+	// aynı isimde ikinci fonksiyona zaten izin vermiyor), yani iddia
+	// derleyicinin işini tekrarlıyordu ve KENDİ başına hiçbir şey
+	// korumuyordu — kaldırıldı.
+	//
+	// Gerçek risk BAŞKA ADLA ikinci bir "şimdi" yardımcısı (guidedNow,
+	// asOfOrNow…) ve bu test onu YAKALAMIYOR. Yakalayan şey yukarıdaki
+	// satır taraması: yeni yardımcı da sonunda bu iki renderer'a girmek
+	// zorunda ve orada `time.Now()` görünürse kırmızıya döner. Dolaylı,
+	// ama gerçek.
+	_ = src
 }

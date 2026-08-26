@@ -2,6 +2,8 @@ package api
 
 import (
 	"errors"
+	"fmt"
+	"github.com/cilcenk/coremetry/internal/ai/provider"
 	"os"
 	"strings"
 	"testing"
@@ -159,5 +161,61 @@ func TestChatWiresOverflowHandling(t *testing.T) {
 	// model bir adım eksik düşünür.
 	if !strings.Contains(src, "round--") {
 		t.Error("yeniden deneme turu geri alınmıyor — döngü bir tur kaybeder")
+	}
+}
+
+// TestShrinkNeverOrphansToolResults — v0.10.52.
+//
+// ⚠ Bu kusur v0.10.26'nın kurtarma yolunu tam ihtiyaç anında yarı yarıya
+// çalışmaz hâle getiriyordu.
+//
+// Tool sonuçları taşıyan bir mesaj sağlayıcıya her sonuç için ayrı bir
+// `{"role":"tool","tool_call_id":…}` mesajı olarak gidiyor
+// (provider/tools.go). OpenAI uyumlu sunucular, aynı id'yi taşıyan asistan
+// `tool_calls` mesajı ÖNCESİNDE yoksa bunu REDDEDİYOR.
+//
+// Ham `conv[len-keep:]` kesimi çifti PARİTEYE göre bölüyordu: korunan ilk
+// mesaj bir tool-sonucu olduğunda yeniden deneme 400 ile ölüyor ve
+// operatör, taşmayı dürüstçe anlatan cümle yerine ham sağlayıcı hatası
+// görüyordu.
+//
+// Bu yüzden test TEK bir uzunluk değil, HER uzunluğu deniyor: kusur
+// paritede yaşıyordu, tek örnek onu ıskalardı.
+func TestShrinkNeverOrphansToolResults(t *testing.T) {
+	mkUser := func(q string) copilot.ChatMessage {
+		return copilot.ChatMessage{Role: "user", Text: q}
+	}
+	mkCall := func(id string) copilot.ChatMessage {
+		return copilot.ChatMessage{Role: "assistant",
+			ToolCalls: []provider.ToolCall{{ID: id, Name: "list_services"}}}
+	}
+	mkResult := func(id string) copilot.ChatMessage {
+		return copilot.ChatMessage{Role: "user",
+			ToolResults: []provider.ToolResult{{CallID: id, Name: "list_services", Content: "{}"}}}
+	}
+
+	for n := 2; n <= 24; n++ {
+		conv := []copilot.ChatMessage{mkUser("checkout yavaş mı?")}
+		for i := 1; len(conv) < n; i++ {
+			conv = append(conv, mkCall(fmt.Sprintf("c%d", i)))
+			if len(conv) < n {
+				conv = append(conv, mkResult(fmt.Sprintf("c%d", i)))
+			}
+		}
+		got, ok := shrinkConvForRetry(conv)
+		if !ok {
+			continue // küçültecek bir şey yok — meşru
+		}
+		if len(got) == 0 {
+			t.Fatalf("n=%d: küçültme her şeyi sildi", n)
+		}
+		if len(got[0].ToolResults) > 0 {
+			t.Errorf("n=%d: korunan İLK mesaj öksüz bir tool sonucu — sağlayıcı "+
+				"eşleşen tool_calls olmadan role:tool mesajını REDDEDER ve taşma "+
+				"kurtarması 400 ile ölür", n)
+		}
+		if len(got) >= len(conv) {
+			t.Errorf("n=%d: küçültme gerçekten küçültmedi (%d → %d)", n, len(conv), len(got))
+		}
 	}
 }

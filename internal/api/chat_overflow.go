@@ -62,7 +62,31 @@ func shrinkConvForRetry(conv []copilot.ChatMessage) ([]copilot.ChatMessage, bool
 	}
 	// EN YENİLER korunuyor: son kullanıcı sorusu ve ona en yakın kanıt.
 	// Baştan atmak, modelin cevaplayacağı soruyu silmek olurdu.
-	return conv[len(conv)-keep:], true
+	start := len(conv) - keep
+
+	// ⚠ KESİM TOOL ÇİFTİNİ BÖLEMEZ (v0.10.52).
+	//
+	// Tool sonuçları taşıyan bir mesaj, sağlayıcıya her sonuç için ayrı bir
+	// `{"role":"tool","tool_call_id":…}` mesajı olarak gidiyor
+	// (provider/tools.go). OpenAI uyumlu sunucular böyle bir mesajı, aynı
+	// id'yi taşıyan asistan `tool_calls` mesajı ÖNCESİNDE yoksa REDDEDİYOR.
+	//
+	// Ham `conv[len-keep:]` kesimi bu çifti kabaca yarı yarıya bölüyordu:
+	// korunan ilk mesaj bir tool-sonucu olduğunda yeniden deneme 400 ile
+	// ölüyor ve operatör, taşmayı dürüstçe anlatan cümle yerine ham bir
+	// sağlayıcı hatası görüyordu — yani v0.10.26'nın kurtarma yolu tam da
+	// ihtiyaç duyulduğu anda yarı yarıya çalışmıyordu.
+	//
+	// Ters yön sorun DEĞİL: asistan `tool_calls` mesajı korunursa sonuçları
+	// zaten ARDINDAN geliyor (sonek kesiyoruz), yani öksüz kalmıyor.
+	for start < len(conv) && len(conv[start].ToolResults) > 0 {
+		start++
+	}
+	// İlerletme her şeyi yediyse küçültecek anlamlı bir şey kalmamıştır.
+	if start >= len(conv) {
+		return conv, false
+	}
+	return conv[start:], true
 }
 
 // chatOverflowMessageTR — taşma operatöre nasıl anlatılıyor.

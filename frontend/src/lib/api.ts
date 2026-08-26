@@ -1932,26 +1932,26 @@ export const api = {
   // VERİLMEYİNCE gövde de davranış da bayt bayt eskisi — akan kip bir
   // TALEP, sözleşme değişikliği değil.
   copilotExplainTrace:   (id: string, includeCode?: boolean, opts?: ExplainStreamOpts) =>
-    explainCall<{ explanation: string; exchangeId?: string; evidenceSpanIds?: string[]; code?: import('./types').AICodeContext }>(
+    explainCall<import('./types').ExplainAnswerBase & { evidenceSpanIds?: string[]; code?: import('./types').AICodeContext }>(
       `/api/copilot/explain-trace/${id}`, explainInit(includeCode), opts),
   // Per-span explain (v0.5.144). Backend pulls target span +
   // parent + children + error siblings for a focused prompt.
   copilotExplainSpan:    (traceId: string, spanId: string, opts?: ExplainStreamOpts) =>
-    explainCall<{ explanation: string; exchangeId?: string }>(
+    explainCall<import('./types').ExplainAnswerBase>(
       `/api/copilot/explain-span/${encodeURIComponent(traceId)}?span=${encodeURIComponent(spanId)}`,
       { method: 'POST' }, opts),
   copilotExplainProblem: (id: string, opts?: ExplainStreamOpts) =>
-    explainCall<{ explanation: string; exchangeId?: string }>(
+    explainCall<import('./types').ExplainAnswerBase>(
       `/api/copilot/explain-problem/${id}`, { method: 'POST' }, opts),
   // v0.9.414 — exception grubu kök-sebep: backend örnek trace + trace
   // loglarını + deploy penceresini otomatik toplar; kanıt trace/span
   // id'leri deterministik döner (UI örnek satırlarını kutular).
   copilotExplainException: (fingerprint: string, includeCode?: boolean, opts?: ExplainStreamOpts) =>
-    explainCall<{ explanation: string; exchangeId?: string; evidenceTraceIds?: string[]; evidenceSpanIds?: string[];
+    explainCall<import('./types').ExplainAnswerBase & { evidenceTraceIds?: string[]; evidenceSpanIds?: string[];
                   code?: import('./types').AICodeContext }>(
       `/api/copilot/explain-exception/${encodeURIComponent(fingerprint)}`, explainInit(includeCode), opts),
   copilotExplainIncident: (id: string, opts?: ExplainStreamOpts) =>
-    explainCall<{ explanation: string; exchangeId?: string }>(
+    explainCall<import('./types').ExplainAnswerBase>(
       `/api/copilot/explain-incident/${id}`, { method: 'POST' }, opts),
   // v0.9.1197 (Faz 5.4) — incident kanıtından postmortem taslağı; taslak
   // editöre düşer, kaydeden yine updateIncident. Bilinçli buffered (akış
@@ -1960,10 +1960,10 @@ export const api = {
     request<{ draft: string; exchangeId?: string }>(
       `/api/copilot/draft-postmortem/${encodeURIComponent(id)}`, { method: 'POST' }),
   copilotExplainAnomaly: (id: string, opts?: ExplainStreamOpts) =>
-    explainCall<{ explanation: string; exchangeId?: string }>(
+    explainCall<import('./types').ExplainAnswerBase>(
       `/api/copilot/explain-anomaly/${id}`, { method: 'POST' }, opts),
   copilotExplainServiceHealth: (service: string, fromNs: number, toNs: number, opts?: ExplainStreamOpts) =>
-    explainCall<{ explanation: string; exchangeId?: string }>(
+    explainCall<import('./types').ExplainAnswerBase>(
       `/api/copilot/explain-service?service=${encodeURIComponent(service)}&from=${fromNs}&to=${toNs}`,
       { method: 'POST' }, opts),
   // v0.9.1031 — ServiceCharts AI çekmecesi (onaylı mockup). Anlatımın
@@ -2007,13 +2007,13 @@ export const api = {
     return insightStream(path, opts);
   },
   copilotRunbook: (id: string, opts?: ExplainStreamOpts) =>
-    explainCall<{ explanation: string; exchangeId?: string; similarCount: number }>(
+    explainCall<import('./types').ExplainAnswerBase & { similarCount: number }>(
       `/api/copilot/runbook/${id}`, { method: 'POST' }, opts),
   // v0.9.1198 (Faz 5.5) — probleme bağlı koşudan runbook güncelleme
   // önerisi; id = execution. Öneri saklanmaz, uygulamak operatörün
   // runbook düzenlemesi.
   runbookUpdateSuggestion: (execId: string, opts?: ExplainStreamOpts) =>
-    explainCall<{ explanation: string; exchangeId?: string; runbookId: string; problemId: string }>(
+    explainCall<import('./types').ExplainAnswerBase & { runbookId: string; problemId: string }>(
       `/api/copilot/runbook-update/${encodeURIComponent(execId)}`, { method: 'POST' }, opts),
   copilotCompareTraces: (aId: string, bId: string) =>
     request<{ explanation: string; exchangeId?: string }>(`/api/copilot/compare-traces`, {

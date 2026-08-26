@@ -4670,6 +4670,39 @@ export interface RagSource {
 // sunucu rotadan deterministik üretir (LLM biçimlemesine güvenilmez).
 export interface ChatAnswerLink { label: string; href: string }
 
+/**
+ * AIAnswerLink — sunucunun bir AI cevabına iliştirdiği link (v0.10.77).
+ *
+ * `guidedAnswerLink`in wire karşılığı. ChatAnswerLink'ten farkı `id`:
+ * kimlik-avlayan üreticiler (request_id köprüsü) linkin türediği HAM
+ * kimliği de gönderiyor ve arayüz onu cevap METNİNDE bulup satır içi
+ * link olarak sarıyor (v0.10.35).
+ */
+export interface AIAnswerLink {
+  label: string;
+  href: string;
+  /** Linkin türediği ham kimlik; yalnız kimlik-avlayan üreticiler doldurur. */
+  id?: string;
+}
+
+/**
+ * ExplainAnswerBase — HER ✨ Explain yanıtının ortak gövdesi (v0.10.77).
+ *
+ * ⚠ `links` buraya yazılmadan önce her çağrı yerinde `as { links?… }`
+ * cast'iyle okunuyordu (CopilotExplain.tsx'te DÖRT kez). Cast, tipin
+ * yalan söylemesine izin veriyor: sunucu alanı kaldırsa ya da adını
+ * değiştirse tsc hiçbir şey söylemez ve satır içi linkler sessizce
+ * kaybolurdu — tam olarak v0.10.35'te düzeltilen kusurun geri gelmesi.
+ *
+ * Sunucu tarafında `links`i deliverExplain HER yüzeye ekliyor, o yüzden
+ * tek bir taban tip doğru şekil.
+ */
+export interface ExplainAnswerBase {
+  explanation: string;
+  exchangeId?: string;
+  links?: AIAnswerLink[];
+}
+
 // ChatTurn (v0.9.479) — ekranda çizilen bir sohbet turu: wire shape'i
 // (ChatMessage) + yalnız UI'ın bildiği alanlar. İKİ yüzey paylaşır —
 // global CoSRE penceresi (CopilotChat) ve AI çekmecesi içindeki sohbet

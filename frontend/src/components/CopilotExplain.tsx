@@ -166,7 +166,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
       if (kind === 'runbook') {
         const r = await api.copilotRunbook(id, opts);
         applyText(r.explanation);
-        setLinks((r as { links?: IdLink[] }).links);
+        setLinks(r.links);
         setExchangeId(r.exchangeId);
         // Surface the "based on N past resolutions" hint so the
         // operator knows whether the steps are grounded in
@@ -178,14 +178,14 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
         const r = kind === 'trace'          ? await api.copilotExplainTrace(id, withCode, opts).then(rr => {
                                                   if (rr.evidenceSpanIds?.length) onEvidence?.(rr.evidenceSpanIds);
                                                   setCode(rr.code ?? null);
-                                                  setLinks((rr as { links?: IdLink[] }).links);
+                                                  setLinks(rr.links);
                                                   return rr;
                                                 })
                 : kind === 'exception'      ? await api.copilotExplainException(id, withCode, opts).then(rr => {
                                                   if (rr.evidenceSpanIds?.length) onEvidence?.(rr.evidenceSpanIds);
                                                   if (rr.evidenceTraceIds?.length) onEvidenceTraces?.(rr.evidenceTraceIds);
                                                   setCode(rr.code ?? null);
-                                                  setLinks((rr as { links?: IdLink[] }).links);
+                                                  setLinks(rr.links);
                                                   return rr;
                                                 })
                 : kind === 'span'           ? await api.copilotExplainSpan(id, spanId ?? '', opts)
@@ -194,7 +194,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
                 : kind === 'anomaly'        ? await api.copilotExplainAnomaly(id, opts)
                 :                             await api.copilotExplainServiceHealth(id, fromNs ?? 0, toNs ?? 0, opts);
         applyText(r.explanation);
-        setLinks((r as { links?: IdLink[] }).links);
+        setLinks(r.links);
         setExchangeId(r.exchangeId);
       }
     } catch (e: unknown) {

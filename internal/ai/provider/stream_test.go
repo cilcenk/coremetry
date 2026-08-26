@@ -212,9 +212,14 @@ func TestOpenAIStreamAccumThinkOnlySalvage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("finish: %v", err)
 	}
-	want := "The checkout span holds an Oracle row lock."
-	if final != want || trailing != want {
-		t.Fatalf("final=%q trailing=%q; want the salvaged reasoning as one delta", final, trailing)
+	// v0.10.37 — kurtarma AYNEN çalışıyor (testin asıl niyeti) ama artık
+	// İŞARETLİ: kurtarılan düşünce, nihai cevaptan ayırt edilebilmeli.
+	const body = "The checkout span holds an Oracle row lock."
+	if !strings.Contains(final, body) || final != trailing {
+		t.Fatalf("final=%q trailing=%q; kurtarılan reasoning tek delta olarak gelmeliydi", final, trailing)
+	}
+	if !IsSalvagedThinking(final) {
+		t.Fatalf("kurtarılan düşünce İŞARETSİZ — operatör onu nihai cevap sanar: %q", final)
 	}
 }
 

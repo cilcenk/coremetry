@@ -328,8 +328,13 @@ func TestParseOpenAIChat_SalvageChain(t *testing.T) {
 					t.Fatalf("hata metni:\n got %q\nwant %q", err.Error(), tc.wantErr)
 				}
 			}
-			if resp.Text != tc.wantText {
-				t.Errorf("Text = %q, want %q", resp.Text, tc.wantText)
+			// v0.10.37 — kurtarılan DÜŞÜNCE artık işaretli çıkıyor
+			// (nihai cevaptan ayırt edilebilsin). Beklenen gövde AYNI;
+			// karşılaştırma işareti soyarak yapılıyor ki testin niyeti
+			// (kurtarma çalışıyor mu) korunsun.
+			gotText := strings.TrimPrefix(resp.Text, SalvagedThinkingPrefix)
+			if gotText != tc.wantText {
+				t.Errorf("Text = %q, want %q", gotText, tc.wantText)
 			}
 			// Token sayıları hata hâlinde de taşınmalı — /ai satırı
 			// başarısız çağrının maliyetini de göstermeli.

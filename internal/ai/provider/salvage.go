@@ -68,7 +68,50 @@ func SalvageAnswer(content, reasoningContent, reasoning string) string {
 	if out := StripThinking(reasoning); out != "" {
 		return out
 	}
-	return ThinkingContent(content)
+	// ⚠ SON ÇARE İŞARETLENİYOR (v0.10.37). Kurtarmanın kendisi makul —
+	// bazı modeller yalnız düşünce bloğu üretiyor ve o düşünce genelde
+	// açıklamanın kendisi; başarısız saymak daha kötü olurdu.
+	//
+	// Kusur kurtarma DEĞİL, sonucun gerçek cevaptan AYIRT EDİLEMEZ
+	// olmasıydı: metin `answer` olarak çıkıyor, ai_calls'a normal cevap
+	// yazılıyor ve bir sonraki turda geçmişe normal cevap gibi biniyordu.
+	// Yani modelin SPEKÜLASYON fazı, nihai cevap kılığında yayına
+	// giriyordu ve operatörün bunu anlamasının hiçbir yolu yoktu.
+	//
+	// İşaret sağlayıcı SINIRINDA konuyor: tek yer, ve sohbet/explain/
+	// ai_calls/geçmiş hepsi birden kazanıyor.
+	return MarkSalvagedThinking(ThinkingContent(content))
+}
+
+// SalvagedThinkingPrefix — kurtarılmış düşünce bloğunun önüne konan
+// uyarı. Dışa açık, çünkü tüketiciler (arayüz, denetim) bu metni
+// TANIYABİLMELİ — dizgeyi kendi kopyalarında tekrar yazmasınlar.
+const SalvagedThinkingPrefix = "⚠ Bu metin modelin DÜŞÜNCE bloğundan kurtarıldı — " +
+	"nihai cevabı değil, çalışma notu. Çıkarımlar ve sayılar yarım olabilir.\n\n"
+
+// MarkSalvagedThinking — düşünce bloğunu işaretler.
+//
+// Boş girdi boş kalır: işaretin tek başına gitmesi, olmayan bir cevabı
+// varmış gibi göstermek olurdu.
+func MarkSalvagedThinking(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return ""
+	}
+	// Zaten işaretliyse tekrarlama — zincir iki kez çağrılırsa uyarı
+	// üst üste binerdi.
+	if strings.HasPrefix(s, SalvagedThinkingPrefix) {
+		return s
+	}
+	return SalvagedThinkingPrefix + s
+}
+
+// IsSalvagedThinking — bu cevap düşünce bloğundan mı kurtarıldı.
+//
+// Tüketiciler (arayüz rozeti, denetim sorgusu) buna bakıyor; dizge
+// karşılaştırmasını kendi içlerinde yazmak, işaret değişince sessizce
+// kopmak demekti.
+func IsSalvagedThinking(s string) bool {
+	return strings.HasPrefix(s, SalvagedThinkingPrefix)
 }
 
 // EmptyAnswerError — kurtarılacak hiçbir şey kalmadığında operatöre

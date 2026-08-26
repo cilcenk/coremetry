@@ -269,7 +269,11 @@ func (s *Store) GetOracleMetrics(
 		// v0.10.15 — GÖZLENEN aralıkla geri çarpım. windowSec ile çarpmak,
 		// payda düzeltildikten sonra toplamı ŞİŞİRİRDİ (rapor bunu
 		// "sessizce yanlışlanabilecek tek satır" diye işaretlemişti).
-		out.CPUTimeSec = rates["oracledb.cpu_time"] * observedSec
+		// v0.10.54 — cpu_time KENDİ gözlenen aralığıyla çarpılıyor.
+		// Tek bir "observed" değeri son taranan metriğin aralığıydı;
+		// metrikler farklı zamanlarda başladığında toplam sessizce
+		// yanlış çıkıyordu.
+		out.CPUTimeSec = rates["oracledb.cpu_time"] * observedSec["oracledb.cpu_time"]
 		out.LogicalReadsPS = rates["oracledb.logical_reads"]
 		out.PhysicalReadsPS = rates["oracledb.physical_reads"]
 		out.HardParsesPS = rates["oracledb.hard_parses"]
@@ -363,7 +367,7 @@ func (s *Store) queryOracleGauges(
 
 func (s *Store) queryOracleRates(
 	ctx context.Context, from, to time.Time, instance string, withInstance bool,
-) (map[string]float64, float64, error) {
+) (map[string]float64, map[string]float64, error) {
 	// For cumulative counters: (max - min) / GÖZLENEN saniye.
 	//
 	// v0.10.15 — payda artık istenen pencere DEĞİL, verinin gerçekten
@@ -386,11 +390,20 @@ func (s *Store) queryOracleRates(
 	}
 	rows, err := s.telemetryReadConn().Query(ctx, q, args...)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 	out := map[string]float64{}
-	var observed float64
+	// v0.10.54 — aralık METRİK BAŞINA taşınıyor.
+	//
+	// Eskiden tek bir `observed` vardı ve döngüde her satırda ÜZERİNE
+	// yazılıyordu, yani fonksiyon SON TARANAN metriğin aralığını
+	// döndürüyordu. Çağıran onunla cpu_time'ı geri çarpıyor: metrikler
+	// farklı zamanlarda başlarsa (yeni bir receiver, yeniden başlatılmış
+	// bir instance) cpu_time BAŞKA bir metriğin aralığıyla çarpılıyordu.
+	//
+	// Sonuç sessiz: CPUTimeSec makul görünen ama yanlış bir toplam.
+	observedFor := map[string]float64{}
 	for rows.Next() {
 		var m string
 		var v, obs float64
@@ -405,15 +418,15 @@ func (s *Store) queryOracleRates(
 		// Sessiz sıfır, gürültülü hatadan çok daha pahalı: operatör "Oracle
 		// boşta" diye okur. Tarama hatası artık okumayı DÜŞÜRÜYOR.
 		if err := rows.Scan(&m, &v, &obs); err != nil {
-			return nil, 0, fmt.Errorf("oracle rates scan: %w", err)
+			return nil, nil, fmt.Errorf("oracle rates scan: %w", err)
 		}
-		observed = obs
+		observedFor[m] = obs
 		if v < 0 {
 			v = 0 // counter reset → suppress
 		}
 		out[m] = v
 	}
-	return out, observed, rows.Err()
+	return out, observedFor, rows.Err()
 }
 
 func (s *Store) queryOracleTablespaces(

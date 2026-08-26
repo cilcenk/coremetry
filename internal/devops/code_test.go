@@ -1,13 +1,13 @@
 package devops
 
 import (
-	"sync"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -369,11 +369,11 @@ type fakeTFS struct {
 	// slowItemAfter / itemDelay — N'inci dosya isteğinden İTİBAREN
 	// uyu (v0.9.1237 süre tavanı testi). Uyku ctx-duyarlı: aksi hâlde
 	// httptest.Server.Close() askıdaki handler'ı beklerdi.
-	slowItemAfter int
-	itemDelay     time.Duration
+	slowItemAfter     int
+	itemDelay         time.Duration
 	hiddenFromListing map[string]bool
-	mu        sync.Mutex
-	treeDelay time.Duration
+	mu                sync.Mutex
+	treeDelay         time.Duration
 }
 
 // repoSegment — istek yolundaki depo adı. Liste ucunda "".
@@ -429,14 +429,18 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 		// TestScopedTreeSingleflightIsKeyed) bu appendi -race'te
 		// yakaladı: eski singleflight testinde tüm çağrılar tek uçuşta
 		// birleştiği için handler hiç çakışmıyordu.
-		f.mu.Lock(); f.seen = append(f.seen, p); f.mu.Unlock()
+		f.mu.Lock()
+		f.seen = append(f.seen, p)
+		f.mu.Unlock()
 		// v0.9.1236 — liste DENEMESİ en tepede sayılır, kimlik ve
 		// api-version muhafızlarından ÖNCE. Sayacı aşağıya, başarı
 		// dalına koymak testi kör ederdi: "kaçış kapısı hiç açılmadı"
 		// ile "açıldı ama sunucu 401 verdi" aynı sıfırı gösterirdi —
 		// oysa testin ölçtüğü şey tam olarak İSTEĞİN ÇIKIP ÇIKMADIĞI.
 		if strings.HasSuffix(p, "/_apis/git/repositories") {
-			f.mu.Lock(); f.hits["list"]++; f.mu.Unlock()
+			f.mu.Lock()
+			f.hits["list"]++
+			f.mu.Unlock()
 		}
 		// PAT sözleşmesi: Basic auth, kullanıcı adı boş, PAT şifrede.
 		if u, pw, ok := r.BasicAuth(); !ok || u != "" || pw == "" {
@@ -469,7 +473,9 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 		}
 		switch {
 		case strings.HasSuffix(p, "/refs"):
-			f.mu.Lock(); f.hits["refs"]++; f.mu.Unlock()
+			f.mu.Lock()
+			f.hits["refs"]++
+			f.mu.Unlock()
 			// v0.9.1265 — gerçek API gibi filter=heads/<ad> ÖNEK süzer;
 			// filter=heads tümünü döndürür. hiddenFromListing, tek-sayfa
 			// kesilmesini taklit eder: SÜZGEÇSİZ listede görünmez ama
@@ -502,7 +508,9 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 			if scope != "" {
 				bucket = "scoped"
 			}
-			f.mu.Lock(); f.hits[bucket]++; f.mu.Unlock()
+			f.mu.Lock()
+			f.hits[bucket]++
+			f.mu.Unlock()
 			if f.treeDelay > 0 {
 				time.Sleep(f.treeDelay)
 			}
@@ -536,7 +544,10 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 			}
 			_ = json.NewEncoder(w).Encode(out)
 		case strings.HasSuffix(p, "/items"):
-			f.mu.Lock(); f.hits["item"]++; items := f.hits["item"]; f.mu.Unlock()
+			f.mu.Lock()
+			f.hits["item"]++
+			items := f.hits["item"]
+			f.mu.Unlock()
 			if f.itemDelay > 0 && items >= f.slowItemAfter {
 				select {
 				case <-time.After(f.itemDelay):
@@ -700,7 +711,7 @@ func TestFetchCodeFailOpen(t *testing.T) {
 		},
 		{
 			name: "uygulama frame'i yok", repo: "core-service",
-			frames:     stackparse.ParseJava("\tat java.base/java.util.Optional.orElseThrow(Optional.java:403)\n"),
+			frames: stackparse.ParseJava("\tat java.base/java.util.Optional.orElseThrow(Optional.java:403)\n"),
 			// v0.9.1264 — tek-cümle üç sınıfa ayrıldı; JDK-only fixture
 			// artık kesin sınıfını söylüyor.
 			wantReason: "çerçeve/JDK",
@@ -1152,8 +1163,18 @@ func TestHuntWindowsLoopDiscipline(t *testing.T) {
 			want: want{windows: 3, fetches: 3},
 		},
 		{
-			// (c) Iska bütçe harcamaz ama SABIR harcar.
-			name: "deneme tavanı patolojik stack'i durdurur",
+			// (c) ⚠ v0.10.71 — MALİYET MODELİ DEĞİŞTİ, sessizce değil.
+			//
+			// Eskiden ıska da tavandan düşüyordu (misses:6, patience:true).
+			// Ama TAM bir ağaçta `find` yalnız BestPathForFrame'dir: yerel
+			// arama, ağ YOK, maliyet YOK. Bedava bir adıma tavan harcamak,
+			// stack birden çok bileşene yayıldığında asıl iş sınıflarına
+			// hiç ulaşamamak demekti (operatör bildirimi: "deneme tavanı
+			// doldu — 4 frame denenmedi").
+			//
+			// Artık hepsi taranıyor ve hepsi ıska: yürüyüş SINIRSIZ değil,
+			// targets zaten codeCandidateLimit ile kesiliyor.
+			name: "ıska tavan harcamaz — hepsi taranır",
 			tree: nil,
 			trg: []stackparse.Frame{
 				huntFrame("A.java", 1), huntFrame("B.java", 2),
@@ -1161,20 +1182,31 @@ func TestHuntWindowsLoopDiscipline(t *testing.T) {
 				huntFrame("E.java", 5), huntFrame("F.java", 6),
 				huntFrame("G.java", 7), huntFrame("H.java", 8),
 			},
-			// Pencere yok → note boş (o hâli çağıran anlatıyor).
-			want: want{windows: 0, misses: 6, patience: true},
+			want: want{windows: 0, misses: 8},
 		},
 		{
-			name: "deneme tavanı kısmi sonuçta rapor edilir",
-			tree: []string{"C.java", "F.java", "Z.java"},
+			// ⚠ v0.10.71 — VAKA YENİDEN KURULDU ki patience'ı GERÇEKTEN
+			// test etsin. Eski girdide tavan ıskalarla doluyordu; yeni
+			// maliyet modelinde ıska bedava, yani o girdi artık sabrı hiç
+			// tetiklemiyordu ve test adı yalan olurdu.
+			//
+			// Yeni girdi: YEDİ frame'in yedisi de ağaçta. Altı ÇEKİM
+			// tavanı doldurur, yedinci denenmez — sabır tam olarak
+			// korunması gereken yerde ısırır (pahalı iş sınırlı kalır).
+			//
+			// Pencere tavanı (windows) burada devreye girmesin diye
+			// lim.windows açıkça yükseltiliyor; ölçülen şey ÇEKİM tavanı.
+			name: "çekim tavanı kısmi sonuçta rapor edilir",
+			lim:  huntLimits{windows: 10, lookups: codeLookupLimit, radius: codeWindowRadius},
+			tree: []string{"A.java", "B.java", "C.java", "D.java", "E.java", "F.java", "Z.java"},
 			trg: []stackparse.Frame{
 				huntFrame("A.java", 1), huntFrame("B.java", 2),
 				huntFrame("C.java", 3), huntFrame("D.java", 4),
 				huntFrame("E.java", 5), huntFrame("F.java", 6),
 				huntFrame("Z.java", 7),
 			},
-			want: want{windows: 2, fetches: 2, misses: 4, patience: true,
-				note: []string{"deneme tavanı (6) doldu — 1 frame denenmedi", "eşleşmeyen:"}},
+			want: want{windows: 6, fetches: 6, patience: true,
+				note: []string{"deneme tavanı (6) doldu — 1 frame denenmedi"}},
 		},
 		{
 			// (d) Dedup: birebir tekrar hiç denenmez, aynı DOSYANIN
@@ -1519,7 +1551,6 @@ func TestFrameGiveUpReasonThreeClasses(t *testing.T) {
 		t.Errorf("locatable-değil: %q", got)
 	}
 }
-
 
 // v0.9.1265 — tek-sayfa refs kaybı: ayarlı branş süzgeçsiz listede
 // görünmese bile (sayfalama kesmesi) branş-bazlı kesin filtre bulur.

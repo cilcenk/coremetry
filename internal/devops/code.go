@@ -477,6 +477,29 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 			return fetchItemContent(c, cli, cfg, ver, repo, branch, p)
 		})
 
+	// v0.10.74 — ISKALAYANLAR İÇİN ORGANİZASYON ARAMASI (opt-in).
+	//
+	// Konvansiyon deposu bulamadıysa sınıf başka bir depoda olabilir —
+	// operatörün teşhisi buydu. Arama YALNIZ ıskalayanlara bakıyor, yani
+	// bugün çalışan hiçbir çözümü değiştirmiyor; ve varsayılan KAPALI,
+	// çünkü ayrı bir uzantı ve doğrulanmamış bir uç gerektiriyor.
+	if cfg.CodeSearch && len(hunt.missedFrames) > 0 {
+		sw, snotes := huntSearchWindows(ctx, hunt.missedFrames, repo, s.ResolveConfig().withDefaults().BranchOrder, codeWindowRadius,
+			func(c context.Context, q string) ([]CodeSearchHit, error) {
+				return SearchCode(c, cli, cfg, q)
+			},
+			func(c context.Context, rp, br, pth string) (string, error) {
+				if br == "" {
+					br = branch
+				}
+				return fetchItemContent(c, cli, cfg, ver, rp, br, pth)
+			})
+		hunt.windows = append(hunt.windows, sw...)
+		for _, n := range snotes {
+			note = withNote(note, n)
+		}
+	}
+
 	// v0.10.73 — HATA METNİNİN ANDIĞI KAYNAK DOSYALAR.
 	//
 	// Frame'ler yalnız .java veriyor; bir sorgu hatasında asıl kanıt çoğu
@@ -717,12 +740,19 @@ type huntLimits struct {
 
 // huntOutcome — döngünün ürünü + NEDEN durduğu.
 type huntOutcome struct {
-	windows  []CodeWindow
-	misses   []string
-	dupes    int  // birebir tekrar olduğu için hiç denenmeyen frame
-	untried  int  // tavana çarpıldığı için denenmeyen aday
-	patience bool // deneme tavanı doldu
-	timedOut bool // süre tavanı doldu
+	windows []CodeWindow
+	misses  []string
+	// missedFrames (v0.10.74) — ıskalayan frame'lerin KENDİSİ.
+	//
+	// `misses` yalnız dosya adı tutuyor ve organizasyon araması için o
+	// yetmiyor: arama sorgusu sınıf+metottan kuruluyor, sıralama ise
+	// paket yolundan. Adı tutup frame'i atmak, aramayı besleyecek tek
+	// bilgiyi atmak olurdu.
+	missedFrames []stackparse.Frame
+	dupes        int  // birebir tekrar olduğu için hiç denenmeyen frame
+	untried      int  // tavana çarpıldığı için denenmeyen aday
+	patience     bool // deneme tavanı doldu
+	timedOut     bool // süre tavanı doldu
 }
 
 // huntWindows — kod çekme döngüsünün çekirdeği (v0.9.1237). Ağı
@@ -792,6 +822,7 @@ func huntWindows(
 			// (scopedHunt) kendi ayrı bütçesi zaten var; yineleme de
 			// sınırlı, çünkü targets codeCandidateLimit ile kesiliyor.
 			out.misses = append(out.misses, f.File)
+			out.missedFrames = append(out.missedFrames, f)
 			continue
 		}
 		lookups++

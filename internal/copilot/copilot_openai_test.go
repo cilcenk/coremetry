@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cilcenk/coremetry/internal/ai/provider"
 )
 
 // v0.8.x — the OpenAI-compatible Explain path didn't handle local reasoning
@@ -115,8 +117,14 @@ func TestExplainOpenAISalvagesThinkOnlyContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out != "The checkout span is slow due to an Oracle row lock." {
-		t.Fatalf("out = %q; want the salvaged reasoning text", out)
+	// v0.10.37 — kurtarma AYNEN çalışıyor (testin niyeti) ama artık
+	// İŞARETLİ: kurtarılan düşünce nihai cevaptan ayırt edilebilmeli.
+	const wantBody = "The checkout span is slow due to an Oracle row lock."
+	if !strings.Contains(out, wantBody) {
+		t.Fatalf("out = %q; kurtarılan reasoning metni bekleniyordu", out)
+	}
+	if !provider.IsSalvagedThinking(out) {
+		t.Fatalf("kurtarılan düşünce İŞARETSİZ — operatör nihai cevap sanar: %q", out)
 	}
 }
 

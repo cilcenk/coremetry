@@ -34,6 +34,33 @@ import "strings"
 // Sökme ise kanıta ihtiyaç duymuyor, çünkü ayrım YAPISAL: sunucu kendi
 // çitlerini modelin metnine değil, metnin SONUNA ekliyor. Dolayısıyla
 // modelin metninde bulunan her chart çiti tanım gereği model-yazımıdır.
+//
+// ── ⚠ BU KURAL YALNIZ SERBEST DÖNGÜDE GEÇERLİ (v0.10.68) ────────────────
+//
+// Denetim "güvence dört kademeden yalnız birinde uygulanıyor" diye bulgu
+// verdi. Doğru — ama düzeltmesi kuralı diğerlerine TAŞIMAK DEĞİL, çünkü
+// çitin KÖKEN YAPISI kademeye göre farklı:
+//
+//	serbest döngü : sunucu çiti cevabın SONUNA ekler (chartBlocks).
+//	                Model metnindeki her çit meşru değildir → SÖKÜLÜR.
+//
+//	guided        : sunucu çiti KANIT bloğuna yazar (chartFence, bundle'lar
+//	                içinde) ve o blok modelin user prompt'una girer. Emit
+//	                edilen cevap ise YALNIZ modelin anlatımı
+//	                (`answer := TrimSpace(raw) + "Kaynak: …"`).
+//	                Yani guided'da grafik ekrana ANCAK model çiti
+//	                AKTARIRSA ulaşıyor. Burada sökmek, guided
+//	                grafiklerinin TAMAMINI öldürür.
+//
+// Bu yüzden sökme guided/drawer/RAG'e taşınMADI ve taşınmamalı. Kapı
+// (chat_chart_origin_test.go) tek çağrı yerini SAYIYLA pinliyor: biri
+// "tutarlılık" adına ikinci bir çağrı eklerse test kırmızıya döner ve bu
+// yorumu okur.
+//
+// ⚠ KALAN RİSK, SESSİZ DEĞİL: guided'da model aktardığı spec'i
+// DEĞİŞTİREBİLİR ya da kendi uydurduğu bir çiti araya sokabilir. O riski
+// kapatmanın doğru yolu sökmek değil, sunucunun kendi çitlerini imzalayıp
+// yalnız imzalıları çizmek — ölçülmemiş bir iş ve ayrı bir dilim.
 // Hiçbir prompt modele çit yazmasını söylemiyor (prompts.go:1258 tersini
 // söylüyor: "render_chart çağır"), yani meşru bir kayıp yok.
 //

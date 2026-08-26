@@ -128,7 +128,7 @@ describe('useChatThread — kalıcılık', () => {
     expect(save.mock.calls[1][0].messages).toHaveLength(4);
   });
 
-  it('persist kapalıyken (çekmece sohbeti) HİÇ yazmaz', async () => {
+  it('persist kapalıyken HİÇ yazmaz', async () => {
     vi.useFakeTimers();
     stubChat();
     const save = vi.spyOn(api, 'saveAiConversation').mockResolvedValue(conv());
@@ -137,6 +137,27 @@ describe('useChatThread — kalıcılık', () => {
     await act(async () => { await thread.send('bu trace neden yavaş?'); });
     await flushPersist();
     expect(save).not.toHaveBeenCalled();
+  });
+
+  // v0.10.55 — AI çekmecesi artık `title` ile açık bir başlık basıyor
+  // (AIDrawer.tsx: aiSubjectTitle+aiSubjectSubtitle), böylece "Geçmiş"
+  // listesinde takip sorusunun lafı değil, öznenin adı görünür.
+  it('title verilirse SUNUCUYA taşınır', async () => {
+    vi.useFakeTimers();
+    stubChat();
+    const save = vi.spyOn(api, 'saveAiConversation')
+      .mockResolvedValue(conv({ id: 'drw-1', title: 'Explain trace · abcd1234…' }));
+
+    function TitledProbe() {
+      thread = useChatThread({ persist: true, title: 'Explain trace · abcd1234…' });
+      return null;
+    }
+    await act(async () => { root.render(<TitledProbe />); });
+    await act(async () => { await thread.send('peki hata logları?'); });
+    await flushPersist();
+
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save.mock.calls[0][0].title).toBe('Explain trace · abcd1234…');
   });
 
   it('ASKIDA kalan kaydetme sıradaki soruyu bloklamaz', async () => {

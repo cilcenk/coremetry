@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { cosreChartDSL, cosreChartItems, COSRE_SERIES_CAP } from './cosreChartSpec';
+import { cosreChartDSL, cosreChartItems, cosreEmptyNoteTR, COSRE_SERIES_CAP } from './cosreChartSpec';
 import type { SpanMetricSeries } from '@/lib/types';
 
 // v0.9.1186 (AI Faz 4.4) — sohbet grafiğinin saf yarısı.
@@ -154,5 +154,70 @@ describe('grafik birimi/başlığı spec\'ten alınmıyor', () => {
     const spec = readFileSync(new URL('./cosreChartSpec.ts', import.meta.url), 'utf8');
     expect(spec).toContain("p99: 'ms'");
     expect(spec).toContain("error_rate: '%'");
+  });
+});
+
+// ── v0.10.46 — SESSİZ BOŞ TUVAL ────────────────────────────────────────
+//
+// Denetimin kapatılmamış son maddesi. Çitin KÖKENİ arayüzde ayırt
+// edilmiyor: `render_chart` aracının kurduğu meşru bir çit ile modelin
+// kendi uydurduğu bir çit AYNI görünüyor. Model olmayan bir servis adı
+// yazarsa sorgu geçerli koşar, sıfır seri döner ve operatör boş bir
+// tuval görür — okunuşu "bu servis sessiz", yani ölçülmemiş bir sağlık
+// beyanı.
+//
+// Boş grafik yanlış sayıdan tehlikeli: yanlış sayı sorgulanır, boşluk
+// onaylanır.
+describe('boş grafik ne demek olduğunu SÖYLER', () => {
+  const spec = { service: 'checkout-service', agg: 'p99' } as const;
+
+  it('kapsamı adıyla taşır', () => {
+    expect(cosreEmptyNoteTR(spec)).toContain('checkout-service');
+    expect(cosreEmptyNoteTR({ ...spec, operation: 'GET /pay' }))
+      .toContain('checkout-service · GET /pay');
+  });
+
+  // ⚠ ASIL İDDİA. Metin "sessiz" okumasını ANMALI ve aynı cümlede
+  // REDDETMELİ. Anmadan geçmek operatörün zaten yaptığı çıkarımı
+  // düzeltmez; reddetmeden anmak onu pekiştirir.
+  it('"servis sessiz" okumasını anar ve reddeder', () => {
+    const t = cosreEmptyNoteTR(spec);
+    expect(t).toContain('sessiz');
+    expect(t).toContain('DEMEK DEĞİL');
+  });
+
+  it('doğrulanacak eylemi verir — belirsizliği ilan etmek yetmez', () => {
+    expect(cosreEmptyNoteTR(spec)).toMatch(/doğrula/i);
+  });
+
+  // Kapsamsız çit AYRI bir arıza: sorgu hiç koşmuyor (enabled:false),
+  // yani "veri yok" demek yalan olurdu — ölçülmedi.
+  it('servis adı yoksa bunu VERİ YOKLUĞU diye sunmaz', () => {
+    const t = cosreEmptyNoteTR({ service: '', agg: 'rate' });
+    expect(t).toContain('çit hatası');
+    expect(t).toContain('hiçbir sorgu çalıştırılmadı');
+  });
+});
+
+// Muhafız: boş dal ÇİZİM YOLUNDAN ÖNCE gelmeli. Panel yine koşulsuz
+// render edilirse yardımcı yeşil kalır ama operatör gene boş tuval
+// görür — "test edilmiş ama ulaşılamaz" sınıfı.
+describe('boş dal çizim yolundan önce', () => {
+  const src = readFileSync(new URL('./CosreChart.tsx', import.meta.url), 'utf8');
+
+  it('CosreChart boş durumu erken döner', () => {
+    expect(src).toContain('cosreEmptyNoteTR');
+    expect(src).toContain('q.isSuccess && items.length === 0');
+    // Erken dönüş, CorePanelMulti render'ından ÖNCE olmalı.
+    expect(src.indexOf('if (emptied)')).toBeGreaterThan(-1);
+    expect(src.indexOf('if (emptied)')).toBeLessThan(src.indexOf('<CorePanelMulti'));
+  });
+
+  // Kapsamsız çit sorguyu hiç koşturmuyor (enabled:!!spec.service), yani
+  // isSuccess ASLA true olmuyor. Yalnız isSuccess'e bakan bir muhafız o
+  // yolu açıkta bırakırdı — sonsuz boş panel.
+  it('kapsamsız çit de yakalanıyor', () => {
+    expect(src).toContain('const noScope = !spec.service');
+    expect(src).toContain('noScope ||');
   });
 });

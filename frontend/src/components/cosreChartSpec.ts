@@ -111,6 +111,34 @@ export function cosreChartItems(
 }
 
 /**
+ * cosreEmptyNoteTR — BOŞ GRAFİK NE DEMEK (v0.10.46).
+ *
+ * ⚠ Bu, çitin KÖKENİ sorununun operatöre değen yarısı. `render_chart`
+ * aracının kurduğu meşru bir çit ile modelin kendi yazdığı bir çit
+ * arayüzde AYNI görünüyor. Model var olmayan bir servis adı uydurursa
+ * sorgu geçerli çalışır, sıfır seri döner ve operatör BOŞ BİR TUVAL
+ * görür — okunuşu "bu servis sessiz", yani sağlık beyanı.
+ *
+ * Sessiz boşluk, yanlış bir sayıdan daha tehlikeli: yanlış sayı
+ * sorgulanır, boş grafik onaylanır.
+ *
+ * Metin bu yüzden İKİ okumayı da adıyla söylüyor ve hangisi olduğuna
+ * KARAR VERMİYOR — arayüzün elinde ayırt edecek bilgi yok. Ayırmak
+ * sunucunun çiti işaretlemesini gerektirir; o gelene dek doğru davranış
+ * belirsizliği ilan etmek, birini seçmek değil.
+ */
+export function cosreEmptyNoteTR(spec: CosreChartSpec): string {
+  if (!spec.service) {
+    return 'Bu grafik çiti servis adı taşımıyor — kapsam kurulamadı, ' +
+      'hiçbir sorgu çalıştırılmadı. Boşluk veri yokluğu değil, çit hatası.';
+  }
+  const scope = spec.operation ? `${spec.service} · ${spec.operation}` : spec.service;
+  return `${scope} için seçilen pencerede veri dönmedi. Bu tek başına ` +
+    `"servis sessiz" DEMEK DEĞİL: grafiğin kapsamı cevabın kendisinden ` +
+    `geliyor ve ad yanlışsa sorgu da boş döner. Adı servis listesinden doğrula.`;
+}
+
+/**
  * seriesLabel — lejant adı.
  *
  * Kırılımsızken agg'ın kendisi (tek çizgi, "rate" yeter). Kırılımda

@@ -396,6 +396,18 @@ export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | 
           <>
             {renderMessage(turn.text, turn.pending)}
             {turn.pending && <span className="cm-ai-cursor" />}
+            {/* v0.10.63 — YARIM CEVAP TAM GİBİ OKUNMASIN.
+                `stopped` bayrağı v0.10.23'ten beri YAZILIYOR ama hiçbir yer
+                OKUMUYORDU: operatörün yarıda kestiği cevap, tamamlanmış bir
+                cevaptan ayırt edilemiyordu. Tipin kendi yorumu bile "bayrak
+                yalnız 'cevap yarım' bilgisini taşıyor" diyordu — taşıyordu
+                ama kimseye ulaşmıyordu.
+                Kırmızı DEĞİL: bu bir arıza değil, operatörün kararı. */}
+            {turn.stopped && !turn.pending && (
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+                ⏹ Durduruldu — bu cevap <b>yarım</b> kaldı.
+              </div>
+            )}
           </>
         ) : turn.pending ? (
           <span style={{ color: 'var(--text3)' }}>yazıyor<span className="cm-ai-cursor" /></span>

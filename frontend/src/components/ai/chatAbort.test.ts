@@ -88,3 +88,33 @@ describe('kablolama', () => {
     expect(chat).toContain('{busy ? (');
   });
 });
+
+// ── v0.10.63 — BAYRAK YAZILIYOR AMA OKUNMUYORDU ─────────────────────────
+//
+// `stopped` v0.10.23'ten beri yazılıyor ve tipin kendi yorumu "bayrak
+// yalnız 'cevap yarım' bilgisini taşıyor" diyor. Taşıyordu — ama HİÇBİR
+// YER OKUMUYORDU:
+//
+//   • ekranda: yarıda kesilen cevap, tamamlanmış cevaptan ayırt edilemiyordu;
+//   • modelde: geçmiş {role,text} olarak kuruluyor ve bayrak DÜŞÜYORDU,
+//     yani model kendi yarım cümlesini TAMAMLANMIŞ kendi cevabı sanıp
+//     üstüne inşa ediyordu.
+//
+// İkincisi daha sinsi: "bir önceki cevabımda dediğim gibi…" diye devam
+// ettiği şey hiç söylenmemiş olabiliyor.
+describe('durdurulan tur YARIM olduğunu söyler', () => {
+  it('balon durdurulmuş turu işaretliyor', () => {
+    const src = readFileSync(new URL('./ChatBubble.tsx', import.meta.url), 'utf8');
+    expect(src).toContain('turn.stopped && !turn.pending');
+    expect(src).toContain('yarım');
+  });
+
+  it('modele giden geçmiş yarımlığı İLAN ediyor', () => {
+    const src = readFileSync(new URL('./useChatThread.ts', import.meta.url), 'utf8');
+    expect(src).toContain('t.stopped ?');
+    expect(src).toContain('YARIDA DURDURULDU');
+    // Tur ELENMEMELİ: operatör ona atıfta bulunabilir ("az önceki listeyi
+    // tamamla"); elenirse o atıf bağlamsız kalır.
+    expect(src).not.toContain('filter(t => !t.error && !t.stopped)');
+  });
+});

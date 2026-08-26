@@ -1247,7 +1247,7 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	case guidedRootCause:
 		evidence, sources, err = s.guidedRootCauseBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
 	case guidedProblems:
-		evidence, sources, err = s.guidedProblemsBundle(ctx, emit, route.Service, route.Env)
+		evidence, sources, err = s.guidedProblemsBundle(ctx, emit, route.Service, route.Env, to)
 	case guidedServiceHealth:
 		// v0.9.184 — operasyon-scope yükseltmesi: soru belirli bir
 		// operasyonu adlandırıyorsa (ya da operatör bir operasyon
@@ -1569,10 +1569,10 @@ func (s *Server) guidedRootCauseBundle(ctx context.Context, emit func(string, an
 		// sıradaki çip aynı listeyi hipotezle gösteriyor, yani
 		// zenginleştirmenin NE KATTIĞI operatörde görünür oluyor.
 		emitGuidedStepResult(emit, nProb, "list_problems",
-			renderProblemsEvidenceTR(probs, service, env, time.Now(), probTotal), nil)
+			renderProblemsEvidenceTR(probs, service, env, evidenceAsOf(to), probTotal), nil)
 		nRC := emitGuidedStep(emit, "root_cause_hypotheses", "")
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
-		blk := renderProblemsEvidenceTR(probs, service, env, time.Now(), probTotal)
+		blk := renderProblemsEvidenceTR(probs, service, env, evidenceAsOf(to), probTotal)
 		emitGuidedStepResult(emit, nRC, "root_cause_hypotheses", blk, nil)
 		b.WriteString(blk)
 	} else {
@@ -1612,7 +1612,11 @@ func (s *Server) guidedRootCauseBundle(ctx context.Context, emit func(string, an
 	return b.String(), src, nil
 }
 
-func (s *Server) guidedProblemsBundle(ctx context.Context, emit func(string, any), service, env string) (string, string, error) {
+// asOf (v0.10.65) — kanıt YAŞLARININ dayanağı. Diğer paketler pencere
+// sonunu (`to`) zaten taşıyor; bu paket taşımıyordu ve `time.Now()`
+// kullanıyordu, yani çıpalı bir pencerede "4 saattir açık" cümlesi
+// saatlerce kayıyordu.
+func (s *Server) guidedProblemsBundle(ctx context.Context, emit func(string, any), service, env string, asOf time.Time) (string, string, error) {
 	nProb := emitGuidedStep(emit, "list_problems", withEnvArg(`{"status":"open"}`, env))
 	probs, probTotal, err := s.guidedProblemsWithTotal(ctx, guidedProblemFilter(service, env, 50))
 	if err != nil {
@@ -1622,10 +1626,10 @@ func (s *Server) guidedProblemsBundle(ctx context.Context, emit func(string, any
 	probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 	// v0.9.1229 — çipin kanıtı: hipotez eklenmeden ÖNCEKİ liste.
 	emitGuidedStepResult(emit, nProb, "list_problems",
-		renderProblemsEvidenceTR(probs, service, env, time.Now(), probTotal), nil)
+		renderProblemsEvidenceTR(probs, service, env, evidenceAsOf(asOf), probTotal), nil)
 	nRC := emitGuidedStep(emit, "root_cause_hypotheses", "")
 	probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
-	evidence := renderProblemsEvidenceTR(probs, service, env, time.Now(), probTotal)
+	evidence := renderProblemsEvidenceTR(probs, service, env, evidenceAsOf(asOf), probTotal)
 	emitGuidedStepResult(emit, nRC, "root_cause_hypotheses", evidence, nil)
 	src := "açık problemler + triage önceliği + kök-neden hipotezleri (canlı)"
 	if env != "" {
@@ -1664,7 +1668,7 @@ func (s *Server) guidedServiceHealthBundle(ctx context.Context, emit func(string
 		if len(probs) == 0 {
 			b.WriteString("Açık problem yok.\n")
 		} else {
-			b.WriteString(renderProblemsEvidenceTR(probs, service, env, time.Now(), probTotal))
+			b.WriteString(renderProblemsEvidenceTR(probs, service, env, evidenceAsOf(to), probTotal))
 		}
 		emitGuidedStepResult(emit, nProb, "list_problems", guidedStepSegment(&b, atProb), nil)
 	} else {
@@ -1720,7 +1724,7 @@ func (s *Server) guidedOperationHealthBundle(ctx context.Context, emit func(stri
 			b.WriteString("Servis düzeyinde açık problem yok.\n")
 		} else {
 			b.WriteString("Servis düzeyinde açık problemler (operasyon-özel değil):\n")
-			b.WriteString(renderProblemsEvidenceTR(probs, service, env, time.Now(), probTotal))
+			b.WriteString(renderProblemsEvidenceTR(probs, service, env, evidenceAsOf(to), probTotal))
 		}
 		emitGuidedStepResult(emit, nProb, "list_problems", guidedStepSegment(&b, atProb), nil)
 	} else {
@@ -1854,7 +1858,7 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 		}
 		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 		emitGuidedStepResult(emit, nProb, "list_problems",
-			renderProblemsEvidenceTR(probs, "", env, time.Now(), probTotal), nil)
+			renderProblemsEvidenceTR(probs, "", env, evidenceAsOf(to), probTotal), nil)
 		nRC := emitGuidedStep(emit, "root_cause_hypotheses", "")
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
 		var b strings.Builder
@@ -1863,7 +1867,7 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 		if len(probs) == 0 {
 			fmt.Fprintf(&b, "Takımın servislerinde açık problem yok.\n")
 		} else {
-			b.WriteString(renderProblemsEvidenceTR(probs, "", env, time.Now(), probTotal))
+			b.WriteString(renderProblemsEvidenceTR(probs, "", env, evidenceAsOf(to), probTotal))
 		}
 		emitGuidedStepResult(emit, nRC, "root_cause_hypotheses", guidedStepSegment(&b, atProb), nil)
 		src := fmt.Sprintf("takım: %s (%d servis) — açık problemler + triage önceliği + kök-neden hipotezleri", u.Team, len(svcs)+trimmed)
@@ -2572,7 +2576,7 @@ func (s *Server) guidedDeployBundle(ctx context.Context, emit func(string, any),
 	// liste, aynı renderer'la. Her etki adımı kendi satırını ayrıca
 	// gösteriyor, yani hangi çipin ne getirdiği ayrışıyor.
 	emitGuidedStepResult(emit, nRecent, "recent_deploys",
-		renderDeployEvidenceTR(refs, nil, lookback, deployRenderNow(anchorTo)), nil)
+		renderDeployEvidenceTR(refs, nil, lookback, evidenceAsOf(anchorTo)), nil)
 	impacts := make([]*chstore.DeployImpact, len(refs))
 	for i, ref := range refs {
 		if i >= 3 {
@@ -2584,14 +2588,14 @@ func (s *Server) guidedDeployBundle(ctx context.Context, emit func(string, any),
 			impacts[i] = imp
 		}
 		emitGuidedStepResult(emit, nImp, "deploy_impact",
-			renderDeployEvidenceTR(refs[i:i+1], impacts[i:i+1], lookback, time.Now()), ierr)
+			renderDeployEvidenceTR(refs[i:i+1], impacts[i:i+1], lookback, evidenceAsOf(anchorTo)), ierr)
 	}
 	src := "deploy işaretçileri + öncesi/sonrası RED etkisi (±10dk pencere)"
 	if env != "" {
 		src += "; ortam filtresi uygulanamadı (deploy verisi ortam boyutu taşımıyor)"
 	}
 	return guidedEnvlessNoteTR("deploy işaretçileri", env) +
-		renderDeployEvidenceTR(refs, impacts, lookback, time.Now()), src, nil
+		renderDeployEvidenceTR(refs, impacts, lookback, evidenceAsOf(anchorTo)), src, nil
 }
 
 // (e) "log hataları/log errors [service]" → severity histogram totals
@@ -2984,12 +2988,16 @@ func (s *Server) guidedSelfMetaBundle(emit func(string, any)) (string, string, e
 		"telemetriyi (trace, log, metrik, problem) okuyup anlatır.", "", nil
 }
 
-// deployRenderNow — "kaç saat önce" hesabının DAYANAĞI.
+// evidenceAsOf — "kaç saat önce" hesabının DAYANAĞI (v0.10.65).
 //
 // Çıpalı bir pencerede yaşları GERÇEK şimdiye göre yazmak, doğru veriye
 // yanlış etiket koymaktır: dün gece 03:00'teki bir deploy "2 saat önce"
-// değil, çapaya göre öyle. Çıpa yoksa davranış aynen eskisi.
-func deployRenderNow(anchorTo time.Time) time.Time {
+// değil, ÇAPAYA göre öyle. Aynı şey problem yaşları için de geçerli —
+// "4 saattir açık" cümlesi çıpalı pencerede saatlerce kayıyordu.
+//
+// Tek yardımcı, çünkü kural tek: kanıtın yaşı, kanıtın PENCERESİNE göre.
+// Çıpa yoksa davranış aynen eskisi.
+func evidenceAsOf(anchorTo time.Time) time.Time {
 	if anchorTo.IsZero() {
 		return time.Now()
 	}

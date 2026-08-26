@@ -4,8 +4,9 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { Card } from '@/components/ui/Card';
 import {
   COVERAGE_FIELDS, fieldSeen, fieldState, fieldPct, fleetSummary,
+  podSeenWindow, podStabilityWarning,
 } from '@/pages/k8s/coverageRows';
-import type { K8sCoverageRow } from '@/lib/types';
+import type { K8sCoverageRow, PodRow } from '@/lib/types';
 import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 
@@ -71,6 +72,15 @@ export default function AdminK8sCoveragePage() {
     // Varsayılan: en az kapsayan üstte — kartın sorusu "kim yaymıyor".
     initialSort: { id: 'podUid', dir: 'asc' },
   });
+
+  // v0.10.41 — pod envanteri (Faz 1 okuma yarısı). Hook'lar erken
+  // dönüşten ÖNCE: 10.36'da bu kuralı bir kez ihlal etmiştim.
+  const pq = useQuery({
+    queryKey: ['k8s-pods'],
+    queryFn: () => api.k8sPods(3600, 300),
+    staleTime: 60_000,
+  });
+  const pods = pq.data?.rows ?? [];
 
   if (q.isPending) return <Spinner />;
   if (q.isError) {
@@ -150,6 +160,61 @@ export default function AdminK8sCoveragePage() {
                     })}
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* v0.10.41 — POD ENVANTERİ. Kimlik (namespace, pod adı); uid
+          prod'da gelmiyor ve beklenmiyor (operatör kararı). */}
+      <Card header={`Pod envanteri (${pods.length})`}>
+        {pq.isPending ? <Spinner /> : pods.length === 0 ? (
+          <Empty icon="∅" title="Örneklemde pod görülmedi">
+            Span'ler k8s.pod.name taşımıyor olabilir — üstteki kapsama
+            tablosu hangi servisin yaydığını söylüyor.
+          </Empty>
+        ) : (
+          <div className="table-wrap is-fit">
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <thead>
+                <tr>
+                  <th style={{ width: 140 }}>namespace</th>
+                  <th>pod</th>
+                  <th style={{ width: 170 }}>servis</th>
+                  <th style={{ width: 150 }}>node</th>
+                  <th style={{ width: 90, textAlign: 'right' }}>span</th>
+                  <th style={{ width: 170 }}>görülme</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pods.map((r: PodRow) => {
+                  const warn = podStabilityWarning(r);
+                  return (
+                    <tr key={`${r.namespace}/${r.pod}`} style={{ contentVisibility: 'auto' }}>
+                      <td className="mono" style={{ color: 'var(--text3)' }}>{r.namespace || '—'}</td>
+                      <td className="mono">
+                        {r.pod}
+                        {/* Uyarı satırın İÇİNDE: dipnota atmak, birleşmiş
+                            ömrün sessiz kalması demek olurdu. */}
+                        {warn && (
+                          <span className="badge b-warn" title={warn}
+                                style={{ fontSize: 9, marginLeft: 6 }}>
+                            ömür belirsiz
+                          </span>
+                        )}
+                      </td>
+                      <td className="mono" style={{ fontSize: 11 }}>{r.service}</td>
+                      <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>
+                        {r.node || '—'}
+                      </td>
+                      <td style={{ textAlign: 'right', color: 'var(--text3)' }}>
+                        {r.spans.toLocaleString()}
+                      </td>
+                      <td style={{ fontSize: 11, color: 'var(--text3)' }}>{podSeenWindow(r)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

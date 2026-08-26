@@ -1,4 +1,4 @@
-import type { K8sCoverageRow } from '@/lib/types';
+import type { K8sCoverageRow, PodRow } from '@/lib/types';
 
 // coverageRows — K8s bağlam kapsama kartının SAF çekirdeği
 // (v0.10.36, entity katmanı Faz 0).
@@ -94,4 +94,40 @@ export function fleetSummary(rows: K8sCoverageRow[] | undefined): FleetSummary[]
     }
     return { field: f.key, label: f.label, full, partial, none };
   });
+}
+
+// ── POD ENVANTERİ (v0.10.41, Faz 1 okuma yarısı) ────────────────────────
+
+
+/**
+ * podSeenWindow — pod'un ÖRNEKLEMDE görüldüğü aralık, okunur biçimde.
+ *
+ * ⚠ Bu pod ÖMRÜ DEĞİL. Örneklem penceresi içindeki ilk/son span; pod
+ * ondan önce de sonra da yaşıyor olabilir. Adlandırma bu yüzden
+ * "görüldü", "ayakta" değil — arayüzün ürettiği cümle, ölçtüğü şeyden
+ * fazlasını iddia etmemeli.
+ */
+export function podSeenWindow(r: PodRow): string {
+  const ms = (r.lastSeen - r.firstSeen) / 1e6;
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  if (ms < 60_000) return `${Math.round(ms / 1000)} sn boyunca görüldü`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)} dk boyunca görüldü`;
+  return `${Math.round(ms / 3_600_000)} sa boyunca görüldü`;
+}
+
+/**
+ * podStabilityWarning — birleşmiş ömür uyarısı.
+ *
+ * ⚠ KİMLİĞİN TEK ZAYIF NOKTASI. Kimlik (namespace, pod adı) ve
+ * StatefulSet pod adları restart'ta DEĞİŞMİYOR (`svc-0` hep `svc-0`).
+ * Yani aynı ad iki ayrı pod ömrünü taşıyor olabilir ve görülme aralığı
+ * ikisini birden kapsar.
+ *
+ * null = uyarı yok (Deployment pod'u; rastgele sonek ömürleri ayırıyor).
+ */
+export function podStabilityWarning(r: PodRow): string | null {
+  if (!r.nameStable) return null;
+  return 'Pod adı sabit desende (StatefulSet). Aynı ad restart\'tan sonra ' +
+    'geri döndüğü için bu aralık İKİ ayrı pod ömrünü kapsıyor olabilir — ' +
+    'kimlikte pod.uid olmadığı için ayrıştırılamıyor.';
 }

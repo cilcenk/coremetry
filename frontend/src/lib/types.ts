@@ -5794,3 +5794,29 @@ export interface K8sCoverage {
   sampleRows: number;
   windowSec: number;
 }
+
+// PodRow / PodInventory (v0.10.41) — K8s entity katmanı Faz 1, okuma
+// tarafı. Kimlik (namespace, pod adı); k8s.pod.uid prod'da gelmiyor.
+//
+// ⚠ nameStable: pod adı SABİT desende (StatefulSet, `svc-0`). true ise
+// firstSeen/lastSeen İKİ ayrı pod ömrünü kapsıyor olabilir — restart'tan
+// sonra aynı ad döndüğü için ömürler tek satırda birleşir. Arayüz bunu
+// İLAN ETMEK zorunda; sessiz bırakmak "bu pod 40 gündür ayakta" gibi
+// yanlış bir cümle üretir.
+export interface PodRow {
+  namespace: string;
+  pod: string;
+  service: string;
+  node?: string;
+  spans: number;
+  /** ÖRNEKLEMDEKİ ilk/son span (ns) — gerçek pod ömrü değil. */
+  firstSeen: number;
+  lastSeen: number;
+  nameStable: boolean;
+}
+
+export interface PodInventory {
+  rows: PodRow[];
+  sampleRows: number;
+  windowSec: number;
+}

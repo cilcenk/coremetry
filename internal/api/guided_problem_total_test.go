@@ -1,6 +1,8 @@
 package api
 
 import (
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -161,4 +163,128 @@ func TestUnknownTotalNeverClaimsOne(t *testing.T) {
 	if !strings.Contains(out, "en az 1") {
 		t.Errorf("belirsizlik söylenmiyor:\n%s", out)
 	}
+}
+
+// TestCountableFilterCoversEveryListOnlyPredicate — v0.10.69.
+//
+// ⚠ İKİ LİSTE ELLE SENKRON TUTULUYORDU ve biri kaydı.
+//
+// ListProblems'in bildiği ama CountProblems'ın BİLMEDİĞİ her yüklem,
+// countableFilter'da reddedilmek zorunda — yoksa sayım DAHA GENİŞ bir
+// kümeyi sayar ve "düzeltme" yeni bir yalan üretir.
+//
+// v0.9.1342 `SubjectKind`i ekledi (ListProblems SQL'de uyguluyor),
+// CountProblems ona hiç bakmıyor ve countableFilter'a da yazılmamıştı:
+// özne-türü şeridiyle daraltılmış bir liste TÜM türler üzerinden
+// sayılıyordu. Üç yüklem yazılmış, dördüncüsü unutulmuştu
+// ([[feedback-fixes-have-second-halves]]).
+//
+// Bu test artık iki KAYNAĞI karşılaştırıyor: beşinci yüklem
+// eklendiğinde elle hatırlamak gerekmiyor, burası kırmızıya dönüyor.
+func TestCountableFilterCoversEveryListOnlyPredicate(t *testing.T) {
+	problemSrc := readRepoFile(t, "../chstore/problem.go")
+
+	// ProblemFilter'ın TÜM alanları.
+	fields := regexp.MustCompile(`(?m)^\t([A-Z][A-Za-z]*)\s`).
+		FindAllStringSubmatch(structBody(problemSrc, "ProblemFilter"), -1)
+	if len(fields) < 5 {
+		t.Fatalf("ProblemFilter alanları ayrıştırılamadı (%d) — test bayatlamış", len(fields))
+	}
+
+	countBody := funcBody(problemSrc, "CountProblems")
+	if countBody == "" {
+		t.Fatal("CountProblems gövdesi bulunamadı — test bayatlamış")
+	}
+	guard := readSourceFile(t, "guided_problem_total.go")
+	guardBody := funcBody(guard, "countableFilter")
+
+	for _, m := range fields {
+		name := m[1]
+		switch name {
+		case "Limit", "Offset", "OrderBy", "Order":
+			continue // sayfalama; kapsamı daraltmaz
+		case "ServicesAllowDBSubjects":
+			// ⚠ MUAFİYET, KANITIYLA. Bu alan bir DEĞİŞTİRİCİ: ListProblems
+			// onu YALNIZ `if f.Services != nil` dalının içinde okuyor
+			// (problemServicesConjunct çağrısı). Services nil iken hiçbir
+			// etkisi yok — ve countableFilter zaten `Services == nil`
+			// şartını koşuyor, yani bu alanın ısırdığı her durum ORADA
+			// reddediliyor.
+			//
+			// Muafiyet kanıta bağlı: ListProblems bir gün bu bayrağı
+			// Services'tan BAĞIMSIZ okursa muafiyet çürür. Aşağıdaki
+			// kontrol o bağımlılığı pinliyor.
+			if !strings.Contains(flatWS(funcBody(problemSrc, "ListProblems")),
+				"if f.Services != nil { wc.add(problemServicesConjunct(len(f.Services), f.ServicesAllowDBSubjects") {
+				t.Error("ServicesAllowDBSubjects artık Services'a bağlı okunmuyor — " +
+					"countableFilter muafiyeti ÇÜRÜDÜ, alanı reddet listesine ekle")
+			}
+			continue
+		}
+		if strings.Contains(countBody, "f."+name) {
+			continue // CountProblems biliyor → sorun yok
+		}
+		if !strings.Contains(guardBody, "f."+name) {
+			t.Errorf("ProblemFilter.%s'i ListProblems biliyor, CountProblems BİLMİYOR "+
+				"ve countableFilter onu REDDETMİYOR — o süzgeçle sayım DAHA GENİŞ "+
+				"bir kümeyi sayar ve 'toplam' yalan olur", name)
+		}
+	}
+}
+
+// TestZeroLimitIsNotUnlimited — AYNA SABİT.
+//
+// chstore.ListProblems `if f.Limit == 0 { f.Limit = 100 }` yapıyor.
+// Çağıran "limit yok" sanıyor; sorgu 100'de kesiliyor.
+func TestZeroLimitIsNotUnlimited(t *testing.T) {
+	src := readRepoFile(t, "../chstore/problem.go")
+	if !strings.Contains(flatWS(src), "if f.Limit == 0 { f.Limit = 100 }") {
+		t.Error("ListProblems'in varsayılan tavanı değişmiş — listDefaultLimit " +
+			"(guided_problem_total.go) onun AYNASI ve birlikte güncellenmeli")
+	}
+	if !strings.Contains(readSourceFile(t, "guided_problem_total.go"), "listDefaultLimit = 100") {
+		t.Error("ayna sabit ListProblems'in varsayılanıyla uyuşmuyor")
+	}
+}
+
+// ── Kaynak ayrıştırma yardımcıları ──────────────────────────────────────
+//
+// Metin taraması yerine YAPI: "struct'ın alanları" ve "fonksiyonun
+// gövdesi" sorularının cevabı, dosyadaki başka bir yerde geçen benzer
+// bir dizgeyle karışmamalı.
+
+func readRepoFile(t *testing.T, rel string) string {
+	t.Helper()
+	b, err := os.ReadFile(rel)
+	if err != nil {
+		t.Fatalf("%s okunamadı: %v", rel, err)
+	}
+	return string(b)
+}
+
+// structBody — `type <name> struct { … }` gövdesi.
+func structBody(src, name string) string {
+	i := strings.Index(src, "type "+name+" struct {")
+	if i < 0 {
+		return ""
+	}
+	j := strings.Index(src[i:], "\n}")
+	if j < 0 {
+		return ""
+	}
+	return src[i : i+j]
+}
+
+// funcBody — `func … <name>(…) …{ … }` gövdesi (ilk eşleşme).
+func funcBody(src, name string) string {
+	re := regexp.MustCompile(`(?m)^func (\([^)]*\) )?` + regexp.QuoteMeta(name) + `\(`)
+	loc := re.FindStringIndex(src)
+	if loc == nil {
+		return ""
+	}
+	rest := src[loc[0]:]
+	if j := strings.Index(rest, "\n}"); j >= 0 {
+		return rest[:j]
+	}
+	return rest
 }

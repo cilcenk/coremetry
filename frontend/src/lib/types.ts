@@ -5798,6 +5798,8 @@ export interface K8sCoverage {
   /** İç taramanın tavanı — kapsama yargısının sınırı. */
   sampleRows: number;
   windowSec: number;
+  /** Dış tavan ısırdı — bazı servisler örnekleme hiç girmemiş olabilir (v0.10.62). */
+  capped?: boolean;
 }
 
 // PodRow / PodInventory (v0.10.41) — K8s entity katmanı Faz 1, okuma

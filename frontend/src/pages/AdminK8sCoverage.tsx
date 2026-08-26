@@ -103,6 +103,18 @@ export default function AdminK8sCoveragePage() {
         “yok” demek DEĞİL.
       </div>
 
+      {/* v0.10.62 — DIŞ TAVAN ISIRDIYSA FİLO EKSİK.
+          Kartın "ölçülmedi ≠ yok" sözleşmesi satır düzeyinde ifade
+          EDİLEMİYOR: GROUP BY sıfır satırlı grup için hiç satır üretmez,
+          yani örnekleme girmeyen servis "unknown" olarak değil, HİÇ
+          görünmüyor. Ölçülebilir olan tek işaret bu: tavan doldu mu. */}
+      {data?.capped && (
+        <div className="badge b-warn" style={{ fontSize: 11, alignSelf: 'flex-start' }}>
+          ⚠ Örneklem tavanı doldu — bazı servisler bu tabloya HİÇ girmemiş
+          olabilir. Aşağıdaki filo sayıları eksik bir küme üzerinden.
+        </div>
+      )}
+
       {/* Filo resmi ÖNCE: operatörün sorusu "filonun ne kadarı bu alanı
           yayıyor". Servis tablosu ikincil, 200 satırda kaybolur. */}
       <Card header="Filo kapsaması">

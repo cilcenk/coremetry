@@ -17,9 +17,24 @@ export type FieldState = 'full' | 'partial' | 'none' | 'unknown';
  * fieldState — bir alanın kapsaması.
  *
  * ⚠ `unknown` ile `none` AYRI. Örneklemde o servisten hiç satır
- * görülmediyse "alan yok" DEMEK YANLIŞ olur — ölçüm yapılmadı. Bu ayrım
- * kartın en önemli sözleşmesi: kart, collector değişikliğinin kabul testi
- * olacak ve "ölçmedim"i "yok" diye okumak o testi çürütür.
+ * görülmediyse "alan yok" DEMEK YANLIŞ olur — ölçüm yapılmadı.
+ *
+ * ⚠⚠ AMA BU DAL BUGÜNKÜ ARKA UÇTA ULAŞILAMAZ (v0.10.62). Sorgu
+ * `GROUP BY service_name` yapıyor ve SIFIR satırlı bir grup HİÇ SATIR
+ * ÜRETMEZ — yani `sampled` asla 0 gelmiyor. Örnekleme girmeyen servis
+ * "unknown" olarak değil, tabloda HİÇ görünmüyordu; kartın "en önemli
+ * sözleşmesi" diye yazılan ayrım hiç çalışmıyordu.
+ * ([[feedback-empty-set-vanishes-not-zero]] — bu deponun tekrar eden sınıfı.)
+ *
+ * Ölçülmemişliğin GERÇEK işareti artık başka yerde ve zarfta taşınıyor:
+ *   • v0.10.56 — örnekleme SERVİS BAŞINA kotalı, yani her servis kendi
+ *     kotasıyla temsil ediliyor (öncesinde alfabetik ilk 5 servis).
+ *   • v0.10.62 — `capped`: dış tavan ısırdıysa bazı servisler örnekleme
+ *     hiç girmemiş olabilir ve kart EKSİK bir filo üzerinden konuşur.
+ *
+ * Dal SİLİNMİYOR: sözleşme doğru, üreteni yok. Bir gün satır-üreten
+ * başka bir kaynak (ör. servis listesiyle diff) eklenirse burası hazır —
+ * ve o güne kadar burada yazılı olan şey, iddianın nerede karşılandığı.
  */
 export function fieldState(seen: number, sampled: number): FieldState {
   if (!sampled || sampled <= 0) return 'unknown';

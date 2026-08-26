@@ -233,3 +233,37 @@ describe('pod envanteri kablolaması', () => {
     expect(iQuery).toBeLessThan(iReturn);
   });
 });
+
+// ── v0.10.62 — SÖZLEŞME NEREDE KARŞILANIYOR ────────────────────────────
+//
+// `fieldState`ın `unknown` dalı bugünkü arka uçta ULAŞILAMAZ: sorgu
+// GROUP BY yapıyor ve sıfır satırlı bir grup HİÇ SATIR üretmiyor, yani
+// `sampled` asla 0 gelmiyor. Kartın "en önemli sözleşmesi" diye yazılan
+// ayrım hiç çalışmıyordu ([[feedback-empty-set-vanishes-not-zero]]).
+//
+// Dal silinmedi — sözleşme doğru, üreteni yok. Ama iddianın NEREDE
+// karşılandığı yazılı olmak zorunda, yoksa bir sonraki okuyan yine
+// çalıştığını sanar.
+describe('unknown dalı ulaşılamaz — ama sözleşme yazılı', () => {
+  it('fonksiyon hâlâ doğru davranıyor (girdi 0 ise unknown)', () => {
+    expect(fieldState(0, 0)).toBe('unknown');
+    expect(fieldState(0, 10)).toBe('none');
+  });
+
+  it('ulaşılamazlık ve gerçek işaretin yeri KAYNAKTA yazılı', () => {
+    const src = readFileSync(new URL('./coverageRows.ts', import.meta.url), 'utf8');
+    expect(src).toContain('ULAŞILAMAZ');
+    // Ölçülmemişliğin gerçek işareti nerede: capped + servis-başına kota.
+    expect(src).toContain('capped');
+    expect(src).toContain('SERVİS BAŞINA');
+  });
+});
+
+// TestCappedIsDeclared — TAVAN DOLDUYSA OPERATÖR GÖRMELİ.
+describe('örneklem tavanı doldu uyarısı', () => {
+  it('sayfa capped bayrağını çiziyor', () => {
+    const page = readFileSync(new URL('../AdminK8sCoverage.tsx', import.meta.url), 'utf8');
+    expect(page).toContain('data?.capped');
+    expect(page).toContain('HİÇ girmemiş');
+  });
+});

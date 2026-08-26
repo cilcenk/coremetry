@@ -180,3 +180,33 @@ func TestStripRunsBeforeTheEarlyReturn(t *testing.T) {
 			"çalışmaz ve o tur model çitinin TEK BAŞINA çizildiği turdur")
 	}
 }
+
+// TestStripStaysInTheFreeLoopOnly — v0.10.68. TUTARLILIK TUZAĞI.
+//
+// Denetim "çit güvencesi dört kademeden yalnız birinde" dedi ve doğruydu.
+// Ama kuralı diğerlerine taşımak guided grafiklerinin TAMAMINI öldürür:
+//
+//	serbest döngü : sunucu çiti cevabın SONUNA ekler → model metnindeki
+//	                her çit model-yazımıdır → sökülür.
+//	guided        : sunucu çiti KANIT bloğuna yazar; emit edilen cevap
+//	                yalnız modelin anlatımı. Grafik ekrana ANCAK model
+//	                çiti AKTARIRSA ulaşıyor.
+//
+// Bu test "eksik" olanı değil, EKLENMEMESİ GEREKENİ koruyor: iyi niyetli
+// bir tutarlılık düzeltmesi çalışan bir özelliği sessizce kaldırabilir.
+func TestStripStaysInTheFreeLoopOnly(t *testing.T) {
+	for _, f := range []string{"copilot_guided.go", "copilot_drawer.go", "rag.go"} {
+		src := readSourceFile(t, f)
+		if strings.Contains(src, "stripModelChartFences") {
+			t.Errorf("%s model çitlerini söküyor — guided/drawer/RAG'de sunucu "+
+				"çiti KANIT bloğunda ve grafik ekrana ancak model onu AKTARIRSA "+
+				"ulaşıyor; sökmek grafikleri TAMAMEN kaldırır "+
+				"(gerekçe: chat_chart_origin.go başlığı)", f)
+		}
+	}
+	// Serbest döngüde TEK çağrı: ikinci bir çağrı, kuralın sınırının
+	// unutulduğunun işareti.
+	if n := strings.Count(readSourceFile(t, "copilot_chat.go"), "stripModelChartFences("); n != 1 {
+		t.Errorf("copilot_chat.go'da %d çağrı var, 1 olmalı", n)
+	}
+}

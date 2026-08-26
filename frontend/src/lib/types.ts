@@ -1334,6 +1334,8 @@ export interface DevOpsSnapshot {
   detectedApiVersion?: string;
   repoPrefixes?: string[];
   branchOrder?: string[];
+  /** Organizasyon geneli kod araması açık mı (v0.10.75). */
+  codeSearch?: boolean;
 }
 export interface DevOpsSettingsInput {
   baseUrl: string;

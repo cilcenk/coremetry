@@ -37,6 +37,9 @@ type devopsSettingsInput struct {
 	PAT                string `json:"pat"`
 	Flavor             string `json:"flavor"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+	// CodeSearch (v0.10.75) — organizasyon geneli kod araması.
+	// Varsayılan KAPALI; gerekçesi devops.Settings.CodeSearch'te.
+	CodeSearch bool `json:"codeSearch"`
 	// RepoPrefixes / BranchOrder (v0.9.830) — the service→repo naming
 	// convention. Omitted or empty = keep the bundled defaults.
 	RepoPrefixes []string `json:"repoPrefixes"`
@@ -66,6 +69,7 @@ func mergeDevOpsSettings(in devopsSettingsInput, cur devops.Settings) (devops.Se
 		PAT:                in.PAT,
 		Flavor:             strings.TrimSpace(in.Flavor),
 		InsecureSkipVerify: in.InsecureSkipVerify,
+		CodeSearch:         in.CodeSearch,
 		RepoPrefixes:       cleanConventionList(in.RepoPrefixes),
 		BranchOrder:        cleanConventionList(in.BranchOrder),
 	}
@@ -182,6 +186,7 @@ func devopsAuditDetails(snap devops.Snapshot) []byte {
 		"flavor":             snap.Flavor,
 		"hasPat":             snap.HasPAT,
 		"insecureSkipVerify": snap.InsecureSkipVerify,
+		"codeSearch":         snap.CodeSearch,
 		"repoPrefixes":       snap.RepoPrefixes,
 		"branchOrder":        snap.BranchOrder,
 	})

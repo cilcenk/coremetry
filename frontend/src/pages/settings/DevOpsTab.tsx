@@ -31,6 +31,9 @@ export function DevOpsTab() {
   const [hasPat, setHasPat] = useState(false);
   const [flavor, setFlavor] = useState<DevOpsFlavor>('auto');
   const [insecure, setInsecure] = useState(false);
+  // v0.10.75 — organizasyon kod araması. Varsayılan KAPALI:
+  // ayrı bir uzantı (Code Search) ve PAT kapsamı istiyor.
+  const [codeSearch, setCodeSearch] = useState(false);
   const [repoPrefixes, setRepoPrefixes] = useState('');
   const [branchOrder, setBranchOrder] = useState('');
   const [detected, setDetected] = useState<{ flavor?: DevOpsFlavor; apiVersion?: string }>({});
@@ -54,6 +57,7 @@ export function DevOpsTab() {
       setHasPat(s.hasPat);
       setFlavor((s.flavor || 'auto') as DevOpsFlavor);
       setInsecure(!!s.insecureSkipVerify);
+      setCodeSearch(!!s.codeSearch);
       setRepoPrefixes((s.repoPrefixes || []).join(', '));
       setBranchOrder((s.branchOrder || []).join(', '));
       setDetected({ flavor: s.detectedFlavor, apiVersion: s.detectedApiVersion });
@@ -66,6 +70,7 @@ export function DevOpsTab() {
   const buildInput = () => ({
     baseUrl, collection, project, username, flavor,
     insecureSkipVerify: insecure,
+    codeSearch,
     repoPrefixes: splitList(repoPrefixes),
     branchOrder: splitList(branchOrder),
     ...(pat ? { pat } : {}),
@@ -295,6 +300,28 @@ export function DevOpsTab() {
             TLS doğrulamasını atla
             <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>
               (kendinden imzalı / iç CA sertifikaları — POC)
+            </span>
+          </span>
+        </label>
+
+        {/* v0.10.75 — ORGANİZASYON KOD ARAMASI.
+            Depo servis adından konvansiyonla çözülüyor; hatanın atıldığı
+            sınıf başka bir depoda olduğunda konvansiyon onu bulamıyor.
+            Arama o boşluğu kapatıyor ama AYRI bir uzantı ve PAT kapsamı
+            istiyor — o yüzden varsayılan kapalı ve ne yaptığı burada
+            yazılı. */}
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+          <input type="checkbox" checked={codeSearch} style={{ marginTop: 3 }}
+            onChange={e => setCodeSearch(e.target.checked)} />
+          <span style={{ fontSize: 13 }}>
+            Organizasyon geneli kod araması
+            <span style={{ display: 'block', marginTop: 2, fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>
+              Depo ağacında bulunamayan stack frame'leri için tüm organizasyonda
+              <code style={{ margin: '0 4px' }}>Sınıf.metot</code>
+              aranır ve bulunan deponun kendisinden çekilir. Azure DevOps
+              <b> Code Search</b> uzantısı ve PAT'te <b>Code (Read)</b> kapsamı
+              gerekir; yoksa açıklama yine üretilir, künyeye “kod araması
+              başarısız” yazılır.
             </span>
           </span>
         </label>

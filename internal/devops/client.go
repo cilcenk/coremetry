@@ -118,6 +118,10 @@ type Snapshot struct {
 	HasPAT             bool   `json:"hasPat"`
 	Flavor             string `json:"flavor,omitempty"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"`
+	// CodeSearch (v0.10.75) — organizasyon araması açık mı. Snapshot'ta,
+	// çünkü ekran kutunun DURUMUNU göstermek zorunda: kapalı bir ayarı
+	// açık göstermek, operatöre çalışmayan bir yolun çalıştığını sandırır.
+	CodeSearch         bool   `json:"codeSearch,omitempty"`
 	DetectedFlavor     string `json:"detectedFlavor,omitempty"`
 	DetectedAPIVersion string `json:"detectedApiVersion,omitempty"`
 	// RepoPrefixes / BranchOrder (v0.9.830) — echoed back RESOLVED, i.e.
@@ -305,6 +309,7 @@ func (s *Service) Snapshot() Snapshot {
 		HasPAT:             s.cfg.PAT != "",
 		Flavor:             s.cfg.Flavor,
 		InsecureSkipVerify: s.cfg.InsecureSkipVerify,
+		CodeSearch:         s.cfg.CodeSearch,
 		DetectedFlavor:     s.detFlavor,
 		DetectedAPIVersion: s.detVersion,
 		RepoPrefixes:       rc.RepoPrefixes,

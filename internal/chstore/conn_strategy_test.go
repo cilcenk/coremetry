@@ -187,6 +187,9 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// DEĞİL) ve okuma ÖRNEKLEMELİ (iç LIMIT). Kapsama kartı bir teşhis
 		// yüzeyi; kardeş span okumalarıyla aynı havuzda kalması doğru.
 		"k8s_coverage.go": true,
+		// v0.10.40 — SAF telemetri: tek FROM'u ham `spans`, örneklemeli.
+		// Kapsama kartıyla aynı sınıf, aynı havuz.
+		"pod_inventory.go": true,
 		// TAŞINMAZ ÜÇÜNCÜ SINIF: sysstats.go + cluster.go system.* okuyor.
 		// Bunlar NODE-LOKAL tablolar; RoundRobin'e verilirse disk/utilizasyon
 		// panelleri her çağrıda BAŞKA node'u raporlar (SQL konsolunun in-order

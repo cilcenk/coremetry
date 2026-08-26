@@ -64,6 +64,17 @@ type Settings struct {
 	// segment, e.g. "DefaultCollection". Empty is allowed for
 	// installs that already carry it inside BaseURL.
 	Collection string `json:"collection,omitempty"`
+	// CodeSearch (v0.10.74) — organizasyon geneli kod araması AÇIK mı.
+	//
+	// ⚠ VARSAYILAN KAPALI, bilinçli. Arama, kod yoluna YENİ bir ağ
+	// çağrısı ekliyor ve Azure DevOps'ta ayrı bir uzantı (Code Search)
+	// gerektiriyor — kurulu değilse uç 404 döner. Ayrıca API şekli
+	// yalnız operatörün örneğinde doğrulanabilir.
+	//
+	// Kapalıyken davranış bit-bit eskisi: konvansiyon + depo ağacı.
+	// Açıldığında yalnız İSKALAYAN frame'ler için devreye giriyor, yani
+	// bugün çalışan hiçbir çözümü değiştirmiyor.
+	CodeSearch bool `json:"codeSearch,omitempty"`
 	// Project is optional. When set, TestConnection verifies the
 	// project resolves as well as the collection.
 	Project string `json:"project,omitempty"`

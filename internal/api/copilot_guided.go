@@ -1269,7 +1269,7 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	case guidedSlowTraces:
 		evidence, sources, err = s.guidedSlowTracesBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
 	case guidedDeployImpact:
-		evidence, sources, err = s.guidedDeployBundle(ctx, emit, route.Service, route.Env, rangeS)
+		evidence, sources, err = s.guidedDeployBundle(ctx, emit, route.Service, route.Env, rangeS, anchorTo)
 	case guidedLogErrors:
 		evidence, sources, err = s.guidedLogErrorsBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
 	case guidedMyServices:
@@ -1594,7 +1594,7 @@ func (s *Server) guidedRootCauseBundle(ctx context.Context, emit func(string, an
 	// Deploy: "neden bozuldu" sorusunun en sık cevabı. Ayrı bir adım
 	// olarak emit ediliyor ki operatör hangi kanıtın çekildiğini görsün.
 	nDep := emitGuidedStep(emit, "recent_deploys", `{"service":"`+service+`"}`)
-	dep, _, derr := s.guidedDeployBundle(ctx, func(string, any) {}, service, env, rangeS)
+	dep, _, derr := s.guidedDeployBundle(ctx, func(string, any) {}, service, env, rangeS, to)
 	emitGuidedStepResult(emit, nDep, "recent_deploys", dep, derr)
 	if derr == nil && strings.TrimSpace(dep) != "" {
 		b.WriteString("\n")
@@ -2522,7 +2522,14 @@ type guidedDeployRef struct {
 // Phase 4 pending) — an env ask (v0.8.398) is answered honestly via
 // guidedEnvlessNoteTR instead of silently ignored; the step echo also
 // omits env because the filter was not applied.
-func (s *Server) guidedDeployBundle(ctx context.Context, emit func(string, any), service, env string, rangeS int64) (string, string, error) {
+// anchorTo (v0.10.64) — pencerenin SONU. Sıfır = şimdi.
+//
+// ⚠ v0.10.33 çıpayı guided kademesine getirdi ama BU fonksiyona hiç
+// geçirmedi: pencere `time.Now()` ile kuruluyordu. Operatör dün geceye
+// zoom yapıp "son deploy neydi" diye sorduğunda BUGÜNÜN deploy'ları
+// dönüyor ve cevap DÜNÜN penceresi diye etiketleniyordu — v0.10.50'de
+// serbest döngüde düzeltilen kusurun guided'daki ikizi.
+func (s *Server) guidedDeployBundle(ctx context.Context, emit func(string, any), service, env string, rangeS int64, anchorTo time.Time) (string, string, error) {
 	// Deploy questions imply a wider horizon than the default 30m chat
 	// window — "son deploy" is rarely in the last half hour. Floor the
 	// lookback at 6h, cap 24h (GetRecentDeploys scales its CH timeout
@@ -2534,7 +2541,10 @@ func (s *Server) guidedDeployBundle(ctx context.Context, emit func(string, any),
 	var refs []guidedDeployRef
 	nRecent := emitGuidedStep(emit, "recent_deploys", `{"service":"`+service+`"}`)
 	if service != "" {
-		now := time.Now()
+		now := anchorTo
+		if now.IsZero() {
+			now = time.Now()
+		}
 		deps, err := s.store.GetServiceDeploys(ctx, service, now.Add(-lookback), now)
 		if err != nil {
 			emitGuidedStepResult(emit, nRecent, "recent_deploys", "", err)
@@ -2562,7 +2572,7 @@ func (s *Server) guidedDeployBundle(ctx context.Context, emit func(string, any),
 	// liste, aynı renderer'la. Her etki adımı kendi satırını ayrıca
 	// gösteriyor, yani hangi çipin ne getirdiği ayrışıyor.
 	emitGuidedStepResult(emit, nRecent, "recent_deploys",
-		renderDeployEvidenceTR(refs, nil, lookback, time.Now()), nil)
+		renderDeployEvidenceTR(refs, nil, lookback, deployRenderNow(anchorTo)), nil)
 	impacts := make([]*chstore.DeployImpact, len(refs))
 	for i, ref := range refs {
 		if i >= 3 {
@@ -2972,4 +2982,16 @@ func (s *Server) guidedSelfMetaBundle(emit func(string, any)) (string, string, e
 	return "Bu kurulumda çalışan LLM modelinin adı TAM OLARAK şudur: " + model +
 		"\n\nAsistanın adı CoSRE'dir ve Coremetry'nin içine gömülüdür; " +
 		"telemetriyi (trace, log, metrik, problem) okuyup anlatır.", "", nil
+}
+
+// deployRenderNow — "kaç saat önce" hesabının DAYANAĞI.
+//
+// Çıpalı bir pencerede yaşları GERÇEK şimdiye göre yazmak, doğru veriye
+// yanlış etiket koymaktır: dün gece 03:00'teki bir deploy "2 saat önce"
+// değil, çapaya göre öyle. Çıpa yoksa davranış aynen eskisi.
+func deployRenderNow(anchorTo time.Time) time.Time {
+	if anchorTo.IsZero() {
+		return time.Now()
+	}
+	return anchorTo
 }

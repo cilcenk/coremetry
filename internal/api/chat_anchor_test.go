@@ -2,6 +2,7 @@ package api
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -190,5 +191,48 @@ func TestFreeLoopAppliesTheAnchorNotJustDeclaresIt(t *testing.T) {
 	if !strings.Contains(src, `"pencere: " + anchorTo.UTC()`) {
 		t.Error("operatöre basılan çip artık anchorTo'dan gelmiyor — ilan ve " +
 			"uygulama ayrışmış olabilir")
+	}
+}
+
+// TestGuidedDeployBundleHonorsTheAnchor — v0.10.64.
+//
+// v0.10.50 çıpayı serbest döngüde uygulattı. Guided kademesinde çıpa
+// zaten uygulanıyordu (copilot_guided.go `to := anchorTo`) — AMA deploy
+// paketi kendi penceresini `time.Now()` ile kuruyordu ve çıpa ona hiç
+// geçmiyordu.
+//
+// ⚠ Operatör dün geceye zoom yapıp "son deploy neydi" diye sorduğunda
+// BUGÜNÜN deploy'ları dönüyor ve cevap DÜNÜN penceresi diye
+// etiketleniyordu. Aynı kusurun guided'daki ikizi — ve tam da "neden
+// bozuldu" sorusunun en sık cevabı olan kanıt.
+func TestGuidedDeployBundleHonorsTheAnchor(t *testing.T) {
+	src := readSourceFile(t, "copilot_guided.go")
+
+	if !strings.Contains(flatWS(src), "rangeS int64, anchorTo time.Time)") {
+		t.Error("guidedDeployBundle çıpayı ALMIYOR — pencere time.Now()'a düşer")
+	}
+	// Pencere çıpadan kurulmalı; çıpa yoksa şimdiye düşmeli.
+	if !strings.Contains(flatWS(src), "now := anchorTo if now.IsZero() { now = time.Now() }") {
+		t.Error("pencere çıpadan kurulmuyor")
+	}
+	// Yaş etiketleri de aynı ana göre: doğru veriye yanlış etiket koymak,
+	// yanlış veriden daha ikna edici bir hatadır.
+	if !strings.Contains(src, "deployRenderNow(anchorTo)") {
+		t.Error("\"kaç saat önce\" hesabı hâlâ GERÇEK şimdiye göre — çıpalı " +
+			"pencerede doğru veriye yanlış yaş etiketi konur")
+	}
+	// İki çağrı yeri de çıpayı geçirmeli (biri anchorTo, biri çıpalanmış `to`).
+	if n := strings.Count(src, "s.guidedDeployBundle(ctx"); n != 2 {
+		t.Errorf("guidedDeployBundle %d yerden çağrılıyor, 2 bekleniyordu — "+
+			"test bayatlamış olabilir", n)
+	}
+	// ⚠ İddia HEDEFLİ olmalı. İlk yazımı `"env, rangeS)"` arıyordu ve
+	// alakasız bir çağrıyı (renderSlowTracesEvidenceTR) ısırdı — bu gece
+	// dördüncü kez aynı sınıf: gevşek desen masum metinde eşleşiyor.
+	// Şimdi yalnız guidedDeployBundle çağrıları taranıyor.
+	for _, call := range regexp.MustCompile(`s\.guidedDeployBundle\([^)]*\)`).FindAllString(flatWS(src), -1) {
+		if strings.HasSuffix(call, "rangeS)") {
+			t.Errorf("çağrı yeri çıpasız: %s", call)
+		}
 	}
 }

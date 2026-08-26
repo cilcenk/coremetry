@@ -2,6 +2,7 @@ package chstore
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -348,11 +349,16 @@ func (s *Store) queryOracleGauges(
 	for rows.Next() {
 		var m string
 		var v float64
-		if err := rows.Scan(&m, &v); err == nil {
-			out[m] = v
+		// v0.10.51 — kardeş fonksiyonla aynı gerekçe: tarama hatası
+		// yutulursa metrik map'ten DÜŞER ve çağıran onu "sıfır" diye okur.
+		// Bugün bu dal ısırmıyor (kolon zaten Float64) ama tuzak aynı;
+		// bir kolonun tipi değiştiğinde sessizce sıfırlanmasın.
+		if err := rows.Scan(&m, &v); err != nil {
+			return nil, fmt.Errorf("oracle gauges scan: %w", err)
 		}
+		out[m] = v
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (s *Store) queryOracleRates(
@@ -388,15 +394,26 @@ func (s *Store) queryOracleRates(
 	for rows.Next() {
 		var m string
 		var v, obs float64
-		if err := rows.Scan(&m, &v, &obs); err == nil {
-			observed = obs
-			if v < 0 {
-				v = 0 // counter reset → suppress
-			}
-			out[m] = v
+		// v0.10.51 — TARAMA HATASI ARTIK YUTULMUYOR.
+		//
+		// Eski hâli `if err := rows.Scan(...); err == nil { … }` idi: hata
+		// olunca satır sessizce ATLANIYOR, map boş kalıyor ve çağıran bunu
+		// "oran sıfır" diye okuyor. v0.10.15 observed_sec kolonunu Int64
+		// olarak ekleyince tam bu oldu — BÜTÜN Oracle oranları 0 döndü,
+		// veri yerli yerindeyken, ve hiçbir log satırı çıkmadı.
+		//
+		// Sessiz sıfır, gürültülü hatadan çok daha pahalı: operatör "Oracle
+		// boşta" diye okur. Tarama hatası artık okumayı DÜŞÜRÜYOR.
+		if err := rows.Scan(&m, &v, &obs); err != nil {
+			return nil, 0, fmt.Errorf("oracle rates scan: %w", err)
 		}
+		observed = obs
+		if v < 0 {
+			v = 0 // counter reset → suppress
+		}
+		out[m] = v
 	}
-	return out, observed, nil
+	return out, observed, rows.Err()
 }
 
 func (s *Store) queryOracleTablespaces(

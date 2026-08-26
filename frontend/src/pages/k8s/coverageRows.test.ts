@@ -267,3 +267,33 @@ describe('örneklem tavanı doldu uyarısı', () => {
     expect(page).toContain('HİÇ girmemiş');
   });
 });
+
+// ── v0.10.67 — İKİ SERT KISIT, AYNI DOSYADA ────────────────────────────
+describe('pod envanteri tablosu ve hata durumu', () => {
+  const page = () => readFileSync(new URL('../AdminK8sCoverage.tsx', import.meta.url), 'utf8');
+
+  // ⚠ İstek HATA verdiğinde `pods` boş kalıyor ve panel eskiden
+  // "Span'ler k8s.pod.name taşımıyor olabilir" diye YANLIŞ TEŞHİS
+  // basıyordu. Ölçüm yapılmadı; "pod yok" demek ölçtüğümüz bir şeyi
+  // söylemek olurdu — ve operatörü olmayan bir collector sorununu
+  // aramaya gönderirdi.
+  it('hata durumu boş durumdan AYRI', () => {
+    const src = page();
+    expect(src).toContain('pq.isError');
+    expect(src).toContain('ÖLÇÜM YAPILMADI');
+    // Hata dalı, boş daldan ÖNCE gelmeli; sonra gelirse boş dal onu yutar.
+    expect(src.indexOf('pq.isError')).toBeLessThan(src.indexOf('pods.length === 0'));
+  });
+
+  // CLAUDE.md sert kısıtı: her veri tablosu useDataTable. Aynı dosyada
+  // kapsama tablosu uyuyordu, 300 satıra çıkan pod tablosu uymuyordu.
+  it('pod tablosu useDataTable kullanıyor', () => {
+    const src = page();
+    expect(src).toContain('POD_COLS');
+    expect(src).toContain('useDataTable<PodRow>');
+    expect(src).toContain('<DataTableHead dt={podDt} />');
+    expect(src).toContain('podDt.sortedRows.map');
+    // Elle yazılmış başlık satırı KALMAMALI.
+    expect(src).not.toContain('<th style={{ width: 140 }}>namespace</th>');
+  });
+});

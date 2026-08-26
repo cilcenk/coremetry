@@ -38,6 +38,22 @@ const TONE: Record<string, { bg: string; fg: string; text: string }> = {
 // (sıralanabilir + yeniden boyutlandırılabilir, genişlikler kalıcı).
 // Sıralama burada gerçekten işe yarıyor: "hangi servis uid yaymıyor"
 // sorusu bir sütun tıkıyla cevaplanıyor.
+// v0.10.67 — POD ENVANTERİ DE useDataTable. Aynı sert kısıt, aynı
+// dosyada bir tablo uyuyor öbürü uymuyordu: 300 satıra kadar çıkan bir
+// tablo elle yazılmıştı, yani sıralama ve sütun genişliği YOK.
+//
+// Sıralama burada da gerçekten işe yarıyor: "hangi pod en çok span
+// üretiyor", "hangi namespace'te yoğunlaşmış", "ömrü belirsiz olanlar
+// hangileri" — hepsi bir sütun tıkı.
+const POD_COLS: DataTableColumn<PodRow>[] = [
+  { id: 'namespace', label: 'namespace', sortValue: r => r.namespace, naturalDir: 'asc', width: 140 },
+  { id: 'pod',       label: 'pod',       sortValue: r => r.pod,       naturalDir: 'asc', width: 260 },
+  { id: 'service',   label: 'servis',    sortValue: r => r.service,   naturalDir: 'asc', width: 170 },
+  { id: 'node',      label: 'node',      sortValue: r => r.node ?? '', naturalDir: 'asc', width: 150 },
+  { id: 'spans',     label: 'span',      sortValue: r => r.spans, numeric: true, naturalDir: 'desc', width: 90 },
+  { id: 'seen',      label: 'görülme',   sortValue: r => r.lastSeen, numeric: true, naturalDir: 'desc', width: 170 },
+];
+
 const COVERAGE_COLS: DataTableColumn<K8sCoverageRow>[] = [
   { id: 'service', label: 'Servis',   sortValue: r => r.service, naturalDir: 'asc', width: 260 },
   { id: 'sampled', label: 'Örneklem', sortValue: r => r.sampled, numeric: true, naturalDir: 'desc', width: 110 },
@@ -80,7 +96,14 @@ export default function AdminK8sCoveragePage() {
     queryFn: () => api.k8sPods(3600, 300),
     staleTime: 60_000,
   });
-  const pods = pq.data?.rows ?? [];
+  const pods: PodRow[] = pq.data?.rows ?? [];
+  // ⚠ HOOK ERKEN DÖNÜŞTEN ÖNCE — bu dosyanın kendi dersi (v0.10.36).
+  const podDt = useDataTable<PodRow>({
+    storageKey: 'admin-k8s-pods',
+    columns: POD_COLS,
+    rows: pods,
+    initialSort: { id: 'spans', dir: 'desc' },
+  });
 
   if (q.isPending) return <Spinner />;
   if (q.isError) {
@@ -181,7 +204,19 @@ export default function AdminK8sCoveragePage() {
       {/* v0.10.41 — POD ENVANTERİ. Kimlik (namespace, pod adı); uid
           prod'da gelmiyor ve beklenmiyor (operatör kararı). */}
       <Card header={`Pod envanteri (${pods.length})`}>
-        {pq.isPending ? <Spinner /> : pods.length === 0 ? (
+        {/* ⚠ v0.10.67 — HATA DURUMU EKLENDİ. Eskiden yalnız
+            isPending / boş ayrımı vardı: istek HATA verdiğinde `pods`
+            boş kalıyor ve panel "Span'ler k8s.pod.name taşımıyor
+            olabilir" diye YANLIŞ TEŞHİS basıyordu.
+            Ölçüm yapılmadı; "alan yok" demek ölçtüğümüz bir şeyi
+            söylemek olurdu — ve operatörü olmayan bir collector
+            sorununu aramaya gönderirdi. */}
+        {pq.isPending ? <Spinner /> : pq.isError ? (
+          <Empty icon="⚠" title="Pod envanteri okunamadı">
+            /api/k8s/pods isteği hata verdi — bu ÖLÇÜM YAPILMADI demek,
+            "pod yok" demek DEĞİL.
+          </Empty>
+        ) : pods.length === 0 ? (
           <Empty icon="∅" title="Örneklemde pod görülmedi">
             Span'ler k8s.pod.name taşımıyor olabilir — üstteki kapsama
             tablosu hangi servisin yaydığını söylüyor.
@@ -189,18 +224,10 @@ export default function AdminK8sCoveragePage() {
         ) : (
           <div className="table-wrap is-fit">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
-              <thead>
-                <tr>
-                  <th style={{ width: 140 }}>namespace</th>
-                  <th>pod</th>
-                  <th style={{ width: 170 }}>servis</th>
-                  <th style={{ width: 150 }}>node</th>
-                  <th style={{ width: 90, textAlign: 'right' }}>span</th>
-                  <th style={{ width: 170 }}>görülme</th>
-                </tr>
-              </thead>
+              <DataTableColgroup dt={podDt} />
+              <DataTableHead dt={podDt} />
               <tbody>
-                {pods.map((r: PodRow) => {
+                {podDt.sortedRows.map((r: PodRow) => {
                   const warn = podStabilityWarning(r);
                   return (
                     <tr key={`${r.namespace}/${r.pod}`} style={{ contentVisibility: 'auto' }}>

@@ -154,7 +154,25 @@ export default function ServiceMapPage() {
     // "why is this quiet" question, not a stale preference.
     if (focus) {
       const fromUrl = searchParams.get('focus');
-      if (fromUrl || real.some(n => n.service === focus)) return;
+      if (fromUrl) return;
+      if (real.some(n => n.service === focus)) {
+        // v0.10.76 — HATIRLANAN ODAK URL'YE DE YAZILIR.
+        //
+        // İlk mount'ta focus localStorage'dan geliyor ve commitFocus
+        // ÇAĞRILMIYOR; odak canlı bir servisse burası sessizce erken
+        // dönüyordu. Sonuç: grafik odaklı görünüyor ama URL'de `?focus=`
+        // YOK — ve bu iki şeyi birden bozuyordu:
+        //
+        //   • sohbet bağlamı rotadan servisi okuyor (chatContext.ts
+        //     FOCUS_PARAM_ROUTES); göremeyince soru FİLO GENELİNE gidiyor,
+        //   • "Copy link" ekrandaki görünümü ÜRETMİYOR (deponun
+        //     "URL = tek gerçek kaynak" değişmezi).
+        //
+        // commitFocus idempotent: aynı değerle çağırmak state'i
+        // değiştirmiyor, yalnız URL'yi ve depoyu hizalıyor.
+        commitFocus(focus);
+        return;
+      }
     }
     commitFocus(real[0].service);
     // eslint-disable-next-line react-hooks/exhaustive-deps

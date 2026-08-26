@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   fieldState, fieldPct, fleetSummary, fieldSeen, COVERAGE_FIELDS,
+  podSeenWindow, podStabilityWarning,
 } from './coverageRows';
-import type { K8sCoverageRow } from '@/lib/types';
+import type { K8sCoverageRow, PodRow } from '@/lib/types';
 
 // v0.10.36 — K8s entity katmanı Faz 0: bağlam kapsama kartı.
 //
@@ -144,5 +145,91 @@ describe('kablolama', () => {
   it('>100 satırlı tablo content-visibility taşıyor', () => {
     // CLAUDE.md sert kısıtı: satır sayısı 100'ü aşabilen tablolar.
     expect(page).toContain("contentVisibility: 'auto'");
+  });
+});
+
+// ── POD ENVANTERİ (v0.10.41) ────────────────────────────────────────────
+
+const pod = (o: Partial<PodRow> = {}): PodRow => ({
+  namespace: 'demo', pod: 'svc-abc12', service: 'svc', spans: 100,
+  firstSeen: 0, lastSeen: 0, nameStable: false, ...o,
+});
+
+describe('podSeenWindow', () => {
+  const NS = 1e6; // ms → ns
+  it.each([
+    [30_000 * NS, '30 sn boyunca görüldü'],
+    [5 * 60_000 * NS, '5 dk boyunca görüldü'],
+    [3 * 3_600_000 * NS, '3 sa boyunca görüldü'],
+  ])('%i ns', (span, want) => {
+    expect(podSeenWindow(pod({ firstSeen: 0, lastSeen: span }))).toBe(want);
+  });
+
+  // ⚠ ADLANDIRMA SÖZLEŞMESİ: "görüldü", "ayakta" DEĞİL. Bu bir örneklem
+  // penceresi; pod ondan önce de sonra da yaşıyor olabilir. Arayüzün
+  // ürettiği cümle, ölçtüğü şeyden fazlasını iddia etmemeli.
+  it('cümle "ayakta" demiyor', () => {
+    const s = podSeenWindow(pod({ firstSeen: 0, lastSeen: 60_000 * NS }));
+    expect(s).toContain('görüldü');
+    expect(s).not.toContain('ayakta');
+  });
+
+  it('bozuk aralıkta çökmez', () => {
+    expect(podSeenWindow(pod({ firstSeen: 100, lastSeen: 0 }))).toBe('—');
+    expect(podSeenWindow(pod({ firstSeen: NaN, lastSeen: 0 }))).toBe('—');
+  });
+});
+
+describe('podStabilityWarning', () => {
+  // ⚠ Kimliğin tek zayıf noktası — sessiz bırakılırsa entity katmanının
+  // İLK çıktısı yanlış olur.
+  it('StatefulSet pod\'unda uyarı VAR ve sebebini söylüyor', () => {
+    const w = podStabilityWarning(pod({ pod: 'kafka-0', nameStable: true }));
+    expect(w).not.toBeNull();
+    expect(w).toContain('İKİ ayrı pod ömrünü');
+    expect(w).toContain('pod.uid');
+  });
+
+  it('Deployment pod\'unda uyarı YOK', () => {
+    // Rastgele sonek ömürleri zaten ayırıyor; her satırda duran bir
+    // uyarı, hiçbir satırda okunmayan bir uyarıdır.
+    expect(podStabilityWarning(pod({ nameStable: false }))).toBeNull();
+  });
+});
+
+describe('pod envanteri kablolaması', () => {
+  const page = readFileSync(new URL('../AdminK8sCoverage.tsx', import.meta.url), 'utf8');
+
+  it('sayfa pod envanterini çekiyor', () => {
+    expect(page).toContain('api.k8sPods(');
+  });
+
+  // ⚠ Uyarı SATIRIN İÇİNDE olmalı. Dipnota atmak, birleşmiş ömrün
+  // sessiz kalması demek — kimliğin tek zayıf noktası görünmez olur.
+  it('ömür uyarısı satır içinde çiziliyor', () => {
+    expect(page).toContain('podStabilityWarning(r)');
+    expect(page).toContain('ömür belirsiz');
+  });
+
+  it('görülme aralığı saf yardımcıdan geliyor', () => {
+    expect(page).toContain('podSeenWindow(r)');
+  });
+
+  // Hook'lar erken dönüşten ÖNCE — v0.10.36'da bu kuralı bir kez ihlal
+  // ettim ve tsc görmedi.
+  it('pod sorgusu erken dönüşten ÖNCE kuruluyor', () => {
+    // ⚠ YORUMLARI ÖNCE SÖK. İlk yazımda ham metinde arıyordum ve test
+    // KIRMIZI verdi — oysa sıra doğruydu: aranan dizge, v0.10.36'da
+    // yazdığım bir YORUMUN içinde de geçiyordu ("… satırlarının ALTINA
+    // koymuştum"). Kapının kendi dokümantasyonunu ısırması bu depoda
+    // tekrar eden sınıf (v0.9.1375, v0.9.1382, v0.10.17, v0.10.25).
+    const code = page
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
+    const iQuery = code.indexOf("queryKey: ['k8s-pods']");
+    const iReturn = code.indexOf('if (q.isPending) return');
+    expect(iQuery).toBeGreaterThan(-1);
+    expect(iReturn).toBeGreaterThan(-1);
+    expect(iQuery).toBeLessThan(iReturn);
   });
 });

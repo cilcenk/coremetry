@@ -1828,6 +1828,11 @@ export const api = {
 
   // v0.10.36 — K8s bağlam kapsama kartı (entity katmanı Faz 0). rangeS
   // sunucuda BASAMAĞA oturuyor; serbest değer cache anahtarını patlatır.
+  // v0.10.41 — pod envanteri (K8s entity Faz 1, okuma yarısı).
+  k8sPods: (rangeS?: number, limit?: number) =>
+    request<import('./types').PodInventory>(
+      `/api/k8s/pods?${qs({ rangeS, limit })}`),
+
   k8sCoverage: (rangeS?: number, limit?: number) =>
     request<import('./types').K8sCoverage>(
       `/api/k8s/coverage?${qs({ rangeS, limit })}`),

@@ -457,10 +457,21 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			// sayaç istek boyunca tekil.
 			// v0.9.1229 — kimliği sarmalayıcı veriyor (emitStepChip);
 			// döngünün kendi sayacı guided'ın çipleriyle çakışabiliyordu.
-			// v0.10.29 — kaynak künyesi için çağrılan araçlar. Çip zaten
-			// tc.Name basıyor; künye AYNI adı kullanıyor ki cevabın altındaki
-			// atıf ile üstündeki çipler ayrışmasın.
-			calledTools = append(calledTools, tc.Name)
+			// v0.10.53 — künye DENENEN aracı değil, VERİ DÖNDÜREN aracı sayar.
+			//
+			// v0.10.29'da bu satır tam burada duruyordu, yani `byName`
+			// kontrolünden ÖNCE: modelin UYDURDUĞU, var olmayan bir araç adı
+			// künyeye "Kaynak:" diye giriyordu. Hata dönen araç da öyle.
+			//
+			// İkisi de künyenin iddiasını çürütüyor: künye cevabın CANLI
+			// VERİYE dayandığını söylüyor. Çalışmamış bir araç veri
+			// döndürmez; hata metni telemetri değildir. Uydurma bir adı
+			// kaynak diye göstermek, uydurmayı KANITLA süslemek olurdu —
+			// künyenin var olma sebebinin tam tersi.
+			//
+			// Kayıt artık başarılı çalıştırmadan SONRA (aşağıda). Çip yine
+			// burada çıkıyor: operatör modelin NE DENEDİĞİNİ görmeli,
+			// başarısız denemeler dâhil — o ayrı bir soru.
 			stepN = emitStepChip(emit, tc.Name, string(tc.Input))
 			h, found := byName[tc.Name]
 			if !found {
@@ -497,6 +508,11 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 				tr.Content = mcp.ToolErrorJSON(herr)
 			} else {
 				tr.Content = out
+				// v0.10.53 — künyeye YALNIZ buradan giriliyor: araç vardı,
+				// çalıştı ve veri döndürdü. Çip zaten tc.Name basıyor; künye
+				// AYNI adı kullanıyor ki cevabın altındaki atıf ile üstündeki
+				// çipler ayrışmasın.
+				calledTools = append(calledTools, tc.Name)
 			}
 			// Kanıt tele biner: modelin GÖRDÜĞÜ metnin ta kendisi, kırpılmışsa
 			// kırpıldığı SÖYLENEREK. Özet göndermek daha ucuz olurdu ama

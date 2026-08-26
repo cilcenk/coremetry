@@ -123,14 +123,64 @@ func TestChatWiresSourceNote(t *testing.T) {
 			t.Errorf("künye kablolanmamış, kayıp: %s", must)
 		}
 	}
-	// Künye ⚙ çipiyle AYNI adı kullanmalı; ayrışırsa cevabın altındaki
-	// atıf ile üstündeki çipler farklı şeyler söyler.
-	iAppend := strings.Index(src, "calledTools = append(calledTools, tc.Name)")
-	iChip := strings.Index(src, "emitStepChip(emit, tc.Name")
-	if iAppend < 0 || iChip < 0 {
-		t.Fatal("biriktirme ya da çip yayını bulunamadı")
+	// Künye ⚙ çipiyle AYNI AD KAYNAĞINI kullanmalı: ikisi de `tc.Name`.
+	// Ayrı bir ad üretirlerse cevabın altındaki atıf ile üstündeki çipler
+	// farklı şeyler söyler.
+	//
+	// ⚠ v0.10.53 — bu kontrol eskiden `iAppend < iChip` konum karşılaştırması
+	// yapıyordu. O bir VEKİLDİ ve yanlış şeyi koruyordu: künye kaydının
+	// çipten önce gelmesi, kaydın `byName` kontrolünden de ÖNCE gelmesi
+	// demekti — yani modelin UYDURDUĞU araç adı künyeye "Kaynak:" diye
+	// giriyordu. Vekil, düzeltmenin kendisini engelliyordu.
+	//
+	// Çip ile künyenin ÜYELİĞİ artık bilerek ayrı: çip DENENEN her aracı
+	// gösteriyor (operatör modelin ne denediğini görmeli), künye ise yalnız
+	// VERİ DÖNDÜRENİ. Korunması gereken şey ad kaynağının tekliği.
+	if !strings.Contains(src, "emitStepChip(emit, tc.Name") {
+		t.Error("çip artık tc.Name basmıyor — künyeyle ad kaynağı ayrışmış olabilir")
 	}
-	if iAppend > iChip {
-		t.Error("araç künyeye çipten SONRA ekleniyor — bir tur atlanırsa ayrışırlar")
+	if !strings.Contains(src, "calledTools = append(calledTools, tc.Name)") {
+		t.Error("künye artık tc.Name kaydetmiyor — çiple ad kaynağı ayrışmış olabilir")
+	}
+}
+
+// TestSourceNoteCountsOnlyToolsThatReturnedData — v0.10.53.
+//
+// v0.10.29 künyeyi "cevap CANLI VERİYE dayanıyor mu" sorusuna cevap
+// olsun diye ekledi. Ama kayıt satırı `byName` kontrolünden ÖNCE
+// duruyordu: modelin UYDURDUĞU, var olmayan bir araç adı künyeye
+// "Kaynak:" diye giriyordu. Hata dönen araç da öyle.
+//
+// ⚠ İkisi de künyenin İDDİASINI çürütüyor. Çalışmamış bir araç veri
+// döndürmez; hata metni telemetri değildir. Uydurma bir adı kaynak diye
+// göstermek, uydurmayı KANITLA süslemek olurdu — künyenin var olma
+// sebebinin tam tersi.
+//
+// Kayıt AST'de tek yerde olmalı: başarı dalında. Bu kapı onu çiviliyor.
+func TestSourceNoteCountsOnlyToolsThatReturnedData(t *testing.T) {
+	src := readSourceFile(t, "copilot_chat.go")
+
+	n := strings.Count(src, "calledTools = append(calledTools, tc.Name)")
+	if n != 1 {
+		t.Fatalf("calledTools %d yerde yazılıyor, 1 olmalı — birden fazla kayıt "+
+			"yeri, başarısız dalın da künyeye sızması demek", n)
+	}
+	// Kayıt, bilinmeyen-araç dalından SONRA gelmeli.
+	unknown := strings.Index(src, `msg := fmt.Sprintf("unknown tool %q", tc.Name)`)
+	record := strings.Index(src, "calledTools = append(calledTools, tc.Name)")
+	if unknown < 0 {
+		t.Fatal("bilinmeyen-araç dalı bulunamadı — test bayatlamış")
+	}
+	if record < unknown {
+		t.Error("künye kaydı bilinmeyen-araç dalından ÖNCE: modelin uydurduğu " +
+			"araç adı 'Kaynak:' diye gösterilir")
+	}
+	// Ve hata dalından SONRA: `tr.Content = out` yalnız başarıda çalışır.
+	success := strings.Index(src, "tr.Content = out")
+	if success < 0 {
+		t.Fatal("başarı dalı bulunamadı — test bayatlamış")
+	}
+	if record < success {
+		t.Error("künye kaydı başarı dalından ÖNCE: hata dönen araç da kaynak sayılır")
 	}
 }

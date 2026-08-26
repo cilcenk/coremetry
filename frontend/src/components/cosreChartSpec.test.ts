@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { cosreChartDSL, cosreChartItems, COSRE_SERIES_CAP } from './cosreChartSpec';
 import type { SpanMetricSeries } from '@/lib/types';
 
@@ -116,5 +117,42 @@ describe('cosreChartItems', () => {
     // İkisi de "(boş)" olurdu; indeks ekiyle lejantta üst üste binmezler.
     expect(new Set(r.items.map(i => i.name)).size).toBe(2);
     expect(r.items.every(i => i.name.startsWith('(boş)'))).toBe(true);
+  });
+});
+
+// ── v0.10.43 — GRAFİK BİRİMİ MODEL KONTROLÜNDE OLAMAZ ───────────────────
+//
+// Copilot denetiminin bulgusu: `ChatBubble` cevap metnindeki HERHANGİ bir
+// ```chart``` çitini canlı panele çeviriyor ve doğrulama
+// `typeof … === 'string'` ile bitiyordu. `CosreChart` de
+// `unit={spec.unit ?? unit}` diyordu — yani MODELİN yazdığı birim,
+// agg'den türetileni EZİYORDU.
+//
+// Sonuç: model bir p99 grafiğine "%" etiketi yazabiliyor ve grafik
+// GERÇEK gecikme verisiyle çiziliyor. Doğru veri + yanlış birim,
+// düzyazıdan daha ikna edici bir hata — grafik daha yüksek güven taşır.
+//
+// ⚠ DÜZELTMEYİ RİSKSİZ KILAN ÖLÇÜM: sunucunun render_chart aracı spec'i
+// TAM ÜÇ anahtarla kuruyor — {service, agg, rangeS}. `unit` ve `title`
+// HİÇ üretilmiyor (internal/mcptools/tools.go). Yani bu iki alan arayüze
+// ulaşıyorsa kaynağı YALNIZCA modelin kendi yazdığı çit olabilir;
+// onları yok saymak meşru hiçbir grafiği etkilemiyor.
+describe('grafik birimi/başlığı spec\'ten alınmıyor', () => {
+  const src = readFileSync(new URL('./CosreChart.tsx', import.meta.url), 'utf8');
+
+  it('birim YALNIZ agg\'den türetiliyor', () => {
+    expect(src).toContain('unit={unit}');
+    expect(src).not.toContain('spec.unit ?? unit');
+  });
+
+  it('başlık YALNIZ defaultTitle\'dan', () => {
+    expect(src).toContain('title={defaultTitle(spec)}');
+    expect(src).not.toContain('spec.title ?? defaultTitle');
+  });
+
+  it('birim kaynağı AGG_UNIT tablosu', () => {
+    const spec = readFileSync(new URL('./cosreChartSpec.ts', import.meta.url), 'utf8');
+    expect(spec).toContain("p99: 'ms'");
+    expect(spec).toContain("error_rate: '%'");
   });
 });

@@ -61,7 +61,13 @@ export function CosreChart({ spec }: { spec: CosreChartSpec }) {
     <div style={{ margin: '10px 0', maxWidth: 560 }}>
       <Suspense fallback={<Spinner />}>
         <CorePanelMulti
-          title={spec.title ?? defaultTitle(spec)}
+          // v0.10.43 — BAŞLIK SPEC'TEN DEĞİL, agg'DEN. Sunucunun
+          // render_chart aracı spec'i tam üç anahtarla kuruyor
+          // (service, agg, rangeS) — title'ı HİÇ üretmiyor. Yani
+          // spec.title'a saygı duymak yalnız MODELİN kendi yazdığı çiti
+          // onurlandırırdı; meşru grafik zaten defaultTitle'a düşüyordu,
+          // dolayısıyla bu değişiklik hiçbir gerçek grafiği etkilemiyor.
+          title={defaultTitle(spec)}
           height={180}
           // storageKey lejant katlanma durumunun kimliği. Spec'in
           // KAPSAMINDAN türetiliyor, sohbet turundan değil: aynı grafiği
@@ -71,7 +77,13 @@ export function CosreChart({ spec }: { spec: CosreChartSpec }) {
           loading={q.isLoading}
           error={q.isError ? 'Grafik verisi alınamadı' : undefined}
           items={items}
-          unit={spec.unit ?? unit}
+          // ⚠ BİRİM MODEL KONTROLÜNDE OLAMAZ. Eskiden spec.unit,
+          // agg'den türetilen birimi EZİYORDU: model bir p99 grafiğine
+          // "%" yazabiliyor ve grafik GERÇEK gecikme verisiyle
+          // çiziliyordu. Doğru veri + yanlış birim, düzyazıdan daha ikna
+          // edici bir hata — grafik daha yüksek güven taşır.
+          // Birim artık YALNIZ AGG_UNIT[agg]'den.
+          unit={unit}
         />
       </Suspense>
       {/* Kırpma İLAN EDİLİR. Sessizce ilk N'i çizmek, operatöre "evren bu"

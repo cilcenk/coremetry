@@ -124,7 +124,21 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
     const o = optsRef.current;
     const history: ChatMessage[] = [
       ...(o.seed ?? []),
-      ...turnsRef.current.filter(t => !t.error).map(t => ({ role: t.role, text: t.text })),
+      // v0.10.63 — DURDURULAN TUR YARIM OLDUĞUNU SÖYLER.
+      //
+      // ⚠ `stopped` bayrağı burada DÜŞÜYORDU: yalnız {role,text} geçiyor.
+      // Yani operatörün yarıda kestiği cevap modele TAMAMLANMIŞ kendi
+      // cevabı gibi geri gidiyor ve model kendi yarım cümlesinin üstüne
+      // inşa ediyordu — "bir önceki cevabımda dediğim gibi…" diye devam
+      // ettiği şey hiç söylenmemiş olabiliyor.
+      //
+      // Tur ELENMİYOR: operatör ona atıfta bulunabilir ("az önceki listeyi
+      // tamamla"). Elenirse o atıf bağlamsız kalırdı. Yarımlık METNE
+      // yazılıyor, ki model neye baktığını bilsin.
+      ...turnsRef.current.filter(t => !t.error).map(t => ({
+        role: t.role,
+        text: t.stopped ? `${t.text}\n\n[Bu cevap operatör tarafından YARIDA DURDURULDU — tamamlanmadı.]` : t.text,
+      })),
       { role: 'user', text: q },
     ];
     setTurns(prev => [

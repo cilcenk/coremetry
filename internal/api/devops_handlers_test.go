@@ -224,8 +224,12 @@ func TestDevOpsAuditDetails_NoSecrets(t *testing.T) {
 	// repoPrefixes / branchOrder joined in v0.9.830: not secrets, and
 	// a convention edit silently repoints which source file every AI
 	// answer quotes, so the trail wants it.
+	// codeSearch v0.10.75'te eklendi: SIR DEĞİL, ama denetlenmesi gereken
+	// bir karar — açıldığında Coremetry organizasyonun TAMAMINDA kod
+	// aramaya başlıyor ve kanıt olarak başka depoların dosyalarını
+	// gösteriyor. Kimin ne zaman açtığı izde durmalı.
 	want := []string{"baseUrl", "collection", "project", "flavor", "hasPat",
-		"insecureSkipVerify", "repoPrefixes", "branchOrder"}
+		"insecureSkipVerify", "repoPrefixes", "branchOrder", "codeSearch"}
 	if len(got) != len(want) {
 		t.Errorf("audit keys = %v, want exactly %v", keysOf(got), want)
 	}

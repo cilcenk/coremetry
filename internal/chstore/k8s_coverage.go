@@ -85,6 +85,23 @@ type K8sCoverage struct {
 	SampleRows int `json:"sampleRows"`
 	// WindowSec — GERÇEKTEN sorulan pencere.
 	WindowSec int64 `json:"windowSec"`
+	// Capped (v0.10.62) — DIŞ tavan ısırdı mı.
+	//
+	// ⚠ Kartın kendi "en önemli sözleşmesi" ölçülemiyordu. `fieldState`ın
+	// `unknown` dalı ("örneklemde o servisten hiç satır yok → 'alan yok'
+	// DEMEK YANLIŞ") YAPISAL OLARAK ULAŞILAMAZDI: GROUP BY sıfır satırlı
+	// bir grup için HİÇ SATIR üretmez, yani `sampled` asla 0 olmaz.
+	// Örnekleme girmeyen servis "unknown" olarak DEĞİL, HİÇ görünmüyordu.
+	//
+	// v0.10.56 servis-başına örneklemeyle bunu büyük ölçüde kapattı: artık
+	// her servisin kendi kotası var. Kalan tek delik DIŞ tavanın ısırması —
+	// o zaman bazı servisler örnekleme hiç girmemiş olabilir ve kart eksik
+	// bir filo üzerinden konuşur.
+	//
+	// Ölçülebilir olduğu için ilan ediliyor: satır sayılarının toplamı
+	// tavana dayandıysa Capped=true. "Gördüğüm bu kadar" ile "olan bu
+	// kadar" ayrımı yine operatörün elinde.
+	Capped bool `json:"capped,omitempty"`
 }
 
 // GetK8sCoverage — hangi servis hangi k8s resource alanını yayıyor.
@@ -131,6 +148,7 @@ func (s *Store) GetK8sCoverage(ctx context.Context, from, to time.Time, limit in
 		SampleRows: k8sCoverageSampleRows,
 		WindowSec:  int64(to.Sub(from).Seconds()),
 	}
+	total := 0
 	for rows.Next() {
 		var r K8sCoverageRow
 		if err := rows.Scan(&r.Service, &r.Sampled, &r.Namespace, &r.Deployment,
@@ -138,6 +156,9 @@ func (s *Store) GetK8sCoverage(ctx context.Context, from, to time.Time, limit in
 			continue
 		}
 		out.Rows = append(out.Rows, r)
+		total += int(r.Sampled)
 	}
+	// v0.10.62 — dış tavan ısırdıysa filo EKSİK olabilir; ilan ediliyor.
+	out.Capped = total >= k8sCoverageSampleRows
 	return out, rows.Err()
 }

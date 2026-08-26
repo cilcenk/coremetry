@@ -42,6 +42,29 @@ var logStackKeys = []string{
 	"stacktrace",
 }
 
+// looseLogStackKeys — GEVŞEK yazımlar: alan adı "burası stacktrace" demiyor,
+// yalnız "burada bir throwable var" diyor.
+//
+// v0.10.59, operatör-bildirimli: "Stacktrace'te hata var ama yok yazıyor."
+// Kayıt, stack'i `throwable` alanında taşıyordu (Log4j2/Logback JSON
+// encoder'larının yaygın yazımı) ve gövde yalnız `message`'ı tuttuğu için
+// gövde taraması da devreye girmiyordu — panel "bu kayıtta stacktrace yok"
+// diyor, oysa stack ekranda görünüyordu.
+//
+// Dosyanın kendi kuralı yeni anahtar için "o yazımı üreten GERÇEK bir
+// kurulum" istiyordu; bu tam olarak öyle bir kurulum.
+//
+// ⚠ AMA KANONİK LİSTEYE KOYULMUYOR. `throwable` bir exception'ın
+// TOPLAMINI tutabilir: bazı encoder'lar oraya yalnız `toString()` yazıyor
+// (tek satır mesaj, frame yok). Onu koşulsuz "stack" saymak, dosyanın
+// uyardığı riski gerçekleştirirdi — "stack sandığımız şey aslında başka bir
+// alanmış". Bu yüzden gevşek anahtarlar GÖVDEYLE AYNI çıtayı geçmek zorunda:
+// en az bodyStackMinFrames adet gerçek frame.
+var looseLogStackKeys = []string{
+	"throwable",
+	"throwable.stack_trace",
+}
+
 // bodyStackMinFrames — gövdeyi "stacktrace" saymak için gereken en az frame.
 //
 // 2, çünkü 1 tek satır tesadüf olabilir: düz bir log cümlesi içinde
@@ -57,6 +80,28 @@ func FromLog(attrs map[string]string, body string) (stack string, fromBody bool)
 	for _, k := range logStackKeys {
 		if v, ok := attrs[k]; ok && strings.TrimSpace(v) != "" {
 			return v, false
+		}
+	}
+	// Gevşek anahtarlar: yalnız GERÇEKTEN frame taşıyorlarsa kabul.
+	//
+	// Eşleşme SONEK üzerinden: bu depoda ES yolu iç içe JSON gövdesini
+	// düzleştiriyor ve alanlar `message.throwable` / `mdc.throwable` gibi
+	// önekli path'lerle geliyor (aynı gözlem v0.8.466'da trace_id için
+	// yapılmıştı: "gövde JSON'ında / alışılmadık bir path'te"). Birebir
+	// eşleşme o kurulumları ıskalardı.
+	//
+	// Sonek eşleşmesi burada GÜVENLİ, çünkü değer yine iki-frame çıtasını
+	// geçmek zorunda: adı ne olursa olsun, frame taşımayan bir alan stack
+	// sayılmıyor.
+	if len(attrs) > 0 {
+		for k, v := range attrs {
+			if !looseStackKeyMatch(k) {
+				continue
+			}
+			v = strings.TrimSpace(v)
+			if v != "" && len(ParseJava(v)) >= bodyStackMinFrames {
+				return v, false
+			}
 		}
 	}
 	if strings.TrimSpace(body) == "" {
@@ -89,4 +134,24 @@ func MessageHead(body string) string {
 		}
 	}
 	return body
+}
+
+// looseStackKeyMatch — anahtarın SON nokta-parçası gevşek listede mi.
+//
+// `throwable`, `message.throwable`, `mdc.throwable` → true.
+// `throwable_count` → false (parça birebir eşleşmeli).
+func looseStackKeyMatch(key string) bool {
+	if i := strings.LastIndexByte(key, '.'); i >= 0 {
+		key = key[i+1:]
+	}
+	for _, k := range looseLogStackKeys {
+		lk := k
+		if i := strings.LastIndexByte(lk, '.'); i >= 0 {
+			lk = lk[i+1:]
+		}
+		if strings.EqualFold(key, lk) {
+			return true
+		}
+	}
+	return false
 }

@@ -124,3 +124,63 @@ func TestFramingDoesNotAskForRedaction(t *testing.T) {
 		}
 	}
 }
+
+// ── v0.10.72 — KOD ALINTISI ZORUNLU ─────────────────────────────────────
+//
+// Operatör: "Kodu kod bloğunda gösterseydin." Ekrandaki cevap dosya ve
+// satır ADI veriyor ama kodu GÖSTERMİYORDU — çünkü eski ek yalnız
+// "satır numarasını yaz" diyordu, blok istemiyordu.
+//
+// ⚠ Satır numarası yazıp kodu göstermemek, operatörün iddiayı
+// DENETLEYEMEMESİ demek: numaranın doğru olduğunu ancak kodu görerek
+// bilir. Model numarayı uydurduğunda fark eden olmaz.
+//
+// Ek PAYLAŞILAN: trace ve exception yüzeylerinin ikisi de bunu
+// kullanıyor, yani tek değişiklik iki yüzeyi birden düzeltiyor
+// ([[feedback-fixes-have-second-halves]]).
+
+func TestCodeAddendumDemandsAQuote(t *testing.T) {
+	for _, p := range map[string]string{
+		"TraceWithCode":     SystemPromptTraceWithCode(),
+		"ExceptionWithCode": SystemPromptExceptionWithCode(),
+	} {
+		if !strings.Contains(p, "KOD ALINTISI ZORUNLU") {
+			t.Error("kod-bağlamlı prompt alıntı İSTEMİYOR — cevap dosya/satır adı " +
+				"verip kodu göstermez ve operatör iddiayı denetleyemez")
+		}
+		// Çit karakterleri gerçekten prompt'a girmeli.
+		if !strings.Contains(p, "```") {
+			t.Error("prompt kod bloğu çitini içermiyor — birleştirme kopmuş olabilir")
+		}
+		if !strings.Contains(p, "Numaraları UYDURMA") {
+			t.Error("satır numarası uydurma yasağı yok")
+		}
+		if !strings.Contains(p, "kaynak çözülemedi") {
+			t.Error("eksik dosya için dürüst çıkış yolu yok — model uydurmaya itilir")
+		}
+	}
+}
+
+// TestCodeAddendumPromisesNoAbsentInput — VERMEDİĞİMİZ GİRDİYİ İSTEME.
+//
+// ⚠ Operatörün taslağı <db_schema> ve <sql_artifacts> blokları
+// istiyordu. Coremetry'nin DB2 kataloğuna erişimi YOK ve mapper/XML
+// dosyaları da çekilmiyor — yalnız stack frame'lerinin kaynak
+// pencereleri gönderiliyor.
+//
+// Var olmayan bir girdiyi vaat etmek, modeli ya UYDURMAYA ya da sürekli
+// "kaynak çözülemedi" demeye iter. Onun yerine kural genelleştirildi:
+// hedefin tanımı pencerede yoksa BUNU SÖYLE.
+func TestCodeAddendumPromisesNoAbsentInput(t *testing.T) {
+	p := SystemPromptTraceWithCode()
+	for _, absent := range []string{"<db_schema>", "<sql_artifacts>", "db_schema"} {
+		if strings.Contains(p, absent) {
+			t.Errorf("prompt %q girdisini vaat ediyor ama sunucu onu GÖNDERMİYOR — "+
+				"model ya uydurur ya sürekli 'çözülemedi' der", absent)
+		}
+	}
+	// Yerine geçen genel kural durmalı.
+	if !strings.Contains(p, "hedefin tanımı bu bağlamda yok") {
+		t.Error("eksik hedef tanımı için genel kural yok")
+	}
+}

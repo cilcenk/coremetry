@@ -34,12 +34,39 @@ import (
 // (bütün bind sırası kayar), iki sorguda tersini yaptım. `go build`
 // hiçbirini göremez: SQL seviyesinde kusur, çalışma zamanında patlar.
 
-var engineFiles = []string{"oracle.go", "postgres.go", "mysql.go", "redis.go"}
+// engineFiles — ARTIK ELLE TUTULMUYOR (v0.10.54).
+//
+// ⚠ Bu liste dört dosya sayıyordu ve kapı yalnız onlara bakıyordu. v0.10.15
+// kümülatif oran paydasını düzeltirken db_capacity.go'daki BEŞİNCİ yeri
+// atladı; kapı da göremedi, çünkü o dosya listede yoktu. Muhafız, koruduğu
+// kurala değil bir DİLİM ADINA bağlıydı ([[feedback-guard-bound-to-slice-name]]).
+//
+// Artık paketin tamamı taranıyor: yeni bir motor okuyucusu eklendiğinde
+// kimsenin listeyi güncellemesi gerekmiyor.
+func engineSourceFiles(t *testing.T) []string {
+	t.Helper()
+	ents, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("paket okunamadı: %v", err)
+	}
+	var out []string
+	for _, e := range ents {
+		n := e.Name()
+		if !e.IsDir() && strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go") {
+			out = append(out, n)
+		}
+	}
+	return out
+}
 
 func TestCumulativeRatesUseObservedSpan(t *testing.T) {
 	// `(max(...) - min(...)) / ?` — istenen pencereye bölen eski kalıp.
-	bad := regexp.MustCompile(`min\([^)]*\)\)\s*/\s*\?`)
-	for _, f := range engineFiles {
+	// ⚠ `minIf(` biçimi ESKİ regex'e takılmıyordu: `min\(` literali
+	// istiyordu ve postgres.go per-database oranlarını `minIf(...)` ile
+	// yazıyor. Kuralın ikinci YAZIMI ilkinden habersizdi
+	// ([[feedback-gate-single-spelling]]).
+	bad := regexp.MustCompile(`min(If)?\([^)]*\)\)?\s*/\s*\?`)
+	for _, f := range engineSourceFiles(t) {
 		t.Run(f, func(t *testing.T) {
 			b, err := os.ReadFile(f)
 			if err != nil {
@@ -107,4 +134,33 @@ func stripGoCommentsCH(src string) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// TestBackMultiplyUsesTheMetricsOwnSpan — v0.10.54.
+//
+// ⚠ queryOracleRates eskiden TEK bir `observed` değeri döndürüyordu ve
+// döngüde her satırda ÜZERİNE yazıyordu: fonksiyon SON TARANAN metriğin
+// aralığını veriyordu. Çağıran onunla cpu_time'ı geri çarpıyor.
+//
+// Metrikler farklı zamanlarda başlarsa (yeni receiver, yeniden başlatılmış
+// instance) cpu_time BAŞKA bir metriğin aralığıyla çarpılıyordu ve
+// CPUTimeSec makul görünen ama yanlış bir toplam oluyordu.
+//
+// Aralık artık metrik başına; geri çarpım metriğin KENDİ aralığını
+// kullanmak zorunda.
+func TestBackMultiplyUsesTheMetricsOwnSpan(t *testing.T) {
+	b, err := os.ReadFile("oracle.go")
+	if err != nil {
+		t.Fatalf("oracle.go okunamadı: %v", err)
+	}
+	src := stripGoCommentsCH(string(b))
+
+	if !strings.Contains(src, "observedFor[m] = obs") {
+		t.Error("gözlenen aralık metrik başına taşınmıyor — tek değer, son " +
+			"taranan satırın aralığıdır ve geri çarpım yanlış metriği kullanır")
+	}
+	if !strings.Contains(src, `rates["oracledb.cpu_time"] * observedSec["oracledb.cpu_time"]`) {
+		t.Error("geri çarpım cpu_time'ın KENDİ aralığını kullanmıyor — " +
+			"CPUTimeSec makul görünen ama yanlış bir toplam olur")
+	}
 }

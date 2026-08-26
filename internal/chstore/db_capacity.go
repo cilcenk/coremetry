@@ -161,18 +161,22 @@ func (s *Store) RateGauge(
 ) ([]CapacitySample, error) {
 	now := time.Now()
 	from := now.Add(-capacityWindow)
-	windowSec := capacityWindow.Seconds()
+	// v0.10.54 — GÖZLENEN aralığa bölünüyor, istenen pencereye DEĞİL.
+	// v0.10.15 dört motor okuyucusunu düzeltti ama burayı ATLADI ve
+	// kapısı da göremedi: gate elle yazılmış dört dosyalık bir listeye
+	// bağlıydı ve bu dosya listede yoktu. Veri pencereden kısaysa oran
+	// sessizce düşük çıkar ve kapasite ETA'sı gerçeğinden uzun görünür.
 	q := `
 		SELECT
 			` + instanceExpr + ` AS inst,
-			(max(value) - min(value)) / ? AS rate
+			(max(value) - min(value)) / ` + observedSpanSQL + ` AS rate
 		FROM metric_points
 		WHERE time >= ? AND time <= ?
 		  AND metric = ?
 		GROUP BY inst
 		LIMIT 1000
 		SETTINGS max_execution_time = 10`
-	rows, err := s.telemetryReadConn().Query(ctx, q, windowSec, from, now, metric)
+	rows, err := s.telemetryReadConn().Query(ctx, q, from, now, metric)
 	if err != nil {
 		return nil, err
 	}

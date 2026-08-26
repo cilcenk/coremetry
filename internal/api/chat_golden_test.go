@@ -170,6 +170,20 @@ func TestChatPipelineGolden(t *testing.T) {
 			wantIn:    []string{"bağlam penceresine sığmadı", "yarıya indirilip", "daralt"},
 			wantNotIn: []string{"context length"},
 		},
+		{
+			name: "model kendi grafiğini yazdı — CANLI çizilmez",
+			why: "v0.10.47: sunucu çiti render_chart'ın DOĞRULANMIŞ spec'inden " +
+				"kuruluyor, ama modelin kendi metnine yazdığı ```chart``` çiti " +
+				"arayüzde ondan ayırt edilemiyordu — uydurma bir kapsam CANLI " +
+				"grafik olarak çiziliyor ve grafik düzyazıdan yüksek güven taşıyor.",
+			build: func() string {
+				out, _ := stripModelChartFences(
+					"Şuna bak:\n```chart\n{\"service\":\"olmayan-servis\",\"agg\":\"p99\"}\n```\n")
+				return out
+			},
+			wantIn:    []string{"çizilmedi", "yalnız sunucu kurar"},
+			wantNotIn: []string{"olmayan-servis", "```chart"},
+		},
 	}
 
 	for _, sc := range scenarios {
@@ -196,8 +210,8 @@ func TestChatPipelineGolden(t *testing.T) {
 // hiçbir şey söylemez — kümenin erimesi, kusurun geri gelmesinden daha
 // sinsi çünkü test sayısı hâlâ yeşil görünür.
 func TestGoldenCorpusCoversTonightsFixes(t *testing.T) {
-	// Her biri v0.10.2x-3x'te düzeltilmiş BİR kusur sınıfı.
-	const minScenarios = 9
+	// Her biri v0.10.2x-4x'te düzeltilmiş BİR kusur sınıfı.
+	const minScenarios = 10
 	// Kümedeki senaryo sayısını saymak için testi yeniden koşmak yerine
 	// kaynağı tarıyoruz: sayım, kümenin KENDİ yapısına bağlı kalmalı.
 	src := readSourceFile(t, "chat_golden_test.go")

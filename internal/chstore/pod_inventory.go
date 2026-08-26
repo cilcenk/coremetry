@@ -56,6 +56,23 @@ import (
 // gerekçe: maliyet O(pencere) değil O(örneklem).
 const podInventorySampleRows = 300_000
 
+// podInventoryPerService — SERVİS BAŞINA örneklem tavanı (v0.10.56).
+//
+// Kapsama kartıyla AYNI kusur ve aynı çare: ORDER BY'sız bir LIMIT,
+// (service_name, time) anahtarının ÖNEKİNİ döndürür — alfabetik ilk
+// servisler. Envanterde bu, "z" ile başlayan servislerin pod'larının hiç
+// görünmemesi demek.
+//
+// ⚠ İKİNCİ KUSUR DAHA AĞIRDI: `pod != ”` süzgeci DIŞ sorgudaydı, yani
+// tavan pod adı TAŞIMAYAN satırlara da harcanıyordu. Filonun bir kısmı
+// k8s bağlamı yaymıyorsa (ki bu kartın ölçtüğü şeyin ta kendisi) tavan
+// onlarla dolup envanter BOŞ dönebiliyordu. Süzgeç artık LIMIT'ten ÖNCE.
+//
+// Bu, deponun "LIMIT'ten sonra süzme" ailesinin (v0.9.322→343) SQL
+// biçimi. audit.sh CHECK 8 yalnız Go biçimini tarıyor — kapı kaçırmadı,
+// kapsamı dışındaydı.
+const podInventoryPerService = 500
+
 // PodRow — bir pod'un envanter satırı.
 type PodRow struct {
 	Namespace string `json:"namespace"`
@@ -121,13 +138,15 @@ func (s *Store) GetPodInventory(ctx context.Context, from, to time.Time, limit i
 			       res_values[indexOf(res_keys, 'k8s.node.name')] AS node
 			FROM spans
 			WHERE time >= ? AND time <= ?
+			  AND has(res_keys, 'k8s.pod.name')
+			LIMIT %d BY service_name
 			LIMIT %d
 		)
 		WHERE pod != ''
 		GROUP BY ns, pod
 		ORDER BY spans DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 25`, namespaceExpr(), podInventorySampleRows)
+		SETTINGS max_execution_time = 25`, namespaceExpr(), podInventoryPerService, podInventorySampleRows)
 
 	rows, err := s.telemetryReadConn().Query(ctx, q, from, to, limit)
 	if err != nil {

@@ -37,6 +37,30 @@ import (
 // attributeKeysSQL'in attrKeysSampleRows'uyla aynı gerekçe.
 const k8sCoverageSampleRows = 200_000
 
+// k8sCoveragePerService — SERVİS BAŞINA örneklem tavanı (v0.10.56).
+//
+// ⚠ ÖNEK ÖRNEKLEMESİ ÖRNEKLEM DEĞİLDİR. `spans` birincil anahtarı
+// (service_name, time); ORDER BY'sız bir LIMIT o anahtarın ÖNEKİNİ döndürür,
+// yani ALFABETİK OLARAK İLK servisleri. Bu kartın bütün amacı "filonun
+// hangi kısmı k8s bağlamı yayıyor" sorusuna cevap vermek — önek
+// örneklemesiyle cevap, alfabetik ilk birkaç servisten üretilmiş bir FİLO
+// İDDİASI oluyor.
+//
+// Lokalde ölçüldü (100 servislik pencere, 5.000 satırlık tavan):
+//
+//	önek örneklemesi   →   5 / 100 servis   (%5)
+//	servis başına      → 100 / 100 servis
+//
+// `LIMIT n BY service_name` her servise kendi kotasını veriyor: seyrek
+// yayan bir servis artık gürültülü bir komşunun arkasında kaybolmuyor.
+// Toplam tavan (k8sCoverageSampleRows) DIŞ LIMIT olarak duruyor, yani
+// maliyet hâlâ O(örneklem).
+//
+// 400: 100 servislik bir filoda 40k satır, 5.000 servislikte dış tavan
+// ısırır. Alan-var-yok sorusu için 400 satır fazlasıyla yeterli — soru
+// "geliyor mu", "ne kadar geliyor" değil.
+const k8sCoveragePerService = 400
+
 // K8sCoverageRow — bir servisin k8s bağlam kapsaması.
 type K8sCoverageRow struct {
 	Service string `json:"service"`
@@ -88,12 +112,13 @@ func (s *Store) GetK8sCoverage(ctx context.Context, from, to time.Time, limit in
 		FROM (
 			SELECT service_name, res_keys FROM spans
 			WHERE time >= ? AND time <= ?
+			LIMIT %d BY service_name
 			LIMIT %d
 		)
 		GROUP BY service_name
 		ORDER BY sampled DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 25`, k8sCoverageSampleRows)
+		SETTINGS max_execution_time = 25`, k8sCoveragePerService, k8sCoverageSampleRows)
 
 	rows, err := s.telemetryReadConn().Query(ctx, q, from, to, limit)
 	if err != nil {

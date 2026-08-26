@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { contextStarter, serviceFromRoute } from './chatContext';
 
 // v0.9.653 — operatör: "Ekranda bir trace açıksa CoSRE 'bu trace'i
@@ -89,5 +90,47 @@ describe('contextStarter — problem/exception', () => {
     expect(contextStarter('/inbox', '?problem=' + 'x'.repeat(80))).toBeNull();
     expect(contextStarter('/inbox', '?exception=a b')).toBeNull();
     expect(contextStarter('/services', '?problem=p1')).toBeNull();
+  });
+});
+
+// ── v0.10.45 — ROTA KAPSAMASI SESSİZCE ERİMESİN ─────────────────────────
+//
+// Copilot denetiminin #6 bulgusu: sayfa farkındalığı ELLE yazılan bir
+// listeye sıkışmış. Yeni bir sayfa `?service=` taşımaya başladığında
+// listeye eklenmezse sohbet orada BAĞLAM-KÖR açılır — ve bunun hiçbir
+// belirtisi yok: `tsc` göremez, hiçbir test kırılmaz, kapsam bandı da
+// çizilmediği için operatör "kör" olduğunu fark etmez.
+//
+// İki rota bu yüzden gözden kaçmıştı (/endpoint ve /service-map).
+// Kapı, unutmayı DERLEME değil TEST hatasına çeviriyor.
+describe('rota kapsaması kapısı', () => {
+  const src = readFileSync(new URL('./chatContext.ts', import.meta.url), 'utf8');
+
+  it('bulunan iki rota artık kapsamda', () => {
+    expect(serviceFromRoute('/endpoint', '?service=svc-a&path=%2Fx')).toBe('svc-a');
+    // /service-map seçimi ?service= DEĞİL ?focus= ile taşıyor.
+    expect(serviceFromRoute('/service-map', '?focus=svc-b')).toBe('svc-b');
+  });
+
+  it('param taşımayan rota boş döner', () => {
+    expect(serviceFromRoute('/endpoint', '')).toBe('');
+    expect(serviceFromRoute('/service-map', '')).toBe('');
+    expect(serviceFromRoute('/bilinmeyen', '?service=x')).toBe('');
+  });
+
+  // ⚠ KÜMENİN ERİMESİ. Liste budanırsa kapsanan rotalar sessizce
+  // kaybolur ve testler yeşil kalır — kusurun kendisinden sinsi.
+  it('liste budanmamış', () => {
+    for (const r of ['/traces', '/endpoints', '/endpoint', '/logs', '/inbox',
+      '/deploys', '/metrics', '/explore', '/clusters', '/profiling']) {
+      expect(src).toContain(`'${r}'`);
+    }
+    expect(src).toContain("FOCUS_PARAM_ROUTES");
+  });
+
+  // Elle tutulan listenin bedeli açıkça yazılmalı: bir sonraki kişi
+  // yeni sayfa eklerken buraya bakmak zorunda olduğunu bilmeli.
+  it('listenin elle tutulduğu ve bedeli koda yazılı', () => {
+    expect(src).toContain('BAĞLAM-KÖR');
   });
 });

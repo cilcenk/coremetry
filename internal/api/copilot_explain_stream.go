@@ -155,7 +155,17 @@ func (e *sseEmitter) wroteAnything() bool { return e.started }
 //
 // Akan kip: delta* → answer → done. Başlık/flush disiplini
 // sseEmitter'da (yukarı).
-func (s *Server) deliverExplain(w http.ResponseWriter, r *http.Request, xid string, extra map[string]any, run explainRun) {
+// explainLinkService — kimlik köprüsünün ORTAMI hangi servisten çıkacak.
+//
+// v0.10.55 — eskiden yalnız `?service=` query param'ı okunuyordu ve ✨
+// Explain uçlarının HİÇBİRİ onu göndermiyor: env her zaman "prod"a
+// düşüyordu (envFromServiceName("") → "" → varsayılan). Prod'da doğru
+// sonuç verdiği için görünmezdi; prod-DIŞI bir trace açıklandığında link
+// yanlış ortamın log sistemine gidiyordu.
+//
+// Handler'ın bildiği servis artık AÇIKÇA geçiyor. Query param yedek
+// olarak kalıyor (sohbet yüzeyleri onu kullanıyor).
+func (s *Server) deliverExplain(w http.ResponseWriter, r *http.Request, xid string, extra map[string]any, run explainRun, service string) {
 	em, canStream := newSSEEmitter(w)
 	// v0.10.35 — KİMLİK KÖPRÜSÜ TEK NOKTADAN. answerRequestIDLinks beş
 	// sohbet yüzeyinde kabloluydu (chat, drawer, guided, RAG) ama ✨ Explain
@@ -166,7 +176,11 @@ func (s *Server) deliverExplain(w http.ResponseWriter, r *http.Request, xid stri
 	// (trace, span, problem, exception…). Servis bilinmiyorsa
 	// templateForService varsayılan şablona düşüyor, yani kırılmıyor.
 	withLinks := func(out string) map[string]any {
-		links := s.answerRequestIDLinks(r.Context(), out, r.URL.Query().Get("service"))
+		svc := service
+		if svc == "" {
+			svc = r.URL.Query().Get("service")
+		}
+		links := s.answerRequestIDLinks(r.Context(), out, svc)
 		if len(links) == 0 {
 			return extra
 		}

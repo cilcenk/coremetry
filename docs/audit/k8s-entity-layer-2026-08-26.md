@@ -17,10 +17,21 @@ Prod span'inde 22 resource attribute var. Belirleyici olanlar:
 | VAR | YOK |
 |---|---|
 | `k8s.node.name` | **`k8s.pod.uid`** |
-| `k8s.pod.name` · `k8s.pod.ip` | **`k8s.namespace.name`** |
-| `openshift.cluster.name` | `k8s.deployment.name` |
-| `host.name` (= pod adı) | `k8s.container.name` |
-| `container.image.name` / `.tag` | `k8s.replicaset.name` |
+| `k8s.pod.name` · `k8s.pod.ip` | `k8s.deployment.name` |
+| **`k8s.namespace.name`** (operatör teyidi) | `k8s.container.name` |
+| `openshift.cluster.name` | `k8s.replicaset.name` |
+| `host.name` (= pod adı) | |
+| `container.image.name` / `.tag` | |
+
+> ⚠ **DÜZELTME (2026-08-26).** Bu tablonun ilk hâli `k8s.namespace.name`i
+> "YOK" sütununa koyuyordu. Yanlıştı ve hata YÖNTEMSELDİ: çıkarım TEK bir
+> prod span'inin attribute listesinden yapılmıştı, yani örneklem boyu BİR
+> olan bir gözlemden filo geneli bir sonuç. Operatör düzeltti: namespace
+> prod'da var.
+>
+> Bu, raporun her yerinde uyardığı hatanın kendisi (fixture/örneklem
+> genellemesi) ve tam da bu yüzden **Faz 0 kapsama kartı** var: tek span
+> yerine servis-servis ölçüm.
 
 **`host.name` == `k8s.pod.name`** — node bilgisi değil, pod adının tekrarı.
 Node ayrıca `k8s.node.name`'de duruyor.
@@ -140,23 +151,40 @@ pod/uid/node) var-yok tablosu.
 
 ### FAZ 1 — `pod_seen` MV
 `service_seen` (`store.go:3905`) birebir emsali: `minState`/`maxState`.
-HAT A'nın pod yaşam döngüsü. **Faz 0'ı beklemiyor**, uid'i de beklemiyor
-(pod adı + namespace ile). Efor: S–M.
+HAT A'nın pod yaşam döngüsü.
+
+**KİMLİK: `(k8s.namespace.name, k8s.pod.name)`** — operatör kararı
+2026-08-26, uid beklenmiyor. İkisi de prod'da geliyor.
+
+⚠ Bu kimliğin TEK zayıf noktası StatefulSet: pod adı restart'ta
+değişmediği için iki ömür tek satırda birleşir. Deployment'larda rastgele
+sonek bunu çözüyor. Sınır MV'nin yorumunda ve arayüzde yazılmalı — sessiz
+bırakılırsa "bu pod 40 gündür ayakta" yanlış cümlesi üretilir.
+
+**Faz 0'ı beklemiyor.** Efor: S–M.
 
 ### FAZ 2 — Terfi zinciri düzeltmesi *(§2'nin blokörü)*
 `service_name='unknown'` / `host_name=''` satırlarının okuma yollarında
 elenmemesi. **Bu olmadan kubeletstats'ın hiçbir faydası görünmez.**
 Efor: M. Faz 4'ün ÖN KOŞULU.
 
-### FAZ 3 — Downward API'ye `pod.uid` + `namespace` ← **operatör tarafı**
+### FAZ 3 — Downward API'ye `pod.uid` ← **operatör tarafı, OPSİYONEL**
 ```yaml
 - name: K8S_POD_UID
   valueFrom: { fieldRef: { fieldPath: metadata.uid } }
-- name: K8S_NAMESPACE
-  valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
 ```
-Collector'a **dokunmuyor** (wedge riski yok), uygulama deployment'ında tek
-satır, geri alınabilir. Kalıcı kimliğin önkoşulu.
+Namespace ZATEN geliyor (düzeltme, §0), yani kimlik `(namespace, pod_name)`
+ile bugün kurulabilir. uid yalnız TEK bir şeyi çözüyor ve o şey gerçek:
+
+⚠ **StatefulSet pod adları restart'ta DEĞİŞMEZ** (`svc-0` hep `svc-0`).
+`(namespace, pod_name)` anahtarıyla iki ayrı pod ömrü TEK varlıkta
+birleşir — `first_seen`/`last_seen` iki hayatı kapsar ve "bu pod 40 gündür
+ayakta" gibi YANLIŞ bir cümle üretir. Deployment pod'larında rastgele sonek
+(`…-59df758cc-scdwq`) bu sorunu pratikte yok ediyor.
+
+Yani uid, entity katmanının ÖN KOŞULU değil; StatefulSet'lerde ömür
+ayrımının doğruluk koşulu. Operatör kararı (2026-08-26): **pod adından
+ilerleniyor**, uid beklenmiyor. Sınır arayüzde İLAN EDİLMELİ.
 
 ### FAZ 4 — k8sattributes + RBAC
 ClusterRole (`pods`, `namespaces`, `replicasets`, `nodes` üzerinde

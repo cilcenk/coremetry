@@ -58,8 +58,17 @@ const observedSpanSQL = `greatest(dateDiff('second', min(time), max(time)), 1)`
 
 // rateSelectSQL — `(max-min) / gözlenen_aralık` seçimi + aralığın
 // kendisi. Çağıran ikinci kolonu geri çarpım için kullanır.
+// ⚠ observed_sec Float64'e ZORLANIYOR (v0.10.51). `dateDiff` Int64 döner ve
+// `greatest(Int64, UInt8)` de Int64'tür; çağıran onu `float64`'e tararsa
+// clickhouse-go tip hatası verir. Kolonu eklediğim ilk hâlde (v0.10.15) tam
+// bu oldu ve hata `if err := rows.Scan(...); err == nil` dalında SESSİZCE
+// yutulduğu için BÜTÜN Oracle oranları 0 döndü — veri yerindeyken.
+//
+// Cast SQL tarafında, çağıran tarafta değil: kolon tek yerde tanımlanıyor,
+// tipi de orada sabitlenmeli. Her tüketicinin doğru Go tipini hatırlaması
+// beklenirse biri unutur ve aynı SESSİZ sıfır geri gelir.
 const rateSelectSQL = `(max(value) - min(value)) / ` + observedSpanSQL +
-	` AS rate, ` + observedSpanSQL + ` AS observed_sec`
+	` AS rate, toFloat64(` + observedSpanSQL + `) AS observed_sec`
 
 // ── Kapı: payda TEK yerden gelmeli ──────────────────────────────────────
 //

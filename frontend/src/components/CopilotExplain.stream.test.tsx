@@ -246,13 +246,23 @@ describe('CopilotExplain — "Kodu da incele" kutusu (v0.9.1184)', () => {
     expect(chip()!.className).not.toContain('active');
   });
 
-  it('tıklama tercihi KALICI yazar (v0.9.1238)', async () => {
+  // ⚠ v0.10.60 — SÖZLEŞME OPERATÖR KARARIYLA TERSİNE ÇEVRİLDİ.
+  //
+  // v0.9.1238 tercihi kalıcı yazıyordu (çekmece her özne için yeni mount
+  // kurduğu için kutu sıfırlanıyor ve auto-koşu ilk turu kodsuz atıyordu).
+  // Operatör: "Kodu incele default seçili olmasın."
+  //
+  // Gerekçe teknik değil, MALİYET: kod okumak bir depo listelemesi + dosya
+  // çekmesi + ikinci bir yerel LLM turu demek. Hatırlama, o maliyeti
+  // operatörün haberi olmadan HER Explain'e yayıyordu.
+  //
+  // Test silinmedi, TERSİNE çevrildi: kalıcılığın YOKLUĞU artık
+  // sözleşmenin kendisi ve sessizce geri gelmesi bu testi kırar.
+  it('tıklama tercihi KALICI YAZMAZ (v0.10.60 operatör kararı)', async () => {
     fakeExplain();
     await mount(<CopilotExplain kind="trace" id="t1" />);
     await act(async () => { chip()!.click(); });
-    expect(getRaw(STORAGE_KEYS.aiIncludeCode)).toBe('1');
-    await act(async () => { chip()!.click(); });
-    expect(getRaw(STORAGE_KEYS.aiIncludeCode)).toBe('0');
+    expect(getRaw(STORAGE_KEYS.aiIncludeCode)).toBeNull();
   });
 
   it('durum ÜÇ işaretle birden söylenir (ton · glif · aria-pressed)', async () => {
@@ -304,15 +314,18 @@ describe('CopilotExplain — hatırlanan "Kodu da incele" (v0.9.1238)', () => {
 
   const settle = async () => { await act(async () => { await Promise.resolve(); }); };
 
-  it('kayıtlı tercihle auto koşusunun İLK turu kodlu gider', async () => {
+  // ⚠ v0.10.60 — TERSİNE ÇEVRİLDİ (yukarıdaki operatör kararı).
+  // Kayıtlı bir tercih ARTIK OKUNMUYOR: kutu her açılışta kapalı başlar
+  // ve auto-koşunun ilk turu kodsuz gider. Eski davranışın sessizce geri
+  // gelmesi bu testi kırar.
+  it('kayıtlı tercih OKUNMAZ — ilk tur yine kodsuz (v0.10.60)', async () => {
     setRaw(STORAGE_KEYS.aiIncludeCode, '1');
     const flags = fakeTrace();
     await mount(<CopilotExplain kind="trace" id="t1" auto />);
     await settle();
 
-    expect(flags).toEqual([true]);        // tek tur, ve kodlu
-    expect(chip()!.className).toContain('active');
-    expect(chip()!.textContent).toContain('☑');
+    expect(flags).toEqual([false]);       // tek tur, ve KODSUZ (açıkça false)
+    expect(chip()!.textContent).toContain('☐');
   });
 
   it('tercih yokken ilk tur kodsuz KALIR (v0.9.831 varsayılanı)', async () => {

@@ -8,7 +8,6 @@ import { useCopilotEnabled } from '@/components/ai/useCopilotEnabled';
 import { aiSubjectQuestion } from '@/components/ai/drawerChat';
 import type { AIKind } from '@/lib/aiSubject';
 import type { AICodeContext } from '@/lib/types';
-import { readIncludeCodePref, writeIncludeCodePref } from '@/lib/aiCodePref';
 import { IconSparkles } from './icons';
 import { RenderedMarkdown } from '@/components/Markdown';
 import type { IdLink } from '@/components/ai/inlineIdLinks';
@@ -109,7 +108,15 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   // useEffect ile düzeltmek, kodsuz isteğin çoktan yola çıkmış olması
   // demekti (düzeltmeye çalıştığımız hatanın ta kendisi).
   const codeCapable = kind === 'exception' || kind === 'trace';
-  const [includeCode, setIncludeCode] = useState(() => readIncludeCodePref(codeCapable));
+  // v0.10.60 — OPERATÖR KARARI: kutu HER AÇILIŞTA KAPALI başlar.
+  //
+  // v0.9.1238 tercihi hatırlıyordu (çekmece her özne için yeni mount
+  // kurduğu için kutu sıfırlanıyor ve auto-koşu ilk turu kodsuz atıyordu).
+  // Operatör bunu tersine çevirdi: "Kodu incele default seçili olmasın."
+  // Hatırlama, kod okumanın maliyetini (depo listelemesi + dosya çekmesi +
+  // ikinci bir yerel LLM turu) operatörün haberi olmadan her Explain'e
+  // yayıyordu.
+  const [includeCode, setIncludeCode] = useState(false);
   const [code, setCode] = useState<AICodeContext | null>(null);
 
   // applyText — cevabı hem panele yaz hem üst bileşene duyur (v0.9.479).
@@ -259,9 +266,6 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
           onClick={() => {
             const next = !includeCode;
             setIncludeCode(next);
-            // v0.9.1238 — seçim kalıcı: bir sonraki çekmece açılışı bu
-            // değerle AÇILIR ve auto-koşu ilk turu doğru modda atar.
-            writeIncludeCodePref(next);
             // Kutuyu değiştirmek isteği YENİDEN çalıştırır — aksi
             // halde ekrandaki cevap kutunun durumuyla çelişirdi.
             if (text !== null || error !== null || auto) void run(next);
@@ -274,6 +278,20 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
           <span aria-hidden="true">{includeCode ? '☑' : '☐'}</span>
           <span>Kodu da incele</span>
         </Chip>
+      )}
+      {/* v0.10.60 — DEPO LİNKİ KUTUNUN ALTINDA (operatör isteği).
+          Depo adı çoğu kurulumda bir KONVANSİYON TAHMİNİ; operatörün o
+          tahmini doğrulamasının tek yolu linke bakmak. Link SUNUCUDAN
+          geliyor (taban adres + koleksiyon + proje yalnız orada biliniyor);
+          burada yeniden kurmak iki yazımın sessizce ayrışmasına izin
+          verirdi. URL yoksa hiç çizilmiyor — yanlış link, link
+          olmamasından kötüdür. */}
+      {includeCode && code?.browseUrl && (
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, wordBreak: 'break-all' }}>
+          <a href={code.browseUrl} target="_blank" rel="noreferrer noopener"
+             style={{ color: 'var(--accent2)' }} title="Depoyu tarayıcıda aç">{code.browseUrl}</a>
+          {code.source && <span> · kaynak: {code.source === 'pin' ? 'katalog pini' : 'konvansiyon'}</span>}
+        </div>
       )}
       {/* v0.9.1127 — Spinner yalnız İLK token'a kadar. Token'lar akmaya
           başladıktan sonra ilerlemeyi metnin kendisi gösteriyor; ikisini

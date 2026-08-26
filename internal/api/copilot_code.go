@@ -150,6 +150,10 @@ type codeContextPayload struct {
 	Source string           `json:"source,omitempty"` // pin | convention
 	Files  []codeFileRefDTO `json:"files,omitempty"`
 	Reason string           `json:"reason,omitempty"`
+	// BrowseURL (v0.10.60) — operatörün tarayıcıda açabileceği depo linki.
+	// Depo bir TAHMİNE dayanabiliyor (konvansiyon); operatörün tahmini
+	// doğrulamasının tek yolu linke bakmak.
+	BrowseURL string `json:"browseUrl,omitempty"`
 }
 
 type codeFileRefDTO struct {
@@ -172,6 +176,7 @@ func codePayload(cc devops.CodeContext, requested bool) *codeContextPayload {
 	}
 	p := &codeContextPayload{
 		Repo: cc.Repo, Branch: cc.Branch, Source: cc.Source, Reason: cc.Reason,
+		BrowseURL: cc.BrowseURL,
 	}
 	for _, w := range cc.Windows {
 		p.Files = append(p.Files, codeFileRefDTO{Path: w.Path, FromLine: w.FromLine, ToLine: w.ToLine, Line: w.Line})

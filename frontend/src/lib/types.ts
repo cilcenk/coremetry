@@ -1316,6 +1316,9 @@ export interface AICodeContext {
   source?: string;
   files?: { path: string; fromLine: number; toLine: number; line?: number }[];
   reason?: string;
+  /** Tarayıcıda açılabilir depo linki — depo bir TAHMİN olabilir, operatör
+   *  onu ancak bakarak doğrulayabilir (v0.10.60). */
+  browseUrl?: string;
 }
 
 export type DevOpsFlavor = 'auto' | 'azure-devops-server' | 'tfs';

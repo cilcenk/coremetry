@@ -87,3 +87,51 @@ func readDevopsSource(t *testing.T, name string) string {
 	}
 	return string(b)
 }
+
+// TestBrowseURLShape — v0.10.60, operatör isteği:
+// "seçince incelerken git repo URL'ini de yazsın."
+//
+// Depo adı çoğu kurulumda bir KONVANSİYON TAHMİNİ. Operatörün o tahmini
+// doğrulamasının tek yolu linke bakmaktı — ama link hiçbir yerde yoktu.
+//
+// ⚠ Şekil `_apis` DEĞİL, `_git`: API kökü tarayıcıda JSON döker ve
+// operatör "depo yok" diye okur.
+func TestBrowseURLShape(t *testing.T) {
+	cfg := Settings{BaseURL: "https://tfs.example.local", Collection: "DefaultCollection", Project: "PROJ"}
+
+	got := BrowseURL(cfg, "payments-api", "release")
+	want := "https://tfs.example.local/DefaultCollection/PROJ/_git/payments-api?version=GBrelease"
+	if got != want {
+		t.Errorf("BrowseURL =\n  %s\nbeklenen\n  %s", got, want)
+	}
+	if strings.Contains(got, "_apis") {
+		t.Error("link API köküne gidiyor — tarayıcıda JSON döker")
+	}
+	// Branş bilinmiyorsa sürüm parçası EKLENMEZ: olmayan bir branşa
+	// gitmek operatörü yanlış dosyaya baktırır.
+	if u := BrowseURL(cfg, "payments-api", ""); strings.Contains(u, "version=") {
+		t.Errorf("branşsız linke sürüm eklendi: %s", u)
+	}
+	// Depo yoksa link de YOK: yanlış link, link olmamasından kötüdür.
+	if u := BrowseURL(cfg, "", "release"); u != "" {
+		t.Errorf("deposuz link üretildi: %s", u)
+	}
+	if u := BrowseURL(Settings{}, "payments-api", "release"); u != "" {
+		t.Errorf("bağlantı yapılandırılmamışken link üretildi: %s", u)
+	}
+}
+
+// TestBrowseURLStampedAtSingleExit — YEDİ ÇIKIŞ, TEK DAMGA.
+//
+// FetchCode'un yedi dönüş noktası var. Her birine tek tek link koymak,
+// bir sonraki yeni çıkışta sessizce unutulacak bir el işiydi.
+func TestBrowseURLStampedAtSingleExit(t *testing.T) {
+	src := readDevopsSource(t, "code.go")
+	if n := strings.Count(src, "out.BrowseURL = BrowseURL("); n != 1 {
+		t.Errorf("BrowseURL %d yerde damgalanıyor, 1 olmalı — çok yazım noktası, "+
+			"yeni bir çıkışta sessizce unutulur", n)
+	}
+	if !strings.Contains(src, "out.Outcome = class") {
+		t.Fatal("tek-çıkış defer'ı bulunamadı — test bayatlamış")
+	}
+}

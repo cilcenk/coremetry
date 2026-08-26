@@ -15,12 +15,12 @@
 package devops
 
 import (
-	"golang.org/x/sync/singleflight"
 	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/sync/singleflight"
 	"io"
 	"log"
 	"net/http"
@@ -643,4 +643,35 @@ func stripUserinfo(msg string) string {
 			rest = rest[at+1:]
 		}
 	}
+}
+
+// BrowseURL — operatörün TARAYICIDA açabileceği depo linki (v0.10.60).
+//
+// Operatör isteği: "Kodu incele … seçince incelerken git repo URL'ini de
+// yazsın." Sebebi somut: kod çekimi bir depo + branş TAHMİNİNE dayanıyor
+// (konvansiyon) ve operatörün o tahmini doğrulamasının tek yolu, linke
+// tıklayıp gerçekten o depo mu diye bakmaktı — ama link hiçbir yerde
+// yoktu.
+//
+// Şekil `_apis` DEĞİL, `_git`: API kökü tarayıcıda JSON döker. Branş
+// biliniyorsa `?version=GB<branş>` ekleniyor, ki açılan sayfa kodun
+// OKUNDUĞU branş olsun; olmayan bir branşa gitmek operatörü yanlış
+// dosyaya bakmaya iter.
+//
+// Boş dönerse arayüz linki hiç çizmez: yanlış bir link, link olmamasından
+// kötüdür.
+func BrowseURL(cfg Settings, repo, branch string) string {
+	repo = strings.Trim(strings.TrimSpace(repo), "/")
+	if repo == "" || strings.TrimSpace(cfg.BaseURL) == "" {
+		return ""
+	}
+	u := collectionURL(cfg)
+	if p := strings.Trim(strings.TrimSpace(cfg.Project), "/"); p != "" {
+		u += "/" + url.PathEscape(p)
+	}
+	u += "/_git/" + url.PathEscape(repo)
+	if b := ShortBranch(branch); b != "" {
+		u += "?version=GB" + url.QueryEscape(b)
+	}
+	return u
 }

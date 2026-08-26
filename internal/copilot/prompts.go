@@ -881,20 +881,47 @@ func SystemPromptRCAVerdict() string { return systemRCAVerdict }
 // kılmazsak, gördüğü tek metottan tüm sınıfın davranışını uydurur.
 // Depo-çalışan sürüm farkı da gerçek: kod release branşından gelir,
 // hata prod'da çalışan sürümden.
+// fenceLit — üç ters-tırnak. AYRI bir literal, çünkü Go HAM dizesi
+// ters-tırnak İÇEREMEZ; prompt'a çit karakterlerini yazmanın tek yolu
+// birleştirme. (İlk yazımda ham dizenin içine koydum ve dize orada
+// kapandı — derleyici yakaladı.)
+const fenceLit = "```"
+
 const systemCodeAddendum = `
 
 Bu istekte KOD BAĞLAMI da var: stacktrace'teki uygulama satırlarının
 depodaki kaynak kodu, gerçek satır numaralarıyla.
 
-- Kök nedeni mümkün olduğunca KODA dayandır: hangi satırdaki koşul,
-  çağrı ya da eksik kontrol bu hatayı üretiyor? Satır numarasını yaz.
+- KOD ALINTISI ZORUNLU. Kök nedeni anlatırken ilgili pencereden bir
+  kod bloğu ver: bloğu ` + fenceLit + ` ile aç ve kapat, ilk satıra
+  // <yol>:<başlangıç>-<bitiş> yaz, ardından SANA VERİLEN satır
+  numaralarıyla kodu koy. Hata satırını ">>" ile işaretle.
+  Satır numarası yazıp kodu GÖSTERMEMEK yetersizdir — operatör iddiayı
+  ancak kodu görerek denetleyebilir.
+- Numaraları UYDURMA: yalnız pencerede verilen satır numaralarını kullan.
+- "X. satırda hata var" demek yetmez. O satırdaki hangi İFADENİN, hangi
+  değişkenin ya da parametrenin hatayı ürettiğini göster; değerin
+  NEREDEN geldiğini pencerelerdeki çağrı zinciri üzerinden takip et.
+- Hatalı bir değer varsa üç ucu bağla: (a) değeri üreten ifade,
+  (b) çağrı zincirindeki kaynağı, (c) karşılaştırıldığı/gönderildiği
+  hedef. Hedefin tanımı (şema, sabit, imza) pencerelerde YOKSA tahmin
+  etme — "hedefin tanımı bu bağlamda yok" de ve karşılaştırmayı
+  yapabilmek için tam olarak neyin gerektiğini yaz.
+- En DERİN uygulama frame'inden başla; framework/proxy/filter
+  frame'lerini atla, gerekiyorsa zinciri 2-3 frame yukarı anlat.
 - Pencerede GÖRMEDİĞİN kod hakkında tahmin yürütme. Bir şeyi görmen
   gerekiyorsa "bu pencerede görünmüyor" de — bu doğru cevaptır,
   eksiklik değil.
-- Kodda olmayan bir metot, alan ya da davranış UYDURMA.
+- Kodda olmayan bir metot, alan, kolon ya da davranış UYDURMA. Bir
+  dosya sana verilmediyse "kaynak çözülemedi: <yol>" de.
+- Birden fazla olası neden varsa en olasısını seç; diğerlerini tek
+  satırlık "alternatif hipotez" olarak geç ve her birini hangi kanıtın
+  desteklediğini/çürüttüğünü yaz.
 - Kod ile stacktrace çelişiyorsa (depodaki branş, çalışan sürümden
   farklı olabilir) bunu tek cümleyle söyle.
-- Düzeltme önerin somut olsun: hangi dosyanın hangi satırına ne.`
+- Sonraki adım DOĞRULANABİLİR olsun: hangi dosyada ne kontrol edilecek,
+  hangi span/attribute'a bakılacak. "Loglara bakın", "input doğrulaması
+  ekleyin" gibi genel tavsiye YAZMA.`
 
 const systemTraceCode = systemTraceBody + systemCodeAddendum + AnswerInTurkish
 const systemExceptionCode = systemExceptionBody + systemCodeAddendum + AnswerInTurkish

@@ -1342,7 +1342,18 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// on CallMeta — the Explain call above already recorded it on the
 	// "chat-guided" ai_calls row, so the UI's thumbs up/down joins
 	// back to it exactly like the free tool loop's answers.
+	// v0.10.70 — MODELİN AKTARDIĞI ÇİT, SUNUCUNUN YAZDIĞI ÇİT OLMALI.
+	//
+	// Guided'da grafik ekrana ancak model çiti AKTARIRSA ulaşıyor
+	// (v0.10.68 bunu neden sökemeyeceğimizle birlikte yazdı). Kalan risk
+	// oradaydı: model spec'i DEĞİŞTİREBİLİR ya da kendi uydurduğunu araya
+	// sokabilir — sonuç "doğru veriyle çizilmiş yanlış kapsam".
+	//
+	// İzin listesi KANITTAN türüyor ve kanıt sunucu-yazımı; yani model
+	// listeye üye EKLEYEMEZ. İmzaya gerek yok: sunucu ne yazdığını zaten
+	// biliyor (guided_chart_allowlist.go).
 	answer := strings.TrimSpace(raw) + "\n\nKaynak: " + sources
+	answer, _ = filterModelChartFences(answer, serverChartScopes(evidence))
 	// v0.9.419 — rotadan türetilen deterministik derin linkler; frontend
 	// çip olarak çizer (eski frontend'ler yok sayar).
 	// v0.9.1321 (§3.1 K6) — çipler cevabın ÜZERİNDE hesaplandığı pencereyi

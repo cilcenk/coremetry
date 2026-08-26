@@ -340,7 +340,7 @@ func listClustersTool(d Deps) mcp.Tool {
 				}
 			}
 			windowS := clusterEnumWindowS(a.RangeS)
-			from, to := rangeWindow(windowS)
+			from, to := rangeWindow(ctx, windowS)
 			names, err := d.Store.ListClusters(ctx, from, to)
 			if err != nil {
 				return nil, err
@@ -449,7 +449,7 @@ func listDeploysTool(d Deps) mcp.Tool {
 			windowS := deployEnumWindowS(a.RangeS)
 			limit := clampLimit(a.Limit, 20, 100)
 			lookback := time.Duration(windowS) * time.Second
-			now := time.Now()
+			now := nowOrAnchor(ctx)
 			var rows []deployRow
 			// storeCapped — okuma KENDİ tavanına dayandı mı (fleet: benim
 			// geçtiğim limit; per-service: serviceDeploysSQL'in LIMIT 50'si).
@@ -574,7 +574,7 @@ func findTraceBySpanTool(d Deps) mcp.Tool {
 				return nil, fmt.Errorf("span_id must be 16 hex chars, got %q", a.SpanID)
 			}
 			windowS := spanScanWindowS(a.RangeS)
-			from, to := rangeWindow(windowS)
+			from, to := rangeWindow(ctx, windowS)
 			traceID, err := d.Store.FindTraceIDBySpan(ctx, spanID, from, to)
 			if err != nil {
 				return nil, err

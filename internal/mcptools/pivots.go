@@ -136,7 +136,7 @@ func getLogsForTraceTool(d Deps) mcp.Tool {
 			if spanID != "" && !isHexLen(spanID, 16) {
 				return nil, fmt.Errorf("span_id must be 16 hex chars, got %q", a.SpanID)
 			}
-			from, to := rangeWindow(a.RangeS)
+			from, to := rangeWindow(ctx, a.RangeS)
 			limit := clampLimit(a.Limit, 100, 500)
 			var page *logstore.Page
 			if spanID != "" {
@@ -220,7 +220,7 @@ func getExemplarTracesTool(d Deps) mcp.Tool {
 			if strings.TrimSpace(a.Service) == "" {
 				return nil, fmt.Errorf("service is required")
 			}
-			from, to := rangeWindow(a.RangeS)
+			from, to := rangeWindow(ctx, a.RangeS)
 			// Tighter than the HTTP /api/exemplars clamp (100/1000,
 			// chstore clampExemplarLimit) ON PURPOSE: this output feeds
 			// an LLM context window, not a chart (v0.8.431 audit note).

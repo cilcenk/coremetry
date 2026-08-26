@@ -629,7 +629,7 @@ func getTeamServicesTool(d Deps) mcp.Tool {
 			}
 			windowS := teamSvcWindowS(a.RangeS)
 			limit := clampLimit(a.Limit, teamSvcDefaultRows, teamSvcMaxRows)
-			from, to := rangeWindow(windowS)
+			from, to := rangeWindow(ctx, windowS)
 			data, err := ReadTeamServices(ctx, d, team, from, to)
 			if err != nil {
 				return nil, err

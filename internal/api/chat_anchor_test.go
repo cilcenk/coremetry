@@ -149,3 +149,46 @@ func TestGuidedUsesTheAnchor(t *testing.T) {
 		t.Error("çıpa guided'dan SONRA hesaplanıyor — kademeler farklı pencere görür")
 	}
 }
+
+// TestFreeLoopAppliesTheAnchorNotJustDeclaresIt — v0.10.50.
+//
+// ⚠ BU DOSYANIN EN ÖNEMLİ TESTİ. v0.10.33 çıpayı serbest döngüde İKİ
+// yerde İLAN ediyordu — operatöre çip, modele önsöz — ama araç katmanına
+// hiç geçirmiyordu: mcptools.rangeWindow koşulsuz time.Now() kuruyordu ve
+// hiçbir tool mutlak pencere argümanı almıyor.
+//
+// Sonuç: model BUGÜNÜN sayısını okuyup, önsöze uyarak DÜNÜN penceresi
+// diye yazıyordu; çip de o yanlışı operatöre TEYİT ediyordu.
+//
+// Bu, düzeltmenin kusuru KÖTÜLEŞTİRDİĞİ bir durumdu: öncesinde cevap
+// sessizce yanlış pencereden geliyordu, sonrasında YANLIŞ ETİKETLİ hâle
+// geldi. Etiketli yanlış sorgulanmaz.
+//
+// Bu depoda ilan ve uygulama AYRI yerlerde yaşıyor, yani biri sessizce
+// gerileyebilir. Test ikisini BİRLİKTE pinliyor.
+func TestFreeLoopAppliesTheAnchorNotJustDeclaresIt(t *testing.T) {
+	src := readSourceFile(t, "copilot_chat.go")
+
+	apply := strings.Index(src, "mcptools.WithAnchor(ctx, anchorTo)")
+	if apply < 0 {
+		t.Fatal("serbest döngü çıpayı araç context'ine GEÇİRMİYOR — çip ve önsöz " +
+			"bir pencere ilan ederken araçlar time.Now() okur ve cevap YANLIŞ " +
+			"ETİKETLENİR (v0.10.33 kusuru)")
+	}
+	// Çıpa tool döngüsünden ÖNCE kurulmalı; sonrasına konursa hiçbir
+	// araç çağrısı onu görmez ve test yeşil kalırken kusur geri gelir
+	// ([[feedback-tested-but-unreachable]]).
+	loop := strings.Index(src, "for round := 0; round < chatMaxToolRounds")
+	if loop < 0 {
+		t.Fatal("tool döngüsü bulunamadı — test bayatlamış, elle doğrula")
+	}
+	if apply > loop {
+		t.Error("çıpa tool döngüsünden SONRA kuruluyor — hiçbir araç çağrısı görmez")
+	}
+	// İlan ile uygulama AYNI değere dayanmalı: çip anchorTo'yu basıyorsa
+	// araçlara giden de anchorTo olmalı, başka bir değişken değil.
+	if !strings.Contains(src, `"pencere: " + anchorTo.UTC()`) {
+		t.Error("operatöre basılan çip artık anchorTo'dan gelmiyor — ilan ve " +
+			"uygulama ayrışmış olabilir")
+	}
+}

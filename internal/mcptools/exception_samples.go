@@ -247,7 +247,7 @@ func getExceptionSamplesTool(d Deps) mcp.Tool {
 			if err != nil {
 				return nil, err
 			}
-			cutoff := time.Now().Add(-time.Duration(windowS) * time.Second).UnixNano()
+			cutoff := nowOrAnchor(ctx).Add(-time.Duration(windowS) * time.Second).UnixNano()
 			kept, dropped := exSamplesInWindow(res.Samples, cutoff)
 			rows, anyCut := exSampleRows(g.Service, g.Type, kept)
 			out["samples"] = rows

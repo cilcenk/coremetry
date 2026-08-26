@@ -89,7 +89,7 @@ func searchTracesTool(d Deps) mcp.Tool {
 					return nil, fmt.Errorf("decode args: %w", err)
 				}
 			}
-			from, to := rangeWindow(a.RangeS)
+			from, to := rangeWindow(ctx, a.RangeS)
 			limit := clampLimit(a.Limit, 20, 100)
 			sortBy := "time"
 			if a.Sort == "duration" {

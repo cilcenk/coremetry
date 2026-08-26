@@ -354,7 +354,7 @@ func registerResources(srv *mcp.Server, d Deps) {
 		Description: "All Coremetry services with current RED metrics over the last 30 minutes. Refreshes on each read.",
 		MimeType:    "application/json",
 		Reader: func(ctx context.Context, _ string) (string, error) {
-			from, to := rangeWindow(1800)
+			from, to := rangeWindow(ctx, 1800)
 			rows, err := d.Store.GetServicesFiltered(ctx, 0, from, to, "", "rps", "desc", 200, 0)
 			if err != nil {
 				return "", err
@@ -392,7 +392,7 @@ func registerResources(srv *mcp.Server, d Deps) {
 		Description: "Anomaly events from the last hour — log patterns + trace operations + ML detectors that exceeded their baseline.",
 		MimeType:    "application/json",
 		Reader: func(ctx context.Context, _ string) (string, error) {
-			from, _ := rangeWindow(3600)
+			from, _ := rangeWindow(ctx, 3600)
 			rows, err := d.Store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{
 				SinceNs: from.UnixNano(),
 				Limit:   100,
@@ -417,7 +417,7 @@ func registerResources(srv *mcp.Server, d Deps) {
 			if name == "" {
 				return "", fmt.Errorf("missing service name in URI %q", uri)
 			}
-			from, to := rangeWindow(1800)
+			from, to := rangeWindow(ctx, 1800)
 			rows, err := d.Store.GetServicesFiltered(ctx, 0, from, to, name, "rps", "desc", 1, 0)
 			if err != nil {
 				return "", err
@@ -472,8 +472,14 @@ func marshalJSON(v any) (string, error) {
 // into a (from, to) pair. Used by every list/query tool below.
 // Caps the lookback at 7 days so an over-eager LLM can't ask for
 // 90 days of spans and trigger a CH scan timeout.
-func rangeWindow(rangeS int) (from, to time.Time) {
-	to = time.Now()
+func rangeWindow(ctx context.Context, rangeS int) (from, to time.Time) {
+	// v0.10.50 — pencerenin SONU çıpadan gelir. Operatör geçmişe zoom
+	// yaptıysa (mutlak pencere) araçlar da o ana bakmalı; yoksa sunucu
+	// operatöre ve modele bir pencere İLAN edip başka bir pencereyi okur.
+	to = anchorOf(ctx)
+	if to.IsZero() {
+		to = time.Now()
+	}
 	if rangeS <= 0 {
 		rangeS = 1800 // default: last 30 min
 	}
@@ -542,7 +548,7 @@ func listServicesTool(d Deps) mcp.Tool {
 					return nil, fmt.Errorf("decode args: %w", err)
 				}
 			}
-			from, to := rangeWindow(a.RangeS)
+			from, to := rangeWindow(ctx, a.RangeS)
 			limit := clampLimit(a.Limit, 50, 500)
 			// v0.8.398 — same read, env-capable variant (GetServicesFiltered
 			// delegates here with env=""; an env-less call stays byte-
@@ -705,7 +711,7 @@ func getServiceHealthTool(d Deps) mcp.Tool {
 			if a.Service == "" {
 				return nil, fmt.Errorf("service is required")
 			}
-			from, to := rangeWindow(a.RangeS)
+			from, to := rangeWindow(ctx, a.RangeS)
 			// v0.8.398 — env-capable variant of the same read; env=""
 			// stays byte-identical to the old GetServicesFiltered call.
 			// v0.10.25 — aynı MV kapısı; tek servis de olsa okuma yolu
@@ -878,7 +884,7 @@ func listAnomaliesTool(d Deps) mcp.Tool {
 			if rs == 0 {
 				rs = 3600
 			}
-			from, _ := rangeWindow(rs)
+			from, _ := rangeWindow(ctx, rs)
 			lim := clampLimit(a.Limit, 25, 200)
 			// ListAnomalyEventsFilter has no Service slot — when
 			// the LLM asks for one we fetch a wider slice (4x the
@@ -949,7 +955,7 @@ func searchLogsTool(d Deps) mcp.Tool {
 					return nil, fmt.Errorf("decode args: %w", err)
 				}
 			}
-			from, to := rangeWindow(a.RangeS)
+			from, to := rangeWindow(ctx, a.RangeS)
 			page, err := d.LogStore.Search(ctx, logstore.Filter{
 				Service:     a.Service,
 				Cluster:     a.Cluster,
@@ -1102,7 +1108,7 @@ func queryMetricTool(d Deps) mcp.Tool {
 			if agg == "" {
 				agg = "avg"
 			}
-			from, to := rangeWindow(a.RangeS)
+			from, to := rangeWindow(ctx, a.RangeS)
 			var groups []string
 			if a.GroupBy != "" {
 				for _, p := range splitCSV(a.GroupBy) {

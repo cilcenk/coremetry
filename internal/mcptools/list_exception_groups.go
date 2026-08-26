@@ -70,7 +70,7 @@ func listExceptionGroupsTool(d Deps) mcp.Tool {
 					return nil, fmt.Errorf("decode args: %w", err)
 				}
 			}
-			from, to := rangeWindow(a.RangeS)
+			from, to := rangeWindow(ctx, a.RangeS)
 			limit := clampLimit(a.Limit, 50, 200)
 			minOcc := a.MinOccurrences
 			if minOcc < 0 {

@@ -252,3 +252,72 @@ func TestNestedThrowablePathIsFound(t *testing.T) {
 		t.Error("`throwable_count` stack sayıldı — sonek eşleşmesi fazla gevşek")
 	}
 }
+
+// ── v0.10.60 — GÖVDE HAM JSON, STACK KAÇIŞLI ────────────────────────────
+//
+// Operatör: "Explain trace dediğimde tüm logu inceliyor, ona göre çıktı
+// veriyor aslında yorumlarken."
+//
+// Gözlem doğruydu ve teşhisi değiştirdi: bazı kurulumlarda uygulama JSON
+// logluyor ve o JSON, ayrı alanlara bölünmeden GÖVDE olarak geliyor. Model
+// gövdeyi bütün gördüğü için cevabında error_code / channel / request_id
+// kullanabiliyor — ama frame dedektörü hiçbir şey bulamıyor, çünkü JSON
+// içindeki stack KAÇIŞLI: `\n` gerçek satır sonu değil, İKİ KARAKTER.
+//
+// Ölçüldü: aynı stack gerçek satır sonlarıyla 2 frame, JSON kaçışlı hâlde
+// 0 frame. Yani "bu kayıtta stacktrace yok" cümlesi teknik olarak
+// dedektörün gördüğü şeydi — ve yanlıştı.
+
+func TestJSONBodyWithEscapedStack(t *testing.T) {
+	body := `{"message":"iş kuralı hatası","error_code":"X_0012",` +
+		`"throwable":"com.example.app.BusinessException: kural ihlali\n` +
+		`\tat com.example.app.Rules.check(Rules.java:57)\n` +
+		`\tat com.example.app.Service.handle(Service.java:23)"}`
+
+	got, fromBody := FromLog(nil, body)
+	if got == "" {
+		t.Fatal("JSON gövdedeki kaçışlı stack görülmedi — panel 'stacktrace yok' " +
+			"der ve kod çekici atlanır (operatör-bildirimli)")
+	}
+	if !fromBody {
+		t.Error("stack gövdeden geldi ama öznitelikten gelmiş gibi işaretlendi")
+	}
+	if !strings.Contains(got, "Rules.java:57") {
+		t.Errorf("stack eksik çözüldü: %q", got)
+	}
+	// Kaçışlar ÇÖZÜLMÜŞ olmalı: kod çekici gerçek satır sonu bekliyor.
+	if strings.Contains(got, `\n`) {
+		t.Error("kaçışlar çözülmemiş — ParseJava yine tek satır görür")
+	}
+}
+
+// TestJSONBodyPrefersNamedField — ADI OLAN ALAN ÖNCE.
+//
+// Belgede hem stack'e işaret eden bir alan hem de frame taşıyan başka bir
+// dize varsa, adı olan kazanmalı: adsız eşleşme son çare.
+func TestJSONBodyPrefersNamedField(t *testing.T) {
+	body := `{"note":"A: q\n\tat z.Z.z(Z.java:9)\n\tat y.Y.y(Y.java:8)",` +
+		`"stack_trace":"B: w\n\tat a.A.a(A.java:1)\n\tat b.B.b(B.java:2)"}`
+	got, _ := FromLog(nil, body)
+	if !strings.Contains(got, "A.java:1") {
+		t.Errorf("adı olan alan seçilmedi:\n%s", got)
+	}
+}
+
+// TestJSONBodyWithoutFramesStaysEmpty — ÇITA JSON'DA DA GEÇERLİ.
+func TestJSONBodyWithoutFramesStaysEmpty(t *testing.T) {
+	body := `{"message":"iş kuralı hatası","throwable":"BusinessException: kural ihlali"}`
+	if got, _ := FromLog(nil, body); got != "" {
+		t.Errorf("frame'siz JSON gövdeden stack üretildi: %q", got)
+	}
+}
+
+// TestNonJSONBodyUnaffected — DÜZ METİN YOLU BOZULMAMALI.
+//
+// En sık yol bu; JSON dalının kendi üreteceği bir gerileme burada olurdu.
+func TestNonJSONBodyUnaffected(t *testing.T) {
+	plain := "E: x\n\tat p.A.a(A.java:1)\n\tat p.B.b(B.java:2)"
+	if got, fromBody := FromLog(nil, plain); got == "" || !fromBody {
+		t.Errorf("düz metin gövde yolu bozuldu: got=%q fromBody=%v", got, fromBody)
+	}
+}

@@ -25,7 +25,10 @@ package stackparse
 // stack gövdeden geldiyse gövdenin yalnız mesaj başı yeter, frame'ler zaten
 // stack alanında ve orada daha büyük bir bütçeyle duruyor.
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // logStackKeys — denenecek öznitelik yazımları, en kanoniden en gevşeğe.
 //
@@ -107,6 +110,28 @@ func FromLog(attrs map[string]string, body string) (stack string, fromBody bool)
 	if strings.TrimSpace(body) == "" {
 		return "", false
 	}
+	// ── GÖVDE HAM JSON İSE (v0.10.60) ───────────────────────────────────
+	//
+	// ⚠ Operatör-bildirimli, v0.10.59'un DEVAMI ve ondan AYRI bir yol.
+	//
+	// Bazı kurulumlarda uygulama JSON logluyor ve o JSON, ayrı alanlara
+	// bölünmeden GÖVDE olarak geliyor. Model gövdeyi bütün gördüğü için
+	// cevabında error_code / channel / request_id gibi alanları
+	// kullanabiliyor — operatörün gözlemi buydu: "tüm logu inceliyor".
+	//
+	// Ama frame dedektörü hiçbir şey bulamıyor, çünkü JSON içindeki stack
+	// KAÇIŞLI: `\n` gerçek satır sonu değil, İKİ KARAKTER. ParseJava
+	// satırlara bölünce tek satır görüyor → 0 frame → "stacktrace yok".
+	// Ölçüldü: aynı stack gerçek satır sonlarıyla 2 frame, JSON kaçışlı
+	// hâlde 0.
+	//
+	// Çözüm kaçışları elle çevirmek DEĞİL (ham metinde geçen bir "\n"
+	// dizisini bozardı): gövde JSON ise AYRIŞTIRILIYOR — json.Unmarshal
+	// kaçışları zaten doğru çözer — ve dize değerleri aynı iki-frame
+	// çıtasıyla sınanıyor.
+	if st := stackFromJSONBody(body); st != "" {
+		return st, true
+	}
 	// "Gövde bir stack mi" sorusunun tanımı, kod çekicinin kullandığı
 	// tanımın AYNISI: ParseJava frame görüyorsa frame vardır. Ayrı bir
 	// sezgisel (ör. "\n\tat " araması) iki yerde iki farklı "stack" tanımı
@@ -145,6 +170,74 @@ func looseStackKeyMatch(key string) bool {
 		key = key[i+1:]
 	}
 	for _, k := range looseLogStackKeys {
+		lk := k
+		if i := strings.LastIndexByte(lk, '.'); i >= 0 {
+			lk = lk[i+1:]
+		}
+		if strings.EqualFold(key, lk) {
+			return true
+		}
+	}
+	return false
+}
+
+// stackFromJSONBody — gövde bir JSON belgesiyse içindeki stack'i bulur.
+//
+// Sıra: ÖNCE adı stack'e işaret eden alanlar (kanonik + gevşek yazımlar,
+// sonek eşleşmeli), sonra adına bakılmaksızın iki-frame çıtasını geçen
+// herhangi bir dize. İkinci basamak, alan adının hiç tanımadığımız bir
+// yazım olduğu kurulumlar için — çıta yine frame sayısı olduğu için
+// "stack sandığımız şey başka bir alanmış" riski açılmıyor.
+func stackFromJSONBody(body string) string {
+	b := strings.TrimSpace(body)
+	if len(b) < 2 || (b[0] != '{' && b[0] != '[') {
+		return "" // JSON değil — düz metin yolu devam etsin
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(b), &doc); err != nil {
+		return ""
+	}
+	named, any_ := "", ""
+	walkJSONStrings(doc, "", func(key, val string) {
+		if len(ParseJava(val)) < bodyStackMinFrames {
+			return
+		}
+		if named == "" && (looseStackKeyMatch(key) || canonicalStackKeyMatch(key)) {
+			named = val
+			return
+		}
+		if any_ == "" {
+			any_ = val
+		}
+	})
+	if named != "" {
+		return named
+	}
+	return any_
+}
+
+// walkJSONStrings — belgedeki her dize değerini (anahtarıyla) gezer.
+func walkJSONStrings(v any, key string, fn func(key, val string)) {
+	switch t := v.(type) {
+	case string:
+		fn(key, t)
+	case map[string]any:
+		for k, vv := range t {
+			walkJSONStrings(vv, k, fn)
+		}
+	case []any:
+		for _, vv := range t {
+			walkJSONStrings(vv, key, fn)
+		}
+	}
+}
+
+// canonicalStackKeyMatch — kanonik yazımların sonek eşleşmesi.
+func canonicalStackKeyMatch(key string) bool {
+	if i := strings.LastIndexByte(key, '.'); i >= 0 {
+		key = key[i+1:]
+	}
+	for _, k := range logStackKeys {
 		lk := k
 		if i := strings.LastIndexByte(lk, '.'); i >= 0 {
 			lk = lk[i+1:]

@@ -149,11 +149,19 @@ type CodeWindow struct {
 // "neden yok" olmadan operatör entegrasyonun bozuk mu yoksa sadece
 // eşleşme mi bulamadığını ayırt edemez.
 type CodeContext struct {
-	Repo    string       `json:"repo,omitempty"`
-	Branch  string       `json:"branch,omitempty"`
-	Source  string       `json:"source,omitempty"` // pin | convention
-	Windows []CodeWindow `json:"windows,omitempty"`
-	Reason  string       `json:"reason,omitempty"`
+	Repo   string `json:"repo,omitempty"`
+	Branch string `json:"branch,omitempty"`
+	Source string `json:"source,omitempty"` // pin | convention
+	// BrowseURL (v0.10.60, operatör isteği: "seçince incelerken git repo
+	// URL'ini de yazsın") — operatörün TARAYICIDA açabileceği depo linki.
+	//
+	// SUNUCU kuruyor, istemci DEĞİL: taban adres, koleksiyon ve proje
+	// yalnız burada biliniyor ve aynı URL mantığını ön yüzde ikinci kez
+	// yazmak, ikisinin sessizce ayrışmasına izin vermek olurdu (bu gece
+	// tekrar eden sınıf).
+	BrowseURL string       `json:"browseUrl,omitempty"`
+	Windows   []CodeWindow `json:"windows,omitempty"`
+	Reason    string       `json:"reason,omitempty"`
 	// Outcome — bu denemenin SINIFI (v0.9.1243), sayaçlarla BİREBİR
 	// aynı taksonomi. v0.9.1241'de sınıf yalnız sayaca gidiyordu; tek
 	// bir çağrının kaydına (ai_calls maskeli kopyası) hangi çıkmaza
@@ -363,6 +371,19 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	// sayaç ile kayıt arasında sessiz bir ayrışma demekti.
 	defer func() {
 		out.Outcome = class
+		// v0.10.60 — GEZİNİLEBİLİR LİNK TEK ÇIKIŞTA damgalanıyor.
+		//
+		// Operatör isteği: "seçince incelerken git repo URL'ini de yazsın."
+		// Bu fonksiyonun YEDİ dönüş noktası var; her birine tek tek link
+		// koymak, bir sonraki yeni çıkışta sessizce unutulacak bir el
+		// işiydi. Outcome damgası zaten burada — link de aynı yerden.
+		//
+		// Depo çözülemediyse link de YOK: yanlış bir link, link
+		// olmamasından kötüdür (operatör tıklar, 404 görür ve deponun
+		// yok olduğunu sanır).
+		if s != nil && out.Repo != "" {
+			out.BrowseURL = BrowseURL(s.CurrentSettings(), out.Repo, out.Branch)
+		}
 		s.RecordCodeOutcome(class, out.Reason)
 	}()
 	out = CodeContext{Repo: repo}
@@ -1761,7 +1782,6 @@ func MaskCodeInPrompt(full, block, summary string) string {
 	return strings.Replace(full, block, summary, 1)
 }
 
-
 // frameGiveUpReason — v0.9.1264: AppFrames boş dönünce HANGİ sebepten
 // boş döndüğünü söyler. SAF, tablo-testli. Üç sınıf üç ayrı aksiyon
 // gerektirir; tek cümle üçünü de "stack işe yaramaz"a indiriyordu.
@@ -1780,7 +1800,6 @@ func frameGiveUpReason(frames []stackparse.Frame) string {
 	}
 	return "uygulama frame'leri dosya/satır taşımıyor (debug bilgisi olmadan derlenmiş olabilir)"
 }
-
 
 // refNames — refs cevabından branş adları. SAF; bozuk JSON → ok=false.
 func refNames(body []byte) ([]string, bool) {

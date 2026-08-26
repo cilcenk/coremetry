@@ -23,6 +23,23 @@ package chstore
 // DÜZELTME: payda da GÖZLENEN aralık olsun — `min(time)`/`max(time)`.
 // Böylece pay ve payda aynı veri kümesini tarif eder.
 //
+// ── BÜYÜKLÜK ÖLÇÜLDÜ (v0.10.49) ─────────────────────────────────────────
+//
+// Bu dosyanın testleri SQL'in ŞEKLİNİ pinliyor, aritmetiğini değil — ve
+// lokal veri düzeltmenin ısırdığı durumu HİÇ içermiyor: demo üreteci
+// kesintisiz yayıyor, 114 metriğin 114'ü de pencereyi %99,9 kapsıyor
+// ([[feedback-local-data-is-a-fixture]]). Yani "lokalde doğru görünüyor"
+// bu düzeltme hakkında hiçbir şey söylemiyor.
+//
+// Canlı CH'de sentetik seyrek seriyle ölçüldü (3600 sn'lik pencerede
+// yalnız 300 sn gözlenen, gerçek hızı 2,0/sn olan kümülatif sayaç):
+//
+//	gözlenen payda (bu kod) → 2,000   ✓ gerçeğe eşit
+//	istenen payda  (eskisi) → 0,167   ✗ 12× DÜŞÜK
+//
+// Yani kusurun bedeli pencere/gözlem oranı kadar: 30 günlük pencerede 2
+// günlük veri = 15× düşük. "Makul görünen yanlış sayı" tam bu.
+//
 // ⚠ TEK NOKTA TUZAĞI: pencerede tek örnek varsa `min(time) == max(time)`
 // ve aralık 0'dır. `greatest(..., 1)` bunu 1 saniyeye sabitliyor; o
 // durumda pay da 0 olduğu için oran 0 çıkar — NULL döndürüp her çağrı

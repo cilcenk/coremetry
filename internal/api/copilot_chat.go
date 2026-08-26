@@ -316,6 +316,17 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	var chartBlocks []string
 	chartSeen := map[string]bool{}
 	appendCharts := func(text string) string {
+		// v0.10.47 — MODELİN KENDİ ÇİTİ ÖNCE SÖKÜLÜR.
+		//
+		// Sunucu çitleri metnin SONUNA ekleniyor; modelin metnine hiç çit
+		// koymuyoruz. Yani `text` içinde bulunan her ```chart``` çiti tanım
+		// gereği model-yazımıdır ve kapsamı DOĞRULANMAMIŞTIR — arayüz ikisini
+		// ayırt edemiyor (chatMarkdown.ts yalnız lang'a bakıyor) ve uydurma
+		// bir kapsamla CANLI grafik çiziyordu.
+		//
+		// Sökme, erken dönüşün ÜSTÜNDE: hiç sunucu grafiği olmayan bir turda
+		// da model çit yazabilir — asıl tehlikeli hâl tam olarak odur.
+		text, _ = stripModelChartFences(text)
 		if len(chartBlocks) == 0 {
 			return text
 		}

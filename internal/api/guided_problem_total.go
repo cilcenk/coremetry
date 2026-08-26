@@ -62,9 +62,28 @@ type problemsTotal struct {
 //
 // Services/NotStatuses/IDs, ListProblems'ın bildiği ama CountProblems'ın
 // BİLMEDİĞİ yüklemler; biri doluysa sayım daha GENİŞ bir kümeyi sayar.
+// ⚠ v0.10.68b/10.69 — SubjectKind EKLENDİ. v0.9.1342 ProblemFilter'a
+// `SubjectKind` koydu ve ListProblems onu SQL'de (LIMIT'ten önce)
+// uyguluyor; CountProblems onu HİÇ bilmiyor. Yani özne-türü şeridiyle
+// daraltılmış bir liste, TÜM türler üzerinden sayılıyordu.
+//
+// Bu, listenin bilip sayımın bilmediği DÖRDÜNCÜ yüklem — ve üçü yazılıp
+// dördüncüsü eklenmemişti ([[feedback-fixes-have-second-halves]]).
+// Kapı artık iki listeyi KARŞILAŞTIRIYOR (guided_problem_total_test.go),
+// yani beşincisi eklendiğinde burası kırmızıya döner.
 func countableFilter(f chstore.ProblemFilter) bool {
-	return f.Services == nil && len(f.NotStatuses) == 0 && f.IDs == nil
+	return f.Services == nil && len(f.NotStatuses) == 0 && f.IDs == nil &&
+		f.SubjectKind == ""
 }
+
+// listDefaultLimit — ListProblems'in Limit==0 iken UYGULADIĞI tavan.
+//
+// ⚠ Ayna sabit. chstore.ListProblems `if f.Limit == 0 { f.Limit = 100 }`
+// yapıyor; çağıran "limit yok" sanıyor ama sorgu 100'de kesiliyor.
+// Aşağıdaki kırpma kontrolü bunu bilmezse, 250 açık problemli bir
+// kurulumda cevap "toplam 100" der — ve bu, tam olarak bu dosyanın var
+// olma sebebi olan v0.10.21 yalanıdır.
+const listDefaultLimit = 100
 
 // guidedProblemsWithTotal — listeyi ve dürüst toplamı birlikte döndürür.
 //
@@ -78,7 +97,19 @@ func (s *Server) guidedProblemsWithTotal(
 		return nil, problemsTotal{}, err
 	}
 	// Tavana dayanmadı → uzunluk gerçek toplam. Sorgu yok.
-	if f.Limit <= 0 || len(probs) < f.Limit {
+	//
+	// ⚠ Limit<=0 "tavan yok" DEMEK DEĞİL: ListProblems o durumda 100
+	// uyguluyor. Eski hâl bu dalda uzunluğu KESİN toplam ilan ediyordu ve
+	// 100 satır dönen bir kurulumda "toplam 100" diyordu.
+	//
+	// Bugünkü guided çağrılarının hepsi açık limit veriyor (10/50), yani
+	// dal ŞU AN ulaşılamaz — ama biri "limitsiz" diye 0 geçtiği an yalan
+	// geri gelirdi ve hiçbir test bunu söylemezdi.
+	effLimit := f.Limit
+	if effLimit <= 0 {
+		effLimit = listDefaultLimit
+	}
+	if len(probs) < effLimit {
 		return probs, problemsTotal{n: uint64(len(probs)), known: true}, nil
 	}
 	if !countableFilter(f) {

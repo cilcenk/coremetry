@@ -57,5 +57,5 @@ func (s *Server) copilotExplainException(w http.ResponseWriter, r *http.Request)
 		"evidenceTraceIds": in.EvTraces,
 		"evidenceSpanIds":  in.EvSpans,
 		"code":             codePayload(cc, opts.IncludeCode),
-	}, run)
+	}, run, g.Service)
 }

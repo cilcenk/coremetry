@@ -68,7 +68,19 @@ type traceExplainInput struct {
 	// aşağı akıştaki bir servis patlar, kök yalnız 500'ü görür. Kökün
 	// deposunda o dosya YOKTUR — yanlış depoda arama, sessiz bir
 	// "eşleşme yok" olurdu.
-	Stack        string
+	Stack string
+	// RootService (v0.10.55) — trace'in KÖK span'ini yayan servis.
+	//
+	// Kimlik köprüsünün ORTAMINI bundan çıkarıyoruz
+	// (envFromServiceName). Öncesinde deliverExplain yalnız `?service=`
+	// query param'ına bakıyordu ve ✨ Explain uçlarının hiçbiri onu
+	// göndermiyor: env HER ZAMAN "prod"a düşüyordu. Prod'da doğru sonuç
+	// verdiği için görünmezdi; prod-dışı bir trace açıklandığında link
+	// yanlış ortamın log sistemine gidiyordu.
+	//
+	// StackService DEĞİL: o, stacktrace'i BASAN servis ve trace'te
+	// stacktrace olmayabilir. Kök servis her trace'te var.
+	RootService  string
 	StackService string
 }
 
@@ -91,6 +103,20 @@ func (s *Server) buildTraceExplainInput(ctx context.Context, id string) (traceEx
 		return traceExplainInput{}, errExplainTraceNotFound
 	}
 	// Trace penceresi (log sorgusu için) — cap'ten ÖNCE, tüm span'lar üstünden.
+	// Kök servis: parent'ı olmayan span; yoksa en erken başlayan
+	// (kırık/eksik parent zincirinde de bir cevap üretmeli).
+	root := spans[0]
+	for _, sp := range spans {
+		if sp.ParentSpanID == "" {
+			root = sp
+			break
+		}
+		if sp.StartTime < root.StartTime {
+			root = sp
+		}
+	}
+	rootService := root.ServiceName
+
 	minT, maxT := spans[0].StartTime, spans[0].EndTime
 	for _, sp := range spans {
 		if sp.StartTime < minT {
@@ -210,6 +236,7 @@ func (s *Server) buildTraceExplainInput(ctx context.Context, id string) (traceEx
 		LogsBlock:    logsBlock,
 		Stack:        rawStack,
 		StackService: stackService,
+		RootService:  rootService,
 	}, nil
 }
 

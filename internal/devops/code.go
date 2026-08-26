@@ -749,13 +749,28 @@ func huntWindows(
 			continue
 		}
 		tried[key] = true
-		lookups++
 
 		p := find(f)
 		if p == "" {
+			// v0.10.71 — IŞKA TAVANDAN DÜŞMEZ (operatör teşhisi:
+			// "tavanı doğru frame'lere harcamak, yükseltmekten daha çok
+			// işe yarar").
+			//
+			// Doğru katman burasıydı: TAM bir ağaçta `find` yalnızca
+			// BestPathForFrame'dir — yerel arama, ağ YOK, maliyet YOK.
+			// Yine de her ıska tavandan düşüyordu; stack birden çok
+			// bileşene yayıldığında (paylaşılan core deposunun sınıfları
+			// bu depoda ASLA yok) tavan asıl iş sınıflarına ulaşamadan
+			// tükeniyordu.
+			//
+			// Tavan artık yalnız gerçekten iş yapan adımı sayıyor:
+			// DOSYA ÇEKİMİ. Ağaç kesikken devreye giren ağ yolunun
+			// (scopedHunt) kendi ayrı bütçesi zaten var; yineleme de
+			// sınırlı, çünkü targets codeCandidateLimit ile kesiliyor.
 			out.misses = append(out.misses, f.File)
 			continue
 		}
+		lookups++
 		body, cached := bodies[p]
 		if !cached {
 			b, ferr := fetch(ctx, p)

@@ -34,10 +34,29 @@ export type ChatContextStarter = { chip: string; question: string };
 // devretsin — bugüne dek chat bu rotalarda kör açılıyordu (denetim
 // bulgusu: sunucu tarafı ctxService + kapsam bandı zaten hazırdı,
 // değer hiç gelmiyordu). SAF — vitest'i chatContext.test.ts'te.
+// ⚠ BU LİSTE ELLE TUTULUYOR VE BEDELİ ŞU: yeni bir sayfa `?service=`
+// taşımaya başlayıp buraya EKLENMEZSE, sohbet o sayfada BAĞLAM-KÖR
+// açılır. Belirtisi yok — tsc göremez, hiçbir test kırılmaz, kapsam
+// bandı da çizilmediği için operatör kör olduğunu fark etmez. İki rota
+// tam bu yüzden gözden kaçtı (v0.10.45: /endpoint ve /service-map).
+// chatContext.test.ts'teki kapı unutmayı en azından TEST hatasına
+// çeviriyor.
 const SERVICE_PARAM_ROUTES = new Set([
   '/traces', '/endpoints', '/logs', '/inbox', '/deploys',
   '/metrics', '/explore', '/clusters', '/profiling',
+  // v0.10.45 — /endpoint (TEKİL detay) listede YOKTU. Sayfa `?service=`
+  // hem yazıyor hem okuyor (endpointParam.ts), yani operatör bir
+  // endpoint'in detayına inip "bu neden yavaş" diye sorduğunda sohbet
+  // SERVİS BAĞLAMI OLMADAN açılıyordu. Kapsam bandı da çizilmediği için
+  // "kör" olduğu görünmüyordu — v0.9.1226'nın kapatmayı amaçladığı
+  // bulgunun aynısı, iki rotada açık kalmış.
+  '/endpoint',
 ]);
+
+// v0.10.45 — /service-map servis seçimini `?service=` DEĞİL `?focus=`
+// ile taşıyor (ServiceMap.tsx:65,156). Ayrı bir eşleme, çünkü tek bir
+// param adı varsaymak bu rotayı sessizce dışarıda bırakıyordu.
+const FOCUS_PARAM_ROUTES = new Set(['/service-map']);
 export function serviceFromRoute(pathname: string, search: string): string {
   const sp = new URLSearchParams(search);
   if (pathname === '/service' || pathname === '/service/backtrace') {
@@ -45,6 +64,7 @@ export function serviceFromRoute(pathname: string, search: string): string {
   }
   if (pathname === '/pod') return sp.get('service') || '';
   if (SERVICE_PARAM_ROUTES.has(pathname)) return sp.get('service') || '';
+  if (FOCUS_PARAM_ROUTES.has(pathname)) return sp.get('focus') || '';
   return '';
 }
 

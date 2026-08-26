@@ -237,7 +237,13 @@ func (s *Store) queryPgDatabases(
 			FROM metric_points
 			WHERE time >= ? AND time <= ?
 			  AND startsWith(metric, 'postgresql.')
-			  AND has(attr_keys, 'database') OR has(attr_keys, 'postgresql.database.name')
+			  -- ⚠ PARANTEZ ŞART (v0.10.57). SQL'de AND, OR'dan SIKI bağlar:
+			  -- parantezsiz hâlde zincir "…AND has(database)" ile kapanıyor ve
+			  -- "OR has(postgresql.database.name)" AYRI bir dal oluyordu —
+			  -- zaman sınırı da metrik süzgeci de TAŞIMAYAN bir dal.
+			  -- Lokalde ölçüldü: 7.109 satır yerine 5.193.027 (731×) ve
+			  -- pencere 10 dakika yerine 10 GÜN.
+			  AND (has(attr_keys, 'database') OR has(attr_keys, 'postgresql.database.name'))
 			` + pgInstanceClause(withInstance) + `
 		)
 		SELECT db,

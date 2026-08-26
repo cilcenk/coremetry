@@ -71,6 +71,18 @@ type DryRunStep struct {
 	Label  string `json:"label"`
 	OK     bool   `json:"ok"`
 	Detail string `json:"detail"`
+	// Derived (v0.10.58) — bu adım DEVOPS'A SORULMADAN, saf türetmeyle
+	// üretildi.
+	//
+	// ⚠ Operatör bildirdi: "Kodu incele dediğimde doğru repoyu bulmuyor."
+	// Ekranda "Depo adı ✓" ve "Proje ✓" görünüyordu — oysa ikisi de
+	// ResolveRepo'nun (saf, ağsız) ürettiği birer TAHMİN. Sunucuya hiçbir
+	// şey sorulmamıştı; ilk gerçek çağrı bir sonraki adımda.
+	//
+	// Yeşil tik operatöre "doğrulandı" der. Doğrulanmamış bir tahmine
+	// yeşil tik vermek, tam da bu ekranın çözmesi gereken soruyu
+	// ("depo doğru mu") cevaplamış gibi yapmaktır.
+	Derived bool `json:"derived,omitempty"`
 }
 
 // DryRunResult — provanın tamamı. Steps SIRALI ve zincir nerede
@@ -97,6 +109,16 @@ type DryRunResult struct {
 func (r *DryRunResult) add(key, label string, ok bool, detail string) {
 	r.Steps = append(r.Steps, DryRunStep{Key: key, Label: label, OK: ok, Detail: detail})
 	r.OK = ok
+}
+
+// addDerived — DEVOPS'A SORULMADAN üretilmiş adım. Zincir devam eder
+// (r.OK true kalır) ama adım "doğrulandı" diye okunmaz.
+func (r *DryRunResult) addDerived(key, label, detail string) {
+	r.Steps = append(r.Steps, DryRunStep{
+		Key: key, Label: label, OK: true, Derived: true,
+		Detail: detail + " — türetildi, DevOps'a sorulmadı",
+	})
+	r.OK = true
 }
 
 // sourceLabel — kaynak kodunun insan karşılığı. Bilinmeyen değer
@@ -153,7 +175,7 @@ func (s *Service) ResolveDryRun(ctx context.Context, service string, pin PinRead
 	case strings.TrimSpace(pin.Repo) != "":
 		out.add(DryRunStepPin, "Katalog pini", true, strings.TrimSpace(pin.Repo))
 	default:
-		out.add(DryRunStepPin, "Katalog pini", true, "pin yok — konvansiyon kullanılacak")
+		out.add(DryRunStepPin, "Katalog pini", true, "pin yok — konvansiyon kullanılacak (pin için: servis kataloğu → Repository alanına depo URL'i; tam DevOps linki kabul edilir ve projeyi de belirler)")
 	}
 
 	// 3 — depo adı.
@@ -167,7 +189,7 @@ func (s *Service) ResolveDryRun(ctx context.Context, service string, pin PinRead
 		return out
 	}
 	out.Repo, out.Source = res.Repo, res.Source
-	out.add(DryRunStepRepo, "Depo adı", true, res.Repo+" (kaynak: "+sourceLabel(res.Source)+")")
+	out.addDerived(DryRunStepRepo, "Depo adı", res.Repo+" (kaynak: "+sourceLabel(res.Source)+")")
 
 	// 4 — proje. ÜÇ kaynak, üçünün de düzeltmesi ayrı yerde; çıkmaz
 	// cümlesi (projectDeadEnd) üçünü birden anlatır.
@@ -177,7 +199,7 @@ func (s *Service) ResolveDryRun(ctx context.Context, service string, pin PinRead
 		return out
 	}
 	out.Project = project
-	out.add(DryRunStepProject, "Proje", true, project+" (kaynak: "+sourceLabel(psrc)+")")
+	out.addDerived(DryRunStepProject, "Proje", project+" (kaynak: "+sourceLabel(psrc)+")")
 	cfg.Project = project
 
 	// 5-6 — branş + ağaç: GERÇEK zincir (code.go/resolveChain).

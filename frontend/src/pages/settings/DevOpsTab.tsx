@@ -398,12 +398,21 @@ export function DevOpsTab() {
               {(dry.steps || []).map((st, i) => (
                 <li key={`${st.key}-${i}`}
                   style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 12 }}>
-                  <Badge tone={st.ok ? 'success' : 'danger'}>{st.ok ? '✓' : '✗'}</Badge>
+                  {/* v0.10.58 — ÜÇ DURUM. "Depo adı" ve "Proje" adımları
+                      DevOps'a sorulmadan, saf türetmeyle üretiliyor; onlara
+                      yeşil tik vermek operatöre "doğrulandı" der ve tam da
+                      bu ekranın cevaplaması gereken soruyu ("depo doğru mu")
+                      cevaplamış gibi yapar. Operatör bildirdi: "Kodu incele
+                      dediğimde doğru repoyu bulmuyor" — ekranda iki yeşil
+                      tik dururken. */}
+                  <Badge tone={st.derived ? 'info' : st.ok ? 'success' : 'danger'}>
+                    {st.derived ? '~' : st.ok ? '✓' : '✗'}
+                  </Badge>
                   <span style={{ minWidth: 110, color: 'var(--text2)' }}>{st.label}</span>
                   {/* Uzun gerekçe (çıkmaz cümleleri üç kaynağı birden
                       anlatıyor) kırpılmaz: kesilen bir teşhis, teşhis
                       değildir. */}
-                  <span style={{ color: st.ok ? 'var(--text)' : 'var(--err)',
+                  <span style={{ color: st.derived ? 'var(--text2)' : st.ok ? 'var(--text)' : 'var(--err)',
                     wordBreak: 'break-word' }}>{st.detail}</span>
                 </li>
               ))}

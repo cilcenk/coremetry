@@ -1360,6 +1360,8 @@ export interface DevOpsResolveStep {
   label: string;
   ok: boolean;
   detail: string;
+  /** DevOps'a sorulmadan türetildi — doğrulanmış DEĞİL (v0.10.58). */
+  derived?: boolean;
 }
 export interface DevOpsResolveDryRun {
   service: string;

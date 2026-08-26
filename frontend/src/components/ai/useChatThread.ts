@@ -20,12 +20,17 @@ import {
 // yazılır (POST /api/ai/conversations). Kimliği SUNUCU basar, istemci
 // yanıttan devralır ve sonraki yazımlarda taşır.
 //
-// Kalıcılık YALNIZ global CoSRE penceresinin özelliği. AI çekmecesindeki
-// özne-kapsamlı sohbet BİLİNÇLİ EFEMER kalıyor: o sohbet bir açıklamanın
-// devamı, kendi başına bir konuşma değil — özne değişince (çekmece
-// remount) bugün de sıfırlanıyor ve arşivde onlarca "NPE fp-abc123"
-// kabuğu birikmesi listeyi işe yaramaz kılardı. Sınır burada: `persist`
-// bayrağını AIDrawer'a açmak bir ÜRÜN kararıdır, bir iyileştirme değil.
+// v0.10.55 (operatör ürün kararı) — kalıcılık artık AI çekmecesine de
+// AÇIK: "Chat'te devam et" sohbeti de saved_views(page='ai-chat')
+// satırına yazılıyor, aynı "🕘 Geçmiş" listesinde CoSRE penceresiyle
+// yan yana görünür. v0.9.1139'daki "NPE fp-abc123 kabuğu" kaygısı iki
+// yerde zaten karşılanıyor: (1) başlık ÖZNE kodeğinden değil, ekrandaki
+// gerçek ilk kullanıcı mesajından türüyor (resolveChatTitle, backend) —
+// çekmece çağrısı ayrıca AÇIK bir `title` de basıyor (AIDrawer.tsx,
+// aiSubjectTitle+aiSubjectSubtitle) ki thread listede "Explain trace ·
+// a1b2c3d4…" gibi tanınabilir dursun; (2) tek-mesajlık boş açıklama
+// turları zaten arşive girmiyor — hasCompletedExchange en az bir takip
+// sorusu + tamamlanmış cevap şart koşuyor.
 //
 // Kaydetme HİÇBİR ZAMAN gönderme yolunu bloklamaz: ateşle-ve-unut,
 // hatası yutulur (sonraki tur zaten tüm geçmişi yeniden yazacak).
@@ -64,8 +69,14 @@ export interface ChatThreadOpts {
   // env (v0.9.1259) — Topbar'daki global env seçimi (rangeS aynası).
   env?: string;
   // persist (v0.9.1139) — konuşma sunucuda saklansın mı. Global CoSRE
-  // penceresi true; AI çekmecesi bilinçle KAPALI (gerekçe dosya başında).
+  // penceresi ve (v0.10.55'ten beri) AI çekmecesi ikisi de true.
   persist?: boolean;
+  // title (v0.10.55) — kalıcı satır için AÇIK başlık. Boşsa backend ilk
+  // kullanıcı mesajından türetir (global CoSRE'nin bugüne kadarki
+  // davranışı); çekmece bunu ÖZNEYE göre basıyor (aiSubjectTitle +
+  // aiSubjectSubtitle) ki "Geçmiş" listesinde hangi trace/span/problem
+  // olduğu takip sorusunun lafından değil, açıklamanın öznesinden okunsun.
+  title?: string;
 }
 
 export function useChatThread(opts: ChatThreadOpts = {}) {
@@ -106,6 +117,7 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
       if (!hasCompletedExchange(snapshot)) return;
       void api.saveAiConversation({
         id: convIdRef.current ?? undefined,
+        title: optsRef.current.title || undefined,
         subject: optsRef.current.subject || undefined,
         messages: persistMessages(snapshot),
       }).then(c => {

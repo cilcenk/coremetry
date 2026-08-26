@@ -66,6 +66,27 @@ func (s *Server) registerK8sCoverageRoutes(mux *http.ServeMux) {
 	// Yalnız admin: kart bir TEŞHİS yüzeyi ve filo genelinde servis adı
 	// listeliyor; viewer'ın operasyonel akışında yeri yok.
 	mux.HandleFunc("GET /api/k8s/coverage", auth.RequireRole(auth.RoleAdmin, s.getK8sCoverage))
+	// v0.10.40 — pod envanteri (Faz 1'in okuma yarısı).
+	mux.HandleFunc("GET /api/k8s/pods", auth.RequireRole(auth.RoleAdmin, s.getK8sPods))
+}
+
+// getK8sPods — pod envanteri.
+//
+// Kimlik (namespace, pod adı) — operatör kararı 2026-08-26. Aynı basamak
+// ve cache disiplini: serbest saniye anahtar kardinalitesini patlatır.
+func (s *Server) getK8sPods(w http.ResponseWriter, r *http.Request) {
+	sec, _ := strconv.ParseInt(r.URL.Query().Get("rangeS"), 10, 64)
+	sec = snapK8sCoverageRange(sec)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 1000 {
+		limit = 300
+	}
+	key := fmt.Sprintf("k8s-pods:v1:r=%d:l=%d", sec, limit)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		to := time.Now()
+		from := to.Add(-time.Duration(sec) * time.Second)
+		return s.store.GetPodInventory(ctx, from, to, limit)
+	})
 }
 
 func (s *Server) getK8sCoverage(w http.ResponseWriter, r *http.Request) {

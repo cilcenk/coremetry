@@ -74,7 +74,7 @@ func getCorrelatedChangesTool(d Deps) mcp.Tool {
 			if baseline <= 0 {
 				baseline = window * 4
 			}
-			at := time.Now().Add(-time.Duration(window) * time.Second)
+			at := nowOrAnchor(ctx).Add(-time.Duration(window) * time.Second)
 			if a.AtISO != "" {
 				t, err := time.Parse(time.RFC3339, a.AtISO)
 				if err != nil {
@@ -152,7 +152,7 @@ func getDeployDiffTool(d Deps) mcp.Tool {
 			if rangeS <= 0 {
 				rangeS = 86400
 			}
-			to := time.Now()
+			to := nowOrAnchor(ctx)
 			from := to.Add(-time.Duration(rangeS) * time.Second)
 			deploys, err := d.Store.GetServiceDeploys(ctx, a.Service, from, to)
 			if err != nil {

@@ -23,7 +23,7 @@ import (
 const (
 	// opBucketS — spanmetrics_1m'in kova boyutu; range_s'in tabanı
 	// (depBucketS gerekçesiyle aynı: daha dar pencere yine tam kova okur).
-	opBucketS           = 60
+	opBucketS             = 60
 	opHealthDefaultRangeS = 3600
 	opHealthMaxRangeS     = 7 * 86400
 	opHealthDefaultRows   = 20
@@ -157,7 +157,7 @@ func getOperationHealthTool(d Deps) mcp.Tool {
 				return nil, fmt.Errorf("service is required — get it from list_services")
 			}
 			windowS := opHealthWindowS(a.RangeS)
-			from, to := rangeWindow(windowS)
+			from, to := rangeWindow(ctx, windowS)
 			limit := clampLimit(a.Limit, opHealthDefaultRows, opHealthMaxRows)
 			// limit+1: truncated bayrağı için bir fazla iste — chstore
 			// LIMIT'i sorguda uygular, "kesildi mi"yi başka türlü bilemeyiz.

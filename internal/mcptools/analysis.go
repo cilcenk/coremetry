@@ -414,7 +414,7 @@ func getTopologyTool(d Deps) mcp.Tool {
 					"o düğüme dokunan servisi odakla ya da service'i boş bırakıp filo kenarlarına bak", service, k)
 			}
 			windowS := topologyWindowS(a.RangeS)
-			from, to := rangeWindow(windowS)
+			from, to := rangeWindow(ctx, windowS)
 			limit := clampLimit(a.Limit, 40, topoEdgeCap)
 			var (
 				edges []chstore.ServiceTopologyEdge
@@ -591,7 +591,7 @@ func getBlastRadiusTool(d Deps) mcp.Tool {
 				return nil, fmt.Errorf("service zorunlu — önce list_services")
 			}
 			windowS := blastWindowS(a.RangeS)
-			from, to := rangeWindow(windowS)
+			from, to := rangeWindow(ctx, windowS)
 			br, err := d.Store.GetServiceBlastRadius(ctx, service, from, to)
 			if err != nil {
 				return nil, err
@@ -844,7 +844,7 @@ func getLogHistogramTool(d Deps) mcp.Tool {
 			}
 			windowS := logHistWindowS(a.RangeS)
 			bucketS := logHistBucketS(windowS, a.Buckets)
-			from, to := rangeWindow(windowS)
+			from, to := rangeWindow(ctx, windowS)
 			service := strings.TrimSpace(a.Service)
 			query := strings.TrimSpace(a.Query)
 			// groupBy "severity" SABİT: bant sözlüğü iki backend'de de

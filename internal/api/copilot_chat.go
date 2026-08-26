@@ -368,6 +368,19 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		AnchorTo:  anchorTo,
 		Anchored:  anchored,
 	}
+	// v0.10.50 — ÇIPA ARAÇLARA DA GEÇER.
+	//
+	// v0.10.33 çıpayı burada operatöre (çip) ve modele (önsöz) İLAN
+	// ediyordu, ama araç katmanına hiç ulaşmıyordu: mcptools.rangeWindow
+	// koşulsuz `time.Now()` kuruyordu ve hiçbir tool mutlak pencere
+	// argümanı almıyor (ev kuralı — küçük modele epoch hesaplatma yok).
+	// Yani model BUGÜNÜN sayısını okuyup önsöze uyarak DÜNÜN penceresi
+	// diye yazıyordu; çip de o yanlışı TEYİT ediyordu.
+	//
+	// Etiketli yanlış, etiketsiz yanlıştan tehlikeli: sorgulanmıyor.
+	if anchored {
+		ctx = mcptools.WithAnchor(ctx, anchorTo)
+	}
 	// Bağlam SESSİZCE uygulanmamalı: operatör cevabın neden o kapsamda
 	// olduğunu görebilmeli (v0.9.1259 env şeffaflığının kalan yarısı).
 	if chip := screenContextChipTR(screenCtx); chip != "" {

@@ -351,7 +351,7 @@ func getDBHealthTool(d Deps) mcp.Tool {
 				}
 			}
 			windowS := dbHealthWindowS(a.RangeS)
-			from, to := rangeWindow(windowS)
+			from, to := rangeWindow(ctx, windowS)
 			data, err := ReadDBHealth(ctx, d, from, to, clampLimit(a.Limit, dbHealthDefaultRows, dbHealthMaxRows))
 			if err != nil {
 				return nil, err
@@ -596,7 +596,7 @@ func getMessagingHealthTool(d Deps) mcp.Tool {
 				}
 			}
 			windowS := msgHealthWindowS(a.RangeS)
-			from, to := rangeWindow(windowS)
+			from, to := rangeWindow(ctx, windowS)
 			data, err := ReadMessagingHealth(ctx, d, from, to, clampLimit(a.Limit, msgHealthDefaultRows, msgHealthMaxRows))
 			if err != nil {
 				return nil, err
@@ -805,7 +805,7 @@ func sanitizePodHeapRows(rows []PodHeapRow) []PodHeapRow {
 // işaretlenir (envanter tek başına da cevaptır — guided davranışı).
 func ReadPodHealth(ctx context.Context, d Deps, service string, from, to time.Time, instLimit, heapLimit int) (PodHealthData, error) {
 	data := PodHealthData{Service: service, HeapWindowS: int(chstore.RuntimePodWindow / time.Second)}
-	heapNow := time.Now()
+	heapNow := nowOrAnchor(ctx)
 	heap, herr := d.Store.JVMHeapPodUsage(ctx, heapNow.Add(-chstore.RuntimePodWindow), heapNow)
 	if service == "" {
 		if herr != nil {
@@ -942,7 +942,7 @@ func getPodHealthTool(d Deps) mcp.Tool {
 			}
 			service := strings.TrimSpace(a.Service)
 			windowS := podHealthWindowS(a.RangeS)
-			from, to := rangeWindow(windowS)
+			from, to := rangeWindow(ctx, windowS)
 			instLimit := clampLimit(a.Limit, podHealthDefaultInstanceRows, podHealthMaxInstanceRows)
 			heapLimit := clampLimit(a.Limit, podHealthDefaultHeapRows, podHealthMaxHeapRows)
 			data, err := ReadPodHealth(ctx, d, service, from, to, instLimit, heapLimit)
@@ -1201,7 +1201,7 @@ func listProblemWindowEventsTool(d Deps) mcp.Tool {
 			}
 			service := strings.TrimSpace(a.Service)
 			windowS := pwWindowS(a.RangeS)
-			from, to := rangeWindow(windowS)
+			from, to := rangeWindow(ctx, windowS)
 			data, err := ReadProblemWindowEvents(ctx, d, service, from, to, clampLimit(a.Limit, pwDefaultRows, pwMaxRows))
 			if err != nil {
 				return nil, err

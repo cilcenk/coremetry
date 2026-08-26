@@ -112,7 +112,7 @@ func registerPrompts(srv *mcp.Server, d Deps) {
 			{Name: "service", Description: "Service name.", Required: true},
 		},
 		Renderer: func(ctx context.Context, args map[string]string) ([]mcp.PromptMessage, error) {
-			from, to := rangeWindow(1800)
+			from, to := rangeWindow(ctx, 1800)
 			rows, err := d.Store.GetServicesFiltered(ctx, 0, from, to, args["service"], "rps", "desc", 1, 0)
 			if err != nil {
 				return nil, err

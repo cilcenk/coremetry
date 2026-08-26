@@ -210,11 +210,22 @@ function AIDrawerChat({ subject, explainText, spanIds, traceIds }: {
   // yazıyor" gibi takipler açıklamanın metninde geçmediği için kör
   // cevaplanıyordu. `?ai=` kodeğinin AYNI biçimi — ikinci bir sözleşme yok.
   const subjectParam = useMemo(() => formatAiParam(subject), [subject]);
+  // title (v0.10.55) — ÖZNEDEN türer, takip sorusunun lafından değil:
+  // "Geçmiş" listesinde "Explain trace · a1b2c3d4…" gibi tanınabilir
+  // dursun (gerekçe useChatThread.ts dosya başında).
+  const persistTitle = useMemo(
+    () => `${aiSubjectTitle(subject)} · ${aiSubjectSubtitle(subject)}`,
+    [subject],
+  );
   // service-health öznesinde sayfa bağlamı da geçer: guided router
   // servisi mesajda bulamazsa bunu varsayılan alır (v0.9.164 sözleşmesi).
   const { turns, busy, send, last, showFollowups } = useChatThread({
     explain, seed, subject: subjectParam,
     service: subject.kind === 'service-health' ? subject.id : undefined,
+    // persist (v0.10.55, operatör ürün kararı) — çekmece sohbeti artık
+    // global CoSRE penceresiyle AYNI arşive yazılıyor; kapatılan çekmece
+    // "🕘 Geçmiş"ten yeniden açılabilir (gerekçe useChatThread.ts).
+    persist: true, title: persistTitle,
   });
 
   useEffect(() => {

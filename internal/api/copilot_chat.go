@@ -568,9 +568,34 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			totalOut += turn2.OutputTokens
 			if err2 != nil {
 				lastErr = err2
-				emit("error", map[string]string{"error": err2.Error()})
+				// v0.10.61 — HATA SINIFLANDIRMASI BURADA DA.
+				//
+				// Bu dal ham `err2.Error()` basıyordu, yani v0.10.24 ve
+				// v0.10.26'nın düzelttiği iki kusur tur-tavanı yolunda AYNEN
+				// duruyordu: operatör ham İngilizce sağlayıcı gövdesini
+				// görüyor ve `context deadline exceeded` metnini "model zaman
+				// aşımına uğradı" diye okuyup MODELİ suçluyordu — oysa olan
+				// şey alışverişin tavana dayanması ve farklı bir eylem
+				// gerektiriyor.
+				//
+				// Sınıflandırma normal yolun AYNISI; ikisinin ayrışmaması
+				// için kalıp birebir kopyalanmadı, aynı yardımcılar çağrıldı.
+				msg := err2.Error()
+				switch {
+				case dctx.Err() != nil:
+					msg = chatDeadlineMessageTR(exchangeMax)
+				case isContextOverflowErr(err2):
+					msg = chatOverflowMessageTR(overflowRetried)
+				}
+				emit("error", map[string]string{"error": msg})
 			} else {
-				finalText = appendCharts(turn2.Text)
+				// v0.10.61 — KAYNAK KÜNYESİ BURADA DA.
+				//
+				// Künye (v0.10.29) normal yolda vardı, tur-tavanı yolunda
+				// YOKTU. Oysa bu yol tanımı gereği EN ÇOK araç çağıran yol:
+				// tavana ancak tur tur araç çağırarak varılıyor. Yani atıfın
+				// en anlamlı olduğu cevap, tek atıfsız cevaptı.
+				finalText = appendCharts(turn2.Text) + chatSourceNoteTR(calledTools)
 				// v0.9.709 (operatör-bildirimi) — cevaptaki request_id'ler log
 				// köprüsü çipi olur. v0.9.1228 — tool köprüleri de burada:
 				// tur-tavanı cevabı da döngünün kanıt linklerini taşır.

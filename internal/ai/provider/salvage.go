@@ -62,11 +62,26 @@ func SalvageAnswer(content, reasoningContent, reasoning string) string {
 	if out := StripThinking(content); out != "" {
 		return out
 	}
+	// ⚠ AYRILMIŞ DÜŞÜNCE KANALLARI DA İŞARETLENİYOR (v0.10.66).
+	//
+	// v0.10.37 yalnız <think> dalını işaretledi ve testi bu tutarsızlığı
+	// ÇİVİLEDİ ("yalnız reasoning_content → işaretlenmez"). O karar
+	// yanlıştı ve gerekçesi kendi içinde çelişiyordu: 10.37'nin derdi
+	// "modelin SPEKÜLASYON fazı nihai cevap kılığında yayına giriyor"du.
+	//
+	// content BOŞken reasoning_content'ten dönen metin tam olarak odur —
+	// aynı madde, yalnız sağlayıcı onu ayrı bir alana koymuş. Hangi ALAN
+	// taşıdığı operatörü ilgilendirmiyor; onu ilgilendiren tek şey elindeki
+	// metnin nihai cevap mı çalışma notu mu olduğu.
+	//
+	// Yani ayrım TAŞIYICIDA değil, MADDEDE: content doluysa (1. basamak)
+	// model cevabını yazmıştır ve işaret YOK; buraya düştüysek cevap
+	// yazılmamış demektir.
 	if out := StripThinking(reasoningContent); out != "" {
-		return out
+		return MarkSalvagedThinking(out)
 	}
 	if out := StripThinking(reasoning); out != "" {
-		return out
+		return MarkSalvagedThinking(out)
 	}
 	// ⚠ SON ÇARE İŞARETLENİYOR (v0.10.37). Kurtarmanın kendisi makul —
 	// bazı modeller yalnız düşünce bloğu üretiyor ve o düşünce genelde

@@ -151,9 +151,16 @@ func TestOpenAIStreamAccumReasoningOnlyStream(t *testing.T) {
 			if err != nil {
 				t.Fatalf("finish: %v", err)
 			}
-			want := "Merhaba! Sorun payment-service."
-			if final != want || trailing != want {
-				t.Fatalf("final=%q trailing=%q; want both %q (one final delta)", final, trailing, want)
+			// ⚠ v0.10.66 — İŞARET BEKLENİYOR. Bu akışta content HİÇ
+			// gelmiyor: operatörün eline geçen metin modelin ÇALIŞMA
+			// NOTUDUR. v0.10.37 yalnız <think> dalını işaretliyordu ve
+			// fark tamamen TAŞIYICIDAN geliyordu (aynı madde, ayrı alan).
+			body := "Merhaba! Sorun payment-service."
+			if !IsSalvagedThinking(final) {
+				t.Fatalf("kurtarılan düşünce İŞARETSİZ: %q", final)
+			}
+			if !strings.Contains(final, body) || final != trailing {
+				t.Fatalf("final=%q trailing=%q; ikisi de %q içermeli", final, trailing, body)
 			}
 		})
 	}
@@ -589,9 +596,18 @@ func TestStreamOpenAIEmitsSalvagedAnswerAsOneDelta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StreamOpenAI: %v", err)
 	}
-	want := "Sorun redis bağlantı havuzu."
-	if resp.Text != want || strings.Join(deltas, "") != want || len(deltas) != 1 {
-		t.Fatalf("text=%q deltas=%v; want tek son parça %q", resp.Text, deltas, want)
+	// ⚠ v0.10.66 — content HİÇ gelmedi, yani bu metin modelin ÇALIŞMA
+	// NOTU ve işaretli çıkmalı. Sözleşmenin geri kalanı aynı: TEK son
+	// parça, ve gövde korunuyor.
+	body := "Sorun redis bağlantı havuzu."
+	if len(deltas) != 1 || strings.Join(deltas, "") != resp.Text {
+		t.Fatalf("text=%q deltas=%v; tek son parça bekleniyordu", resp.Text, deltas)
+	}
+	if !IsSalvagedThinking(resp.Text) {
+		t.Fatalf("kurtarılan düşünce İŞARETSİZ: %q", resp.Text)
+	}
+	if !strings.Contains(resp.Text, body) {
+		t.Fatalf("gövde kayboldu: %q", resp.Text)
 	}
 }
 

@@ -50,7 +50,11 @@ func TestExplainOpenAIReasoningContentFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out != "answer from reasoning field" {
+	// ⚠ v0.10.66 — content HİÇ gelmediğinde dönen metin modelin ÇALIŞMA
+	// NOTUDUR ve artık İŞARETLİ çıkıyor (provider.MarkSalvagedThinking).
+	// v0.10.37 yalnız <think> dalını işaretliyordu; fark tamamen
+	// TAŞIYICIDAN geliyordu. Sözleşme: gövde korunur, işaret eklenir.
+	if !strings.Contains(out, "answer from reasoning field") {
 		t.Fatalf("out = %q; want the reasoning_content fallback", out)
 	}
 	if pt != 5 || ct != 7 {
@@ -137,7 +141,9 @@ func TestExplainOpenAIReasoningFieldFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out != "answer from the reasoning field" {
+	// v0.10.66 — kardeş testle aynı gerekçe: content hiç gelmedi, dönen
+	// metin çalışma notu ve işaretli çıkıyor.
+	if !strings.Contains(out, "answer from the reasoning field") {
 		t.Fatalf("out = %q; want the reasoning-field fallback", out)
 	}
 }

@@ -55,8 +55,18 @@ func TestNormalAnswerIsNotMarked(t *testing.T) {
 		{"düz cevap", "checkout p99 340ms", "", ""},
 		{"düşünce SONRASI cevap", "<think>hmm</think>checkout p99 340ms", "", ""},
 		{"reasoning_content ayrı, content dolu", "cevap", "düşünce", ""},
-		{"yalnız reasoning_content", "", "ayrılmış düşünce", ""},
-		{"yalnız reasoning", "", "", "ayrılmış düşünce"},
+		// ⚠ v0.10.66 — İKİ DURUM BURADAN ÇIKARILDI ("yalnız
+		// reasoning_content", "yalnız reasoning") ve artık İŞARETLENİYOR
+		// (bkz. TestSeparatedReasoningIsAlsoMarked).
+		//
+		// v0.10.37 yalnız <think> dalını işaretlemişti ve bu test o
+		// tutarsızlığı çiviledi. Karar yanlıştı: 10.37'nin derdi "modelin
+		// SPEKÜLASYON fazı nihai cevap kılığında yayına giriyor"du ve
+		// content boşken reasoning_content'ten dönen metin TAM OLARAK odur
+		// — aynı madde, yalnız sağlayıcı ayrı bir alana koymuş.
+		//
+		// Ayrım TAŞIYICIDA değil MADDEDE: content doluysa model cevabını
+		// yazmıştır; oraya düşmediysek cevap yazılmamış demektir.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := SalvageAnswer(tc.content, tc.rc, tc.reas)
@@ -106,5 +116,33 @@ func TestConsumersUseTheHelper(t *testing.T) {
 	out := SalvageAnswer("<think>x</think>", "", "")
 	if !strings.HasPrefix(out, SalvagedThinkingPrefix) {
 		t.Error("SalvageAnswer son çaresi işaretlemiyor")
+	}
+}
+
+// TestSeparatedReasoningIsAlsoMarked — v0.10.66.
+//
+// Sağlayıcı düşünceyi ayrı bir alana koyduğunda (reasoning_content /
+// reasoning) ve content BOŞ olduğunda, operatörün eline geçen şey yine
+// modelin ÇALIŞMA NOTUDUR. v0.10.37 bunu işaretlemiyordu; yalnız <think>
+// dalını işaretliyordu ve fark tamamen TAŞIYICIDAN geliyordu.
+func TestSeparatedReasoningIsAlsoMarked(t *testing.T) {
+	for _, tc := range []struct{ name, rc, reas string }{
+		{"yalnız reasoning_content", "belki checkout yavaş", ""},
+		{"yalnız reasoning", "", "belki checkout yavaş"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := SalvageAnswer("", tc.rc, tc.reas)
+			if !IsSalvagedThinking(out) {
+				t.Errorf("ayrılmış düşünce İŞARETSİZ çıktı — operatör onu nihai "+
+					"cevap sanar:\n%s", out)
+			}
+			if !strings.Contains(out, "checkout yavaş") {
+				t.Errorf("içerik kayboldu: %q", out)
+			}
+		})
+	}
+	// content DOLUYSA işaret YOK: model cevabını yazmıştır.
+	if IsSalvagedThinking(SalvageAnswer("checkout p99 340ms", "düşünce", "")) {
+		t.Error("gerçek cevap düşünce diye işaretlendi")
 	}
 }

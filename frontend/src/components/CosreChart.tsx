@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Spinner } from '@/components/Spinner';
 import type { CorePanelMultiItem } from '@/components/chart/corePanelEntry';
-import { cosreChartDSL, cosreChartItems, COSRE_SERIES_CAP } from './cosreChartSpec';
+import { cosreChartDSL, cosreChartItems, cosreEmptyNoteTR, COSRE_SERIES_CAP } from './cosreChartSpec';
 
 // CosreChart — sohbete gömülen CANLI grafik (```chart``` çiti).
 //
@@ -56,6 +56,33 @@ export function CosreChart({ spec }: { spec: CosreChartSpec }) {
   });
 
   const { items, unit, truncated, total } = cosreChartItems(spec, q.data?.v ?? []);
+
+  // v0.10.46 — SESSİZ BOŞ TUVAL YOK.
+  //
+  // İki yol buraya düşüyor ve ikisi de eskiden AYNI şeyi üretiyordu: boş
+  // bir grafik kartı. (a) çit servis taşımıyor → sorgu hiç koşmuyor
+  // (enabled:false), (b) sorgu koştu ve sıfır seri döndü. Boş tuvalin
+  // okunuşu "bu servis sessiz" — yani grafik, hiç ölçmediği bir şey
+  // hakkında sağlık beyanı veriyordu.
+  const noScope = !spec.service;
+  const emptied = noScope || (q.isSuccess && items.length === 0);
+
+  if (emptied) {
+    return (
+      <div style={{ margin: '10px 0', maxWidth: 560 }}>
+        <div style={{
+          border: '1px solid var(--border)', borderRadius: 6,
+          padding: '10px 12px', background: 'var(--bg2)',
+          fontSize: 11, lineHeight: 1.5, color: 'var(--text2)',
+        }}>
+          <div style={{ color: 'var(--text)', marginBottom: 4 }}>
+            {noScope ? 'Grafik kurulamadı' : `${defaultTitle(spec)} — veri yok`}
+          </div>
+          {cosreEmptyNoteTR(spec)}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ margin: '10px 0', maxWidth: 560 }}>

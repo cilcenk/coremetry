@@ -11,6 +11,7 @@ import type { AICodeContext } from '@/lib/types';
 import { IconSparkles } from './icons';
 import { RenderedMarkdown } from '@/components/Markdown';
 import type { IdLink } from '@/components/ai/inlineIdLinks';
+import { readAiCodeParam, writeAiCodeParam } from '@/lib/aiSubject';
 import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
 
 // CopilotExplain — drop-in Explain button that calls the
@@ -116,7 +117,13 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   // Hatırlama, kod okumanın maliyetini (depo listelemesi + dosya çekmesi +
   // ikinci bir yerel LLM turu) operatörün haberi olmadan her Explain'e
   // yayıyordu.
-  const [includeCode, setIncludeCode] = useState(false);
+  // v0.10.81 — tohum URL'den (paylaşılan link kodlu açılsın; operatör:
+  // "paylaştıktan sonra tekrar basmak gerekiyor"). TEMBEL başlatıcıda,
+  // çünkü auto-koşu efekti mount'ta atıyor: sonradan düzeltmek, kodsuz
+  // isteğin çoktan yola çıkması demekti — bu dosyanın kendi dersi.
+  // Uygulama içi açılışta param zaten silinmiş olur (useAiSubject),
+  // yani v0.10.60'ın "her açılışta kapalı" kararı bozulmuyor.
+  const [includeCode, setIncludeCode] = useState(() => codeCapable && readAiCodeParam());
   const [code, setCode] = useState<AICodeContext | null>(null);
 
   // applyText — cevabı hem panele yaz hem üst bileşene duyur (v0.9.479).
@@ -266,6 +273,8 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
           onClick={() => {
             const next = !includeCode;
             setIncludeCode(next);
+            // Seçim adrese yazılır: Copy link ekrandakini AYNEN üretir.
+            writeAiCodeParam(next);
             // Kutuyu değiştirmek isteği YENİDEN çalıştırır — aksi
             // halde ekrandaki cevap kutunun durumuyla çelişirdi.
             if (text !== null || error !== null || auto) void run(next);

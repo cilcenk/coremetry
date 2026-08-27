@@ -19,6 +19,39 @@
 
 export const AI_PARAM = 'ai';
 
+// AI_CODE_PARAM (v0.10.81, operatör-bildirimli): "Kodu da incele"
+// seçimi URL'de yaşar. Paylaşılan bir Explain linki kodsuz açılıyordu
+// ve alıcı kutuya yeniden basmak zorunda kalıyordu — ikinci bir yerel
+// LLM turu. URL-tek-gerçek-kaynak ailesinin (v0.8.256/265/267,
+// v0.10.76) çekmece üyesi.
+//
+// ⚠ v0.10.60 kararıyla ÇELİŞMEZ, birleşir: kutu uygulama İÇİNDE her
+// açılışta kapalı başlar (gizli kalıcılık yok — useAiSubject.setSubject
+// her kullanıcı-açılışında paramı SİLER); param yalnız paylaşılan /
+// yapıştırılan linkte ve sayfa yenilemede hayatta kalır. Yani varsayılan
+// kapalı kalır, paylaşım ise gördüğünü aynen taşır.
+export const AI_CODE_PARAM = 'aicode';
+
+// readAiCodeParam — CANLI adres çubuğundan okur. Router'a bağlanmıyor,
+// bilerek: CopilotExplain router'sız da mount ediliyor (testler) ve bu
+// çekmece ailesi zaten ham history API'siyle konuşuyor (useAiSubject'in
+// "canlı adres çubuğu üst kümedir" gerekçesi).
+export function readAiCodeParam(): boolean {
+  if (typeof window === 'undefined') return false;
+  return new URLSearchParams(window.location.search).get(AI_CODE_PARAM) === '1';
+}
+
+// writeAiCodeParam — seçimi adrese yazar/siler. Ham replaceState:
+// /trace ve Dashboard emsali; yabancı parametreler AYNEN korunur ve
+// history'ye durak eklenmez.
+export function writeAiCodeParam(on: boolean): void {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  if (on) url.searchParams.set(AI_CODE_PARAM, '1');
+  else url.searchParams.delete(AI_CODE_PARAM);
+  window.history.replaceState(window.history.state, '', url.toString());
+}
+
 export const AI_KINDS = [
   'trace', 'span', 'problem', 'incident', 'anomaly',
   'service-health', 'runbook', 'exception', 'charts',

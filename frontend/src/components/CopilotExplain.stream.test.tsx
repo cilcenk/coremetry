@@ -81,6 +81,10 @@ function fakeExplain() {
 }
 
 beforeEach(() => {
+  // v0.10.81 — kutu artık ?aicode='u GERÇEK URL'ye yazıyor; jsdom URL'si
+  // testler arası sıfırlanmadığı için bir testin tıkı sonrakinin
+  // tohumunu işaretli bulurdu. Her test temiz adresle başlar.
+  window.history.replaceState({}, '', '/');
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   __resetCopilotEnabledCache();
   // v0.9.1238 — "Kodu da incele" tercihi artık localStorage'da yaşıyor;

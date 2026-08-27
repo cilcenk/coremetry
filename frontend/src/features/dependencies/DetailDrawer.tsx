@@ -165,13 +165,10 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
     ? callers.filter(c => c.role && c.role !== 'producer' && c.role !== 'consumer')
     : callers;
 
-  // v0.8.364 (Stage-2 M1) — produce/consume series off
-  // messaging_caller_summary_5m (kind × time_bucket). Optional
-  // (`?? []`): a stale pre-M1 cached payload simply renders the
-  // drawer without sparklines mid-rolling-deploy.
-  const msgSeries = kind === 'queue' && 'series' in data
-    ? (data as MessagingDetail).series ?? []
-    : [];
+  // v0.10.101 — "Üretim vs Tüketim" grafiği KALDIRILDI (operatör:
+  // "yazmasına gerek yok"). Payload'daki series alanı telde duruyor
+  // (aynı MV okumasının yan ürünü, ayrı sorgu değil); yalnız görsel
+  // tüketicisi kalktı. Geri getirme = bu bloğun git geçmişi.
 
   // v0.8.372 (Stage-2 M2) — span_links-correlated end-to-end
   // produce→consume latency. Tri-state: undefined = backend read
@@ -293,23 +290,9 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
           etmek zorundaydı. Üçü AYNI sync grubunda (destination başına
           ayrı grup) — imleç birlikte gezer, yani üretim düşüşü ile
           gecikme sıçraması aynı x'te okunur. */}
-      {(msgSeries.length > 1 || e2eSeries.length > 1) && (
-        <div className="ov-grid ov-charts-3 ov-mb">
-          {msgSeries.length > 1 && (
-            <LazyMount minHeight={170}>
-              <Suspense fallback={<div style={{ height: 170, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
-                <CorePanelMultiLazy
-                  title="Üretim vs Tüketim"
-                  storageKey="msg-drawer-rate"
-                  height={150} unit="cpm" xRange={drawerXRange} syncKey={drawerSync}
-                  items={[
-                    { name: 'Üretim', role: 'data', series: kindSeries(msgSeries, p => p.produceCount / 5, 'Üretim') },
-                    { name: 'Tüketim', role: 'success', series: kindSeries(msgSeries, p => p.consumeCount / 5, 'Tüketim') },
-                  ]} />
-              </Suspense>
-            </LazyMount>
-          )}
-          {e2eSeries.length > 1 && (
+      {e2eSeries.length > 1 && (
+        <div className="ov-mb">
+          {(
             <LazyMount minHeight={170}>
               <Suspense fallback={<div style={{ height: 170, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
                 <CorePanelMultiLazy

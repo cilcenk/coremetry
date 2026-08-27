@@ -151,6 +151,26 @@ spec:
             - name: COREMETRY_SELF_OBS_SAMPLE_RATE
               value: {{ $.Values.selfObs.sampleRate | quote }}
             {{- end }}
+            {{- if $.Values.selfObs.enabled }}
+            # v0.10.91 — selfobs k8s kimliği (downward API, RBAC'sız);
+            # monolitik şablondaki blokla aynı, kapsam $ (range içi).
+            - name: COREMETRY_K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: COREMETRY_K8S_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: COREMETRY_K8S_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: COREMETRY_K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            {{- end }}
             {{- if eq (default "clickhouse" $.Values.logs.backend) "elasticsearch" }}
             - name: COREMETRY_LOGS_BACKEND
               value: "elasticsearch"

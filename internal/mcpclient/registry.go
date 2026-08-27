@@ -231,7 +231,7 @@ func (r *Registry) ensureClientLocked(e *regEntry) {
 		e.lastErr = err.Error()
 		return
 	}
-	e.tr, e.cl = tr, NewClient(tr)
+	e.tr, e.cl = tr, NewNamedClient(e.cfg.Name, tr)
 }
 
 func (r *Registry) sortedNames() []string {

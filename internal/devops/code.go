@@ -1886,8 +1886,13 @@ func (c CodeContext) PromptBlock() string {
 			// Bu dosya bir çağrı yığınından gelmiyor: hata METNİ onu andı.
 			// İçinde "hata satırı" YOK ve öyle sunulursa model XML'de
 			// olmayan bir satırı suçlar. Etiket bunu açıkça söylüyor.
-			fmt.Fprintf(&b, "\n\nkaynak %d/%d — hata metninin ANDIĞI dosya (stack buraya işaret etmiyor)\n%s (ilk %d satır)\n```%s\n%s\n```",
-				i+1, len(c.Windows), w.Path, w.ToLine, fenceLang(w.Path), w.Content)
+			// v0.10.113 — statement bloğu satır aralığı + id ile; ilk-N ise eski etiket.
+			span := fmt.Sprintf("(ilk %d satır)", w.ToLine)
+			if w.Frame != "" {
+				span = fmt.Sprintf("(satır %d-%d, %s)", w.FromLine, w.ToLine, w.Frame)
+			}
+			fmt.Fprintf(&b, "\n\nkaynak %d/%d — hata metninin ANDIĞI dosya (stack buraya işaret etmiyor)\n%s %s\n```%s\n%s\n```",
+				i+1, len(c.Windows), w.Path, span, fenceLang(w.Path), w.Content)
 			continue
 		}
 		fmt.Fprintf(&b, "\n\npencere %d/%d%s\n%s (satır %d-%d) — %s",
@@ -2201,16 +2206,102 @@ func huntResources(
 		if err != nil || strings.TrimSpace(body) == "" {
 			continue
 		}
-		w := WindowAround(body, 1, resourceWindowLines)
+		// v0.10.113 — STATEMENT BLOĞU ÖNCE: hata metni `Mapper.statementId`
+		// verdiyse dosyanın tamamı değil o blok kesilir (gerçek satır
+		// numaralarıyla). Bulunamazsa eski ilk-N davranışı (fail-open).
+		var w CodeWindow
+		if r.Member != "" {
+			w = MapperStatementWindow(body, r.Member, mapperStatementLines)
+		}
+		if w.Content == "" {
+			w = WindowAround(body, 1, resourceWindowLines)
+			// Frame YOK: bu pencere bir çağrı yığınından gelmiyor. Alan boş
+			// bırakılıyor ki prompt onu "hata burada" diye sunmasın.
+		}
 		if w.Content == "" {
 			continue
 		}
 		w.Path, w.Resource = p, true
-		// Frame YOK: bu pencere bir çağrı yığınından gelmiyor. Alan boş
-		// bırakılıyor ki prompt onu "hata burada" diye sunmasın.
 		out = append(out, w)
 	}
 	return out
+}
+
+// mapperStatementLines — statement bloğu tavanı. 80 satır en uzun
+// dinamik-SQL bloklarını kapsar; üstü kırpılır ve KESİM SÖYLENİR.
+const mapperStatementLines = 80
+
+// mapperStatementTags — statement bloğu sayılan XML etiketleri. resultMap
+// BİLİNÇLİ dışarıda: aynı id'yi çoğu zaman resultMap de taşır ve model
+// sorguyu değil kolon eşlemesini görürdü. resultMap'e YALNIZ statement
+// bulunamazsa düşülmez — kolon eşlemesi "sorgu bloğu" değildir.
+var mapperStatementTags = []string{"select", "insert", "update", "delete", "sql"}
+
+// MapperStatementWindow — XML gövdesinde `<select|insert|update|delete|sql
+// id="ID">` bloğunu gerçek satır numaralarıyla keser (v0.10.113). Saf;
+// tablo-testli (mapper_statement_test.go). Bulunamazsa sıfır pencere.
+//
+// AST YOK: satır bazlı arama. Açılış etiketi satırı bulunur; kapanış
+// `</tag>` içeren ilk satıra kadar (dahil) alınır; kapanış yoksa ya da
+// blok tavanı aşarsa tavana kadar kesilir ve Frame'e "kırpıldı" düşer.
+// CDATA/`<include>` içerik olarak aynen kalır — model onları görmeli.
+func MapperStatementWindow(body, id string, maxLines int) CodeWindow {
+	id = strings.TrimSpace(id)
+	if id == "" || strings.TrimSpace(body) == "" {
+		return CodeWindow{}
+	}
+	if maxLines <= 0 {
+		maxLines = mapperStatementLines
+	}
+	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	start, tag := -1, ""
+	for i, ln := range lines {
+		for _, t := range mapperStatementTags {
+			if strings.Contains(ln, "<"+t) && mapperIDRe(t, id).MatchString(ln) {
+				start, tag = i, t
+				break
+			}
+		}
+		if start >= 0 {
+			break
+		}
+	}
+	if start < 0 {
+		return CodeWindow{}
+	}
+	end, closed := start, false
+	closeTag := "</" + tag + ">"
+	for i := start; i < len(lines); i++ {
+		if strings.Contains(lines[i], closeTag) || (i == start && strings.HasSuffix(strings.TrimSpace(lines[i]), "/>")) {
+			end, closed = i, true
+			break
+		}
+	}
+	if !closed {
+		end = len(lines) - 1
+	}
+	truncated := false
+	if end-start+1 > maxLines {
+		end, truncated = start+maxLines-1, true
+	}
+	var b strings.Builder
+	for i := start; i <= end; i++ {
+		fmt.Fprintf(&b, "%d| %s\n", i+1, lines[i])
+	}
+	w := CodeWindow{FromLine: start + 1, ToLine: end + 1, Content: strings.TrimRight(b.String(), "\n"),
+		Resource: true, Frame: "statement id: " + id}
+	if truncated || !closed {
+		w.Frame += fmt.Sprintf(" (blok %d satırda kırpıldı)", maxLines)
+	}
+	return w
+}
+
+// mapperIDRe — `<tag … id="ID"` eşleşmesi; id değeri regexp-kaçışlı.
+func mapperIDRe(tag, id string) *regexp.Regexp {
+	return regexp.MustCompile(`<` + tag + `\b[^>]*\bid\s*=\s*"` + regexp.QuoteMeta(id) + `"`)
 }
 
 // bestPathForResource — ağaçta adaya en iyi eşleşen yol.

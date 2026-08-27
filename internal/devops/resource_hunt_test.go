@@ -42,8 +42,10 @@ func TestResourceIsFetchedWhenNamedInTheError(t *testing.T) {
 	if !strings.HasSuffix(out[0].Path, "/OrderMapper.xml") {
 		t.Errorf("yanlış dosya çekildi: %s", out[0].Path)
 	}
-	if out[0].Frame != "" {
-		t.Error("kaynak penceresine Frame yazılmış — çağrı yığınından gelmiyor")
+	// v0.10.113 — Frame artık "statement id: …" TAŞIYABİLİR (sorgu bloğu);
+	// yasak olan, bir ÇAĞRI YIĞINI frame'i gibi görünmesi ("X.java:N").
+	if f := out[0].Frame; f != "" && !strings.HasPrefix(f, "statement id: ") {
+		t.Errorf("kaynak penceresine stack frame'i yazılmış — çağrı yığınından gelmiyor: %q", f)
 	}
 }
 

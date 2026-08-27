@@ -475,6 +475,14 @@ otelCollector:
     type: ClusterIP
     grpcPort: 4317
     httpPort: 4318
+  # k8sattributes (v0.10.92) — İZLENEN TÜM servislerin telemetrisine
+  # k8s kimliği (namespace/deployment/pod/uid/node/container) ekler.
+  # VARSAYILAN KAPALI: ClusterRole + ClusterRoleBinding ister
+  # (otelcol-rbac.yaml) ve cluster-scoped kaynak ancak açık kararla
+  # kurulur. Coremetry'nin KENDİ pod'u bundan bağımsız, downward API
+  # yoluyla kimlikli (v0.10.91).
+  k8sattributes:
+    enabled: false
   # OTel Collector resources. At ~5k spans/sec a single collector
   # uses ~500m CPU + 256Mi memory; the limits below leave room
   # for a 3-5× burst (deploy event, traffic spike) before the

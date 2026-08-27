@@ -116,7 +116,11 @@ func TestTopologyWritersUseTDigest(t *testing.T) {
 		}
 		tdigest += strings.Count(ln, "quantileTDigest(0.99)")
 	}
-	if tdigest != 3 {
-		t.Errorf("quantileTDigest(0.99) %d yerde, beklenen 3", tdigest)
+	// v0.10.93 — 3→4: RUNS_ON pass'i (dikey eksen dilim ①) dördüncü
+	// yazıcı ve o da TDigest kullanıyor — kapının istediği tam bu.
+	// Sayı iddiası bilinçli: beşinci bir yazıcı eklenirse buraya yine
+	// elle gelinip TDigest kullandığı teyit edilecek.
+	if tdigest != 4 {
+		t.Errorf("quantileTDigest(0.99) %d yerde, beklenen 4", tdigest)
 	}
 }

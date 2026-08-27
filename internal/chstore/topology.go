@@ -139,7 +139,7 @@ type ServiceTopologyEdge struct {
 }
 
 // RootFlow describes one business-level entry point: the root
-// span (kind=server, parent_id='') groups under (service, op) and
+// span (kind=server, parent_id=”) groups under (service, op) and
 // counts how many traces start there. Services carries the set
 // of unique services those traces touch, in arbitrary order (use
 // GetFlowTopology to recover the call-graph shape for one flow).
@@ -668,6 +668,65 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		return fmt.Errorf("topology bucket cross-service pass: %w", err)
 	}
 
+	// RUNS_ON pass (v0.10.93, dikey eksen dilim ①) — service → k8s node.
+	//
+	// Üç pass'in aksine JOIN'SİZ: kimlik span satırının KENDİ
+	// res_keys'inde (k8s.node.name), ebeveyn-çocuk span çifti yok.
+	// Kaynak k8sattributes (v0.10.92 opt-in) ya da üreticinin kendi
+	// resource'u; alan akmıyorsa sonuç BOŞ KÜMEDİR — pass 0 satır yazar
+	// ve hiçbir okuma bozulmaz (boş küme kaybolur, sıfır olmaz — burada
+	// bilinçli ve zararsız).
+	//
+	// top_labels bu kenarda POD adlarını taşır (topK 5): operatörün
+	// "bu node'da servisin hangi pod'ları" sorusu etikete sığıyor;
+	// distinct_labels = pod sayısı. protocol='runs_on' — DDL yorumundaki
+	// http|rpc|db|kafka|internal listesi çağrı kenarlarını sayar, bu
+	// kenar çağrı değil yerleşim; okuyucular türü child_node önekinden
+	// (nodeIDPrefix) tanır, TopoCallEdgeFilterSQL dışlar.
+	// Per-row hesaplar İÇ SELECT'te (v0.9.186 analyzer-portable kuralı).
+	if err := s.conn.Exec(ctx, `
+		INSERT INTO topology_edges_5m
+			(time_bucket, parent_service, child_node, node_kind,
+			 protocol, top_labels, distinct_labels, calls,
+			 sum_duration_ns, p99_ms, errors,
+			 parent_env, child_env, version)
+		SELECT
+			toDateTime(?, 'UTC') AS time_bucket,
+			parent_service,
+			concat('`+nodeIDPrefix+`', node_name) AS child_node,
+			'`+NodeKindNode+`'   AS node_kind,
+			'runs_on'            AS protocol,
+			topK(5)(pod)         AS top_labels,
+			toUInt32(uniqExact(pod)) AS distinct_labels,
+			toUInt64(count())    AS calls,
+			toUInt64(sum(duration)) AS sum_duration_ns,
+			toFloat64(quantileTDigest(0.99)(duration)) / 1e6 AS p99_ms,
+			toUInt64(countIf(status_code = 'error')) AS errors,
+			any(p_env)           AS parent_env,
+			''                   AS child_env,
+			toUInt64(?)          AS version
+		FROM (
+			SELECT
+				service_name AS parent_service,
+				res_values[indexOf(res_keys, 'k8s.node.name')] AS node_name,
+				res_values[indexOf(res_keys, 'k8s.pod.name')]  AS pod,
+				duration, status_code,
+				`+topoEnvChainSQL("")+` AS p_env
+			FROM spans
+			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
+			  AND service_name != ''
+			  AND has(res_keys, 'k8s.node.name')
+		)
+		WHERE node_name != ''
+		GROUP BY parent_service, node_name
+		SETTINGS max_execution_time = 60`,
+		bucketStart.Unix(),
+		uint64(time.Now().UnixNano()),
+		bucketStart.Unix(), end.Unix(),
+	); err != nil {
+		return fmt.Errorf("topology bucket runs-on pass: %w", err)
+	}
+
 	// Infra pass — service → db/queue/external.
 	// v0.5.408 — DB / queue child_node now includes the host
 	// instance suffix (e.g. `db:postgres@10.0.1.5` or
@@ -1158,7 +1217,7 @@ type FlowSig struct {
 //
 // The IN list is bounded by the caller's flow limit (cap 200 on
 // the API surface), so even at billion-span scale this is a thin
-// GROUP BY over (parent_id='') roots filtered to a handful of
+// GROUP BY over (parent_id=”) roots filtered to a handful of
 // signatures — far cheaper than ranking flows from raw spans,
 // which is why we let the agg path own ranking and use this only
 // for latency enrichment.
@@ -1332,7 +1391,8 @@ func (s *Store) readServiceTopologyAggFiltered(ctx context.Context, from, to tim
 				any(child_env)  AS child_env`+clusterInnerSel+`
 			FROM topology_edges_5m FINAL
 			WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
-			  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE`+touchWhere+`
+			  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE
+			  AND `+TopoCallEdgeFilterSQL+touchWhere+`
 			GROUP BY parent_service, child_node, protocol
 		)
 		ORDER BY total_calls DESC

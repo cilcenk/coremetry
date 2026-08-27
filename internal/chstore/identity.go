@@ -62,7 +62,22 @@ const (
 	NodeKindDB       = "db"
 	NodeKindQueue    = "queue"
 	NodeKindExternal = "external"
+	// NodeKindNode — v0.10.93, dikey eksen dilim ①: RUNS_ON kenarının
+	// çocuğu bir k8s node'u. Kolon sözleşmesi değişmedi: node_kind yine
+	// ÇOCUĞUN türü (dosya başındaki v0.9.1028 anlatısı).
+	NodeKindNode = "node"
 )
+
+// nodeIDPrefix — RUNS_ON çocuğunun ID öneki. TEK yazım: önek tablosu,
+// yazıcının concat'i ve çağrı-grafiği dışlaması hep buradan türer.
+const nodeIDPrefix = "node:"
+
+// TopoCallEdgeFilterSQL — RUNS_ON kenarlarını ÇAĞRI-grafiği
+// okumalarından dışlayan WHERE parçası (v0.10.93). service_adjacency
+// MV'yi süzgeçsiz okuyor ve yeni kenar türü yazıldığı an korelatöre
+// ÇAĞRI kenarı olarak girerdi (keşif bulgusu); dilim ① davranışı
+// değiştirmiyor — RUNS_ON tüketicisi dilim ②'de bilinçli eklenecek.
+const TopoCallEdgeFilterSQL = "NOT startsWith(child_node, '" + nodeIDPrefix + "')"
 
 // TopologyNodeIDPrefixes — agregatörün yazdığı önekler ve MV
 // sözlüğündeki node_kind karşılıkları. Sıra önemsiz (önekler
@@ -71,6 +86,7 @@ var TopologyNodeIDPrefixes = []struct{ Prefix, Kind string }{
 	{"db:", NodeKindDB},
 	{"queue:", NodeKindQueue},
 	{"ext:", NodeKindExternal},
+	{nodeIDPrefix, NodeKindNode},
 }
 
 // TopologyNodeIdentity — bir düğüm ID'sinin KIND'ı ve önekten soyulmuş

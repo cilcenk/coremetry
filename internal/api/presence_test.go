@@ -124,7 +124,7 @@ func TestPresenceLastSeen_EnrichMapping(t *testing.T) {
 	stub := presenceStubCache{
 		Cache: cacheOnly(cache.NewNoop()),
 		vals: map[string][]byte{
-			presenceKeyPrefix + "alice": []byte(strconv.FormatInt(freshNs, 10)),
+			presenceKeyPrefix + "alice":   []byte(strconv.FormatInt(freshNs, 10)),
 			presenceKeyPrefix + "mallory": []byte("not-a-number"),
 			presenceKeyPrefix + "zero":    []byte("0"),
 		},

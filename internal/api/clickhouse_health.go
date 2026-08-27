@@ -31,24 +31,24 @@ type CHHealth struct {
 	// All three are needed because a misconfigured cluster name
 	// looks identical to standalone from the driver — only
 	// system.clusters confirms ZK actually wired the node up.
-	Topology       CHTopology       `json:"topology"`
-	SlowQueries    []CHSlowQuery    `json:"slowQueries"`
-	Merges         []CHMerge        `json:"merges"`
-	PartHotspots   []CHPartHotspot  `json:"partHotspots"`
-	Replication    []CHReplicationLag `json:"replicationLag,omitempty"`
+	Topology     CHTopology         `json:"topology"`
+	SlowQueries  []CHSlowQuery      `json:"slowQueries"`
+	Merges       []CHMerge          `json:"merges"`
+	PartHotspots []CHPartHotspot    `json:"partHotspots"`
+	Replication  []CHReplicationLag `json:"replicationLag,omitempty"`
 	// v0.5.346 — in-flight async_insert batches. Each row =
 	// one currently-buffered INSERT awaiting flush. Lets the
 	// operator see whether the tuned async_insert_busy_timeout
 	// is doing useful coalescence or sitting idle.
-	AsyncInserts   []CHAsyncInsert  `json:"asyncInserts,omitempty"`
+	AsyncInserts []CHAsyncInsert `json:"asyncInserts,omitempty"`
 	// v0.6.22 — in-flight ALTER TABLE … DELETE / UPDATE
 	// mutations. Healthy queue is empty; growing queue is an
 	// operator-visible signal that a state-table mutation
 	// pattern needs rethinking (tombstone, ReplacingMergeTree,
 	// etc.). Top 20 most-recent unfinished, sorted by parts-
 	// remaining desc so the worst offender lands on top.
-	Mutations      []CHMutation     `json:"mutations,omitempty"`
-	Generated      int64            `json:"generatedAt"` // unix ns of snapshot
+	Mutations []CHMutation `json:"mutations,omitempty"`
+	Generated int64        `json:"generatedAt"` // unix ns of snapshot
 }
 
 // CHTopology — what cluster does Coremetry think it's talking to,
@@ -60,14 +60,14 @@ type CHTopology struct {
 	// the CH server has no matching <remote_servers> block) shows
 	// up as "standalone" with a non-empty ConfiguredCluster — the
 	// banner flags this mismatch.
-	Mode               string         `json:"mode"`
-	ConfiguredCluster  string         `json:"configuredCluster,omitempty"`
-	Database           string         `json:"database"`
-	ConnectedHosts     []string       `json:"connectedHosts,omitempty"`
+	Mode              string   `json:"mode"`
+	ConfiguredCluster string   `json:"configuredCluster,omitempty"`
+	Database          string   `json:"database"`
+	ConnectedHosts    []string `json:"connectedHosts,omitempty"`
 	// Nodes — one entry per (shard, replica) registered in
 	// system.clusters for the configured cluster. Empty in
 	// standalone mode.
-	Nodes              []CHClusterNode `json:"nodes,omitempty"`
+	Nodes []CHClusterNode `json:"nodes,omitempty"`
 	// Table engine breakdown — drives the "distributed table?"
 	// answer. DistributedTables > 0 = the install is running the
 	// full cluster pattern (Distributed wrapper + _local
@@ -75,15 +75,15 @@ type CHTopology struct {
 	// count. Plain = MergeTree / ReplacingMergeTree without
 	// replication. Used to confirm migrations actually built the
 	// cluster pattern they were supposed to.
-	DistributedTables  int            `json:"distributedTables"`
-	LocalReplicated    int            `json:"localReplicated"`
-	PlainMergeTree     int            `json:"plainMergeTree"`
+	DistributedTables int `json:"distributedTables"`
+	LocalReplicated   int `json:"localReplicated"`
+	PlainMergeTree    int `json:"plainMergeTree"`
 	// ZK / Keeper presence — system.zookeeper exists only when
 	// CH is configured with a Keeper endpoint. ReplicatedMergeTree
 	// needs this; absence on a cluster mode install is a config
 	// bug that should surface here, not via a CREATE TABLE failure
 	// six hours into ingest.
-	ZooKeeperConnected bool           `json:"zookeeperConnected"`
+	ZooKeeperConnected bool `json:"zookeeperConnected"`
 	// v0.5.419 — resolved per-table shard expression map. Lets
 	// the operator audit "which shard key did each table actually
 	// get?" without `SHOW CREATE TABLE` round-trips. Empty in
@@ -105,28 +105,28 @@ type CHTopology struct {
 	// small "last refreshed N min ago" pill instead of the warn
 	// banner. ClusterProbeError stays empty in this path — the
 	// banner only fires when there's no cache to fall back on.
-	ClusterNodesStale     bool  `json:"clusterNodesStale,omitempty"`
-	ClusterNodesAgeMs     int64 `json:"clusterNodesAgeMs,omitempty"`
+	ClusterNodesStale bool  `json:"clusterNodesStale,omitempty"`
+	ClusterNodesAgeMs int64 `json:"clusterNodesAgeMs,omitempty"`
 }
 
 type CHClusterNode struct {
-	Cluster       string `json:"cluster"`
-	ShardNum      uint32 `json:"shardNum"`
-	ReplicaNum    uint32 `json:"replicaNum"`
-	HostName      string `json:"hostName"`
-	HostAddress   string `json:"hostAddress,omitempty"`
-	Port          uint16 `json:"port"`
-	IsLocal       bool   `json:"isLocal"`
+	Cluster     string `json:"cluster"`
+	ShardNum    uint32 `json:"shardNum"`
+	ReplicaNum  uint32 `json:"replicaNum"`
+	HostName    string `json:"hostName"`
+	HostAddress string `json:"hostAddress,omitempty"`
+	Port        uint16 `json:"port"`
+	IsLocal     bool   `json:"isLocal"`
 }
 
 type CHSlowQuery struct {
-	Query        string  `json:"query"`
-	ElapsedMs    float64 `json:"elapsedMs"`
-	MemoryMB     float64 `json:"memoryMb"`
-	ReadRows     uint64  `json:"readRows"`
-	ResultRows   uint64  `json:"resultRows"`
-	EventTimeNs  int64   `json:"eventTimeNs"`
-	User         string  `json:"user"`
+	Query       string  `json:"query"`
+	ElapsedMs   float64 `json:"elapsedMs"`
+	MemoryMB    float64 `json:"memoryMb"`
+	ReadRows    uint64  `json:"readRows"`
+	ResultRows  uint64  `json:"resultRows"`
+	EventTimeNs int64   `json:"eventTimeNs"`
+	User        string  `json:"user"`
 }
 
 // inFlightMergesQuery — saf SQL üreteci (koordinatör panelindeki
@@ -168,18 +168,18 @@ type CHMerge struct {
 }
 
 type CHPartHotspot struct {
-	Database  string `json:"database"`
-	Table     string `json:"table"`
-	Parts     uint64 `json:"parts"`     // active parts count
-	RowsTotal uint64 `json:"rowsTotal"`
+	Database   string `json:"database"`
+	Table      string `json:"table"`
+	Parts      uint64 `json:"parts"` // active parts count
+	RowsTotal  uint64 `json:"rowsTotal"`
 	BytesTotal uint64 `json:"bytesTotal"`
 }
 
 type CHReplicationLag struct {
-	Database          string `json:"database"`
-	Table             string `json:"table"`
-	QueueSize         uint32 `json:"queueSize"`
-	AbsoluteDelay     uint64 `json:"absoluteDelaySec"`
+	Database      string `json:"database"`
+	Table         string `json:"table"`
+	QueueSize     uint32 `json:"queueSize"`
+	AbsoluteDelay uint64 `json:"absoluteDelaySec"`
 }
 
 // CHAsyncInsert mirrors one row of system.asynchronous_inserts
@@ -190,10 +190,10 @@ type CHReplicationLag struct {
 // burst (good sign — coalescence working) and falls back as
 // the busy_timeout fires.
 type CHAsyncInsert struct {
-	Database string `json:"database"`
-	Table    string `json:"table"`
-	TotalBytes uint64 `json:"totalBytes"`
-	EntriesCount uint64 `json:"entriesCount"`
+	Database         string `json:"database"`
+	Table            string `json:"table"`
+	TotalBytes       uint64 `json:"totalBytes"`
+	EntriesCount     uint64 `json:"entriesCount"`
 	FirstUpdateMsAgo uint64 `json:"firstUpdateMsAgo"`
 }
 
@@ -209,11 +209,11 @@ type CHAsyncInsert struct {
 // queue depth shows up; finished mutations age out of the table
 // after ~7 days and don't matter for live ops.
 type CHMutation struct {
-	Database  string `json:"database"`
-	Table     string `json:"table"`
-	Command   string `json:"command"`     // trimmed; full text would be unbounded
-	Parts     uint64 `json:"parts"`        // parts left to mutate
-	ElapsedMs int64  `json:"elapsedMs"`    // since the mutation was submitted
+	Database   string `json:"database"`
+	Table      string `json:"table"`
+	Command    string `json:"command"`   // trimmed; full text would be unbounded
+	Parts      uint64 `json:"parts"`     // parts left to mutate
+	ElapsedMs  int64  `json:"elapsedMs"` // since the mutation was submitted
 	LatestFail string `json:"latestFail,omitempty"`
 }
 

@@ -24,11 +24,11 @@ import (
 // authoritative.
 func TestVersionEndpointReportsOverride(t *testing.T) {
 	cases := []struct {
-		name             string
-		version, build   string
-		wantVersion      string
-		wantBuild        string
-		wantOverridden   bool
+		name           string
+		version, build string
+		wantVersion    string
+		wantBuild      string
+		wantOverridden bool
 	}{
 		{"no override", "v0.9.339", "v0.9.339", "v0.9.339", "v0.9.339", false},
 		// The v0.5.394 scenario: a stale env pointing at an old release. The

@@ -123,15 +123,15 @@ type endpointExemplars struct {
 // section pointer is nil when its read failed — per-section tolerance,
 // never a 500 for a partial miss.
 type endpointDetailPayload struct {
-	Service         string                          `json:"service"`
-	Path            string                          `json:"path"`
-	FromNs          int64                           `json:"fromNs"`
-	ToNs            int64                           `json:"toNs"`
-	Histogram       *endpointHistogram              `json:"histogram"`
-	StatusBreakdown *chstore.EndpointStatus         `json:"statusBreakdown"`
-	TopExceptions   []chstore.EndpointException     `json:"topExceptions"`
-	FailingTraces   []chstore.EndpointFailingTrace  `json:"failingTraces"`
-	Exemplars       *endpointExemplars              `json:"exemplars"`
+	Service         string                         `json:"service"`
+	Path            string                         `json:"path"`
+	FromNs          int64                          `json:"fromNs"`
+	ToNs            int64                          `json:"toNs"`
+	Histogram       *endpointHistogram             `json:"histogram"`
+	StatusBreakdown *chstore.EndpointStatus        `json:"statusBreakdown"`
+	TopExceptions   []chstore.EndpointException    `json:"topExceptions"`
+	FailingTraces   []chstore.EndpointFailingTrace `json:"failingTraces"`
+	Exemplars       *endpointExemplars             `json:"exemplars"`
 }
 
 // getEndpointDetail serves GET /api/endpoints/detail —

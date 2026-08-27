@@ -54,7 +54,7 @@ func TestIsVolatileSegment(t *testing.T) {
 		"01bf1097b1018351",                 // span id
 		"42", "1001",                       // numeric
 		"3f2504e0-4f89-41d3-9a0c-0305e82c3301", // uuid
-		"deadbeefcafe",                     // 12-hex
+		"deadbeefcafe",                         // 12-hex
 	}
 	for _, s := range volatile {
 		if !isVolatileSegment(s) {

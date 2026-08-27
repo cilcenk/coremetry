@@ -893,6 +893,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// iki farklı kurala bağlamamak için.
 	mux.HandleFunc("GET    /api/problems/{id}", s.getProblemByID)
 	s.registerProblemNotificationRoutes(mux) // v0.9.1344 — bu probleme kim haber aldı (ve kimse almadıysa o), problem_notifications.go
+	s.registerDeploymentReportRoutes(mux)    // v0.10.79 — deploy analiz raporu (PR #31), deployment_report.go
 	mux.HandleFunc("GET    /api/problems/{id}/rootcause", s.getProblemRootCause)
 	// Copilot prose narration of the persisted problem hypothesis (rc #4) —
 	// problem-anchored sibling of the anomaly explain route. Lazy/opt-in,

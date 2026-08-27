@@ -7,7 +7,7 @@ import type {
   MetricQueryResult,
   MetricResolveResult,
   EndpointRow, EndpointsListResponse, EndpointDetail, EndpointSplitResponse, EndpointDownstream, EndpointCallersResponse, ServiceAttrsResponse,
-  AlertRule, Problem, EvaluatorHealth, WatcherImportResult, WatcherSummaryEntry, WatcherHistory,
+  AlertRule, Problem, EvaluatorHealth, WatcherImportResult, WatcherSummaryEntry, WatcherHistory, DeploymentReport,
   Runbook, RunbookExecution,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel, ChannelHealthRow,
@@ -2642,6 +2642,13 @@ export const api = {
   // API okur). Filtre YOK: sağlık her filtreden bağımsızdır ve
   // parametre eklemek gereksiz cache parçalanması olurdu.
   evaluatorHealth: () => get<EvaluatorHealth>('/api/problems/evaluator'),
+
+  // Deployment analysis report — fleet-wide, generated on demand.
+  // `sinceNs` is unix nanoseconds (same convention as from/to
+  // elsewhere in this client), not milliseconds. ownerTeam/sreTeam
+  // mirror the Problems inbox's team filter (v0.8.310).
+  deploymentReport: (sinceNs: number, params: { ownerTeam?: string; sreTeam?: string } = {}) =>
+    get<DeploymentReport>(`/api/deployment-report?${qs({ since: sinceNs, ...params })}`),
 
   // ── SLOs ─────────────────────────────────────────────────────────────────
   listSLOs: () => get<SLORow[] | null>('/api/slos'),

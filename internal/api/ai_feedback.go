@@ -84,7 +84,7 @@ func validateAIFeedback(exchangeID string, verdict int8) error {
 // postAIFeedback stores one verdict. The surface label is resolved
 // server-side from the ai_calls row carrying the same exchange_id —
 // the client can't mislabel a verdict, and a not-yet-flushed row
-// (RecordUsage inserts on a goroutine) degrades to surface '' rather
+// (RecordUsage inserts on a goroutine) degrades to surface ” rather
 // than rejecting the click.
 func (s *Server) postAIFeedback(w http.ResponseWriter, r *http.Request) {
 	var req aiFeedbackRequest

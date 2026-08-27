@@ -48,13 +48,13 @@ func TestExemplarKindForAnomaly(t *testing.T) {
 		kind string
 		want chstore.ExemplarKind
 	}{
-		{"trace_op", chstore.ExemplarError},     // error-ratio anomaly → erroring trace
-		{"TRACE_OP", chstore.ExemplarError},     // case-insensitive
-		{" trace_op ", chstore.ExemplarError},   // trimmed
-		{"log_pattern", chstore.ExemplarAny},    // log anomaly → any representative trace
+		{"trace_op", chstore.ExemplarError},   // error-ratio anomaly → erroring trace
+		{"TRACE_OP", chstore.ExemplarError},   // case-insensitive
+		{" trace_op ", chstore.ExemplarError}, // trimmed
+		{"log_pattern", chstore.ExemplarAny},  // log anomaly → any representative trace
 		{"log_template_new", chstore.ExemplarAny},
-		{"", chstore.ExemplarAny},               // unknown / empty defaults to any
-		{"future_kind", chstore.ExemplarAny},    // forward-compat default
+		{"", chstore.ExemplarAny},            // unknown / empty defaults to any
+		{"future_kind", chstore.ExemplarAny}, // forward-compat default
 	}
 	for _, tt := range tests {
 		if got := exemplarKindForAnomaly(tt.kind); got != tt.want {

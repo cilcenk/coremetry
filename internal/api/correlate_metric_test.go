@@ -29,11 +29,11 @@ func TestCorrelateExemplarKind(t *testing.T) {
 		{"latency", chstore.ExemplarSlow},
 		{"error", chstore.ExemplarError},
 		{"throughput", chstore.ExemplarAny},
-		{"LATENCY", chstore.ExemplarSlow},  // case-insensitive
-		{"Error", chstore.ExemplarError},   // case-insensitive
+		{"LATENCY", chstore.ExemplarSlow},   // case-insensitive
+		{"Error", chstore.ExemplarError},    // case-insensitive
 		{" latency ", chstore.ExemplarSlow}, // trimmed
-		{"", chstore.ExemplarAny},          // unknown/empty → any (weak)
-		{"count", chstore.ExemplarAny},     // any other label → any
+		{"", chstore.ExemplarAny},           // unknown/empty → any (weak)
+		{"count", chstore.ExemplarAny},      // any other label → any
 	}
 	for _, tt := range tests {
 		if got := correlateExemplarKind(tt.metricKind); got != tt.want {

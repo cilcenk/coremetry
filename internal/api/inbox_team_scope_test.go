@@ -104,7 +104,7 @@ func TestInboxTeamFilterReachesEverySource(t *testing.T) {
 
 // The two new store filters must agree on the strict contract: nil = no
 // constraint, EMPTY = match nothing, and a service-less row does NOT match a
-// team (unlike the env narrow's `service='' OR …` escape — env keeps global
+// team (unlike the env narrow's `service=” OR …` escape — env keeps global
 // rows, teams do not own them).
 func TestTeamAllowlistContractOnStores(t *testing.T) {
 	anom := readSrc(t, "../chstore/anomaly_event.go")

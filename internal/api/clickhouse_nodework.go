@@ -112,11 +112,12 @@ func nodeWorkQuery(clusterName string) string {
 // v0.9.547 — kaynak system.clusters'tan system.macros'a TAŞINDI.
 //
 // Ad eşleştirmesi bir çıkmaz sokaktı ve iki kez patladı:
-//   is_local        → lokal kümede HER İKİ node da 0 bildiriyor
-//   host_name=hostName() → host_name FQDN (chc-0.chc-headless) ya da
-//                          IP (172.31.240.15), hostName() kısa ad
-//                          (chc-0 / lckhsdbp01) — hiçbir kurulumda
-//                          güvenilir eşleşmiyor
+//
+//	is_local        → lokal kümede HER İKİ node da 0 bildiriyor
+//	host_name=hostName() → host_name FQDN (chc-0.chc-headless) ya da
+//	                       IP (172.31.240.15), hostName() kısa ad
+//	                       (chc-0 / lckhsdbp01) — hiçbir kurulumda
+//	                       güvenilir eşleşmiyor
 //
 // system.macros bu sorunun tamamını atlıyor: her node'un KENDİ
 // yapılandırmasında yazılı, eşleştirme gerektirmiyor. Ve pratikte her
@@ -241,4 +242,3 @@ func (s *Server) getCHNodeWork(w http.ResponseWriter, r *http.Request) {
 		return out, nil
 	})
 }
-

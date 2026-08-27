@@ -244,10 +244,10 @@ func TestBuildWatcherImportWatchText(t *testing.T) {
 func TestBuildWatcherSummaries(t *testing.T) {
 	rules := []chstore.AlertRule{
 		{ID: "w1", Metric: "watcher", Enabled: true, WatcherJSON: fullWatch},
-		{ID: "w2", Metric: "watcher", Enabled: true, WatcherJSON: fullWatch},   // never fired
+		{ID: "w2", Metric: "watcher", Enabled: true, WatcherJSON: fullWatch},    // never fired
 		{ID: "w3", Metric: "watcher", Enabled: false, WatcherJSON: scriptWatch}, // structurally disabled
-		{ID: "w4", Metric: "watcher", Enabled: false, WatcherJSON: fullWatch},  // operator-disabled, runnable
-		{ID: "m1", Metric: "error_rate", Enabled: true},                        // not a watcher
+		{ID: "w4", Metric: "watcher", Enabled: false, WatcherJSON: fullWatch},   // operator-disabled, runnable
+		{ID: "m1", Metric: "error_rate", Enabled: true},                         // not a watcher
 	}
 	hourly := make([]uint64, 24)
 	hourly[23] = 2

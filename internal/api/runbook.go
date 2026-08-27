@@ -107,8 +107,12 @@ func (s *Server) deleteRunbook(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (s *Server) enableRunbook(w http.ResponseWriter, r *http.Request)  { s.setRunbookEnabled(w, r, true) }
-func (s *Server) disableRunbook(w http.ResponseWriter, r *http.Request) { s.setRunbookEnabled(w, r, false) }
+func (s *Server) enableRunbook(w http.ResponseWriter, r *http.Request) {
+	s.setRunbookEnabled(w, r, true)
+}
+func (s *Server) disableRunbook(w http.ResponseWriter, r *http.Request) {
+	s.setRunbookEnabled(w, r, false)
+}
 
 func (s *Server) setRunbookEnabled(w http.ResponseWriter, r *http.Request, enabled bool) {
 	id := r.PathValue("id")

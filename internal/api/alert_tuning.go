@@ -21,13 +21,13 @@ import (
 // apply with one click via the existing AlertRule edit endpoint.
 type NoisyRuleWithSuggestion struct {
 	chstore.NoisyRule
-	Suggestion   string  `json:"suggestion"`
-	SuggestedFor uint32  `json:"suggestedForSec,omitempty"`
-	SuggestedMin uint32  `json:"suggestedMinSamples,omitempty"`
-	SuggestedCD  uint32  `json:"suggestedCooldownSec,omitempty"`
-	CurrentFor   uint32  `json:"currentForSec"`
-	CurrentMin   uint32  `json:"currentMinSamples"`
-	CurrentCD    uint32  `json:"currentCooldownSec"`
+	Suggestion   string `json:"suggestion"`
+	SuggestedFor uint32 `json:"suggestedForSec,omitempty"`
+	SuggestedMin uint32 `json:"suggestedMinSamples,omitempty"`
+	SuggestedCD  uint32 `json:"suggestedCooldownSec,omitempty"`
+	CurrentFor   uint32 `json:"currentForSec"`
+	CurrentMin   uint32 `json:"currentMinSamples"`
+	CurrentCD    uint32 `json:"currentCooldownSec"`
 }
 
 // alertTuningNoisyRules ranks rules by problems-opened count.
@@ -62,9 +62,9 @@ func (s *Server) alertTuningNoisyRules(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 		return map[string]any{
-			"rules":   out,
-			"from":    from.UnixNano(),
-			"to":      to.UnixNano(),
+			"rules":    out,
+			"from":     from.UnixNano(),
+			"to":       to.UnixNano(),
 			"sinceSec": int64(since.Seconds()),
 		}, nil
 	})

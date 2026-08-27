@@ -94,7 +94,10 @@ func (s *Server) putAIRates(w http.ResponseWriter, r *http.Request) {
 // rest of the handler — surface is derived from the request path
 // and the auth claims live in ctx via the auth middleware.
 func (s *Server) copilotExplain(r *http.Request, system, user string) (string, error) {
-	return s.copilot.Explain(explainCallCtx(r), system, user)
+	ctx, done := s.beginExplainSpan(r, explainCallCtx(r))
+	out, err := s.copilot.Explain(ctx, system, user)
+	done(err)
+	return out, err
 }
 
 // copilotExplainStream (v0.9.1127, Faz 1.5) — copilotExplain'in AKAN
@@ -111,7 +114,10 @@ func (s *Server) copilotExplain(r *http.Request, system, user string) (string, e
 // (sıfır delta + tam metin), yani çağıran her iki durumda da aynı
 // "cevap metni doğrunun kaynağıdır" sözleşmesini korur.
 func (s *Server) copilotExplainStream(r *http.Request, system, user string, onDelta func(string)) (string, error) {
-	return s.copilot.StreamText(explainCallCtx(r), system, user, onDelta)
+	ctx, done := s.beginExplainSpan(r, explainCallCtx(r))
+	out, err := s.copilot.StreamText(ctx, system, user, onDelta)
+	done(err)
+	return out, err
 }
 
 // explainCallCtx — tek-atış ✨ çağrısının atıf bağlamı: surface (istek
@@ -179,7 +185,10 @@ func (s *Server) copilotExplainMasked(r *http.Request, system, user, logUser str
 	if logUser != "" && logUser != user {
 		meta.PromptLogOverride = system + "\n\n" + logUser
 	}
-	return s.copilot.Explain(copilot.WithMeta(r.Context(), meta), system, user)
+	ctx, done := s.beginExplainSpan(r, copilot.WithMeta(r.Context(), meta))
+	out, err := s.copilot.Explain(ctx, system, user)
+	done(err)
+	return out, err
 }
 
 // copilotExplainJSON (v0.9.517) — modelden KATI JSON bekleyen yüzeyler
@@ -221,7 +230,10 @@ func (s *Server) copilotExplainJSON(r *http.Request, system, user string, schema
 		// anda o cevap oylanabilir hale geliyor.
 		ExchangeID: copilot.MetaFromContext(r.Context()).ExchangeID,
 	})
-	return s.copilot.Explain(ctx, system, user)
+	ctx, done := s.beginExplainSpan(r, ctx)
+	out, err := s.copilot.Explain(ctx, system, user)
+	done(err)
+	return out, err
 }
 
 // copilotExplainSurface (v0.8.397) — sibling wrapper for handlers

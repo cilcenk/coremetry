@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go.opentelemetry.io/otel/trace"
 	"hash/fnv"
 	"html"
 	"io"
@@ -56,6 +57,10 @@ import (
 
 type Server struct {
 	addr string
+	// tracer (v0.10.114) — ✨ Explain span'larının kaynağı; nil →
+	// selfobs.Tracer() (prod). Testler in-memory exporter'lı bir SDK
+	// tracer'ı enjekte eder (ai_span_test.go).
+	tracer trace.Tracer
 	// roleIngestOff / roleAPIOff — inverted so the zero value keeps every
 	// role ON (monolithic + direct-constructed test Servers unchanged);
 	// SetRoles flips them from main's parsed COREMETRY_MODE (v0.8.346).

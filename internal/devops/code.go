@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,7 +59,11 @@ const (
 	// SABIR harcar: 60.000 yollu bir ağaçta on frame'i tek tek arayıp
 	// her birinde ıskalayan patolojik bir stack açıklamayı bekletmesin.
 	// 6 = 3 pencere + 3 ıska payı.
-	codeLookupLimit = 6
+	//
+	// v0.10.112 — artık yalnız SON ÇARE varsayılanı: yürürlükteki değer
+	// Settings.CodeLookupLimit → lookupLimit() (DefaultCodeLookupLimit
+	// ile aynı sayı; iki sabit tek kaynağa bağlı, test pinler).
+	codeLookupLimit = DefaultCodeLookupLimit
 	// codeFetchDeadline — FetchCode'un TOPLAM süre tavanı (v0.9.1237).
 	// İstek başına 20 sn'lik client tavanı vardı ama N ARDIŞIK isteğin
 	// tavanı yoktu: kara delik bir host'ta zincir (2 refs + varsayılan
@@ -149,6 +154,27 @@ type CodeWindow struct {
 	// tanım BU" der. İkisini aynı etiketle sunmak, modelin XML'de bir
 	// "hata satırı" aramasına yol açardı.
 	Resource bool `json:"resource,omitempty"`
+	// Signature / SignatureLine (v0.10.112) — pencerenin DIŞINDA kalan
+	// çevreleyen metot/ctor imzası ve satırı. ±30 satır çoğu metodu
+	// kapsar; uzun bir metodun ortasındaki hata satırında imza pencereden
+	// taşar ve model parametre adlarını/tiplerini göremez ("hedefin
+	// tanımı bu bağlamda yok"). Pencere imzayı zaten içeriyorsa boş.
+	Signature     string `json:"signature,omitempty"`
+	SignatureLine int    `json:"signatureLine,omitempty"`
+}
+
+// FetchStats — bir çekimin SAYILARI (v0.10.112, gözlemlenebilirlik).
+// Reason metni operatöre hitap eder ve serbestçe değişir; span
+// attribute'ları ve sayaçlar buradan okur. Sıfır değerler "hiç
+// başlanmadı" demek olabilir — çağıran Outcome ile birlikte okur.
+type FetchStats struct {
+	FramesTotal int `json:"framesTotal,omitempty"` // ParseJava'nın verdiği tüm frame'ler
+	Candidates  int `json:"candidates,omitempty"`  // RankFrames adayları (≤ codeCandidateLimit)
+	Fetched     int `json:"fetched,omitempty"`     // gerçek dosya çekimi (tavandan düşen)
+	Resolved    int `json:"resolved,omitempty"`    // kesilen pencere (bütçe ÖNCESİ)
+	Missed      int `json:"missed,omitempty"`      // ağaçta/okumada ıskalanan frame
+	Untried     int `json:"untried,omitempty"`     // tavan/süre yüzünden hiç denenmeyen
+	Dupes       int `json:"dupes,omitempty"`       // birebir tekrar (bedava atlanan)
 }
 
 // CodeContext — bir stacktrace için toplanan tüm kod bağlamı.
@@ -177,6 +203,14 @@ type CodeContext struct {
 	// alternatifti ve reddedildi: metin operatöre hitap eden, serbestçe
 	// değişen bir cümle; sınıf bir sözleşme.
 	Outcome CodeOutcome `json:"outcome,omitempty"`
+	// Trimmed (v0.10.112) — bütçe kırpması/düşmesi OLDUYSA modele
+	// söylenecek tek satır. Reason'dan AYRI: Reason operatör ekranına ve
+	// kayda gider (depo düzeltme izi, ıska listesi, süre…); modelin
+	// bilmesi gereken yalnız "elindeki kod eksik". Operatör direktifi
+	// 2026-08-28: "kırpma yapıldıysa modele bildir".
+	Trimmed string `json:"trimmed,omitempty"`
+	// Stats (v0.10.112) — sayılar; bkz. FetchStats.
+	Stats FetchStats `json:"stats,omitempty"`
 }
 
 // Empty — kod bağlamı yok mu?
@@ -210,6 +244,7 @@ func (c CodeContext) Halved() CodeContext {
 		}
 		c.Outcome = CodePartial
 		c.Reason = withNote(note, c.Reason)
+		c.Trimmed = withNote(note, c.Trimmed)
 	}
 	return c
 }
@@ -431,7 +466,10 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	// v0.10.85 — frame seçimi proje çözümünden ÖNCE: aşağıdaki çıkmaz
 	// yedeği frame ister ve frame yoksa proje çözülse de kod bağlamı
 	// kurulamaz — o hâlde dürüst cümle CodeNoStack'inki.
-	targets := stackparse.AppFrames(frames, codeCandidateLimit)
+	// v0.10.112 — UYGULAMA FRAME'İ ÖNCE (operatör-raporlu "tavan çerçeve
+	// sınıflarına gidiyor"): operatörün paket önekleri varsa iş sınıfları
+	// kurum-içi çerçevenin önüne alınır; yoksa AppFrames ile bire bir.
+	targets := stackparse.RankFrames(frames, codeCandidateLimit, cfg.AppPrefixes)
 	if len(targets) == 0 {
 		// v0.9.1264 (denetim [3/XS]) — tek cümle ÜÇ farklı vazgeçişi
 		// katıyordu ve üçünün operatör aksiyonu farklı: (a) hiç frame
@@ -503,7 +541,7 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 		on:      ch.capped, budget: scopedFetchLimit,
 	}
 	hunt := huntWindows(ctx, targets,
-		huntLimits{windows: codeWindowLimit, lookups: codeLookupLimit, radius: codeWindowRadius},
+		huntLimits{windows: codeWindowLimit, lookups: cfg.lookupLimit(), radius: codeWindowRadius},
 		func(f stackparse.Frame) string {
 			if p := BestPathForFrame(paths, f); p != "" {
 				return p
@@ -606,8 +644,16 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 		// sığmayacak kadar farklı bir kayıp.
 		out.Reason = fmt.Sprintf("kod bütçesi (%d karakter) doldu — %d pencere düştü, kalanlar hata satırı çevresinde kısaltıldı",
 			codeBudgetRunes, len(hunt.windows)-len(windows))
+		out.Trimmed = out.Reason
 	case trimmed:
 		out.Reason = fmt.Sprintf("kod bütçesi (%d karakter) doldu — pencereler hata satırı çevresinde kısaltıldı", codeBudgetRunes)
+		out.Trimmed = out.Reason
+	}
+	// v0.10.112 — SAYILAR (span attribute'ları ve /ai için).
+	out.Stats = FetchStats{
+		FramesTotal: len(frames), Candidates: len(targets),
+		Fetched: hunt.lookups, Resolved: len(hunt.windows),
+		Missed: len(hunt.misses), Untried: hunt.untried, Dupes: hunt.dupes,
 	}
 	// v0.9.1241 — TAM/KISMİ ayrımı KAYIPTAN türetilir, Reason
 	// METNİNDEN değil. Başarılı bir çekmede de not olabiliyor (depo
@@ -822,6 +868,12 @@ type huntOutcome struct {
 	untried      int  // tavana çarpıldığı için denenmeyen aday
 	patience     bool // deneme tavanı doldu
 	timedOut     bool // süre tavanı doldu
+	// lookupCap (v0.10.112) — döngünün KOŞTUĞU tavan; not metni bunu
+	// basar. Sabit değil: operatör ayarı (Settings.CodeLookupLimit).
+	lookupCap int
+	// lookups (v0.10.112) — gerçekten yapılan dosya çekimi sayısı;
+	// gözlemlenebilirlik (CodeContext.Stats) buradan okur.
+	lookups int
 }
 
 // huntWindows — kod çekme döngüsünün çekirdeği (v0.9.1237). Ağı
@@ -838,9 +890,14 @@ type huntOutcome struct {
 //     özyineleme ve wrapper kalıplarında sık — atlanır: ne istek ne
 //     sabır harcar, ve aynı pencerenin kopyası bütçeyi yiyip daha
 //     derin bir frame'i dışarı itmez. Aynı DOSYANIN başka satırı ise
-//     eldeki içerikten kesilir; ikinci bir GET yok.
-//  3. IŞKA SABIR HARCAR. Denenen her frame sabırdan düşer; lookups
-//     tavanı, ağaçta hiçbir şeyi tutmayan patolojik bir stack'in
+//     eldeki içerikten kesilir; ikinci bir GET yok — ve v0.10.112'den
+//     beri SABIR DA HARCAMAZ: tavan yalnız gerçek çekimi sayar. Eski
+//     hâlde filter zinciri / dispatcher döngüsü gibi aynı dosyanın
+//     üç-dört satırı GET atmadan tavanı yiyor, iş sınıfına sıra
+//     gelmiyordu (operatör-raporlu "4 frame denenmedi").
+//  3. ÇEKİM SABIR HARCAR. Yalnız dosya çekimi sabırdan düşer (ıska
+//     v0.10.71'den beri bedava); lookups tavanı, ağaçta her şeyi tutan
+//     ama hiçbir penceresi kesilmeyen patolojik bir stack'in
 //     açıklamayı bekletmesini engeller.
 func huntWindows(
 	ctx context.Context,
@@ -850,6 +907,7 @@ func huntWindows(
 	fetch func(context.Context, string) (string, error),
 ) huntOutcome {
 	var out huntOutcome
+	out.lookupCap = lim.lookups
 	tried := map[string]bool{}    // (dosya,satır) — birebir tekrar muhafızı
 	bodies := map[string]string{} // yol → içerik (aynı dosya, başka satır)
 	lookups := 0
@@ -894,9 +952,11 @@ func huntWindows(
 			out.missedFrames = append(out.missedFrames, f)
 			continue
 		}
-		lookups++
 		body, cached := bodies[p]
 		if !cached {
+			// v0.10.112 — tavan BURADA düşer: yalnız gerçek çekimde.
+			lookups++
+			out.lookups = lookups
 			b, ferr := fetch(ctx, p)
 			if ferr != nil {
 				// Süre tavanı bir ıska DEĞİLDİR: dosya orada, biz
@@ -938,8 +998,12 @@ func (h huntOutcome) note(kept, total int, cutoff string) string {
 			cutoff, total, kept))
 	}
 	if h.patience {
+		cap := h.lookupCap
+		if cap <= 0 {
+			cap = codeLookupLimit
+		}
 		parts = append(parts, fmt.Sprintf("deneme tavanı (%d) doldu — %d frame denenmedi",
-			codeLookupLimit, h.untried))
+			cap, h.untried))
 	}
 	if len(h.misses) > 0 {
 		parts = append(parts, "eşleşmeyen: "+strings.Join(h.misses, ", "))
@@ -1533,7 +1597,85 @@ func WindowAround(content string, line, radius int) CodeWindow {
 	for i := from; i <= to; i++ {
 		fmt.Fprintf(&b, "%d| %s\n", i, lines[i-1])
 	}
-	return CodeWindow{FromLine: from, ToLine: to, Content: strings.TrimRight(b.String(), "\n")}
+	w := CodeWindow{FromLine: from, ToLine: to, Content: strings.TrimRight(b.String(), "\n")}
+	// v0.10.112 — çevreleyen imza pencerenin ÜSTÜNDE kaldıysa ayrıca
+	// taşınır. Pencere içindeyse model zaten görüyor; from==1'de üstte
+	// satır yok.
+	if line > 0 && from > 1 {
+		w.Signature, w.SignatureLine = EnclosingSignature(lines, from)
+	}
+	return w
+}
+
+// Çevreleyen imza sezgisi (v0.10.112). Java/Kotlin/Scala/Groovy
+// bildirimleri: erişim belirteçleri opsiyonel, ardından dönüş tipi +
+// ad + '(' (Java), ya da `fun ad(` (Kotlin), `def ad(` (Scala/Groovy),
+// ya da ctor `Ad(`. Kontrol akışı satırları (if/for/while/switch/
+// catch/synchronized/return/new/throw) ve ';' ile biten satırlar
+// (çağrılar) elenir — bunlar da '(' taşır. AST YOK: yanlış eşleşme
+// riski var; o yüzden sonuç prompt'ta "imza (satır N)" diye ETİKETLİ
+// ve satır numaralı — model ve operatör doğrulayabilir.
+var (
+	sigDeclRe = regexp.MustCompile(`^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:public|private|protected|static|final|abstract|synchronized|native|default|override|open|suspend|inline|internal|tailrec)\s+)*(?:<[^>]+>\s+)?(?:(?:fun|def)\s+\w+|[\w$<>\[\],.?]+(?:\s+[\w$<>\[\],.?]+)*\s+\w+|[A-Z]\w*)\s*\(`)
+	sigSkipRe = regexp.MustCompile(`^\s*(?:if|else|for|while|switch|catch|try|do|return|throw|new|synchronized|case|when|super|this)\b`)
+)
+
+// EnclosingSignature — lines içinde (1-tabanlı) fromLine'ın ÜSTÜNDEN
+// yukarı doğru ilk metot/ctor bildirimini bulur. Saf; tablo-testli
+// (code_window_signature_test.go). Bulamazsa ("", 0): dosya başı,
+// yalnız alan/import satırları, tanınmayan dil.
+//
+// Tarama tavanı 400 satır: devasa bir sınıfta imzayı bulamamak,
+// yüzlerce satırı yanlış eşleşme riskiyle taramaktan iyidir.
+func EnclosingSignature(lines []string, fromLine int) (string, int) {
+	if fromLine <= 1 || fromLine-1 > len(lines) {
+		return "", 0
+	}
+	floor := fromLine - 1 - 400
+	if floor < 1 {
+		floor = 1
+	}
+	for i := fromLine - 1; i >= floor; i-- {
+		ln := lines[i-1]
+		t := strings.TrimSpace(ln)
+		if t == "" || strings.HasPrefix(t, "//") || strings.HasPrefix(t, "*") || strings.HasPrefix(t, "/*") {
+			continue
+		}
+		if strings.HasSuffix(t, ";") || sigSkipRe.MatchString(ln) {
+			continue
+		}
+		if strings.HasPrefix(t, "}") || strings.HasPrefix(t, "{") {
+			continue
+		}
+		if sigDeclRe.MatchString(ln) {
+			// KAPANMIŞ bildirim çevreleyen değildir: imza ile pencere
+			// arasında imzayla aynı girintide bir "}" varsa o metot
+			// pencereden önce bitmiş — çevreleyen metot pencerenin
+			// içinde başlıyor (ya da satır sınıf düzeyinde). Yanlış
+			// imza, imzasızdan kötü.
+			ind := indentOf(ln)
+			for j := i + 1; j < fromLine; j++ {
+				if strings.HasPrefix(strings.TrimSpace(lines[j-1]), "}") && indentOf(lines[j-1]) == ind {
+					return "", 0
+				}
+			}
+			return t, i
+		}
+	}
+	return "", 0
+}
+
+// indentOf — baştaki boşluk/sekme sayısı (sekme = 1). Saf.
+func indentOf(ln string) int {
+	n := 0
+	for _, r := range ln {
+		if r == ' ' || r == '\t' {
+			n++
+			continue
+		}
+		break
+	}
+	return n
 }
 
 // ClampCodeWindows — pencereleri TOPLAM rune bütçesine sığdırır.
@@ -1748,14 +1890,55 @@ func (c CodeContext) PromptBlock() string {
 				i+1, len(c.Windows), w.Path, w.ToLine, fenceLang(w.Path), w.Content)
 			continue
 		}
-		fmt.Fprintf(&b, "\n\npencere %d/%d%s\n%s (satır %d-%d) — %s\n```%s\n%s\n```",
+		fmt.Fprintf(&b, "\n\npencere %d/%d%s\n%s (satır %d-%d) — %s",
 			i+1, len(c.Windows), segmentLabel(w.Segment, deepest),
-			w.Path, w.FromLine, w.ToLine, w.Frame,
-			fenceLang(w.Path), markFrameLine(w.Content, w.Line))
+			w.Path, w.FromLine, w.ToLine, w.Frame)
+		// v0.10.112 — pencere dışında kalan çevreleyen imza, satırıyla.
+		if w.Signature != "" {
+			fmt.Fprintf(&b, "\nimza (satır %d, pencere dışı): %s", w.SignatureLine, w.Signature)
+		}
+		fmt.Fprintf(&b, "\n```%s\n%s\n```", fenceLang(w.Path), markFrameLine(w.Content, w.Line))
+	}
+	// v0.10.112 — KIRPMA MODELE SÖYLENİR (operatör direktifi 2026-08-28).
+	// Eskiden yalnız Reason'a (ekran + kayıt) gidiyordu; model üç pencere
+	// bekleyip ikisini görünce eksik olanı uydurabiliyordu.
+	if c.Trimmed != "" {
+		b.WriteString("\n\nNOT — kod bağlamı EKSİK: " + c.Trimmed + ". Gönderilmeyen pencereler hakkında iddia yürütme; gerekiyorsa \"kaynak çözülemedi: <yol>\" de.")
 	}
 	b.WriteString("\n\nKodu stack'le BİRLİKTE oku: hatanın atıldığı satırı göster ve kök nedeni o satırdaki koşula/çağrıya dayandır. Kodda görmediğin bir davranışı UYDURMA — pencere dışında kalan kısım hakkında \"bu pencerede görünmüyor\" de.")
 	return b.String()
 }
+
+// MissingBlock — KOD İSTENDİ AMA ÇÖZÜLEMEDİ (v0.10.112, operatör
+// direktifi 2026-08-28: "alıntı yoksa model 'kaynak çözülemedi: <path>'
+// demeli, tahmin etmemeli").
+//
+// v0.9.1243'ün TERSİNE çevrilen kararı: o gün "modele 'kod alınamadı'
+// demek olmayan kanıt hakkında konuşmaya davetiye" diye yalnız kayda
+// yazılmıştı. Prod gözlemi tersini gösterdi: model düz prompt'la
+// stack'teki satır numarasını okuyup "X. satırda hata var" diye
+// ALINTISIZ iddia üretiyor. Boşluğu söylemek, uydurmaktan iyidir;
+// blok modele ne yapmayacağını da yazıyor. Pencere varsa boş döner.
+func (c CodeContext) MissingBlock() string {
+	if !c.Empty() {
+		return ""
+	}
+	reason := strings.TrimSpace(c.Reason)
+	if reason == "" {
+		reason = "sebep bilinmiyor"
+	}
+	var b strings.Builder
+	b.WriteString("\n\nKOD BAĞLAMI İSTENDİ — ÇÖZÜLEMEDİ: " + capRunes(reason, 400))
+	if c.Repo != "" {
+		b.WriteString(" (depo: " + c.Repo + ")")
+	}
+	b.WriteString(".\nSana kaynak kod VERİLMEDİ: satır numarası ya da kod içeriği İDDİA ETME, kod alıntısı yapma. Kaynağa dayanması gereken her yargıda \"kaynak çözülemedi: <dosya>\" yaz ve yalnız stack/trace/log kanıtıyla konuş.")
+	return b.String()
+}
+
+// FrameMarker — frameMarker'ın dışa açık adı (v0.10.112): prompt
+// şablonu (copilot.CodeFrameMarker) ile tek yazım; api testi pinler.
+const FrameMarker = frameMarker
 
 // frameMarker — hata satırının pencere içi işareti. TEK yazım: hem
 // markFrameLine hem başlıktaki açıklama buradan okur, yoksa model
@@ -1843,8 +2026,15 @@ func (c CodeContext) LogSummary() string {
 		if lines < 0 {
 			lines = 0
 		}
-		parts = append(parts, fmt.Sprintf("[kod: %s%s:%d-%d · %d satır]",
-			c.Repo, w.Path, w.FromLine, w.ToLine, lines))
+		// v0.10.112 — arama-türevi pencere yolu zaten "depo:yol" taşıyor
+		// (codesearch.go); depoyu bir daha öne yazmak "core-service
+		// diğer-depo:/src/…" gibi ikili bir ad üretiyordu.
+		loc := c.Repo + w.Path
+		if strings.Contains(w.Path, ":") {
+			loc = w.Path
+		}
+		parts = append(parts, fmt.Sprintf("[kod: %s:%d-%d · %d satır]",
+			loc, w.FromLine, w.ToLine, lines))
 	}
 	// v0.9.1243 — KISMİ isabette kayıp da yazılır. Pencere listesi tek
 	// başına "kod geldi" der ve NEYİN gelmediğini gizler: üç frame'den

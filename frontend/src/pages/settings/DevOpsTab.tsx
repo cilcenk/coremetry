@@ -36,6 +36,12 @@ export function DevOpsTab() {
   const [codeSearch, setCodeSearch] = useState(false);
   const [repoPrefixes, setRepoPrefixes] = useState('');
   const [branchOrder, setBranchOrder] = useState('');
+  // v0.10.112 — uygulama paket önekleri + deneme tavanı (operatör-raporlu
+  // "tavan çerçeve sınıflarına gidiyor"). Tavan metin olarak tutulur:
+  // boş kutu = varsayılan, sunucu 0'ı "ayar yok" okur.
+  const [appPrefixes, setAppPrefixes] = useState('');
+  const [lookupLimit, setLookupLimit] = useState('');
+  const [effectiveLimit, setEffectiveLimit] = useState(6);
   const [detected, setDetected] = useState<{ flavor?: DevOpsFlavor; apiVersion?: string }>({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -60,6 +66,9 @@ export function DevOpsTab() {
       setCodeSearch(!!s.codeSearch);
       setRepoPrefixes((s.repoPrefixes || []).join(', '));
       setBranchOrder((s.branchOrder || []).join(', '));
+      setAppPrefixes((s.appPrefixes || []).join(', '));
+      setLookupLimit(s.codeLookupLimit ? String(s.codeLookupLimit) : '');
+      setEffectiveLimit(s.effectiveLookupLimit || 6);
       setDetected({ flavor: s.detectedFlavor, apiVersion: s.detectedApiVersion });
     },
   );
@@ -73,6 +82,8 @@ export function DevOpsTab() {
     codeSearch,
     repoPrefixes: splitList(repoPrefixes),
     branchOrder: splitList(branchOrder),
+    appPrefixes: splitList(appPrefixes),
+    codeLookupLimit: Math.max(0, parseInt(lookupLimit, 10) || 0),
     ...(pat ? { pat } : {}),
   });
 
@@ -276,6 +287,40 @@ export function DevOpsTab() {
             Örnek: <code>bsa-odeme-servisi-prod</code> → <code>odeme-servisi</code>.
             Katalogdaki <strong>Repository</strong> alanı doluysa O kazanır —
             elle pin konvansiyonu ezer.
+          </div>
+        </label>
+
+        {/* v0.10.112 — UYGULAMA PAKET ÖNEKLERİ + DENEME TAVANI.
+            Kurum-içi çerçeve sınıfları (RestFilter, BasicDispatcher…) JDK/
+            Spring listesinde olmadığı için uygulama sayılıyor ve stack'te
+            iş sınıfından önce geldikleri için tavanı önce onlar yiyordu.
+            Önek listesi iş sınıflarını başa alır; tavan ayarlanabilir. */}
+        <label style={{ display: 'block', marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+            Uygulama paket önekleri <span style={{ color: 'var(--text3)' }}>(virgülle)</span>
+          </div>
+          <input value={appPrefixes}
+            onChange={e => setAppPrefixes(e.target.value)}
+            placeholder="com.banka.odeme., com.banka.kart."
+            style={{ width: '100%' }} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Bu öneklerle başlayan stack frame'leri <strong>önce</strong> denenir;
+            kurum-içi çerçeve ve kütüphane sınıfları (ör. <code>com.banka.core.rest.*</code>)
+            arkaya düşer, atılmaz. Boş = stack sırası (yalnız JDK/Spring/JBoss elenir).
+          </div>
+        </label>
+
+        <label style={{ display: 'block', marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+            Kod çekme deneme tavanı <span style={{ color: 'var(--text3)' }}>(1–30, boş = varsayılan)</span>
+          </div>
+          <input value={lookupLimit} inputMode="numeric"
+            onChange={e => setLookupLimit(e.target.value.replace(/[^0-9]/g, ''))}
+            placeholder={String(effectiveLimit)}
+            style={{ width: 120 }} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Bir açıklama için en fazla kaç dosya çekilir. Ağaçta bulunamayan frame
+            ve aynı dosyanın başka satırı tavandan düşmez. Yürürlükte: <strong>{effectiveLimit}</strong>.
           </div>
         </label>
 

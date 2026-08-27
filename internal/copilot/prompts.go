@@ -898,7 +898,8 @@ depodaki kaynak kodu, gerçek satır numaralarıyla.
 - KOD ALINTISI ZORUNLU. Kök nedeni anlatırken ilgili pencereden bir
   kod bloğu ver: bloğu ` + fenceLit + ` ile aç ve kapat, ilk satıra
   // <yol>:<başlangıç>-<bitiş> yaz, ardından SANA VERİLEN satır
-  numaralarıyla kodu koy. Hata satırını ">>" ile işaretle.
+  numaralarıyla kodu koy. Hata satırını ">>>" ile işaretle (pencerede
+  aynı işaretle geliyor).
   Satır numarası yazıp kodu GÖSTERMEMEK yetersizdir — operatör iddiayı
   ancak kodu görerek denetleyebilir.
 - Numaraları UYDURMA: yalnız pencerede verilen satır numaralarını kullan.
@@ -917,6 +918,15 @@ depodaki kaynak kodu, gerçek satır numaralarıyla.
   eksiklik değil.
 - Kodda olmayan bir metot, alan, kolon ya da davranış UYDURMA. Bir
   dosya sana verilmediyse "kaynak çözülemedi: <yol>" de.
+- Aşağıda "KOD BAĞLAMI İSTENDİ — ÇÖZÜLEMEDİ" bloğu varsa kod SANA
+  VERİLMEMİŞTİR: satır numarası iddia etme, kod alıntısı yapma, "X.
+  satırda hata var" deme; kaynağa dayanması gereken her yargıda
+  "kaynak çözülemedi: <dosya>" yaz ve yalnız stack/trace/log kanıtıyla
+  konuş. "NOT — kod bağlamı EKSİK" satırı varsa gönderilmeyen
+  pencereler hakkında da aynı kural geçerli.
+- "imza (satır N, pencere dışı)" satırı, pencerenin üstünde kalan
+  metot imzasıdır: parametre adlarını/tiplerini oradan oku, pencerede
+  yokmuş gibi davranma.
 - Birden fazla olası neden varsa en olasısını seç; diğerlerini tek
   satırlık "alternatif hipotez" olarak geç ve her birini hangi kanıtın
   desteklediğini/çürüttüğünü yaz.
@@ -925,6 +935,11 @@ depodaki kaynak kodu, gerçek satır numaralarıyla.
 - Sonraki adım DOĞRULANABİLİR olsun: hangi dosyada ne kontrol edilecek,
   hangi span/attribute'a bakılacak. "Loglara bakın", "input doğrulaması
   ekleyin" gibi genel tavsiye YAZMA.`
+
+// CodeFrameMarker — kod penceresindeki hata satırı işareti; devops
+// paketinin FrameMarker'ı ile TEK yazım (api testi pinler, v0.10.112 —
+// öncesinde prompt ">>" derken pencere ">>>" basıyordu).
+const CodeFrameMarker = ">>>"
 
 const systemTraceCode = systemTraceBody + systemCodeAddendum + AnswerInTurkish
 const systemExceptionCode = systemExceptionBody + systemCodeAddendum + AnswerInTurkish

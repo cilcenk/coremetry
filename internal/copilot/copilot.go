@@ -39,6 +39,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -740,7 +741,28 @@ func truncForSample(s string) string {
 	if len(s) <= cap {
 		return s
 	}
-	return s[:cap]
+	// v0.10.112 — BAŞ + SON. Örnek yalnız baştan kesilince prompt'un
+	// SONUNDAKİ maske özeti ("[kod: repo/dosya:aralık]") ve ıska işareti
+	// ("[kod alınamadı: sınıf]") hiç görünmüyordu: kodlu system prompt
+	// tek başına 4,3 KB ve gerçek exception/trace gövdesi onlarca KB.
+	// /ai sayfası "kod istendi mi, geldi mi" sorusuna cevap veremiyordu.
+	// Son 1 KB korunur, atlanan bayt sayısı işaretle yazılır; toplam
+	// yine ≤ cap (chstore.SamplePromptCap ikinci kapı, aynı sayı).
+	const tail = 1024
+	skipped := len(s) - cap
+	marker := fmt.Sprintf("\n…[örnek kırpıldı: %d bayt atlandı]…\n", skipped)
+	head := cap - tail - len(marker)
+	if head < 0 {
+		return s[:cap]
+	}
+	for head > 0 && !utf8.RuneStart(s[head]) {
+		head--
+	}
+	ts := len(s) - tail
+	for ts < len(s) && !utf8.RuneStart(s[ts]) {
+		ts++
+	}
+	return s[:head] + marker + s[ts:]
 }
 
 func truncErr(s string) string {

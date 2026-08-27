@@ -523,8 +523,21 @@ func TestExplainCodeFallsBackWhenNoCode(t *testing.T) {
 	if len(sent) != 1 {
 		t.Fatalf("sağlayıcı çağrısı=%d, istenen 1", len(sent))
 	}
-	if strings.Contains(sent[0], "KOD BAĞLAMI") {
-		t.Fatal("kod yokken kod ekli prompt gönderilmiş — modele olmayan kanıt vaat ediliyor")
+	// v0.10.112 — KARAR TERSİNE DÖNDÜ (operatör direktifi 2026-08-28):
+	// kod istendi ama çözülemediyse model BUNU ÖĞRENİR ("KOD BAĞLAMI
+	// İSTENDİ — ÇÖZÜLEMEDİ") ve satır numarası iddia etmemesi söylenir.
+	// Olmayan kanıt vaat edilmiyor: blok kod İÇERMEZ, yalnız yokluğu ve
+	// gerekçeyi taşır. Pencere/çit yine yok.
+	if !strings.Contains(sent[0], "KOD BAĞLAMI İSTENDİ — ÇÖZÜLEMEDİ: depo çözülemedi") {
+		t.Fatalf("kod yokken model yokluğu öğrenmedi:\n%s", sent[0])
+	}
+	// (system prompt'un kendisi çit karakterini anlatır; pencere çiti
+	// dil etiketiyle gelir — onu ararız.)
+	if strings.Contains(sent[0], "```java") || strings.Contains(sent[0], "pencere 1/") {
+		t.Fatal("kod yokken pencere/çit gönderilmiş")
+	}
+	if !strings.Contains(sent[0], "kaynak çözülemedi") {
+		t.Fatal("kodlu system prompt'un dürüst çıkış kuralı prompt'ta yok")
 	}
 	recs := rec.wait(t, 1)
 	if strings.Contains(recs[0].PromptSample, "[kod:") {
@@ -605,10 +618,59 @@ func TestExplainCodeDropsCodeWhenHalvingCannotShrink(t *testing.T) {
 	if len(sent) != 2 {
 		t.Fatalf("sağlayıcı çağrısı=%d, istenen 2", len(sent))
 	}
-	if strings.Contains(sent[1], "KOD BAĞLAMI") {
+	// v0.10.112 — kod DÜŞTÜ ama model bunu öğrenir (MissingBlock); çit
+	// ve pencere yok, kodsuz system prompt.
+	if strings.Contains(sent[1], "```") || strings.Contains(sent[1], "pencere 1/") || strings.Contains(sent[1], "int x = 1") {
 		t.Fatal("ikinci denemede kod hâlâ var — kırpılamayan kod bırakılmalıydı")
 	}
+	if !strings.Contains(sent[1], "KOD BAĞLAMI İSTENDİ — ÇÖZÜLEMEDİ: bağlam taşması") {
+		t.Fatalf("düşen kod modele söylenmedi:\n%s", sent[1])
+	}
 	rec.wait(t, 2)
+}
+
+// TestFrameMarkerSingleSpelling — v0.10.112: prompt şablonu ">>" derken
+// pencere ">>>" basıyordu; model tarif edilmeyen bir işaretle karşılaşıyordu.
+func TestFrameMarkerSingleSpelling(t *testing.T) {
+	if devops.FrameMarker != copilot.CodeFrameMarker {
+		t.Fatalf("işaret ayrıştı: devops %q, copilot %q", devops.FrameMarker, copilot.CodeFrameMarker)
+	}
+	for _, p := range []string{copilot.SystemPromptTraceWithCode(), copilot.SystemPromptExceptionWithCode()} {
+		if !strings.Contains(p, `"`+copilot.CodeFrameMarker+`"`) {
+			t.Error("kodlu prompt işareti tırnak içinde anmıyor")
+		}
+		if strings.Contains(p, `">>"`) {
+			t.Error("eski iki-karakterli işaret prompt'ta duruyor")
+		}
+	}
+}
+
+// TestExplainMissingCodeKeepsMaskContract — ıska işareti KAYITTA durur,
+// gerçek prompt'ta durmaz; MissingBlock gerçek prompt'ta durur, kayıtta
+// ise ıska işaretiyle temsil edilir (/ai "hiç istenmedi"den ayırır).
+func TestExplainMissingCodeKeepsMaskContract(t *testing.T) {
+	fp := newFakeProvider(t, false)
+	rec := newCapRecorder()
+	s := codeServer(t, fp, rec)
+	miss := devops.CodeContext{Repo: "core-service", Reason: "deneme tavanı (6) doldu — 4 frame denenmedi", Outcome: devops.CodePartial}
+	miss.Outcome = devops.CodeTreeMiss
+	r := httptest.NewRequest(http.MethodPost, "/api/copilot/explain-trace/t1", nil)
+	if _, err := s.copilotExplainCode(r, copilot.SystemPromptTrace(), copilot.SystemPromptTraceWithCode(), "TRACE: x", miss); err != nil {
+		t.Fatal(err)
+	}
+	sent := fp.sent()[0]
+	if !strings.Contains(sent, "deneme tavanı (6) doldu — 4 frame denenmedi (depo: core-service)") {
+		t.Fatalf("gerekçe modele gitmedi:\n%s", sent)
+	}
+	if strings.Contains(sent, "[kod alınamadı") {
+		t.Fatal("kayıt işareti gerçek prompt'a sızdı")
+	}
+	sample := rec.wait(t, 1)[0].PromptSample
+	// (system prompt kuralı bloğun ADINI anar; kayıtta olmaması gereken,
+	// gerekçeli bloğun kendisi.)
+	if !strings.Contains(sample, "[kod alınamadı: tree-miss]") || strings.Contains(sample, "ÇÖZÜLEMEDİ: deneme tavanı") {
+		t.Fatalf("kayıt sözleşmesi bozuldu:\n%s", sample)
+	}
 }
 
 // ── katalog pini: HATA ≠ BOŞ (v0.9.1236) ─────────────────────────

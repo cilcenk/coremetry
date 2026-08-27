@@ -3,6 +3,7 @@ package chstore
 // trace_backfill_test.go — v0.10.103 sihirbaz sözleşmeleri.
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"strings"

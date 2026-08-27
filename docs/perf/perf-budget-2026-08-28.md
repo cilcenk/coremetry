@@ -209,6 +209,14 @@ perfcheck her soğuk koşuda pencereyi 61 sn geriye kaydırır (SQL metni
 farklı, veri yoğunluğu aynı); `measure.sh` ile elle ölçerken `from/to`'yu
 her koşuda değiştir, yoksa "soğuk" p50 yalan söyler.
 
+**Oynaklık uyarısı (üç ardışık taban koşusu, 2026-08-28):** aynı fixture,
+aynı harness, 10 dk arayla — P6 `problems` 1.54 s → 113 ms, P5 bundle 1.89
+s → 520 ms, P4 2.30 s → 799 ms, P2 4.19 s → 3.01 s. Lokal VM'de ±3×
+sallanma normal (evaluator/merge/demo yükü). Bu yüzden karar ÇİFT koşullu
+(bütçe aşımı VE önceki koşuya göre gerileme), tolerans %25, taban = son 3
+gecenin medyanı — tek koşuya bakıp eşik değiştirme. Son koşu
+(`perf/out/baseline-2026-08-28.json`): 6/6 geçti.
+
 Ortam hazırlığı (tekrar edilebilir taban): minikube `chc-0/1` + demo
 üretici en az 2 saat koşmuş (24h penceresi dolu değilse `datasetDrift`
 uyarısı kıyası düşürür), `kubectl port-forward -n coremetry svc/coremetry

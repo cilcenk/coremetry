@@ -192,6 +192,14 @@ hits=$(grep -rn 'IN (SELECT' internal/chstore internal/api 2>/dev/null \
     | grep -v 'GLOBAL IN (SELECT' \
     | grep -v _test.go \
     | filter_ignored || true)
+# v0.10.102 — ÇOK-SATIRLI yazım: `IN (\n SELECT` tek-satır grep'e
+# görünmezdi ve dağıtıkta code 288 üretti (repo.go serviceSubquery).
+# Perl slurp modu satır sonu aşırı tarar; GLOBAL öneklisi muaf.
+hits2=$(perl -0777 -ne 'while (/(?<![A-Za-z])(?<!GLOBAL )(?<!GLOBAL NOT )IN \(\s*\n\s*SELECT[^;)]{0,200}?FROM\s+(?:spans|logs|metric_points|trace_summary_5m|trace_service_index_5m|topology_edges_5m|\w+_summary_5m)\b/sg){ next if substr($_, pos(), 6000) =~ /distributed_product_mode\s*=\s*.global./; my $pre=substr($_,0,pos()); my $l=()=$pre=~/\n/g; print "$ARGV:".($l+1).": cok-satirli non-GLOBAL IN(SELECT — telemetri tablosu\n" }' \
+    internal/chstore/*.go internal/api/*.go 2>/dev/null \
+    | grep -v _test.go | filter_ignored || true)
+if [ -n "$hits2" ]; then hits="${hits}${hits:+
+}$hits2"; fi
 if [ -n "$hits" ]; then
     while IFS= read -r line; do crit "$line"; done <<< "$hits"
 else

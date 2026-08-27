@@ -65,7 +65,7 @@ func TestTraceBackfillDropsBeforeInsert(t *testing.T) {
 	// KISMİ-YAZIM pini (canlı provada ölçüldü: 159 sonrası MV'de kısmi
 	// satır kaldı): her merdiven denemesi TEMİZ zeminde başlamalı —
 	// düşürme merdiven DÖNGÜSÜNÜN İÇİNDE olmalı, dışında değil.
-	iLadder := strings.Index(src, "range backfillSliceLadder")
+	iLadder := strings.Index(src, "range backfillLadderFor(") // v0.10.108: hacme-göre merdiven
 	iDropCall := strings.Index(src, "s.dropTraceDayPartition(ctx, day)")
 	if iLadder < 0 || iDropCall < 0 || iDropCall < iLadder {
 		t.Fatal("yeniden-düşürme merdiven döngüsünün içinde değil — kısmi yazım üstüne ekleme çifte sayım üretir")
@@ -82,10 +82,10 @@ func TestTraceBackfillDropsBeforeInsert(t *testing.T) {
 
 func TestTraceBackfillDayValidation(t *testing.T) {
 	s := &Store{}
-	if err := s.TraceBackfillDayRun(nil, "26-08-2026"); err == nil {
+	if err := s.TraceBackfillDayRun(nil, "26-08-2026", 0, nil); err == nil {
 		t.Error("bozuk gün biçimi kabul edildi")
 	}
-	if err := s.TraceBackfillDayRun(nil, "2026-08-26'; DROP TABLE spans;--"); err == nil {
+	if err := s.TraceBackfillDayRun(nil, "2026-08-26'; DROP TABLE spans;--", 0, nil); err == nil {
 		t.Error("enjeksiyon denemesi tarih doğrulamasından geçti")
 	}
 }

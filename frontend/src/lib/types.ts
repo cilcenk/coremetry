@@ -1357,6 +1357,23 @@ export interface DevOpsSettingsInput {
   appPrefixes?: string[];
   codeLookupLimit?: number;
 }
+// SchemaCatalogSummary (v0.10.115) — uygulama DB şema kataloğu anlık
+// görüntüsünün ÖZETİ; kolon içeriği tarayıcıya dönmez. snapshotSql
+// flavor → operatörün kendi tarafında koşturacağı salt-okunur SELECT.
+export interface SchemaCatalogSummary {
+  tables: number;
+  columns: number;
+  /** unix ms; 0 = hiç yüklenmedi */
+  importedAt: number;
+  source?: string;
+  flavor?: string;
+  snapshotSql: Record<string, string>;
+}
+export interface SchemaCatalogImportInput {
+  csv: string;
+  source?: string;
+  flavor?: string;
+}
 // DevOpsResolveStep / DevOpsResolveDryRun (v0.9.1242) — "çözümü dene".
 //
 // Konvansiyonu (önek, branş sırası, proje) test etmenin tek yolu, stack

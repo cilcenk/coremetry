@@ -49,6 +49,11 @@ type traceLite struct {
 	DurationMs float64 `json:"durMs"`
 	Status     string  `json:"status,omitempty"`
 	StatusMsg  string  `json:"statusMsg,omitempty"`
+	// DBSystem / DBStatement (v0.10.115) — yalnız HATA span'larında: SQL
+	// hatasında çalışan ifade kanıtın kendisidir (şema hedefi buradan
+	// çıkar). Başarılı span'larda taşınmaz — prompt bütçesi.
+	DBSystem    string `json:"dbSystem,omitempty"`
+	DBStatement string `json:"dbStatement,omitempty"`
 }
 
 // traceExplainInput — kurulan girdi + deterministik kanıt.
@@ -82,6 +87,11 @@ type traceExplainInput struct {
 	// stacktrace olmayabilir. Kök servis her trace'te var.
 	RootService  string
 	StackService string
+	// DBStatements / ErrorText (v0.10.115) — hata span'larının SQL
+	// ifadeleri (≤3, tekil) ve hata metni (status mesajları + stack başı):
+	// şema kanıtının girdisi (api/schema_catalog.go buildSchemaEvidence).
+	DBStatements []string
+	ErrorText    string
 }
 
 // buildTraceExplainInput — trace'in span'lerini çekip kompakt JSON'a
@@ -135,6 +145,8 @@ func (s *Server) buildTraceExplainInput(ctx context.Context, id string) (traceEx
 	totalSpans := len(spans)
 	spans = pickExplainSpans(spans, 100)
 	compact := make([]traceLite, 0, len(spans))
+	var dbStmts, errTexts []string
+	seenStmt := map[string]bool{}
 	for _, sp := range spans {
 		dur := float64(sp.EndTime-sp.StartTime) / 1e6
 		l := traceLite{Name: sp.Name, Service: sp.ServiceName, Kind: sp.Kind,
@@ -142,6 +154,17 @@ func (s *Server) buildTraceExplainInput(ctx context.Context, id string) (traceEx
 		if sp.StatusCode == "error" {
 			l.Status = "error"
 			l.StatusMsg = sp.StatusMessage
+			if sp.DBStatement != "" {
+				l.DBSystem = sp.DBSystem
+				l.DBStatement = truncRunesN(sp.DBStatement, 600)
+				if len(dbStmts) < 3 && !seenStmt[l.DBStatement] {
+					seenStmt[l.DBStatement] = true
+					dbStmts = append(dbStmts, l.DBStatement)
+				}
+			}
+			if len(errTexts) < 5 && sp.StatusMessage != "" {
+				errTexts = append(errTexts, sp.StatusMessage)
+			}
 		}
 		compact = append(compact, l)
 	}
@@ -237,6 +260,8 @@ func (s *Server) buildTraceExplainInput(ctx context.Context, id string) (traceEx
 		Stack:        rawStack,
 		StackService: stackService,
 		RootService:  rootService,
+		DBStatements: dbStmts,
+		ErrorText:    truncRunesN(strings.Join(errTexts, "\n")+"\n"+rawStack, 2000),
 	}, nil
 }
 
@@ -284,4 +309,16 @@ func traceExplainUser(id string, analyzed, total int, payload, logsBlock string)
 		analyzedNote = fmt.Sprintf(" (trace'in tamamı %d span; hatalar + en yavaşlar öncelikli %d span analiz edildi)", total, analyzed)
 	}
 	return fmt.Sprintf("Trace %s with %d spans%s:\n```json\n%s\n```%s", id, analyzed, analyzedNote, payload, logsBlock)
+}
+
+// truncRunesN — rune-güvenli baş kesme (v0.10.115).
+func truncRunesN(s string, n int) string {
+	if n <= 0 || len(s) <= n {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }

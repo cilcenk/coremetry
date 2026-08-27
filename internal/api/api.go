@@ -31,6 +31,7 @@ import (
 
 	"github.com/cilcenk/coremetry/internal/acache"
 	"github.com/cilcenk/coremetry/internal/anomaly"
+	"github.com/cilcenk/coremetry/internal/appschema"
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -203,6 +204,9 @@ type Server struct {
 	// testi. Repo eşleme ve kod-inceleme sonraki dilim, dolayısıyla
 	// bu istemcinin henüz tüketicisi yok. nil-safe.
 	devops *devops.Service
+	// schema (v0.10.115) — uygulama DB şema kataloğu anlık görüntüsü
+	// (appschema); SQLCODE'lu Explain'lerde kolon tanımı kanıtı.
+	schema *appschema.Service
 
 	// mcpClient — dış MCP sunucularının istemci servisi (v0.10.87,
 	// dilim ②). Şimdilik ayar katmanı; sohbet köprüsü dilim ③. nil-safe.
@@ -367,6 +371,11 @@ func (s *Server) SetVMetrics(v *vmetrics.Service) {
 // (v0.9.829). Always called from main() with a non-nil service;
 // Configured() reports whether the operator filled in a server
 // URL. Connection layer only — no reader consumes it yet.
+// SetSchemaCatalog (v0.10.115) — main.go bağlar; nil güvenli (Summary boş).
+func (s *Server) SetSchemaCatalog(sc *appschema.Service) {
+	s.schema = sc
+}
+
 func (s *Server) SetDevOps(d *devops.Service) {
 	s.devops = d
 }
@@ -669,6 +678,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.registerStateUnifyRoutes(mux)
 	s.registerStateRepartRoutes(mux)
 	s.registerTraceBackfillRoutes(mux) // v0.10.103 — /traces tarihçe sihirbazı, admin_trace_backfill.go
+	s.registerSchemaCatalogRoutes(mux) // v0.10.115 — şema kataloğu, schema_catalog.go
 	mux.HandleFunc("GET /api/correlations", s.getCorrelations)
 	// v0.9.135 (scale-audit 2026-07-20) — admin-only (Redis internals);
 	// only AdminStats reads it, handler had no role check.
@@ -8880,10 +8890,13 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 	cacheKey := explainCacheKey(copilot.SystemPromptTrace(), in.User, "")
 	if opts.IncludeCode {
 		cc = s.buildCodeContext(r.Context(), in.StackService, in.Stack)
-		cacheKey = explainCacheKey(copilot.SystemPromptTraceWithCode(), in.User, cc.PromptBlock())
+		// v0.10.115 — SQL hatasında şema kanıtı (hata span'ının db_statement'ı
+		// → katalog); kod bloğunun arkasına, kendi bütçesiyle.
+		se := s.buildSchemaEvidence(in.ErrorText, in.DBStatements, mapperBlocks(cc))
+		cacheKey = explainCacheKey(copilot.SystemPromptTraceWithCode(), in.User, cc.PromptBlock()+se.Block)
 		run = explainPromptBuffered(func() (string, error) {
-			return s.copilotExplainCode(r,
-				copilot.SystemPromptTrace(), copilot.SystemPromptTraceWithCode(), in.User, cc)
+			return s.copilotExplainEvidence(r,
+				copilot.SystemPromptTrace(), copilot.SystemPromptTraceWithCode(), in.User, cc, se)
 		})
 	}
 	// v0.9.1127 (Faz 1.5) — cevabın çıkışı tek yerden (deliverExplain).

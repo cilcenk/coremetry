@@ -30,6 +30,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/consumer"
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/correlator"
+	"github.com/cilcenk/coremetry/internal/appschema"
 	"github.com/cilcenk/coremetry/internal/devops"
 	"github.com/cilcenk/coremetry/internal/mcpclient"
 	"github.com/cilcenk/coremetry/internal/elasticml"
@@ -1026,6 +1027,14 @@ func main() {
 		log.Printf("[devops] load persisted config: %v", err)
 	}
 	go devopsSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	// v0.10.115 — uygulama DB şema kataloğu (salt-okunur anlık görüntü;
+	// SQLCODE'lu Explain'lerde kolon tanımı kanıtı). devops deseni; blob
+	// MB olabildiğinden yenileme 5 dk.
+	schemaSvc := appschema.NewService()
+	if err := schemaSvc.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[appschema] load persisted catalog: %v", err)
+	}
+	go schemaSvc.StartConfigRefresh(ctx, store, 5*time.Minute)
 	// v0.10.87 — dış MCP sunucu istemcisi (devops bloğuyla aynı desen).
 	mcpCliSvc := mcpclient.NewService()
 	if err := mcpCliSvc.LoadPersisted(ctx, store); err != nil {

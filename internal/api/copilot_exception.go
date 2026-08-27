@@ -48,10 +48,13 @@ func (s *Server) copilotExplainException(w http.ResponseWriter, r *http.Request)
 			codeSvc = in.StackService
 		}
 		cc = s.buildCodeContext(r.Context(), codeSvc, in.Stack)
-		cacheKey = explainCacheKey(copilot.SystemPromptExceptionWithCode(), in.User, cc.PromptBlock())
+		// v0.10.115 — SQL hatasında şema kanıtı: grup tipi+mesajı ve örnek
+		// trace'in hata span'larındaki db_statement → katalog.
+		se := s.buildSchemaEvidence(in.ErrorText, in.DBStatements, mapperBlocks(cc))
+		cacheKey = explainCacheKey(copilot.SystemPromptExceptionWithCode(), in.User, cc.PromptBlock()+se.Block)
 		run = explainPromptBuffered(func() (string, error) {
-			return s.copilotExplainCode(r,
-				copilot.SystemPromptException(), copilot.SystemPromptExceptionWithCode(), in.User, cc)
+			return s.copilotExplainEvidence(r,
+				copilot.SystemPromptException(), copilot.SystemPromptExceptionWithCode(), in.User, cc, se)
 		})
 	}
 	// v0.9.1127 (Faz 1.5) — cevabın çıkışı tek yerden: `?stream=1` ise

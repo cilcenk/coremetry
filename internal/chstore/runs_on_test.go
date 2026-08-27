@@ -74,8 +74,14 @@ func TestCallGraphReadersExcludeRunsOn(t *testing.T) {
 		if reads == 0 {
 			continue
 		}
+		// v0.10.94 — RUNS_ON-kapsamlı okuma da meşru: startsWith ile
+		// yalnız node: kenarlarını seçen sorgu (GetRunsOnPlacements)
+		// çağrı grafiği DEĞİL, dikey eksenin kendi okumasıdır. İğne
+		// parça parça kuruluyor — Go backtick içinde backtick olmaz.
+		scopedNeedle := "startsWith(child_node, '" + "`" + "+nodeIDPrefix+" + "`" + "')"
 		covered := strings.Count(src, "TopoCallEdgeFilterSQL") +
 			strings.Count(src, "node_kind = 'external'") +
+			strings.Count(src, scopedNeedle) +
 			len(probeRe.FindAllString(src, -1))
 		// Sabitin TANIMI da bir sayım verirdi; tanım dosyası okuma
 		// içermiyor (identity.go'da FROM yok) — yine de netlik için
@@ -95,13 +101,13 @@ func TestCallGraphReadersExcludeRunsOn(t *testing.T) {
 func TestRunsOnPassShape(t *testing.T) {
 	src := chstoreSources(t)["topology.go"]
 	for needle, why := range map[string]string{
-		"topology bucket runs-on pass":       "4. pass hiç yok",
-		"has(res_keys, 'k8s.node.name')":     "boş-küme süzgeci yok — alan akmayan kurulumda tüm span'ler taranır",
-		"'runs_on'            AS protocol":   "protokol damgası yok",
+		"topology bucket runs-on pass":     "4. pass hiç yok",
+		"has(res_keys, 'k8s.node.name')":   "boş-küme süzgeci yok — alan akmayan kurulumda tüm span'ler taranır",
+		"'runs_on'            AS protocol": "protokol damgası yok",
 		// Çocuk ID öneki SABİTTEN türer (nodeIDPrefix) — kaynakta literal
 		// değil sabit-kullanımı aranır: derleyici yazımı zaten kilitliyor,
 		// bu iğne yalnız birinin sabiti literale çevirmesini yakalar.
-		"nodeIDPrefix+`', node_name)": "çocuk ID öneki sözlük sabitinden türemiyor",
+		"nodeIDPrefix+`', node_name)":        "çocuk ID öneki sözlük sabitinden türemiyor",
 		"topK(5)(pod)         AS top_labels": "pod etiketi düşmüş — operatörün 'hangi pod' sorusu cevapsız kalır",
 	} {
 		if !strings.Contains(src, needle) {

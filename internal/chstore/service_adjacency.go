@@ -202,3 +202,47 @@ func (s *Store) GetServiceAdjacencyWeighted(
 	}
 	return out, rows.Err()
 }
+
+// RunsOnPlacement — bir servisin bir k8s node'una yerleşimi (RUNS_ON
+// kenarından; v0.10.94 dikey eksen dilim ②).
+type RunsOnPlacement struct {
+	Service string
+	Node    string // önek soyulmuş node adı
+}
+
+// GetRunsOnPlacements — penceredeki (servis, node) yerleşim çiftleri.
+// Adjacency okumalarının tam TERSİ kapsam: yalnız RUNS_ON kenarları
+// (startsWith node:). Aynı MV, aynı sınırlar; kenar yoksa boş küme —
+// dikey eksen adaylığı sessizce devre dışı kalır.
+func (s *Store) GetRunsOnPlacements(ctx context.Context, since time.Duration) ([]RunsOnPlacement, error) {
+	if since <= 0 {
+		since = time.Hour
+	}
+	bucketStart := time.Now().Add(-since).Truncate(5 * time.Minute)
+	rows, err := s.conn.Query(ctx, `
+		SELECT parent_service, child_node
+		FROM topology_edges_5m FINAL
+		WHERE time_bucket >= ?
+		  AND startsWith(child_node, '`+nodeIDPrefix+`')
+		GROUP BY parent_service, child_node
+		ORDER BY parent_service, child_node
+		LIMIT 20000
+		SETTINGS max_execution_time = 10`, bucketStart)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RunsOnPlacement
+	for rows.Next() {
+		var svc, child string
+		if err := rows.Scan(&svc, &child); err != nil {
+			return nil, err
+		}
+		kind, name := TopologyNodeIdentity(child)
+		if svc == "" || kind != NodeKindNode || name == "" {
+			continue
+		}
+		out = append(out, RunsOnPlacement{Service: svc, Node: name})
+	}
+	return out, rows.Err()
+}

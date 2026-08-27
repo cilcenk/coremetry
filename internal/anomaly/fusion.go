@@ -88,6 +88,9 @@ type evidenceInputs struct {
 	// weightedAdjacency carries per-edge calls/errors so the root-cause
 	// propagation ranking (Faz 6) can score downstream suspects.
 	weightedAdjacency []chstore.ServiceEdgePair
+	// runsOn (v0.10.94, dikey eksen dilim ②) — servis→node yerleşimleri;
+	// aynı-node kök-neden adaylığının girdisi. Kenar akmıyorsa boş.
+	runsOn []chstore.RunsOnPlacement
 }
 
 // gatherEvidenceInputs reads the four evidence sources. Best-effort: any read
@@ -111,6 +114,9 @@ func gatherEvidenceInputs(ctx context.Context, store *chstore.Store) evidenceInp
 	}
 	if a, err := store.GetServiceAdjacencyWeighted(ctx, evidenceWindow); err == nil {
 		in.weightedAdjacency = a
+	}
+	if r, err := store.GetRunsOnPlacements(ctx, evidenceWindow); err == nil {
+		in.runsOn = r
 	}
 	return in
 }

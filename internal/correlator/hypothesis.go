@@ -306,13 +306,21 @@ func Synthesize(
 			if nb.Service == "" || nb.Score <= 0 {
 				continue
 			}
+			reason := fmt.Sprintf("downstream dependency — %.0f%% of error share, %d-hop",
+				nb.Score*100, nb.Hops)
+			if nb.Kind == chstore.NodeKindNode {
+				// v0.10.94 — dikey eksen adayı: skor hata payı değil,
+				// aynı node'daki alarmda-komşu oranı; cümle onu söyler.
+				reason = fmt.Sprintf("same-node placement — %.0f%% of co-tenant services also firing",
+					nb.Score*100)
+			}
 			cands = append(cands, chstore.ScoredCause{
 				Service: nb.Service,
 				Score:   propTierBase * nb.Score,
 				Hops:    nb.Hops,
 				Path:    nb.Path,
-				Reason: fmt.Sprintf("downstream dependency — %.0f%% of error share, %d-hop",
-					nb.Score*100, nb.Hops),
+				Kind:    nb.Kind,
+				Reason:  reason,
 			})
 		}
 	}

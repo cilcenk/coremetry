@@ -251,8 +251,11 @@ func (s *Store) dropTraceDayPartition(ctx context.Context, day string) error {
 	if s.clusterMode() {
 		target = "trace_summary_5m_local"
 	}
+	// purgeGuard (v0.10.110): prod'da tek günün state partition'ı 50 GB
+	// max_partition_size_to_drop sınırını aşabilir — guard'sız DROP 359
+	// basar ve merdiven yanlışlıkla "kaynak hatası" sanıp basamak düşer.
 	return s.conn.Exec(ctx,
-		"ALTER TABLE "+target+s.onCluster()+" DROP PARTITION '"+day+"'")
+		"ALTER TABLE "+target+s.onCluster()+" DROP PARTITION '"+day+"'"+purgeGuard)
 }
 
 // backfillDaySlices — günü sabit boy dilimlerle kurar; ilk hatada durur.

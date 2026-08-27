@@ -316,7 +316,12 @@ function ToolEvidence({ d }: { d: ChatStepDetail }) {
       ) : (
         <pre className="mono" style={{
           margin: 0, maxHeight: 220, overflow: 'auto',
-          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          // v0.10.79 — break-word uzun TEK token'da (nitelikli Java adı)
+        // flex min-content'e yenilebiliyor; anywhere kırmayı garantiler.
+        // Sarma YENİ bir düğümle değil mevcut stile eklendi: araya blok
+        // kutu koymak akış imlecini alt satıra atıyordu ve
+        // ChatBubble.render.test.tsx bunu yakaladı (imleç SPAN'a yapışık).
+        whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere',
           fontSize: 10, color: 'var(--text2)',
         }}>{view.text || '(boş)'}</pre>
       )}

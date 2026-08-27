@@ -40,6 +40,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/ldap"
 	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/mcp"
+	"github.com/cilcenk/coremetry/internal/mcpclient"
 	"github.com/cilcenk/coremetry/internal/notify"
 	"github.com/cilcenk/coremetry/internal/otlp"
 	"github.com/cilcenk/coremetry/internal/pipeline"
@@ -197,6 +198,10 @@ type Server struct {
 	// testi. Repo eşleme ve kod-inceleme sonraki dilim, dolayısıyla
 	// bu istemcinin henüz tüketicisi yok. nil-safe.
 	devops *devops.Service
+
+	// mcpClient — dış MCP sunucularının istemci servisi (v0.10.87,
+	// dilim ②). Şimdilik ayar katmanı; sohbet köprüsü dilim ③. nil-safe.
+	mcpClient *mcpclient.Service
 
 	// cluster — per-pod heartbeat / membership service (v0.5.253).
 	// Always non-nil when Set; the service degenerates to a single-
@@ -359,6 +364,13 @@ func (s *Server) SetVMetrics(v *vmetrics.Service) {
 // URL. Connection layer only — no reader consumes it yet.
 func (s *Server) SetDevOps(d *devops.Service) {
 	s.devops = d
+}
+
+// SetMCPClient — dış MCP istemci servisini bağlar (v0.10.87). main()
+// her zaman non-nil verir; handler'lar yine de nil'e dayanıklı (unit
+// testlerin kısmi kurulumu boş snapshot görür, çökmez).
+func (s *Server) SetMCPClient(m *mcpclient.Service) {
+	s.mcpClient = m
 }
 
 // SetCluster wires the per-pod heartbeat / membership service
@@ -1186,6 +1198,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Azure DevOps / TFS bağlantısı (v0.9.829) — admin-only: kayıtlı
 	// PAT operatörün tüm koleksiyonunu okur. Test ucu kaydetmeden
 	// dener, sonucu {ok,error} olarak 200 ile döner.
+	s.registerMCPClientRoutes(mux) // v0.10.87 — dış MCP sunucu listesi, mcp_client_routes.go
 	mux.HandleFunc("GET  /api/settings/devops", auth.RequireRole(auth.RoleAdmin, s.getDevOpsSettings))
 	mux.HandleFunc("PUT  /api/settings/devops", auth.RequireRole(auth.RoleAdmin, s.putDevOpsSettings))
 	mux.HandleFunc("POST /api/settings/devops/test", auth.RequireRole(auth.RoleAdmin, s.testDevOpsSettings))

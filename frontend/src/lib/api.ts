@@ -1,4 +1,5 @@
 import type {
+  McpServersSnapshot, McpServerInput, McpServerTestResult,
   PurgeResult,
   Service, ServiceEdge, TracesResponse, TracesExtrasResponse, TraceDetailResponse,
   LogsResponse, LogFieldStats, NotificationLogEntry, MetricInfo, MetricNameSearchResult,
@@ -1546,6 +1547,21 @@ export const api = {
     }),
   testDevOpsSettings: (s: DevOpsSettingsInput) =>
     request<DevOpsTestResult>(`/api/settings/devops/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }),
+  // v0.10.87 — dış MCP sunucu listesi. DevOps sözleşmesinin aynısı:
+  // GET sırsız (hasToken), PUT'ta boş/"********" token saklıyı korur,
+  // test ucu kaydetmeden TEK sunucuyu prova eder ve başarısız bağlantı
+  // {ok:false,error} ile 200 döner.
+  getMcpServers: () => get<McpServersSnapshot>(`/api/settings/mcp-servers`),
+  putMcpServers: (servers: McpServerInput[]) =>
+    request<McpServersSnapshot>(`/api/settings/mcp-servers`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ servers }),
+    }),
+  testMcpServer: (s: McpServerInput) =>
+    request<McpServerTestResult>(`/api/settings/mcp-servers/test`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
     }),

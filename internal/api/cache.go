@@ -526,6 +526,16 @@ func (s *Server) reloadConfigOnSignal(ctx context.Context, svc string) {
 				log.Printf("[cache] config-reload devops: %v", err)
 			}
 		}
+	// v0.10.87 — dış MCP sunucu listesi. Case uçla AYNI sürümde
+	// (thanos v0.9.237 dersi: dinleyicisiz publish peer pod'ları 30s
+	// poll'a bırakır — burada bedeli modelin ESKİ dış tool listesiyle
+	// konuşması olurdu).
+	case "mcpclient":
+		if s.mcpClient != nil {
+			if err := s.mcpClient.LoadPersisted(ctx, s.store); err != nil {
+				log.Printf("[cache] config-reload mcpclient: %v", err)
+			}
+		}
 	// v0.9.233 — custom roles had no reload case, and the gap failed OPEN.
 	// userPayload only emits customRolePages when CustomRolePages(name)
 	// returns non-nil; a peer pod that hasn't polled yet returns nil, the

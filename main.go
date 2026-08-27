@@ -31,6 +31,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/correlator"
 	"github.com/cilcenk/coremetry/internal/devops"
+	"github.com/cilcenk/coremetry/internal/mcpclient"
 	"github.com/cilcenk/coremetry/internal/elasticml"
 	"github.com/cilcenk/coremetry/internal/evaluator"
 	"github.com/cilcenk/coremetry/internal/ldap"
@@ -1025,6 +1026,12 @@ func main() {
 		log.Printf("[devops] load persisted config: %v", err)
 	}
 	go devopsSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	// v0.10.87 — dış MCP sunucu istemcisi (devops bloğuyla aynı desen).
+	mcpCliSvc := mcpclient.NewService()
+	if err := mcpCliSvc.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[mcpclient] load persisted config: %v", err)
+	}
+	go mcpCliSvc.StartConfigRefresh(ctx, store, 30*time.Second)
 	if tempoSvc.Configured() {
 		t := tempoSvc.Snapshot()
 		log.Printf("[tempo] external backend enabled (baseUrl=%s authType=%s orgId=%s)",
@@ -1189,6 +1196,7 @@ func main() {
 	srv.SetThanos(thanosSvc)
 	srv.SetVMetrics(vmSvc)
 	srv.SetDevOps(devopsSvc)
+	srv.SetMCPClient(mcpCliSvc)
 	// Cross-pod L1 cache invalidation (v0.5.337). Subscribes
 	// to the Redis pub/sub channel so a putBranding /
 	// putTempoSettings / etc. on one pod evicts the cached

@@ -265,6 +265,11 @@ func SplitPrefixed(name string) (server, tool string, ok bool) {
 	return name[:i], name[i+len(prefixSep):], true
 }
 
+// SanitizedName — sanitizeServerName'in dışa açık yüzü: api katmanının
+// token-merge eşlemesi Registry'yle AYNI kimliği kullanmak zorunda
+// (iki ayrı yazım, aynı sunucuya iki kimlik demekti).
+func SanitizedName(name string) string { return sanitizeServerName(name) }
+
 // sanitizeServerName — ayar adını önek-güvenli biçime indirger:
 // küçük harf, [a-z0-9-] dışı her şey '-'. Alt çizgi de '-' olur —
 // önekteki "__" ayracının tekliği buna dayanıyor.

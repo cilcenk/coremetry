@@ -21,6 +21,7 @@ export const SETTINGS_TAB_INDEX: SettingsTabRef[] = [
   { slug: 'kibana', label: 'Kibana link' },
   { slug: 'log-bridge', label: 'Log köprüsü' },
   { slug: 'devops', label: 'Kod entegrasyonu' },
+  { slug: 'mcp-servers', label: 'MCP sunucuları' },
   { slug: 'ldap', label: 'LDAP / AD' },
   { slug: 'sso', label: 'SSO presets' },
   { slug: 'retention', label: 'Data retention' },

@@ -219,3 +219,23 @@ func TestChatPromptPromisesNoAbsentInput(t *testing.T) {
 			"önsöze bağlanamaz")
 	}
 }
+
+// ── v0.10.99 — AYNI DEĞER İKİ ETİKETLE TEKRARLANMAZ ────────────────────
+//
+// Operatör: "request_id ve channel yazıyorsun, tekrar korelasyon ID
+// yazmaya gerek yok — ezilsin." Şablonun "any request/correlation IDs"
+// satırı modele aynı CRC değerini iki başlıkta bastırıyordu.
+func TestTracePromptForbidsDuplicateIDLine(t *testing.T) {
+	p := SystemPromptTrace()
+	if strings.Contains(p, "correlation IDs worth searching") {
+		t.Error("şablon hâlâ ayrı korelasyon-ID satırı istiyor — kopya geri gelir")
+	}
+	if !strings.Contains(flat(p), "must never repeat under another") {
+		t.Error("kopya-yasağı cümlesi yok — model aynı değeri iki etiketle basar")
+	}
+	// Taban paylaşılan: kodlu varyant da aynı yasağı taşımalı
+	// ([[feedback-fixes-have-second-halves]] — taban+ek deseni bunu bedava verir).
+	if !strings.Contains(flat(SystemPromptTraceWithCode()), "must never repeat under another") {
+		t.Error("kodlu trace prompt'u yasağı kaybetmiş — taban ayrışmış olabilir")
+	}
+}

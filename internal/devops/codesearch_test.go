@@ -354,3 +354,62 @@ func TestSearchURLPinsAPIVersion70(t *testing.T) {
 		t.Fatalf("kod arama api-version 7.0 olmalı (on-prem tavanı): %s", u)
 	}
 }
+
+// ── v0.10.100 — hata-kodu aramasının sözleşmeleri ───────────────────────
+func TestHuntErrorCodeWindows(t *testing.T) {
+	body := "line1\nthrow new CoreException(\"Acme.X.CustomerCardsNoFlag\");\nline3\nline4"
+	search := func(_ context.Context, q string) ([]CodeSearchHit, error) {
+		if q != "CustomerCardsNoFlag" {
+			t.Errorf("sorgu token'ın kendisi olmalı: %q", q)
+		}
+		return []CodeSearchHit{
+			{Project: "P", Repository: "", Path: "$/P/old/X.cs"}, // TFVC elenir
+			{Project: "FIN", Repository: "financial-core", Path: "/src/Svc/X.cs", Branch: "release"},
+		}, nil
+	}
+	var gotPrj string
+	fetchIn := func(_ context.Context, prj, repo, br, pth string) (string, error) {
+		gotPrj = prj
+		return body, nil
+	}
+	out, notes := huntErrorCodeWindows(context.Background(),
+		[]string{"CustomerCardsNoFlag"}, []string{"release", "master"}, 5, search, fetchIn)
+	if len(out) != 1 {
+		t.Fatalf("pencere=%d: %v", len(out), notes)
+	}
+	w := out[0]
+	// Pencere token'ın İLK geçtiği satıra merkezlenir — uzantı fark etmez.
+	if w.Line != 2 || !strings.Contains(w.Content, "CustomerCardsNoFlag") {
+		t.Errorf("satır=%d içerik=%q", w.Line, w.Content)
+	}
+	// Çapraz-proje çekimi + başka-depo etiketi (operatör yolu kendi
+	// deposunda aramasın).
+	if gotPrj != "FIN" || !strings.HasPrefix(w.Path, "financial-core:") {
+		t.Errorf("proje/etiket: prj=%q path=%q", gotPrj, w.Path)
+	}
+	if w.Frame != "hata kodu: CustomerCardsNoFlag" {
+		t.Errorf("frame etiketi: %q", w.Frame)
+	}
+	if len(notes) == 0 || !strings.Contains(notes[len(notes)-1], "dil-bağımsız") {
+		t.Errorf("künye yok: %v", notes)
+	}
+}
+
+func TestHuntErrorCodeWindowsFailureIsReported(t *testing.T) {
+	_, notes := huntErrorCodeWindows(context.Background(), []string{"SomethingLong"},
+		nil, 5,
+		func(context.Context, string) ([]CodeSearchHit, error) { return nil, errSearchProbe },
+		func(context.Context, string, string, string, string) (string, error) { return "", nil })
+	if len(notes) == 0 || !strings.Contains(notes[0], "hata-kodu araması başarısız") {
+		t.Errorf("arama hatası künyeye yazılmadı: %v", notes)
+	}
+}
+
+// Ulaşılabilirlik: av FetchCode'dan gerçekten çağrılıyor
+// ([[feedback-tested-but-unreachable]]).
+func TestErrorCodeHuntIsReachable(t *testing.T) {
+	src := readDevopsSource(t, "code.go")
+	if !strings.Contains(src, "huntErrorCodeWindows(ctx, errTokens") {
+		t.Error("hata-kodu avı FetchCode'dan çağrılmıyor — ölü yol")
+	}
+}

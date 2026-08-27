@@ -406,3 +406,69 @@ func huntSearchWindows(
 	}
 	return out, notes
 }
+
+// errCodeSearchLimit — hata-kodu token'ı başına değil TOPLAM arama tavanı.
+// Frame aramasıyla aynı gerekçe (codeSearchLimit): arama pahalı, asıl
+// kanıt pencereleri başka yoldan da geliyor.
+const errCodeSearchLimit = 2
+
+// huntErrorCodeWindows — hata-kodu token'larıyla DİL-BAĞIMSIZ organizasyon
+// araması (v0.10.100). Frame aramasından farkı: sorgu bir sınıf.metot değil
+// hata kodunun kendisi, hedef satır da frame'in satırı değil token'ın
+// dosyada İLK geçtiği satır — uzantı ne olursa olsun (.cs dahil) fırlatan
+// satırın çevresi pencerelenir.
+func huntErrorCodeWindows(
+	ctx context.Context,
+	tokens []string,
+	branchOrder []string,
+	radius int,
+	search func(context.Context, string) ([]CodeSearchHit, error),
+	fetchIn func(ctx context.Context, project, repo, branch, path string) (string, error),
+) ([]CodeWindow, []string) {
+	var out []CodeWindow
+	var notes []string
+	tried := 0
+	for _, tok := range tokens {
+		if tried >= errCodeSearchLimit || ctx.Err() != nil {
+			break
+		}
+		tried++
+		hits, err := search(ctx, tok)
+		if err != nil {
+			notes = append(notes, "hata-kodu araması başarısız: "+firstLine(err.Error()))
+			return out, notes
+		}
+		// Boş frame: paket-yolu bonusu yok; TFVC eleme + branş rütbesi +
+		// deterministik kuyruk aynen işler.
+		h, ok := PickSearchHit(hits, "", stackparse.Frame{}, branchOrder)
+		if !ok {
+			continue
+		}
+		body, ferr := fetchIn(ctx, h.Project, h.Repository, h.Branch, h.Path)
+		if ferr != nil || strings.TrimSpace(body) == "" {
+			continue
+		}
+		line := 0
+		for i, ln := range strings.Split(body, "\n") {
+			if strings.Contains(ln, tok) {
+				line = i + 1
+				break
+			}
+		}
+		if line == 0 {
+			continue // arama gövde eşleşmesi vermiş olabilir; satır yoksa pencere yok
+		}
+		w := WindowAround(body, line, radius)
+		if w.Content == "" {
+			continue
+		}
+		w.Line = line
+		w.Frame = "hata kodu: " + tok
+		w.Path = h.Repository + ":" + h.Path
+		out = append(out, w)
+	}
+	if len(out) > 0 {
+		notes = append(notes, fmt.Sprintf("%d pencere hata-kodu aramasıyla bulundu (dil-bağımsız)", len(out)))
+	}
+	return out, notes
+}

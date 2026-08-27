@@ -125,3 +125,42 @@ func sortedKeysBool(m map[string]bool) []string {
 	sort.Strings(out)
 	return out
 }
+
+// ErrorCodeTokens — hata METNİNDEKİ nitelikli kimliklerin SON parçasından
+// dil-bağımsız arama token'ları (v0.10.100, operatör-raporlu "Aslında kod
+// var"): hata zinciri Java'dan .NET'e geçince fırlatan kod .cs dosyasında
+// yaşıyor ve frame-türevi .java araması onu YAPISAL olarak bulamaz. Hata
+// kodunun kendisi ("…CustomerCardsNoCreditCardSmFlag" gibi) ise dilden
+// bağımsız: kodu fırlatan satır o token'ı içerir ve org araması onu her
+// uzantıda bulur.
+//
+// Seçicilik bilinçli sıkı: SON parça, BüyükHarfle başlar, içinde küçük
+// harf taşır (CamelCase — SABİT_YAZIM kimlikleri ve kısaltmalar elenir)
+// ve ≥8 karakterdir; ilk görülme sırası korunur, tavan 3. Gevşek bir
+// süzgeç org aramasını gürültüye boğar — yanlış kanıt, kanıt yokluğundan
+// kötü (PickSearchHit başlığındaki ders).
+func ErrorCodeTokens(text string) []string {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range qualifiedIDRe.FindAllStringSubmatch(text, -1) {
+		parts := strings.Split(m[1], ".")
+		last := parts[len(parts)-1]
+		if len(last) < 8 || last[0] < 'A' || last[0] > 'Z' {
+			continue
+		}
+		if strings.ToUpper(last) == last { // küçük harf yok → sabit/kısaltma
+			continue
+		}
+		if !seen[last] {
+			seen[last] = true
+			out = append(out, last)
+			if len(out) == 3 {
+				break
+			}
+		}
+	}
+	return out
+}

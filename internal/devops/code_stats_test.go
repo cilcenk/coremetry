@@ -348,7 +348,7 @@ func TestFetchCodeRecordsOutcome(t *testing.T) {
 
 			svc := New()
 			svc.Configure(cfg)
-			cc := svc.FetchCode(context.Background(), tt.repo, tt.hint, tt.frames, nil)
+			cc := svc.FetchCode(context.Background(), tt.repo, tt.hint, tt.frames, nil, nil)
 			got := svc.CodeObservability()
 			if got.Attempts != 1 {
 				t.Fatalf("Attempts=%d, istenen 1 — her çağrı TAM BİR kez sayılmalı", got.Attempts)
@@ -394,7 +394,7 @@ func TestFetchCodeCountsEveryCall(t *testing.T) {
 		"\tat com.example.card.CardDetailBusiness.handle(CardDetailBusiness.java:246)\n")
 
 	for i := 0; i < 3; i++ {
-		svc.FetchCode(context.Background(), "core-service", ProjectHint{}, frames, nil)
+		svc.FetchCode(context.Background(), "core-service", ProjectHint{}, frames, nil, nil)
 	}
 	got := svc.CodeObservability()
 	if got.Attempts != 3 || got.OK != 3 {

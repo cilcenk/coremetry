@@ -373,7 +373,7 @@ func evictOldest(m map[string]treeEntry) {
 // bir "ok" değil.
 // refs (v0.10.73) — hata METNİNİN andığı kaynak dosya adayları
 // (stackparse.ResourceRefs). Boş geçilebilir: kaynak avı atlanır.
-func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, frames []stackparse.Frame, refs []stackparse.ResourceRef) (out CodeContext) {
+func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, frames []stackparse.Frame, refs []stackparse.ResourceRef, errTokens []string) (out CodeContext) {
 	class := CodeOther
 	// v0.10.85 — cfg defer'den ÖNCE bildiriliyor ki link YÜRÜRLÜKTEKİ
 	// yapılandırmayla kurulsun: pickProject / organizasyon araması
@@ -541,6 +541,31 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 		hunt.windows = append(hunt.windows, sw...)
 		for _, n := range snotes {
 			note = withNote(note, n)
+		}
+		// v0.10.100 — hata-kodu token'larıyla dil-bağımsız av: hata
+		// zinciri başka DİLDEKİ bir servise iniyorsa (.cs fırlatıcı)
+		// frame-türevi .java araması yapısal olarak ıskalar; kodu
+		// fırlatan satır hata kodunun KENDİSİNİ içerir.
+		if len(errTokens) > 0 {
+			ew, enotes := huntErrorCodeWindows(ctx, errTokens,
+				s.ResolveConfig().withDefaults().BranchOrder, codeWindowRadius,
+				func(c context.Context, q string) ([]CodeSearchHit, error) {
+					return SearchCode(c, cli, cfg, q)
+				},
+				func(c context.Context, prj, rp, br, pth string) (string, error) {
+					if br == "" {
+						br = branch
+					}
+					pcfg := cfg
+					if strings.TrimSpace(prj) != "" {
+						pcfg.Project = prj
+					}
+					return fetchItemContent(c, cli, pcfg, ver, rp, br, pth)
+				})
+			hunt.windows = append(hunt.windows, ew...)
+			for _, n := range enotes {
+				note = withNote(note, n)
+			}
 		}
 	}
 

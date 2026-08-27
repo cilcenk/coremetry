@@ -2823,8 +2823,19 @@ func (s *Store) migrate(ctx context.Context) error {
 	// kurulduğundan İLK boot false kalabilir: okumalar o süreçte ESKİ
 	// zinciri kullanır (davranış bit-bit eski, 500 yok), sonraki boot
 	// true'ya döner — kendini iyileştiren pencere, sessiz değil (log).
-	esRows, esErr := s.conn.Query(ctx, `SELECT entry_service_state FROM trace_summary_5m LIMIT 1 SETTINGS max_execution_time = 3`)
-	maybeCloseRows(esRows, esErr)
+	// v0.10.111 — probe KOLON VARLIĞINI ölçer, sürücü çözülebilirliğini
+	// DEĞİL. 10.97'nin şekli (SELECT entry_service_state … LIMIT 1) ham
+	// state kolonunu tele bindiriyordu; clickhouse-go AggregateFunction
+	// tipini hiçbir sürümde çözemez → probe HER kümede false kalıyor ve
+	// 'unknown' düşüşü hiç açılmıyordu (lokalde ölçüldü: "unsupported
+	// column type AggregateFunction(argMinIf, String, DateTime64(9),
+	// UInt8)"). Korunan okumaların hepsi sunucu tarafında argMinIfMerge
+	// ile finalize eder — ihtiyaçları kolonun ŞEMADA olması (code 47
+	// yememek), teleden çözülebilmesi değil. system.columns metadata
+	// okumasıdır: veri hacminden bağımsız, yoğun kümede 3s cap'in
+	// yanlış-false ürettiği v0.5.388 sınıfına da kapalı.
+	var esOne uint8
+	esErr := s.conn.QueryRow(ctx, `SELECT 1 FROM system.columns WHERE database = currentDatabase() AND table = 'trace_summary_5m' AND name = 'entry_service_state' LIMIT 1 SETTINGS max_execution_time = 3`).Scan(&esOne)
 	s.hasTraceEntrySvcCol = esErr == nil
 	if !s.hasTraceEntrySvcCol {
 		log.Printf("[chstore] `entry_service_state` not readable on trace_summary_5m (%v) — /traces kök-servis 'unknown' düşüşü bu süreçte devre dışı (eski davranış)", esErr)

@@ -2,6 +2,7 @@ package chstore
 
 import (
 	"context"
+	"log"
 	"fmt"
 	"strings"
 	"time"
@@ -61,23 +62,54 @@ func (s *Store) TraceBackfillPreflight(ctx context.Context, days int) ([]TraceBa
 	if days <= 0 || days > 30 {
 		days = 30
 	}
-	src := "system.parts"
-	spansT, mvT := "'spans'", "'trace_summary_5m'"
+	// v0.10.106 (lokal smoke'un yakaladığı ürün hatası): TO'suz bir
+	// MaterializedView'ın system.parts'ta KENDİ satırı YOKTUR — veri
+	// gizli `.inner_id.<uuid>` tablosunda durur. MV adını saymak
+	// mv_rows'u ebediyen 0 gösterir ve sihirbaz DOLU günleri de
+	// "boşluk" diye yıkıcı yeniden-doluma önerir (prod'da boşa iş).
+	// İç adlar uuid'den çözülür (mvInnerTable/innerName ailesinin
+	// deseni); cluster'da her replica'nın uuid'i farklı olabilir,
+	// fan-out'la HEPSİ toplanır.
+	inner, err := s.traceMVInnerNames(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("mv iç tablo çözümü: %w", err)
+	}
+	src, spansT := "system.parts", "spans"
 	if s.clusterMode() {
 		src = fmt.Sprintf("clusterAllReplicas('%s', system.parts)", s.ClusterName())
-		spansT, mvT = "'spans_local'", "'trace_summary_5m_local'"
+		spansT = "spans_local"
 	}
-	since := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+	mvNames := make([]string, 0, len(inner)+1)
+	mvNames = append(mvNames, inner...)
+	if len(mvNames) == 0 {
+		// Gelecekte TO-tablolu bir refactor iç ad üretmezse dürüst
+		// düşüş: MV adının kendisi (bugünkü şekilde daima 0 satır ama
+		// sorgu kırılmaz; boşluk hükmü "bilinmiyor"a değil "boş"a
+		// düşer ve log bunu söyler).
+		mvNames = append(mvNames, "trace_summary_5m")
+		log.Printf("[trace-backfill] MV iç tablosu çözülemedi — mv sayımı 0 görünecek")
+	}
+	ph := strings.Repeat("?,", len(mvNames))
+	ph = ph[:len(ph)-1]
+	args := []any{spansT}
+	for _, n := range mvNames {
+		args = append(args, n)
+	}
+	args = append(args, spansT)
+	for _, n := range mvNames {
+		args = append(args, n)
+	}
+	args = append(args, time.Now().AddDate(0, 0, -days).Format("2006-01-02"))
 	rows, err := s.conn.Query(ctx, `
 		SELECT partition AS day,
-		       sumIf(rows, table = `+spansT+`)  AS span_rows,
-		       sumIf(rows, table = `+mvT+`)     AS mv_rows
+		       sumIf(rows, table = ?)      AS span_rows,
+		       sumIf(rows, table IN (`+ph+`)) AS mv_rows
 		FROM `+src+`
 		WHERE database = currentDatabase()
-		  AND table IN (`+spansT+`, `+mvT+`)
+		  AND (table = ? OR table IN (`+ph+`))
 		  AND active AND partition >= ?
 		GROUP BY day ORDER BY day DESC
-		SETTINGS max_execution_time = 25`, since)
+		SETTINGS max_execution_time = 25`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -89,13 +121,41 @@ func (s *Store) TraceBackfillPreflight(ctx context.Context, days int) ([]TraceBa
 		if err := rows.Scan(&day, &spanRows, &mvRows); err != nil {
 			return nil, err
 		}
-		// Oran hükmü: MV satırı ham satırın en az %2'si olmalı — sağlıklı
-		// günlerde MV/spans oranı trace-başına-span'e bağlı (%5-20 tipik);
-		// upgrade sonrası tam boş gün 0'dır, kısmi gün de yakalanır.
 		out = append(out, TraceBackfillDay{
 			Day: day, SpanTraces: spanRows, MVTraces: mvRows,
 			Gap: spanRows > 0 && mvRows*50 < spanRows,
 		})
+	}
+	return out, rows.Err()
+}
+
+// traceMVInnerNames — trace_summary_5m'in gizli depolama tablo adları
+// (`.inner_id.<uuid>`). Cluster'da clusterAllReplicas fan-out'u: her
+// replica'nın kendi uuid'i olabilir, parts eşlemesi hepsini ister.
+func (s *Store) traceMVInnerNames(ctx context.Context) ([]string, error) {
+	src, name := "system.tables", "trace_summary_5m"
+	if s.clusterMode() {
+		src = fmt.Sprintf("clusterAllReplicas('%s', system.tables)", s.ClusterName())
+		name = "trace_summary_5m_local"
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT DISTINCT concat('.inner_id.', toString(uuid))
+		FROM `+src+`
+		WHERE database = currentDatabase() AND name = ?
+		  AND engine = 'MaterializedView'
+		  AND toString(uuid) != '00000000-0000-0000-0000-000000000000'
+		SETTINGS max_execution_time = 10`, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
 	}
 	return out, rows.Err()
 }

@@ -109,3 +109,30 @@ func TestBackfillLadderDescendsOnResourceErrors(t *testing.T) {
 		}
 	}
 }
+
+// v0.10.106 — preflight MV'nin GİZLİ iç tablosunu saymak zorunda:
+// TO'suz MV'nin system.parts satırı yoktur; MV adını saymak mv_rows'u
+// ebediyen 0 gösterir ve sihirbaz dolu günleri de yıkıcı yeniden-doluma
+// önerir (lokal smoke prod-öncesi yakaladı). Kaynak pini: çözüm
+// concat('.inner_id.' üzerinden ve parts eşlemesi IN listesiyle.
+func TestPreflightCountsHiddenInnerTable(t *testing.T) {
+	b, err := os.ReadFile("trace_backfill.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	for needle, why := range map[string]string{
+		"concat('.inner_id.', toString(uuid))": "iç tablo adı uuid'den çözülmüyor",
+		"traceMVInnerNames(ctx)":               "preflight iç-ad çözümünü çağırmıyor",
+		"table IN (":                           "parts eşlemesi iç-ad listesine bakmıyor",
+	} {
+		if !strings.Contains(src, needle) {
+			t.Errorf("%s (aranan: %q)", why, needle)
+		}
+	}
+	// MV adının DOĞRUDAN parts'ta sayılması yalnız dürüst-düşüş dalında
+	// kalabilir; sumIf'in MV adıyla eşleşen bir sabiti KALMAMALI.
+	if strings.Contains(src, "sumIf(rows, table = 'trace_summary_5m") {
+		t.Error("parts sayımı hâlâ MV adına sabitlenmiş — mv_rows 0 yalanı geri gelir")
+	}
+}

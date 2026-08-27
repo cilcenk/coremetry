@@ -159,6 +159,14 @@ func TestCodeAddendumDemandsAQuote(t *testing.T) {
 		if !strings.Contains(p, "kaynak çözülemedi") {
 			t.Error("eksik dosya için dürüst çıkış yolu yok — model uydurmaya itilir")
 		}
+		// v0.10.112 — kod istendi ama çözülemedi bloğu ve pencere-dışı
+		// imza etiketi prompt'ta tarif edilmeli; yoksa model bunları
+		// tanımsız girdi olarak okur.
+		for _, want := range []string{"KOD BAĞLAMI İSTENDİ — ÇÖZÜLEMEDİ", "imza (satır N, pencere dışı)", "NOT — kod bağlamı EKSİK"} {
+			if !strings.Contains(p, want) {
+				t.Errorf("prompt %q bloğunu tarif etmiyor", want)
+			}
+		}
 	}
 }
 

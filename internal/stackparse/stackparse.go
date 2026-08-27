@@ -23,6 +23,7 @@ package stackparse
 
 import (
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -52,6 +53,12 @@ type Frame struct {
 	// basar, kök neden ise EN DERİN segmenttedir; bu alan olmadan
 	// zincirdeki yer aşağı akışta geri kazanılamıyordu.
 	Segment int
+	// Tier — RankFrames damgası (v0.10.112): 0 = operatörün uygulama
+	// paket öneklerinden biriyle başlıyor, 1 = diğer (kurum-içi
+	// çerçeve, üçüncü parti kütüphane — IsApp ama önek listesinde
+	// değil). Yalnız RankFrames'in döndürdüğü kopyalarda anlamlı;
+	// ParseJava 0 bırakır.
+	Tier int
 }
 
 // javaAtRe — "    at <ref>(<source>)" satırı.
@@ -257,6 +264,96 @@ func AppFrames(frames []Frame, n int) []Frame {
 // locatableApp — bu frame için kod penceresi kurulabilir mi?
 func locatableApp(f Frame) bool {
 	return f.IsApp && f.File != "" && f.Line > 0
+}
+
+// HasAppPrefix — sınıf adı operatörün uygulama paket öneklerinden
+// biriyle mi başlıyor? ÖNEK eşleşmesi ("içeriyor" değil); boş/beyaz
+// önekler yok sayılır. Saf.
+func HasAppPrefix(class string, prefixes []string) bool {
+	if class == "" {
+		return false
+	}
+	for _, p := range prefixes {
+		p = strings.TrimSpace(p)
+		if p != "" && strings.HasPrefix(class, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// RankFrames — kod çekmenin aday listesi, UYGULAMA FRAME'İ ÖNCE
+// (v0.10.112). AppFrames'in üstüne bir birincil anahtar koyar:
+//
+//  1. Tier — appPrefixes'ten biriyle başlayan sınıf (0) önce, kalan
+//     uygulama frame'leri (1) sonra. Çerçeve/JDK frame'leri yine
+//     dışarıda; AMA operatörün açık öneki frameworkPrefixes'i EZER
+//     (org.apache.myco bir uygulama olabilir — açık ayar, sabit
+//     listeden güçlüdür).
+//  2. Segment — derin "Caused by" önce (v0.9.1235 sözleşmesi tier
+//     içinde aynen korunur).
+//  3. Metin sırası.
+//
+// appPrefixes boşsa (ya da yalnız boş dizeler taşıyorsa) sonuç
+// AppFrames ile BİRE BİR aynıdır: bugün çalışan hiçbir kurulumun
+// sırası değişmez; sıralama yalnız operatör önek yazınca devreye girer.
+//
+// Neden sıralama, süzme değil: kurum-içi çerçeve sınıfları (RestFilter,
+// BasicDispatcher…) bazen gerçekten hatanın atıldığı yerdir; onları
+// atmak kanıtı düşürür. Arkaya almak, tavanı önce iş sınıflarına
+// harcatır — iş sınıfı bulunamazsa sıra yine onlara gelir.
+func RankFrames(frames []Frame, n int, appPrefixes []string) []Frame {
+	if n <= 0 {
+		return nil
+	}
+	hasPrefixes := false
+	for _, p := range appPrefixes {
+		if strings.TrimSpace(p) != "" {
+			hasPrefixes = true
+			break
+		}
+	}
+	if !hasPrefixes {
+		return AppFrames(frames, n)
+	}
+	type cand struct {
+		f    Frame
+		tier int
+		idx  int
+	}
+	var cs []cand
+	for i, f := range frames {
+		if f.File == "" || f.Line <= 0 {
+			continue
+		}
+		app := HasAppPrefix(f.Class, appPrefixes)
+		if !app && !f.IsApp {
+			continue
+		}
+		tier := 1
+		if app {
+			tier = 0
+		}
+		f.Tier = tier
+		cs = append(cs, cand{f: f, tier: tier, idx: i})
+	}
+	sort.SliceStable(cs, func(a, b int) bool {
+		if cs[a].tier != cs[b].tier {
+			return cs[a].tier < cs[b].tier
+		}
+		if cs[a].f.Segment != cs[b].f.Segment {
+			return cs[a].f.Segment > cs[b].f.Segment
+		}
+		return cs[a].idx < cs[b].idx
+	})
+	out := make([]Frame, 0, n)
+	for _, c := range cs {
+		out = append(out, c.f)
+		if len(out) >= n {
+			break
+		}
+	}
+	return out
 }
 
 // String — "com.x.Y.m(Y.java:246)". Prompt'ta ve kaynak satırında

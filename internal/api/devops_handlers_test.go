@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -228,8 +229,12 @@ func TestDevOpsAuditDetails_NoSecrets(t *testing.T) {
 	// bir karar — açıldığında Coremetry organizasyonun TAMAMINDA kod
 	// aramaya başlıyor ve kanıt olarak başka depoların dosyalarını
 	// gösteriyor. Kimin ne zaman açtığı izde durmalı.
+	// appPrefixes / codeLookupLimit v0.10.112: önek listesi hangi
+	// dosyanın ÖNCE kanıt olacağını, tavan kaç dosyanın kanıt olabileceğini
+	// değiştirir — repoPrefixes ile aynı sınıf, izde durmalı.
 	want := []string{"baseUrl", "collection", "project", "flavor", "hasPat",
-		"insecureSkipVerify", "repoPrefixes", "branchOrder", "codeSearch"}
+		"insecureSkipVerify", "repoPrefixes", "branchOrder", "codeSearch",
+		"appPrefixes", "codeLookupLimit"}
 	if len(got) != len(want) {
 		t.Errorf("audit keys = %v, want exactly %v", keysOf(got), want)
 	}
@@ -338,4 +343,47 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestMergeDevOpsSettings_AppPrefixesAndLookupLimit — v0.10.112: uygulama
+// önekleri konvansiyon listesi gibi temizlenir (boşlar düşer, hiç
+// kalmazsa nil = "ayar yok"); tavan 0 kalır (varsayılan demek), negatif
+// 0'a, üst sınır devops.MaxCodeLookupLimit'e sıkışır.
+func TestMergeDevOpsSettings_AppPrefixesAndLookupLimit(t *testing.T) {
+	cases := []struct {
+		name       string
+		prefixes   []string
+		limit      int
+		wantPrefix []string
+		wantLimit  int
+	}{
+		{"boş", nil, 0, nil, 0},
+		{"temizlenir", []string{" com.banka.odeme. ", "", "com.banka.kart."}, 8, []string{"com.banka.odeme.", "com.banka.kart."}, 8},
+		{"yalnız boşluk → nil", []string{"  ", ""}, 0, nil, 0},
+		{"negatif → 0", nil, -3, nil, 0},
+		{"tavan üstü sıkışır", nil, 999, nil, devops.MaxCodeLookupLimit},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			in := devopsSettingsInput{BaseURL: "https://tfs.example.local", AppPrefixes: c.prefixes, CodeLookupLimit: c.limit}
+			cfg, bad := mergeDevOpsSettings(in, baseCur())
+			if bad != "" {
+				t.Fatalf("beklenmeyen ret: %s", bad)
+			}
+			if !reflect.DeepEqual(cfg.AppPrefixes, c.wantPrefix) {
+				t.Errorf("AppPrefixes=%v, istenen %v", cfg.AppPrefixes, c.wantPrefix)
+			}
+			if cfg.CodeLookupLimit != c.wantLimit {
+				t.Errorf("CodeLookupLimit=%d, istenen %d", cfg.CodeLookupLimit, c.wantLimit)
+			}
+		})
+	}
+	// Audit izi iki alanı da taşır (v0.9.830 gerekçesi: sıralamayı
+	// değiştiren ayar, her admin'in kanıtını değiştirir).
+	svc := devops.New()
+	svc.Configure(devops.Settings{BaseURL: "https://x", AppPrefixes: []string{"com.banka."}, CodeLookupLimit: 9})
+	det := string(devopsAuditDetails(svc.Snapshot()))
+	if !strings.Contains(det, `"appPrefixes":["com.banka."]`) || !strings.Contains(det, `"codeLookupLimit":9`) {
+		t.Errorf("audit detayı eksik: %s", det)
+	}
 }

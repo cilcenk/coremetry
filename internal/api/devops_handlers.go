@@ -44,6 +44,10 @@ type devopsSettingsInput struct {
 	// convention. Omitted or empty = keep the bundled defaults.
 	RepoPrefixes []string `json:"repoPrefixes"`
 	BranchOrder  []string `json:"branchOrder"`
+	// AppPrefixes / CodeLookupLimit (v0.10.112) — uygulama paket önekleri
+	// ve kod çekme deneme tavanı; gerekçe devops.Settings'te.
+	AppPrefixes     []string `json:"appPrefixes"`
+	CodeLookupLimit int      `json:"codeLookupLimit"`
 }
 
 // mergeDevOpsSettings validates the input and folds it over the
@@ -72,6 +76,8 @@ func mergeDevOpsSettings(in devopsSettingsInput, cur devops.Settings) (devops.Se
 		CodeSearch:         in.CodeSearch,
 		RepoPrefixes:       cleanConventionList(in.RepoPrefixes),
 		BranchOrder:        cleanConventionList(in.BranchOrder),
+		AppPrefixes:        cleanConventionList(in.AppPrefixes),
+		CodeLookupLimit:    devops.ClampCodeLookupLimit(in.CodeLookupLimit),
 	}
 	if cfg.Flavor == "" {
 		cfg.Flavor = devops.FlavorAuto
@@ -189,6 +195,8 @@ func devopsAuditDetails(snap devops.Snapshot) []byte {
 		"codeSearch":         snap.CodeSearch,
 		"repoPrefixes":       snap.RepoPrefixes,
 		"branchOrder":        snap.BranchOrder,
+		"appPrefixes":        snap.AppPrefixes,
+		"codeLookupLimit":    snap.CodeLookupLimit,
 	})
 	return b
 }

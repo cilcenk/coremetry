@@ -247,7 +247,13 @@ func isContextOverflowErr(err error) bool {
 func (s *Server) copilotExplainCode(r *http.Request, systemNoCode, systemWithCode, user string, cc devops.CodeContext) (string, error) {
 	block := cc.PromptBlock()
 	if block == "" {
-		return s.explainNoCode(r, systemNoCode, user, cc.LogMissSummary())
+		// v0.10.112 — KOD İSTENDİ, ÇÖZÜLEMEDİ → modele SÖYLENİR (operatör
+		// direktifi 2026-08-28; v0.9.1243'ün tersine, gerekçe
+		// CodeContext.MissingBlock'ta). System prompt kodlu varyant kalır:
+		// "kaynak çözülemedi" kuralı orada. Kayıt kopyası eskisi gibi
+		// yalnız ıska işaretini taşır — blok kod içermediği için maskeye
+		// gerek yok, ama kaydın sözleşmesi "[kod alınamadı: sınıf]".
+		return s.explainMissingCode(r, systemWithCode, user, cc)
 	}
 	out, err := s.explainWithCodeBlock(r, systemWithCode, user, block, cc.LogSummary())
 	if err == nil || !isContextOverflowErr(err) {
@@ -260,18 +266,28 @@ func (s *Server) copilotExplainCode(r *http.Request, systemNoCode, systemWithCod
 		// Kod BURADA vardı ama prompt'a sığmadı — taksonomideki bir
 		// çıkmaz değil, o yüzden sınıf değil gerekçe yazılıyor. Kayda
 		// "ıska" demek yine de doğru: bu SATIRIN prompt'unda kod yok.
-		return s.explainNoCode(r, systemNoCode, user,
+		// v0.10.112 — model de öğrenir: pencereler düşürülür, gerekçe
+		// MissingBlock'la gider (kodsuz system prompt: bağlam zaten dar).
+		dropped := devops.CodeContext{Repo: cc.Repo, Reason: "bağlam taşması — kod bloğu prompt'a sığmadı"}
+		return s.explainNoCode(r, systemNoCode, user+dropped.MissingBlock(),
 			devops.FormatCodeMissNote("", "bağlam taşması — kod bloğu prompt'a sığmadı"))
 	}
 	return s.explainWithCodeBlock(r, systemWithCode, user, hb, half.LogSummary())
 }
 
+// explainMissingCode (v0.10.112) — kod istendi, çözülemedi: gerçek
+// prompt = kodlu system + user + MissingBlock (kod yok, yalnız gerekçe);
+// kayıt kopyası = user + "[kod alınamadı: sınıf]" (v0.9.1243 sözleşmesi
+// aynen — /ai "hiç istenmedi"den ayırt edebilsin).
+func (s *Server) explainMissingCode(r *http.Request, systemWithCode, user string, cc devops.CodeContext) (string, error) {
+	return s.copilotExplainMasked(r, systemWithCode, user+cc.MissingBlock(), user+cc.LogMissSummary())
+}
+
 // explainNoCode — kodsuz çağrı + maskeli kayda ıska işareti.
 //
-// GERÇEK prompt'a dokunulmaz: işaret yalnız log kopyasına gider.
-// Modele "kod alınamadı" diye bir satır göndermek, olmayan bir kanıt
-// hakkında konuşmasına davetiye olurdu (kodsuz system prompt'unun
-// zaten sustuğu bir konu); kayıt ise tam tersine bunu bilmek zorunda.
+// v0.10.112 öncesi gerekçe ("modele 'kod alınamadı' demek olmayan kanıt
+// hakkında konuşmaya davetiye") yalnız kayıt için geçerli kaldı; gerçek
+// prompt'a ne gideceğine çağıran karar verir (MissingBlock).
 func (s *Server) explainNoCode(r *http.Request, system, user, missNote string) (string, error) {
 	if missNote == "" {
 		return s.copilotExplain(r, system, user)

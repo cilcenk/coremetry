@@ -1336,6 +1336,13 @@ export interface DevOpsSnapshot {
   branchOrder?: string[];
   /** Organizasyon geneli kod araması açık mı (v0.10.75). */
   codeSearch?: boolean;
+  /** v0.10.112 — uygulama paket önekleri; kod çekicisi bunları kurum-içi
+   *  çerçeve frame'lerinden ÖNCE dener. Boş = eski davranış. */
+  appPrefixes?: string[];
+  /** v0.10.112 — deneme tavanı (dosya çekimi); 0/yok = varsayılan. */
+  codeLookupLimit?: number;
+  /** Yürürlükteki tavan (varsayılan dahil) — kutu boşken de gösterilir. */
+  effectiveLookupLimit?: number;
 }
 export interface DevOpsSettingsInput {
   baseUrl: string;
@@ -1347,6 +1354,8 @@ export interface DevOpsSettingsInput {
   insecureSkipVerify?: boolean;
   repoPrefixes?: string[];
   branchOrder?: string[];
+  appPrefixes?: string[];
+  codeLookupLimit?: number;
 }
 // DevOpsResolveStep / DevOpsResolveDryRun (v0.9.1242) — "çözümü dene".
 //

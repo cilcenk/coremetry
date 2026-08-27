@@ -100,6 +100,50 @@ type Settings struct {
 	// snapshot, unlike the PAT — the secret contract is unchanged.
 	RepoPrefixes []string `json:"repoPrefixes,omitempty"`
 	BranchOrder  []string `json:"branchOrder,omitempty"`
+	// AppPrefixes (v0.10.112) — UYGULAMA paket önekleri
+	// ("com.banka.odeme.", "com.banka.kart."). Kod çekicisi bu öneklerle
+	// başlayan frame'leri kurum-içi çerçeve/kütüphane frame'lerinden
+	// ÖNCE dener (stackparse.RankFrames); deneme tavanı önce onlara
+	// harcanır. Boş = eski davranış (yalnız JDK/Spring/JBoss elenir,
+	// kalan her frame eşit).
+	AppPrefixes []string `json:"appPrefixes,omitempty"`
+	// CodeLookupLimit (v0.10.112) — bir açıklama için en fazla kaç
+	// dosya ÇEKİMİ denenir. 0 = varsayılan (DefaultCodeLookupLimit);
+	// [1, MaxCodeLookupLimit] aralığına sıkıştırılır (lookupLimit()).
+	CodeLookupLimit int `json:"codeLookupLimit,omitempty"`
+}
+
+// Deneme tavanı sınırları (v0.10.112). Varsayılan 6 = 3 pencere + 3
+// ıska payı (code.go codeLookupLimit gerekçesi); 30 = 60.000 yollu bir
+// ağaçta bile açıklamayı dakikalara sürüklemeyecek üst sınır
+// (codeFetchDeadline 25 sn zaten ikinci kapı).
+const (
+	DefaultCodeLookupLimit = 6
+	MaxCodeLookupLimit     = 30
+)
+
+// lookupLimit — yürürlükteki deneme tavanı; 0 → varsayılan, aşırı
+// değerler sıkıştırılır. Saf.
+func (c Settings) lookupLimit() int {
+	switch {
+	case c.CodeLookupLimit <= 0:
+		return DefaultCodeLookupLimit
+	case c.CodeLookupLimit > MaxCodeLookupLimit:
+		return MaxCodeLookupLimit
+	}
+	return c.CodeLookupLimit
+}
+
+// ClampCodeLookupLimit — PUT girdisi için tek yazım: 0 kalır (varsayılan
+// demek), negatif 0'a, tavan üstü tavana. Saf; handler ve test okur.
+func ClampCodeLookupLimit(n int) int {
+	switch {
+	case n <= 0:
+		return 0
+	case n > MaxCodeLookupLimit:
+		return MaxCodeLookupLimit
+	}
+	return n
 }
 
 // Snapshot is the public view returned by GET /api/settings/devops.
@@ -131,6 +175,12 @@ type Snapshot struct {
 	// out of a failed lookup would be "but what IS it stripping?".
 	RepoPrefixes []string `json:"repoPrefixes,omitempty"`
 	BranchOrder  []string `json:"branchOrder,omitempty"`
+	// AppPrefixes / CodeLookupLimit (v0.10.112) — olduğu gibi yankılanır;
+	// tavan 0 ise ekran "varsayılan 6" der, RESOLVED değer ayrıca
+	// EffectiveLookupLimit'te (kutu boşken bile yürürlükteki sayı görünsün).
+	AppPrefixes          []string `json:"appPrefixes,omitempty"`
+	CodeLookupLimit      int      `json:"codeLookupLimit,omitempty"`
+	EffectiveLookupLimit int      `json:"effectiveLookupLimit"`
 }
 
 // TestResult is the POST /api/settings/devops/test response.
@@ -302,18 +352,21 @@ func (s *Service) Snapshot() Snapshot {
 	defer s.mu.RUnlock()
 	rc := s.resolveConfigLocked()
 	return Snapshot{
-		BaseURL:            s.cfg.BaseURL,
-		Collection:         s.cfg.Collection,
-		Project:            s.cfg.Project,
-		Username:           s.cfg.Username,
-		HasPAT:             s.cfg.PAT != "",
-		Flavor:             s.cfg.Flavor,
-		InsecureSkipVerify: s.cfg.InsecureSkipVerify,
-		CodeSearch:         s.cfg.CodeSearch,
-		DetectedFlavor:     s.detFlavor,
-		DetectedAPIVersion: s.detVersion,
-		RepoPrefixes:       rc.RepoPrefixes,
-		BranchOrder:        rc.BranchOrder,
+		BaseURL:              s.cfg.BaseURL,
+		Collection:           s.cfg.Collection,
+		Project:              s.cfg.Project,
+		Username:             s.cfg.Username,
+		HasPAT:               s.cfg.PAT != "",
+		Flavor:               s.cfg.Flavor,
+		InsecureSkipVerify:   s.cfg.InsecureSkipVerify,
+		CodeSearch:           s.cfg.CodeSearch,
+		DetectedFlavor:       s.detFlavor,
+		DetectedAPIVersion:   s.detVersion,
+		RepoPrefixes:         rc.RepoPrefixes,
+		BranchOrder:          rc.BranchOrder,
+		AppPrefixes:          s.cfg.AppPrefixes,
+		CodeLookupLimit:      s.cfg.CodeLookupLimit,
+		EffectiveLookupLimit: s.cfg.lookupLimit(),
 	}
 }
 

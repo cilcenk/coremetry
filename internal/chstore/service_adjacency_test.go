@@ -182,8 +182,11 @@ func TestAdjacencyReadsAreNotNodeKindFiltered(t *testing.T) {
 	// (yükseltilmiş kapak + deterministik sıra) SQL dizesinde yaşıyor ve
 	// hiçbir tip denetimi görmüyor. Mutasyon testi bunları ilk turda
 	// PİNSİZ buldu — "eklediğim korumayı kimse tutmuyor" hâli.
-	if strings.Count(src, "LIMIT 20000") != 2 {
-		t.Error("iki adjacency okumasının kapağı da LIMIT 20000 olmalı.\n" +
+	// v0.10.94 — 2→3: GetRunsOnPlacements (dikey eksen dilim ②) aynı
+	// MV'yi aynı kapakla okuyan üçüncü sorgu. Sayı iddiası bilinçli:
+	// dördüncü okuma eklenirse buraya elle gelinip kapağı teyit edilecek.
+	if strings.Count(src, "LIMIT 20000") != 3 {
+		t.Error("bu dosyadaki üç topology_edges_5m okumasının kapağı da LIMIT 20000 olmalı.\n" +
 			"10000'e düşürmek, A4 genişlemesinden sonra kenarların bir\n" +
 			"kısmını sessizce düşürür — ve düşen kenar korelatörün tükettiği\n" +
 			"hata sinyalini taşıyan kenar olabilir")

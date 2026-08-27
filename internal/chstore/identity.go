@@ -72,6 +72,11 @@ const (
 // yazıcının concat'i ve çağrı-grafiği dışlaması hep buradan türer.
 const nodeIDPrefix = "node:"
 
+// NodeIDFor — bir k8s node adının topoloji düğüm ID'si. TEK yazım:
+// yazıcının concat'i, okuyucuların startsWith'i ve korelatörün aday
+// ID'si hep bu önekten türer.
+func NodeIDFor(name string) string { return nodeIDPrefix + name }
+
 // TopoCallEdgeFilterSQL — RUNS_ON kenarlarını ÇAĞRI-grafiği
 // okumalarından dışlayan WHERE parçası (v0.10.93). service_adjacency
 // MV'yi süzgeçsiz okuyor ve yeni kenar türü yazıldığı an korelatöre

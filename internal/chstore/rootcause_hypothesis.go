@@ -90,7 +90,10 @@ type ScoredCause struct {
 	Score   float64  `json:"score"`
 	Hops    int      `json:"hops"`
 	Path    []string `json:"path,omitempty"`
-	Reason  string   `json:"reason,omitempty"`
+	// Kind (v0.10.94) — correlator.ScoredCause.Kind'in aynası: boş =
+	// çağrı grafiği şüphelisi, "node" = aynı-node yerleşim adayı.
+	Kind   string `json:"kind,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // UpsertHypothesis records (or refreshes) the synthesized hypothesis for one

@@ -53,6 +53,10 @@ type ScoredCause struct {
 	Score   float64
 	Hops    int
 	Path    []string
+	// Kind (v0.10.94, dikey eksen dilim ②) — adayın türü. Boş = çağrı
+	// grafiği şüphelisi (bugüne dek tek tür); chstore.NodeKindNode =
+	// aynı-node yerleşim adayı. chstore aynası aynı alanı taşır.
+	Kind string
 }
 
 // RootCauseRank scores the live graph's downstream candidates for svc,
@@ -179,4 +183,62 @@ func pathLess(a, b []string) bool {
 		}
 	}
 	return len(a) < len(b)
+}
+
+// RankNodeCauses — dikey eksenin aday üreticisi (v0.10.94, dilim ②):
+// tetikleyen servisin node'larında BAŞKA servisler de alarmdaysa node
+// bir kök-neden adayıdır ("host çöktü → üzerindekiler bozuldu").
+//
+// SAF ve deterministik. Skor = alarmda olan kiracı komşu / tüm kiracı
+// komşu (tetikleyen hariç). Tek kiracılı node ADAY OLMAZ: yalnız kendi
+// servisinin alarmı node hakkında hiçbir şey söylemez. Komşusu alarmda
+// olmayan node da olmaz — yerleşim tek başına kanıt değil, eş-zamanlı
+// arıza kanıt.
+func RankNodeCauses(placements []chstore.RunsOnPlacement, trigger string, firing map[string]bool) []ScoredCause {
+	if trigger == "" || len(placements) == 0 {
+		return nil
+	}
+	byNode := map[string]map[string]bool{}
+	for _, pl := range placements {
+		if pl.Service == "" || pl.Node == "" {
+			continue
+		}
+		if byNode[pl.Node] == nil {
+			byNode[pl.Node] = map[string]bool{}
+		}
+		byNode[pl.Node][pl.Service] = true
+	}
+	var out []ScoredCause
+	for node, svcs := range byNode {
+		if !svcs[trigger] {
+			continue
+		}
+		cotenants, alight := 0, 0
+		for svc := range svcs {
+			if svc == trigger {
+				continue
+			}
+			cotenants++
+			if firing[svc] {
+				alight++
+			}
+		}
+		if cotenants == 0 || alight == 0 {
+			continue
+		}
+		out = append(out, ScoredCause{
+			Service: chstore.NodeIDFor(node),
+			Score:   float64(alight) / float64(cotenants),
+			Hops:    1,
+			Path:    []string{trigger, chstore.NodeIDFor(node)},
+			Kind:    chstore.NodeKindNode,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
+		}
+		return out[i].Service < out[j].Service
+	})
+	return out
 }

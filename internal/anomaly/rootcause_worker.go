@@ -234,6 +234,7 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 			}
 			bundle := buildEvidenceBundle(p, in)
 			synthIn := synthInputForProblem(p, bundle)
+			appendNodeCauses(&synthIn, in, p.Service)
 			s.enrichDeployImpact(ctx, p.Service, &synthIn) // v0.9.1059
 			h := correlator.Synthesize(
 				"problem", p.ID, p.Service, now.UnixNano(),
@@ -385,6 +386,7 @@ func synthInputForAnomaly(ev chstore.AnomalyEvent, in evidenceInputs) correlator
 		}
 		out.Neighbours = append(out.Neighbours, sc)
 	}
+	appendNodeCauses(&out, in, ev.Service)
 
 	// Co-firing — other OPEN problems on the SAME service as the anomaly.
 	for _, op := range in.openProblems {
@@ -486,4 +488,29 @@ func freshnessFrac(d *chstore.RecentDeployEntry, onsetNs int64) float64 {
 		frac = 1
 	}
 	return frac
+}
+
+// appendNodeCauses — dikey eksen adaylarını her iki anchor yoluna da
+// ekler (v0.10.94; anomali + problem — sözleşme iki yerde yaşıyor,
+// tek yardımcı iki çağrı). "Alarmda" kümesi: anchor'ın KENDİSİ hariç,
+// açık problemi ya da aktif anomalisi olan servisler. Aday sırası
+// RankNodeCauses'ta deterministik — hipotezin bayt-özdeş determinizm
+// pinleri bozulmaz.
+func appendNodeCauses(dst *correlator.SynthesisInput, in evidenceInputs, anchor string) {
+	if len(in.runsOn) == 0 {
+		return
+	}
+	firing := map[string]bool{}
+	for _, op := range in.openProblems {
+		if op.Service != "" && op.Service != anchor {
+			firing[op.Service] = true
+		}
+	}
+	for _, ev := range in.events {
+		if ev.Status == "active" && ev.Service != "" && ev.Service != anchor {
+			firing[ev.Service] = true
+		}
+	}
+	dst.Neighbours = append(dst.Neighbours,
+		correlator.RankNodeCauses(in.runsOn, anchor, firing)...)
 }

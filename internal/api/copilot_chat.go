@@ -304,6 +304,29 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			Name: t.Name, Description: t.ChatDescription(), InputSchema: t.InputSchema,
 		})
 	}
+	// v0.10.88 (dilim ③) — DIŞ MCP tool'ları yerli kataloğun yanına.
+	// Aynı toolsForRole süzgeci, aynı spec şekli; döngü dış/yerli
+	// ayrımını görmez — bütçe (clampToolResultForModel) ve hata
+	// (ToolErrorJSON) yolları değişmeden işler. Katalog Registry'nin
+	// 5 dk TTL'li önbelleğinden gelir; sunucu erişilemezse katalog boş
+	// düşer ve sohbet YERLİ tool'larla aynen sürer (soft-fail).
+	if s.mcpClient != nil && s.mcpClient.Configured() {
+		ext := externalChatTools(
+			s.mcpClient.Registry().Tools(ctx),
+			s.mcpClient.ToolRules,
+			s.mcpClient.Registry().Call,
+			func(server, tool string, args json.RawMessage) {
+				// Her dış çağrı iz bırakır: modelin konuştuğu dış uç,
+				// operatörün "bunu kim/ne çağırdı" sorusunun konusu.
+				s.audit(r, "mcp.call", "mcp_server", server, mcpCallAuditDetails(tool, args))
+			})
+		for _, t := range toolsForRole(ext, role) {
+			byName[t.Name] = t.Handler
+			specs = append(specs, copilot.ToolSpec{
+				Name: t.Name, Description: t.ChatDescription(), InputSchema: t.InputSchema,
+			})
+		}
+	}
 
 	// CoSRE Faz-2 — render_chart server-side emission: the model PICKS
 	// the chart by calling the render_chart tool; the SERVER builds the
@@ -388,6 +411,13 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	}
 	loopPrompt := screenContextPreambleTR(screenCtx) +
 		withAddressee(addressee, copilot.SystemPromptChat())
+
+	// v0.10.88 — TEKRAR MUHAFIZI (exchange kapsamı). v0.10.84 prompt'u
+	// "aynı tool'u aynı argümanlarla iki kez çağırma" diyor; bu harita
+	// yasağı ZORLAMAYA çevirir (devops huntWindows `tried` deseni).
+	// Dış tool'da bedel ağ + audit satırı, yerlide CH sorgusu — ikisi de
+	// aynı cevabı ikinci kez satın almaya değmez.
+	seenToolCalls := map[string]bool{}
 
 	for round := 0; round < chatMaxToolRounds; round++ {
 		turn, err := s.copilot.ChatWithTools(ctx, loopPrompt, conv, specs)
@@ -483,6 +513,22 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 				results = append(results, copilot.ToolResult{
 					CallID: tc.ID, Name: tc.Name, IsError: true,
 					Content: msg,
+				})
+				continue
+			}
+			// v0.10.88 — aynı çağrının ikinci kopyası YÜRÜTÜLMEZ; model
+			// ToolErrorJSON sözleşmesindeki alanlarla (error/retryable/
+			// hint) yönlendirilir. Anahtar kanonik: JSON anahtar sırası
+			// değişse de aynı çağrıdır (chat_mcp_bridge.go).
+			if markRepeatedCall(seenToolCalls, tc.Name, tc.Input) {
+				preview, _ := clipStepPreview(repeatedCallJSON)
+				emit("step-result", map[string]any{
+					"i": stepN, "tool": tc.Name, "ok": false,
+					"preview": preview, "truncated": false, "bytes": len(repeatedCallJSON),
+				})
+				results = append(results, copilot.ToolResult{
+					CallID: tc.ID, Name: tc.Name, IsError: true,
+					Content: repeatedCallJSON,
 				})
 				continue
 			}

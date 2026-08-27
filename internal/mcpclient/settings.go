@@ -100,6 +100,23 @@ func (s *Service) CurrentSettings() Settings {
 	return out
 }
 
+// ToolRules — sunucunun (sanitize edilmiş adıyla) allow/deny listeleri.
+// Köprü (dilim ③) her katalog kurulumunda çağırır; Registry'yle aynı
+// kimlik (SanitizedName) — iki yazım aynı sunucuya iki kimlik olurdu.
+func (s *Service) ToolRules(server string) (allow, deny []string) {
+	if s == nil {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, sv := range s.cfg.Servers {
+		if SanitizedName(sv.Name) == server {
+			return sv.AllowTools, sv.DenyTools
+		}
+	}
+	return nil, nil
+}
+
 // Configured — en az bir ETKİN sunucu var mı (dilim ③'ün kapısı).
 func (s *Service) Configured() bool {
 	if s == nil {

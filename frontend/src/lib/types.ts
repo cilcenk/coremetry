@@ -4730,6 +4730,10 @@ export interface ExplainAnswerBase {
   explanation: string;
   exchangeId?: string;
   links?: AIAnswerLink[];
+  /** v0.10.83 — cevap sunucu önbelleğinden geldi (LLM çağrılmadı). */
+  cached?: boolean;
+  /** İsabette: cevabın ÜRETİLDİĞİ an (ms) — arayüz yaş gösterir. */
+  cachedAtMs?: number;
 }
 
 // ChatTurn (v0.9.479) — ekranda çizilen bir sohbet turu: wire shape'i

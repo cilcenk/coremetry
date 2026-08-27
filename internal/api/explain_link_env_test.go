@@ -27,7 +27,9 @@ func TestExplainPassesServiceForLinkEnv(t *testing.T) {
 	src := readSourceFile(t, "copilot_explain_stream.go")
 
 	// Servis artık AÇIK bir parametre; query param yalnız YEDEK.
-	if !strings.Contains(src, "run explainRun, service string)") {
+	// v0.10.83 imza genişledi (cacheKey eklendi) — iğne güncel yazımda;
+	// ölçülen güvence aynı: servis AÇIK parametre.
+	if !strings.Contains(src, "run explainRun, service, cacheKey string)") {
 		t.Error("deliverExplain servisi açık parametre olarak almıyor — " +
 			"env yine query param'a (ve oradan 'prod' varsayılanına) düşer")
 	}
@@ -66,7 +68,7 @@ func TestTraceExplainUsesRootService(t *testing.T) {
 	}
 
 	api := readSourceFile(t, "api.go")
-	if !strings.Contains(api, "}, run, in.RootService)") {
+	if !strings.Contains(api, "}, run, in.RootService, cacheKey)") {
 		t.Error("trace explain kök servisi deliverExplain'e GEÇİRMİYOR — " +
 			"prod-dışı trace'in linki yanlış ortama gider")
 	}

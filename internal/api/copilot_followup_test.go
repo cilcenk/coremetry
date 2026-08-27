@@ -103,7 +103,7 @@ func TestIsFollowUpCue(t *testing.T) {
 		{"son 24 saatte?", true}, // açık range tek başına cue
 		{"aynı soruyu uat için", true},
 		{"bunun sebebi ne", true},
-		{"checkout-service nasıl?", false},  // bağımsız soru, cue yok
+		{"checkout-service nasıl?", false},   // bağımsız soru, cue yok
 		{"bu sistem nasıl çalışıyor", false}, // tek başına "bu" cue DEĞİL
 	}
 	for _, c := range cases {

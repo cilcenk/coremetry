@@ -39,9 +39,9 @@ func TestFlattenSeriesFPs(t *testing.T) {
 		{
 			// The budget bug: with max=3 over three groups, the winners
 			// must be the lexicographically-first groups, always.
-			name: "budget goes to sorted-first groups",
-			in:   map[string][]uint64{"b": {3, 4}, "a": {1, 2}, "c": {5}},
-			max:  3,
+			name:     "budget goes to sorted-first groups",
+			in:       map[string][]uint64{"b": {3, 4}, "a": {1, 2}, "c": {5}},
+			max:      3,
 			wantFlat: []uint64{1, 2, 3},
 		},
 		{

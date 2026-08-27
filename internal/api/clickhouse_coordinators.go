@@ -30,6 +30,7 @@ import (
 //     (v0.9.481'in kazanımı; bu panelde dengeli görünmeli)
 //   - SELECT'ler ana bağlantıda, ConnOpenInOrder → hep ilk node
 //     (açık kalem; okuma havuzu dilimi bunu düzeltecek)
+//
 // Operatör tek tabloda "insert'lerim dağıldı, select'lerim dağılmadı"
 // ayrımını görebilsin diye ikisi yan yana.
 type CHCoordinator struct {

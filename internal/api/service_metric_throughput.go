@@ -18,11 +18,11 @@
 package api
 
 import (
-	"encoding/json"
-	"strconv"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -755,7 +755,6 @@ func serviceNameAttempts(service string) []svcAttempt {
 	return append(out, svcAttempt{Service: stripped, EnvAmbiguous: true})
 }
 
-
 // ── v0.9.719 (operatör önerisi: "bir defa keşfet, sonra hızlı gelsin") ──────
 //
 // Kimlik ÇÖZÜMÜ pahalı: 5 aday metrik + instrument/temporality probları +
@@ -778,13 +777,13 @@ type tputBinding struct {
 	Instrument string `json:"instrument"`
 	// Kind: "label" → Filters üzerinden kimlik etiketi; "svc" →
 	// serviceNameAttempts biçimi (Service + Filters).
-	Kind         string             `json:"kind"`
-	Label        string             `json:"label,omitempty"`
-	AttemptLabel string             `json:"attemptLabel,omitempty"`
-	Service      string             `json:"service,omitempty"`
+	Kind         string               `json:"kind"`
+	Label        string               `json:"label,omitempty"`
+	AttemptLabel string               `json:"attemptLabel,omitempty"`
+	Service      string               `json:"service,omitempty"`
 	Filters      []chstore.FilterExpr `json:"filters,omitempty"`
-	EnvAmbiguous bool               `json:"envAmbiguous,omitempty"`
-	MatchedBy    string             `json:"matchedBy"`
+	EnvAmbiguous bool                 `json:"envAmbiguous,omitempty"`
+	MatchedBy    string               `json:"matchedBy"`
 }
 
 const (

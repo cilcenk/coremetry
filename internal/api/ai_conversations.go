@@ -221,7 +221,7 @@ func fitChatBlob(blob aiChatBlob, maxMsgs, maxBytes int) (aiChatBlob, string, er
 // metaToSummary (v0.9.1192) — CH-tarafı projeksiyon → liste öğesi.
 //
 // SAHİPLİK, TOMBSTONE, SIRA ve TAVAN artık SQL'de (ListSavedViewMeta:
-// owner_id TAM eşitlik — takım kovası yok; name != ''; created_at DESC;
+// owner_id TAM eşitlik — takım kovası yok; name != ”; created_at DESC;
 // LIMIT). Eski ownAIConversations bu dört garantiyi Go'da veriyordu ve
 // bunun bedeli 50 thread için 64 KB'a kadar blob × 200 satırı CH'den
 // taşımaktı — liste yalnız başlık+sayı gösterirken. Garantiler yer

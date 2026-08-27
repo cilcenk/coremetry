@@ -149,7 +149,7 @@ func TestTeamServiceChipsFallBackWhenUnresolved(t *testing.T) {
 func TestServiceHealthChipsCarryOperatorDrilldowns(t *testing.T) {
 	got := guidedSuggestions(guidedRoute{Intent: guidedServiceHealth, Service: "checkout"})
 	want := map[string]bool{
-		"checkout hata logları?":     false,
+		"checkout hata logları?":       false,
 		"checkout en yavaş trace'ler?": false,
 	}
 	for _, g := range got {

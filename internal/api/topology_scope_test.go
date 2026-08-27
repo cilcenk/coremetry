@@ -25,7 +25,7 @@ func TestCountDistinctServices(t *testing.T) {
 	edges := []chstore.ServiceTopologyEdge{
 		edge("a", "b", "service", 10),
 		edge("b", "c", "service", 5),
-		edge("a", "db:pg", "db", 99),    // db child not counted
+		edge("a", "db:pg", "db", 99),     // db child not counted
 		edge("c", "queue:k", "queue", 3), // queue child not counted
 	}
 	// distinct services: a, b, c = 3 (db:pg / queue:k excluded)

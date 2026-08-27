@@ -98,14 +98,14 @@ func (s *Server) getAnnotations(w http.ResponseWriter, r *http.Request) {
 					if p.StartedAt >= from.UnixNano() && p.StartedAt < to.UnixNano() {
 						its = append(its, AnnotationItem{
 							TS: p.StartedAt, Kind: "alert_fired", Service: p.Service,
-							Title: "🔥 " + p.Severity + " · " + title,
+							Title:      "🔥 " + p.Severity + " · " + title,
 							TargetType: "problem", TargetID: p.ID,
 						})
 					}
 					if p.ResolvedAt != nil && *p.ResolvedAt >= from.UnixNano() && *p.ResolvedAt < to.UnixNano() {
 						its = append(its, AnnotationItem{
 							TS: *p.ResolvedAt, Kind: "alert_resolved", Service: p.Service,
-							Title: "çözüldü · " + title,
+							Title:      "çözüldü · " + title,
 							TargetType: "problem", TargetID: p.ID,
 						})
 					}
@@ -130,7 +130,7 @@ func (s *Server) getAnnotations(w http.ResponseWriter, r *http.Request) {
 				for _, e := range evs {
 					its = append(its, AnnotationItem{
 						TS: e.StartedAt, Kind: "anomaly", Service: e.Service,
-						Title: "◈ " + e.Kind + ": " + e.Pattern,
+						Title:      "◈ " + e.Kind + ": " + e.Pattern,
 						TargetType: "anomaly", TargetID: e.ID,
 					})
 				}

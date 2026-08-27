@@ -16,9 +16,9 @@ import (
 // services sayfasında olduğu gibi" (like the Services page).
 func TestMatchesTeamFilter(t *testing.T) {
 	tests := []struct {
-		name                               string
+		name                                 string
 		rowOwner, rowSRE, wantOwner, wantSRE string
-		keep                               bool
+		keep                                 bool
 	}{
 		// No filter set → everything passes (empty means "all").
 		{"no filter keeps all", "payments", "platform", "", "", true},
@@ -71,9 +71,9 @@ func TestServicesForTeam(t *testing.T) {
 		"orphan":       {Service: "orphan"}, // catalog entry with no team
 	}
 	tests := []struct {
-		name             string
+		name               string
 		wantOwner, wantSRE string
-		want             []string // nil is meaningful — see doc above
+		want               []string // nil is meaningful — see doc above
 	}{
 		{"no axis set → nil (no constraint)", "", "", nil},
 		{"owner only", "payments", "", []string{"ledger", "payments-api"}},

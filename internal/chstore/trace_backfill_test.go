@@ -87,3 +87,24 @@ func TestTraceBackfillDayValidation(t *testing.T) {
 		t.Error("enjeksiyon denemesi tarih doğrulamasından geçti")
 	}
 }
+
+// v0.10.104 — merdiveni indiren hata sınıfı İKİ kaynak türünü de
+// kapsamalı (prod ilk koşusu 241'de durdu): 159 VE 241 iner; yapısal
+// hata inmez. Her iki dal da sürülür ([[feedback-unit-mixing-needs-
+// both-branches]] sınıfı: tek dalı test etmek öbürünü görünmez kılar).
+func TestBackfillLadderDescendsOnResourceErrors(t *testing.T) {
+	for _, tc := range []struct {
+		msg  string
+		want bool
+	}{
+		{"code: 159, message: Timeout exceeded: elapsed 25087 ms", true},
+		{"code: 241, message: Query memory limit exceeded: would use 3.74 GiB", true},
+		{"context deadline exceeded", true},
+		{"code: 62, message: Syntax error", false},
+		{"code: 47, message: Unknown identifier entry_service_state", false},
+	} {
+		if got := isBackfillTimeout(fmt.Errorf("%s", tc.msg)); got != tc.want {
+			t.Errorf("isBackfillTimeout(%q)=%v, istenen %v", tc.msg, got, tc.want)
+		}
+	}
+}

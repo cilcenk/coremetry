@@ -193,23 +193,35 @@ func (s *Store) backfillDaySlices(ctx context.Context, day time.Time, slice time
 			         max_bytes_before_external_group_by = 2000000000,
 			         distributed_product_mode = 'global'`,
 			from.UTC().Format("2006-01-02 15:04:05"), to.UTC().Format("2006-01-02 15:04:05")); err != nil {
-			return fmt.Errorf("dilim %s→%s: %w",
-				from.UTC().Format("15:04"), to.UTC().Format("15:04"), err)
+			// Etiket dilim BOYUNU da söyler — 24h diliminde "00:00→00:00"
+			// (ertesi gün sarması) tek başına anlaşılmıyordu (prod ekranı).
+			return fmt.Errorf("dilim %s→%s (%s boy): %w",
+				from.UTC().Format("01-02 15:04"), to.UTC().Format("01-02 15:04"),
+				slice, err)
 		}
 	}
 	return nil
 }
 
-// isBackfillTimeout — yarılamayı tetikleyen hata sınıfı: sunucu tavanı
-// (code 159) ya da sürücü/ctx zaman aşımı. Bellek/sözdizimi gibi hatalar
-// yarılamaz — aynı hatayı 288 dilimde tekrarlamak teşhisi boğar.
+// isBackfillTimeout — merdiveni İNDİREN hata sınıfı: KAYNAK hataları.
+//
+// v0.10.104 (prod ilk koşusu, operatör ekranı): 21 Ağustos günü code
+// 241 (Query memory limit exceeded, 3.74 GiB / 3.73 GiB) ile durdu.
+// İlk tasarım yalnız zaman aşımını (159) indiriyordu ve "bellek
+// yarılanmaz" diyordu — BU İŞ YÜKÜ İÇİN YANLIŞ: dilim zamanla küçülünce
+// GROUP BY'ın grup sayısı ve remote stream tamponları da küçülür, yani
+// bellek de zamana bağlı bir kaynak. 241 artık 159'la aynı basamağı
+// iniyor. Sözdizimi/bilinmeyen-kolon gibi yapısal hatalar İNMEZ — aynı
+// hatayı 288 dilimde tekrarlamak teşhisi boğar.
 func isBackfillTimeout(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "code: 159") ||
+		strings.Contains(msg, "code: 241") ||
 		strings.Contains(msg, "Timeout exceeded") ||
+		strings.Contains(msg, "memory limit exceeded") ||
 		strings.Contains(msg, "context deadline exceeded") ||
 		strings.Contains(msg, "i/o timeout")
 }

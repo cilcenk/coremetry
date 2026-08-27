@@ -195,17 +195,20 @@ const traceBackfillStateSQL = `
 // Böylece kısmi yazım hiçbir zaman üstüne-eklenmez: gün ya boş ya
 // bütündür; tekrar koşmak da güvenlidir. 5 dk (MV'nin canlı bucket
 // maliyeti) da yetmezse hata dürüstçe yükselir.
-func (s *Store) TraceBackfillDayRun(ctx context.Context, day string) error {
+func (s *Store) TraceBackfillDayRun(ctx context.Context, day string, spanRows uint64, progress func(string)) error {
 	dayT, err := time.Parse("2006-01-02", day)
 	if err != nil {
 		return fmt.Errorf("geçersiz gün %q: %w", day, err)
 	}
+	if progress == nil {
+		progress = func(string) {}
+	}
 	var lastErr error
-	for _, slice := range backfillSliceLadder {
+	for _, slice := range backfillLadderFor(spanRows) {
 		if err := s.dropTraceDayPartition(ctx, day); err != nil {
 			return fmt.Errorf("gün %s: partition düşürme: %w", day, err)
 		}
-		lastErr = s.backfillDaySlices(ctx, dayT, slice)
+		lastErr = s.backfillDaySlices(ctx, dayT, slice, progress)
 		if lastErr == nil {
 			return nil
 		}
@@ -222,6 +225,27 @@ var backfillSliceLadder = []time.Duration{
 	24 * time.Hour, 6 * time.Hour, time.Hour, 15 * time.Minute, 5 * time.Minute,
 }
 
+// backfillLadderFor — HACME GÖRE başlangıç basamağı (v0.10.108,
+// operatör: "yavaş gidiyor"). Prod'da gün ~6-8 MİLYAR span; 24h ve 6h
+// basamakları MAHKÛM — her mahkûm deneme 25s + kısmi-yazım + yeniden
+// düşürme israfıdır. Preflight'ın zaten bildiği gün hacmiyle, dilim
+// başına beklenen satır ~200M'ı aşmayacak İLK basamaktan başlanır;
+// merdivenin kalan alt basamakları emniyet olarak durur. spanRows=0
+// (bilinmiyor) tam merdiven demektir — eski davranış.
+func backfillLadderFor(spanRows uint64) []time.Duration {
+	if spanRows == 0 {
+		return backfillSliceLadder
+	}
+	const perSliceTarget = 200_000_000
+	for i, slice := range backfillSliceLadder {
+		expected := float64(spanRows) * slice.Hours() / 24.0
+		if expected <= perSliceTarget {
+			return backfillSliceLadder[i:]
+		}
+	}
+	return backfillSliceLadder[len(backfillSliceLadder)-1:]
+}
+
 func (s *Store) dropTraceDayPartition(ctx context.Context, day string) error {
 	target := "trace_summary_5m"
 	if s.clusterMode() {
@@ -232,13 +256,18 @@ func (s *Store) dropTraceDayPartition(ctx context.Context, day string) error {
 }
 
 // backfillDaySlices — günü sabit boy dilimlerle kurar; ilk hatada durur.
-func (s *Store) backfillDaySlices(ctx context.Context, day time.Time, slice time.Duration) error {
+func (s *Store) backfillDaySlices(ctx context.Context, day time.Time, slice time.Duration, progress func(string)) error {
 	end := day.AddDate(0, 0, 1)
+	total := int(24*time.Hour/slice + 1)
+	n := 0
 	for from := day; from.Before(end); from = from.Add(slice) {
 		to := from.Add(slice)
 		if to.After(end) {
 			to = end
 		}
+		n++
+		progress(fmt.Sprintf("%s · %s dilim %d/%d",
+			day.Format("2006-01-02"), slice, n, total-1))
 		if err := s.conn.Exec(ctx, `
 			INSERT INTO trace_summary_5m
 			  (trace_id, time_bucket, root_service_state, root_name_state,

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func flatWSBF(s string) string {
@@ -162,5 +163,32 @@ func TestRawRootOnlyLooksBeyondServiceFilter(t *testing.T) {
 	}
 	if !strings.Contains(block, "f.Service != \"\" || len(f.RequireServices) > 0") {
 		t.Error("dallanma koşulu değişmiş — hangi şekil hangi kaynağa bakıyor belirsizleşir")
+	}
+}
+
+// v0.10.108 — hacme-göre başlangıç basamağı ("yavaş gidiyor"): mahkûm
+// basamaklar atlanır, bilinmeyen hacim tam merdivendir.
+func TestBackfillLadderForVolume(t *testing.T) {
+	d := func(v time.Duration) string { return v.String() }
+	cases := []struct {
+		rows  uint64
+		first time.Duration
+	}{
+		{0, 24 * time.Hour},              // bilinmiyor → tam merdiven
+		{100_000_000, 24 * time.Hour},    // küçük gün → tek atış
+		{600_000_000, 6 * time.Hour},     // orta → 6h'den başla
+		{4_000_000_000, time.Hour},       // büyük → 1h
+		{8_000_000_000, 15 * time.Minute}, // prod günü → 15m
+		{200_000_000_000, 5 * time.Minute}, // uç → taban
+	}
+	for _, tc := range cases {
+		got := backfillLadderFor(tc.rows)
+		if len(got) == 0 || got[0] != tc.first {
+			t.Errorf("rows=%d → ilk basamak %s, istenen %s", tc.rows, d(got[0]), d(tc.first))
+		}
+	}
+	// Merdivenin kuyruğu daima korunur (emniyet basamakları düşmez).
+	if got := backfillLadderFor(8_000_000_000); got[len(got)-1] != 5*time.Minute {
+		t.Error("alt emniyet basamağı düşmüş")
 	}
 }

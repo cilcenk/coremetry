@@ -607,7 +607,6 @@ function depLabel(kind: string): string {
   switch (kind) {
     case 'db': return 'database';
     case 'queue': return 'queue';
-    case 'node': return 'k8s node';
     case 'external': return 'dış bağımlılık';
     default: return kind;
   }

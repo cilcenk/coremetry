@@ -531,11 +531,7 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 	// services) renders as one collapsed hub instead of N edges.
 	broadcastShow := r.URL.Query().Get("broadcast") == "show"
 	hidPats := s.topologyHiddenPatterns(r.Context())
-	// v0.10.95 (dikey eksen dilim ③) — ?nodes=1 RUNS_ON kenarlarını da
-	// getirir; anahtar bayrağı taşır (v0.5.187 tüm-girdiler kuralı).
-	withNodes := r.URL.Query().Get("nodes") == "1"
-	key := fmt.Sprintf("topology-service:nodes=%v:from=%d:to=%d:noise=%v:mp=%.2f:cmp=%v:top=%d:focus=%s:hops=%d:bc=%v:hid=%s",
-		withNodes,
+	key := fmt.Sprintf("topology-service:from=%d:to=%d:noise=%v:mp=%.2f:cmp=%v:top=%d:focus=%s:hops=%d:bc=%v:hid=%s",
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute),
 		noiseShow, minCallPct, comparePrior, topN, focusSvc, focusHops, broadcastShow, hiddenDigest(hidPats))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
@@ -547,16 +543,6 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 		edges, err := s.store.ReadServiceTopologyAgg(ctx, from, to, edgeCap)
 		if err != nil {
 			return nil, err
-		}
-		if withNodes {
-			// RUNS_ON kenarları AYRI okumayla eklenir (çağrı okuması
-			// dışlamayı korur — v0.10.93 sözleşmesi). Soft-fail: okuma
-			// düşerse graf node'suz döner, 500 olmaz. Prior/karşılaştırma
-			// penceresine BİLİNÇLİ eklenmez — yerleşim Δ'sı (pod'un node
-			// değiştirmesi) çağrı-Δ'sının yanında gürültü olurdu.
-			if rn, rerr := s.store.ReadRunsOnTopologyEdges(ctx, from, to, edgeCap); rerr == nil {
-				edges = append(edges, rn...)
-			}
 		}
 		// v0.8.241 — hidden-pattern policy: drop edges touching a
 		// hidden node BEFORE noise/topN/broadcast processing so a

@@ -297,9 +297,6 @@ func nodeKindToOTel(k string) string {
 		return "database"
 	case "queue", "kafka", "messaging":
 		return "queue"
-	case "node":
-		// v0.10.95 — dikey eksen: k8s node düğümü kendi adıyla geçer.
-		return "node"
 	case "external":
 		return "external"
 	default:
@@ -380,11 +377,8 @@ func (s *Server) getOtelServiceGraph(w http.ResponseWriter, r *http.Request) {
 	// (ext-merge sonrası) kenar anahtarında yapılır ki iki pencere aynı
 	// düğüm adlarını konuşsun.
 	compare := q.Get("compare") == "prior"
-		// v0.10.95 (dikey eksen dilim ③) — ?nodes=1 RUNS_ON kenarlarını da
-	// grafiğe katar; anahtar bayrağı taşır (v0.5.187).
-	withNodes := r.URL.Query().Get("nodes") == "1"
-key := fmt.Sprintf("servicegraph:nodes=%v:focus=%s:scope=%s:from=%d:to=%d:top=%d:hops=%d:cmp=%v:hid=%s",
-		withNodes, focus, scope, from.Unix()/60, to.Unix()/60, topN, hops, compare, hiddenDigest(hidPats))
+	key := fmt.Sprintf("servicegraph:focus=%s:scope=%s:from=%d:to=%d:top=%d:hops=%d:cmp=%v:hid=%s",
+		focus, scope, from.Unix()/60, to.Unix()/60, topN, hops, compare, hiddenDigest(hidPats))
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		// v0.9.366 — neighborhood scope'ta okuma odak-kapsamlı: eski yol
 		// tüm filonun calls-DESC ilk 20k kenarını çekip Go'da hop-yürüyordu;
@@ -402,18 +396,6 @@ key := fmt.Sprintf("servicegraph:nodes=%v:focus=%s:scope=%s:from=%d:to=%d:top=%d
 			return nil, err
 		}
 		edges = filterHiddenTopologyEdges(edges, hidPats)
-		if withNodes {
-			// RUNS_ON kenarları AYRI okumayla (çağrı okuması v0.10.93
-			// dışlamasını korur). Soft-fail: okuma düşerse graf node'suz
-			// döner. Komşuluk kapsamında yalnız GRAFİKTE ZATEN OLAN
-			// servislerin yerleşimi eklenir — odakla ilgisiz servislerin
-			// node'ları komşuluğu şişirmesin. Prior penceresine BİLİNÇLİ
-			// eklenmez: yerleşim Δ'sı çağrı-Δ'sının yanında gürültü.
-			if rn, rerr := s.store.ReadRunsOnTopologyEdges(ctx, from, to, 20000); rerr == nil {
-				rn = filterHiddenTopologyEdges(rn, hidPats)
-				edges = append(edges, filterRunsOnToPresentServices(rn, edges)...)
-			}
-		}
 		// Best-effort db.name enrichment for database nodes; a lookup failure
 		// leaves nodes unannotated rather than failing the whole graph.
 		dbNames, _ := s.store.DbNamesBySystem(ctx, from, to)
@@ -636,26 +618,4 @@ func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string,
 	})
 
 	return ServiceGraphResponse{Nodes: out, Edges: graphEdges, Scope: scope, Focus: focus}
-}
-
-// filterRunsOnToPresentServices — RUNS_ON kenarlarını, çağrı kenarlarında
-// GÖRÜNEN servislerle sınırlar (komşuluk kapsamı; global'de edges tüm
-// filoyu içerdiğinden pratik etkisi yalnız kapsam daralmasıdır). SAF.
-func filterRunsOnToPresentServices(rn, callEdges []chstore.ServiceTopologyEdge) []chstore.ServiceTopologyEdge {
-	present := map[string]bool{}
-	for _, e := range callEdges {
-		if k, _ := chstore.TopologyNodeIdentity(e.ParentService); k == "" {
-			present[e.ParentService] = true
-		}
-		if k, _ := chstore.TopologyNodeIdentity(e.ChildNode); k == "" {
-			present[e.ChildNode] = true
-		}
-	}
-	out := rn[:0:0]
-	for _, e := range rn {
-		if present[e.ParentService] {
-			out = append(out, e)
-		}
-	}
-	return out
 }

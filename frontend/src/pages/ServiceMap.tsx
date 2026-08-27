@@ -123,9 +123,6 @@ export default function ServiceMapPage() {
   const hops = Math.min(3, Math.max(1,
     parseInt(searchParams.get('hops') ?? String(DEFAULT_TOPOLOGY_HOPS), 10) || DEFAULT_TOPOLOGY_HOPS));
   const eonly = searchParams.get('eonly') === '1';
-  // ?knodes=1 (v0.10.95, dikey eksen dilim ③) — RUNS_ON görünürlüğü;
-  // eonly kodeğinin ikizi, servis sekmesiyle AYNI param ailesi.
-  const knodes = searchParams.get('knodes') === '1';
   const setHops = (h: number) => setSearchParams(prev => {
     const p = new URLSearchParams(prev);
     if (h !== DEFAULT_TOPOLOGY_HOPS) p.set('hops', String(h)); else p.delete('hops');
@@ -134,11 +131,6 @@ export default function ServiceMapPage() {
   const setEonly = (v: boolean) => setSearchParams(prev => {
     const p = new URLSearchParams(prev);
     if (v) p.set('eonly', '1'); else p.delete('eonly');
-    return p;
-  }, { replace: true });
-  const setKnodes = (v: boolean) => setSearchParams(prev => {
-    const p = new URLSearchParams(prev);
-    if (v) p.set('knodes', '1'); else p.delete('knodes');
     return p;
   }, { replace: true });
   // Auto-pick a focused service on first load so the operator
@@ -467,8 +459,6 @@ export default function ServiceMapPage() {
             focus={focus}
             hops={hops}
             errorsOnly={eonly}
-            showNodes={knodes}
-            onShowNodes={setKnodes}
             onHops={setHops}
             onErrorsOnly={setEonly}
             onRecenter={commitFocus}

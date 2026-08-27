@@ -1310,28 +1310,12 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 	return s.readServiceTopologyAggFiltered(ctx, from, to, limit, nil)
 }
 
-// ReadRunsOnTopologyEdges — /topology'nin ?nodes=1 okuması (v0.10.95,
-// dikey eksen dilim ③): YALNIZ RUNS_ON kenarları, çağrı kenarlarıyla
-// AYNI sorgu gövdesi (tek SQL, iki kapsam — kopya ayrışamaz). Kenar
-// akmayan kurulumda boş küme.
-func (s *Store) ReadRunsOnTopologyEdges(ctx context.Context, from, to time.Time, limit int) ([]ServiceTopologyEdge, error) {
-	return s.readServiceTopologyAggScoped(ctx, from, to, limit, nil,
-		"startsWith(child_node, '`+nodeIDPrefix+`')")
-}
-
 // readServiceTopologyAggFiltered is ReadServiceTopologyAgg with an optional
 // node-touch filter: when `touching` is non-empty only edges with at least
 // one endpoint in the set are read. v0.9.366 — the neighborhood scope's
 // building block; the focus walk (ReadServiceTopologyAggForFocus) feeds
 // frontiers here instead of pulling the whole estate's top-20k edge set.
 func (s *Store) readServiceTopologyAggFiltered(ctx context.Context, from, to time.Time, limit int, touching []string) ([]ServiceTopologyEdge, error) {
-	return s.readServiceTopologyAggScoped(ctx, from, to, limit, touching, TopoCallEdgeFilterSQL)
-}
-
-// readServiceTopologyAggScoped — tek SQL gövdesi, enjekte edilen kenar
-// kapsamı (çağrı kenarları için TopoCallEdgeFilterSQL, RUNS_ON için
-// startsWith). Kapsam ifadesi ÇAĞIRANDAN gelir ve her çağıran testli.
-func (s *Store) readServiceTopologyAggScoped(ctx context.Context, from, to time.Time, limit int, touching []string, edgeScopeSQL string) ([]ServiceTopologyEdge, error) {
 	if limit <= 0 || limit > 100000 {
 		limit = 20000
 	}
@@ -1408,7 +1392,7 @@ func (s *Store) readServiceTopologyAggScoped(ctx context.Context, from, to time.
 			FROM topology_edges_5m FINAL
 			WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
 			  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE
-			  AND `+edgeScopeSQL+touchWhere+`
+			  AND `+TopoCallEdgeFilterSQL+touchWhere+`
 			GROUP BY parent_service, child_node, protocol
 		)
 		ORDER BY total_calls DESC

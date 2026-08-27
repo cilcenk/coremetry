@@ -206,8 +206,14 @@ type searchCodeResponse struct {
 }
 
 // searchURL — {base}/{collection}/_apis/search/codesearchresults
+//
+// api-version 7.0 (v0.10.98, operatör-raporlu CANLI ilk koşu): 7.1,
+// on-prem Azure DevOps Server'da "out of range for this server; latest
+// supported is 7.0" ile HTTP 400 veriyordu — arama özelliği açıldığı
+// gün hiç çalışmadan düştü. Kod arama ucu 7.0'da birebir aynı sözleşme;
+// 7.0 bulutta da geçerli. Sunucunun kendi cevabı zemin gerçeği.
 func searchURL(cfg Settings) string {
-	return collectionURL(cfg) + "/_apis/search/codesearchresults?api-version=7.1"
+	return collectionURL(cfg) + "/_apis/search/codesearchresults?api-version=7.0"
 }
 
 // SearchCode — organizasyonda kod arar.

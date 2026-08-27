@@ -82,7 +82,10 @@ export function RenderedMarkdown({ text, idLinks }: {
     i++;
   }
   flushBullets();
-  return <>{blocks}</>;
+  // Kök artık fragment DEĞİL: overflow-wrap kalıtsal ve tek kalıtım
+  // noktası uzun nitelikli adların balonu yana itmesini bitiriyor
+  // (v0.10.79, gerekçe globals.css .cm-md-wrap).
+  return <div className="cm-md-wrap">{blocks}</div>;
 }
 
 // stripMarkdown — işaretleri ATAR, düz metin döndürür (v0.9.696).

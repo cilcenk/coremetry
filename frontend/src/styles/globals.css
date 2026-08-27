@@ -3275,6 +3275,16 @@ thead th:hover .th-remove { opacity: 1; }
 }
 .cm-md-table td.ta-c, .cm-md-table th.ta-c { text-align: center; }
 
+/* cm-md-wrap (v0.10.79, operatör-bildirimli): AI cevabındaki uzun
+   NİTELİKLİ adlar (com.x.y.Uzun$SınıfAdı.metot) tek token olduğu için
+   kırılamıyor ve balonu YANA itiyordu — panel yatay kayıyor, operatör
+   metnin yarısını göremiyordu. overflow-wrap KALITSAL: köke koymak
+   paragrafı, li'yi ve satır içi <code>u birden kapsar. Blok kod
+   ETKİLENMEZ (.cm-md-code pre white-space:pre + kendi kaydırıcısı).
+   CLAUDE.md'nin sessiz-kırpma ailesi: nowrap+dar genişlik sınıfının
+   satır içi ikizi. */
+.cm-md-wrap { overflow-wrap: anywhere; min-width: 0; }
+
 /* Kod bloğu: başlık şeridi (dil etiketi + kopyala) + gövde. Gövde KENDİ
    yatay kaydırıcısına sahip — uzun bir SQL satırı balonu genişletmemeli. */
 .cm-md-code {

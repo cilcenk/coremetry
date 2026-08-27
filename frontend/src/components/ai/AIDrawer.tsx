@@ -192,7 +192,11 @@ function AIDrawerChat({ subject, explainText, spanIds, traceIds }: {
   spanIds: string[];
   traceIds: string[];
 }) {
-  const [open, setOpen] = useState(false);
+  // v0.10.82 (operatör isteği: "Chat'te devam et demesine gerek yok,
+  // kullanıcı isterse hemen yazabilsin"). `open` kapısı kaldırıldı —
+  // salt aşamalı-gösterimdi ve bir tık vergisiydi: composer'ın mount'u
+  // BEDAVA (useChatThread yalnız send'de istek atar), yani kapının
+  // koruduğu hiçbir maliyet yoktu.
   const [input, setInput] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -237,17 +241,6 @@ function AIDrawerChat({ subject, explainText, spanIds, traceIds }: {
   // Bağlam kurulamadıysa (yalnız-boşluk cevap) sohbeti hiç açma —
   // bağlamsız sohbet operatör raporundaki hatanın ta kendisiydi.
   if (!explain) return null;
-
-  if (!open) {
-    return (
-      <div style={{ marginTop: 16 }}>
-        <Button variant="accent" size="sm" onClick={() => setOpen(true)}
-          title="Bu açıklama üzerinden CoSRE ile devam et">
-          💬 Chat'te devam et →
-        </Button>
-      </div>
-    );
-  }
 
   // Çipler: sunucu rotadan öneri gönderdiyse onlar (v0.9.411), yoksa
   // özneye göre üretilen liste — global chat'in filo çipleri burada

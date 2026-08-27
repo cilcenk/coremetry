@@ -19,11 +19,11 @@ func TestResolveLdapLoginRole(t *testing.T) {
 	local := func(role string) *chstore.User { return &chstore.User{AuthProvider: "local", Role: role} }
 
 	cases := []struct {
-		name         string
-		existing     *chstore.User
-		groupRole    string
-		fromGroup    bool
-		want         string
+		name      string
+		existing  *chstore.User
+		groupRole string
+		fromGroup bool
+		want      string
 	}{
 		{
 			"THE BUG: LDAP user manually admin, no group match → keep admin",

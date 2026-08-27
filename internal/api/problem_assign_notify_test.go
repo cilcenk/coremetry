@@ -12,10 +12,10 @@ import "testing"
 //   - empty/whitespace new assignee (an unassign) never notifies.
 func TestAssigneeNotifyEmail(t *testing.T) {
 	cases := []struct {
-		name          string
-		newA, oldA    string
-		wantEmail     string
-		wantSend      bool
+		name       string
+		newA, oldA string
+		wantEmail  string
+		wantSend   bool
 	}{
 		{"person newly assigned", "alice@corp.com", "", "alice@corp.com", true},
 		{"person replaces a team", "bob@corp.com", "payments", "bob@corp.com", true},

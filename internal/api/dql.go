@@ -57,10 +57,10 @@ func (s *Server) runDQL(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(traceIDs) == 0 {
 			writeJSON(w, map[string]any{
-				"plan":   plan,
-				"sql":    plan.SQLPreview(from, to),
-				"series": []chstore.SpanMetricSeries{},
-				"window": map[string]int64{"fromNs": from.UnixNano(), "toNs": to.UnixNano()},
+				"plan":           plan,
+				"sql":            plan.SQLPreview(from, to),
+				"series":         []chstore.SpanMetricSeries{},
+				"window":         map[string]int64{"fromNs": from.UnixNano(), "toNs": to.UnixNano()},
 				"joinTraceCount": 0,
 			})
 			return

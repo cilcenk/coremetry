@@ -10,7 +10,7 @@ import {
   Inbox, TriangleAlert, Boxes, Webhook, Workflow, Database, ClipboardList,
   MessageSquare, ListTree, ChartSpline, ScrollText, Compass, BookText,
   LayoutDashboard, Bell, Target, CircleGauge, Hash, Eye,
-  Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, Bug, Flag, type LucideIcon,
+  Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, Bug, Flag, Rocket, type LucideIcon,
 } from 'lucide-react';
 import { navHref } from '@/lib/navHref';
 import { useAuth } from './AuthProvider';
@@ -79,6 +79,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/inbox',     label: 'nav.inbox',     icon: Inbox },
       { href: '/problems',  label: 'nav.problems',  icon: Bug },
       { href: '/incidents', label: 'nav.incidents', icon: TriangleAlert },
+      { href: '/deployment-report', label: 'nav.deploymentReport', icon: Rocket },
     ],
   },
   {

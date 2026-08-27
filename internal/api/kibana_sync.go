@@ -25,18 +25,18 @@ import (
 // Fields chosen to match what Kibana's importer accepts —
 // missing optional fields default sensibly when uploaded.
 type kibanaSavedSearch struct {
-	ID         string                 `json:"id"`
-	Type       string                 `json:"type"`
-	Attributes kibanaSavedAttributes  `json:"attributes"`
-	References []any                  `json:"references"`
-	Version    string                 `json:"version,omitempty"`
+	ID         string                `json:"id"`
+	Type       string                `json:"type"`
+	Attributes kibanaSavedAttributes `json:"attributes"`
+	References []any                 `json:"references"`
+	Version    string                `json:"version,omitempty"`
 }
 
 type kibanaSavedAttributes struct {
-	Title                 string `json:"title"`
-	Description           string `json:"description"`
-	Columns               []string `json:"columns"`
-	Sort                  [][]any  `json:"sort"`
+	Title                 string         `json:"title"`
+	Description           string         `json:"description"`
+	Columns               []string       `json:"columns"`
+	Sort                  [][]any        `json:"sort"`
 	KibanaSavedObjectMeta map[string]any `json:"kibanaSavedObjectMeta"`
 }
 

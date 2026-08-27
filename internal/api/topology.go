@@ -31,13 +31,13 @@ type TopologyNode struct {
 // — the UI shows a banner so the operator knows the view is
 // partial.
 type TopologyResponse struct {
-	Nodes       []TopologyNode          `json:"nodes"`
-	Edges       []chstore.TopologyEdge  `json:"edges"`
-	RootService string                  `json:"rootService"`
-	Depth       int                     `json:"depth"`
-	From        int64                   `json:"from"` // unix ns
-	To          int64                   `json:"to"`
-	Truncated   bool                    `json:"truncated"`
+	Nodes       []TopologyNode         `json:"nodes"`
+	Edges       []chstore.TopologyEdge `json:"edges"`
+	RootService string                 `json:"rootService"`
+	Depth       int                    `json:"depth"`
+	From        int64                  `json:"from"` // unix ns
+	To          int64                  `json:"to"`
+	Truncated   bool                   `json:"truncated"`
 }
 
 // getTopology builds an operation-level call graph rooted at a
@@ -237,7 +237,7 @@ type ServiceTopologyNode struct {
 	// brought this node into the graph. UI surfaces it as a
 	// small chip ("prod" / "stage") next to the service name
 	// so multi-env installs distinguish at-a-glance.
-	Env        string `json:"env,omitempty"`
+	Env string `json:"env,omitempty"`
 	// v0.7.32 — for a collapsed broadcast queue node, the real number of
 	// distinct consumer services its fan-out was hidden behind. The renderer
 	// shows "→ N services (broadcast)" on the node instead of N edges. Only set
@@ -754,11 +754,11 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 			edges = []chstore.ServiceTopologyEdge{}
 		}
 		return ServiceTopologyResponse{
-			Nodes:         nodesOut,
-			Edges:         edges,
-			From:          from.UnixNano(),
-			To:            to.UnixNano(),
-			Truncated:     len(edges) >= edgeCap,
+			Nodes:              nodesOut,
+			Edges:              edges,
+			From:               from.UnixNano(),
+			To:                 to.UnixNano(),
+			Truncated:          len(edges) >= edgeCap,
 			TotalServices:      totalServices,
 			Scoped:             scoped,
 			ScopeReason:        scopeReason,
@@ -1238,7 +1238,10 @@ func filterExternalPeers(edges []chstore.ServiceTopologyEdge) []chstore.ServiceT
 // BFS hop, picks a colour per kind, and writes the file under
 // the given diagram name + Content-Disposition filename.
 func writeServiceDrawIO(w http.ResponseWriter, diagramName, filename string, edges []chstore.ServiceTopologyEdge) {
-	type nodeMeta struct{ ID, Name, Kind string; Hop int }
+	type nodeMeta struct {
+		ID, Name, Kind string
+		Hop            int
+	}
 	nodes := map[string]*nodeMeta{}
 	addNode := func(id, kind string) {
 		if _, ok := nodes[id]; ok {

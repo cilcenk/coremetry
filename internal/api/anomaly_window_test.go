@@ -16,16 +16,16 @@ func TestSnapAnomalyWindow(t *testing.T) {
 		in   time.Duration
 		want time.Duration
 	}{
-		{30 * time.Second, 1 * time.Minute},   // sub-rung → smallest rung
-		{1 * time.Minute, 1 * time.Minute},    // exact rung passes through
-		{2 * time.Minute, 5 * time.Minute},    // covers, never shrinks
-		{5 * time.Minute, 5 * time.Minute},    // the default
+		{30 * time.Second, 1 * time.Minute}, // sub-rung → smallest rung
+		{1 * time.Minute, 1 * time.Minute},  // exact rung passes through
+		{2 * time.Minute, 5 * time.Minute},  // covers, never shrinks
+		{5 * time.Minute, 5 * time.Minute},  // the default
 		{7 * time.Minute, 15 * time.Minute},
 		{15 * time.Minute, 15 * time.Minute},
 		{29 * time.Minute, 30 * time.Minute},
 		{30 * time.Minute, 30 * time.Minute},
-		{6 * time.Hour, 30 * time.Minute},     // capped — no long-range scans
-		{0, 1 * time.Minute},                  // degenerate input still bounded
+		{6 * time.Hour, 30 * time.Minute}, // capped — no long-range scans
+		{0, 1 * time.Minute},              // degenerate input still bounded
 	}
 	for _, c := range cases {
 		if got := snapAnomalyWindow(c.in); got != c.want {

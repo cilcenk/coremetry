@@ -35,12 +35,12 @@ func withPrior(o chstore.OperationSummary, p95, errRate float64) chstore.Operati
 
 func TestSelectOpDeltas(t *testing.T) {
 	tests := []struct {
-		name       string
-		rows       []chstore.OperationSummary
-		topN       int
-		wantNames  []string
-		wantOther  int
-		check      func(t *testing.T, got []OpDelta)
+		name      string
+		rows      []chstore.OperationSummary
+		topN      int
+		wantNames []string
+		wantOther int
+		check     func(t *testing.T, got []OpDelta)
 	}{
 		{
 			name:      "boş girdi",

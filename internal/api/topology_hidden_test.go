@@ -13,8 +13,8 @@ func TestHiddenNodeMatcher(t *testing.T) {
 		id   string
 		want bool
 	}{
-		{"queue:kafka:log.orders", true},   // queue: stripped, prefix glob
-		{"kafka:log-shipper", true},        // raw id form
+		{"queue:kafka:log.orders", true}, // queue: stripped, prefix glob
+		{"kafka:log-shipper", true},      // raw id form
 		{"queue:kafka:bsa.callcenter", true},
 		{"kafka:business.payments", false}, // kafka but not log*/bsa*
 		{"queue:kafka", false},             // system-level node stays

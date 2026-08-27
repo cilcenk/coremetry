@@ -82,9 +82,9 @@ func (s *Server) exportConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := configExportPayload{
-		Format:           "coremetry.config",
-		Version:          1,
-		ExportedAt:       time.Now().UTC().Format(time.RFC3339),
+		Format:     "coremetry.config",
+		Version:    1,
+		ExportedAt: time.Now().UTC().Format(time.RFC3339),
 		// v0.5.394 — use the Server's resolved version (ldflag /
 		// /app/VERSION) instead of re-reading the COREMETRY_VERSION
 		// env. Env override path was retired so config export
@@ -126,9 +126,9 @@ func (s *Server) exportConfig(w http.ResponseWriter, r *http.Request) {
 //   - Each row is inserted with its ORIGINAL version column intact.
 //     ReplacingMergeTree(version) then picks the highest version per
 //     ORDER BY key:
-//       • fresh install   → all imported rows appear
-//       • local edit LATER than imported  → local wins (merge)
-//       • local edit EARLIER than imported → imported wins
+//   - fresh install   → all imported rows appear
+//   - local edit LATER than imported  → local wins (merge)
+//   - local edit EARLIER than imported → imported wins
 //   - ?mode=replace bumps every imported row's version to now() so
 //     the imported state always wins regardless of local edits.
 //     Opt-in confirms the operator wants to overwrite drift.

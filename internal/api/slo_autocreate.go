@@ -35,18 +35,18 @@ type autoSLOSuggestion struct {
 // service, then proposes (and optionally writes) an availability +
 // latency SLO for each. Heuristics:
 //
-//   • Availability target = round_down(measured_sli - 0.5%) to the
+//   - Availability target = round_down(measured_sli - 0.5%) to the
 //     nearest 0.05% boundary, but never below 99% and never above
 //     99.95%. Captures "current real reliability minus a small buffer"
 //     so the SLO isn't already breached on day one.
 //
-//   • Latency threshold = measured_p99 × 1.5, rounded up to the
+//   - Latency threshold = measured_p99 × 1.5, rounded up to the
 //     nearest 50 ms band. Generous enough that a normal day passes;
 //     tight enough that real regressions trip it.
 //
-//   • Rolling window = 30 days — the bank-style default.
+//   - Rolling window = 30 days — the bank-style default.
 //
-//   • Skip rule: never overwrite an existing SLO for the same
+//   - Skip rule: never overwrite an existing SLO for the same
 //     (service, sliType). If the operator wants a tighter SLO,
 //     they edit the existing one — auto-create is for stamping
 //     defaults, not for tuning.

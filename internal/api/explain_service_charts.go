@@ -241,9 +241,9 @@ func summarizeSeries(rows []chstore.SpanMetricSeries, topN int) []chartSeriesSta
 		return nil
 	}
 	type bag struct {
-		name             string
+		name              string
 		sum, mn, mx, last float64
-		cnt              int
+		cnt               int
 	}
 	bags := make([]bag, 0, len(rows))
 	for _, s := range rows {

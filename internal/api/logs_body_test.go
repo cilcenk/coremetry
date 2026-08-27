@@ -19,8 +19,8 @@ func TestLogsBodyToValues(t *testing.T) {
 		"after":    "eyJwaXQiOiJ2ZXJ5LWxvbmctcGl0LWlkIn0", // cursor GÖVDEDE taşınır — URL sınırı yok
 		"hasTrace": true,
 		"paging":   true,
-		"asc":      false,          // false → HİÇ yazılmaz (parseBoolParam sözleşmesi)
-		"limit":    float64(100),   // JSON sayısı → ondalıksız metin
+		"asc":      false,        // false → HİÇ yazılmaz (parseBoolParam sözleşmesi)
+		"limit":    float64(100), // JSON sayısı → ondalıksız metin
 		"severity": float64(17),
 		"nested":   map[string]any{"x": 1}, // GET'te ifade edilemez → sızmaz
 	})

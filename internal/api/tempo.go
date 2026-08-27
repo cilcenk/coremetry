@@ -30,15 +30,15 @@ import (
 // All routes live under /tempo/* so they don't collide with our own /api/*.
 // Grafana's datasource config should point its URL at:  http://<coremetry>/tempo
 func (s *Server) registerTempoRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /tempo/api/echo",                    s.tempoEcho)
-	mux.HandleFunc("GET /tempo/ready",                       s.tempoEcho)
-	mux.HandleFunc("GET /tempo/api/search",                  s.tempoSearch)
-	mux.HandleFunc("GET /tempo/api/search/tags",             s.tempoTags)
-	mux.HandleFunc("GET /tempo/api/v2/search/tags",          s.tempoTagsV2)
+	mux.HandleFunc("GET /tempo/api/echo", s.tempoEcho)
+	mux.HandleFunc("GET /tempo/ready", s.tempoEcho)
+	mux.HandleFunc("GET /tempo/api/search", s.tempoSearch)
+	mux.HandleFunc("GET /tempo/api/search/tags", s.tempoTags)
+	mux.HandleFunc("GET /tempo/api/v2/search/tags", s.tempoTagsV2)
 	mux.HandleFunc("GET /tempo/api/search/tag/{name}/values", s.tempoTagValues)
 	mux.HandleFunc("GET /tempo/api/v2/search/tag/{name}/values", s.tempoTagValuesV2)
-	mux.HandleFunc("GET /tempo/api/traces/{id}",             s.tempoTrace)
-	mux.HandleFunc("GET /tempo/api/v2/traces/{id}",          s.tempoTraceV2)
+	mux.HandleFunc("GET /tempo/api/traces/{id}", s.tempoTrace)
+	mux.HandleFunc("GET /tempo/api/v2/traces/{id}", s.tempoTraceV2)
 }
 
 // ── /api/echo — Grafana datasource health check ──────────────────────────────
@@ -50,12 +50,13 @@ func (s *Server) tempoEcho(w http.ResponseWriter, r *http.Request) {
 // ── /api/search — Grafana query the trace list ───────────────────────────────
 //
 // Supported query parameters:
-//   q              — TraceQL (we accept and ignore unsupported features)
-//   tags           — logfmt-encoded `key=value` pairs (legacy)
-//   minDuration    — e.g. "100ms"
-//   maxDuration    — e.g. "1s"
-//   limit          — int
-//   start, end     — unix seconds (Tempo) or RFC3339
+//
+//	q              — TraceQL (we accept and ignore unsupported features)
+//	tags           — logfmt-encoded `key=value` pairs (legacy)
+//	minDuration    — e.g. "100ms"
+//	maxDuration    — e.g. "1s"
+//	limit          — int
+//	start, end     — unix seconds (Tempo) or RFC3339
 //
 // Response: { "traces": [{ traceID, rootServiceName, rootTraceName, startTimeUnixNano, durationMs }] }
 func (s *Server) tempoSearch(w http.ResponseWriter, r *http.Request) {
@@ -63,10 +64,14 @@ func (s *Server) tempoSearch(w http.ResponseWriter, r *http.Request) {
 
 	limit := parseInt(q.Get("limit"), 20)
 	startSec, _ := strconv.ParseInt(q.Get("start"), 10, 64)
-	endSec, _   := strconv.ParseInt(q.Get("end"),   10, 64)
+	endSec, _ := strconv.ParseInt(q.Get("end"), 10, 64)
 	var from, to time.Time
-	if startSec > 0 { from = time.Unix(startSec, 0) }
-	if endSec   > 0 { to   = time.Unix(endSec,   0) }
+	if startSec > 0 {
+		from = time.Unix(startSec, 0)
+	}
+	if endSec > 0 {
+		to = time.Unix(endSec, 0)
+	}
 
 	minMs := durationToMs(q.Get("minDuration"))
 	maxMs := durationToMs(q.Get("maxDuration"))
@@ -83,11 +88,14 @@ func (s *Server) tempoSearch(w http.ResponseWriter, r *http.Request) {
 		From: from, To: to, MinMs: minMs, MaxMs: maxMs,
 		Service: tqlService, Search: tqlName,
 		Filters: filters,
-		Limit: limit, Sort: "time", Order: "desc",
+		Limit:   limit, Sort: "time", Order: "desc",
 		// Tempo /search just needs the rows; don't pay the count cost.
 		CountMode: "skip",
 	})
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 
 	type tempoTrace struct {
 		TraceID           string `json:"traceID"`
@@ -112,18 +120,24 @@ func (s *Server) tempoSearch(w http.ResponseWriter, r *http.Request) {
 // ── /api/search/tags — distinct attribute keys ───────────────────────────────
 func (s *Server) tempoTags(w http.ResponseWriter, r *http.Request) {
 	tags, err := s.collectTagNames(r.Context())
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, map[string]interface{}{"tagNames": tags})
 }
 
 // /api/v2/search/tags — same data, scope-grouped (resource / span)
 func (s *Server) tempoTagsV2(w http.ResponseWriter, r *http.Request) {
 	span, res, err := s.collectTagNamesScoped(r.Context())
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, map[string]interface{}{
 		"scopes": []map[string]interface{}{
 			{"name": "resource", "tags": res},
-			{"name": "span",     "tags": span},
+			{"name": "span", "tags": span},
 		},
 	})
 }
@@ -131,20 +145,28 @@ func (s *Server) tempoTagsV2(w http.ResponseWriter, r *http.Request) {
 func (s *Server) tempoTagValues(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	vals, err := s.collectTagValues(r.Context(), name)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, map[string]interface{}{"tagValues": vals})
 }
 
 func (s *Server) tempoTagValuesV2(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	vals, err := s.collectTagValues(r.Context(), name)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	type v struct {
 		Type  string `json:"type"`
 		Value string `json:"value"`
 	}
 	wrapped := make([]v, len(vals))
-	for i, val := range vals { wrapped[i] = v{"string", val} }
+	for i, val := range vals {
+		wrapped[i] = v{"string", val}
+	}
 	writeJSON(w, map[string]interface{}{"tagValues": wrapped})
 }
 
@@ -153,14 +175,18 @@ func (s *Server) tempoTagValuesV2(w http.ResponseWriter, r *http.Request) {
 // Grafana's Tempo plugin expects this endpoint to return an OTLP TracesData
 // proto in binary form, NOT JSON. (Tempo natively serves protobuf and the
 // plugin calls proto.Unmarshal on the body.) We honour Accept negotiation:
-//   • application/json                 → JSON envelope (debugging / our UI)
-//   • application/protobuf (default)   → real OTLP binary
+//   - application/json                 → JSON envelope (debugging / our UI)
+//   - application/protobuf (default)   → real OTLP binary
 func (s *Server) tempoTrace(w http.ResponseWriter, r *http.Request) {
 	id := strings.ToLower(r.PathValue("id"))
 	spans, err := s.store.GetTrace(r.Context(), id)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	if len(spans) == 0 {
-		http.NotFound(w, r); return
+		http.NotFound(w, r)
+		return
 	}
 
 	td := buildTracesData(spans)
@@ -170,7 +196,10 @@ func (s *Server) tempoTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, err := proto.Marshal(td)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/protobuf")
 	w.Write(body)
 }
@@ -178,10 +207,10 @@ func (s *Server) tempoTrace(w http.ResponseWriter, r *http.Request) {
 // tempoTraceV2 returns the same trace as v1 wrapped in Tempo's
 // `TraceByIDResponse` proto:
 //
-//   message TraceByIDResponse {
-//     Trace  trace  = 1;
-//     string status = 4;
-//   }
+//	message TraceByIDResponse {
+//	  Trace  trace  = 1;
+//	  string status = 4;
+//	}
 //
 // Modern Grafana Tempo datasources prefer the v2 endpoint and try to
 // decode the body as TraceByIDResponse — feeding them a bare TracesData
@@ -190,9 +219,13 @@ func (s *Server) tempoTrace(w http.ResponseWriter, r *http.Request) {
 func (s *Server) tempoTraceV2(w http.ResponseWriter, r *http.Request) {
 	id := strings.ToLower(r.PathValue("id"))
 	spans, err := s.store.GetTrace(r.Context(), id)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	if len(spans) == 0 {
-		http.NotFound(w, r); return
+		http.NotFound(w, r)
+		return
 	}
 
 	td := buildTracesData(spans)
@@ -203,7 +236,10 @@ func (s *Server) tempoTraceV2(w http.ResponseWriter, r *http.Request) {
 	}
 
 	traceBytes, err := proto.Marshal(td)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 
 	// TraceByIDResponse wire format:
 	//   field 1 (Trace, embedded message) — tag 0x0a + varint(len) + bytes
@@ -281,7 +317,7 @@ func buildTracesData(spans []chstore.SpanRow) *tracepb.TracesData {
 		}
 
 		td.ResourceSpans = append(td.ResourceSpans, &tracepb.ResourceSpans{
-			Resource:   &resourcepb.Resource{Attributes: makeAttrs(resAttrs)},
+			Resource: &resourcepb.Resource{Attributes: makeAttrs(resAttrs)},
 			ScopeSpans: []*tracepb.ScopeSpans{{
 				Scope: &commonpb.InstrumentationScope{Name: "coremetry"},
 				Spans: spansPB,
@@ -294,9 +330,13 @@ func buildTracesData(spans []chstore.SpanRow) *tracepb.TracesData {
 // hexBytes decodes a hex string back into its raw byte form. Empty / invalid
 // input returns nil so the proto field stays unset.
 func hexBytes(hexStr string) []byte {
-	if hexStr == "" { return nil }
+	if hexStr == "" {
+		return nil
+	}
 	b, err := hex.DecodeString(hexStr)
-	if err != nil { return nil }
+	if err != nil {
+		return nil
+	}
 	return b
 }
 
@@ -316,20 +356,28 @@ func (s *Server) collectTagNames(ctx context.Context) ([]string, error) {
 		    SELECT arrayJoin(res_keys)  AS k FROM spans WHERE time > now() - INTERVAL 24 HOUR
 		) ORDER BY k LIMIT 1000
 		SETTINGS max_execution_time = 5`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var out []string
 	for rows.Next() {
 		var k string
-		if err := rows.Scan(&k); err != nil { return nil, err }
+		if err := rows.Scan(&k); err != nil {
+			return nil, err
+		}
 		out = append(out, k)
 	}
 	// Always include well-known dimensions
 	wellKnownTags := []string{"service.name", "name", "kind", "status", "http.method", "http.route", "http.status_code"}
 	have := map[string]bool{}
-	for _, t := range out { have[t] = true }
+	for _, t := range out {
+		have[t] = true
+	}
 	for _, t := range wellKnownTags {
-		if !have[t] { out = append(out, t) }
+		if !have[t] {
+			out = append(out, t)
+		}
 	}
 	return out, nil
 }
@@ -339,16 +387,28 @@ func (s *Server) collectTagNamesScoped(ctx context.Context) (span []string, res 
 		SELECT DISTINCT arrayJoin(attr_keys) AS k FROM spans
 		WHERE time > now() - INTERVAL 24 HOUR LIMIT 1000
 		SETTINGS max_execution_time = 5`)
-	if err != nil { return nil, nil, err }
-	for rs.Next() { var k string; rs.Scan(&k); span = append(span, k) }
+	if err != nil {
+		return nil, nil, err
+	}
+	for rs.Next() {
+		var k string
+		rs.Scan(&k)
+		span = append(span, k)
+	}
 	rs.Close()
 
 	rs, err = s.store.Conn().Query(ctx, `
 		SELECT DISTINCT arrayJoin(res_keys) AS k FROM spans
 		WHERE time > now() - INTERVAL 24 HOUR LIMIT 1000
 		SETTINGS max_execution_time = 5`)
-	if err != nil { return nil, nil, err }
-	for rs.Next() { var k string; rs.Scan(&k); res = append(res, k) }
+	if err != nil {
+		return nil, nil, err
+	}
+	for rs.Next() {
+		var k string
+		rs.Scan(&k)
+		res = append(res, k)
+	}
 	rs.Close()
 	return
 }
@@ -392,13 +452,19 @@ func (s *Server) collectTagValues(ctx context.Context, key string) ([]string, er
 		args = []any{key2, key2, key2, key2}
 	}
 	rows, err := s.store.Conn().Query(ctx, sql, args...)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var out []string
 	for rows.Next() {
 		var v string
-		if err := rows.Scan(&v); err != nil { return nil, err }
-		if v != "" { out = append(out, v) }
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		if v != "" {
+			out = append(out, v)
+		}
 	}
 	return out, nil
 }
@@ -406,11 +472,15 @@ func (s *Server) collectTagValues(ctx context.Context, key string) ([]string, er
 // parseLogfmtTags converts Tempo's legacy `tags` parameter ("key=value foo=bar")
 // into FilterExpr equality clauses.
 func parseLogfmtTags(s string) []chstore.FilterExpr {
-	if s == "" { return nil }
+	if s == "" {
+		return nil
+	}
 	var out []chstore.FilterExpr
 	for _, pair := range strings.Fields(s) {
 		eq := strings.IndexByte(pair, '=')
-		if eq <= 0 { continue }
+		if eq <= 0 {
+			continue
+		}
 		k, v := pair[:eq], strings.Trim(pair[eq+1:], `"`)
 		out = append(out, chstore.FilterExpr{Key: k, Op: "=", Values: []string{v}})
 	}
@@ -418,12 +488,17 @@ func parseLogfmtTags(s string) []chstore.FilterExpr {
 }
 
 // parseSimpleTraceQL pulls equality clauses out of a TraceQL string like
-//   { resource.service.name = "api" && span.http.status_code = 500 }
+//
+//	{ resource.service.name = "api" && span.http.status_code = 500 }
+//
 // Anything more advanced is silently ignored.
 func parseSimpleTraceQL(q string) ([]chstore.FilterExpr, string, string) {
-	if q == "" { return nil, "", "" }
+	if q == "" {
+		return nil, "", ""
+	}
 	q = strings.TrimSpace(q)
-	q = strings.TrimPrefix(q, "{"); q = strings.TrimSuffix(q, "}")
+	q = strings.TrimPrefix(q, "{")
+	q = strings.TrimSuffix(q, "}")
 	q = strings.TrimSpace(q)
 
 	parts := splitTopLevel(q, "&&")
@@ -432,7 +507,9 @@ func parseSimpleTraceQL(q string) ([]chstore.FilterExpr, string, string) {
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
 		eq := strings.Index(p, "=")
-		if eq < 0 { continue }
+		if eq < 0 {
+			continue
+		}
 		key := strings.TrimSpace(p[:eq])
 		val := strings.Trim(strings.TrimSpace(p[eq+1:]), `"`)
 		switch {
@@ -455,10 +532,16 @@ func splitTopLevel(s, sep string) []string {
 	last := 0
 	for i := 0; i < len(s)-len(sep)+1; i++ {
 		c := s[i]
-		if c == '"' { inStr = !inStr }
+		if c == '"' {
+			inStr = !inStr
+		}
 		if !inStr {
-			if c == '(' || c == '{' { depth++ }
-			if c == ')' || c == '}' { depth-- }
+			if c == '(' || c == '{' {
+				depth++
+			}
+			if c == ')' || c == '}' {
+				depth--
+			}
 			if depth == 0 && s[i:i+len(sep)] == sep {
 				out = append(out, s[last:i])
 				last = i + len(sep)
@@ -472,27 +555,38 @@ func splitTopLevel(s, sep string) []string {
 
 // durationToMs parses Go-style durations ("100ms", "1s") into milliseconds.
 func durationToMs(s string) float64 {
-	if s == "" { return 0 }
+	if s == "" {
+		return 0
+	}
 	d, err := time.ParseDuration(s)
-	if err != nil { return 0 }
+	if err != nil {
+		return 0
+	}
 	return float64(d.Milliseconds())
 }
 
 func spanKindNum(k string) int {
 	switch k {
-	case "server":   return 2
-	case "client":   return 3
-	case "producer": return 4
-	case "consumer": return 5
-	case "internal": return 1
+	case "server":
+		return 2
+	case "client":
+		return 3
+	case "producer":
+		return 4
+	case "consumer":
+		return 5
+	case "internal":
+		return 1
 	}
 	return 0
 }
 
 func statusCodeNum(s string) int {
 	switch s {
-	case "ok":    return 1
-	case "error": return 2
+	case "ok":
+		return 1
+	case "error":
+		return 2
 	}
 	return 0
 }

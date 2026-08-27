@@ -35,8 +35,8 @@ func TestToolCallLink(t *testing.T) {
 		{"list_exception_groups", `{"service":"x"}`, "/inbox?kind=exception&service=x", true},
 		{"get_topology", `{}`, "/service-map", true},
 		{"get_db_health", `{}`, "/databases", true},
-		{"render_chart", `{}`, "", false},  // grafik cevabın içinde — köprü yok
-		{"list_services", `{}`, "", false}, // hedef sayfa aramanın kendisi değil
+		{"render_chart", `{}`, "", false},             // grafik cevabın içinde — köprü yok
+		{"list_services", `{}`, "", false},            // hedef sayfa aramanın kendisi değil
 		{"get_service_health", `not-json`, "", false}, // bozuk args → servis boş → köprü yok
 	}
 	for _, c := range cases {

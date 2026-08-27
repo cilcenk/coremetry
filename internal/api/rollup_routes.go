@@ -16,12 +16,13 @@ import (
 // registerRollupRoutes(mux, s) tek satırını çağırır.
 //
 // GET /api/rollup/red
-//   from, to           unix-ns (diğer uçlarla aynı parseTime)
-//   maxDataPoints      panel nokta bütçesi (0 → 1500; clamp 4000)
-//   service, kind, status, endpoint, channel, function   eşitlik filtreleri
-//   groupBy            tek boyut (service_name|span_kind|status_code|endpoint|channel_code|function_code)
-//   exact=1            SLO-hassas tdigest şartı (geniş boyutla çelişirse 400)
-//   maxGroups          groupBy grubu tavanı (0 → 20)
+//
+//	from, to           unix-ns (diğer uçlarla aynı parseTime)
+//	maxDataPoints      panel nokta bütçesi (0 → 1500; clamp 4000)
+//	service, kind, status, endpoint, channel, function   eşitlik filtreleri
+//	groupBy            tek boyut (service_name|span_kind|status_code|endpoint|channel_code|function_code)
+//	exact=1            SLO-hassas tdigest şartı (geniş boyutla çelişirse 400)
+//	maxGroups          groupBy grubu tavanı (0 → 20)
 //
 // Yanıt zarfı: {plan:{table,stepSeconds,quantileMode,reason,partialWindow},
 // truncated, series:[{group,points:[{ts,calls,errors,avgMs,p50Ms,p95Ms,p99Ms}]}]}

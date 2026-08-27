@@ -20,10 +20,10 @@ import (
 
 func TestEndpointKeyDigestBoundaries(t *testing.T) {
 	cases := []struct {
-		name           string
-		aSvc, aPath    string
-		bSvc, bPath    string
-		wantCollision  bool
+		name          string
+		aSvc, aPath   string
+		bSvc, bPath   string
+		wantCollision bool
 	}{
 		{"same tuple", "checkout", "/orders/:id", "checkout", "/orders/:id", true},
 		{"different path", "checkout", "/orders/:id", "checkout", "/orders", false},

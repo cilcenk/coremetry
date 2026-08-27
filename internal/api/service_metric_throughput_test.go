@@ -1,10 +1,10 @@
 package api
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
-	"os"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 )

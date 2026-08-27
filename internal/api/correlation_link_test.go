@@ -37,9 +37,9 @@ func TestValidCorrelationTemplate(t *testing.T) {
 		"host yok":       "https:///?id={value}",
 		// GÜVENLİK: javascript: şablonu cevabı tıklanabilir bir betiğe
 		// çevirirdi.
-		"javascript":     "javascript:alert(1)/*{value}*/",
-		"data":           "data:text/html,{value}",
-		"file":           "file:///tmp/{value}",
+		"javascript": "javascript:alert(1)/*{value}*/",
+		"data":       "data:text/html,{value}",
+		"file":       "file:///tmp/{value}",
 	}
 	for name, s := range bad {
 		if validCorrelationTemplate(s) {
@@ -128,9 +128,9 @@ func TestEnvFromServiceName(t *testing.T) {
 		// SONEK araması, alt dize DEĞİL: "integration-service" içinde
 		// "int" geçiyor ama sonu "-int" değil. Alt dize araması burayı
 		// sessizce test ortamına yönlendirirdi.
-		"integration-service":   "",
-		"int-gateway":           "",
-		"":                      "",
+		"integration-service": "",
+		"int-gateway":         "",
+		"":                    "",
 	}
 	for svc, want := range cases {
 		if got := envFromServiceName(svc); got != want {

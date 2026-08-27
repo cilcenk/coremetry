@@ -97,8 +97,8 @@ func TestBuildServiceGraph_GlobalDecodesOTelKinds(t *testing.T) {
 
 func TestBuildServiceGraph_MergeExtIntoService(t *testing.T) {
 	edges := []chstore.ServiceTopologyEdge{
-		sgEdge("gateway", "payments", "service", "http", 500, 0, 50),     // payments is a real service
-		sgEdge("mobile", "ext:payments", "external", "http", 100, 5, 80), // same service, seen via peer.service
+		sgEdge("gateway", "payments", "service", "http", 500, 0, 50),       // payments is a real service
+		sgEdge("mobile", "ext:payments", "external", "http", 100, 5, 80),   // same service, seen via peer.service
 		sgEdge("orders", "ext:stripe.com", "external", "http", 60, 6, 400), // true 3rd party
 	}
 	g := buildServiceGraph(edges, "", "global", 0, nil, 60)
@@ -549,6 +549,6 @@ func TestTopologyAddNodeSitesUseSharedIdentity(t *testing.T) {
 	}
 	// Kusurun imzası: adı KIND'a bakarak soymak.
 	if strings.Contains(body, `if kind != "service" {`) {
-		t.Error(`ad soyma yine kind'a bağlı (`+"`"+`if kind != "service"`+"`"+`) — kind yanlış geldiğinde ham önek geri gelir (v0.9.1029)`)
+		t.Error(`ad soyma yine kind'a bağlı (` + "`" + `if kind != "service"` + "`" + `) — kind yanlış geldiğinde ham önek geri gelir (v0.9.1029)`)
 	}
 }

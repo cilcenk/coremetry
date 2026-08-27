@@ -242,7 +242,7 @@ func TestSanitizeChatMessages(t *testing.T) {
 }
 
 // v0.9.1192 — SAHİPLİK/tombstone/sıra/tavan artık SQL'de
-// (chstore.ListSavedViewMeta: owner_id TAM eşitlik, name != '',
+// (chstore.ListSavedViewMeta: owner_id TAM eşitlik, name != ”,
 // created_at DESC, LIMIT). Eski ownAIConversations/summarizeAIConversation
 // testlerinin garantileri iki yere taşındı: SQL şekli
 // chstore/saved_view_meta_test.go'da, satır→öğe dönüşümü burada.

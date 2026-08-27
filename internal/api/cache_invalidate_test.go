@@ -46,12 +46,12 @@ type publishCall struct {
 	msg     string
 }
 
-func (f *fakeCache) Get(context.Context, string) ([]byte, bool, error)         { return nil, false, nil }
-func (f *fakeCache) Set(context.Context, string, []byte, time.Duration) error  { return nil }
+func (f *fakeCache) Get(context.Context, string) ([]byte, bool, error)        { return nil, false, nil }
+func (f *fakeCache) Set(context.Context, string, []byte, time.Duration) error { return nil }
 func (f *fakeCache) SetNX(context.Context, string, []byte, time.Duration) (bool, error) {
 	return true, nil
 }
-func (f *fakeCache) Del(context.Context, string) error                         { return nil }
+func (f *fakeCache) Del(context.Context, string) error { return nil }
 func (f *fakeCache) MGet(_ context.Context, keys []string) ([][]byte, error) {
 	return make([][]byte, len(keys)), nil
 }
@@ -67,7 +67,7 @@ func (f *fakeCache) DelPrefix(_ context.Context, prefix string) error {
 	f.mu.Unlock()
 	return nil
 }
-func (f *fakeCache) Ping(context.Context) error                  { return nil }
+func (f *fakeCache) Ping(context.Context) error { return nil }
 func (f *fakeCache) Stats(context.Context) (cache.RedisStats, error) {
 	return cache.RedisStats{}, nil
 }

@@ -24,15 +24,15 @@ func TestProblemCountsCache(t *testing.T) {
 	if got := c.get(t0.Add(29 * time.Second)); got == nil || got["svc"].Critical != 2 {
 		t.Fatal("TTL içinde hit beklenirdi")
 	}
-	if c.get(t0.Add(30 * time.Second)) != nil {
+	if c.get(t0.Add(30*time.Second)) != nil {
 		t.Fatal("tam TTL sınırında (>= ttl) miss beklenirdi")
 	}
-	if c.get(t0.Add(31 * time.Second)) != nil {
+	if c.get(t0.Add(31*time.Second)) != nil {
 		t.Fatal("TTL sonrası miss beklenirdi")
 	}
 	// Yeni put pencereyi tazeler.
 	c.put(m, t0.Add(31*time.Second))
-	if c.get(t0.Add(40 * time.Second)) == nil {
+	if c.get(t0.Add(40*time.Second)) == nil {
 		t.Fatal("tazeleme sonrası hit beklenirdi")
 	}
 }

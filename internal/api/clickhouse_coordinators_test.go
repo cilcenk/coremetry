@@ -35,11 +35,11 @@ func TestCoordinatorQueryFanout(t *testing.T) {
 func TestCoordinatorQueryBounds(t *testing.T) {
 	q := coordinatorQuery("c", 7200)
 	for _, want := range []string{
-		"INTERVAL 7200 SECOND",         // pencere gerçekten bind edilmiş
-		"type = 'QueryFinish'",         // yalnız tamamlanmış sorgular
-		"is_initial_query = 1",         // shard alt-sorguları HARİÇ — panelin tüm anlamı bu
-		"LIMIT 64",                     //
-		"SETTINGS max_execution_time",  //
+		"INTERVAL 7200 SECOND",        // pencere gerçekten bind edilmiş
+		"type = 'QueryFinish'",        // yalnız tamamlanmış sorgular
+		"is_initial_query = 1",        // shard alt-sorguları HARİÇ — panelin tüm anlamı bu
+		"LIMIT 64",                    //
+		"SETTINGS max_execution_time", //
 	} {
 		if !strings.Contains(q, want) {
 			t.Errorf("sorguda %q yok — sınırsız/yanlış query_log okuması", want)
@@ -60,8 +60,8 @@ func TestCoordinatorEventsQuery(t *testing.T) {
 	cl := coordinatorEventsQuery("uptrace")
 	for _, want := range []string{
 		"clusterAllReplicas('uptrace', system.events)", // cluster() DEĞİL
-		"InitialQuery",   // koordinatör sinyali — panelin asıl rakamı
-		"any(uptime())",  // sayaçlar açılıştan beri; restart etmiş node düşük okunur
+		"InitialQuery",  // koordinatör sinyali — panelin asıl rakamı
+		"any(uptime())", // sayaçlar açılıştan beri; restart etmiş node düşük okunur
 		"SETTINGS max_execution_time",
 		"LIMIT 64",
 	} {

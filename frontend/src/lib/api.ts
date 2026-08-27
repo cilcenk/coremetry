@@ -1539,6 +1539,15 @@ export const api = {
   // {ok:false, error} on a failed connection — a failed probe is
   // a successful answer to the operator's question, not an HTTP
   // error.
+  // v0.10.115 — şema kataloğu (SQLCODE'lu Explain'lerde kolon tanımı).
+  getSchemaCatalog: () => get<import('./types').SchemaCatalogSummary>(`/api/settings/schema-catalog`),
+  putSchemaCatalog: (s: import('./types').SchemaCatalogImportInput) =>
+    request<import('./types').SchemaCatalogSummary>(`/api/settings/schema-catalog`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }),
+  deleteSchemaCatalog: () =>
+    request<import('./types').SchemaCatalogSummary>(`/api/settings/schema-catalog`, { method: 'DELETE' }),
   getDevOpsSettings: () => get<DevOpsSnapshot>(`/api/settings/devops`),
   putDevOpsSettings: (s: DevOpsSettingsInput) =>
     request<DevOpsSnapshot>(`/api/settings/devops`, {

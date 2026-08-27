@@ -3,7 +3,7 @@ import { Spinner } from '@/components/Spinner';
 import { Badge, Button, Field } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useSettingsLoad, SettingsLoadError } from './shared';
-import type { DevOpsFlavor, DevOpsResolveDryRun, DevOpsTestResult } from '@/lib/types';
+import type { DevOpsFlavor, DevOpsResolveDryRun, DevOpsTestResult, SchemaCatalogSummary } from '@/lib/types';
 
 // DevOpsTab — Azure DevOps Server / TFS bağlantısı (v0.9.829),
 // v0.9.830'da adlandırma konvansiyonu eklendi.
@@ -52,10 +52,44 @@ export function DevOpsTab() {
   const [dryBusy, setDryBusy] = useState(false);
   const [dry, setDry] = useState<DevOpsResolveDryRun | null>(null);
   const [dryErr, setDryErr] = useState('');
+  // v0.10.115 — şema kataloğu (SQLCODE'lu Explain'lerde kolon tanımı).
+  // Kolon içeriği ekrana DÖNMEZ; yalnız sayı/tarih. CSV metin olarak
+  // yüklenir (dosya seçici de okuyup metne çevirir).
+  const [schema, setSchema] = useState<SchemaCatalogSummary | null>(null);
+  const [schemaFlavor, setSchemaFlavor] = useState('db2');
+  const [schemaCsv, setSchemaCsv] = useState('');
+  const [schemaBusy, setSchemaBusy] = useState(false);
+  const [schemaMsg, setSchemaMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const loadSchema = () => api.getSchemaCatalog().then(setSchema).catch(() => setSchema(null));
+  const importSchema = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!schemaCsv.trim()) return;
+    setSchemaBusy(true); setSchemaMsg(null);
+    try {
+      const out = await api.putSchemaCatalog({ csv: schemaCsv, flavor: schemaFlavor, source: 'settings-upload' });
+      setSchema(out); setSchemaCsv('');
+      setSchemaMsg({ kind: 'ok', text: `${out.tables} tablo · ${out.columns} kolon yüklendi.` });
+    } catch (err) {
+      setSchemaMsg({ kind: 'err', text: String((err as Error).message || err) });
+    } finally { setSchemaBusy(false); }
+  };
+  const clearSchema = async () => {
+    setSchemaBusy(true); setSchemaMsg(null);
+    try { setSchema(await api.deleteSchemaCatalog()); setSchemaMsg({ kind: 'ok', text: 'Katalog temizlendi.' }); }
+    catch (err) { setSchemaMsg({ kind: 'err', text: String((err as Error).message || err) }); }
+    finally { setSchemaBusy(false); }
+  };
+  const readCsvFile = (f: File | undefined) => {
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => setSchemaCsv(String(rd.result || ''));
+    rd.readAsText(f);
+  };
 
   const { loaded, error: loadErr, retry } = useSettingsLoad(
     () => api.getDevOpsSettings(),
     s => {
+      void loadSchema();
       setBaseUrl(s.baseUrl || '');
       setCollection(s.collection || '');
       setProject(s.project || '');
@@ -497,6 +531,59 @@ export function DevOpsTab() {
             )}
           </div>
         )}
+      </form>
+
+      {/* v0.10.115 — ŞEMA KATALOĞU. SQLCODE/SQLSTATE'li hatalarda model hedef
+          kolonun tipini/uzunluğunu bilmediği için tahmin yürütüyordu
+          ("muhtemelen telefon numarası"). Katalog SALT-OKUNUR bir anlık
+          görüntü: operatör aşağıdaki SELECT'i kendi tarafında koşturur,
+          CSV'yi yükler. Canlı DB bağlantısı yok — sürücü, kimlik, ağ yok. */}
+      <form onSubmit={importSchema} style={{
+        marginTop: 18, padding: 16, borderRadius: 8,
+        background: 'var(--bg2)', border: '1px solid var(--border)',
+      }}>
+        <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Şema kataloğu (SQL hataları için)</h3>
+        <p style={{ color: 'var(--text2)', fontSize: 12, marginBottom: 10 }}>
+          <code>SQLCODE</code>/<code>SQLSTATE</code>/<code>ORA-</code> taşıyan hatalarda AI,
+          hedef tablonun <strong style={{ color: 'var(--text)' }}>kolon tanımlarını</strong>
+          (tip, uzunluk, NULL) kanıt olarak alır. Aşağıdaki salt-okunur sorguyu DB
+          tarafında koşturup CSV çıktısını yükleyin; katalog Coremetry'de saklanır,
+          DB'ye bağlantı kurulmaz.
+        </p>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+          {schema && schema.importedAt > 0 ? (
+            <Badge tone="success">{schema.tables} tablo · {schema.columns} kolon · {new Date(schema.importedAt).toLocaleString()}{schema.flavor ? ` · ${schema.flavor}` : ''}</Badge>
+          ) : (
+            <Badge>katalog yüklü değil</Badge>
+          )}
+          <label style={{ fontSize: 12, color: 'var(--text2)' }}>
+            Veritabanı{' '}
+            <select value={schemaFlavor} onChange={e => setSchemaFlavor(e.target.value)}>
+              {['db2', 'oracle', 'postgres', 'mysql', 'mssql'].map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </label>
+        </div>
+        <details style={{ marginBottom: 8 }}>
+          <summary style={{ fontSize: 12, color: 'var(--text2)', cursor: 'pointer' }}>Katalog sorgusu ({schemaFlavor}) — DB tarafında koşturun, çıktıyı CSV alın</summary>
+          <pre style={{ fontSize: 11, marginTop: 6, padding: 8, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
+            {schema?.snapshotSql?.[schemaFlavor] || '—'}
+          </pre>
+        </details>
+        <label style={{ display: 'block', marginBottom: 8 }}>
+          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+            CSV (başlık satırlı; virgül / noktalı virgül / sekme) — yapıştırın ya da dosya seçin
+          </div>
+          <textarea value={schemaCsv} onChange={e => setSchemaCsv(e.target.value)} rows={5}
+            placeholder={'TABSCHEMA,TABNAME,COLNAME,TYPENAME,LENGTH,SCALE,NULLS\nBSA,INT_TFRAUD,TELNO,VARCHAR,10,0,N'}
+            style={{ width: '100%', fontFamily: 'var(--mono)', fontSize: 11 }} />
+          <input type="file" accept=".csv,.txt,text/csv" style={{ marginTop: 6, fontSize: 12 }}
+            onChange={e => readCsvFile(e.target.files?.[0])} />
+        </label>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <Button type="submit" variant="primary" disabled={!schemaCsv.trim()} loading={schemaBusy}>Kataloğu yükle</Button>
+          <Button type="button" variant="secondary" disabled={!schema || schema.importedAt === 0 || schemaBusy} onClick={clearSchema}>Temizle</Button>
+          {schemaMsg && <span style={{ fontSize: 12, color: schemaMsg.kind === 'ok' ? 'var(--ok)' : 'var(--err)' }}>{schemaMsg.text}</span>}
+        </div>
       </form>
     </div>
   );

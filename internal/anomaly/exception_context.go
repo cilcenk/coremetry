@@ -168,6 +168,11 @@ type ExceptionExplainInput struct {
 	// (v0.9.1225): depo çözümü grubun servisi yerine buna gitmeli.
 	// Boşsa grup servisi geçerli.
 	StackService string
+	// DBStatements / ErrorText (v0.10.115) — örnek trace'in hata
+	// span'larındaki SQL ifadeleri (≤3) ve grup tipi+mesajı+stack başı:
+	// şema kanıtının girdisi (api buildSchemaEvidence).
+	DBStatements []string
+	ErrorText    string
 
 	// ── v0.9.1129 (AI Faz 2.1) — insight kartının YAPISAL yarısı ──
 	//
@@ -248,8 +253,13 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 		DurationMs float64 `json:"durMs"`
 		Status     string  `json:"status,omitempty"`
 		StatusMsg  string  `json:"statusMsg,omitempty"`
+		// v0.10.115 — yalnız hata span'larında: SQL hatasında çalışan ifade.
+		DBSystem    string `json:"dbSystem,omitempty"`
+		DBStatement string `json:"dbStatement,omitempty"`
 	}
 	var traceBlock, logsBlock string
+	var dbStmts []string
+	seenStmt := map[string]bool{}
 	// v0.9.1225 — kod çekicinin log-fallback istihkakı (aşağıdaki logs
 	// döngüsünde dolar; yalnız örnekler stack taşımıyorsa kullanılır).
 	var logStack, logStackSvc string
@@ -312,6 +322,14 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 					l.StatusMsg = sp.StatusMessage
 					if len(evSpans) < 5 {
 						evSpans = append(evSpans, sp.SpanID)
+					}
+					if sp.DBStatement != "" {
+						l.DBSystem = sp.DBSystem
+						l.DBStatement = truncRunes(sp.DBStatement, 600)
+						if len(dbStmts) < 3 && !seenStmt[l.DBStatement] {
+							seenStmt[l.DBStatement] = true
+							dbStmts = append(dbStmts, l.DBStatement)
+						}
 					}
 				}
 				compact = append(compact, l)
@@ -420,6 +438,8 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 		LogsBlock:    logsBlock,
 		Stack:        stackRaw,
 		StackService: stackSvc,
+		DBStatements: dbStmts,
+		ErrorText:    truncRunes(g.Type+": "+g.Message+"\n"+stackRaw, 2000),
 		TraceID:      traceID,
 		Trend:        trendRef,
 		Deploys:      nearby,

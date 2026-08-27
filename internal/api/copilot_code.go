@@ -245,9 +245,18 @@ func isContextOverflowErr(err error) bool {
 // opts.IncludeCode kapısının arkasında), dolayısıyla işaretin varlığı
 // "istendi" demektir ve yokluğu "hiç istenmedi".
 func (s *Server) copilotExplainCode(r *http.Request, systemNoCode, systemWithCode, user string, cc devops.CodeContext) (string, error) {
+	return s.copilotExplainEvidence(r, systemNoCode, systemWithCode, user, cc, schemaEvidence{})
+}
+
+// copilotExplainEvidence (v0.10.115) — copilotExplainCode + ŞEMA bölümü.
+// Bütçe sırası (operatör direktifi): kod > şema > SQL (kod penceresi
+// içinde) > log. Şema bloğu kod bloğunun ARKASINA eklenir; kod yokken de
+// gider (SQLCODE'lu hatada tablo/kolon tanımı kod olmadan da kanıttır).
+// Maske: şema bloğu ai_calls kopyasında "[şema: T · N kolon]" özetiyle.
+func (s *Server) copilotExplainEvidence(r *http.Request, systemNoCode, systemWithCode, user string, cc devops.CodeContext, se schemaEvidence) (string, error) {
 	// v0.10.114 — kod bağlamı span'a gitsin diye isteğe iliştirilir
 	// (ai_span.go); sarmalayıcılar ctx'ten okur.
-	r = withExplainEvidence(r, cc)
+	r = withExplainEvidence(r, cc, se)
 	block := cc.PromptBlock()
 	if block == "" {
 		// v0.10.112 — KOD İSTENDİ, ÇÖZÜLEMEDİ → modele SÖYLENİR (operatör
@@ -256,9 +265,9 @@ func (s *Server) copilotExplainCode(r *http.Request, systemNoCode, systemWithCod
 		// "kaynak çözülemedi" kuralı orada. Kayıt kopyası eskisi gibi
 		// yalnız ıska işaretini taşır — blok kod içermediği için maskeye
 		// gerek yok, ama kaydın sözleşmesi "[kod alınamadı: sınıf]".
-		return s.explainMissingCode(r, systemWithCode, user, cc)
+		return s.explainMissingCode(r, systemWithCode, user, cc, se)
 	}
-	out, err := s.explainWithCodeBlock(r, systemWithCode, user, block, cc.LogSummary())
+	out, err := s.explainWithCodeBlock(r, systemWithCode, user, block+se.Block, cc.LogSummary()+se.Summary)
 	if err == nil || !isContextOverflowErr(err) {
 		return out, err
 	}
@@ -272,18 +281,31 @@ func (s *Server) copilotExplainCode(r *http.Request, systemNoCode, systemWithCod
 		// v0.10.112 — model de öğrenir: pencereler düşürülür, gerekçe
 		// MissingBlock'la gider (kodsuz system prompt: bağlam zaten dar).
 		dropped := devops.CodeContext{Repo: cc.Repo, Reason: "bağlam taşması — kod bloğu prompt'a sığmadı"}
-		return s.explainNoCode(r, systemNoCode, user+dropped.MissingBlock(),
-			devops.FormatCodeMissNote("", "bağlam taşması — kod bloğu prompt'a sığmadı"))
+		return s.explainNoCode(r, systemNoCode, user+dropped.MissingBlock()+se.Block,
+			devops.FormatCodeMissNote("", "bağlam taşması — kod bloğu prompt'a sığmadı")+se.Summary)
 	}
-	return s.explainWithCodeBlock(r, systemWithCode, user, hb, half.LogSummary())
+	return s.explainWithCodeBlock(r, systemWithCode, user, hb+se.Block, half.LogSummary()+se.Summary)
 }
 
 // explainMissingCode (v0.10.112) — kod istendi, çözülemedi: gerçek
 // prompt = kodlu system + user + MissingBlock (kod yok, yalnız gerekçe);
 // kayıt kopyası = user + "[kod alınamadı: sınıf]" (v0.9.1243 sözleşmesi
 // aynen — /ai "hiç istenmedi"den ayırt edebilsin).
-func (s *Server) explainMissingCode(r *http.Request, systemWithCode, user string, cc devops.CodeContext) (string, error) {
-	return s.copilotExplainMasked(r, systemWithCode, user+cc.MissingBlock(), user+cc.LogMissSummary())
+func (s *Server) explainMissingCode(r *http.Request, systemWithCode, user string, cc devops.CodeContext, se schemaEvidence) (string, error) {
+	return s.copilotExplainMasked(r, systemWithCode, user+cc.MissingBlock()+se.Block, user+cc.LogMissSummary()+se.Summary)
+}
+
+// mapperBlocks — kod bağlamındaki statement/kaynak pencerelerinin
+// içeriği (şema hedefi çıkarımı için, appschema.TargetsOf satır
+// öneklerini/XML'i soyar). Saf.
+func mapperBlocks(cc devops.CodeContext) []string {
+	var out []string
+	for _, w := range cc.Windows {
+		if w.Resource && w.Content != "" {
+			out = append(out, w.Content)
+		}
+	}
+	return out
 }
 
 // explainNoCode — kodsuz çağrı + maskeli kayda ıska işareti.

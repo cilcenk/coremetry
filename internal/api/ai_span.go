@@ -45,10 +45,16 @@ import (
 
 type explainEvidenceKey struct{}
 
-// withExplainEvidence — kod bağlamını isteğe iliştirir; sarmalayıcı
-// span'a stamplar. Kod istenmeyen yüzeylerde çağrılmaz → requested=false.
-func withExplainEvidence(r *http.Request, cc devops.CodeContext) *http.Request {
-	return r.WithContext(context.WithValue(r.Context(), explainEvidenceKey{}, cc))
+// explainEvidence — bir Explain'e giden kanıt paketi (kod + şema).
+type explainEvidence struct {
+	Code   devops.CodeContext
+	Schema schemaEvidence
+}
+
+// withExplainEvidence — kanıtı isteğe iliştirir; sarmalayıcı span'a
+// stamplar. Kod istenmeyen yüzeylerde çağrılmaz → requested=false.
+func withExplainEvidence(r *http.Request, cc devops.CodeContext, se schemaEvidence) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), explainEvidenceKey{}, explainEvidence{Code: cc, Schema: se}))
 }
 
 // tracerOrDefault — enjekte edilmiş tracer yoksa selfobs (prod'da OTLP,
@@ -68,8 +74,15 @@ func (s *Server) beginExplainSpan(r *http.Request, ctx context.Context) (context
 	ctx, span := s.tracerOrDefault().Start(ctx, "ai.explain",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(attribute.String("coremetry.ai.surface", meta.Surface)))
-	if cc, ok := r.Context().Value(explainEvidenceKey{}).(devops.CodeContext); ok {
-		span.SetAttributes(codeEvidenceAttrs(cc)...)
+	if ev, ok := r.Context().Value(explainEvidenceKey{}).(explainEvidence); ok {
+		span.SetAttributes(codeEvidenceAttrs(ev.Code)...)
+		span.SetAttributes(
+			attribute.Int("coremetry.ai.schema.columns", ev.Schema.Columns),
+			attribute.Bool("coremetry.ai.schema.signal", ev.Schema.Signal),
+		)
+		if ev.Schema.Block != "" {
+			span.SetAttributes(attribute.String("coremetry.ai.context.types", contextTypes(ev.Code)+",schema"))
+		}
 	} else {
 		span.SetAttributes(attribute.Bool("coremetry.ai.code.requested", false))
 	}
@@ -92,6 +105,29 @@ func (s *Server) beginExplainSpan(r *http.Request, ctx context.Context) (context
 		}
 		span.End()
 	}
+}
+
+// contextTypes — modele giden kod-kanıt türleri ("code,sql" / "code-missing").
+func contextTypes(cc devops.CodeContext) string {
+	types := make([]string, 0, 3)
+	code, sql := 0, 0
+	for _, w := range cc.Windows {
+		if w.Resource {
+			sql++
+		} else {
+			code++
+		}
+	}
+	if code > 0 {
+		types = append(types, "code")
+	}
+	if sql > 0 {
+		types = append(types, "sql")
+	}
+	if len(cc.Windows) == 0 {
+		types = append(types, "code-missing")
+	}
+	return strings.Join(types, ",")
 }
 
 // codeEvidenceAttrs — CodeContext → attribute listesi. Saf; tablo-testli.

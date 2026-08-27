@@ -1,6 +1,7 @@
 package copilot
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -182,5 +183,39 @@ func TestCodeAddendumPromisesNoAbsentInput(t *testing.T) {
 	// Yerine geçen genel kural durmalı.
 	if !strings.Contains(p, "hedefin tanımı bu bağlamda yok") {
 		t.Error("eksik hedef tanımı için genel kural yok")
+	}
+}
+
+// ── v0.10.84 — SERBEST DÖNGÜ PROMPT'U VERMEDİĞİMİZ GİRDİYİ VAAT ETMEZ ──
+//
+// Operatörün ROL taslağı üç şey vaat ediyordu ki makine bunları
+// VERMİYOR: <context> tag'i (bağlam EKRAN BAĞLAMI önsözü olarak gelir,
+// chat_screen_context.go), repo tool'u (kod bağlamı yalnız explain
+// yüzeylerinde) ve "12 çağrıda dur" sabiti (gerçek mekanizma
+// chatMaxToolRounds + tur-tavanı prompt'u). Uzlaştırma koda yaslandı;
+// bu kapı taslaktaki yazımların sonraki bir düzenlemede geri sızmasını
+// yakalar — TestCodeAddendumPromisesNoAbsentInput ile aynı sınıf.
+func TestChatPromptPromisesNoAbsentInput(t *testing.T) {
+	p := flat(SystemPromptChat())
+	for _, absent := range []string{"<context>", "repo tool"} {
+		if strings.Contains(p, absent) {
+			t.Errorf("serbest döngü prompt'u %q vaadini taşıyor ama makine onu "+
+				"VERMİYOR — model ya uydurur ya sürekli 'bulamadım' der", absent)
+		}
+	}
+	// Sabit çağrı-sayısı vaadi: "12" ÇIPLAK alt-dize olarak aranmaz
+	// (2.130 gibi masum bir sayıyı ısırırdı — [[feedback-gate-matches-its-
+	// own-text]] sınıfı); rakam-sınırlı aranır. Taslaktaki yazım "12'yi
+	// aşarsa" idi; tavan sayısı chatMaxToolRounds'ta yaşar, prompt'ta değil.
+	if regexp.MustCompile(`(^|[^0-9.])12([^0-9.]|$)`).MatchString(p) {
+		t.Error("prompt sabit bir çağrı tavanı sayısı ilan ediyor — gerçek tavan " +
+			"chatMaxToolRounds + tur-tavanı prompt'udur; sayı oradan sapar")
+	}
+	// Bağlam referansı önsözün GERÇEK etiketiyle anılmalı: model
+	// "EKRAN BAĞLAMI önsözü varsa" talimatını ancak önsöz aynı adla
+	// gelirse eşleştirebilir (screenContextPreambleTR aynı etiketi basar).
+	if !strings.Contains(p, "EKRAN BAĞLAMI") {
+		t.Error("prompt ekran-bağlamı önsözünü adıyla anmıyor — bağlam talimatı " +
+			"önsöze bağlanamaz")
 	}
 }

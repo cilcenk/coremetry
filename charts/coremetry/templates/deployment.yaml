@@ -134,6 +134,28 @@ spec:
             - name: COREMETRY_SELF_OBS_SAMPLE_RATE
               value: {{ .Values.selfObs.sampleRate | quote }}
             {{- end }}
+            {{- if .Values.selfObs.enabled }}
+            # v0.10.91 — selfobs k8s kimliği (downward API, RBAC'sız):
+            # pod'un kendi bilgisi resource attribute'u olur; k8sattributes
+            # processor'ı ve ClusterRole GEREKMEZ. deployment/container adı
+            # downward API'de yok — o ikisi bilinçli eksik.
+            - name: COREMETRY_K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: COREMETRY_K8S_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: COREMETRY_K8S_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: COREMETRY_K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            {{- end }}
             {{- if eq (default "clickhouse" .Values.logs.backend) "elasticsearch" }}
             # External Elasticsearch read-backend wiring. Ingest still
             # writes to ClickHouse; only /api/logs reads come from ES.

@@ -71,6 +71,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/attribute"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
@@ -217,12 +218,34 @@ func buildResource(mode, version string) (*resource.Resource, error) {
 	// resource has an empty schema URL, so the merge keeps Default()'s URL
 	// without conflict and stays robust to future SDK/semconv version skew.
 	// (service.name/version/instance keys are stable across semconv versions.)
-	return resource.Merge(resource.Default(), resource.NewSchemaless(
+	attrs := []attribute.KeyValue{
 		semconv.ServiceName(serviceName(mode)),
 		semconv.ServiceVersion(version),
 		semconv.ServiceInstanceID(host),
 		semconv.DeploymentEnvironment(strings.TrimSpace(os.Getenv("COREMETRY_DEPLOY_ENV"))),
-	))
+	}
+	// v0.10.91 — K8S KİMLİĞİ downward API'den (chart env'leri).
+	//
+	// /api/k8s/coverage denetiminde coremetry-monolithic'in YEDİ k8s
+	// alanı da sıfırdı: bu resource hiç k8s.* üretmiyordu ve hattaki
+	// collector'da k8sattributes processor'ı yok (RBAC'ı da yok). Bu
+	// dört alan pod'un KENDİ bilgisi — API sunucusuna sormadan, yetki
+	// istemeden downward API'den gelir. deployment.name/container.name
+	// downward API'de YOK; onları ancak k8sattributes doldurur (ayrı
+	// karar, ClusterRole ister). Env boşsa (docker-compose, çıplak
+	// binary) alan HİÇ yazılmaz — boş string yazmak, coverage sayacına
+	// sahte doluluk saymaktı.
+	for _, kv := range []struct{ env, key string }{
+		{"COREMETRY_K8S_NAMESPACE", "k8s.namespace.name"},
+		{"COREMETRY_K8S_POD_NAME", "k8s.pod.name"},
+		{"COREMETRY_K8S_POD_UID", "k8s.pod.uid"},
+		{"COREMETRY_K8S_NODE_NAME", "k8s.node.name"},
+	} {
+		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
+			attrs = append(attrs, attribute.String(kv.key, v))
+		}
+	}
+	return resource.Merge(resource.Default(), resource.NewSchemaless(attrs...))
 }
 
 func serviceName(mode string) string {

@@ -3110,6 +3110,18 @@ export const api = {
   /** Ön kontrol — hiçbir şey yazmaz. ADIM 0a-0e: küme şekli, 0009
    *  uygulanmış mı, host'lar hemfikir mi, fiziksel bölünme ve kusurun
    *  CANLI kanıtı (FINAL sayımı ↔ do_not_merge ayarıyla FINAL sayımı). */
+  // v0.10.103 — /traces tarihçe geri doldurma sihirbazı. Preflight ölçer
+  // (yazmaz); apply GÜN partition'ını düşürüp ham spans'ten yeniden kurar
+  // (idempotens) — gövde açık onay ister.
+  traceBackfillPreflight: () =>
+    get<{ days: import('./types').TraceBackfillDay[] }>(`/api/admin/clickhouse/trace-backfill/preflight`),
+  traceBackfillStatus: () =>
+    get<import('./types').TraceBackfillRun>(`/api/admin/clickhouse/trace-backfill/status`),
+  traceBackfillApply: (days: string[]) =>
+    request<{ ok: boolean; days: number }>(`/api/admin/clickhouse/trace-backfill/apply`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ days, confirm: 'BACKFILL' }),
+    }),
   stateRepartPreflight: () =>
     get<import('./types').StateRepartPreflightResult>('/api/admin/state-repart/preflight'),
   /** Koşan/bitmiş göçün anlık hâli. */

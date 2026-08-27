@@ -23,6 +23,11 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
+	"github.com/cilcenk/coremetry/internal/selfobs"
 )
 
 // protocolVersion — konuşulan MCP sürümü; internal/mcp sunucusuyla aynı.
@@ -117,16 +122,47 @@ type ToolDef struct {
 type Client struct {
 	tr          Transport
 	initialized bool
+	// server — span attribute'u için sunucu adı; boş olabilir (test).
+	server string
 }
 
 func NewClient(tr Transport) *Client { return &Client{tr: tr} }
 
+// NewNamedClient — span'lere sunucu adını taşıyan kurucu (dilim ④).
+// Registry ve Test probu bunu kullanır; adsız NewClient testlerde kalır.
+func NewNamedClient(server string, tr Transport) *Client {
+	return &Client{tr: tr, server: server}
+}
+
+// startSpan — giden MCP çağrısının selfobs span'i (v0.10.89, dilim ④).
+//
+// Depoda BUGÜNE DEK hiçbir dış HTTP istemcisi span'lenmiyordu (keşif
+// bulgusu: otelhttp.NewTransport 0 kullanım); MCP çağrısı modelin cevap
+// süresine DOĞRUDAN girer, yani "sohbet niye 12 sn" sorusunun cevabı
+// tam buradadır. selfobs kapalıyken Tracer() noop döner — bedel sıfır
+// (traced_conn deseni). Hata mesajı SafeAttr'dan geçer.
+func (c *Client) startSpan(ctx context.Context, op string, extra ...attribute.KeyValue) (context.Context, func(error)) {
+	ctx, span := selfobs.Tracer().Start(ctx, op)
+	span.SetAttributes(append([]attribute.KeyValue{
+		attribute.String("mcp.server", c.server),
+	}, extra...)...)
+	return ctx, func(err error) {
+		if err != nil {
+			span.RecordError(fmt.Errorf("%s", selfobs.SafeAttr(err.Error())))
+			span.SetStatus(codes.Error, selfobs.SafeAttr(err.Error()))
+		}
+		span.End()
+	}
+}
+
 // Initialize — el sıkışma + initialized bildirimi. İkinci çağrı no-op:
 // Registry tembel başlatır ve aynı istemciyi yeniden kullanır.
-func (c *Client) Initialize(ctx context.Context) error {
+func (c *Client) Initialize(ctx context.Context) (err error) {
 	if c.initialized {
 		return nil
 	}
+	ctx, end := c.startSpan(ctx, "mcpclient.initialize")
+	defer func() { end(err) }()
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	params := map[string]any{
@@ -157,6 +193,8 @@ func (c *Client) ListTools(ctx context.Context) (tools []ToolDef, truncated bool
 	if err := c.Initialize(ctx); err != nil {
 		return nil, false, err
 	}
+	ctx, end := c.startSpan(ctx, "mcpclient.list_tools")
+	defer func() { end(err) }()
 	cursor := ""
 	for page := 0; page < listToolsPageCap; page++ {
 		cctx, cancel := context.WithTimeout(ctx, callTimeout)
@@ -194,6 +232,9 @@ func (c *Client) CallTool(ctx context.Context, name string, args json.RawMessage
 	if err := c.Initialize(ctx); err != nil {
 		return "", false, err
 	}
+	ctx, end := c.startSpan(ctx, "mcpclient.call",
+		attribute.String("mcp.tool", name))
+	defer func() { end(err) }()
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	params := map[string]any{"name": name}

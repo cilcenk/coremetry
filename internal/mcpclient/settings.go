@@ -228,7 +228,7 @@ func (s *Service) Test(ctx context.Context, cfg ServerConfig) TestResult {
 		return TestResult{Error: err.Error()}
 	}
 	defer tr.Close()
-	cl := NewClient(tr)
+	cl := NewNamedClient(cfg.Name, tr)
 	tools, trunc, err := cl.ListTools(ctx)
 	if err != nil {
 		return TestResult{Error: err.Error()}

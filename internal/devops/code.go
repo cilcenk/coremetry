@@ -375,6 +375,13 @@ func evictOldest(m map[string]treeEntry) {
 // (stackparse.ResourceRefs). Boş geçilebilir: kaynak avı atlanır.
 func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, frames []stackparse.Frame, refs []stackparse.ResourceRef) (out CodeContext) {
 	class := CodeOther
+	// v0.10.85 — cfg defer'den ÖNCE bildiriliyor ki link YÜRÜRLÜKTEKİ
+	// yapılandırmayla kurulsun: pickProject / organizasyon araması
+	// cfg.Project'i doldurur ve CurrentSettings bunu görmez. Eski hâl
+	// (defer içinde CurrentSettings) türetilmiş/aranmış projeyi düşürüyor
+	// ve link koleksiyon köküne çıkıyordu — operatörün ekranındaki
+	// projesiz URL tam olarak buydu.
+	var cfg Settings
 	// v0.9.1243 — sınıf sayaca GİDERKEN bağlamın kendisine de yazılır.
 	// Aynı defer BİLİNÇLİ: on dört çıkışın sınıfı zaten burada tek
 	// yerde okunuyor, ikinci bir yazım noktası açmak ilk yeni çıkışta
@@ -392,7 +399,7 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 		// olmamasından kötüdür (operatör tıklar, 404 görür ve deponun
 		// yok olduğunu sanır).
 		if s != nil && out.Repo != "" {
-			out.BrowseURL = BrowseURL(s.CurrentSettings(), out.Repo, out.Branch)
+			out.BrowseURL = BrowseURL(cfg, out.Repo, out.Branch)
 		}
 		s.RecordCodeOutcome(class, out.Reason)
 	}()
@@ -405,7 +412,7 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 		class = CodeRepoUnresolved
 		return CodeContext{Reason: "servis için depo çözülemedi"}
 	}
-	cfg := s.CurrentSettings()
+	cfg = s.CurrentSettings()
 	if strings.TrimSpace(cfg.BaseURL) == "" {
 		class = CodeUnconfigured
 		return CodeContext{Repo: repo, Reason: "DevOps bağlantısı yapılandırılmamış (Ayarlar → Kod entegrasyonu)"}
@@ -416,23 +423,14 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, s.fetchDeadline())
 	defer cancel()
-	// v0.9.1183 — proje ayarda boşsa servis önekinden TÜRETİLİR
-	// (bsa-… → BSA). Açık ayar HER ZAMAN kazanır: türetme bir tahmin,
-	// operatörün yazdığı ad bir karar (ResolveRepo'daki pin sözleşmesinin
-	// aynısı). Önceden burası kesin bir duvardı ve kurulumun kendi
-	// adlandırma sözleşmesi zaten cevabı taşırken operatörden aynı bilgiyi
-	// ikinci kez istiyordu.
-	project, _, dead := pickProject(cfg, hint)
-	if dead != "" {
-		// Depo ADIYLA çağırıyoruz; ada göre çözüm proje kapsamı ister.
-		class = CodeProjectDeadEnd
-		return CodeContext{Repo: repo, Reason: dead}
-	}
-	cfg.Project = project
 	// v0.9.1235 — AppFrames artık EN DERİN "Caused by" segmentinden dışa
 	// doğru seçiyor: üç pencerenin ilki kök nedenin fırlatıldığı satır,
 	// wrapper'ın yeniden-fırlatma satırları arta kalan bütçeye düşüyor.
 	// v0.9.1237 — aday listesi GENİŞ (10), tavan çıktıda (3 pencere).
+	//
+	// v0.10.85 — frame seçimi proje çözümünden ÖNCE: aşağıdaki çıkmaz
+	// yedeği frame ister ve frame yoksa proje çözülse de kod bağlamı
+	// kurulamaz — o hâlde dürüst cümle CodeNoStack'inki.
 	targets := stackparse.AppFrames(frames, codeCandidateLimit)
 	if len(targets) == 0 {
 		// v0.9.1264 (denetim [3/XS]) — tek cümle ÜÇ farklı vazgeçişi
@@ -444,8 +442,44 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 		class = CodeNoStack
 		return CodeContext{Repo: repo, Reason: frameGiveUpReason(frames)}
 	}
-
 	cli := s.clientFor(cfg.InsecureSkipVerify)
+
+	// v0.9.1183 — proje ayarda boşsa servis önekinden TÜRETİLİR
+	// (bsa-… → BSA). Açık ayar HER ZAMAN kazanır: türetme bir tahmin,
+	// operatörün yazdığı ad bir karar (ResolveRepo'daki pin sözleşmesinin
+	// aynısı). Önceden burası kesin bir duvardı ve kurulumun kendi
+	// adlandırma sözleşmesi zaten cevabı taşırken operatörden aynı bilgiyi
+	// ikinci kez istiyordu.
+	//
+	// v0.10.85 (operatör-raporlu) — çıkmaz artık MUTLAK duvar değil:
+	// servis BAŞKA bir DevOps projesi altında yaşıyorsa üç kaynak birden
+	// ıskalar ve tam bu iş için yazılmış organizasyon araması (v0.10.74)
+	// sırada SONRA durduğu için hiç koşamıyordu. Arama açıksa (proje,
+	// depo) stacktrace'ten aranır; kapalıysa çıkmaz cümlesi dördüncü
+	// çareyi söyler.
+	project, _, dead := pickProject(cfg, hint)
+	var searchNote string
+	if dead != "" {
+		if !cfg.CodeSearch {
+			class = CodeProjectDeadEnd
+			return CodeContext{Repo: repo, Reason: dead + searchOffRemedyTR}
+		}
+		p, r, snote, sok := searchResolveProjectRepo(ctx, targets, repo,
+			s.ResolveConfig().withDefaults().BranchOrder,
+			func(c context.Context, q string) ([]CodeSearchHit, error) {
+				return SearchCode(c, cli, cfg, q)
+			})
+		if !sok {
+			class = CodeProjectDeadEnd
+			return CodeContext{Repo: repo, Reason: dead + ", " + snote}
+		}
+		project, searchNote = p, snote
+		if r != "" {
+			repo, out.Repo = r, r
+		}
+	}
+	cfg.Project = project
+
 	ch := s.resolveChain(ctx, parent, cli, cfg, repo)
 	repo, out.Repo, out.Branch = ch.repo, ch.repo, ch.branch
 	if ch.class != "" {
@@ -453,7 +487,10 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 		return CodeContext{Repo: ch.repo, Branch: ch.branch, Reason: ch.reason}
 	}
 	// note — düzeltme izi. Boş kalırsa hiçbir şey değişmedi demektir.
-	note, ver, branch, paths := ch.note, ch.ver, ch.branch, ch.paths
+	// v0.10.85 — arama künyesi EN ÖNDE: depo başka projeden geldiyse
+	// operatör bunu her nottan önce görmeli, yoksa "Kaynak: <depo>"
+	// satırındaki yabancı adı kendi ayarlarında arar.
+	note, ver, branch, paths := withNote(searchNote, ch.note), ch.ver, ch.branch, ch.paths
 
 	// v0.9.1269 — KESİK AĞAÇTA kapsamlı geri-deneme. Tam ağaç ıskaladı
 	// ve ağaç kesikse, frame'in paket yolundan türeyen alt-ağaçlar
@@ -488,11 +525,18 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 			func(c context.Context, q string) ([]CodeSearchHit, error) {
 				return SearchCode(c, cli, cfg, q)
 			},
-			func(c context.Context, rp, br, pth string) (string, error) {
+			func(c context.Context, prj, rp, br, pth string) (string, error) {
 				if br == "" {
 					br = branch
 				}
-				return fetchItemContent(c, cli, cfg, ver, rp, br, pth)
+				// v0.10.85 — isabetin projesi çekim URL'ine girer; eskiden
+				// yürürlükteki proje kullanılıyor ve çapraz-proje isabeti
+				// 404'e düşüp sessizce atlanıyordu.
+				pcfg := cfg
+				if strings.TrimSpace(prj) != "" {
+					pcfg.Project = prj
+				}
+				return fetchItemContent(c, cli, pcfg, ver, rp, br, pth)
 			})
 		hunt.windows = append(hunt.windows, sw...)
 		for _, n := range snotes {

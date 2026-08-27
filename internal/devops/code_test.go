@@ -362,6 +362,9 @@ type fakeTFS struct {
 	repos []string
 	// hits — uç başına istek sayısı (cache pini için).
 	hits map[string]int
+	// searchHits — kod arama ucunun (codesearchresults) döndüreceği
+	// isabetler (v0.10.85 proje-çıkmazı yedeği testleri).
+	searchHits []CodeSearchHit
 	// seen — görülen istek YOLLARI (v0.9.1240). Proje adının gerçekten
 	// URL'e girdiğini ölçmek için: hint'i okuyup isteğe koymayan bir
 	// uygulama, yalnız Reason'a bakan bir testten geçerdi.
@@ -472,6 +475,41 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 			return
 		}
 		switch {
+		case strings.HasSuffix(p, "/_apis/search/codesearchresults"):
+			// v0.10.85 — organizasyon araması ucu. Tel şekli gerçek API'nin
+			// (searchCodeResponse'un okuduğu yarı): results[].path +
+			// repository{name,type} + project{name} + versions[].branchName.
+			f.mu.Lock()
+			f.hits["search"]++
+			f.mu.Unlock()
+			type wireHit struct {
+				Path       string `json:"path"`
+				Repository struct {
+					Name string `json:"name"`
+					Type string `json:"type"`
+				} `json:"repository"`
+				Project struct {
+					Name string `json:"name"`
+				} `json:"project"`
+				Versions []struct {
+					BranchName string `json:"branchName"`
+				} `json:"versions"`
+			}
+			out := struct {
+				Results []wireHit `json:"results"`
+			}{}
+			for _, h := range f.searchHits {
+				var w wireHit
+				w.Path, w.Repository.Name, w.Repository.Type = h.Path, h.Repository, "git"
+				w.Project.Name = h.Project
+				if h.Branch != "" {
+					w.Versions = append(w.Versions, struct {
+						BranchName string `json:"branchName"`
+					}{BranchName: "refs/heads/" + h.Branch})
+				}
+				out.Results = append(out.Results, w)
+			}
+			_ = json.NewEncoder(w).Encode(out)
 		case strings.HasSuffix(p, "/refs"):
 			f.mu.Lock()
 			f.hits["refs"]++
@@ -1923,4 +1961,92 @@ func TestCappedTreeNote(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ── v0.10.85 — PROJE ÇIKMAZINDA ORGANİZASYON ARAMASI ────────────────────
+//
+// Operatör-raporlu: servis BAŞKA bir DevOps projesi altında; Ayarlar'daki
+// Project boş, pin yok, önek tutmuyor. Eski davranış "proje adı çözülemedi"
+// duvarıydı ve v0.10.74'ün araması — tam bu iş için yazılmış makine — hiç
+// koşmuyordu ([[feedback-tested-but-unreachable]]). Adlar jenerik: gerçek
+// müşteri servisi/projesi/deposu teste GİRMEZ.
+func TestFetchCodeProjectDeadEndSearchFallback(t *testing.T) {
+	const hitPath = "/src/main/java/com/example/transfer/TransferBusiness.java"
+	stack := "java.lang.IllegalArgumentException: Cannot format given Object as a Number\n" +
+		"\tat com.example.transfer.TransferBusiness.formatAmount(TransferBusiness.java:246)\n" +
+		"\tat org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:1010)\n"
+	frames := stackparse.ParseJava(stack)
+	// Servis öneksiz → hint boş, çıkmaz cümlesi hazır (operatörün durumu).
+	deadHint := ResolveRepo("web-orders-bff", "", ResolveConfig{}).Project
+	if deadHint.Value != "" {
+		t.Fatalf("kurulum hatası: öneksiz servis proje önerisi üretmemeli: %+v", deadHint)
+	}
+
+	t.Run("arama açık → depo başka projeden bulunur", func(t *testing.T) {
+		f := newFakeTFS(t)
+		f.tree = []string{hitPath}
+		f.files[hitPath] = javaFile("com.example.transfer", "TransferBusiness", 400, 246)
+		f.searchHits = []CodeSearchHit{
+			{Project: "PLATFORM", Repository: "transfer-core", Path: hitPath, Branch: "release"},
+		}
+		cfg := f.settings()
+		cfg.Project = ""
+		cfg.CodeSearch = true
+		svc := New()
+		svc.Configure(cfg)
+
+		cc := svc.FetchCode(context.Background(), "web-orders-bff", deadHint, frames, nil)
+		if len(cc.Windows) == 0 {
+			t.Fatalf("pencere yok, kod gelmeliydi: %s", cc.Reason)
+		}
+		if !strings.Contains(cc.Reason, "organizasyon aramasıyla bulundu: PLATFORM/transfer-core") {
+			t.Errorf("künye arama kaynağını söylemiyor: %q", cc.Reason)
+		}
+		// Proje URL'lere GERÇEKTEN girdi mi — Reason'a bakan test, isteğe
+		// koymayan bir uygulamadan geçerdi (v0.9.1240 dersi).
+		if !f.sawPathContaining("/PLATFORM/") {
+			t.Error("aranan proje hiçbir istek URL'ine girmedi")
+		}
+		if !strings.Contains(cc.BrowseURL, "/PLATFORM/_git/transfer-core") {
+			t.Errorf("BrowseURL aranan projeyi taşımıyor: %q", cc.BrowseURL)
+		}
+		if cc.Outcome != CodeOK && cc.Outcome != CodePartial {
+			t.Errorf("Outcome=%s, ok/partial bekleniyordu", cc.Outcome)
+		}
+	})
+
+	t.Run("arama kapalı → çıkmaz dördüncü çareyi söyler", func(t *testing.T) {
+		f := newFakeTFS(t)
+		f.tree = []string{hitPath}
+		cfg := f.settings()
+		cfg.Project = ""
+		svc := New()
+		svc.Configure(cfg)
+
+		cc := svc.FetchCode(context.Background(), "web-orders-bff", deadHint, frames, nil)
+		if cc.Outcome != CodeProjectDeadEnd {
+			t.Fatalf("Outcome=%s, project-dead-end bekleniyordu (%s)", cc.Outcome, cc.Reason)
+		}
+		if !strings.Contains(cc.Reason, "kod aramasını açın") {
+			t.Errorf("çıkmaz cümlesi kod araması çaresini söylemiyor: %q", cc.Reason)
+		}
+	})
+
+	t.Run("arama açık ama ıska → çıkmaz + arama sonucu", func(t *testing.T) {
+		f := newFakeTFS(t)
+		f.tree = []string{hitPath}
+		cfg := f.settings()
+		cfg.Project = ""
+		cfg.CodeSearch = true
+		svc := New()
+		svc.Configure(cfg)
+
+		cc := svc.FetchCode(context.Background(), "web-orders-bff", deadHint, frames, nil)
+		if cc.Outcome != CodeProjectDeadEnd {
+			t.Fatalf("Outcome=%s, project-dead-end bekleniyordu (%s)", cc.Outcome, cc.Reason)
+		}
+		if !strings.Contains(cc.Reason, "organizasyon araması da eşleşme bulamadı") {
+			t.Errorf("çıkmaz cümlesi arama sonucunu söylemiyor: %q", cc.Reason)
+		}
+	})
 }

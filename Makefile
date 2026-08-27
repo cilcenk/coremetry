@@ -78,6 +78,15 @@ audit:
 # and tags exactly like docker-up does, and starts nothing.
 #
 # Use `make docker-up` when you actually want the compose stack.
+# perfcheck — performans bütçesi koşucusu (docs/perf/perf-budget-2026-08-28.md
+# AŞAMA 3). Canlı yığın ister (varsayılan :8090 port-forward); JSON'u
+# perf/out/ altına yazar, PREV verilirse önceki koşuyla kıyaslar.
+#   make perfcheck                      # taban koşu
+#   make perfcheck PREV=perf/out/x.json # kıyas
+.PHONY: perfcheck
+perfcheck:
+	@go run ./cmd/perfcheck -budget scripts/perf/budget.json $(if $(PREV),-compare $(PREV),) $(PERFCHECK_ARGS)
+
 .PHONY: image
 image: .env-version
 	docker compose build coremetry

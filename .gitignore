@@ -99,3 +99,6 @@ deployment-coremetry-prod.yaml
 /services-coremetry-distributed.yaml
 /services-coremetry-prod-distributed.yaml
 /route-coremetry-otlp-http-prod.yaml
+
+# perfcheck koşu çıktıları (docs/perf/perf-budget-2026-08-28.md) — yerel, kıyas için elde tutulur
+perf/out/

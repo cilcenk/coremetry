@@ -29,6 +29,7 @@ import { serviceHref } from '@/lib/serviceHref';
 const CAP = 40;
 
 function kindLabel(n: GraphNode): string {
+  if (n.kind === 'node')     return 'k8s node';
   if (n.kind === 'database') return n.system ? `db · ${n.system}` : 'database';
   if (n.kind === 'queue')    return n.system ? `mq · ${n.system}` : 'queue';
   if (n.kind === 'external') return 'external';
@@ -136,13 +137,19 @@ export function assignFocusColumns(edges: GraphEdge[], focus: string, hops: numb
   return col;
 }
 
-export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, onErrorsOnly, onRecenter, onClear }: {
+export function FocusedNeighborhood({ range, focus, hops, errorsOnly, showNodes, onHops, onErrorsOnly, onShowNodes, onRecenter, onClear }: {
   range: TimeRange;
   focus: string;
   hops: number;
   errorsOnly: boolean;
+  // showNodes (v0.10.95, dikey eksen dilim ③) — RUNS_ON kenarları:
+  // servisin üstünde koştuğu k8s node'ları grafiğe katılır. Veri ancak
+  // k8sattributes (v0.10.92) açıkken akar; kapalıyken sunucu boş küme
+  // döndürür ve görünüm değişmez.
+  showNodes: boolean;
   onHops: (h: number) => void;
   onErrorsOnly: (v: boolean) => void;
+  onShowNodes: (v: boolean) => void;
   onRecenter: (svc: string) => void;
   onClear: () => void;
 }) {
@@ -154,8 +161,9 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
   // Tek görünüm kaldığı için `enabled` gate'i de kalktı — sorgu artık her
   // zaman çizilen şeyi besliyor.
   const graph = useQuery<ServiceGraphResponse>({
-    queryKey: ['servicegraph', 'neighborhood', focus, hops, from, to],
-    queryFn: () => api.serviceGraph({ focus, scope: 'neighborhood', hops, from, to }),
+    queryKey: ['servicegraph', 'neighborhood', focus, hops, from, to, showNodes],
+    queryFn: () => api.serviceGraph({ focus, scope: 'neighborhood', hops, from, to,
+      nodes: showNodes ? '1' : undefined }),
     staleTime: 30_000,
   });
 
@@ -240,6 +248,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
       errorRate: n.errorRate / 100,
       kind: n.kind === 'database' ? 'db'
         : n.kind === 'queue' ? 'queue'
+        : n.kind === 'node' ? 'node'
         : n.kind === 'external' || n.kind === 'internal' ? 'external'
         : undefined,
       // v0.8.297 — dep pill'in ana satırı motor adını okur ("oracle",
@@ -324,6 +333,10 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
             </div>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--text2)', cursor: 'pointer' }}>
               <input type="checkbox" checked={errorsOnly} onChange={e => onErrorsOnly(e.target.checked)} /> Errors only
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}
+              title="Servisin üstünde koştuğu k8s node'larını grafiğe kat (k8sattributes açık olmalı)">
+              <input type="checkbox" checked={showNodes} onChange={e => onShowNodes(e.target.checked)} /> k8s nodes
             </label>
             <span style={{ fontSize: 11, color: 'var(--text3)' }}>
               {nb.nodes.length} of {graph.data?.nodes.length ?? 0} nodes · {nb.edges.length} edges

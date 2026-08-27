@@ -143,7 +143,7 @@ export interface ServiceTopologyResponse {
 // topology_edges_5m MV (no raw-span scan). Node kind is decoded from the MV's
 // structured node_kind (db.system/messaging.system origin) — the client never
 // does the old "db:h2" prefix-strip. Consumed by the canonical ServiceGraph.
-export type GraphNodeKind = 'service' | 'database' | 'queue' | 'external' | 'internal';
+export type GraphNodeKind = 'service' | 'database' | 'queue' | 'external' | 'internal' | 'node';
 export interface GraphNode {
   id: string;          // canonical id (raw MV name, e.g. "payments" / "db:h2")
   name: string;        // display name, prefix-decoded

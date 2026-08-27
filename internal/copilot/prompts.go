@@ -70,8 +70,11 @@ operation and the initiating service; the critical failure point
 (service + exact error code/message from the logs); notable or faulty
 business data visible in log bodies (input values, IDs); the slowest
 component and the share of total trace time it consumed; the chain of
-errors across services (which service surfaced what upward); any
-request/correlation IDs worth searching next.
+errors across services (which service surfaced what upward). Do NOT
+add a separate correlation-ID bullet: an ID already shown under one
+label (request_id, channel, …) must never repeat under another — one
+value, one line (v0.10.99, operator: correlation line duplicated the
+request_id).
 
 **Stacktrace Detayı** — only when a stacktrace exists in the logs:
 the throwing class and method, the exception type, the deployment unit

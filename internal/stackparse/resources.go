@@ -61,6 +61,11 @@ type ResourceRef struct {
 	Base string
 	// Ext — biliniyorsa uzantı (".xml"); boşsa çağıran resourceExts'i dener.
 	Ext string
+	// Member (v0.10.113) — nitelikli kimliğin SON parçası: MyBatis
+	// statement id'si (`…IntTfraudMapper.ariCTelefonSelect` → Member
+	// "ariCTelefonSelect"). Açık dosya adından türeyen adaylarda boş.
+	// Çağıran bununla dosyanın tamamı yerine İLGİLİ sorgu bloğunu keser.
+	Member string
 }
 
 // ResourceRefs — hata metninden kaynak dosya adaylarını çıkarır.
@@ -78,7 +83,10 @@ func ResourceRefs(text string) []ResourceRef {
 		explicit[m[1]] = "." + strings.ToLower(m[2])
 	}
 
-	derived := map[string]bool{}
+	// derived: base → statement id (Member). Aynı mapper birden çok id
+	// ile anılırsa METİNDEKİ İLK kazanır — hata satırı genelde önce
+	// asıl statement'ı anar; deterministik (FindAll metin sırası).
+	derived := map[string]string{}
 	for _, m := range qualifiedIDRe.FindAllStringSubmatch(text, -1) {
 		parts := strings.Split(m[1], ".")
 		// Sondan bir önceki parça: `...Mapper.method` → `Mapper`.
@@ -90,8 +98,11 @@ func ResourceRefs(text string) []ResourceRef {
 		if cand == "" || cand[0] < 'A' || cand[0] > 'Z' {
 			continue
 		}
-		if _, seen := explicit[cand]; !seen {
-			derived[cand] = true
+		if _, seen := explicit[cand]; seen {
+			continue
+		}
+		if _, seen := derived[cand]; !seen {
+			derived[cand] = parts[len(parts)-1]
 		}
 	}
 
@@ -99,8 +110,8 @@ func ResourceRefs(text string) []ResourceRef {
 	for _, b := range sortedKeys(explicit) {
 		out = append(out, ResourceRef{Base: b, Ext: explicit[b]})
 	}
-	for _, b := range sortedKeysBool(derived) {
-		out = append(out, ResourceRef{Base: b})
+	for _, b := range sortedKeys(derived) {
+		out = append(out, ResourceRef{Base: b, Member: derived[b]})
 	}
 	return out
 }
@@ -109,15 +120,6 @@ func ResourceRefs(text string) []ResourceRef {
 func ResourceExts() []string { return append([]string(nil), resourceExts...) }
 
 func sortedKeys(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func sortedKeysBool(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)

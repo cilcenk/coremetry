@@ -109,6 +109,7 @@ func (s *Store) GetServiceAdjacency(
 		SELECT parent_service, child_node
 		FROM topology_edges_5m FINAL
 		WHERE time_bucket >= ?
+		  AND `+TopoCallEdgeFilterSQL+`
 		GROUP BY parent_service, child_node
 		ORDER BY parent_service, child_node
 		LIMIT 20000
@@ -178,6 +179,7 @@ func (s *Store) GetServiceAdjacencyWeighted(
 		       sum(sum_duration_ns) AS sum_dur
 		FROM topology_edges_5m FINAL
 		WHERE time_bucket >= ?
+		  AND `+TopoCallEdgeFilterSQL+`
 		GROUP BY parent_service, child_node
 		ORDER BY errors DESC, calls DESC
 		LIMIT 20000

@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AI_PARAM, formatAiParam, parseAiParam, type AISubject } from '@/lib/aiSubject';
+import { AI_CODE_PARAM, AI_PARAM, formatAiParam, parseAiParam, type AISubject } from '@/lib/aiSubject';
 
 // useAiSubject — AI çekmecesinin açık öznesi, ADRESTEN okunur/yazılır
 // (v0.9.477). Ev kuralı: her operatör seçimi `setSearchParams(prev => …,
@@ -24,6 +24,11 @@ export function useAiSubject(): [AISubject | null, (s: AISubject | null) => void
       prev.forEach((v, k) => { if (!next.has(k)) next.append(k, v); });
       if (s) next.set(AI_PARAM, formatAiParam(s));
       else next.delete(AI_PARAM);
+      // v0.10.81 — aicode YALNIZ paylaşılan linkte yaşar: uygulama içi
+      // her açılış/kapanış/özne değişimi onu siler. Silmeseydik bir kez
+      // işaretlenen kutu SONRAKİ öznelere de sızardı ve v0.10.60'ın
+      // "her açılışta kapalı" kararı arka kapıdan geri dönerdi.
+      next.delete(AI_CODE_PARAM);
       return next;
     }, { replace: true });
   }, [setSearchParams]);

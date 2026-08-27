@@ -276,6 +276,9 @@ type Store struct {
 	// KATALOG köprüsünde kalır — yani en kötü hâl "eski davranış",
 	// asla yanlış bir cluster'a açılan çekmece değil.
 	hasTopoClusterCol bool
+	// hasTraceEntrySvcCol — trace_summary_5m.entry_service_state okunabilir
+	// mi (v0.10.97). false iken /traces okumaları eski zinciri kullanır.
+	hasTraceEntrySvcCol bool
 
 	// neighborProvider is the optional 1-hop topology lookup used
 	// by AttachProblemToIncident for rule 3 (cluster a new
@@ -2814,6 +2817,18 @@ func (s *Store) migrate(ctx context.Context) error {
 	tcRows, tcErr := s.conn.Query(ctx, `SELECT cluster FROM topology_edges_5m LIMIT 1 SETTINGS max_execution_time = 3`)
 	maybeCloseRows(tcRows, tcErr)
 	s.hasTopoClusterCol = tcErr == nil
+	// entry_service_state okuma probe'u (v0.10.97) — BARE ada sorar,
+	// çünkü koruduğu okumalar bare addan geçiyor. Cluster'da sarmalayıcı
+	// bu migrate'in İÇİNDE düşürülüp boot'un ilerisinde (ensure) yeniden
+	// kurulduğundan İLK boot false kalabilir: okumalar o süreçte ESKİ
+	// zinciri kullanır (davranış bit-bit eski, 500 yok), sonraki boot
+	// true'ya döner — kendini iyileştiren pencere, sessiz değil (log).
+	esRows, esErr := s.conn.Query(ctx, `SELECT entry_service_state FROM trace_summary_5m LIMIT 1 SETTINGS max_execution_time = 3`)
+	maybeCloseRows(esRows, esErr)
+	s.hasTraceEntrySvcCol = esErr == nil
+	if !s.hasTraceEntrySvcCol {
+		log.Printf("[chstore] `entry_service_state` not readable on trace_summary_5m (%v) — /traces kök-servis 'unknown' düşüşü bu süreçte devre dışı (eski davranış)", esErr)
+	}
 	if !s.hasTopoClusterCol {
 		log.Printf("[chstore] `cluster` column not present on topology_edges_5m (%v) — topology passes omit it; queue nodes keep the narrowed /messaging catalogue link instead of the drawer deep-link", tcErr)
 	}
@@ -3751,7 +3766,17 @@ func (s *Store) migrate(ctx context.Context) error {
 		   countState()                              AS span_count_state,
 		   countIfState(status_code = 'error')       AS error_count_state,
 		   argMaxIfState(http_route, time,
-		     (parent_id = '' OR parent_id = '0000000000000000') AND name != '') AS entry_route_state
+		     (parent_id = '' OR parent_id = '0000000000000000') AND name != '') AS entry_route_state,
+		   -- entry_service_state (v0.10.97, operatör-raporlu "iframe
+		   -- trace'leri"): EN ERKEN server/consumer span'in servisi —
+		   -- entry-span ilkesinin trace-listesi yarısı. Mobil web/iframe
+		   -- telemetrisi service.name'siz span'i trace'in MUTLAK köküne
+		   -- koyunca liste "unknown" basıyordu; görüntüleme zinciri kök
+		   -- 'unknown'/boşken buna düşer (traceDisplaySvcExpr). argMIN:
+		   -- giriş = ilk sunucu tarafı span; 'unknown' bilinçli dışarıda.
+		   argMinIfState(service_name, time,
+		     (kind = 'server' OR kind = 'consumer')
+		     AND service_name != '' AND service_name != 'unknown') AS entry_service_state
 		 FROM spans
 		 GROUP BY trace_id, time_bucket`,
 
@@ -4178,6 +4203,52 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if err := s.execDDL(ctx, findMV("trace_summary_5m")); err != nil {
 			return fmt.Errorf("recreate trace_summary_5m with entry_route: %w", err)
+		}
+	}
+
+	// v0.10.97 (operatör-raporlu "iframe trace'leri") — trace_summary_5m
+	// entry_service_state kazandı. v0.8.52 ile aynı drop+recreate şekli;
+	// yerinde koruma reçetesi (inner ALTER + MODIFY QUERY, 90g tarihçeyi
+	// korur) yukarıdaki notta — prod'da migration'dan ÖNCE elle uygulanırsa
+	// bu blok no-op kalır ve tarihçe yaşar.
+	//
+	// ⚠ DAĞITIK İKİNCİ YARI (bu sınıf prod'u iki kez kırdı): _local'i
+	// yeniden yaratmak yetmez — BARE Distributed sarmalayıcı ESKİ şemayla
+	// kalır ve yeni kolonu okuyan her sorgu UNKNOWN_COLUMN ile ölür.
+	// Sarmalayıcı burada düşürülür; boot sırası migrate →
+	// ensureDistributedWrappers olduğundan AYNI boot'ta yeni şemayla
+	// (CREATE ... AS _local) geri kurulur.
+	var hasEntrySvc uint8
+	entrySvcProbe := `
+		SELECT count() > 0
+		FROM system.columns
+		WHERE database = currentDatabase()
+		  AND table    = 'trace_summary_5m'
+		  AND name     = 'entry_service_state'`
+	if s.clusterMode() {
+		entrySvcProbe = `
+		SELECT count() > 0
+		FROM system.columns
+		WHERE database = currentDatabase()
+		  AND table    = 'trace_summary_5m_local'
+		  AND name     = 'entry_service_state'`
+	}
+	if err := s.conn.QueryRow(ctx, entrySvcProbe).Scan(&hasEntrySvc); err == nil && hasEntrySvc == 0 {
+		log.Println("[chstore] upgrading trace_summary_5m MV (adding entry_service_state) — past 5-min buckets will be dropped; in-place recipe preserves them (see v0.8.52 note)")
+		dropTarget := "trace_summary_5m"
+		if s.clusterMode() {
+			dropTarget = "trace_summary_5m_local"
+		}
+		if err := s.dropCombinedMV(ctx, dropTarget); err != nil {
+			return fmt.Errorf("drop old trace_summary_5m for entry_service upgrade: %w", err)
+		}
+		if s.clusterMode() {
+			if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS trace_summary_5m"+s.onCluster()+" SYNC"); err != nil {
+				return fmt.Errorf("drop stale trace_summary_5m wrapper: %w", err)
+			}
+		}
+		if err := s.execDDL(ctx, findMV("trace_summary_5m")); err != nil {
+			return fmt.Errorf("recreate trace_summary_5m with entry_service: %w", err)
 		}
 	}
 

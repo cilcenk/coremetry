@@ -44,7 +44,7 @@ func (s *Store) GetTraceAggregateStub(ctx context.Context, traceID string) (Trac
 	// SETTINGS max_execution_time = 5 — small bounded lookup.
 	row := s.conn.QueryRow(ctx, `
 		SELECT
-		  argMaxIfMerge(root_service_state)          AS root_service,
+		  `+s.traceDisplaySvcExpr()+`          AS root_service,
 		  argMaxIfMerge(root_name_state)             AS root_name,
 		  toUnixTimestamp64Nano(minMerge(trace_start_state)) AS start_ns,
 		  toInt64(maxMerge(trace_end_state))         AS end_ns,

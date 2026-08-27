@@ -3176,7 +3176,13 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	traceIDClause := ""
 	var idArgs []any
 	if serviceSubquery {
-		traceIDClause = `trace_id IN (
+		// v0.10.102 (operatör-raporlu) — GLOBAL şart: dağıtıkta çıplak
+		// IN alt-sorgusu code 288 ile REDDEDİLİYOR
+		// (distributed_product_mode='deny'), yani her filtreli+servisli
+		// liste sorgusu ham yola düşüyordu. CHECK 5'in tek-satır grep'i
+		// bu ÇOK-SATIRLI yazımı göremedi; auditor aynı sürümde
+		// çok-satır tarıyor.
+		traceIDClause = `trace_id GLOBAL IN (
 			SELECT trace_id FROM trace_service_index_5m
 			WHERE service_name = ? AND time_bucket >= ? AND time_bucket < ?
 			GROUP BY trace_id
@@ -3653,7 +3659,10 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 	innerWhere := "WHERE time_bucket >= ? AND time_bucket < ?"
 	innerArgs := []any{f.From, aggWindowEnd(f.From, f.To, f.Service != "")}
 	if f.Service != "" {
-		innerWhere += ` AND trace_id IN (
+		// v0.10.102 — GLOBAL: liste yolundaki 288'in AYNISI Aggregated
+		// sekmesindeydi (sözleşmenin ikinci yarısı; auditor'ın yeni
+		// çok-satır taraması buldu).
+		innerWhere += ` AND trace_id GLOBAL IN (
 		    SELECT DISTINCT trace_id FROM trace_service_index_5m
 		    WHERE service_name = ? AND time_bucket >= ? AND time_bucket < ?
 		)`

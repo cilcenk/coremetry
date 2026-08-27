@@ -344,3 +344,13 @@ func TestNewerBranchWins(t *testing.T) {
 		t.Errorf("branş sırası ters çevrildiğinde seçim değişmedi: %+v", got)
 	}
 }
+
+// TestSearchURLPinsAPIVersion70 — v0.10.98, operatör-raporlu canlı 400:
+// on-prem sunucu 7.1'i reddediyor ("latest supported is 7.0"). Sürümü
+// 7.1'e geri almak, aramayı o kurulumda TEKRAR sıfır gün çalıştırır.
+func TestSearchURLPinsAPIVersion70(t *testing.T) {
+	u := searchURL(Settings{BaseURL: "https://devops.example.local/tfs", Collection: "DefaultCollection"})
+	if !strings.HasSuffix(u, "api-version=7.0") {
+		t.Fatalf("kod arama api-version 7.0 olmalı (on-prem tavanı): %s", u)
+	}
+}

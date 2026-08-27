@@ -143,14 +143,21 @@ Koşul: 24h ≈ 1.5 M span · 100 servis · demo yükü; soğuk = `refresh=1`;
 (ulaşılabilir = bugünkü medyanın ≈1.5×'i, gürültü payıyla; arzu = darboğaz
 giderilince beklenen). Ad = self-telemetry span adı + senaryo eki.
 
-| # | Nokta (span adı · senaryo) | Bugün (medyan) | Ulaşılabilir p95 | Arzu p95 | Darboğaz → gereken değişiklik |
+Taban = **perfcheck düzeltilmiş koşusu** (2026-08-28 01:4x, 5 soğuk koşu,
+her koşu 61 sn kaydırılmış pencere, 24h 1.46 M span / 100 servis,
+`perf/out/baseline-2026-08-28.json`); §2'deki curl sayıları ilk keşfin
+sayılarıdır ve iki tuzak taşıyordu (aynı SQL tekrarı → 0 satır; `range=`
+yok sayılıp varsayılan pencere). Ulaşılabilir eşik = taban medyanının
+≈1.5×'i (gürültü payı); karar medyan üzerinden, p95 bilgi.
+
+| # | Nokta (span adı · senaryo) | Taban p50 (p95) | Ulaşılabilir (p50 eşiği) | Arzu | Darboğaz → gereken değişiklik |
 |---|---|---|---|---|---|
-| P1 | `GET /api/traces` · `mv-24h` (count=skip, filtresiz) | 0.58 s | **≤ 0.9 s** | ≤ 0.3 s | CH iki-aşama; lokal CH taban gecikmesi. Arzu için aşama-1 dilimini `trace_service_index_5m`'e bağlı küçültme |
-| P2 | `GET /api/traces` · `raw-attr-filter-24h` (terfisiz attribute filtresi) | 6.2 s | **≤ 3 s** | ≤ 1 s | Ham `GROUP BY` tam pencere (30.800:1). Ulaşılabilir: ham yola **yenilik dilimi** (önce son N id, gerekirse genişlet); arzu: operatörün sıcak anahtarları terfi + `set(0)` index (channel/function_code emsali: 0 satır) + §2.3 op reddi |
-| P3 | `GET /api/traces` · `extras-50-2cols` | 0.70 s | **≤ 1 s** | ≤ 0.3 s | `idx_trace` bloom G4 (8/19 granül) — zaten sayfaya sınırlı; arzu için `trace_summary_5m`'e terfi kolon boyutu (spec ister) |
-| P4 | `GET /api/servicegraph` · `focus-2hop-top500` + istemci yerleşim `500/20k` | 1.67 s / 1.9 s | **≤ 2.5 s / ≤ 3 s** | ≤ 0.5 s / ≤ 0.3 s | Sunucu: hop sorguları ardışık + `FINAL` → tek 2-hop sorgu ya da paralel hop; istemci: barycenter comparator'ında `edges.filter` → komşuluk indeksi (O(E+n log n)) |
-| P5 | `POST /api/dashboards/data` · `preset-dependencies-1h` | 2.2 s / 1.71 MB | **≤ 2.5 s, gövde ≤ 2 MB** | ≤ 1 s, gövde ≤ 500 KB | Cache yok + panel başına tam seri; `maxDataPoints`/downsample + serveCached (anahtar: gövde hash) |
-| P6 | `GET /api/problems` · `cold` | 0.59 s | **≤ 1 s** | ≤ 0.2 s | `problems FINAL` 6.5k satır p50 612 ms — CPU/FINAL; arzu: `OpenProblemsSnapshot` emsali (v0.9.691) ya da `FINAL`'sız argMax okuma |
+| P1 | `GET /api/traces` · `mv-24h` (count=skip, filtresiz) | 334 ms (1.1 s) | **≤ 600 ms** | ≤ 300 ms | CH iki-aşama; lokal CH taban gecikmesi. Arzu için aşama-1 dilimini `trace_service_index_5m`'e bağlı küçültme |
+| P2 | `GET /api/traces` · `raw-attr-filter-24h` (terfisiz attribute filtresi, geniş eşleşme `user_agent.original LIKE %`) | 4.19 s (5.6 s) | **≤ 6.5 s** | ≤ 1 s | Ham `GROUP BY` tam pencere (dizi yolu 1.54 M satır/273 MiB). Arzu: ham yola **yenilik dilimi** (önce son N id, gerekirse genişlet) ve operatörün sıcak anahtarları terfi + `set(0)` index (channel/function_code emsali: 0 satır) + §2.3 op reddi |
+| P3 | `GET /api/traces` · `extras-50-2cols` | 377 ms (0.7 s) | **≤ 600 ms** | ≤ 300 ms | `idx_trace` bloom G4 (8/19 granül) — zaten sayfaya sınırlı; arzu için `trace_summary_5m`'e terfi kolon boyutu (spec ister) |
+| P4 | `GET /api/servicegraph` · `focus-2hop-top500` + istemci yerleşim `500/20k` | 2.30 s (2.7 s) / 1.9 s | **≤ 3.5 s / ≤ 4 s** | ≤ 0.5 s / ≤ 0.3 s | Sunucu: hop sorguları ardışık + `FINAL` → tek 2-hop sorgu ya da paralel hop; istemci: barycenter comparator'ında `edges.filter` → komşuluk indeksi (O(E+n log n)) |
+| P5 | `POST /api/dashboards/data` · `preset-dependencies-1h` | 1.89 s (2.8 s) / 1.62 MB | **≤ 3 s, gövde ≤ 2 MB** | ≤ 1 s, gövde ≤ 500 KB | Cache yok + panel başına tam seri; `maxDataPoints`/downsample + serveCached (anahtar: gövde hash) |
+| P6 | `GET /api/problems` · `cold` | 1.54 s (2.3 s) | **≤ 2.5 s** | ≤ 200 ms | `problems FINAL` 6.5k satır — CPU/FINAL, lokal VM'de 0.6–1.5 s oynak; arzu: `OpenProblemsSnapshot` emsali (v0.9.691) ya da `FINAL`'sız argMax okuma |
 
 Bütçeye GİRMEYENLER (ölçülemedi): TTFI/istemci çizim (tarayıcı gerekir —
 Playwright yalnız operatör isterse), SSE/h2 (ingress yok), trace-detay N+1.
@@ -193,6 +200,14 @@ Playwright yalnız operatör isterse), SSE/h2 (ingress yok), trace-detay N+1.
 | Prod kıyası | `scripts/perf/prod-compare.sql` — aynı nokta adlarıyla `spanmetrics_1m` p50/p95 |
 | İstemci noktası | `frontend/src/components/TopologyFlowGraph.perf.test.tsx` (vitest, eşik 500/20k ≤ 4 s) |
 | Make | `make perfcheck [PREV=perf/out/x.json]`; çıktı `perf/out/<zaman>.json` (gitignore) |
+
+**Ölçüm tuzağı (v0.10.117'de kapatıldı):** ilk taban koşusunda aynı SQL
+metni art arda koşunca ikinci koşu `query_log`'da **0 satır / 16 ms**
+okudu (CH `use_query_cache=0`, app kullanıcısı `default`, mekanizma
+teşhis edilmedi) — `refresh=1` yalnız Coremetry cache'ini atlıyor.
+perfcheck her soğuk koşuda pencereyi 61 sn geriye kaydırır (SQL metni
+farklı, veri yoğunluğu aynı); `measure.sh` ile elle ölçerken `from/to`'yu
+her koşuda değiştir, yoksa "soğuk" p50 yalan söyler.
 
 Ortam hazırlığı (tekrar edilebilir taban): minikube `chc-0/1` + demo
 üretici en az 2 saat koşmuş (24h penceresi dolu değilse `datasetDrift`

@@ -323,13 +323,25 @@ func (r *runner) dashboardBody(id string, from, to int64) ([]byte, error) {
 }
 
 // measure — bir nokta: ısınma (atılır) + K soğuk + (opsiyonel) K sıcak.
+//
+// v0.10.117 — HER SOĞUK KOŞU FARKLI PENCERE: aynı SQL metni iki kez
+// koşunca ikincisi 0 satır okuyordu (taban koşusunda P2 25 ms, P1 148 ms
+// — gerçek okuma değil). `refresh=1` yalnız Coremetry cache'ini atlar;
+// sunucu tarafında aynı metni yeniden hesaplamayan katman kalıyor. Pencere
+// her koşuda 61 sn geriye kayar (uzunluk aynı, veri yoğunluğu aynı,
+// SQL metni farklı) → her koşu gerçek bir okuma.
 func (r *runner) measure(p perfcheck.Point) perfcheck.Result {
 	res := perfcheck.Result{Name: p.Name, Scenario: p.Scenario, Budget: p.Budget}
-	from, to := windowNs(p.Window)
-	path := strings.NewReplacer(
-		"{from}", fmt.Sprint(from), "{to}", fmt.Sprint(to),
-		"{service}", url.QueryEscape(r.service), "{traceIds}", r.traceIDs,
-	).Replace(p.Path)
+	pathFor := func(shift int) (string, int64, int64) {
+		from, to := windowNs(p.Window)
+		d := int64(shift) * 61 * int64(time.Second)
+		from, to = from-d, to-d
+		return strings.NewReplacer(
+			"{from}", fmt.Sprint(from), "{to}", fmt.Sprint(to),
+			"{service}", url.QueryEscape(r.service), "{traceIds}", r.traceIDs,
+		).Replace(p.Path), from, to
+	}
+	path, from, to := pathFor(0)
 	method := p.Method
 	if method == "" {
 		method = http.MethodGet
@@ -343,21 +355,31 @@ func (r *runner) measure(p perfcheck.Point) perfcheck.Result {
 		}
 		body = b
 	}
-	coldPath := path
-	if p.Cold {
-		sep := "?"
-		if strings.Contains(coldPath, "?") {
-			sep = "&"
+	coldPath := func(shift int) string {
+		cp, _, _ := pathFor(shift)
+		if p.Cold {
+			sep := "?"
+			if strings.Contains(cp, "?") {
+				sep = "&"
+			}
+			cp += sep + "refresh=1"
 		}
-		coldPath += sep + "refresh=1"
+		return cp
 	}
 	for i := 0; i < r.warmup; i++ {
-		_ = r.one(method, coldPath, body)
+		_ = r.one(method, coldPath(100+i), body)
 	}
 	var cold []perfcheck.Sample
 	var ttfb []float64
 	for i := 0; i < r.runs; i++ {
-		s := r.one(method, coldPath, body)
+		if body != nil && p.BodyFromDashboard != "" {
+			// POST gövdesi de pencereyi taşır — her koşuda kaydır.
+			_, f2, t2 := pathFor(i + 1)
+			if b, err := r.dashboardBody(p.BodyFromDashboard, f2, t2); err == nil {
+				body = b
+			}
+		}
+		s := r.one(method, coldPath(i+1), body)
 		cold = append(cold, s)
 		ttfb = append(ttfb, s.TTFBMs)
 		res.XCache = append(res.XCache, s.XCache)

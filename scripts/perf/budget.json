@@ -4,43 +4,43 @@
   "runs": 5,
   "warmup": 1,
   "rules": { "tolerancePct": 25, "datasetDriftWarnPct": 20 },
-  "_doc": "docs/perf/perf-budget-2026-08-28.md §3 — nokta adı = self-telemetry span adı (spanmetrics_1m.name); eşikler 2026-08-28 lokal taban ölçümünden (minikube, 24h ≈ 1.5M span, 100 servis). Soğuk = refresh=1 (X-Cache BYPASS). Karar: medyan; fail = bütçe aşımı VE önceki koşuya göre +tolerans.",
+  "_doc": "docs/perf/perf-budget-2026-08-28.md §3 — nokta adı = self-telemetry span adı (spanmetrics_1m.name). Eşikler = perfcheck DÜZELTİLMİŞ taban koşusu (2026-08-28, minikube, 24h 1.46M span, 100 servis, her soğuk koşu kaydırılmış pencere) medyanının ≈1.5×ı; arzu = darboğaz giderilince. Soğuk = refresh=1 (X-Cache BYPASS). Karar: medyan; fail = bütçe aşımı VE önceki koşuya göre +tolerans.",
   "points": [
     {
       "name": "GET /api/traces", "scenario": "mv-24h", "window": "24h", "cold": true,
       "path": "/api/traces?limit=50&offset=0&count=skip&from={from}&to={to}",
-      "budget": { "achievableMs": 900, "aspirationalMs": 300 },
-      "note": "P1 — MV iki aşama, pencereden bağımsız; taban medyan 0.58 s"
+      "budget": { "achievableMs": 600, "aspirationalMs": 300 },
+      "note": "P1 — MV iki aşama, pencereden bağımsız; perfcheck taban p50 334 ms (p95 1.1 s)"
     },
     {
       "name": "GET /api/traces", "scenario": "raw-attr-filter-24h", "window": "24h", "cold": true,
-      "path": "/api/traces?limit=50&offset=0&count=skip&from={from}&to={to}&filters=%5B%7B%22k%22%3A%22http.user_agent%22%2C%22op%22%3A%22LIKE%22%2C%22v%22%3A%5B%22%25zzz-nomatch%25%22%5D%7D%5D",
-      "budget": { "achievableMs": 3000, "aspirationalMs": 1000 },
-      "note": "P2 — terfisiz attribute filtresi → ham GROUP BY tam pencere (taban 6.2 s, 1.57M satır); ulaşılabilir eşik yenilik dilimi ister"
+      "path": "/api/traces?limit=50&offset=0&count=skip&from={from}&to={to}&filters=%5B%7B%22k%22%3A%22user_agent.original%22%2C%22op%22%3A%22LIKE%22%2C%22v%22%3A%5B%22%25%22%5D%7D%5D",
+      "budget": { "achievableMs": 6500, "aspirationalMs": 1000 },
+      "note": "P2 — terfisiz attribute filtresi (dizi yolu, GENİŞ eşleşme: user_agent.original LIKE %) → ham GROUP BY tam pencere; perfcheck taban p50 4.19 s (p95 5.6 s); ulaşılabilir = 1.5×; arzu 1 s yenilik dilimi / terfi+skip index ister"
     },
     {
       "name": "GET /api/traces", "scenario": "extras-50-2cols", "window": "1h", "cold": true,
       "path": "/api/traces?traceIds={traceIds}&extraAttrs=channel_code,function_code&from={from}&to={to}",
-      "budget": { "achievableMs": 1000, "aspirationalMs": 300 },
-      "note": "P3 — attribute kolonları sayfadaki 50 id'ye sınırlı (idx_trace); taban 0.70 s"
+      "budget": { "achievableMs": 600, "aspirationalMs": 300 },
+      "note": "P3 — attribute kolonları sayfadaki 50 id'ye sınırlı (idx_trace); perfcheck taban p50 377 ms"
     },
     {
       "name": "GET /api/servicegraph", "scenario": "focus-2hop-top500", "window": "1h", "cold": true,
-      "path": "/api/servicegraph?focus={service}&hops=2&top=500&from={from}&to={to}",
-      "budget": { "achievableMs": 2500, "aspirationalMs": 500 },
-      "note": "P4 — hop başına ardışık FINAL okuması; taban 1.67 s. İstemci yerleşimi ayrı: frontend TopologyFlowGraph.perf.test.tsx"
+      "path": "/api/servicegraph?focus={service}&hops=2&topN=500&from={from}&to={to}",
+      "budget": { "achievableMs": 3500, "aspirationalMs": 500 },
+      "note": "P4 — hop başına ardışık FINAL okuması; perfcheck taban p50 2.30 s. İstemci yerleşimi ayrı: frontend TopologyFlowGraph.perf.test.tsx"
     },
     {
       "name": "POST /api/dashboards/data", "scenario": "preset-dependencies-1h", "window": "1h", "cold": false,
       "method": "POST", "path": "/api/dashboards/data", "bodyFromDashboard": "preset-dependencies",
-      "budget": { "achievableMs": 2500, "aspirationalMs": 1000, "maxBytes": 2000000 },
-      "note": "P5 — bundle cache'siz, 12 panel; taban 2.2 s / 1.71 MB"
+      "budget": { "achievableMs": 3000, "aspirationalMs": 1000, "maxBytes": 2000000 },
+      "note": "P5 — bundle cache'siz, 12 panel; perfcheck taban p50 1.89 s / 1.62 MB"
     },
     {
       "name": "GET /api/problems", "scenario": "cold", "cold": true,
       "path": "/api/problems",
-      "budget": { "achievableMs": 1000, "aspirationalMs": 200 },
-      "note": "P6 — problems FINAL 6.5k satır p50 612 ms lokalde; sıcak yol 15 s cache"
+      "budget": { "achievableMs": 2500, "aspirationalMs": 200 },
+      "note": "P6 — problems FINAL 6.5k satır; perfcheck taban p50 1.54 s (curl tabanı 0.59 s — lokal VM oynak); sıcak yol 15 s cache"
     }
   ]
 }

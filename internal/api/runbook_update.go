@@ -201,5 +201,6 @@ func (s *Server) runbookUpdateSuggest(w http.ResponseWriter, r *http.Request) {
 	r, xid := withExchange(r)
 	s.deliverExplain(w, r, xid,
 		map[string]any{"runbookId": rb.ID, "problemId": ex.ProblemID},
-		s.explainPrompt(r, copilot.SystemPromptRunbookUpdate(), evidence), "")
+		s.explainPrompt(r, copilot.SystemPromptRunbookUpdate(), evidence), "",
+		explainCacheKey(copilot.SystemPromptRunbookUpdate(), evidence, ""))
 }

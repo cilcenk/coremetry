@@ -153,7 +153,7 @@ func TestDeliverExplainStreamFrameSequence(t *testing.T) {
 	r := explainReq(true)
 	w := httptest.NewRecorder()
 	s.deliverExplain(w, r, "xid-abc", map[string]any{"similarCount": 2},
-		s.explainPrompt(r, "sys", "user"), "")
+		s.explainPrompt(r, "sys", "user"), "", "")
 
 	if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
 		t.Fatalf("Content-Type = %q; akan kipte SSE olmalı", ct)
@@ -207,7 +207,7 @@ func TestDeliverExplainBufferedUnchanged(t *testing.T) {
 	r := explainReq(false)
 	w := httptest.NewRecorder()
 	s.deliverExplain(w, r, "xid-1", map[string]any{"similarCount": 0},
-		s.explainPrompt(r, "sys", "user"), "")
+		s.explainPrompt(r, "sys", "user"), "", "")
 
 	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
 		t.Fatalf("Content-Type = %q; bayraksız istek JSON almalı", ct)
@@ -232,7 +232,7 @@ func TestDeliverExplainNonFlusherFallsBackToBuffered(t *testing.T) {
 
 	r := explainReq(true)
 	rec := httptest.NewRecorder()
-	s.deliverExplain(nonFlusher{rec}, r, "xid-2", nil, s.explainPrompt(r, "sys", "user"), "")
+	s.deliverExplain(nonFlusher{rec}, r, "xid-2", nil, s.explainPrompt(r, "sys", "user"), "", "")
 
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
 		t.Fatalf("Content-Type = %q; flush edemeyen writer'da JSON'a düşmeli", ct)
@@ -260,7 +260,7 @@ func TestDeliverExplainTransparentBufferedFallback(t *testing.T) {
 
 	r := explainReq(true)
 	w := httptest.NewRecorder()
-	s.deliverExplain(w, r, "xid-3", nil, s.explainPrompt(r, "sys", "user"), "")
+	s.deliverExplain(w, r, "xid-3", nil, s.explainPrompt(r, "sys", "user"), "", "")
 
 	frames := parseSSE(t, w.Body.String())
 	if len(frames) != 2 {
@@ -285,7 +285,7 @@ func TestDeliverExplainErrorBeforeFirstByteStaysHTTPError(t *testing.T) {
 
 	r := explainReq(true)
 	w := httptest.NewRecorder()
-	s.deliverExplain(w, r, "xid-4", nil, s.explainPrompt(r, "sys", "user"), "")
+	s.deliverExplain(w, r, "xid-4", nil, s.explainPrompt(r, "sys", "user"), "", "")
 
 	if w.Code == http.StatusOK {
 		t.Fatal("ilk bayttan önceki hata 200 döndü; SSE içine gizlenmiş hata FE'nin retry davranışını bozar")

@@ -165,7 +165,10 @@ func (e *sseEmitter) wroteAnything() bool { return e.started }
 //
 // Handler'ın bildiği servis artık AÇIKÇA geçiyor. Query param yedek
 // olarak kalıyor (sohbet yüzeyleri onu kullanıyor).
-func (s *Server) deliverExplain(w http.ResponseWriter, r *http.Request, xid string, extra map[string]any, run explainRun, service string) {
+// cacheKey (v0.10.83) — boş değilse cevap explain önbelleğinden
+// servis edilir / oraya yazılır (explain_cache.go: anahtar prompt'un
+// tamamından türer, isabet etiketlenir, ?refresh=1 atlar).
+func (s *Server) deliverExplain(w http.ResponseWriter, r *http.Request, xid string, extra map[string]any, run explainRun, service, cacheKey string) {
 	em, canStream := newSSEEmitter(w)
 	// v0.10.35 — KİMLİK KÖPRÜSÜ TEK NOKTADAN. answerRequestIDLinks beş
 	// sohbet yüzeyinde kabloluydu (chat, drawer, guided, RAG) ama ✨ Explain
@@ -175,6 +178,22 @@ func (s *Server) deliverExplain(w http.ResponseWriter, r *http.Request, xid stri
 	// Burada hesaplamak 15 explain ucunun HEPSİNİ birden kazandırıyor
 	// (trace, span, problem, exception…). Servis bilinmiyorsa
 	// templateForService varsayılan şablona düşüyor, yani kırılmıyor.
+	// ── ÖNBELLEK İSABETİ (v0.10.83) ────────────────────────────────────
+	// run HİÇ çağrılmaz: LLM turu yok, ai_calls satırı yok. exchangeId
+	// SAKLANAN kimliktir ki 👍/👎 gerçek çağrıya bağlansın; isabet
+	// cached/cachedAtMs ile ETİKETLENİR. Linkler yeniden hesaplanır —
+	// şablon ayarı değişmiş olabilir ve link üretimi ucuz.
+	if env, hit := s.explainCacheGet(r, cacheKey); hit {
+		hitExtra := map[string]any{"cached": true, "cachedAtMs": env.AtMs}
+		for k, v := range extra {
+			hitExtra[k] = v
+		}
+		extra = hitExtra
+		xid = env.Xid
+		run = explainPromptBuffered(func() (string, error) { return env.Text, nil })
+		cacheKey = "" // isabeti geri yazma
+	}
+
 	withLinks := func(out string) map[string]any {
 		svc := service
 		if svc == "" {
@@ -197,6 +216,7 @@ func (s *Server) deliverExplain(w http.ResponseWriter, r *http.Request, xid stri
 			writeErr(w, err)
 			return
 		}
+		s.explainCacheSet(r.Context(), cacheKey, out, xid)
 		writeJSON(w, explainBody(out, xid, withLinks(out)))
 		return
 	}
@@ -216,6 +236,7 @@ func (s *Server) deliverExplain(w http.ResponseWriter, r *http.Request, xid stri
 		em.emit("done", map[string]bool{"ok": false})
 		return
 	}
+	s.explainCacheSet(r.Context(), cacheKey, out, xid)
 	em.emit("answer", explainAnswerFrame(out, xid, withLinks(out)))
 	em.emit("done", map[string]bool{"ok": true})
 }

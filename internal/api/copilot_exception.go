@@ -38,6 +38,8 @@ func (s *Server) copilotExplainException(w http.ResponseWriter, r *http.Request)
 	// kod gelmezse açıklama yine üretilir, cc.Reason yanıtta döner.
 	var cc devops.CodeContext
 	run := s.explainPrompt(r, copilot.SystemPromptException(), in.User)
+	// v0.10.83 — anahtar GERÇEK prompt'tan; kod dalında blok da kimlik.
+	cacheKey := explainCacheKey(copilot.SystemPromptException(), in.User, "")
 	if opts.IncludeCode {
 		// v0.9.1225 — stack log-fallback'ten geldiyse depo çözümü logu
 		// atan servise gider (bsa- önek deseni servis adından türetilir).
@@ -46,6 +48,7 @@ func (s *Server) copilotExplainException(w http.ResponseWriter, r *http.Request)
 			codeSvc = in.StackService
 		}
 		cc = s.buildCodeContext(r.Context(), codeSvc, in.Stack)
+		cacheKey = explainCacheKey(copilot.SystemPromptExceptionWithCode(), in.User, cc.PromptBlock())
 		run = explainPromptBuffered(func() (string, error) {
 			return s.copilotExplainCode(r,
 				copilot.SystemPromptException(), copilot.SystemPromptExceptionWithCode(), in.User, cc)
@@ -57,5 +60,5 @@ func (s *Server) copilotExplainException(w http.ResponseWriter, r *http.Request)
 		"evidenceTraceIds": in.EvTraces,
 		"evidenceSpanIds":  in.EvSpans,
 		"code":             codePayload(cc, opts.IncludeCode),
-	}, run, g.Service)
+	}, run, g.Service, cacheKey)
 }

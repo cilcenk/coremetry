@@ -99,6 +99,11 @@ export interface ExplainStreamOpts {
   onDelta?: (text: string) => void;
   /** "Yeniden sor" uçuştaki akışı iptal eder. */
   signal?: AbortSignal;
+  /** v0.10.83 — true ise ?refresh=1 gider: sunucu explain önbelleğini
+   *  ATLAR ve taze LLM cevabı üretip eskisinin üzerine yazar. Yalnız
+   *  operatörün AÇIK "Yeniden sor" tıkı bunu geçer; otomatik koşular
+   *  önbellekten faydalanır. */
+  fresh?: boolean;
 }
 
 /**
@@ -169,6 +174,8 @@ async function explainStream<T>(path: string, init: RequestInit, opts: ExplainSt
  * Uç başına kip dalı YAZILMAZ: sekiz çağrı da bu tek fonksiyondan geçer.
  */
 function explainCall<T>(path: string, init: RequestInit, opts?: ExplainStreamOpts): Promise<T> {
+  // v0.10.83 — taze istek önbelleği atlar (sunucu ?refresh=1 okur).
+  if (opts?.fresh) path += (path.includes('?') ? '&' : '?') + 'refresh=1';
   if (!opts?.onDelta) return request<T>(path, opts?.signal ? { ...init, signal: opts.signal } : init);
   return explainStream<T>(path, init, opts);
 }

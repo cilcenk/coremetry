@@ -125,6 +125,8 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   // yani v0.10.60'ın "her açılışta kapalı" kararı bozulmuyor.
   const [includeCode, setIncludeCode] = useState(() => codeCapable && readAiCodeParam());
   const [code, setCode] = useState<AICodeContext | null>(null);
+  // v0.10.83 — isabet yaşı; null = taze LLM cevabı.
+  const [cachedAtMs, setCachedAtMs] = useState<number | null>(null);
 
   // applyText — cevabı hem panele yaz hem üst bileşene duyur (v0.9.479).
   // BOŞ model cevabı bağlam olamaz: onAnswer'a boş string gider, çekmece
@@ -156,18 +158,21 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   // hemen sonra run() çağrıldığında setState henüz uygulanmamış olur ve
   // istek eski değerle gider (React batching). Operatör kutuyu
   // işaretler, kodsuz cevap alır, nedenini göremez.
-  const run = async (withCode = includeCode) => {
+  // fresh (v0.10.83): yalnız "Yeniden sor" true geçer — sunucu explain
+  // önbelleğini atlar. Otomatik/ilk koşular önbellekten faydalanır.
+  const run = async (withCode = includeCode, fresh = false) => {
     // "Yeniden sor" uçuştaki akışı KESER. Kesilmezse eski akışın
     // delta'ları yeni cevabın üstüne yazmaya devam eder ve panelde iki
     // cevap iç içe geçer.
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
-    const opts = streamOpts(ac);
+    const opts = { ...streamOpts(ac), fresh };
 
     setUsed(true);
     setBusy(true); setError(null); setText(null); setMeta(null); setCode(null);
     setExchangeId(undefined);
+    setCachedAtMs(null);
     onAnswer?.(''); // "Yeniden sor" bayat bağlamı taşımasın
     try {
       if (kind === 'runbook') {
@@ -175,6 +180,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
         applyText(r.explanation);
         setLinks(r.links);
         setExchangeId(r.exchangeId);
+        setCachedAtMs(r.cached ? (r.cachedAtMs ?? 0) : null);
         // Surface the "based on N past resolutions" hint so the
         // operator knows whether the steps are grounded in
         // real history or first-principles.
@@ -203,6 +209,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
         applyText(r.explanation);
         setLinks(r.links);
         setExchangeId(r.exchangeId);
+        setCachedAtMs(r.cached ? (r.cachedAtMs ?? 0) : null);
       }
     } catch (e: unknown) {
       // İptal HATA DEĞİL: "Yeniden sor" kendi öncülünü keser, bileşen
@@ -309,7 +316,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
         <Spinner label={includeCode ? 'CoSRE kodu okuyor…' : 'CoSRE düşünüyor…'} />
       )}
       {showButton && (
-        <Button variant="accent" size="sm" onClick={() => void run()} disabled={busy}
+        <Button variant="accent" size="sm" onClick={() => void run(includeCode, true)} disabled={busy}
           className={used || auto ? undefined : 'ai-attn'}>
           {busy
             ? <><IconSparkles /> <span>Thinking…</span></>
@@ -382,6 +389,14 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
 
               whiteSpace:'pre-wrap' KALKTI: Markdown kendi blok düzenini
               kuruyor, ikisi birlikte satır aralarını ikiye katlıyordu. */}
+          {cachedAtMs !== null && (
+            /* v0.10.83 — İSABET ETİKETİ. Önbellekten gelen cevabı taze
+               sanmak, bu gecenin kapattığı sınıfın ta kendisi olurdu.
+               "Yeniden sor" zaten taze üretir; etiket bunu da söylüyor. */
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>
+              ♻ önbellekten{cachedAtMs > 0 ? ` · ${Math.max(1, Math.round((Date.now() - cachedAtMs) / 60000))} dk önce üretildi` : ''} — taze cevap için “Yeniden sor”
+            </div>
+          )}
           <RenderedMarkdown text={text} idLinks={links} />
           {/* v0.9.1127 — akan cevabın imleci (ChatBubble'ın `.cm-ai-cursor`
               atomu). Cevap BİTMEDEN de metin görünür olduğu için, bittiğini

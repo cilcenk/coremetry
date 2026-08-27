@@ -91,3 +91,27 @@ func TestEmptyTextYieldsNothing(t *testing.T) {
 		t.Errorf("boş metinden aday üretildi: %+v", got)
 	}
 }
+
+// TestErrorCodeTokens — v0.10.100, operatör-raporlu "Aslında kod var":
+// hata zinciri başka DİLDEKİ servise inince (.cs fırlatıcı) frame-türevi
+// arama ıskalar; token'lar dil-bağımsız arama anahtarı.
+func TestErrorCodeTokens(t *testing.T) {
+	got := ErrorCodeTokens(
+		"CoreException: Acme.Exception.Restructuring.CustomerCardsNoFlag " +
+			"ayrıca com.acme.util.ERROR_CODES ve com.acme.a.Db kısa " +
+			"ve Acme.Exception.Restructuring.CustomerCardsNoFlag tekrar " +
+			"ve Acme.Channel.Validation.InvalidChannelState son")
+	want := []string{"CustomerCardsNoFlag", "InvalidChannelState"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("tokens=%v, istenen %v (SABİT_YAZIM ve kısa parçalar elenmeli, "+
+			"tekrar tekilleşmeli, ilk-görülme sırası korunmalı)", got, want)
+	}
+	if ErrorCodeTokens("") != nil {
+		t.Error("boş metin token üretti")
+	}
+	// Tavan 3: dördüncü aday düşer.
+	many := ErrorCodeTokens("A.B.CandidateOne x A.B.CandidateTwo x A.B.CandidateThree x A.B.CandidateFour")
+	if len(many) != 3 {
+		t.Errorf("tavan 3 işlemedi: %v", many)
+	}
+}

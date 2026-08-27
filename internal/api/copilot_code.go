@@ -109,8 +109,13 @@ func (s *Server) buildCodeContext(ctx context.Context, service, stack string) de
 	// çoğu zaman mapper XML'i ya da SQL parçasıdır. Adaylar HAM stack
 	// metninden çıkarılıyor (ParseJava frame olmayan satırları atıyor,
 	// oysa mesaj tam orada).
+	// errTokens (v0.10.100, operatör-raporlu "Aslında kod var"): hata
+	// kodunun kendisi dil-bağımsız arama anahtarıdır — zincir başka
+	// dildeki bir servise indiğinde (.cs fırlatıcı) frame-türevi arama
+	// yapısal olarak ıskalar, token araması bulur.
 	cc := s.devops.FetchCode(ctx, res.Repo, res.Project,
-		stackparse.ParseJava(stack), stackparse.ResourceRefs(stack))
+		stackparse.ParseJava(stack), stackparse.ResourceRefs(stack),
+		stackparse.ErrorCodeTokens(stack))
 	cc.Source = res.Source
 	return cc
 }

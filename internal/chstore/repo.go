@@ -2299,8 +2299,27 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		// This excludes Tempo-style "root not available" partial
 		// traces where some orphan child span happens to have an
 		// empty parent_id but isn't actually the trace's root.
-		havingParts = append(havingParts,
-			"countIf((parent_id = '' OR parent_id = '0000000000000000') AND name != '' AND service_name != '') > 0")
+		//
+		// v0.10.107 — SERVİS-DARALTILMIŞ ham şekilde bu countIf YANLIŞTI:
+		// WHERE service_name=? span'leri önce süzüyor, HAVING kökü o
+		// daraltılmış kümede arıyor — kökü BAŞKA serviste olan her trace
+		// sessizce düşüyordu (MV yolu "kök herhangi bir serviste" diye
+		// bakar; tooltip'in vaadi de o). Daraltılmış şekilde kök-varlığı
+		// artık DARALTILMAMIŞ kaynaktan sorulur: trace_summary_5m üyeliği
+		// (bucket-budanmış, GLOBAL — 288 sınıfı değil). Daraltmasız ham
+		// taramada eski countIf doğru ve ucuz: kök zaten görünür.
+		if f.Service != "" || len(f.RequireServices) > 0 {
+			havingParts = append(havingParts, `trace_id GLOBAL IN (
+			SELECT trace_id FROM trace_summary_5m
+			WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
+			  AND time_bucket < toDateTime(?, 'UTC')
+			GROUP BY trace_id
+			HAVING argMaxIfMerge(root_service_state) != '')`)
+			havingArgs = append(havingArgs, f.From.Unix(), f.To.Unix())
+		} else {
+			havingParts = append(havingParts,
+				"countIf((parent_id = '' OR parent_id = '0000000000000000') AND name != '' AND service_name != '') > 0")
+		}
 	}
 	for _, svc := range f.RequireServices {
 		if svc == "" {

@@ -136,3 +136,31 @@ func TestPreflightCountsHiddenInnerTable(t *testing.T) {
 		t.Error("parts sayımı hâlâ MV adına sabitlenmiş — mv_rows 0 yalanı geri gelir")
 	}
 }
+
+// v0.10.107 — ham yolun rootOnly'si: servis-daraltılmış şekilde kök
+// sorusu DARALTILMAMIŞ kaynaktan (MV üyeliği, GLOBAL) sorulmalı; span
+// içi countIf servis süzgecinin ardında kökü göremez ve kökü başka
+// serviste olan her trace sessizce düşer. İki dal da pinli
+// ([[feedback-unit-mixing-needs-both-branches]]).
+func TestRawRootOnlyLooksBeyondServiceFilter(t *testing.T) {
+	b, err := os.ReadFile("repo.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	i := strings.Index(src, "v0.10.107 — SERVİS-DARALTILMIŞ ham şekilde")
+	if i < 0 {
+		t.Fatal("ham rootOnly düzeltme bloğu yok")
+	}
+	block := src[i : i+1600]
+	if !strings.Contains(block, "trace_id GLOBAL IN (") ||
+		!strings.Contains(block, "argMaxIfMerge(root_service_state) != ''") {
+		t.Error("daraltılmış dal MV üyeliğine (GLOBAL) bakmıyor")
+	}
+	if !strings.Contains(block, `countIf((parent_id = '' OR parent_id = '0000000000000000')`) {
+		t.Error("daraltmasız dalın span-içi kök koşulu düşmüş — o dalda doğru ve ucuz olan buydu")
+	}
+	if !strings.Contains(block, "f.Service != \"\" || len(f.RequireServices) > 0") {
+		t.Error("dallanma koşulu değişmiş — hangi şekil hangi kaynağa bakıyor belirsizleşir")
+	}
+}

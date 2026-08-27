@@ -357,14 +357,6 @@ export function ServiceTopologyTab({ service, range }: { service: string; range:
     if (v) next.set('eonly', '1'); else next.delete('eonly');
     return next;
   }, { replace: true });
-  // ?knodes=1 (v0.10.95) — /topology sayfasıyla AYNI kodek (aynı bileşen,
-  // aynı param ailesi; ayrışma tek-yön-okuma hata sınıfının kuzeni).
-  const showNodes = tparams.get('knodes') === '1';
-  const setShowNodes = (v: boolean) => setTparams(prev => {
-    const next = new URLSearchParams(prev);
-    if (v) next.set('knodes', '1'); else next.delete('knodes');
-    return next;
-  }, { replace: true });
   return (
     <div className="card" style={{ marginTop: 4 }}>
       <div className="ov-card-h">
@@ -382,10 +374,8 @@ export function ServiceTopologyTab({ service, range }: { service: string; range:
           focus={service}
           hops={hops}
           errorsOnly={errorsOnly}
-          showNodes={showNodes}
           onHops={setHops}
           onErrorsOnly={setErrorsOnly}
-          onShowNodes={setShowNodes}
           onRecenter={(s) => navigate(serviceHref(s, { range, tab: 'topology' }))}
           onClear={() => navigate(`/topology?range=${rangeParam}`)}
         />

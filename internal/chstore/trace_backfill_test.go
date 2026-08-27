@@ -222,3 +222,25 @@ func TestTraceDropStatementsCarryVolumeGuard(t *testing.T) {
 		}
 	}
 }
+
+// v0.10.111 — 10.97 probe'u ham AggregateFunction kolonunu SELECT'liyordu;
+// clickhouse-go o tipi çözemediğinden probe her kümede false kalıp
+// "iframe kökü unknown" düzeltmesini ölü bırakıyordu (lokal pod logunda
+// ölçüldü). Pin: probe metadata'dan (system.columns) sorar; hiçbir probe
+// ham *_state kolonunu tele bindiremez.
+func TestEntrySvcProbeChecksSchemaNotWire(t *testing.T) {
+	b, err := os.ReadFile("store.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	if strings.Contains(src, "SELECT entry_service_state FROM") {
+		t.Error("probe ham state kolonunu SELECT'liyor — sürücü AggregateFunction çözemez, probe daima false")
+	}
+	if !strings.Contains(src, `table = 'trace_summary_5m' AND name = 'entry_service_state'`) {
+		t.Error("entry_service_state varlık probe'u (system.columns) kayıp")
+	}
+	if m := regexp.MustCompile(`SELECT \w+_state FROM`).FindString(src); m != "" {
+		t.Errorf("ham state kolonu tele biniyor: %q", m)
+	}
+}

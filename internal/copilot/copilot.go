@@ -238,6 +238,22 @@ type CallMeta struct {
 	// call's cost, and the /ai page's whole job is telling the truth
 	// about cost.
 	PromptLogOverride string
+	// Observe (v0.10.114) — çağrı bitince SENKRON çağrılır (kayıt
+	// goroutine'inden önce): api katmanı buradan token/süre/sağlayıcıyı
+	// Explain span'ına yazar. Recorder yokken de çalışır — span, ai_calls
+	// tablosundan bağımsız bir gözlemlenebilirlik yolu.
+	Observe func(Usage)
+}
+
+// Usage — bir LLM çağrısının ölçülmüş maliyeti (CallMeta.Observe girdisi).
+type Usage struct {
+	Provider     string
+	Model        string
+	Status       string // ok | error
+	InputTokens  uint32
+	OutputTokens uint32
+	DurationMs   uint32
+	Err          error
 }
 
 // WithMeta returns ctx tagged with the given CallMeta. The api
@@ -688,10 +704,21 @@ func (s *Service) QuotaBackoffActive() bool {
 func (s *Service) recordNarration(ctx context.Context, started time.Time,
 	provider, model, baseURL, systemPrompt, userPrompt, out string,
 	inputTokens, outputTokens uint32, err error) {
+	meta := MetaFromContext(ctx)
+	// v0.10.114 — gözlemci RECORDER'DAN BAĞIMSIZ ve SENKRON: span
+	// attribute'ları çağıranın elindeki span kapanmadan yazılmalı.
+	if meta.Observe != nil {
+		u := Usage{Provider: provider, Model: model, Status: "ok",
+			InputTokens: inputTokens, OutputTokens: outputTokens,
+			DurationMs: uint32(time.Since(started).Milliseconds()), Err: err}
+		if err != nil {
+			u.Status = "error"
+		}
+		meta.Observe(u)
+	}
 	if s.recorder == nil {
 		return
 	}
-	meta := MetaFromContext(ctx)
 	fullPrompt := systemPrompt + "\n\n" + userPrompt
 	// v0.9.831 — the recorded SAMPLE may be a masked copy (source
 	// code stripped, see CallMeta.PromptLogOverride). PromptChars

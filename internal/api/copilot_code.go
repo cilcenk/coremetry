@@ -245,6 +245,9 @@ func isContextOverflowErr(err error) bool {
 // opts.IncludeCode kapısının arkasında), dolayısıyla işaretin varlığı
 // "istendi" demektir ve yokluğu "hiç istenmedi".
 func (s *Server) copilotExplainCode(r *http.Request, systemNoCode, systemWithCode, user string, cc devops.CodeContext) (string, error) {
+	// v0.10.114 — kod bağlamı span'a gitsin diye isteğe iliştirilir
+	// (ai_span.go); sarmalayıcılar ctx'ten okur.
+	r = withExplainEvidence(r, cc)
 	block := cc.PromptBlock()
 	if block == "" {
 		// v0.10.112 — KOD İSTENDİ, ÇÖZÜLEMEDİ → modele SÖYLENİR (operatör

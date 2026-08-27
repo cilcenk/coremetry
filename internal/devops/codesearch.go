@@ -265,6 +265,74 @@ func SearchCode(ctx context.Context, cli *http.Client, cfg Settings, text string
 	return hits, nil
 }
 
+// ── PROJE ÇIKMAZI YEDEĞİ (v0.10.85) ─────────────────────────────────────
+//
+// Operatör-raporlu: servis BAŞKA bir DevOps projesi altında yaşıyor;
+// Ayarlar'daki Project boş, katalog pini yok, önek de tutmuyor. Üç kaynak
+// birden ıskalayınca FetchCode "proje adı çözülemedi" duvarına çarpıyor ve
+// v0.10.74'ün organizasyon araması — tam bu iş için yazılmış makine — HİÇ
+// koşmuyordu, çünkü sırada ondan ÖNCE duruyordu
+// ([[feedback-tested-but-unreachable]]). Arama koleksiyon kapsamlı ve
+// isabet PROJE adını da taşıyor: çıkmazın cevabı zaten elimizdeydi.
+
+// searchOffRemedyTR — çıkmaz cümlesine eklenen dördüncü çare. TEK YAZIM:
+// FetchCode ve dry-run aynı sabiti basar; iki elde iki yazım sessizce
+// ayrışırdı ([[feedback-gate-single-spelling]]).
+const searchOffRemedyTR = " — ya da Ayarlar → Kod entegrasyonu'nda kod aramasını açın: " +
+	"organizasyon genelinde arayıp depoyu ve projeyi stacktrace'ten kendisi bulur"
+
+// searchResolveProjectRepo — proje çıkmazında organizasyon aramasıyla
+// (proje, depo) çözümü. Ağ yarısı `search` ile enjekte edilir; gerisi SAF.
+//
+// Pencere avından (huntSearchWindows) farkı: orada proje ZATEN çözülmüş
+// ve arama yalnız ıskalayan frame'in dosyasını arıyor; burada aranan şey
+// deponun KİMLİĞİ. Bu yüzden projesiz isabet burada İŞE YARAMAZ (item
+// URL'i projesiz kurulamaz) ve elenir.
+//
+// Dönen note her iki dalda da doludur: bulunduysa kaynak künyesi,
+// bulunamadıysa nedeni — sessiz bir başarısızlık "aradık, yok" ile
+// "hiç aramadık"ı ayırt edilemez kılardı.
+func searchResolveProjectRepo(
+	ctx context.Context,
+	targets []stackparse.Frame,
+	preferRepo string,
+	branchOrder []string,
+	search func(context.Context, string) ([]CodeSearchHit, error),
+) (project, repo, note string, ok bool) {
+	tried := 0
+	for _, f := range targets {
+		if tried >= codeSearchLimit || ctx.Err() != nil {
+			break
+		}
+		q := SearchQueryForFrame(f)
+		if q == "" {
+			continue
+		}
+		tried++
+		hits, err := search(ctx, q)
+		if err != nil {
+			return "", "", "organizasyon araması başarısız: " + firstLine(err.Error()), false
+		}
+		var withProject []CodeSearchHit
+		for _, h := range hits {
+			if strings.TrimSpace(h.Project) != "" {
+				withProject = append(withProject, h)
+			}
+		}
+		h, hok := PickSearchHit(withProject, preferRepo, f, branchOrder)
+		if !hok {
+			continue
+		}
+		return h.Project, h.Repository,
+			"depo organizasyon aramasıyla bulundu: " + h.Project + "/" + h.Repository +
+				" (arama: " + q + ")", true
+	}
+	if tried == 0 {
+		return "", "", "organizasyon araması koşamadı: aranabilir frame yok", false
+	}
+	return "", "", "organizasyon araması da eşleşme bulamadı", false
+}
+
 // huntSearchWindows — ISKALAYAN frame'ler için organizasyon araması.
 //
 // ⚠ SIRA BİLİNÇLİ: konvansiyon + depo ağacı ÖNCE, arama SONRA. Operatör
@@ -283,7 +351,7 @@ func huntSearchWindows(
 	branchOrder []string,
 	radius int,
 	search func(context.Context, string) ([]CodeSearchHit, error),
-	fetchIn func(ctx context.Context, repo, branch, path string) (string, error),
+	fetchIn func(ctx context.Context, project, repo, branch, path string) (string, error),
 ) ([]CodeWindow, []string) {
 	var out []CodeWindow
 	var notes []string
@@ -309,7 +377,11 @@ func huntSearchWindows(
 		if !ok {
 			continue
 		}
-		body, ferr := fetchIn(ctx, h.Repository, h.Branch, h.Path)
+		// v0.10.85 — isabetin PROJESİ de geçer. Eskiden yalnız depo adı
+		// geçiyordu ve BAŞKA projedeki bir isabet, yürürlükteki projenin
+		// URL'iyle çekilip 404'e düşüyor, sessizce atlanıyordu: arama
+		// depoyu bulmuş, çekim onu kaybetmişti.
+		body, ferr := fetchIn(ctx, h.Project, h.Repository, h.Branch, h.Path)
 		if ferr != nil || strings.TrimSpace(body) == "" {
 			continue
 		}

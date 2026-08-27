@@ -275,3 +275,36 @@ func TestResolveDryRunDoesNotTouchCodeCounters(t *testing.T) {
 		t.Fatalf("FetchCode sayacı=%d, istenen 1 — sayaç zaten ölüyse üstteki sıfır bir şey kanıtlamaz", st.Attempts)
 	}
 }
+
+// v0.10.85 — çıkmaz adımı DÖRDÜNCÜ çareyi de söyler: FetchCode artık
+// organizasyon aramasına düşüyor; sınama bunun gerçeğini yansıtmalı
+// (arama servis adından koşan bu sınamada YÜRÜTÜLEMEZ, stacktrace yok).
+func TestResolveDryRunDeadEndMentionsSearch(t *testing.T) {
+	t.Run("arama kapalı → açma çaresi", func(t *testing.T) {
+		f := newFakeTFS(t)
+		cfg := f.settings()
+		cfg.Project = ""
+		svc := New()
+		svc.Configure(cfg)
+		res := svc.ResolveDryRun(context.Background(), "legacy-service",
+			PinRead{Repo: "payments-core"})
+		last := lastStep(t, res)
+		if last.OK || !strings.Contains(last.Detail, "kod aramasını açın") {
+			t.Errorf("çıkmaz adımı arama çaresini söylemiyor: %+v", last)
+		}
+	})
+	t.Run("arama açık → açıklama sırasında denenecek", func(t *testing.T) {
+		f := newFakeTFS(t)
+		cfg := f.settings()
+		cfg.Project = ""
+		cfg.CodeSearch = true
+		svc := New()
+		svc.Configure(cfg)
+		res := svc.ResolveDryRun(context.Background(), "legacy-service",
+			PinRead{Repo: "payments-core"})
+		last := lastStep(t, res)
+		if last.OK || !strings.Contains(last.Detail, "organizasyon aramasıyla stacktrace'ten aranacak") {
+			t.Errorf("çıkmaz adımı arama yedeğini ilan etmiyor: %+v", last)
+		}
+	})
+}

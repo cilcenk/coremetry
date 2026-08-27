@@ -193,8 +193,21 @@ func (s *Service) ResolveDryRun(ctx context.Context, service string, pin PinRead
 
 	// 4 — proje. ÜÇ kaynak, üçünün de düzeltmesi ayrı yerde; çıkmaz
 	// cümlesi (projectDeadEnd) üçünü birden anlatır.
+	//
+	// v0.10.85 — dördüncü çare de burada söylenir: FetchCode artık
+	// çıkmazda organizasyon aramasına düşüyor ama bu sınama SERVİS
+	// ADINDAN koşar, elinde stacktrace yok — arama burada koşturulamaz.
+	// Sınamanın işi gerçeği söylemek: açıksa "açıklama sırasında
+	// denenecek", kapalıysa FetchCode'un basacağı çareyi aynen göster
+	// (searchOffRemedyTR TEK yazım; iki elde iki cümle sessizce ayrışırdı).
 	project, psrc, dead := pickProject(cfg, res.Project)
 	if dead != "" {
+		if cfg.CodeSearch {
+			dead += " — kod araması açık: açıklama sırasında depo/proje organizasyon " +
+				"aramasıyla stacktrace'ten aranacak (bu sınama servis adından koşar, stacktrace'i yok)"
+		} else {
+			dead += searchOffRemedyTR
+		}
 		out.add(DryRunStepProject, "Proje", false, dead)
 		return out
 	}

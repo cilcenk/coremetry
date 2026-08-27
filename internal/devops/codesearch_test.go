@@ -137,9 +137,9 @@ func TestSearchFindsClassInAnotherRepo(t *testing.T) {
 			{Project: "P", Repository: "delivery-manager", Path: "/src/com/x/mail/EmailSender.java", Branch: "master"},
 		}, nil
 	}
-	var gotRepo, gotBranch string
-	fetchIn := func(_ context.Context, repo, branch, path string) (string, error) {
-		gotRepo, gotBranch = repo, branch
+	var gotProject, gotRepo, gotBranch string
+	fetchIn := func(_ context.Context, project, repo, branch, path string) (string, error) {
+		gotProject, gotRepo, gotBranch = project, repo, branch
 		return javaFile("com.x.mail", "EmailSender", 700, 645), nil
 	}
 	out, notes := huntSearchWindows(context.Background(), missed, "other-service", nil, 5, search, fetchIn)
@@ -149,6 +149,11 @@ func TestSearchFindsClassInAnotherRepo(t *testing.T) {
 	}
 	if gotRepo != "delivery-manager" || gotBranch != "master" {
 		t.Errorf("çekim yanlış hedefe gitti: repo=%q branch=%q", gotRepo, gotBranch)
+	}
+	// v0.10.85 — isabetin PROJESİ çekime geçmeli: başka projedeki depo,
+	// yürürlükteki projenin URL'iyle 404 olur ve sessizce atlanırdı.
+	if gotProject != "P" {
+		t.Errorf("çekim isabetin projesini taşımıyor: project=%q", gotProject)
 	}
 	// Operatör pencerenin BAŞKA depodan geldiğini görmeli, yoksa yolu
 	// kendi deposunda arar.
@@ -171,7 +176,7 @@ func TestSearchFailureIsReported(t *testing.T) {
 		return nil, errSearchProbe
 	}
 	_, notes := huntSearchWindows(context.Background(), missed, "", nil, 5, search,
-		func(context.Context, string, string, string) (string, error) { return "", nil })
+		func(context.Context, string, string, string, string) (string, error) { return "", nil })
 	if len(notes) == 0 || !strings.Contains(notes[0], "kod araması başarısız") {
 		t.Errorf("arama hatası künyeye yazılmadı: %v", notes)
 	}
@@ -189,7 +194,7 @@ func TestSearchIsBounded(t *testing.T) {
 		return nil, nil
 	}
 	huntSearchWindows(context.Background(), missed, "", nil, 5, search,
-		func(context.Context, string, string, string) (string, error) { return "", nil })
+		func(context.Context, string, string, string, string) (string, error) { return "", nil })
 	if calls != codeSearchLimit {
 		t.Errorf("arama=%d, tavan %d olmalıydı", calls, codeSearchLimit)
 	}
@@ -219,6 +224,85 @@ func TestSearchIsReachableAndOptIn(t *testing.T) {
 	if (Settings{}).CodeSearch {
 		t.Error("kod araması VARSAYILAN AÇIK — doğrulanmamış bir uç prod yoluna girer")
 	}
+	// v0.10.85 — proje çıkmazı yedeği de ULAŞILABİLİR olmalı: saf çözücü
+	// yeşilken çağrı yolu unutulursa operatörün duvarı geri gelir.
+	if !strings.Contains(src, "searchResolveProjectRepo(ctx, targets") {
+		t.Error("proje-çıkmazı yedeği FetchCode'dan çağrılmıyor — ölü yol (v0.10.85)")
+	}
+	// Dördüncü çare TEK yazımdan (searchOffRemedyTR) iki yüzeye de akmalı.
+	for _, file := range []string{"code.go", "resolve_dryrun.go"} {
+		if !strings.Contains(readDevopsSource(t, file), "searchOffRemedyTR") {
+			t.Errorf("%s çıkmazda kod araması çaresini basmıyor", file)
+		}
+	}
+}
+
+// TestSearchResolveProjectRepo — proje çıkmazı çözücüsünün saf yarısı
+// (v0.10.85, operatör-raporlu: servis başka DevOps projesi altında).
+func TestSearchResolveProjectRepo(t *testing.T) {
+	fr := func(class string) stackparse.Frame {
+		return searchFrame(class, "run", "X.java", 10)
+	}
+	t.Run("projeli isabet kazanır, projesiz elenir", func(t *testing.T) {
+		search := func(_ context.Context, q string) ([]CodeSearchHit, error) {
+			return []CodeSearchHit{
+				{Project: "", Repository: "r0", Path: "/src/com/x/A.java"},
+				{Project: "PLATFORM", Repository: "transfer-core", Path: "/src/com/x/A.java", Branch: "master"},
+			}, nil
+		}
+		prj, repo, note, ok := searchResolveProjectRepo(context.Background(),
+			[]stackparse.Frame{fr("com.x.A")}, "", nil, search)
+		if !ok || prj != "PLATFORM" || repo != "transfer-core" {
+			t.Fatalf("ok=%v prj=%q repo=%q", ok, prj, repo)
+		}
+		if !strings.Contains(note, "PLATFORM/transfer-core") {
+			t.Errorf("künye kaynağı söylemiyor: %q", note)
+		}
+	})
+	t.Run("ilk frame projesiz → ikinci frame çözer", func(t *testing.T) {
+		call := 0
+		search := func(_ context.Context, q string) ([]CodeSearchHit, error) {
+			call++
+			if call == 1 {
+				return []CodeSearchHit{{Project: "", Repository: "r0", Path: "/p"}}, nil
+			}
+			return []CodeSearchHit{{Project: "P2", Repository: "r2", Path: "/src/com/y/B.java"}}, nil
+		}
+		prj, _, _, ok := searchResolveProjectRepo(context.Background(),
+			[]stackparse.Frame{fr("com.x.A"), fr("com.y.B")}, "", nil, search)
+		if !ok || prj != "P2" {
+			t.Fatalf("ikinci frame'e geçilmedi: ok=%v prj=%q (çağrı=%d)", ok, prj, call)
+		}
+	})
+	t.Run("arama hatası künyeye yazılır", func(t *testing.T) {
+		search := func(context.Context, string) ([]CodeSearchHit, error) {
+			return nil, errSearchProbe
+		}
+		_, _, note, ok := searchResolveProjectRepo(context.Background(),
+			[]stackparse.Frame{fr("com.x.A")}, "", nil, search)
+		if ok || !strings.Contains(note, "organizasyon araması başarısız") {
+			t.Errorf("ok=%v note=%q", ok, note)
+		}
+	})
+	t.Run("hepsi ıska → dürüst cümle", func(t *testing.T) {
+		search := func(context.Context, string) ([]CodeSearchHit, error) { return nil, nil }
+		_, _, note, ok := searchResolveProjectRepo(context.Background(),
+			[]stackparse.Frame{fr("com.x.A")}, "", nil, search)
+		if ok || !strings.Contains(note, "eşleşme bulamadı") {
+			t.Errorf("ok=%v note=%q", ok, note)
+		}
+	})
+	t.Run("aranabilir frame yok → koşamadı", func(t *testing.T) {
+		search := func(context.Context, string) ([]CodeSearchHit, error) {
+			t.Fatal("sınıfsız frame'le arama yapılmamalı")
+			return nil, nil
+		}
+		_, _, note, ok := searchResolveProjectRepo(context.Background(),
+			[]stackparse.Frame{fr("")}, "", nil, search)
+		if ok || !strings.Contains(note, "koşamadı") {
+			t.Errorf("ok=%v note=%q", ok, note)
+		}
+	})
 }
 
 var errSearchProbe = errors.New("http 404: extension not installed")

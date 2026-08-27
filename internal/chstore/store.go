@@ -4243,7 +4243,12 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("drop old trace_summary_5m for entry_service upgrade: %w", err)
 		}
 		if s.clusterMode() {
-			if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS trace_summary_5m"+s.onCluster()+" SYNC"); err != nil {
+			// v0.10.110 — purgeGuard ŞART (operatör, test ortamı):
+			// bu ad eski kurulumda İNCE wrapper değil TO'suz MV'nin
+			// kendisi olabilir; DROP inner'a cascade eder ve 50 GB
+			// max_table_size_to_drop sınırında code 359 ile boot
+			// sonsuz döngüye girer (211 GB inner, canlıda ölçüldü).
+			if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS trace_summary_5m"+s.onCluster()+" SYNC"+purgeGuard); err != nil {
 				return fmt.Errorf("drop stale trace_summary_5m wrapper: %w", err)
 			}
 		}

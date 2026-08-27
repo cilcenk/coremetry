@@ -192,3 +192,33 @@ func TestBackfillLadderForVolume(t *testing.T) {
 		t.Error("alt emniyet basamağı düşmüş")
 	}
 }
+
+// v0.10.110 — Operator-reported (test ortamı): bayat trace_summary_5m
+// DROP'u 211 GB inner'a cascade edip code 359'la boot'u kilitledi.
+// Her iki düşürme de hacim-guard'ı taşımak ZORUNDA.
+func TestTraceDropStatementsCarryVolumeGuard(t *testing.T) {
+	for _, f := range []string{"trace_backfill.go", "store.go"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(b)
+		for _, stmt := range []string{
+			`DROP PARTITION '"+day+"'"`,
+			`DROP TABLE IF EXISTS trace_summary_5m"+s.onCluster()+" SYNC"`,
+		} {
+			for i := 0; ; {
+				j := strings.Index(src[i:], stmt)
+				if j < 0 {
+					break
+				}
+				i += j + len(stmt)
+				// İfadenin devamında aynı satır zincirinde purgeGuard olmalı.
+				tail := src[i:min(i+80, len(src))]
+				if !strings.Contains(tail, "purgeGuard") {
+					t.Errorf("%s: %q guard'sız — 359 sınıfı (50 GB drop sınırı)", f, stmt)
+				}
+			}
+		}
+	}
+}

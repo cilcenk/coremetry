@@ -5940,3 +5940,22 @@ export interface McpServerTestResult {
   truncated?: boolean;
   error?: string;
 }
+
+// ── /traces tarihçe geri doldurma sihirbazı (v0.10.103) — Go:
+// chstore.TraceBackfillDay + api.traceBackfillRun ────────────────────────
+export interface TraceBackfillDay {
+  day: string;        // "2026-08-26"
+  spanTraces: number; // ham spans'teki ~trace sayısı
+  mvTraces: number;   // MV'de görünen
+  gap: boolean;       // MV ham veriye göre boş/zayıf
+}
+export interface TraceBackfillRun {
+  running: boolean;
+  startedBy?: string;
+  startedAt?: number;
+  doneAt?: number;
+  days: string[];
+  done: number;
+  current?: string;
+  errors?: string[];
+}

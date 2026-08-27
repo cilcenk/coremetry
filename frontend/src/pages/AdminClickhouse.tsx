@@ -12,6 +12,7 @@ import type {
   RollupActionResult, RollupPreflightResult, RollupTableStatus, RollupTarget,
   StateUnifyPreflightResult, StateUnifyRun, StateUnifyTable,
   StateRepartPreflightResult, StateRepartRun, StateRepartTable,
+  TraceBackfillDay, TraceBackfillRun,
 } from '@/lib/types';
 
 // AdminClickhouse — v0.5.329. Datadog-style CH self-stats:
@@ -732,6 +733,7 @@ export default function AdminClickhousePage() {
                 Operatör yukarıdaki panelin yeşil olduğunu görmeden
                 buraya geçmemeli. */}
             <StateRepartWizardPanel />
+            <TraceBackfillWizardPanel />
 
             <Section title="Slow queries (>500ms, last 1h)">
               {(!data.slowQueries || data.slowQueries.length === 0)
@@ -2387,4 +2389,131 @@ function fmtAge(ms: number): string {
   if (ms < 60_000) return `${Math.round(ms / 1000)}s ago`;
   if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`;
   return `${Math.round(ms / 3_600_000)}h ago`;
+}
+
+// v0.10.103 — /traces tarihçe geri doldurma sihirbazı (operatör:
+// "Sihirbaz ile yapalım"). v0.10.97 MV upgrade'i geçmiş 5-dk
+// bucket'ları düşürür; bu panel boş kalan günleri ölçer ve seçilenleri
+// ham spans'ten GÜN GÜN yeniden kurar (önce günün MV partition'ı düşer —
+// AggregatingMergeTree'de çifte-insert sayıları şişirir; span'lere
+// dokunulmaz). 0010 panelinin deseni: 2s poll + document.hidden.
+function TraceBackfillWizardPanel() {
+  const [days, setDays] = useState<TraceBackfillDay[] | null>(null);
+  const [sel, setSel] = useState<Record<string, boolean>>({});
+  const [run, setRun] = useState<TraceBackfillRun | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState(false);
+  const pollRef = useRef<number | null>(null);
+
+  async function preflight() {
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.traceBackfillPreflight();
+      setDays(r.days);
+      const next: Record<string, boolean> = {};
+      for (const d of r.days) if (d.gap) next[d.day] = true;
+      setSel(next);
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  function startPolling() {
+    if (pollRef.current !== null) return;
+    pollRef.current = window.setInterval(async () => {
+      if (document.hidden) return;
+      try {
+        const st = await api.traceBackfillStatus();
+        setRun(st);
+        if (!st.running) {
+          if (pollRef.current !== null) { window.clearInterval(pollRef.current); pollRef.current = null; }
+          void preflight();
+        }
+      } catch { /* geçici — sonraki tik */ }
+    }, 2000);
+  }
+
+  async function apply() {
+    const chosen = Object.keys(sel).filter(d => sel[d]).sort();
+    setConfirm(false); setBusy(true); setErr(null);
+    try {
+      await api.traceBackfillApply(chosen);
+      startPolling();
+      setRun({ running: true, days: chosen, done: 0 });
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  const chosenCount = Object.values(sel).filter(Boolean).length;
+  const running = !!run?.running;
+
+  return (
+    <Section title="/traces tarihçe geri doldurma">
+      <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg1)', padding: 14 }}>
+        <p style={{ fontSize: 12, color: 'var(--text3)', margin: '0 0 12px', lineHeight: 1.6 }}>
+          MV upgrade'i (v0.10.97) <code>trace_summary_5m</code>'in geçmiş bucket'larını
+          düşürür: span'ler durur ama /traces listesi eski pencerede boşalır. Bu sihirbaz
+          boş günleri ölçer ve seçilenleri ham spans'ten yeniden kurar (gün başına: MV
+          partition'ı düş + yeniden aggregate — tekrar koşmak güvenli; span'lere dokunulmaz).
+        </p>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+          <Button variant="secondary" size="sm" loading={busy && !days} onClick={preflight}>Ölç</Button>
+          {days && (
+            <Button variant="primary" size="sm" disabled={running || chosenCount === 0}
+              onClick={() => setConfirm(true)}>
+              Seçili {chosenCount} günü geri doldur
+            </Button>
+          )}
+          {err && <span style={{ fontSize: 12, color: 'var(--err)' }}>{err}</span>}
+        </div>
+        {confirm && (
+          <div style={{ marginBottom: 10, fontSize: 12 }}>
+            Seçili günlerin MV partition'ları düşürülüp yeniden kurulacak.{' '}
+            <Button variant="danger" size="sm" onClick={apply}>Onayla</Button>{' '}
+            <Button variant="ghost" size="sm" onClick={() => setConfirm(false)}>Vazgeç</Button>
+          </div>
+        )}
+        {running && run && (
+          <div style={{ fontSize: 12, marginBottom: 10 }}>
+            ⏳ {run.done}/{run.days.length} gün · şu an: <code>{run.current || '—'}</code>
+          </div>
+        )}
+        {run && !run.running && (run.errors?.length ?? 0) > 0 && (
+          <div style={{ fontSize: 12, color: 'var(--err)', marginBottom: 10 }}>
+            {run.errors!.join(' · ')} — koşu durdu; hata giderilip yeniden başlatılabilir
+            (tekrar güvenli).
+          </div>
+        )}
+        {days && (
+          <table style={{ fontSize: 12, borderCollapse: 'collapse' }}>
+            <thead><tr>
+              <th style={{ textAlign: 'left', padding: '2px 10px 2px 0' }}></th>
+              <th style={{ textAlign: 'left', padding: '2px 10px 2px 0' }}>Gün</th>
+              <th style={{ textAlign: 'right', padding: '2px 10px 2px 0' }}>Spans ~trace</th>
+              <th style={{ textAlign: 'right', padding: '2px 10px 2px 0' }}>MV trace</th>
+              <th style={{ textAlign: 'left', padding: '2px 0' }}>Durum</th>
+            </tr></thead>
+            <tbody>
+              {days.map(d => (
+                <tr key={d.day}>
+                  <td style={{ padding: '2px 10px 2px 0' }}>
+                    <input type="checkbox" checked={!!sel[d.day]} disabled={running}
+                      onChange={e => setSel(s2 => ({ ...s2, [d.day]: e.target.checked }))} />
+                  </td>
+                  <td style={{ padding: '2px 10px 2px 0', fontFamily: 'ui-monospace, monospace' }}>{d.day}</td>
+                  <td style={{ padding: '2px 10px 2px 0', textAlign: 'right' }}>{d.spanTraces.toLocaleString()}</td>
+                  <td style={{ padding: '2px 10px 2px 0', textAlign: 'right' }}>{d.mvTraces.toLocaleString()}</td>
+                  <td style={{ padding: '2px 0' }}>
+                    {d.gap
+                      ? <span className="badge b-warn">boşluk</span>
+                      : <span className="badge b-ok">tam</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </Section>
+  );
 }

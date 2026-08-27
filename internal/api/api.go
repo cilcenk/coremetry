@@ -663,6 +663,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.registerRollupAdminRoutes(mux)
 	s.registerStateUnifyRoutes(mux)
 	s.registerStateRepartRoutes(mux)
+	s.registerTraceBackfillRoutes(mux) // v0.10.103 — /traces tarihçe sihirbazı, admin_trace_backfill.go
 	mux.HandleFunc("GET /api/correlations", s.getCorrelations)
 	// v0.9.135 (scale-audit 2026-07-20) — admin-only (Redis internals);
 	// only AdminStats reads it, handler had no role check.

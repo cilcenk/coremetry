@@ -110,7 +110,16 @@ func (s *Server) postTraceBackfillApply(w http.ResponseWriter, r *http.Request) 
 	details, _ := json.Marshal(map[string]any{"days": in.Days})
 	s.audit(r, "admin.trace_backfill.apply", "clickhouse", "trace_summary_5m", string(details))
 
-	go s.runTraceBackfill(in.Days)
+	// v0.10.108 — gün hacimleri preflight'tan: hacme-göre başlangıç
+	// basamağı mahkûm denemeleri atlar ("yavaş gidiyor"). Preflight
+	// düşerse harita boş kalır ve günler tam merdivenle koşar.
+	rowsByDay := map[string]uint64{}
+	if pf, err := s.store.TraceBackfillPreflight(r.Context(), 30); err == nil {
+		for _, d := range pf {
+			rowsByDay[d.Day] = d.SpanTraces
+		}
+	}
+	go s.runTraceBackfill(in.Days, rowsByDay)
 	writeJSON(w, map[string]any{"ok": true, "days": len(in.Days)})
 }
 
@@ -118,7 +127,7 @@ func (s *Server) postTraceBackfillApply(w http.ResponseWriter, r *http.Request) 
 // (WithoutCancel sınıfı — tarayıcı kapansa da gün yarım kalmasın; her
 // günün kendi 600s tavanı var). Panik guard'ı şart: api'de recover
 // middleware yok, kopuk goroutine'de panik süreci öldürür.
-func (s *Server) runTraceBackfill(days []string) {
+func (s *Server) runTraceBackfill(days []string, rowsByDay map[string]uint64) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[trace-backfill] panik: %v", r)
@@ -134,8 +143,18 @@ func (s *Server) runTraceBackfill(days []string) {
 		traceBackfill.run.Current = day
 		traceBackfill.mu.Unlock()
 
-		dayCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
-		err := s.store.TraceBackfillDayRun(dayCtx, day)
+		// Dilim ilerlemesi durumda görünür — "yavaş" hissinin yarısı
+		// görünmezlikti; artık operatör hangi dilimde olduğumuzu okur.
+		progress := func(p string) {
+			traceBackfill.mu.Lock()
+			traceBackfill.run.Current = p
+			traceBackfill.mu.Unlock()
+		}
+		// v0.10.108 — gün tavanı 15dk→60dk: prod'da milyarlık gün 15m
+		// dilimlerle bile 15 dakikayı aşabiliyor; tavan artık gün
+		// bütçesi, dilim bütçesi değil.
+		dayCtx, cancel := context.WithTimeout(ctx, 60*time.Minute)
+		err := s.store.TraceBackfillDayRun(dayCtx, day, rowsByDay[day], progress)
 		cancel()
 
 		traceBackfill.mu.Lock()

@@ -2185,6 +2185,24 @@ func searchPredicate(search string) (string, []any) {
 	return sql, args
 }
 
+
+// traceDisplaySvcExpr — /traces listesinde GÖSTERİLEN servis (v0.10.97,
+// operatör-raporlu "iframe trace'leri"). Mutlak kök (parent'sız span)
+// mobil web/iframe telemetrisinden gelince servisi 'unknown' oluyor;
+// giriş-span ilkesi gereği görüntü EN ERKEN server/consumer span'in
+// servisine düşer. Probe false iken (kolon henüz okunamıyor — cluster
+// upgrade'inin ilk boot'u) ifade bit-bit ESKİ zincirdir.
+//
+// Kök-VARLIĞI filtreleri (RootOnly HAVING'i) bilinçli olarak bu zinciri
+// KULLANMAZ: onlar "gerçek kök var mı" sorusu, bu "ne gösterelim" sorusu.
+func (s *Store) traceDisplaySvcExpr() string {
+	const root = "argMaxIfMerge(root_service_state)"
+	if !s.hasTraceEntrySvcCol {
+		return root
+	}
+	return "if((" + root + " = '' OR " + root + " = 'unknown') AND argMinIfMerge(entry_service_state) != '', argMinIfMerge(entry_service_state), " + root + ")"
+}
+
 func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint64, bool, error) {
 	// MV fast-path. Activates when:
 	//   • Window is ≥ 5 minutes (MVs are 5-min bucketed)
@@ -3172,7 +3190,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	stage2 := `
 		SELECT trace_id,
 		       argMaxIfMerge(root_name_state)                              AS root_name,
-		       argMaxIfMerge(root_service_state)                           AS root_svc,
+		       `+s.traceDisplaySvcExpr()+`                           AS root_svc,
 		       minMerge(trace_start_state)                                 AS trace_start,
 		       (maxMerge(trace_end_state) -
 		        toUnixTimestamp64Nano(minMerge(trace_start_state))) / 1e6  AS dur_ms,
@@ -3566,11 +3584,11 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 	var keyExpr, extraExpr string
 	switch f.GroupBy {
 	case "service":
-		keyExpr = "argMaxIfMerge(root_service_state)"
+		keyExpr = s.traceDisplaySvcExpr()
 		extraExpr = "''"
 	default: // "" or "operation"
 		keyExpr = "argMaxIfMerge(root_name_state)"
-		extraExpr = "argMaxIfMerge(root_service_state)"
+		extraExpr = s.traceDisplaySvcExpr()
 	}
 
 	sortMap := map[string]string{
@@ -3673,7 +3691,7 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 		    SELECT trace_id,
 		           ` + keyExpr + ` AS group_key,
 		           ` + extraExpr + ` AS group_extra,
-		           argMaxIfMerge(root_service_state) AS root_svc,
+		           `+s.traceDisplaySvcExpr()+` AS root_svc,
 		           minMerge(trace_start_state) AS trace_start,
 		           (maxMerge(trace_end_state) -
 		            toUnixTimestamp64Nano(minMerge(trace_start_state))) / 1e6 AS dur_ms,

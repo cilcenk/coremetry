@@ -228,6 +228,7 @@ func (s *Server) importConfig(w http.ResponseWriter, r *http.Request) {
 	// leave peers enforcing the old set for 30s (v0.9.233).
 	for _, svc := range []string{
 		"copilot", "ldap", "tempo", "pipeline", "logstore", "thanos", "custom_roles",
+		"mcpclient", // v0.10.87 — dış MCP sunucu listesi de hydrate eder
 	} {
 		s.publishConfigReload(r.Context(), svc)
 	}

@@ -5895,3 +5895,48 @@ export interface PodInventory {
   sampleRows: number;
   windowSec: number;
 }
+
+// ── MCP istemcisi (v0.10.87, dilim ②) — Go: mcpclient.Snapshot ────────────
+// Sunucu satırı sır taşımaz: token yerine hasToken sinyali.
+export interface McpServerSnapshot {
+  name: string;
+  transport: string; // 'http' | 'stdio'
+  url?: string;
+  command?: string;
+  args?: string[];
+  enabled: boolean;
+  hasToken: boolean;
+  allowTools?: string[];
+  denyTools?: string[];
+  insecureSkipVerify?: boolean;
+}
+export interface McpServerStatus {
+  server: string;
+  tools: number;
+  truncated?: boolean;
+  fetchedAt?: string;
+  err?: string;
+}
+export interface McpServersSnapshot {
+  servers: McpServerSnapshot[];
+  status?: McpServerStatus[];
+}
+// PUT/test gövdesindeki sunucu — token düz alan; boş/"********" saklıyı korur.
+export interface McpServerInput {
+  name: string;
+  transport: string;
+  url?: string;
+  token?: string;
+  command?: string;
+  args?: string[];
+  enabled: boolean;
+  allowTools?: string[];
+  denyTools?: string[];
+  insecureSkipVerify?: boolean;
+}
+export interface McpServerTestResult {
+  ok: boolean;
+  tools: number;
+  truncated?: boolean;
+  error?: string;
+}

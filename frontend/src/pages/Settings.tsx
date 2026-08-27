@@ -25,6 +25,7 @@ import { KnowledgeTab } from './settings/KnowledgeTab';
 import { TempoTab } from './settings/TempoTab';
 import { MetricsBackendTab } from './settings/MetricsBackendTab';
 import { DevOpsTab } from './settings/DevOpsTab';
+import { McpServersTab } from './settings/McpServersTab';
 import { ClustersTab } from './settings/ClustersTab';
 import { ElasticTab } from './settings/ElasticTab';
 import { KibanaTab } from './settings/KibanaTab';
@@ -68,6 +69,7 @@ const TAB_COMPS: Record<string, ComponentType> = {
   'kibana': KibanaTab,
   'log-bridge': LogBridgeTab,
   'devops': DevOpsTab,
+  'mcp-servers': McpServersTab,
   'ldap': LDAPTab,
   'sso': SSOPresetsTab,
   'retention': RetentionTab,

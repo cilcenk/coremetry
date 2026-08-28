@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useEscLayer } from '@/lib/escLayer';
 import { Link } from 'react-router-dom';
-import type { SpanRow, ProfileRow, SpanHotspotsResponse, LogRow } from '@/lib/types';
+import type { SpanRow, ProfileRow, SpanHotspotsResponse, LogRow, TimeRange } from '@/lib/types';
 import { selfTimeMs } from '@/lib/selfTime';
 import { tsLong, tsShort, sevName, sevClass, displaySpanName } from '@/lib/utils';
 import { api } from '@/lib/api';
@@ -13,6 +13,8 @@ import { IconFlame, IconSparkles } from './icons';
 import { CopyButton } from './CopyButton';
 import { AIExplainButton } from './ai/AIExplainButton';
 import { BreakdownBar, KindBadge } from './KindBadge';
+import { useEntityEnabled } from '@/lib/queries';
+import { SpanK8sSection } from './SpanK8sSection';
 
 const PANEL_MIN = 300;
 const PANEL_MAX = 1100;
@@ -28,7 +30,7 @@ const SPAN_LOG_WINDOW_BUFFER_NS = 60_000_000_000;
 // @timestamp'ler pencere dışında kalmasın.
 const LOGS_LINK_EXTRA_NS = 15 * 60_000_000_000;
 
-export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = true, traceSpans }: {
+export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = true, traceSpans, pageRange }: {
   span: SpanRow;
   onClose: () => void;
   // Trace-anchored log lookup window (Unix ns), threaded down from the Trace
@@ -45,6 +47,9 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   // Self time satırı çizilir (aralık-birleşimli öz süre, lib/selfTime).
   // Bağımsız mount'lar (span'siz) satırı hiç görmez.
   traceSpans?: SpanRow[];
+  // v0.10.137 — Kubernetes pivot linklerine taşınan SAYFA penceresi (log
+  // penceresi ±2 dk'lık; pod sayfasını ona kilitlemek yanlıştı — inceleme).
+  pageRange?: TimeRange;
 }) {
   const attrs = Object.entries(span.attributes ?? {});
   const res = Object.entries(span.resourceAttributes ?? {});
@@ -102,6 +107,9 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   // (± buffer), or the trace-anchored one the Trace page threads down.
   // Memoised so the context value is referentially stable — a fresh object
   // each render would re-render every Row in the panel.
+  // v0.10.137 (DETAY SAYFALARI adım 3) — Kubernetes bölümü: bayrak açık VE
+  // uygulama-içi linkler açıkken (public trace'te kapalı). Hook koşulsuz.
+  const { enabled: k8sOn, clusters: entityClusters } = useEntityEnabled(serviceLinks);
   const spanLinkCtx = useMemo(() => ({
     on: serviceLinks,
     window: logsFromBound && logsToBound
@@ -323,6 +331,12 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
             {span.statusMessage && <Row k="Status msg" v={span.statusMessage} copyable />}
           </KV>
         </Section>
+
+        {serviceLinks && k8sOn && (
+          <Section title="Kubernetes">
+            <SpanK8sSection span={span} clusters={entityClusters} range={pageRange} />
+          </Section>
+        )}
 
         {res.length > 0 && (
           <Section title={`Resource (${res.length})`}>

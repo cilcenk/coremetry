@@ -2448,39 +2448,56 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// attr/res array columns for EVERY span in the window (before LIMIT) —
 	// measured 6.97× read_bytes on the audit's local run. Extras ride the
 	// common, bounded phase-2 (fillTraceExtras) after the page is known.
-	querySQL := buildGetTracesListSQL(wc.sql(), havingSQL, sortCol, order)
-
+	// v0.10.126 — YENİLİK DİLİMİ (trace_raw_probe.go, perf bütçesi P2).
+	// Zaman-DESC listede önce dar kuyruk penceresi taranır; K =
+	// offset+limit+1 satırın hepsi floor'un üstünde başlamışsa sayfa tam
+	// taramayla bire bir aynıdır, değilse basamak genişler, en sonda tam
+	// pencere (eski davranış). Sayım sorguları yukarıda, tam pencere.
+	//
 	// Argument order matches placeholder order in the SQL:
 	//   1. WHERE  predicates (time / service / DSL filters)
 	//   2. HAVING predicates (RequireServices fan-in)
 	//   3. LIMIT / OFFSET
-	args := append([]any{}, wc.args...)
-	args = append(args, havingArgs...)
-	args = append(args, pageLimit, f.Offset)
-	rows, err := s.telemetryReadConn().Query(ctx, querySQL, args...)
-	if err != nil {
-		return nil, 0, false, err
+	runList := func(from time.Time, limit, offset int) ([]TraceRow, error) {
+		lf := f
+		lf.From = from
+		lwc := buildGetTracesWhere(lf, s.clusterExpr())
+		querySQL := buildGetTracesListSQL(lwc.sql(), havingSQL, sortCol, order)
+		args := append([]any{}, lwc.args...)
+		args = append(args, havingArgs...)
+		args = append(args, limit, offset)
+		rows, err := s.telemetryReadConn().Query(ctx, querySQL, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		return scanTraceListRows(rows)
 	}
-	defer rows.Close()
-
-	out := []TraceRow{}
-	for rows.Next() {
-		var t TraceRow
-		var hasErr uint8
-		var ts time.Time
-		if err := rows.Scan(&t.TraceID, &t.RootName, &t.ServiceName, &ts, &t.DurationMs, &t.SpanCount, &hasErr); err != nil {
+	var out []TraceRow
+	var hasMore, served bool
+	if traceRawProbeEligible(f) {
+		for _, w := range traceRawProbeWindows(f.From, f.To) {
+			floor := f.To.Add(-w)
+			rows, err := runList(floor.Add(-traceRawProbeLookback), f.Offset+pageLimit, 0)
+			if err != nil {
+				return nil, 0, false, err
+			}
+			if page, more, ok := traceRawProbePage(rows, floor.UnixNano(), f.Offset, f.Limit); ok {
+				out, hasMore, served = page, more, true
+				break
+			}
+		}
+	}
+	if !served {
+		rows, err := runList(f.From, pageLimit, f.Offset)
+		if err != nil {
 			return nil, 0, false, err
 		}
-		t.StartTime = ts.UnixNano()
-		t.HasError = hasErr == 1
-		out = append(out, t)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, false, err
-	}
-	hasMore := len(out) > f.Limit
-	if hasMore {
-		out = out[:f.Limit]
+		out = rows
+		hasMore = len(out) > f.Limit
+		if hasMore {
+			out = out[:f.Limit]
+		}
 	}
 	// Common phase-2: extras for the trimmed page only (≤ Limit ids), bounded
 	// by the page rows' real min/max timestamps. Also serves the CSV export

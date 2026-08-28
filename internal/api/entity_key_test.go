@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/cilcenk/coremetry/internal/chstore"
 	"testing"
 	"time"
 )
@@ -48,5 +49,17 @@ func TestEntityCacheKeysHashAllInputs(t *testing.T) {
 	s2 := servicePodsKey("api", "", t0, t0.Add(time.Hour))
 	if s1 == s2 {
 		t.Fatal("cluster'sız ve cluster'lı servis→pod anahtarı ayrı olmalı")
+	}
+}
+
+// v0.10.139 (inceleme) — çoklu değerli kayıtta aynı pod'un iki satırı birleşir:
+// sayımlar toplanır, ortalama ağırlıklı, uç görülmeler, node boşsa öbüründen.
+func TestMergeSeenAgg(t *testing.T) {
+	t1 := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
+	a := chstore.EntitySeenAgg{Cluster: "prod-eu-west", Namespace: "pay", Pod: "api-1", Spans: 100, Errors: 1, AvgMs: 10, FirstSeen: t1.Add(time.Hour), LastSeen: t1.Add(2 * time.Hour)}
+	b := chstore.EntitySeenAgg{Cluster: "eu-legacy", Namespace: "pay", Pod: "api-1", Node: "w1", Spans: 300, Errors: 3, AvgMs: 30, FirstSeen: t1, LastSeen: t1.Add(3 * time.Hour)}
+	m := mergeSeenAgg(a, b)
+	if m.Cluster != "prod-eu-west" || m.Spans != 400 || m.Errors != 4 || m.AvgMs != 25 || m.Node != "w1" || !m.FirstSeen.Equal(t1) || !m.LastSeen.Equal(t1.Add(3*time.Hour)) {
+		t.Fatalf("birleşim: %+v", m)
 	}
 }

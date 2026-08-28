@@ -48,7 +48,9 @@ func (s *Server) getExceptionGroupPods(w http.ResponseWriter, r *http.Request) {
 		byValue := map[string]thanos.ClusterConfig{}
 		for _, c := range s.thanos.CurrentSettings().Clusters {
 			if c.Enabled {
-				byValue[c.SpanClusterKey()] = c
+				for _, k := range c.SpanClusterKeys() { // v0.10.139 — bir kayıt birden çok değer
+					byValue[k] = c
+				}
 			}
 		}
 		type row struct {
@@ -58,10 +60,22 @@ func (s *Server) getExceptionGroupPods(w http.ResponseWriter, r *http.Request) {
 		}
 		rows := make([]row, 0, len(res.Rows))
 		unmapped := map[string]bool{}
+		type key struct{ cid, ns, pod string }
+		idx := map[key]int{}
 		for _, p := range res.Rows {
 			x := row{ExceptionPodRow: p}
 			if c, ok := byValue[p.Cluster]; ok {
 				x.ClusterID, x.ClusterName = c.EffectiveID(), c.Name
+				// v0.10.139 — çoklu değerli kayıtta aynı pod tek satır.
+				k := key{x.ClusterID, p.Namespace, p.Pod}
+				if j, ok := idx[k]; ok {
+					rows[j].Occurrences += p.Occurrences
+					if p.LastSeen.After(rows[j].LastSeen) {
+						rows[j].LastSeen = p.LastSeen
+					}
+					continue
+				}
+				idx[k] = len(rows)
 			} else {
 				unmapped[p.Cluster] = true
 			}

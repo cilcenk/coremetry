@@ -27,7 +27,7 @@ func (t *ThanosSource) Clusters() []ClusterRef {
 		if !c.Enabled || c.URL == "" {
 			continue
 		}
-		out = append(out, ClusterRef{ID: c.EffectiveID(), Name: c.Name, NamespaceFilter: c.NamespaceFilter, SpanClusterValue: c.SpanClusterKey()})
+		out = append(out, ClusterRef{ID: c.EffectiveID(), Name: c.Name, NamespaceFilter: c.NamespaceFilter, SpanClusterValue: c.SpanClusterKey(), SpanClusterValues: c.SpanClusterKeys()})
 	}
 	return out
 }

@@ -7,7 +7,7 @@ import { spanK8sContext, spanK8sNote, tracePods } from './spanK8s';
 import type { EntityClusterInfo } from './types';
 
 const clusters: EntityClusterInfo[] = [
-  { id: 'c-a', name: 'prod-eu', spanClusterValue: 'prod-eu-west' },
+  { id: 'c-a', name: 'prod-eu', spanClusterValue: 'prod-eu-west', spanClusterValues: ['prod-eu-west', 'eu-legacy'] },
   { id: 'c-b', name: 'prod-us', spanClusterValue: 'prod-us-east' },
 ];
 const span = (ra: Record<string, string>, startNs = 1_700_000_000_123_456_789, extra: Partial<{ serviceName: string; statusCode: string }> = {}) =>
@@ -52,6 +52,11 @@ describe('spanK8sContext', () => {
     expect(a.podHref).not.toBe(b.podHref);
     expect(params(a.podHref!).get('cluster')).toBe('prod-eu');
     expect(params(b.podHref!).get('cluster')).toBe('prod-us');
+  });
+  it('a secondary span cluster value (v0.10.139 multi-value record) maps to the same cluster', () => {
+    const ctx = spanK8sContext(span({ 'k8s.pod.name': 'api-1', 'k8s.namespace.name': 'pay', 'k8s.cluster.name': 'eu-legacy' }), clusters);
+    expect(ctx.reason).toBe('ok');
+    expect(ctx.clusterId).toBe('c-a');
   });
   it('matches ONLY spanClusterValue — a Remote Cluster name is not a span value (inceleme: yanlış cluster bağlama)', () => {
     const ctx = spanK8sContext(span({ 'k8s.pod.name': 'api-1', 'k8s.cluster.name': 'prod-us' }), clusters);

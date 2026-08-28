@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
+import { fmtDateTime } from '@/lib/utils';
 import { Combobox } from '@/components/Combobox';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
@@ -28,6 +29,10 @@ interface EditRow {
   thanosLabelName: string;
   thanosLabelValue: string;
   spanClusterValue: string;
+  /** v0.10.139 — virgülle ayrılmış çoklu değer; kaydetmede listeye çevrilir. */
+  spanClusterValues: string;
+  thanosLabelSource?: 'auto' | 'manual';
+  thanosLabelDetectedAt?: number;
   authType: ThanosAuthType;
   token: string;    // only ever holds a NEW token; '' = keep stored
   hasToken: boolean;
@@ -42,6 +47,8 @@ function fromSnapshot(c: ThanosClusterSnapshot): EditRow {
     thanosLabelName: c.thanosLabelName || '',
     thanosLabelValue: c.thanosLabelValue || '',
     spanClusterValue: c.spanClusterValue || '',
+    spanClusterValues: (c.spanClusterValues && c.spanClusterValues.length ? c.spanClusterValues : [c.spanClusterValue || '']).filter(Boolean).join(', '),
+    thanosLabelSource: c.thanosLabelSource, thanosLabelDetectedAt: c.thanosLabelDetectedAt,
     authType: (c.authType || 'none') as ThanosAuthType,
     token: '', hasToken: c.hasToken,
     namespaceFilter: c.namespaceFilter || '',
@@ -52,7 +59,7 @@ function fromSnapshot(c: ThanosClusterSnapshot): EditRow {
 
 const EMPTY_ROW: EditRow = {
   id: '', name: '', url: '', authType: 'bearer', token: '', hasToken: false,
-  thanosLabelName: '', thanosLabelValue: '', spanClusterValue: '',
+  thanosLabelName: '', thanosLabelValue: '', spanClusterValue: '', spanClusterValues: '',
   namespaceFilter: '', insecureSkipVerify: false, enabled: true,
 };
 
@@ -123,6 +130,7 @@ export function ClustersTab() {
           thanosLabelName: r.thanosLabelName.trim() || undefined,
           thanosLabelValue: r.thanosLabelValue.trim() || undefined,
           spanClusterValue: r.spanClusterValue.trim() || undefined,
+          spanClusterValues: r.spanClusterValues.split(',').map(v => v.trim()).filter(Boolean),
           namespaceFilter: r.namespaceFilter.trim() || undefined,
           insecureSkipVerify: r.insecureSkipVerify, enabled: r.enabled,
         })),
@@ -248,10 +256,20 @@ export function ClustersTab() {
                     style={{ width: '100%' }} />
                 </label>
                 <label style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Span cluster value</div>
-                  <input value={r.spanClusterValue}
-                    onChange={e => patch(i, { spanClusterValue: e.target.value })}
-                    placeholder={r.name.trim() ? `empty = ${r.name.trim()}` : 'empty = cluster name'}
+                  <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+                    Span cluster values
+                    {r.thanosLabelSource && (
+                      <span className={`badge ${r.thanosLabelSource === 'auto' ? 'b-info' : 'b-gray'}`} style={{ marginLeft: 6 }}
+                        title={r.thanosLabelSource === 'auto' && r.thanosLabelDetectedAt ? `Thanos etiketi otomatik algılandı · ${fmtDateTime(new Date(r.thanosLabelDetectedAt))}` : 'Thanos etiketi elle girildi'}>
+                        label: {r.thanosLabelSource}
+                      </span>
+                    )}
+                  </div>
+                  {/* v0.10.139 — bir kayıt birden çok span değeri taşır (virgülle); bir
+                      değer aynı anda TEK kayda — çakışmayı sunucu reddeder ve bağlı kaydı söyler. */}
+                  <input value={r.spanClusterValues}
+                    onChange={e => patch(i, { spanClusterValues: e.target.value, spanClusterValue: e.target.value.split(',')[0]?.trim() ?? '' })}
+                    placeholder={r.name.trim() ? `empty = ${r.name.trim()} · comma-separated` : 'empty = cluster name · comma-separated'}
                     style={{ width: '100%' }} />
                 </label>
                 <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 4, minWidth: 140 }}>

@@ -40,7 +40,7 @@ export function spanK8sContext(span: SpanLike, clusters: EntityClusterInfo[], ra
   // Yalnız spanClusterValue (sunucu SpanClusterKey ile aynı: değer boşsa ad
   // zaten oraya yazılır). Ad yedeği, değeri farklı bir kaydı yanlış cluster'a
   // bağlayabilirdi (inceleme).
-  const c = clusters.find(x => x.spanClusterValue === r.cluster);
+  const c = clusters.find(x => x.spanClusterValue === r.cluster || (x.spanClusterValues ?? []).includes(r.cluster!));
   if (!c) return { ...base, reason: 'unmapped-cluster' };
   const ns = r.k8s.namespace ?? '';
   const opts = { range, at: atMs, clusterName: c.name, service: span.serviceName || undefined };

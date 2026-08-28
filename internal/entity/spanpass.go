@@ -35,12 +35,17 @@ const UnmappedClusterID = "(unmapped)"
 func GroupSeenByCluster(rows []SeenRow, refs []ClusterRef) (map[string][]SeenRow, map[string]int) {
 	byValue := map[string]string{}
 	for _, r := range refs {
-		v := r.SpanClusterValue
-		if v == "" {
-			v = r.Name
+		if r.ID == "" {
+			continue
 		}
-		if v != "" && r.ID != "" {
-			byValue[v] = r.ID
+		vals := append([]string{r.SpanClusterValue}, r.SpanClusterValues...)
+		if r.SpanClusterValue == "" && len(r.SpanClusterValues) == 0 {
+			vals = []string{r.Name}
+		}
+		for _, v := range vals {
+			if v != "" {
+				byValue[v] = r.ID // v0.10.139 — bir kayıt birden çok değer
+			}
 		}
 	}
 	out := map[string][]SeenRow{}

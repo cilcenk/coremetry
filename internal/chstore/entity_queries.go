@@ -366,12 +366,12 @@ func (s *Store) scanSeenAgg(ctx context.Context, sql string, args ...any) ([]Ent
 
 // EntitySeenForService — servis → pod'lar (ORDER BY öneki). cluster = span
 // cluster DEĞERİ (SpanClusterKey), boşsa tüm cluster'lar (yanıt clusterAmbiguous ilan eder).
-func (s *Store) EntitySeenForService(ctx context.Context, service, clusterValue string, from, to time.Time) ([]EntitySeenAgg, error) {
+func (s *Store) EntitySeenForService(ctx context.Context, service string, clusterValues []string, from, to time.Time) ([]EntitySeenAgg, error) {
 	where := "service_name = ? AND time_bucket >= toStartOfFiveMinute(?) AND time_bucket <= ?"
 	args := []any{service, from, to}
-	if clusterValue != "" {
-		where += " AND cluster = ?"
-		args = append(args, clusterValue)
+	if len(clusterValues) > 0 { // v0.10.139 — bir kayıt birden çok değer
+		where += " AND cluster IN (?)"
+		args = append(args, clusterValues)
 	}
 	return s.scanSeenAgg(ctx, `SELECT `+entitySeenAggCols+`
 		FROM entity_seen_5m
@@ -383,27 +383,30 @@ func (s *Store) EntitySeenForService(ctx context.Context, service, clusterValue 
 }
 
 // EntitySeenForPod — pod → servisler + sağlık (zaman sınırlı tarama).
-func (s *Store) EntitySeenForPod(ctx context.Context, clusterValue, namespace, pod string, from, to time.Time) ([]EntitySeenAgg, error) {
+func (s *Store) EntitySeenForPod(ctx context.Context, clusterValues []string, namespace, pod string, from, to time.Time) ([]EntitySeenAgg, error) {
+	if len(clusterValues) == 0 {
+		return []EntitySeenAgg{}, nil
+	}
 	return s.scanSeenAgg(ctx, `SELECT `+entitySeenAggCols+`
 		FROM entity_seen_5m
 		WHERE time_bucket >= toStartOfFiveMinute(?) AND time_bucket <= ?
-		  AND cluster = ? AND k8s_namespace = ? AND k8s_pod = ?
+		  AND cluster IN (?) AND k8s_namespace = ? AND k8s_pod = ?
 		GROUP BY cluster, k8s_namespace, k8s_pod, service_name
 		ORDER BY spans DESC
 		LIMIT 200
-		SETTINGS max_execution_time = 10`, from, to, clusterValue, namespace, pod)
+		SETTINGS max_execution_time = 10`, from, to, clusterValues, namespace, pod)
 }
 
 // EntitySeenForPods — node/namespace pivotu: verilen pod adları (≤ 500).
-func (s *Store) EntitySeenForPods(ctx context.Context, clusterValue, namespace string, pods []string, from, to time.Time) ([]EntitySeenAgg, error) {
-	if len(pods) == 0 {
+func (s *Store) EntitySeenForPods(ctx context.Context, clusterValues []string, namespace string, pods []string, from, to time.Time) ([]EntitySeenAgg, error) {
+	if len(pods) == 0 || len(clusterValues) == 0 {
 		return []EntitySeenAgg{}, nil
 	}
 	if len(pods) > 500 {
 		pods = pods[:500]
 	}
-	where := "time_bucket >= toStartOfFiveMinute(?) AND time_bucket <= ? AND cluster = ? AND k8s_pod IN (?)"
-	args := []any{from, to, clusterValue, pods}
+	where := "time_bucket >= toStartOfFiveMinute(?) AND time_bucket <= ? AND cluster IN (?) AND k8s_pod IN (?)"
+	args := []any{from, to, clusterValues, pods}
 	if namespace != "" {
 		where += " AND k8s_namespace = ?"
 		args = append(args, namespace)

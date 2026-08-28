@@ -1,0 +1,394 @@
+package api
+
+// entities.go — v0.10.130 (K8s entity katmanı adım 6: sorgu katmanı ve
+// pivot uçları; docs/plans/entity-layer-design-2026-08-28.md §4-§5).
+//
+// api.go BÜYÜMEYECEK kuralı: rotalar burada, api.go tek satır.
+//
+//	GET /api/entities/clusters                       viewer — Remote Cluster listesi (id/name) + son koşu
+//	GET /api/entities?cluster=&type=&namespace=&q=&at=&limit=   viewer — sunucu-taraflı arama (picker kuralı)
+//	GET /api/entity?id=&at=                          viewer — varlık + ebeveyn zinciri + çocuk sayıları + ömürler
+//	GET /api/entity/services?id=&from&to             viewer — pod/node/ns/wl → servisler + sağlık (entity_seen_5m)
+//	GET /api/entity/metrics?id=&from&to              viewer — pod → Thanos CPU/bellek trendi (delegasyon)
+//	GET /api/services/{name}/pods?cluster=&from&to   viewer — servisi taşıyan pod'lar + sağlık
+//
+// Rol kapısı YOK — salt-okunur drill-down; küresel middleware kimliksiz
+// isteği 401 yapar ve viewer bu veriyi GÖRMELİ. Bayrak kapalıyken uçlar
+// 404 {disabled:true} — mevcut sayfalar etkilenmez. Cluster ZORUNLU
+// (design §4 kuralı): cluster'sız liste/servis-pod sorgusu tüm cluster'lara
+// yayılmaz; servis→pod'lar cluster'sız verilirse yanıt clusterAmbiguous ilan
+// eder. Her cevap serveCached; anahtarlar entity_keys.go (tüm girdiler).
+
+import (
+	"context"
+	"net/http"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/entity"
+	"github.com/cilcenk/coremetry/internal/thanos"
+)
+
+func (s *Server) registerEntityQueryRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/entities/clusters", s.getEntityClusters)
+	mux.HandleFunc("GET /api/entities", s.listEntities)
+	// entity_id '/' taşır ("pod:<cid>/<ns>/<pod>") — yol segmenti olamaz
+	// (Go mux çok-segmentli {id}'yi yalnız sonda kabul eder); ?id= ile.
+	mux.HandleFunc("GET /api/entity", s.getEntity)
+	mux.HandleFunc("GET /api/entity/services", s.getEntityServices)
+	mux.HandleFunc("GET /api/entity/metrics", s.getEntityMetrics)
+	mux.HandleFunc("GET /api/services/{name}/pods", s.getServicePods)
+}
+
+// entityEnabled — bayrak kapısı: kapalıysa 404 {disabled:true} yazar, false döner.
+func (s *Server) entityEnabled(w http.ResponseWriter) bool {
+	if s.entitySettings == nil || !s.entitySettings.Resolved().Enabled {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"disabled":true}`))
+		return false
+	}
+	return true
+}
+
+// resolveCluster — ?cluster= id ya da ad → (cluster id, span cluster değeri).
+func (s *Server) resolveCluster(ref string) (thanos.ClusterConfig, bool) {
+	if s.thanos == nil || ref == "" {
+		return thanos.ClusterConfig{}, false
+	}
+	return s.thanos.ClusterByRef(ref)
+}
+
+func parseAt(q string) time.Time {
+	if q == "" {
+		return time.Time{}
+	}
+	if n, err := strconv.ParseInt(q, 10, 64); err == nil {
+		if n > 1e15 { // ns
+			return time.Unix(0, n).UTC()
+		}
+		return time.Unix(n, 0).UTC()
+	}
+	if t, err := time.Parse(time.RFC3339, q); err == nil {
+		return t.UTC()
+	}
+	return time.Time{}
+}
+
+func (s *Server) getEntityClusters(w http.ResponseWriter, r *http.Request) {
+	if !s.entityEnabled(w) {
+		return
+	}
+	s.serveCached(w, r, "entities:clusters", 15*time.Second, func(ctx context.Context) (any, error) {
+		out := []map[string]any{}
+		if s.thanos == nil {
+			return map[string]any{"clusters": out}, nil
+		}
+		runs, _ := s.store.EntitySyncRuns(ctx, time.Now().Add(-24*time.Hour), 500)
+		last := map[string]entity.Run{}
+		for _, ru := range runs { // DESC sıralı: ilk görülen en yeni
+			if _, ok := last[ru.ClusterID]; !ok {
+				last[ru.ClusterID] = ru
+			}
+		}
+		cfg := s.thanos.CurrentSettings()
+		for _, c := range cfg.Clusters {
+			if !c.Enabled {
+				continue
+			}
+			m := map[string]any{"id": c.EffectiveID(), "name": c.Name, "spanClusterValue": c.SpanClusterKey()}
+			if ru, ok := last[c.EffectiveID()]; ok {
+				m["lastRun"] = ru
+			}
+			out = append(out, m)
+		}
+		if ru, ok := last[entity.UnmappedClusterID]; ok {
+			return map[string]any{"clusters": out, "unmapped": ru}, nil
+		}
+		return map[string]any{"clusters": out}, nil
+	})
+}
+
+func (s *Server) listEntities(w http.ResponseWriter, r *http.Request) {
+	if !s.entityEnabled(w) {
+		return
+	}
+	q := r.URL.Query()
+	c, ok := s.resolveCluster(strings.TrimSpace(q.Get("cluster")))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "cluster parametresi zorunlu (Remote Cluster id ya da adı)")
+		return
+	}
+	typ, ns, search := strings.TrimSpace(q.Get("type")), strings.TrimSpace(q.Get("namespace")), strings.TrimSpace(q.Get("q"))
+	limit := parseInt(q.Get("limit"), 100)
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	at := parseAt(q.Get("at"))
+	key := entityListKey(c.EffectiveID(), typ, ns, search, limit, at)
+	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
+		rows, err := s.store.EntityList(ctx, chstore.EntityListQuery{ClusterID: c.EffectiveID(), Type: typ, Namespace: ns, Search: search, At: at, Limit: limit})
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"cluster": c.EffectiveID(), "items": rows}, nil
+	})
+}
+
+func (s *Server) getEntity(w http.ResponseWriter, r *http.Request) {
+	if !s.entityEnabled(w) {
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	ref, ok := entity.ParseID(id)
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "geçersiz entity id")
+		return
+	}
+	at := parseAt(r.URL.Query().Get("at"))
+	key := entityPivotKey("get", id+"@"+atBucket(at), time.Time{}, time.Time{})
+	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
+		cur, all, err := s.store.EntityLifetimes(ctx, id, at)
+		if err != nil {
+			return nil, err
+		}
+		if cur == nil {
+			return nil, errNotFound
+		}
+		parents := s.store.EntityParents(ctx, id, at)
+		children, _ := s.store.EntityChildrenCounts(ctx, ref.ClusterID, id, at)
+		out := map[string]any{"entity": cur, "parents": parents, "children": children, "lifetimes": all}
+		if ref.Type == entity.TypePod {
+			// node: runs_on (geçerli)
+			if rels, err := s.store.EntityRelations(ctx, ref.ClusterID, entity.RelRunsOn, id, false, time.Now().Add(-time.Hour), time.Now()); err == nil && len(rels) > 0 {
+				out["node"] = rels[0].ChildID
+			}
+		}
+		if c, ok := s.thanos.ClusterByID(ref.ClusterID); ok {
+			out["cluster"] = map[string]any{"id": c.EffectiveID(), "name": c.Name}
+		}
+		return out, nil
+	})
+}
+
+// getEntityServices — pod → servisler; node/namespace/workload → altındaki
+// pod'lar → servisler; hepsi entity_seen_5m sağlığıyla.
+func (s *Server) getEntityServices(w http.ResponseWriter, r *http.Request) {
+	if !s.entityEnabled(w) {
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	ref, ok := entity.ParseID(id)
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "geçersiz entity id")
+		return
+	}
+	from, to := parseFromTo(r, time.Hour)
+	c, ok := s.thanos.ClusterByID(ref.ClusterID)
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, "cluster not configured")
+		return
+	}
+	key := entityPivotKey("services", id, from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		var pods []chstore.EntityRecord
+		switch ref.Type {
+		case entity.TypePod:
+			if cur, _, err := s.store.EntityLifetimes(ctx, id, to); err == nil && cur != nil {
+				pods = []chstore.EntityRecord{*cur}
+			} else {
+				pods = []chstore.EntityRecord{{Type: entity.TypePod, ClusterID: ref.ClusterID, ID: id, Namespace: ref.Namespace, Name: ref.Name}}
+			}
+		case entity.TypeNode:
+			rels, err := s.store.EntityRelations(ctx, ref.ClusterID, entity.RelRunsOn, id, true, from, to)
+			if err != nil {
+				return nil, err
+			}
+			for _, rl := range rels {
+				if pr, ok := entity.ParseID(rl.ParentID); ok {
+					pods = append(pods, chstore.EntityRecord{Type: entity.TypePod, ClusterID: ref.ClusterID, ID: rl.ParentID, Namespace: pr.Namespace, Name: pr.Name})
+				}
+			}
+		case entity.TypeNamespace, entity.TypeWorkload:
+			list, err := s.store.EntityList(ctx, chstore.EntityListQuery{ClusterID: ref.ClusterID, Type: entity.TypePod, Namespace: ref.Namespace, At: to, Limit: 500})
+			if err != nil {
+				return nil, err
+			}
+			for _, p := range list {
+				if ref.Type == entity.TypeNamespace && p.Namespace == ref.Name || ref.Type == entity.TypeWorkload && p.ParentID == id {
+					pods = append(pods, p)
+				}
+			}
+		default:
+			return nil, errBadRequest
+		}
+		if len(pods) == 0 {
+			return map[string]any{"entity": id, "pods": []any{}, "services": []any{}}, nil
+		}
+		// Sağlık: pod'ların (ns, pod) çiftleri → entity_seen_5m.
+		byNS := map[string][]string{}
+		for _, p := range pods {
+			byNS[p.Namespace] = append(byNS[p.Namespace], p.Name)
+		}
+		var aggs []chstore.EntitySeenAgg
+		for ns, names := range byNS {
+			a, err := s.store.EntitySeenForPods(ctx, c.SpanClusterKey(), ns, names, from, to)
+			if err != nil {
+				return nil, err
+			}
+			aggs = append(aggs, a...)
+		}
+		type svcRow struct {
+			Service string  `json:"service"`
+			Pods    int     `json:"pods"`
+			Spans   int64   `json:"spans"`
+			Errors  int64   `json:"errors"`
+			AvgMs   float64 `json:"avgMs"`
+		}
+		svc := map[string]*svcRow{}
+		podSet := map[string]map[string]bool{}
+		for _, a := range aggs {
+			row, ok := svc[a.Service]
+			if !ok {
+				row = &svcRow{Service: a.Service}
+				svc[a.Service] = row
+				podSet[a.Service] = map[string]bool{}
+			}
+			if !podSet[a.Service][a.Namespace+"/"+a.Pod] {
+				podSet[a.Service][a.Namespace+"/"+a.Pod] = true
+				row.Pods++
+			}
+			row.AvgMs = (row.AvgMs*float64(row.Spans) + a.AvgMs*float64(a.Spans)) / float64(max64(row.Spans+a.Spans, 1))
+			row.Spans += a.Spans
+			row.Errors += a.Errors
+		}
+		services := make([]svcRow, 0, len(svc))
+		for _, v := range svc {
+			services = append(services, *v)
+		}
+		sort.Slice(services, func(i, j int) bool { return services[i].Spans > services[j].Spans })
+		return map[string]any{"entity": id, "cluster": c.EffectiveID(), "pods": pods, "services": services, "rows": aggs}, nil
+	})
+}
+
+func max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// getEntityMetrics — pod → Thanos CPU/bellek trendi (cluster matcher'lı).
+func (s *Server) getEntityMetrics(w http.ResponseWriter, r *http.Request) {
+	if !s.entityEnabled(w) {
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	ref, ok := entity.ParseID(id)
+	if !ok || ref.Type != entity.TypePod {
+		writeJSONError(w, http.StatusBadRequest, "yalnız pod varlıkları için")
+		return
+	}
+	c, ok := s.thanos.ClusterByID(ref.ClusterID)
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, "cluster not configured")
+		return
+	}
+	from, to := parseFromTo(r, time.Hour)
+	from, to, _ = clampThanosWindow(from, to)
+	key := entityPivotKey("metrics", id, from, to)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		pts, err := s.thanos.PodTrend(qctx, c, ref.Namespace, ref.Name, from, to)
+		if err != nil {
+			return nil, err
+		}
+		if pts == nil {
+			pts = []thanos.TrendPoint{}
+		}
+		return map[string]any{"entity": id, "cluster": c.EffectiveID(), "points": pts}, nil
+	})
+}
+
+// getServicePods — servisi taşıyan pod'lar + sağlık. cluster verilmezse
+// tüm cluster'lar okunur ve yanıt clusterAmbiguous ile ilan eder.
+func (s *Server) getServicePods(w http.ResponseWriter, r *http.Request) {
+	if !s.entityEnabled(w) {
+		return
+	}
+	name := r.PathValue("name")
+	if name == "" {
+		writeJSONError(w, http.StatusBadRequest, "service name required")
+		return
+	}
+	from, to := parseFromTo(r, time.Hour)
+	clusterRef := strings.TrimSpace(r.URL.Query().Get("cluster"))
+	var clusterValue, clusterID string
+	if clusterRef != "" {
+		c, ok := s.resolveCluster(clusterRef)
+		if !ok {
+			writeJSONError(w, http.StatusNotFound, "cluster not configured")
+			return
+		}
+		clusterValue, clusterID = c.SpanClusterKey(), c.EffectiveID()
+	}
+	key := servicePodsKey(name, clusterID, from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		aggs, err := s.store.EntitySeenForService(ctx, name, clusterValue, from, to)
+		if err != nil {
+			return nil, err
+		}
+		// span cluster değeri → Remote Cluster id (eşlenemeyen ilan edilir)
+		byValue := map[string]thanos.ClusterConfig{}
+		for _, c := range s.thanos.CurrentSettings().Clusters {
+			if c.Enabled {
+				byValue[c.SpanClusterKey()] = c
+			}
+		}
+		type podRow struct {
+			chstore.EntitySeenAgg
+			ClusterID string                `json:"clusterId,omitempty"`
+			EntityID  string                `json:"entityId,omitempty"`
+			Entity    *chstore.EntityRecord `json:"entity,omitempty"`
+		}
+		out := make([]podRow, 0, len(aggs))
+		clusters := map[string]bool{}
+		unmapped := map[string]bool{}
+		for _, a := range aggs {
+			row := podRow{EntitySeenAgg: a}
+			if c, ok := byValue[a.Cluster]; ok {
+				row.ClusterID = c.EffectiveID()
+				row.EntityID = entity.PodID(c.EffectiveID(), a.Namespace, a.Pod)
+				clusters[c.EffectiveID()] = true
+				if cur, _, err := s.store.EntityLifetimes(ctx, row.EntityID, to); err == nil && cur != nil {
+					row.Entity = cur
+				}
+			} else {
+				unmapped[a.Cluster] = true
+			}
+			out = append(out, row)
+		}
+		resp := map[string]any{"service": name, "pods": out}
+		if clusterID == "" && len(clusters) > 1 {
+			ids := make([]string, 0, len(clusters))
+			for id := range clusters {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			resp["clusterAmbiguous"] = ids
+		}
+		if len(unmapped) > 0 {
+			vals := make([]string, 0, len(unmapped))
+			for v := range unmapped {
+				vals = append(vals, v)
+			}
+			sort.Strings(vals)
+			resp["unmappedClusters"] = vals
+		}
+		return resp, nil
+	})
+}

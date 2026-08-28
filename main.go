@@ -21,6 +21,7 @@ import (
 	agentpkg "github.com/cilcenk/coremetry/internal/agent"
 	"github.com/cilcenk/coremetry/internal/anomaly"
 	"github.com/cilcenk/coremetry/internal/api"
+	"github.com/cilcenk/coremetry/internal/appschema"
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chmigrate"
@@ -30,14 +31,14 @@ import (
 	"github.com/cilcenk/coremetry/internal/consumer"
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/correlator"
-	"github.com/cilcenk/coremetry/internal/appschema"
 	"github.com/cilcenk/coremetry/internal/devops"
-	"github.com/cilcenk/coremetry/internal/mcpclient"
 	"github.com/cilcenk/coremetry/internal/elasticml"
+	"github.com/cilcenk/coremetry/internal/entity"
 	"github.com/cilcenk/coremetry/internal/evaluator"
 	"github.com/cilcenk/coremetry/internal/ldap"
 	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/mcp"
+	"github.com/cilcenk/coremetry/internal/mcpclient"
 	"github.com/cilcenk/coremetry/internal/mcptools"
 	"github.com/cilcenk/coremetry/internal/monitor"
 	"github.com/cilcenk/coremetry/internal/notify"
@@ -999,6 +1000,23 @@ func main() {
 		log.Printf("[thanos] load persisted config: %v", err)
 	}
 	go thanosSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	// v0.10.129 — K8s entity katmanı: bayrak + vidalar her modda (uçlar
+	// okur), Thanos senkronizasyonu yalnız worker rolünde ve liderde
+	// (cache.LeaderHolder "entity-sync"). Bayrak kapalıyken Tick no-op.
+	entitySettings := entity.NewSettingsService()
+	if err := entitySettings.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[entity] load persisted config: %v", err)
+	}
+	go entitySettings.StartConfigRefresh(ctx, store, 30*time.Second)
+	var entitySyncer *entity.Syncer
+	if mode.worker {
+		entitySyncer = entity.NewSyncer(entity.NewThanosSource(thanosSvc), entity.StoreFromCH(store), entitySettings.Resolved)
+		entitySyncer.SetSeenReader(entity.SeenFromCH(store))
+		entityLeader := cache.NewLeaderHolder(lockImpl, "entity-sync", cache.LeaderTTL(time.Minute))
+		entityLeader.SetOnAcquire(func() { entitySyncer.Tick(ctx) })
+		entityLeader.Start(ctx)
+		go entitySyncer.Run(ctx, entityLeader.IsLeader)
+	}
 	// v0.9.1150 — dış VictoriaMetrics OKUMA backend'i (tempo/thanos
 	// simetriği): blob'u boot'ta yükle + 30s multi-pod senkron poll'u.
 	// Kapalıyken (varsayılan) metrik yüzeyleri ClickHouse'tan okumaya
@@ -1203,6 +1221,7 @@ func main() {
 	srv.SetBackgroundConfig(cfg.Background)
 	srv.SetTempo(tempoSvc)
 	srv.SetThanos(thanosSvc)
+	srv.SetEntity(entitySettings, entitySyncer)
 	srv.SetVMetrics(vmSvc)
 	srv.SetDevOps(devopsSvc)
 	srv.SetMCPClient(mcpCliSvc)

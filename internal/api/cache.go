@@ -500,6 +500,13 @@ func (s *Server) reloadConfigOnSignal(ctx context.Context, svc string) {
 				log.Printf("[cache] config-reload thanos: %v", err)
 			}
 		}
+	case "entities":
+		// v0.10.129 — entity katmanı bayrağı/vidaları (entity_routes.go PUT).
+		if s.entitySettings != nil {
+			if err := s.entitySettings.LoadPersisted(ctx, s.store); err != nil {
+				log.Printf("[entity] reload on signal: %v", err)
+			}
+		}
 	case "rag":
 		if s.rag != nil {
 			if err := s.rag.LoadPersisted(ctx, s.store); err != nil {

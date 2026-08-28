@@ -39,6 +39,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/devops"
+	"github.com/cilcenk/coremetry/internal/entity"
 	"github.com/cilcenk/coremetry/internal/ldap"
 	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/mcp"
@@ -189,6 +190,9 @@ type Server struct {
 	// /clusters yüzeyi + Settings → Clusters. nil ya da boş liste →
 	// rotalar 404/boş snapshot döner.
 	thanos *thanos.Service
+	// v0.10.129 — K8s entity katmanı (entity_routes.go): ayarlar her modda, syncer yalnız worker.
+	entitySettings *entity.SettingsService
+	entitySync     *entity.Syncer
 
 	// vmetrics — dış VictoriaMetrics OKUMA backend'i (v0.9.1150, Faz 1).
 	// Configured() true olduğunda metrik keşif/sorgu yüzeyleri
@@ -1202,6 +1206,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// (v0.9.1150).
 	s.registerVMetricsRoutes(mux)
 	s.registerThanosIdentityRoutes(mux) // v0.10.128 — Remote Cluster etiket rozeti, thanos_identity.go
+	s.registerEntityRoutes(mux)         // v0.10.129 — entity katmanı bayrak + sync yönetimi, entity_routes.go
+	s.registerEntityQueryRoutes(mux)    // v0.10.130 — entity pivot uçları, entities.go
 	// External Tempo backend — admin-only because the token grants
 	// read access to every trace in the operator's Tempo cluster.
 	mux.HandleFunc("GET /api/settings/tempo", auth.RequireRole(auth.RoleAdmin, s.getTempoSettings))

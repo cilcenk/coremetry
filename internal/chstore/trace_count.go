@@ -134,6 +134,8 @@ func buildTraceCountSQL(source string, preds []string) string {
 
 // CountTracesCapped — listeyle AYNI evreni tavana kadar sayar.
 func (s *Store) CountTracesCapped(ctx context.Context, f TraceFilter) (TraceCount, error) {
+	// v0.10.124 — liste ile AYNI kapı: MV boşluğunda plan ham yola düşer.
+	f.MVGap = s.TraceMVGap(ctx, f.From, f.To)
 	source, preds, args, reason := traceCountPlan(f)
 	if reason != "" {
 		return TraceCount{Reason: reason}, nil

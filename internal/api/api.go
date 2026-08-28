@@ -4272,6 +4272,11 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 		resp := map[string]interface{}{"traces": traces, "hasMore": hasMore}
+		// v0.10.124 — pencere MV'de boş bir güne değiyorsa ham yoldan okundu;
+		// UI bunu söyler (sihirbaz doldurunca kendiliğinden kaybolur).
+		if s.store.TraceMVGap(ctx, f.From, f.To) {
+			resp["mvGap"] = true
+		}
 		if !narrowedFrom.IsZero() {
 			// The operator asked about a window this query could not
 			// afford. Say which window actually answered — a top-N over

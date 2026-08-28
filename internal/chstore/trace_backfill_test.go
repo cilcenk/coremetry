@@ -386,3 +386,22 @@ func TestBackfillDayAllowed(t *testing.T) {
 		t.Errorf("bugün reddi sebebi eksik: %v", err)
 	}
 }
+
+// v0.10.120 — canlı dilim kaynağı: kümede clusterAllReplicas (shard
+// bacakları görünsün), tek düğümde system.processes; yalnız backfill
+// INSERT'i, sınırlı ve süre tavanlı.
+func TestTraceBackfillLiveSQL(t *testing.T) {
+	c := flatWSBF(traceBackfillLiveSQL("coremetry"))
+	if !strings.Contains(c, "clusterAllReplicas('coremetry', system.processes)") {
+		t.Errorf("küme kaynağı yok: %s", c)
+	}
+	s := flatWSBF(traceBackfillLiveSQL(""))
+	if strings.Contains(s, "clusterAllReplicas") || !strings.Contains(s, "FROM system.processes") {
+		t.Errorf("tek düğüm kaynağı yanlış: %s", s)
+	}
+	for _, want := range []string{"INSERT INTO trace_summary_5m", "FROM spans", "LIMIT 20", "max_execution_time = 3", "is_initial_query"} {
+		if !strings.Contains(c, want) {
+			t.Errorf("eksik: %q", want)
+		}
+	}
+}

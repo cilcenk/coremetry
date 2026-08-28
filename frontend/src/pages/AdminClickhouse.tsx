@@ -2397,6 +2397,13 @@ function fmtAge(ms: number): string {
 // ham spans'ten GÜN GÜN yeniden kurar (önce günün MV partition'ı düşer —
 // AggregatingMergeTree'de çifte-insert sayıları şişirir; span'lere
 // dokunulmaz). 0010 panelinin deseni: 2s poll + document.hidden.
+// fmtCount — canlı dilim satırı için kısa sayı biçimi (fmtBytes ortak import).
+function fmtCount(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)} Mr`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)} M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(0)} K`;
+  return String(n);
+}
 // fmtMs — "12 s" / "3 dk 20 s" / "1 sa 5 dk" (ETA okunurluğu).
 function fmtMs(ms?: number): string {
   if (!ms || ms <= 0) return '—';
@@ -2509,6 +2516,31 @@ function TraceBackfillWizardPanel() {
                 {run.runEtaMs ? ` · toplam ≈ ${fmtMs(run.runEtaMs)}` : ''}
               </span>
             )}
+          </div>
+        )}
+        {/* v0.10.120 — CANLI DİLİM (system.processes): prod'da query_log
+            kapalı; koşan INSERT SELECT'in maliyeti yalnız burada görünür.
+            Eski kodla koşan backfill'de de dolar. */}
+        {run && (run.live?.length ?? 0) > 0 && (
+          <div style={{ fontSize: 12, marginBottom: 10, color: 'var(--text2)' }}>
+            Canlı (system.processes):{' '}
+            {run.live!.map((p, i) => (
+              <span key={i} style={{ marginRight: 12 }}>
+                <code>{p.host}</code>{p.initial ? ' (initiator)' : ''} · {p.elapsedS.toFixed(1)} s ·{' '}
+                {fmtCount(p.readRows)} satır · {fmtBytes(p.readBytes)} · bellek {fmtBytes(p.memoryBytes)}
+                {p.peakBytes > p.memoryBytes ? ` (tepe ${fmtBytes(p.peakBytes)})` : ''}
+              </span>
+            ))}
+          </div>
+        )}
+        {run?.liveError && (
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 10 }}>canlı görünüm okunamadı: {run.liveError}</div>
+        )}
+        {running && (
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 10 }}>
+            Rehber: ilk günü 1 eşzamanlı koşturup <em>ort</em> dilim süresine bakın; shard belleği
+            rahatsa (241 yok) sonraki günleri 2 ile deneyin ve <em>ort</em>'u kıyaslayın — kazanç
+            ölçülmeden 4'e çıkmayın. 96 × ort ≈ bir günün süresi.
           </div>
         )}
         {run && !run.running && (run.errors?.length ?? 0) > 0 && (

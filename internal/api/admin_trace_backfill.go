@@ -46,6 +46,10 @@ type traceBackfillRun struct {
 	DayEtaMs     int64  `json:"dayEtaMs,omitempty"`
 	RunEtaMs     int64  `json:"runEtaMs,omitempty"`
 	DayStartedAt int64  `json:"dayStartedAt,omitempty"`
+	// Live (v0.10.120) — system.processes'taki koşan backfill sorguları;
+	// durum çağrısında doldurulur, koşu kaydına yazılmaz.
+	Live      []chstore.TraceBackfillProc `json:"live,omitempty"`
+	LiveError string                      `json:"liveError,omitempty"`
 }
 
 type traceBackfillFlight struct {
@@ -80,6 +84,19 @@ func (s *Server) getTraceBackfillStatus(w http.ResponseWriter, r *http.Request) 
 	traceBackfill.mu.Lock()
 	run := traceBackfill.run
 	traceBackfill.mu.Unlock()
+	// v0.10.120 — canlı dilim (system.processes); okunamazsa durum yine
+	// döner, hata ayrı alanda. Koşu yokken de sorulur: eski kodla başlamış
+	// bir backfill'in sorgusu görünür olsun.
+	if s.store != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		live, err := s.store.TraceBackfillLive(ctx)
+		cancel()
+		if err != nil {
+			run.LiveError = err.Error()
+		} else {
+			run.Live = live
+		}
+	}
 	writeJSON(w, run)
 }
 

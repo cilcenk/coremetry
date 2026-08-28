@@ -40,6 +40,10 @@ export function ColumnManager({ cols, onAdd }: {
           'db.system', 'db.statement', 'db.operation', 'db.name',
           'messaging.system', 'messaging.destination.name', 'messaging.operation',
           'peer.service', 'server.address', 'kind',
+          // v0.10.143 (DETAY SAYFALARI adım 6) — Kubernetes bağlamı: terfi kolonlar
+          // (k8s_namespace/k8s_pod/k8s_node) + cluster; kolon olarak eklenince
+          // hücreler entity sayfalarına link olur (traceK8sLinks).
+          'k8s.namespace.name', 'k8s.pod.name', 'k8s.node.name', 'cluster',
         ];
         setKeys([...new Set([...seed, ...live])].sort());
       })

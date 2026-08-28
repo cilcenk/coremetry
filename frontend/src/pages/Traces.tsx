@@ -70,6 +70,9 @@ import { SvcBadge, DurationBar, fmtDur } from '@/components/traces/shared';
 import { PageControls } from '@/components/ui/PageControls';
 import { QueryError } from '@/components/QueryError';
 import { PageShell } from '@/components/ui/PageShell';
+import { useEntityEnabled } from '@/lib/queries';
+import { traceK8sHref, isTraceK8sCol, withK8sColumns, canAddK8sColumns } from '@/lib/traceK8sLinks';
+import type { EntityClusterInfo } from '@/lib/types';
 
 // v0.9.304 (operatör) — 'relations' kaldırıldı. Yapısal self-join
 // sorgusu ham spans üzerinde koşuyordu, yani sayfadaki en pahalı okuma
@@ -288,6 +291,8 @@ function TracesPageInner() {
   // back to flat-AND naturally falls back to the legacy `filters=` param.
   const grouped = advGroup !== null;
   const advGroupParam = useMemo(() => encodeFilterGroup(advGroup), [advGroup]);
+  // v0.10.143 — Kubernetes kolonları/linkleri yalnız entity katmanı açıkken.
+  const { enabled: k8sOn, clusters: entityClusters } = useEntityEnabled();
   const [extraCols, setExtraCols] = useState<string[]>(() => {
     // URL ?cols= wins; then the persisted per-browser selection; then
     // DEFAULT_TRACE_COLUMNS (v0.9.841 — no longer empty; see the
@@ -1252,6 +1257,12 @@ function TracesPageInner() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
               <ColumnManager cols={extraCols}
                 onAdd={k => { if (!extraCols.includes(k) && extraCols.length < 8) setExtraCols([...extraCols, k]); }} />
+              {/* v0.10.143 (DETAY SAYFALARI adım 6) — Kubernetes kolon seti tek tıkla;
+                  yalnız entity katmanı açıkken (hücreler entity sayfalarına link olur). */}
+              {k8sOn && canAddK8sColumns(extraCols) && (
+                <Button type="button" variant="ghost" size="xs" title="k8s.namespace.name · k8s.pod.name · k8s.node.name · cluster kolonlarını ekle (8 kolon tavanı)"
+                  onClick={() => setExtraCols(withK8sColumns(extraCols))}>+ K8s columns</Button>
+              )}
               {extraCols.map(c => (
                 <span key={c} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 4, background: 'var(--bg3)', border: '1px solid var(--border)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11 }}>
                   {c}
@@ -1300,7 +1311,7 @@ function TracesPageInner() {
                       <td key={id} onMouseEnter={() => prefetchTrace(t.traceId)}
                         onClick={() => openTrace(t)}
                         style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer', background: t.hasError ? 'color-mix(in srgb, var(--err) 8%, transparent)' : undefined }}>
-                        {renderTraceCell(id, t, visibleMax)}
+                        {renderTraceCell(id, t, visibleMax, k8sOn ? { clusters: entityClusters, range } : undefined)}
                       </td>
                     ))}
                   </Fragment>
@@ -1450,8 +1461,19 @@ function TracesPageInner() {
   );
 }
 
-// Per-column cell content for a trace row.
-function renderTraceCell(id: string, t: TraceRow, visibleMax: number) {
+// Per-column cell content for a trace row. k8s: v0.10.143 — entity katmanı
+// açıkken Kubernetes kolonları entity sayfalarına link (traceK8sLinks).
+function renderTraceCell(id: string, t: TraceRow, visibleMax: number, k8s?: { clusters: EntityClusterInfo[]; range: TimeRange }) {
+  if (k8s && isTraceK8sCol(id)) {
+    const v = t.extras?.[id] ?? '';
+    if (!v) return <span className="mono" style={{ color: 'var(--text3)' }}>—</span>;
+    const { href, note } = traceK8sHref(id, t, k8s.clusters, k8s.range);
+    // stopPropagation: hücre satır-tıkına (openTrace) sarılı; Link'in navigate'i
+    // bubbling'de trace navigate'iyle ezilirdi (Clusters.tsx / Hosts.tsx emsali).
+    return href
+      ? <Link to={href} className="mono sec" title={`${v} · entity sayfası (trace anı)`} onClick={e => e.stopPropagation()}>{v}</Link>
+      : <span className="mono" style={{ color: 'var(--text2)' }} title={note ?? v}>{v}</span>;
+  }
   switch (id) {
     case 'time':      return <span className="mono">{tsDateTime(t.startTime)}</span>;
     case 'service':   return <SvcBadge name={t.serviceName} />;

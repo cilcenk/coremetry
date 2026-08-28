@@ -25,6 +25,8 @@ INSERT'i version'ı açık yazar (v0.10.129, Replicated dedup).
 
 **v0.10.142 (DETAY SAYFALARI adım 5 — Node / Namespace detay):** `/entity` sayfası node için kapasite/kullanım (clusterNodes), CPU/Mem trend (resource-trend byNode, node serisi), namespace için pods/CPU/Mem/restart/failing (clusterNamespaces) + çok-pod trend (ThanosTrendPanel); ikisinde etki şeridi (pod/servis/span/hata — entity_seen) + giriş-span p50/p95/p99 (`GET /api/entity/latency`, entity_pod_latency.go, boyut beyaz listesi k8s_node/k8s_namespace, cluster sınırlı). Bayrak kapalı → sayfa kapalı ilan.
 
+**v0.10.143 (DETAY SAYFALARI adım 6 — Traces listesi):** kolon yöneticisine `k8s.namespace.name / k8s.pod.name / k8s.node.name / cluster` tohumları + "+ K8s columns" tek tık (bayrak açıkken); hücreler `traceK8sLinks` ile entity sayfalarına link (doğru cluster — ikincil span değeri dahil, at = trace anı, range + servis; cluster/namespace kolonu yoksa link YOK + gerekçe). Filtreler zaten terfi kolonlara düşüyor. **Sorgu planı kanıtı (lokal CH 26.2, `EXPLAIN indexes=1`, `k8s.pod.name = …` filtresiyle ham yol):** MinMax(time) 2/51 part · 9/1997 granül → PrimaryKey(service_name,time) 2/9 granül → Skip `idx_k8s_pod` (set) 2/2 granül — tam-pencere tarama yok; filtresiz liste `trace_summary_5m` hızlı yolunda kalıyor (query_log: argMaxIfMerge(root_name_state)).
+
 > **Varsayımlar (probe gelmeden yazıldı, her biri konfigüre edilebilir):**
 > V1 Thanos external label adı `cluster` (UI önerisi; kayıt varsayılanı BOŞ = matcher yok, bkz. §1.1), değeri Remote Cluster `Name` ile
 > aynı (probe A2(b) aksini söylerse yalnız kayıt alanları değişir, model

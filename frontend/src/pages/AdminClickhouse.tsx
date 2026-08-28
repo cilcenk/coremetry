@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -10,6 +10,7 @@ import { makeBaseline, nodeWorkView, type Baseline, type NodeWorkRow } from '@/l
 import { Button, Modal } from '@/components/ui';
 import type {
   RollupActionResult, RollupPreflightResult, RollupTableStatus, RollupTarget,
+  EntityLayerObjectStatus, EntityLayerStatusResult, EntityLayerPreflightResult,
   StateUnifyPreflightResult, StateUnifyRun, StateUnifyTable,
   StateRepartPreflightResult, StateRepartRun, StateRepartTable,
   TraceBackfillDay, TraceBackfillRun,
@@ -726,6 +727,8 @@ export default function AdminClickhousePage() {
                 göç 37 tablo × RENAME, yani kuyruğu en çok o meşgul
                 eder. Operatör önce DDL kuyruğunun boş olduğunu görmeli. */}
             <StateUnifyWizardPanel />
+            {/* v0.10.134 — 0011 entity katmanı şeması (operatör: "0011 sihirbazda yok"). */}
+            <EntityLayerWizardPanel />
 
             {/* v0.9.1341 — 0010 partition sökme sihirbazı. 0009'un
                 hemen ALTINDA ve bu SIRA anlamlı: 0010'un önkoşulu
@@ -2339,6 +2342,175 @@ function StateUnifyRow({ t }: { t: StateUnifyTable }) {
         {t.catchUp}
       </td>
     </tr>
+  );
+}
+
+// ── 0011 entity katmanı şeması sihirbazı — v0.10.134 ────────────────
+// Operator-reported (prod): "cluster eşleşme için sihirbaz — 0011 MV'yi
+// görmedim". Rollup panelinin aynası: durum (host başına nesne), ön
+// kontrol (küme + k8s kapsama + LC kapısı), uygula (gömülü 0011, ilk
+// hatada durur), geri al (yalnız MV'ler). Boot'ta asla koşmaz.
+const ENTITY_LAYER_COLS: DataTableColumn<EntityLayerObjectStatus>[] = [
+  { id: 'name', label: 'Nesne', width: 220, sortValue: o => o.name },
+  { id: 'kind', label: 'Tür', width: 110, sortValue: o => o.kind },
+  { id: 'state', label: 'Durum', width: 130, sortValue: o => o.state },
+  { id: 'hosts', label: 'Host', width: 90, numeric: true, sortValue: o => o.haveHosts },
+];
+
+function EntityLayerWizardPanel() {
+  const [status, setStatus] = useState<EntityLayerStatusResult | null>(null);
+  const [statusErr, setStatusErr] = useState<string | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [pre, setPre] = useState<EntityLayerPreflightResult | null>(null);
+  const [preBusy, setPreBusy] = useState(false);
+  const [preErr, setPreErr] = useState<string | null>(null);
+  const [cluster, setCluster] = useState('');
+  const [confirmKind, setConfirmKind] = useState<'apply' | 'rollback' | null>(null);
+  const [busyKind, setBusyKind] = useState<'apply' | 'rollback' | null>(null);
+  const [action, setAction] = useState<{ kind: 'apply' | 'rollback'; res: RollupActionResult } | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const busy = busyKind !== null;
+  const rows = status?.objects ?? [];
+  const dt = useDataTable<EntityLayerObjectStatus>({ storageKey: 'ch-entity-layer-status', columns: ENTITY_LAYER_COLS, rows });
+  const loadStatus = async () => {
+    setStatusBusy(true); setStatusErr(null);
+    try { setStatus(await api.entityLayerStatus()); }
+    catch (e: unknown) { setStatusErr(e instanceof Error ? e.message : String(e)); }
+    finally { setStatusBusy(false); }
+  };
+  useEffect(() => { void loadStatus(); }, []);
+  const runPreflight = async () => {
+    setPreBusy(true); setPreErr(null);
+    try {
+      const r = await api.entityLayerPreflight();
+      setPre(r);
+      const suggested = r.suggestedCluster && r.clusters.includes(r.suggestedCluster)
+        ? r.suggestedCluster : r.clusters.length === 1 ? r.clusters[0] : '';
+      setCluster(suggested);
+    } catch (e: unknown) { setPreErr(e instanceof Error ? e.message : String(e)); setPre(null); }
+    finally { setPreBusy(false); }
+  };
+  const runAction = async (kind: 'apply' | 'rollback') => {
+    setConfirmKind(null); setBusyKind(kind); setActionErr(null); setAction(null);
+    try {
+      const res = kind === 'apply' ? await api.entityLayerApply(cluster) : await api.entityLayerRollback(cluster);
+      setAction({ kind, res });
+    } catch (e: unknown) { setActionErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusyKind(null); void loadStatus(); void runPreflight(); }
+  };
+  const canApply = !!pre?.supported && !!cluster && !busy;
+  const allOk = rows.length > 0 && rows.every(o => o.state === 'ok');
+  return (
+    <Section title="K8s entity katmanı şeması (0011)">
+      <p style={{ fontSize: 12, color: 'var(--text2)', margin: '0 0 10px', lineHeight: 1.55 }}>
+        spans'a <code className="mono">k8s_namespace / k8s_pod / k8s_node</code> terfi kolonları + set index,
+        <code className="mono"> entities / entity_relations / entity_sync_runs</code> state tabloları ve
+        <code className="mono"> entity_seen_1m/5m</code> MV'leri. Uygulama boot'ta kendi de dener; bu kart
+        hangi host'ta neyin gerçekten indiğini gösterir ve eksiği tamamlar. Sonra: Settings → Remote clusters
+        (Thanos etiket + span cluster değeri) → Settings → K8s entity katmanı → Enable.
+      </p>
+      {statusBusy && !status && <Spinner />}
+      {statusErr && <Empty icon="⚠" title="Durum okunamadı">{statusErr}</Empty>}
+      {status && (
+        <>
+          <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>
+            küme <span className="mono">{status.cluster || '(tek düğüm)'}</span> ·{' '}
+            {allOk ? <span className="badge b-ok">TAM</span> : <span className="badge b-warn">EKSİK</span>} ·
+            entity_seen_5m son 15 dk: <span className="mono">{fmtNum(status.seenRows)}</span> satır
+          </div>
+          <div className="table-wrap is-fit" style={{ marginBottom: 10 }}>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} />
+              <DataTableHead dt={dt} />
+              <tbody>
+                {dt.sortedRows.map(o => (
+                  <tr key={`${o.kind}:${o.name}`}>
+                    <td className="mono">{o.name}</td>
+                    <td style={{ fontSize: 11, color: 'var(--text3)' }}>{o.kind}{o.table ? ` · ${o.table}` : ''}</td>
+                    <td>
+                      {o.state === 'ok' ? <span className="badge b-ok">VAR</span>
+                        : o.state === 'partial' ? <span className="badge b-warn" title="bazı host'larda yok — dağıtık DDL yarım kalmış">KISMİ</span>
+                        : o.state === 'missing' ? <span className="badge b-gray">YOK</span>
+                        : <span className="badge b-warn" title={o.err}>OKUNAMADI</span>}
+                    </td>
+                    <td className="num mono">{o.haveHosts}/{o.hosts}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+        <Button variant="secondary" size="sm" onClick={runPreflight} loading={preBusy}>Ön kontrol</Button>
+        <Button variant="ghost" size="sm" onClick={() => void loadStatus()} disabled={statusBusy}>Durumu yenile</Button>
+        {preErr && <span style={{ color: 'var(--err)', fontSize: 12 }}>{preErr}</span>}
+      </div>
+      {pre && (
+        <div style={{
+          padding: '12px 14px', borderRadius: 6, marginBottom: 12,
+          border: `1px solid ${pre.supported ? 'var(--ok)' : 'var(--warn)'}`,
+          background: pre.supported ? 'color-mix(in srgb, var(--ok) 8%, transparent)' : 'color-mix(in srgb, var(--warn) 10%, transparent)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span className={`badge ${pre.supported ? 'b-ok' : 'b-warn'}`}>{pre.supported ? 'UYGULANABİLİR' : 'UYGULANAMAZ'}</span>
+            <span style={{ fontSize: 12.5, color: 'var(--text2)', lineHeight: 1.5 }}>{pre.detail}</span>
+          </div>
+          <div className="table-wrap" style={{ marginBottom: 8 }}>
+            <table style={{ width: '100%' }}>
+              <thead><tr><th>Kontrol</th><th>Sonuç</th></tr></thead>
+              <tbody>
+                <PreRow label="spans_local" ok={pre.spansLocal} />
+                <PreRow label="Tanımlı küme" ok={pre.clusters.length > 0} note={pre.clusters.join(', ')} />
+                <PreRow label="k8s.pod.name kapsama (son 15 dk)" ok={pre.podAttrCoverage > 0} note={`%${(pre.podAttrCoverage * 100).toFixed(0)}`} />
+                <PreRow label="uniq pod adı (son 1 saat) ≤ 100k" ok={pre.uniqPods1h <= 100_000} note={fmtNum(pre.uniqPods1h)} />
+              </tbody>
+            </table>
+          </div>
+          {pre.probeErrors && pre.probeErrors.length > 0 && (
+            <div style={{ fontSize: 11.5, color: 'var(--warn)' }}>Probe hataları: {pre.probeErrors.join(' · ')}</div>
+          )}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text3)' }}>
+          Küme
+          <select value={cluster} onChange={e => setCluster(e.target.value)} disabled={!pre || busy}>
+            <option value="">—</option>
+            {(pre?.clusters ?? []).map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </label>
+        {confirmKind === null ? (
+          <>
+            <Button variant="primary" size="sm" disabled={!canApply} onClick={() => setConfirmKind('apply')}>Uygula (0011)</Button>
+            <Button variant="ghost-danger" size="sm" disabled={!cluster || busy} onClick={() => setConfirmKind('rollback')}>MV'leri geri al</Button>
+          </>
+        ) : (
+          <>
+            <span style={{ fontSize: 12 }}>
+              {confirmKind === 'apply'
+                ? <>0011 <span className="mono">{cluster}</span> kümesine uygulanacak (IF NOT EXISTS; ilk hatada durur). Emin misin?</>
+                : <>entity_seen MV'leri düşürülecek — yazım kesilir, kolon/tablo/veri kalır. Emin misin?</>}
+            </span>
+            <Button variant={confirmKind === 'apply' ? 'primary' : 'danger'} size="sm" loading={busy} onClick={() => void runAction(confirmKind)}>Evet</Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirmKind(null)}>Vazgeç</Button>
+          </>
+        )}
+        {actionErr && <span style={{ color: 'var(--err)', fontSize: 12 }}>{actionErr}</span>}
+      </div>
+      {action && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, marginBottom: 4 }}>
+            {action.kind === 'apply' ? 'Uygulama' : 'Geri alma'}: {action.res.ok ? <span className="badge b-ok">TAMAM</span> : <span className="badge b-err">HATA</span>}
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11.5 }}>
+            {action.res.statements.map((st, i) => (
+              <li key={i} className="mono" style={{ color: st.ok ? 'var(--text2)' : 'var(--err)' }}>{st.head}{st.err ? ` — ${st.err}` : ''}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Section>
   );
 }
 

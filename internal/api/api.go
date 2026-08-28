@@ -679,6 +679,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// /admin/clickhouse'tan, ön kontrollü. Boot'ta ASLA koşmaz —
 	// tek tetikleyici admin (gerekçe: admin_rollup.go başlığı).
 	s.registerRollupAdminRoutes(mux)
+	s.registerEntityLayerAdminRoutes(mux) // v0.10.134 — 0011 entity katmanı şeması sihirbazı, admin_entity_layer.go
 	s.registerStateUnifyRoutes(mux)
 	s.registerStateRepartRoutes(mux)
 	s.registerTraceBackfillRoutes(mux) // v0.10.103 — /traces tarihçe sihirbazı, admin_trace_backfill.go

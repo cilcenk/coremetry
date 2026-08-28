@@ -1,6 +1,9 @@
 -- 0011_entity_layer.sql — K8s ENTITY KATMANI şeması (dış Distributed prod).
--- v0.10.127. OPERATÖR UYGULAR. Sihirbaz/boot ASLA koşmaz (ev kuralı:
--- ON CLUSTER DDL'i N pod yarıştırırsa kuyruk tıkanır — v0.9.613).
+-- v0.10.127. Boot ASLA koşmaz (ev kuralı: ON CLUSTER DDL'i N pod yarıştırırsa
+-- kuyruk tıkanır — v0.9.613). v0.10.134: Admin → ClickHouse → "K8s entity
+-- katmanı şeması (0011)" sihirbazı bu dosyayı GÖMÜLÜ olarak, operatörün
+-- tıklamasıyla, ifade ifade uygular (uptrace_all token'ı gerçek küme adıyla);
+-- elle koşmak da geçerli. Kolon/index/tablo/MV durumu host başına kartta.
 --
 -- ============================================================
 -- GEREKÇE

@@ -15,6 +15,8 @@ Cluster kayıtlarına Thanos etiket adı/değeri + span cluster değeri girilir
 sinyali eski satırı okuyup değeri geri alıyordu); `system_settings`
 INSERT'i version'ı açık yazar (v0.10.129, Replicated dedup).
 
+**v0.10.135 (DETAY SAYFALARI adım 1 — Pod detay):** /pod entity paneli (zincir linkleri cluster›node›ns›workload, live/stale/**artık yok** + tarihçe, ?at= zaman geçerliliği (atMatch), etiketler, KSM konteyner durumları `/api/entity/containers`, servisler, kardeş pod'lar); servis paramsız gelişte RED üçlüsü `k8s.pod.name` terfi kolonuyla; `/entity?id=` genel sayfa (node/ns/workload hedefi); `lib/entityHref.ts` bağlam taşıyan link kuralı; ölü/o-an-geçersiz kayıt 404 değil (en yeni ömür + atMatch=false). Sıradaki: servis detay → trace pivot → exceptions dağılımı → node/ns detay → traces kolonları.
+
 > **Varsayımlar (probe gelmeden yazıldı, her biri konfigüre edilebilir):**
 > V1 Thanos external label adı `cluster` (UI önerisi; kayıt varsayılanı BOŞ = matcher yok, bkz. §1.1), değeri Remote Cluster `Name` ile
 > aynı (probe A2(b) aksini söylerse yalnız kayıt alanları değişir, model

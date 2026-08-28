@@ -156,6 +156,7 @@ export const keys = {
     get:         (id: string, at?: number) => ['entities', 'get', id, at ?? 0] as const,
     services:    (id: string, range: { from: number; to: number }) => ['entities', 'services', id, range] as const,
     metrics:     (id: string, range: { from: number; to: number }) => ['entities', 'metrics', id, range] as const,
+    containers:  (id: string) => ['entities', 'containers', id] as const,
     servicePods: (service: string, cluster: string, range: { from: number; to: number }) =>
                    ['entities', 'service-pods', service, cluster, range] as const,
     settings:    () => ['entities', 'settings'] as const,

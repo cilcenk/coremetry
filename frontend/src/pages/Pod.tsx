@@ -25,7 +25,8 @@ import { fmtCores, podPhaseBadge } from '@/pages/clusters/thresholds';
 import { resolvePodCluster } from '@/pages/service/podResolve';
 import { serviceHref } from '@/lib/serviceHref';
 import { PageShell } from '@/components/ui/PageShell';
-import { PodEntityStrip } from '@/pages/pod/PodEntityStrip';
+import { PodEntityPanel } from '@/pages/pod/PodEntityPanel';
+import { useEntityEnabled } from '@/lib/queries';
 
 const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
@@ -66,6 +67,8 @@ function PodDetail() {
   // pods/metrics → "Pods" sekmesi (v0.9.158 rename), infra → "Infrastructure".
   // clusters → /clusters sayfası (aşağıda service boşsa zaten oraya gider).
   const drillFrom = sp.get('from') ?? '';
+  // v0.10.135 — tarihsel bağlam (ms): entity paneli o an geçerli pod kaydını çözer.
+  const atParam = Number(sp.get('at') ?? 0) || 0;
   const toPods = drillFrom === 'pods' || drillFrom === 'metrics';
   const backTab = toPods ? 'pods' : 'infra';
   const backLabel = toPods ? 'Pods' : 'Infrastructure';
@@ -122,12 +125,29 @@ function PodDetail() {
   const searchTruncated = podsQs.some(q => q.data?.truncated);
 
   // Per-pod RED — Overview.tsx'in iki batch'ini birebir aynala + host.name.
-  const podScope = `service.name = "${service.replace(/"/g, '\\"')}" AND host.name = "${pod.replace(/"/g, '\\"')}"`;
-  const redEnabled = !!service && !!pod;
+  // v0.10.135 — servis parametresi yokken (entity linkinden gelindi) ve entity
+  // katmanı açıkken RED üçlüsü pod'un TERFİ kolonuyla scope'lanır
+  // (k8s.pod.name + k8s.namespace.name → k8s_pod/k8s_namespace, set index):
+  // bu pod'dan geçen TÜM servislerin span'leri. Bayrak kapalı = eski davranış.
+  // İnceleme (v0.10.135): pod adı cluster-benzersiz DEĞİL (StatefulSet
+  // kafka-0 iki cluster'da aynı ad) → `cluster` DSL anahtarı ŞART; span
+  // tarafı değeri Remote Cluster kaydının spanClusterValue'su. Değer
+  // bilinmiyorsa (eşlenmemiş cluster) entity dalı KAPALI kalır — yanlış
+  // kapsamdansa eski "eşlenmedi" ekranı. `resource.` öneki: terfi haritası
+  // boot probe'unda dolmadıysa bile res_values'a düşer (doğru ama yavaş);
+  // çıplak yazım o durumda attr_values'a düşüp SIFIR satır verirdi.
+  const { enabled: entityOn, clusters: entityClusters } = useEntityEnabled();
+  const clusterRef = cluster || clusterParam;
+  const spanCluster = entityClusters.find(c => c.id === clusterRef || c.name === clusterRef)?.spanClusterValue ?? '';
+  const esc = (v: string) => v.replace(/"/g, '\\"');
+  const podScope = service
+    ? `service.name = "${esc(service)}" AND host.name = "${esc(pod)}"`
+    : `resource.k8s.pod.name = "${esc(pod)}"${namespace ? ` AND resource.k8s.namespace.name = "${esc(namespace)}"` : ''} AND cluster = "${esc(spanCluster)}"`;
+  const redEnabled = !!pod && (!!service || (entityOn && !!spanCluster));
   // v0.9.391 (Faz B) — mdp + zarf select'i (Overview deseniyle aynı).
   const podMdp = panelMaxDataPoints(3);
   const redQ = useQuery({
-    queryKey: ['pod-red', service, pod, from, to, podMdp],
+    queryKey: ['pod-red', podScope, pod, from, to, podMdp],
     queryFn: () => api.spanMetricBatch({ from, to, maxDataPoints: podMdp, dsl: podScope, aggs: [
       { name: 'rate', agg: 'rate' },
       { name: 'error_rate', agg: 'error_rate' },
@@ -137,7 +157,7 @@ function PodDetail() {
   });
   // Latency kafka messaging span'lerini HARİÇ tutar (Overview v0.9.129 emsali).
   const latQ = useQuery({
-    queryKey: ['pod-latency-nokafka', service, pod, from, to, podMdp],
+    queryKey: ['pod-latency-nokafka', podScope, pod, from, to, podMdp],
     queryFn: () => api.spanMetricBatch({ from, to, maxDataPoints: podMdp, dsl: `${podScope} AND messaging.system != "kafka"`, aggs: [
       { name: 'p99', agg: 'p99', field: 'duration_ms' },
       { name: 'p95', agg: 'p95', field: 'duration_ms' },
@@ -199,8 +219,9 @@ function PodDetail() {
     <>
       <Topbar title={`Pod · ${pod}`} range={range} onRangeChange={setRange} />
       <PageShell>
-        {/* v0.10.131 — entity şeridi: cluster › node › ns › workload › pod + bu pod'daki servisler (bayrak açıkken). */}
-        <PodEntityStrip clusterRef={cluster || clusterParam} namespace={namespace || nsParam} pod={pod} range={{ from, to }} />
+        {/* v0.10.135 — entity paneli (v0.10.131 şeridinin büyümüşü): zincir linkleri,
+            geçerlilik/ölü durum, etiketler, konteynerler, servisler, kardeşler. */}
+        <PodEntityPanel clusterRef={cluster || clusterParam} namespace={namespace || nsParam} pod={pod} range={{ from, to }} at={atParam} pageRange={range} />
         {/* Geri + kimlik + KPI başlık satırı */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
           {/* v0.9.965 — GERİ linki penceresini taşımıyordu: pod'a özel
@@ -221,11 +242,11 @@ function PodDetail() {
         </div>
 
         {/* RED — servisin kümülatif metrikleri, bu pod'a scope'lu */}
-        {service ? (
+        {redEnabled ? (
           <>
             <h3 style={{ fontSize: 13, margin: '4px 0 8px' }}>
               Service metrics · this pod
-              <span style={{ fontWeight: 400, color: 'var(--text3)' }}> · {service}</span>
+              <span style={{ fontWeight: 400, color: 'var(--text3)' }}> · {service || `bu pod'dan geçen tüm servisler · cluster ${spanCluster}`}</span>
             </h3>
             {/* v0.9.945 (UX denetimi D2 / K10) — RED üçlüsü ChartCard'dan
                 CorePanelMulti'ye TAŞINDI.

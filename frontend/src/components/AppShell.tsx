@@ -45,7 +45,9 @@ export function isPathAllowed(pathname: string, allowedPages: string[]): boolean
     // which made /clusters grantable for the first time.
     if (p === '/incidents' && pathname === '/incident') return true;
     if (p === '/runbooks' && (pathname === '/runbook' || pathname === '/runbook-exec')) return true;
-    if (p === '/clusters' && pathname === '/pod') return true;
+    // v0.10.135 — /entity (node/namespace/workload detayı) /pod'un kardeşi;
+    // aynı sınıf: /clusters verilen custom-rol zincir linkinde ışınlanmasın.
+    if (p === '/clusters' && (pathname === '/pod' || pathname === '/entity')) return true;
     // v0.9.854 (UX denetimi K5) — v0.9.839/840'ta endpoint ve database
     // detayları çekmeceden SIBLING rotalara taşındı; istisna listesi
     // güncellenmedi. Yalnız /endpoints (ya da /databases) verilen

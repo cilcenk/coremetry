@@ -29,6 +29,8 @@ describe('isPathAllowed — list pages reach their detail routes', () => {
     // bu satırlar yeni sibling detay rotası doğduğunda hatırlatıcıdır.
     ['/endpoints', '/endpoint'],
     ['/databases', '/database'],
+    // v0.10.135 — /entity (node/namespace/workload detayı) /pod'un kardeşi.
+    ['/clusters', '/entity'],
   ];
   for (const [granted, detail] of cases) {
     it(`${granted} grants ${detail}`, () => {

@@ -1495,6 +1495,32 @@ export interface ThanosDetectResponse {
   detection?: ThanosLabelDetection;
   error?: string;
 }
+/** chstore.SeenClusterValue + sahip (v0.10.141). */
+export interface ThanosSpanClusterRow {
+  value: string;
+  spans: number;
+  firstSeen: string;
+  lastSeen: string;
+  ownerId?: string;
+  ownerName?: string;
+}
+export interface ThanosSpanClustersResponse {
+  rows: ThanosSpanClusterRow[];
+  unmapped: number;
+  source: string;
+  since: string;
+}
+export interface ThanosAssignSpanClusterResponse {
+  ok: boolean;
+  conflict?: boolean;
+  ownerId?: string;
+  ownerName?: string;
+  error?: string;
+  clusterId?: string;
+  clusterName?: string;
+  values?: string[];
+  backfill?: string;
+}
 /** thanos.LabelCheck (v0.10.140) — periyodik doğrulama. */
 export interface ThanosLabelCheck { ok: boolean; series: number; checkedAt: string; error?: string }
 export interface ThanosSettingsInput {

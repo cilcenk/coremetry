@@ -1608,6 +1608,10 @@ export const api = {
   /** v0.10.128 — Settings "Test label": matcher'lı kube_node_info seri sayısı (200 + ok:false on failure). */
   thanosClusterProbe: (cluster: string) =>
     get<ThanosClusterProbe>(`/api/clusters/sources/probe?cluster=${encodeURIComponent(cluster)}`),
+  // v0.10.141 — span cluster değerleri (sayaç + sahip) ve atama (admin).
+  thanosSpanClusters: () => get<import('./types').ThanosSpanClustersResponse>(`/api/settings/thanos/span-clusters`),
+  thanosAssignSpanCluster: (body: { value: string; clusterId: string; backfill: boolean }) =>
+    request<import('./types').ThanosAssignSpanClusterResponse>('/api/settings/thanos/assign-span-cluster', { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
   // v0.10.140 — etiket otomatik algılama; apply=true kaydeder (admin).
   thanosClusterDetect: (cluster: string, apply: boolean) =>
     request<import('./types').ThanosDetectResponse>(`/api/settings/thanos/detect?cluster=${encodeURIComponent(cluster)}${apply ? '&apply=1' : ''}`, { method: 'POST' }),

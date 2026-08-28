@@ -20,12 +20,15 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/auth"
+	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/thanos"
 )
 
@@ -34,6 +37,9 @@ func (s *Server) registerThanosIdentityRoutes(mux *http.ServeMux) {
 		auth.RequireRole(auth.RoleAdmin, http.HandlerFunc(s.probeClusterSource)))
 	// v0.10.140 — etiket otomatik algılama (admin; apply=1 kaydeder + audit).
 	mux.Handle("POST /api/settings/thanos/detect", auth.RequireRole(auth.RoleAdmin, http.HandlerFunc(s.detectClusterLabel)))
+	// v0.10.141 — span cluster değerleri: liste (sayaç + ilk/son görülme + sahip) ve atama.
+	mux.Handle("GET /api/settings/thanos/span-clusters", auth.RequireRole(auth.RoleAdmin, http.HandlerFunc(s.listSpanClusterValues)))
+	mux.Handle("POST /api/settings/thanos/assign-span-cluster", auth.RequireRole(auth.RoleAdmin, http.HandlerFunc(s.assignSpanClusterValue)))
 }
 
 func (s *Server) probeClusterSource(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +152,7 @@ func (s *Server) detectClusterLabel(w http.ResponseWriter, r *http.Request) {
 	s.publishConfigReload(r.Context(), "thanos")
 	s.thanos.ResetLabelChecks(context.WithoutCancel(r.Context()), s.store)
 	go s.thanos.LabelCheckTickPersist(context.WithoutCancel(r.Context()), s.store) // taze denetim (bayat uyarı kalmasın)
+	s.cacheInvalidate(context.WithoutCancel(r.Context()), "thanos:span-clusters")
 	s.audit(r, "settings.thanos.detect", "settings", c.EffectiveID(),
 		fmt.Sprintf("cluster=%s label=%s value=%q series=%d", c.Name, d.Label, d.Value, d.Series))
 	out["applied"] = true
@@ -197,4 +204,135 @@ func (s *Server) autoDetectNewClusterLabels(ctx context.Context, in, cur thanos.
 		}
 	}
 	return in
+}
+
+// listSpanClusterValues — v0.10.141. Son 7 günün span cluster değerleri
+// (entity_seen_5m; yoksa spans 1 saat) + her değerin sahibi (Remote Cluster)
+// ya da EŞLEŞMEMİŞ. 5 dk cache (admin yüzeyi; sorgu MV üzerinden ucuz).
+func (s *Server) listSpanClusterValues(w http.ResponseWriter, r *http.Request) {
+	if s.thanos == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "thanos service not available")
+		return
+	}
+	s.serveCached(w, r, "thanos:span-clusters", 5*time.Minute, func(ctx context.Context) (any, error) {
+		res, err := s.store.EntitySeenClusterValues(ctx, time.Now().Add(-7*24*time.Hour))
+		if err != nil {
+			return nil, err
+		}
+		cfg := s.thanos.CurrentSettings()
+		type row struct {
+			chstore.SeenClusterValue
+			OwnerID   string `json:"ownerId,omitempty"`
+			OwnerName string `json:"ownerName,omitempty"`
+		}
+		rows := make([]row, 0, len(res.Rows))
+		unmapped := 0
+		for _, v := range res.Rows {
+			x := row{SeenClusterValue: v}
+			if o, ok := thanos.SpanClusterOwner(cfg, v.Value); ok {
+				x.OwnerID, x.OwnerName = o.EffectiveID(), o.Name
+			} else {
+				unmapped++
+			}
+			rows = append(rows, x)
+		}
+		return map[string]any{"rows": rows, "unmapped": unmapped, "source": res.Source, "since": res.Since}, nil
+	})
+}
+
+// assignSpanClusterValue — v0.10.141. Bir span cluster değerini bir Remote
+// Cluster kaydına bağlar (kalıcı; teklik Reconcile'da — çakışma 200 +
+// conflict + sahip, probe duruşu). backfill=true: entity ayarına
+// BackfillUntil (şimdi+10 dk) yazılır → lider Tick'i 24 saatlik span
+// geçişiyle koşar (rol-güvenli); bu pod'da syncer varsa hemen bir tick.
+func (s *Server) assignSpanClusterValue(w http.ResponseWriter, r *http.Request) {
+	if s.thanos == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "thanos service not available")
+		return
+	}
+	var in struct {
+		Value     string `json:"value"`
+		ClusterID string `json:"clusterId"`
+		Backfill  bool   `json:"backfill"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "geçersiz JSON: "+err.Error())
+		return
+	}
+	in.Value, in.ClusterID = strings.TrimSpace(in.Value), strings.TrimSpace(in.ClusterID)
+	if in.Value == "" || in.ClusterID == "" {
+		writeJSONError(w, http.StatusBadRequest, "value ve clusterId zorunlu")
+		return
+	}
+	cur := s.thanos.CurrentSettings()
+	if o, ok := thanos.SpanClusterOwner(cur, in.Value); ok && o.EffectiveID() != in.ClusterID {
+		writeJSON(w, map[string]any{"ok": false, "conflict": true, "ownerId": o.EffectiveID(), "ownerName": o.Name,
+			"error": fmt.Sprintf("span cluster değeri %q zaten %q kaydına bağlı; bir değer aynı anda tek kayda bağlanabilir", in.Value, o.Name)})
+		return
+	}
+	idx := -1
+	for i, c := range cur.Clusters {
+		if c.EffectiveID() == in.ClusterID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		writeJSONError(w, http.StatusNotFound, "cluster kaydı yok")
+		return
+	}
+	next := cur
+	next.Clusters = append([]thanos.ClusterConfig(nil), cur.Clusters...)
+	c := next.Clusters[idx]
+	// AÇIK değerlere ekle (SpanClusterKeys değil: Name yedeğini listeye
+	// yazmak yeniden adlandırmayı kırar — v0.10.139 dersi). Aynı değer zaten
+	// bu kayıttaysa idempotent (Reconcile tekilleştirir).
+	// Kaydın hiç açık değeri yoksa örtük Name anahtarı da AÇIKÇA korunur —
+	// aksi halde ilk atama Name eşleşmesini sessizce koparırdı (inceleme).
+	// Bilinçli operatör eylemi: yeniden adlandırmada eski ad tarihsel
+	// span'ler için açık değer olarak kalır (istenen).
+	vals := c.ExplicitSpanClusterValues()
+	if len(vals) == 0 && c.Name != "" {
+		vals = []string{c.Name}
+	}
+	c.SpanClusterValues = append(vals, in.Value)
+	next.Clusters[idx] = c
+	merged, err := thanos.ReconcileClusterSettings(next, cur)
+	if err != nil {
+		writeJSONError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err := s.thanos.SavePersisted(r.Context(), s.store, merged); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.publishConfigReload(r.Context(), "thanos")
+	s.cacheInvalidate(context.WithoutCancel(r.Context()), "thanos:span-clusters") // sahip değişti; 5 dk cache bayat kalmasın
+	backfill := "none"
+	switch {
+	case !in.Backfill:
+	case s.entitySettings == nil || !s.entitySettings.Resolved().Enabled:
+		backfill = "skipped: entity katmanı kapalı" // inceleme: kapalıyken "running" yalan olurdu
+	default:
+		es := s.entitySettings.Current()
+		es.BackfillUntil = time.Now().Add(10 * time.Minute).UnixMilli()
+		es.BackfillValue = in.Value // yalnız bu değer; küresel 24 s pencere yok (inceleme)
+		if err := s.entitySettings.SavePersisted(context.WithoutCancel(r.Context()), s.store, es); err == nil {
+			s.publishConfigReload(r.Context(), "entities")
+			backfill = "scheduled-24h"
+			if s.entitySync != nil {
+				go func(ctx context.Context) {
+					if ran, why := s.entitySync.TryTick(ctx); !ran {
+						log.Printf("[entities] backfill anlık tick atlandı (%s); lider tick'i alacak", why)
+					}
+				}(context.WithoutCancel(r.Context()))
+				backfill = "scheduled-24h (tick tetiklendi)"
+			}
+		} else {
+			backfill = "failed: " + err.Error()
+		}
+	}
+	s.audit(r, "settings.thanos.assign_span_cluster", "settings", in.ClusterID,
+		fmt.Sprintf("value=%q cluster=%s backfill=%s", in.Value, c.Name, backfill))
+	writeJSON(w, map[string]any{"ok": true, "clusterId": c.EffectiveID(), "clusterName": c.Name, "values": merged.Clusters[idx].SpanClusterKeys(), "backfill": backfill})
 }

@@ -264,3 +264,7 @@ func TestRowsForChange(t *testing.T) {
 		t.Fatalf("tazeleme valid_from korur, last_seen now: %+v", b)
 	}
 }
+
+func (m *memStore) Existing(context.Context, string, []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}

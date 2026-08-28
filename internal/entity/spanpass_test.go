@@ -131,3 +131,57 @@ func (f fakeSeen) RecentSeen(ctx context.Context, since time.Time) ([]SeenRow, e
 }
 
 func context_bg() context.Context { return context.Background() }
+
+// v0.10.141 — backfill sözleşmesi (inceleme: küresel pencere ölü pod'ları
+// diriltiyordu): yalnız atanan değer; canlı (≤ podGap) → normal diff, ölü →
+// KAPALI ömür (valid_from = ilk görülme, valid_to = son görülme), yalnız pod
+// entity'si + ilişkileri; aynı pod'un servis satırları birleşir.
+func TestSplitBackfillRowsAndClosedRows(t *testing.T) {
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	cut := now.Add(-10 * time.Minute)
+	rows := []SeenRow{
+		{ClusterValue: "dr-eu-west", Namespace: "pay", Pod: "api-1", Service: "api", Node: "w1", FirstSeen: now.Add(-20 * time.Hour), LastSeen: now.Add(-5 * time.Hour)},
+		{ClusterValue: "dr-eu-west", Namespace: "pay", Pod: "api-1", Service: "billing", FirstSeen: now.Add(-19 * time.Hour), LastSeen: now.Add(-6 * time.Hour)},
+		{ClusterValue: "dr-eu-west", Namespace: "pay", Pod: "api-2", Service: "api", FirstSeen: now.Add(-2 * time.Hour), LastSeen: now.Add(-time.Minute)},
+		{ClusterValue: "dr-eu-west", Namespace: "pay", Pod: "api-2", Service: "old-svc", FirstSeen: now.Add(-20 * time.Hour), LastSeen: now.Add(-8 * time.Hour)}, // canlı pod'un eski servis satırı → CANLI sayılır
+		{ClusterValue: "prod-eu-west", Namespace: "pay", Pod: "api-9", Service: "api", FirstSeen: now.Add(-20 * time.Hour), LastSeen: now.Add(-5 * time.Hour)},
+		{ClusterValue: "dr-eu-west", Namespace: "", Pod: "x", LastSeen: now},
+	}
+	live, dead := SplitBackfillRows(rows, "dr-eu-west", cut)
+	if len(live) != 2 || live[0].Pod != "api-2" || live[1].Pod != "api-2" || len(dead) != 2 {
+		t.Fatalf("live=%v dead=%v", live, dead)
+	}
+	ents, rels := ClosedRowsForDead("c-1", dead)
+	if len(ents) != 1 || ents[0].ID != "pod:c-1/pay/api-1" || ents[0].Type != TypePod {
+		t.Fatalf("yalnız pod entity'si, birleşik: %+v", ents)
+	}
+	e := ents[0]
+	if !e.ValidFrom.Equal(now.Add(-20*time.Hour)) || !e.ValidTo.Equal(now.Add(-5*time.Hour)) || !e.FirstSeen.Equal(e.ValidFrom) || !e.LastSeen.Equal(e.ValidTo) || e.Source != SourceSpan {
+		t.Fatalf("kapalı ömür zamanları: %+v", e)
+	}
+	kinds := map[string]int{}
+	for _, r := range rels {
+		kinds[r.Type]++
+		if r.ValidTo.IsZero() {
+			t.Fatalf("ilişki kapalı olmalı: %+v", r)
+		}
+	}
+	if kinds[RelParent] != 1 || kinds[RelRuns] != 2 || kinds[RelRunsOn] != 1 {
+		t.Fatalf("ilişkiler parent=1 runs=2 runs_on=1: %v", kinds)
+	}
+}
+
+func (f fakeSeen) RecentSeenFor(ctx context.Context, since time.Time, _ string) ([]SeenRow, error) {
+	return f.RecentSeen(ctx, since)
+}
+
+// Canlı kesimi normal pencereyi aşamaz (inceleme: podGap 1 s → 45 dk önce ölen
+// pod "canlı" diye açılıyordu).
+func TestBackfillLiveCutNeverExceedsWindow(t *testing.T) {
+	if got := minDur(time.Hour, seenLookback(60*time.Second)); got != 10*time.Minute {
+		t.Fatalf("podGap 1h, lookback 10m → 10m; got %v", got)
+	}
+	if got := minDur(time.Minute, seenLookback(60*time.Second)); got != time.Minute {
+		t.Fatalf("podGap 1m → 1m; got %v", got)
+	}
+}

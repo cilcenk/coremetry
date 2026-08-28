@@ -3,6 +3,8 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/entity"
@@ -193,10 +195,12 @@ func (s *Store) EntitySyncRuns(ctx context.Context, since time.Time, limit int) 
 func (s *Store) EntitySeenRecent(ctx context.Context, since time.Time) ([]entity.SeenRow, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT cluster, k8s_namespace, k8s_pod, anyLast(k8s_node) AS node, service_name,
-		       toInt64(countMerge(span_count_state)) AS spans, maxMerge(last_seen_state) AS last_seen
+		       toInt64(countMerge(span_count_state)) AS spans,
+		       minMerge(first_seen_state) AS first_seen, maxMerge(last_seen_state) AS last_seen
 		FROM entity_seen_5m
 		WHERE time_bucket >= toStartOfFiveMinute(?) AND time_bucket <= now()
 		GROUP BY cluster, k8s_namespace, k8s_pod, service_name
+		ORDER BY last_seen DESC
 		LIMIT 200000
 		SETTINGS max_execution_time = 10`, since)
 	if err != nil {
@@ -207,11 +211,141 @@ func (s *Store) EntitySeenRecent(ctx context.Context, since time.Time) ([]entity
 	for rows.Next() {
 		var r entity.SeenRow
 		var spans int64
-		if err := rows.Scan(&r.ClusterValue, &r.Namespace, &r.Pod, &r.Node, &r.Service, &spans, &r.LastSeen); err != nil {
+		if err := rows.Scan(&r.ClusterValue, &r.Namespace, &r.Pod, &r.Node, &r.Service, &spans, &r.FirstSeen, &r.LastSeen); err != nil {
 			return nil, err
 		}
 		r.Spans = int(spans)
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// EntitySeenRecentFor — v0.10.141: yalnız bir span cluster değeri (backfill).
+func (s *Store) EntitySeenRecentFor(ctx context.Context, since time.Time, clusterValue string) ([]entity.SeenRow, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT cluster, k8s_namespace, k8s_pod, anyLast(k8s_node) AS node, service_name,
+		       toInt64(countMerge(span_count_state)) AS spans,
+		       minMerge(first_seen_state) AS first_seen, maxMerge(last_seen_state) AS last_seen
+		FROM entity_seen_5m
+		WHERE time_bucket >= toStartOfFiveMinute(?) AND time_bucket <= now() AND cluster = ?
+		GROUP BY cluster, k8s_namespace, k8s_pod, service_name
+		ORDER BY last_seen DESC
+		LIMIT 200000
+		SETTINGS max_execution_time = 10`, since, clusterValue)
+	if err != nil {
+		return nil, fmt.Errorf("entity_seen recent: %w", err)
+	}
+	defer rows.Close()
+	out := []entity.SeenRow{}
+	for rows.Next() {
+		var r entity.SeenRow
+		var spans int64
+		if err := rows.Scan(&r.ClusterValue, &r.Namespace, &r.Pod, &r.Node, &r.Service, &spans, &r.FirstSeen, &r.LastSeen); err != nil {
+			return nil, err
+		}
+		r.Spans = int(spans)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ── v0.10.141 — span cluster değerleri (otomatik eşleme brief'i) ──
+// entity_seen_5m varsa son `since`'ten beri değer başına span sayısı +
+// ilk/son görülme (MV, ucuz). MV yoksa (0011 uygulanmamış) spans son 1 saat
+// (zaman sınırlı, LIMIT, max_execution_time) + Source ilanı.
+type SeenClusterValue struct {
+	Value     string    `json:"value"`
+	Spans     int64     `json:"spans"`
+	FirstSeen time.Time `json:"firstSeen"`
+	LastSeen  time.Time `json:"lastSeen"`
+}
+
+type SeenClusterValues struct {
+	Rows   []SeenClusterValue `json:"rows"`
+	Source string             `json:"source"` // "entity_seen_5m" | "spans-1h"
+	Since  time.Time          `json:"since"`
+}
+
+func (s *Store) EntitySeenClusterValues(ctx context.Context, since time.Time) (SeenClusterValues, error) {
+	out := SeenClusterValues{Rows: []SeenClusterValue{}, Source: "entity_seen_5m", Since: since}
+	rows, err := s.conn.Query(ctx, `
+		SELECT cluster, toInt64(countMerge(span_count_state)) AS spans, min(time_bucket), max(time_bucket)
+		FROM entity_seen_5m
+		WHERE time_bucket >= toStartOfFiveMinute(?) AND time_bucket <= now() AND cluster != ''
+		GROUP BY cluster
+		ORDER BY spans DESC
+		LIMIT 200
+		SETTINGS max_execution_time = 10`, since)
+	if err != nil {
+		if !isUnknownTableOrColumn(err) {
+			return out, fmt.Errorf("span cluster values: %w", err)
+		}
+		out.Source, out.Since = "spans-1h", time.Now().Add(-time.Hour)
+		// Ana bağlantı: bu dosya state tabloları okur (RoundRobin okuma havuzu
+		// allow-list'i dışında); nadir admin yedeği için havuz gerekmez.
+		rows, err = s.conn.Query(ctx, `
+			SELECT cluster, toInt64(count()) AS spans, min(time), max(time)
+			FROM spans
+			WHERE time >= now() - INTERVAL 1 HOUR AND cluster != ''
+			GROUP BY cluster
+			ORDER BY spans DESC
+			LIMIT 200
+			SETTINGS max_execution_time = 15`)
+		if err != nil {
+			return out, fmt.Errorf("span cluster values (spans): %w", err)
+		}
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r SeenClusterValue
+		if err := rows.Scan(&r.Value, &r.Spans, &r.FirstSeen, &r.LastSeen); err != nil {
+			return out, err
+		}
+		out.Rows = append(out.Rows, r)
+	}
+	return out, rows.Err()
+}
+
+// isUnknownTableOrColumn — CH 60 UNKNOWN_TABLE / 47 UNKNOWN_IDENTIFIER.
+func isUnknownTableOrColumn(err error) bool {
+	if err == nil {
+		return false
+	}
+	m := err.Error()
+	return strings.Contains(m, "code: 60") || strings.Contains(m, "code: 47")
+}
+
+// EntityIDsExisting — v0.10.141: verilen id'lerden herhangi bir ömrü olanlar.
+// Backfill yalnız hiç kaydı olmayan ölü pod'ları yazar (yeniden koşum
+// idempotent). FINAL gerekmez (varlık sorusu).
+func (s *Store) EntityIDsExisting(ctx context.Context, cid string, ids []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	// Parçalı sorgu: sessiz kesme yok (inceleme: kesilen kuyruk "kayıt yok"
+	// sayılıp yeniden yazılıyordu). Her parça kendi LIMIT'ini taşır.
+	const chunk = 5000
+	for i := 0; i < len(ids); i += chunk {
+		part := ids[i:min(i+chunk, len(ids))]
+		rows, err := s.conn.Query(ctx, `
+			SELECT DISTINCT entity_id FROM entities
+			WHERE cluster_id = ? AND entity_id IN (?)
+			LIMIT `+strconv.Itoa(chunk)+`
+			SETTINGS max_execution_time = 10`, cid, part)
+		if err != nil {
+			return nil, fmt.Errorf("entity ids existing: %w", err)
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[id] = true
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return out, nil
 }

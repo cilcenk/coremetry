@@ -79,6 +79,9 @@ type Store interface {
 	OpenLifetimes(ctx context.Context, cid string) (map[string]Lifetime, error)
 	Apply(ctx context.Context, cid string, rows []EntityRow, rels []RelationRow) error
 	RecordRun(ctx context.Context, run Run) error
+	// Existing — v0.10.141: bu id'lerden HERHANGİ bir ömrü olanlar (backfill
+	// yalnız hiç kaydı olmayan ölü pod'ları yazar; yeniden koşum idempotent).
+	Existing(ctx context.Context, cid string, ids []string) (map[string]bool, error)
 }
 
 // Observability — /api/admin/entities/sync + SystemStats.
@@ -111,6 +114,27 @@ type Syncer struct {
 
 	ticks, okN, failN, entsN, relsN, lastMs atomic.Int64
 	lastAt                                  atomic.Int64
+	// v0.10.141 — TryTick: aynı pod'da örtüşen tick yok (inFlight) ve yalnız
+	// lider (leader nil = kontrol yok, tek-binary kipi).
+	inFlight atomic.Bool
+	leader   func() bool
+}
+
+// SetLeaderCheck — main.go LeaderHolder.IsLeader'ı bağlar.
+func (s *Syncer) SetLeaderCheck(f func() bool) { s.leader = f }
+
+// TryTick — API tarafından tetiklenen anlık tick: lider değilse koşmaz
+// (inceleme: lider olmayan pod'un tick'i liderin tick'iyle yarışıp aynı
+// ömrü iki kez açıyordu). Örtüşme koruması Tick'in kendisinde — periyodik
+// Run, SetOnAcquire ve "Run now" ucu da aynı kapıdan geçer.
+func (s *Syncer) TryTick(ctx context.Context) (ran bool, reason string) {
+	if s.leader != nil && !s.leader() {
+		return false, "not-leader"
+	}
+	if !s.Tick(ctx) {
+		return false, "in-flight"
+	}
+	return true, ""
 }
 
 func NewSyncer(src Source, store Store, settings func() Resolved) *Syncer {
@@ -149,7 +173,21 @@ func (s *Syncer) Run(ctx context.Context, isLeader func() bool) {
 }
 
 // Tick — bir senkronizasyon turu (bayrak kapalıysa no-op).
-func (s *Syncer) Tick(ctx context.Context) {
+// Tick — bir senkronizasyon turu; aynı pod'da örtüşen tur koşmaz (false
+// döner). Tüm çağıranlar (Run, SetOnAcquire, Run now, TryTick) bu kapıdan
+// geçer — inceleme: kapı yalnız TryTick'teyken API tick'i periyodik tick'le
+// çakışıp aynı ömrü iki kez açabiliyordu.
+func (s *Syncer) Tick(ctx context.Context) bool {
+	if !s.inFlight.CompareAndSwap(false, true) {
+		log.Printf("[entity] tick atlandı: bir tur zaten koşuyor")
+		return false
+	}
+	defer s.inFlight.Store(false)
+	s.tick(ctx)
+	return true
+}
+
+func (s *Syncer) tick(ctx context.Context) {
 	r := s.settings()
 	if !r.Enabled {
 		return
@@ -163,6 +201,21 @@ func (s *Syncer) Tick(ctx context.Context) {
 		if err != nil {
 			log.Printf("[entity] entity_seen okunamadı (span geçişi atlandı): %v", err)
 		} else {
+			// v0.10.141 — atama sonrası geriye dönük geçiş: YALNIZ atanan değer,
+			// canlılar normal diff'e, ölüler kapalı ömür (backfillDead, tick sonunda).
+			if r.BackfillUntil.After(start) && r.BackfillValue != "" {
+				// Değer süzgeci SQL'de (RecentSeenFor): 200k satır kesimi yalnız bu
+				// değerin satırlarına uygulanır. Canlı kesimi normal pencereyi
+				// AŞAMAZ: min(podGap, seenLookback) — podGap 1 s olabilir ve
+				// 45 dk önce ölen pod'u "canlı" diye açardı (inceleme).
+				if extra, berr := s.seen.RecentSeenFor(ctx, start.Add(-BackfillLookback), r.BackfillValue); berr == nil {
+					live, dead := SplitBackfillRows(extra, r.BackfillValue, start.Add(-minDur(r.PodGap, seenLookback(r.SyncInterval))))
+					rows = append(rows, live...)
+					defer s.backfillDead(ctx, clusters, r.BackfillValue, dead)
+				} else {
+					log.Printf("[entity] backfill entity_seen okunamadı: %v", berr)
+				}
+			}
 			var unmapped map[string]int
 			spanByCID, unmapped = GroupSeenByCluster(rows, clusters)
 			if len(unmapped) > 0 {
@@ -444,4 +497,73 @@ func indexByte(s string, b byte) int {
 		}
 	}
 	return -1
+}
+
+// backfillDead — ölü pod'ları KAPALI ömür olarak yazar; yalnız hiç kaydı
+// olmayanlar (Existing). Hedef cluster = değerin bağlı olduğu kayıt.
+func (s *Syncer) backfillDead(ctx context.Context, clusters []ClusterRef, value string, dead []SeenRow) {
+	if len(dead) == 0 {
+		return
+	}
+	cid := ""
+	for _, c := range clusters {
+		vals := append([]string{c.SpanClusterValue}, c.SpanClusterValues...)
+		if c.SpanClusterValue == "" && len(c.SpanClusterValues) == 0 {
+			vals = []string{c.Name}
+		}
+		for _, v := range vals {
+			if v == value && c.ID != "" {
+				cid = c.ID
+			}
+		}
+	}
+	if cid == "" {
+		return
+	}
+	rows, rels := ClosedRowsForDead(cid, dead)
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.ID)
+	}
+	have, err := s.store.Existing(ctx, cid, ids)
+	if err != nil {
+		log.Printf("[entity] backfill existing (%s): %v", cid, err)
+		return
+	}
+	keepRow := make([]EntityRow, 0, len(rows))
+	skip := map[string]bool{}
+	for _, r := range rows {
+		if have[r.ID] {
+			skip[r.ID] = true
+			continue
+		}
+		keepRow = append(keepRow, r)
+	}
+	keepRel := make([]RelationRow, 0, len(rels))
+	for _, rl := range rels {
+		if skip[rl.ParentID] || skip[rl.ChildID] {
+			continue
+		}
+		keepRel = append(keepRel, rl)
+	}
+	if len(keepRow) == 0 {
+		return
+	}
+	// Ayrı koşu satırı YOK: entity_sync_runs anahtarı (cluster_id, started_at)
+	// saniye çözünürlüklü — aynı saniyede tick'in kendi satırını ezerdi
+	// (inceleme). Sayaç + günlük yeter.
+	if err := s.store.Apply(ctx, cid, keepRow, keepRel); err != nil {
+		log.Printf("[entity] backfill %q → %s yazılamadı: %v", value, cid, err)
+		return
+	}
+	s.entsN.Add(int64(len(keepRow)))
+	s.relsN.Add(int64(len(keepRel)))
+	log.Printf("[entity] backfill %q → %s: %d kapalı pod ömrü, %d ilişki (atlanan mevcut: %d)", value, cid, len(keepRow), len(keepRel), len(skip))
+}
+
+func minDur(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
 }

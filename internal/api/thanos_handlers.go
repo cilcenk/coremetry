@@ -781,6 +781,7 @@ func (s *Server) putThanosSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.publishConfigReload(r.Context(), "thanos")
+	s.cacheInvalidate(context.WithoutCancel(r.Context()), "thanos:span-clusters") // span değeri sahipleri değişmiş olabilir
 	s.thanos.ResetLabelChecks(context.WithoutCancel(r.Context()), s.store)
 	go s.thanos.LabelCheckTickPersist(context.WithoutCancel(r.Context()), s.store) // v0.10.140 — kayıt sonrası taze denetim
 	snap := s.thanos.Snapshot()

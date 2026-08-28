@@ -20,12 +20,15 @@ import (
 type SeenRow struct {
 	ClusterValue, Namespace, Pod, Node, Service string
 	Spans                                       int
-	LastSeen                                    time.Time
+	FirstSeen, LastSeen                         time.Time
 }
 
 // SeenReader — chstore.EntitySeenRecent adaptörü.
 type SeenReader interface {
 	RecentSeen(ctx context.Context, since time.Time) ([]SeenRow, error)
+	// RecentSeenFor — v0.10.141: yalnız bir span cluster değerinin satırları
+	// (backfill; kesim tavanı o değere uygulanır).
+	RecentSeenFor(ctx context.Context, since time.Time, clusterValue string) ([]SeenRow, error)
 }
 
 // UnmappedClusterID — eşlenemeyen span cluster değerlerinin koşu satırı.
@@ -149,4 +152,103 @@ func sortedUnmapped(m map[string]int) ([]string, []uint32) {
 		counts[i] = uint32(m[k])
 	}
 	return keys, counts
+}
+
+// ── v0.10.141 — atama sonrası geriye dönük geçiş (backfill) ──
+//
+// İnceleme dersi: 24 saatlik pencereyi TÜM tick'e uygulamak her cluster'ın
+// ölü pod'larını "şimdi açıldı" diye yeniden açıyordu. Doğrusu: yalnız
+// ATANAN değerin satırları; canlı olanlar (son görülme ≤ podGap) normal
+// diff'e katılır, ölü olanlar KAPALI ömür olarak yazılır (valid_from =
+// ilk görülme, valid_to = son görülme) — ve yalnız hiç kaydı olmayan
+// entity'ler için (Existing süzgeci), böylece yeniden koşum idempotent.
+
+// SplitBackfillRows — saf: değere süz, canlı/ölü ayır. Karar POD başına:
+// aynı pod'un bir satırı (servis) canlıysa TÜM satırları canlıdır — satır
+// başına karar, canlı pod'a eski bir servis satırı yüzünden kapalı ömür
+// yazdırırdı.
+func SplitBackfillRows(rows []SeenRow, value string, liveCut time.Time) (live, dead []SeenRow) {
+	alive := map[string]bool{}
+	for _, r := range rows {
+		if r.ClusterValue == value && r.Pod != "" && r.Namespace != "" && !r.LastSeen.Before(liveCut) {
+			alive[r.Namespace+"/"+r.Pod] = true
+		}
+	}
+	for _, r := range rows {
+		if r.ClusterValue != value || r.Pod == "" || r.Namespace == "" {
+			continue
+		}
+		if alive[r.Namespace+"/"+r.Pod] {
+			live = append(live, r)
+		} else {
+			dead = append(dead, r)
+		}
+	}
+	return live, dead
+}
+
+// ClosedRowsForDead — saf: ölü satırlardan yalnız POD entity'leri (kapalı
+// ömür) + ilişkileri (parent ns→pod, runs pod→svc, runs_on pod→node; hepsi
+// kapalı). Namespace/servis/node kayıtları canlı yoldan gelir; burada
+// üretilmez. Aynı pod'un birden çok satırı (servis başına) birleşir.
+func ClosedRowsForDead(cid string, dead []SeenRow) ([]EntityRow, []RelationRow) {
+	type agg struct {
+		ns, pod, node string
+		first, last   time.Time
+		services      map[string]bool
+	}
+	pods := map[string]*agg{}
+	for _, r := range dead {
+		id := PodID(cid, r.Namespace, r.Pod)
+		a := pods[id]
+		if a == nil {
+			a = &agg{ns: r.Namespace, pod: r.Pod, first: r.FirstSeen, last: r.LastSeen, services: map[string]bool{}}
+			pods[id] = a
+		}
+		if a.node == "" && r.Node != "" {
+			a.node = r.Node
+		}
+		if !r.FirstSeen.IsZero() && (a.first.IsZero() || r.FirstSeen.Before(a.first)) {
+			a.first = r.FirstSeen
+		}
+		if r.LastSeen.After(a.last) {
+			a.last = r.LastSeen
+		}
+		if r.Service != "" {
+			a.services[r.Service] = true
+		}
+	}
+	ids := make([]string, 0, len(pods))
+	for id := range pods {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var rows []EntityRow
+	var rels []RelationRow
+	for _, id := range ids {
+		a := pods[id]
+		from := a.first
+		if from.IsZero() || from.After(a.last) {
+			from = a.last
+		}
+		nsID := NamespaceID(cid, a.ns)
+		rows = append(rows, EntityRow{
+			Type: TypePod, ClusterID: cid, ID: id, Namespace: a.ns, Name: a.pod, ParentID: nsID,
+			ValidFrom: from, ValidTo: a.last, FirstSeen: from, LastSeen: a.last,
+			LabelKeys: []string{}, LabelValues: []string{}, Source: SourceSpan,
+		})
+		rels = append(rels, RelationRow{Type: RelParent, ClusterID: cid, ParentID: nsID, ChildID: id, ValidFrom: from, ValidTo: a.last, LastSeen: a.last, Source: SourceSpan})
+		svcs := make([]string, 0, len(a.services))
+		for sname := range a.services {
+			svcs = append(svcs, sname)
+		}
+		sort.Strings(svcs)
+		for _, sname := range svcs {
+			rels = append(rels, RelationRow{Type: RelRuns, ClusterID: cid, ParentID: id, ChildID: ServiceID(sname), ValidFrom: from, ValidTo: a.last, LastSeen: a.last, Source: SourceSpan})
+		}
+		if a.node != "" {
+			rels = append(rels, RelationRow{Type: RelRunsOn, ClusterID: cid, ParentID: id, ChildID: NodeID(cid, a.node), ValidFrom: from, ValidTo: a.last, LastSeen: a.last, Source: SourceSpan})
+		}
+	}
+	return rows, rels
 }

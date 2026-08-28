@@ -1608,6 +1608,9 @@ export const api = {
   /** v0.10.128 — Settings "Test label": matcher'lı kube_node_info seri sayısı (200 + ok:false on failure). */
   thanosClusterProbe: (cluster: string) =>
     get<ThanosClusterProbe>(`/api/clusters/sources/probe?cluster=${encodeURIComponent(cluster)}`),
+  // v0.10.140 — etiket otomatik algılama; apply=true kaydeder (admin).
+  thanosClusterDetect: (cluster: string, apply: boolean) =>
+    request<import('./types').ThanosDetectResponse>(`/api/settings/thanos/detect?cluster=${encodeURIComponent(cluster)}${apply ? '&apply=1' : ''}`, { method: 'POST' }),
   // ── K8s entity katmanı (v0.10.131) — entities.go / entity_routes.go ──
   entityClusters: (signal?: AbortSignal) => get<EntityClustersResponse>(`/api/entities/clusters`, signal),
   entities: (q: { cluster: string; type?: string; namespace?: string; q?: string; at?: number; limit?: number }, signal?: AbortSignal) =>

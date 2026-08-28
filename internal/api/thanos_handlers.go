@@ -770,11 +770,19 @@ func (s *Server) putThanosSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.thanos.SavePersisted(r.Context(), s.store, in); err != nil {
+	// v0.10.140 — YENİ kayıt, etiket boş, kaynak manual değil → oluşturma
+	// anında best-effort algıla (5 s/cluster; belirsizlik/hata sessizce
+	// atlanır, UI "Detect label" ile tekrar deneyebilir).
+	in = s.autoDetectNewClusterLabels(r.Context(), in, cur)
+	// Kaydetme istemci kopsa da tamamlanır (inceleme: algılama I/O'su
+	// r.Context()'i tüketip SavePersisted'ı yarıda bırakabilirdi).
+	if err := s.thanos.SavePersisted(context.WithoutCancel(r.Context()), s.store, in); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.publishConfigReload(r.Context(), "thanos")
+	s.thanos.ResetLabelChecks(context.WithoutCancel(r.Context()), s.store)
+	go s.thanos.LabelCheckTickPersist(context.WithoutCancel(r.Context()), s.store) // v0.10.140 — kayıt sonrası taze denetim
 	snap := s.thanos.Snapshot()
 	// Token'lar audit_log'a girmez (tempo sözleşmesi) — adlar +
 	// enabled bayrakları operatörün "kim ne zaman hangi cluster'ı

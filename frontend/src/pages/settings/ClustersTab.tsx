@@ -33,6 +33,7 @@ interface EditRow {
   spanClusterValues: string;
   thanosLabelSource?: 'auto' | 'manual';
   thanosLabelDetectedAt?: number;
+  labelCheck?: { ok: boolean; series: number; checkedAt: string; error?: string };
   authType: ThanosAuthType;
   token: string;    // only ever holds a NEW token; '' = keep stored
   hasToken: boolean;
@@ -48,7 +49,7 @@ function fromSnapshot(c: ThanosClusterSnapshot): EditRow {
     thanosLabelValue: c.thanosLabelValue || '',
     spanClusterValue: c.spanClusterValue || '',
     spanClusterValues: (c.spanClusterValues && c.spanClusterValues.length ? c.spanClusterValues : [c.spanClusterValue || '']).filter(Boolean).join(', '),
-    thanosLabelSource: c.thanosLabelSource, thanosLabelDetectedAt: c.thanosLabelDetectedAt,
+    thanosLabelSource: c.thanosLabelSource, thanosLabelDetectedAt: c.thanosLabelDetectedAt, labelCheck: c.labelCheck,
     authType: (c.authType || 'none') as ThanosAuthType,
     token: '', hasToken: c.hasToken,
     namespaceFilter: c.namespaceFilter || '',
@@ -69,6 +70,26 @@ export function ClustersTab() {
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   // v0.10.128 — per-row "Test label" result (probe endpoint, on click only).
   const [probe, setProbe] = useState<Record<string, string>>({});
+  // v0.10.140 — "Algıla": sunucu enjeksiyonsuz sorguyla etiketi bulur ve
+  // (belirsiz değilse) kaydeder; belirsizlikte adaylar satırın altında.
+  const [detect, setDetect] = useState<Record<string, { text: string; candidates?: Record<string, string[]> }>>({});
+  const runDetect = async (r: EditRow) => {
+    const ref = r.id || r.name.trim();
+    if (!ref) return;
+    setDetect(p => ({ ...p, [ref]: { text: '…' } }));
+    try {
+      const res = await api.thanosClusterDetect(ref, true);
+      const d = res.detection;
+      if (res.error) setDetect(p => ({ ...p, [ref]: { text: `✗ ${res.error}`, candidates: d?.candidates } }));
+      else if (res.applied) {
+        setDetect(p => ({ ...p, [ref]: { text: d?.label ? `✓ ${d.label}="${d.value}" (auto, saved)` : '✓ aday etiket yok — matcher gerekmiyor (saved)' } }));
+        const next = await api.getThanosSettings();
+        setRows((next.clusters ?? []).map(fromSnapshot));
+      } else setDetect(p => ({ ...p, [ref]: { text: d?.ambiguous ? `? ${d.label}: birden çok değer — birini seçin` : 'algılanamadı', candidates: d?.candidates } }));
+    } catch (err) {
+      setDetect(p => ({ ...p, [ref]: { text: `✗ ${err instanceof Error ? err.message : 'detect failed'}` } }));
+    }
+  };
   const runProbe = async (r: EditRow) => {
     const ref = r.id || r.name.trim();
     if (!ref) return;
@@ -278,7 +299,30 @@ export function ClustersTab() {
                     onClick={() => runProbe(r)}>
                     Test label
                   </Button>
-                  {probe[r.id || r.name.trim()] && (
+                  <Button type="button" variant="secondary" size="sm" disabled={!r.id}
+                    title={r.id ? 'Thanos external label\'ını enjeksiyonsuz sorguyla algıla ve kaydet (auto)' : 'Save first'}
+                    onClick={() => runDetect(r)}>
+                    Detect label
+                  </Button>
+                  {r.labelCheck && !r.labelCheck.ok && (
+                <div style={{ fontSize: 12, color: 'var(--err)', marginTop: 4 }} title={r.labelCheck.checkedAt}>
+                  ⚠ periyodik doğrulama: {r.labelCheck.error || 'etiket eşleşmiyor'} · {fmtDateTime(new Date(r.labelCheck.checkedAt))}
+                </div>
+              )}
+              {detect[r.id || r.name.trim()] && (
+                <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4 }}>
+                  {detect[r.id || r.name.trim()].text}
+                  {detect[r.id || r.name.trim()].candidates && Object.entries(detect[r.id || r.name.trim()].candidates!).map(([label, vals]) => (
+                    <span key={label} style={{ marginLeft: 8 }}>
+                      {label}: {vals.slice(0, 8).map(v => (
+                        <Button key={v} type="button" variant="ghost" size="xs" title={`Bu değeri seç: ${label}="${v}" (kaydetmeyi unutma)`}
+                          onClick={() => patch(i, { thanosLabelName: label, thanosLabelValue: v })}>{v}</Button>
+                      ))}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {probe[r.id || r.name.trim()] && (
                     <span style={{ fontSize: 11, color: 'var(--text2)' }}>{probe[r.id || r.name.trim()]}</span>
                   )}
                 </div>

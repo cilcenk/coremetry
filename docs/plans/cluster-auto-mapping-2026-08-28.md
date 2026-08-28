@@ -52,3 +52,18 @@ değeri aynı anda yalnız BİR kayda bağlanabilir.
 Reconcile teklik (aynı değer iki kayıt → hata + kayıt adı; çoklu değer; eski
 tekil birleşimi), `PickClusterLabel` tablo (ad eşleşmesi, tek değer, belirsiz,
 etiket yok), `SpanClusterKeys` eşleşmesi, span-clusters SQL şekli.
+
+## Uygulama durumu
+- **v0.10.139 (dilim 1):** çoklu span değeri + teklik + auto alanları + tüm okuma
+  haritaları; Snapshot yalnız AÇIK değerleri gösterir (Name yedeği örtük).
+- **v0.10.140 (dilim 2):** etiket algılama (`cluster_detect.go`: enjeksiyonsuz
+  `count by (adaylar) (kube_node_info)`, `PickClusterLabel` — güçlü etiketlerde
+  tek değer kabul, zayıf etiketlerde (prometheus/tenant) yalnız ad eşleşmesi,
+  aksi belirsiz), `POST /api/settings/thanos/detect?cluster=&apply=1` (admin,
+  audit, teklik Reconcile'da), PUT'ta yeni kayıt için 6 s toplam bütçeli
+  best-effort algılama, probe'da öneri; mevcut matcher boş sonuçla SİLİNMEZ.
+  Periyodik doğrulama: worker rolünde lider ticker (10 dk + liderlik anında),
+  sonuç `labelCheck` (bellek; her tick sıfırdan; kayıt sonrası sıfırlanır +
+  taze denetim); Settings'te "Detect label", auto/manual rozeti, aday çipleri,
+  eşleşmeme uyarısı.
+- **Sıradaki (dilim 3):** span cluster değerleri listesi + atama + 24 s backfill.

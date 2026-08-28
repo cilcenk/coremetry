@@ -29,13 +29,27 @@ func (s *Store) GetSetting(ctx context.Context, key string) ([]byte, error) {
 	return []byte(v), nil
 }
 
+// settingsInsertSQL — v0.10.129: updated_at + version İSTEMCİ damgasıyla
+// AÇIKÇA yazılır. Operator-reported: "modeli Settings'ten kaydediyorum,
+// yine eski modele dönüyor". system_settings ReplicatedReplacingMergeTree;
+// yalnız (key, value) yazılınca blok özeti o iki kolondan çıkıyor ve daha
+// önce yazılmış birebir aynı blob (A → B → A) Replicated INSERT dedup'uyla
+// SESSİZCE düşüyordu (lokalde ölçüldü: iki özdeş INSERT → 1 satır); FINAL
+// en yüksek version'lı eski değeri döndürüyor, 30 s poll bellekteki yeniyi
+// geri alıyordu. Damga her bloğu benzersiz kılar; dedup tetiklenmez.
+const settingsInsertSQL = "INSERT INTO system_settings (key, value, updated_at, version)"
+
+// settingsVersion — sunucu DEFAULT'uyla aynı birim (UnixNano). Saf; testli.
+func settingsVersion(now time.Time) uint64 { return uint64(now.UnixNano()) }
+
 // PutSetting upserts the JSON-encoded value at key.
 func (s *Store) PutSetting(ctx context.Context, key string, value []byte) error {
-	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO system_settings (key, value)")
+	batch, err := s.conn.PrepareBatch(ctx, settingsInsertSQL)
 	if err != nil {
 		return fmt.Errorf("prepare settings: %w", err)
 	}
-	if err := batch.Append(key, string(value)); err != nil {
+	now := time.Now()
+	if err := batch.Append(key, string(value), now, settingsVersion(now)); err != nil {
 		return fmt.Errorf("append setting: %w", err)
 	}
 	return batch.Send()

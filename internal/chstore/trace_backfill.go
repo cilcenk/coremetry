@@ -487,6 +487,17 @@ type TraceBackfillProc struct {
 // traceBackfillLiveSQL — kaynak seçimi: kümede clusterAllReplicas (shard
 // bacakları da görünsün), tek düğümde system.processes. Saf; test pinler.
 //
+// v0.10.122 — SHARD BACAKLARI da görünür: uzak bacağın metni yeniden
+// yazılmış bir SELECT'tir (INSERT yok, `FROM coremetry.spans_local`);
+// lokal doğrulamada yalnız initiator listelendi ve bellek 0 B çıktı —
+// oysa 241 kararı shard belleğine bakar. Backfill/MV'ye özgü state
+// ifadesi (argMinIfState — entry_service, bu DB'de yalnız bu MV/backfill
+// kullanır) iki bacağı da yakalar; uzak bacak yeniden yazılmış hâlde
+// (`argMinIfState(\`__table1\`.\`service_name\`, …)`) geldiği için
+// argüman adları eşleşmeye GİRMEZ, yalnız fonksiyon adı. MV'nin kendi
+// DDL'i (boot migrasyonu, ON CLUSTER kuyruğu) aynı ifadeyi taşıdığı
+// için dışarıda.
+//
 // v0.10.121 — KENDİNİ EŞLEMEZ: bu sorgunun metni de 'INSERT INTO
 // trace_summary_5m' literal'ini taşıyor ve system.processes'ta kendisi
 // görünüyordu — lokal doğrulamada koşu yokken bile 3 hayalet satır
@@ -499,8 +510,11 @@ func traceBackfillLiveSQL(cluster string) string {
 	}
 	return `SELECT hostName(), is_initial_query, elapsed, read_rows, read_bytes, memory_usage, peak_memory_usage
 		FROM ` + src + `
-		WHERE query LIKE '%INSERT INTO trace_summary_5m%' AND query LIKE '%FROM spans%'
+		WHERE (query LIKE '%INSERT INTO trace_summary_5m%'
+		       OR query LIKE '%argMinIfState(%')
+		  AND query LIKE '%spans%'
 		  AND query NOT LIKE '%system.processes%'
+		  AND query NOT LIKE '%MATERIALIZED VIEW%'
 		ORDER BY is_initial_query DESC, hostName()
 		LIMIT 20
 		SETTINGS max_execution_time = 3`

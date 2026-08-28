@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { keys } from './keys';
 import type {
-  EntityClustersResponse, EntityDetailResponse, EntityListResponse, EntityMetricsResponse, EntityContainersResponse,
+  EntityClustersResponse, EntityDetailResponse, EntityListResponse, EntityMetricsResponse, EntityContainersResponse, EntityClusterInfo,
   EntityServicesResponse, EntitySettings, EntitySettingsResponse, EntitySyncResponse, ServicePodsResponse,
 } from '@/lib/types';
 
@@ -26,9 +26,13 @@ export function useEntityClusters(enabled = true) {
   });
 }
 
-export function useEntityEnabled() {
-  const q = useEntityClusters();
-  return { enabled: !!q.data && !q.data.disabled, loading: q.isPending, clusters: q.data?.clusters ?? [] };
+// v0.10.137 (inceleme) — NONE modül sabiti: `?? []` her render'da yeni dizi
+// üretip tüketicilerin memo'larını boşa düşürüyordu; `enabled` parametresi
+// public trace görüntüleyicide (kimliksiz) auth kapılı isteği HİÇ atmamak için.
+const NONE: EntityClusterInfo[] = [];
+export function useEntityEnabled(enabled = true) {
+  const q = useEntityClusters(enabled);
+  return { enabled: enabled && !!q.data && !q.data.disabled, loading: enabled && q.isPending, clusters: q.data?.clusters ?? NONE };
 }
 
 export function useEntities(q: { cluster: string; type?: string; namespace?: string; q?: string; at?: number; limit?: number }, enabled = true) {

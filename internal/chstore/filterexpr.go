@@ -596,3 +596,57 @@ func ApplyFilterGroup(wc *whereClause, g FilterGroup) {
 	}
 	wc.add(sql, args...)
 }
+
+// ── v0.10.118 — SINIRDA DOĞRULAMA ──────────────────────────────────────
+//
+// Ölçülen olay (perf keşfi 2026-08-28): `filters=[{"k":…,"op":"contains"}]`
+// → op allowedOps'ta yok → ApplyFilters yan tümceyi (v0.9.269 kararıyla)
+// LOGLAYIP ATLADI → MV yolu yan tümcenin VARLIĞI yüzünden diskalifiye,
+// ham `GROUP BY trace_id` 24h penceresinin TAMAMINI taradı (1.57 M satır,
+// 6.2 s) ve 51 FİLTRESİZ satır döndü. v0.9.269'un kendi yorumu bunun
+// "en kötü hata modu" olduğunu yazıyor; loglamak görünür kıldı ama
+// sonucu değiştirmedi. Bundan sonra derlenemeyecek bir yan tümce API
+// SINIRINDA reddedilir (400); ApplyFilters'ın atlaması yalnız son çare.
+
+// Validate — yan tümce derlenebilir mi: op allowedOps'ta (boş = "="),
+// anahtar dolu. SQL üretmez, saf; parse anında çağrılır.
+func (f FilterExpr) Validate() error {
+	op := strings.ToUpper(strings.TrimSpace(f.Op))
+	if op == "" {
+		op = "="
+	}
+	if !allowedOps[op] {
+		return fmt.Errorf("invalid operator %q for key %q (allowed: =, !=, =~, !~, LIKE, NOT LIKE, IN, NOT IN, >, >=, <, <=, EXISTS, NOT EXISTS)", f.Op, f.Key)
+	}
+	if strings.TrimSpace(f.Key) == "" {
+		return fmt.Errorf("filter with operator %q has no key", f.Op)
+	}
+	return nil
+}
+
+// ValidateFilters — listedeki İLK derlenemeyen yan tümcenin hatası.
+func ValidateFilters(fs []FilterExpr) error {
+	for i, f := range fs {
+		if err := f.Validate(); err != nil {
+			return fmt.Errorf("filters[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// Validate — grubun yaprakları + bir seviye alt grup (buildGroupFragment
+// derinlik tavanıyla aynı); nil grup geçerli.
+func (g *FilterGroup) Validate() error {
+	if g == nil {
+		return nil
+	}
+	if err := ValidateFilters(g.Filters); err != nil {
+		return fmt.Errorf("filterGroup: %w", err)
+	}
+	for i, sub := range g.Groups {
+		if err := ValidateFilters(sub.Filters); err != nil {
+			return fmt.Errorf("filterGroup.groups[%d]: %w", i, err)
+		}
+	}
+	return nil
+}

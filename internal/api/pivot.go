@@ -319,7 +319,11 @@ func (s *Server) getSeriesExemplars(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	filtersRaw := q.Get("filters")
-	filters := parseFilters(filtersRaw)
+	filters, ferr := parseFilters(filtersRaw)
+	if ferr != nil {
+		writeErr(w, ferr)
+		return
+	}
 	from, to := parseFromTo(r, time.Hour)
 	limit := parseInt(q.Get("limit"), 0)
 

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
-import { Badge, Button, Field } from '@/components/ui';
+import { Badge, Button, Field, useConfirm } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useSettingsLoad, SettingsLoadError } from './shared';
 import { fmtDateTime } from '@/lib/utils';
@@ -24,6 +24,7 @@ function splitList(s: string): string[] {
 }
 
 export function DevOpsTab() {
+  const confirm = useConfirm();
   const [baseUrl, setBaseUrl] = useState('');
   const [collection, setCollection] = useState('');
   const [project, setProject] = useState('');
@@ -75,6 +76,15 @@ export function DevOpsTab() {
     } finally { setSchemaBusy(false); }
   };
   const clearSchema = async () => {
+    // v0.10.133 — yıkıcı: katalog sunucudan silinir, geri dönüşü CSV'yi
+    // yeniden yüklemek (destructiveConfirm kapısı; v0.10.115'te onaysızdı).
+    if (!await confirm({
+      title: 'Şema kataloğu silinsin mi?',
+      body: <>Kayıtlı DB2/Oracle kolon kataloğu sunucudan kaldırılacak; SQL hatası açıklamaları
+        yeni bir CSV yüklenene kadar <b>şema bağlamı olmadan</b> üretilecek.</>,
+      confirmLabel: 'Kataloğu sil',
+      danger: true,
+    })) return;
     setSchemaBusy(true); setSchemaMsg(null);
     try { setSchema(await api.deleteSchemaCatalog()); setSchemaMsg({ kind: 'ok', text: 'Katalog temizlendi.' }); }
     catch (err) { setSchemaMsg({ kind: 'err', text: String((err as Error).message || err) }); }
@@ -582,7 +592,7 @@ export function DevOpsTab() {
         </label>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <Button type="submit" variant="primary" disabled={!schemaCsv.trim()} loading={schemaBusy}>Kataloğu yükle</Button>
-          <Button type="button" variant="secondary" disabled={!schema || schema.importedAt === 0 || schemaBusy} onClick={clearSchema}>Temizle</Button>
+          <Button type="button" variant="danger" disabled={!schema || schema.importedAt === 0 || schemaBusy} onClick={clearSchema}>Kataloğu sil</Button>
           {schemaMsg && <span style={{ fontSize: 12, color: schemaMsg.kind === 'ok' ? 'var(--ok)' : 'var(--err)' }}>{schemaMsg.text}</span>}
         </div>
       </form>

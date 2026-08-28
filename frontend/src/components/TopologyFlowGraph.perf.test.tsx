@@ -3,9 +3,11 @@
 // react-dom/server ile render → useMemo yerleşimi + SVG üretimi ölçülür
 // (boya hariç). Taban (2026-08-28, laptop): 50/148 → 5 ms · 100/496 →
 // 13 ms · 300/3k → 189 ms · 500/10k → 940 ms · 500/20k (sunucu tavanı)
-// → 1.906 ms. Eşik tavanda 4 s (CI makinesi payı ×2); medyan of 3.
-// Yerleşim O(E·n log n): barycenter comparator'ında edges.filter —
-// arzu edilen ≤ 300 ms komşuluk indeksi ister.
+// → 1.906 ms. v0.10.133 komşuluk indeksi (lib/topoBfsLayout.ts) sonrası
+// aynı makine: 300/3k → 83 ms · 500/10k → 199 ms · 500/20k → 336 ms
+// (5×; kalan maliyet 20k kenarın SVG dizesi, yerleşim değil). Eşik
+// tavanda 1.5 s (4× pay, CI makinesi dahil) — eski 4 s gevşek kalırdı;
+// medyan of 3.
 import { describe, it, expect } from 'vitest';
 import { renderToString } from 'react-dom/server';
 import { TopologyFlowGraph } from './TopologyFlowGraph';
@@ -44,9 +46,9 @@ describe('TopologyFlowGraph layout cost (perf probe)', () => {
       out.push(`nodes=${n} edges=${data.edges.length} median=${runs[1].toFixed(1)}ms min=${runs[0].toFixed(1)} max=${runs[2].toFixed(1)}`);
     }
     console.log('\nTOPOLOGY_LAYOUT_PERF\n' + out.join('\n'));
-    // Bütçe: sunucu tavanı (500 düğüm / 20k kenar) medyan ≤ 4000 ms.
+    // Bütçe: sunucu tavanı (500 düğüm / 20k kenar) medyan ≤ 1500 ms (v0.10.133).
     const cap = out[out.length - 1];
     const med = Number(/median=([\d.]+)ms/.exec(cap)?.[1] ?? 'NaN');
-    expect(med, `yerleşim bütçesi aşıldı (500/20k): ${cap}`).toBeLessThan(4000);
+    expect(med, `yerleşim bütçesi aşıldı (500/20k): ${cap}`).toBeLessThan(1500);
   });
 });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ROW_PITCH } from '@/lib/topoLayout';
+import { bfsBarycenterLayout } from '@/lib/topoBfsLayout';
 import type { ServiceMap, ServiceMapNode, ServiceMapEdge } from '@/lib/types';
 import { isMessagingDep, fmtNum } from '@/lib/utils';
 import { edgeWeights } from '@/lib/edgeWeight';
@@ -192,60 +193,11 @@ export function TopologyFlowGraph({
   // "çok fazla servis ekrana sığmıyor" düzeltmesinin yarısı budur (diğer
   // yarısı zoom/pan).
   const { positioned, layoutW, layoutH } = useMemo(() => {
-    const incoming = new Map<string, number>();
-    for (const e of data.edges) incoming.set(e.callee, (incoming.get(e.callee) ?? 0) + 1);
-    let roots = data.nodes.filter(n => !incoming.has(n.service)).map(n => n.service);
-    if (roots.length === 0 && data.nodes.length > 0) {
-      // Döngü: en yüksek hacimli servisi kök say.
-      roots = [data.nodes.slice().sort((a, b) => b.spanCount - a.spanCount)[0].service];
-    }
-    const depth = new Map<string, number>();
-    roots.forEach(r => depth.set(r, 0));
-    let frontier = [...roots];
-    let d = 0;
-    while (frontier.length && d < 12) {
-      d++;
-      const next = new Set<string>();
-      for (const f of frontier) {
-        for (const e of data.edges) {
-          if (e.caller === f && !depth.has(e.callee)) { depth.set(e.callee, d); next.add(e.callee); }
-        }
-      }
-      frontier = Array.from(next);
-    }
-    let maxDepth = 0;
-    for (const v of depth.values()) maxDepth = Math.max(maxDepth, v);
-    for (const n of data.nodes) if (!depth.has(n.service)) depth.set(n.service, maxDepth + 1);
-    maxDepth = Math.max(...Array.from(depth.values()), 0);
-
-    const columns: string[][] = Array.from({ length: maxDepth + 1 }, () => []);
-    for (const n of data.nodes) columns[depth.get(n.service)!].push(n.service);
-
-    // Layout alanı: en kalabalık sütun satır başına ROW_PITCH alır, sütunlar
-    // en az 180px açılır — view'dan KÜÇÜLMEZ (az düğümde eski yerleşim).
-    const maxCol = Math.max(1, ...columns.map(c => c.length));
-    const lh = Math.max(height, maxCol * ROW_PITCH);
-    const padX = 110;
-    const lw = Math.max(width, padX * 2 + Math.max(0, columns.length - 1) * 180);
-
-    const pos = new Map<string, { x: number; y: number }>();
-    const colW = columns.length > 1 ? (lw - padX * 2) / (columns.length - 1) : 0;
-    columns.forEach((col, ci) => {
-      // Barycenter: ebeveyn y ortalamasına göre sırala (0. sütun ada göre).
-      const sorted = ci === 0
-        ? col.slice().sort()
-        : col.slice().sort((a, b) => barycenter(a) - barycenter(b));
-      function barycenter(svc: string): number {
-        const ys = data.edges.filter(e => e.callee === svc).map(e => pos.get(e.caller)?.y ?? lh / 2);
-        return ys.length ? ys.reduce((s, y) => s + y, 0) / ys.length : lh / 2;
-      }
-      sorted.forEach((svc, i) => {
-        pos.set(svc, {
-          x: columns.length === 1 ? lw / 2 : padX + ci * colW,
-          y: ((i + 1) / (sorted.length + 1)) * lh,
-        });
-      });
-    });
+    // v0.10.133 — yerleşim saf çekirdeğe taşındı (lib/topoBfsLayout.ts):
+    // komşuluk indeksi, O(E·n log n) → O(E + n log n); çıktı birebir aynı
+    // (topoBfsLayout.test.ts referans kopyasıyla pinli). Ölçüm 500/20k:
+    // 1 716 ms → (aşağıda, perf probe).
+    const { pos, lw, lh } = bfsBarycenterLayout(data.nodes, data.edges, width, height, ROW_PITCH);
     return { positioned: pos, layoutW: lw, layoutH: lh };
   }, [data, width, height]);
 

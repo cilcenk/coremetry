@@ -125,7 +125,7 @@ done
 
 hdr "C9 Owner zinciri kapsamı: pod→RS→Deployment çözülebilen pod oranı"
 q 'count(kube_pod_owner{owner_kind="ReplicaSet"})' | head -c 300; echo
-q 'count(kube_pod_owner{owner_kind="ReplicaSet"} * on (namespace, owner_name, cluster) group_left(owner_kind_rs, owner_name_rs) label_replace(label_replace(kube_replicaset_owner, "owner_kind_rs", "$1", "owner_kind", "(.*)"), "owner_name_rs", "$1", "owner_name", "(.*)") )' | head -c 300; echo
+q 'count(kube_pod_owner{owner_kind="ReplicaSet"} * on (namespace, cluster, owner_name) group_left() label_replace(kube_replicaset_owner{owner_kind="Deployment"}, "owner_name", "$1", "replicaset", "(.*)"))' | head -c 300; echo   # RS→Deployment çözülen pod sayısı
 q 'count by (owner_kind) (kube_pod_owner)' | head -c 800; echo
 q 'count by (owner_kind) (kube_replicaset_owner)' | head -c 800; echo
 q 'count(kube_pod_info) - count(kube_pod_info{node!=""})' | head -c 300; echo   # node ataması eksik pod

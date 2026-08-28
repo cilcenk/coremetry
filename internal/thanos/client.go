@@ -39,8 +39,21 @@ import (
 // for the service→cluster pivot to light up; the Settings UI
 // suggests observed names for exactly that reason.
 type ClusterConfig struct {
+	// ID — v0.10.128: opak, DEĞİŞMEZ kimlik ("c-" + 8 hex). Entity
+	// hiyerarşisinin kökü (cluster_identity.go); sunucu sahipli — PUT
+	// istemciden gelen ID'yi ada göre saklı kayıttan alır, boşsa türetir.
+	ID   string `json:"id,omitempty"`
 	Name string `json:"name"`
 	URL  string `json:"url"`
+	// ThanosLabelName/Value — v0.10.128: TEK querier'ın önünde N cluster
+	// varken seriyi bu cluster'a bağlayan external label. Ad BOŞ =
+	// enjeksiyon yok = cluster başına URL modeli (eski davranış). Değer
+	// boşsa Name.
+	ThanosLabelName  string `json:"thanosLabelName,omitempty"`
+	ThanosLabelValue string `json:"thanosLabelValue,omitempty"`
+	// SpanClusterValue — v0.10.128: span `cluster` kolonunda bu cluster'ın
+	// değeri; boşsa Name (bugünkü join anahtarı).
+	SpanClusterValue string `json:"spanClusterValue,omitempty"`
 	// AuthType — none | bearer. Bearer covers the standard
 	// OpenShift path: a ServiceAccount token with the
 	// cluster-monitoring-view ClusterRole against the
@@ -66,8 +79,12 @@ type Settings struct {
 
 // ClusterSnapshot mirrors ClusterConfig with the token masked.
 type ClusterSnapshot struct {
+	ID                 string `json:"id,omitempty"`
 	Name               string `json:"name"`
 	URL                string `json:"url"`
+	ThanosLabelName    string `json:"thanosLabelName,omitempty"`
+	ThanosLabelValue   string `json:"thanosLabelValue,omitempty"`
+	SpanClusterValue   string `json:"spanClusterValue,omitempty"`
 	AuthType           string `json:"authType,omitempty"`
 	HasToken           bool   `json:"hasToken"`
 	NamespaceFilter    string `json:"namespaceFilter,omitempty"`
@@ -230,6 +247,17 @@ func (s *Service) LoadPersisted(ctx context.Context, store settingsStore) error 
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return fmt.Errorf("thanos decode: %w", err)
 	}
+	// v0.10.128 — geriye dönük id doldurma: boş ID'ler Name'den türetilir
+	// ve bloba BİR KEZ yazılır. Türetim deterministik; çok-pod yarışı
+	// zararsız (aynı değer). Yazım hatası boot'u durdurmaz — bellekte
+	// türetilmiş id yine kullanılır (EffectiveID), sonraki boot dener.
+	if filled, changed := BackfillClusterIDs(cfg); changed {
+		if err := s.SavePersisted(ctx, store, filled); err != nil {
+			log.Printf("[thanos] cluster id geriye doldurma yazılamadı (%v) — bellekte türetilmiş id ile devam", err)
+			s.Configure(cfg)
+		}
+		return nil
+	}
 	s.Configure(cfg)
 	return nil
 }
@@ -294,8 +322,10 @@ func (s *Service) Snapshot() Snapshot {
 	out := Snapshot{Clusters: make([]ClusterSnapshot, 0, len(s.cfg.Clusters))}
 	for _, c := range s.cfg.Clusters {
 		out.Clusters = append(out.Clusters, ClusterSnapshot{
-			Name: c.Name, URL: c.URL, AuthType: c.AuthType,
-			HasToken: c.Token != "", NamespaceFilter: c.NamespaceFilter,
+			ID: c.EffectiveID(), Name: c.Name, URL: c.URL, AuthType: c.AuthType,
+			ThanosLabelName: c.ThanosLabelName, ThanosLabelValue: c.ThanosLabelValue,
+			SpanClusterValue: c.SpanClusterValue,
+			HasToken:         c.Token != "", NamespaceFilter: c.NamespaceFilter,
 			InsecureSkipVerify: c.InsecureSkipVerify, Enabled: c.Enabled,
 		})
 	}
@@ -409,6 +439,15 @@ type promSeries struct {
 const maxSeriesParsed = 1000
 
 func (s *Service) doQuery(ctx context.Context, c ClusterConfig, path string, params url.Values) ([]promSeries, error) {
+	// v0.10.128 — cluster matcher enjeksiyonu (cluster_matcher.go): tek
+	// querier'da her seçici <label>="<value>" taşır; etiket adı boşsa
+	// ifade aynen gider.
+	if label, value := c.EffectiveThanosLabel(); label != "" {
+		if q := params.Get("query"); q != "" {
+			params = cloneValues(params)
+			params.Set("query", withClusterMatcher(q, label, value))
+		}
+	}
 	u := strings.TrimRight(c.URL, "/") + path + "?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -441,6 +480,15 @@ func (s *Service) doQuery(ctx context.Context, c ClusterConfig, path string, par
 		env.Data.Result = env.Data.Result[:maxSeriesParsed]
 	}
 	return env.Data.Result, nil
+}
+
+// cloneValues — params çağıranın; enjeksiyon kopyada yapılır.
+func cloneValues(v url.Values) url.Values {
+	out := make(url.Values, len(v))
+	for k, vs := range v {
+		out[k] = append([]string(nil), vs...)
+	}
+	return out
 }
 
 func firstN(s string, n int) string {

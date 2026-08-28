@@ -98,7 +98,7 @@ func (s *Server) getClusterPods(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cluster query param required", http.StatusBadRequest)
 		return
 	}
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -179,7 +179,7 @@ func (s *Server) getClusterPodDetail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cluster, namespace, pod query params required", http.StatusBadRequest)
 		return
 	}
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -215,7 +215,7 @@ func (s *Server) getClusterNamespaces(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cluster query param required", http.StatusBadRequest)
 		return
 	}
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -248,7 +248,7 @@ func (s *Server) getClusterDeployments(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cluster and namespace query params required", http.StatusBadRequest)
 		return
 	}
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -283,7 +283,7 @@ func (s *Server) getClusterNamespaceDetail(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "cluster and namespace query params required", http.StatusBadRequest)
 		return
 	}
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -320,7 +320,7 @@ func (s *Server) getClusterNamespacePodsTrend(w http.ResponseWriter, r *http.Req
 		http.Error(w, "cluster and namespace query params required", http.StatusBadRequest)
 		return
 	}
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -356,7 +356,7 @@ func (s *Server) getClusterAlerts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cluster query param required", http.StatusBadRequest)
 		return
 	}
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -394,7 +394,7 @@ func (s *Server) getClusterResourceTrend(w http.ResponseWriter, r *http.Request)
 		metric = "mem"
 	}
 	byNode := q.Get("byNode") == "1"
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -440,7 +440,7 @@ func (s *Server) getClusterDeployTrend(w http.ResponseWriter, r *http.Request) {
 		metric = q.Get("metric")
 	}
 	byPod := q.Get("byPod") == "1"
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -494,7 +494,7 @@ func (s *Server) getClusterHaproxyTrend(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "kind must be 2xx, 5xx or latency", http.StatusBadRequest)
 		return
 	}
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -532,7 +532,7 @@ func (s *Server) getClusterJMXMetrics(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cluster, ns and deploy query params required", http.StatusBadRequest)
 		return
 	}
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -575,7 +575,7 @@ func (s *Server) getClusterJMXTrend(w http.ResponseWriter, r *http.Request) {
 	// ?pod= — Grafana $pod (v0.9.149): dolu ise sorgu o tek pod'a daralır
 	// (label değeri jmxTrendQuery'de escapeLabelValue ile kaçışlanır).
 	pod := strings.TrimSpace(q.Get("pod"))
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -610,7 +610,7 @@ func (s *Server) getClusterNetworkTrend(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "cluster query param required", http.StatusBadRequest)
 		return
 	}
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -643,7 +643,7 @@ func (s *Server) getClusterSummary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cluster query param required", http.StatusBadRequest)
 		return
 	}
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -671,7 +671,7 @@ func (s *Server) getClusterNodes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cluster query param required", http.StatusBadRequest)
 		return
 	}
-	cfg, ok := s.thanos.ClusterByName(name)
+	cfg, ok := s.thanos.ClusterByRef(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
@@ -731,16 +731,17 @@ func (s *Server) putThanosSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cur := s.thanos.CurrentSettings()
-	stored := map[string]string{}
-	for _, c := range cur.Clusters {
-		stored[c.Name] = c.Token
-	}
 	seen := map[string]bool{}
 	for i := range in.Clusters {
 		c := &in.Clusters[i]
 		c.Name = strings.TrimSpace(c.Name)
 		c.URL = strings.TrimSpace(c.URL)
 		c.AuthType = strings.TrimSpace(c.AuthType)
+		// v0.10.128 — kimlik/eşleme alanları (cluster_identity.go).
+		c.ID = strings.TrimSpace(c.ID)
+		c.ThanosLabelName = strings.TrimSpace(c.ThanosLabelName)
+		c.ThanosLabelValue = strings.TrimSpace(c.ThanosLabelValue)
+		c.SpanClusterValue = strings.TrimSpace(c.SpanClusterValue)
 		if c.Name == "" {
 			http.Error(w, "cluster name required", http.StatusBadRequest)
 			return
@@ -761,9 +762,13 @@ func (s *Server) putThanosSettings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "authType must be one of: none, bearer", http.StatusBadRequest)
 			return
 		}
-		if c.Token == "" {
-			c.Token = stored[c.Name]
-		}
+	}
+	// v0.10.128 — ID sunucu sahipli + saklı token birleştirmesi (ada VE
+	// id'ye göre: yeniden adlandırma token'ı düşürmez).
+	in, err := thanos.ReconcileClusterSettings(in, cur)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	if err := s.thanos.SavePersisted(r.Context(), s.store, in); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

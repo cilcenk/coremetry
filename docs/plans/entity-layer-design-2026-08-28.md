@@ -4,7 +4,7 @@
 · **Durum:** kod yok, şema yok. Onaydan sonra AŞAMA 3 adımları sırayla.
 
 > **Varsayımlar (probe gelmeden yazıldı, her biri konfigüre edilebilir):**
-> V1 Thanos external label adı `cluster`, değeri Remote Cluster `Name` ile
+> V1 Thanos external label adı `cluster` (UI önerisi; kayıt varsayılanı BOŞ = matcher yok, bkz. §1.1), değeri Remote Cluster `Name` ile
 > aynı (probe A2(b) aksini söylerse yalnız kayıt alanları değişir, model
 > değişmez). V2 Prod span'leri `openshift.cluster.name`, `k8s.namespace.name`,
 > `k8s.pod.name`, `k8s.node.name` taşır (n=1 kanıt; B5 filo ölçümü düşük
@@ -34,7 +34,7 @@ cluster değerleri sayaçlanır, düşürülmez. Özellik bayrağı arkasında.
 | Alan | Anlam | Boşsa |
 |---|---|---|
 | `ID string` | opak, değişmez kimlik (`c-` + 8 hex); **oluşturmada üretilir** | mevcut kayıt için boot'ta `c-` + fnv64(Name)[:8] türetilir ve blob'a **bir kez** yazılır (SavePersisted, audit `settings.thanos.backfill_ids`) — Name sonradan değişse de ID sabit |
-| `ThanosLabelName` | seriyi bu cluster'a bağlayan etiket adı | `cluster` (V1) |
+| `ThanosLabelName` | seriyi bu cluster'a bağlayan etiket adı | **boş = matcher YOK = cluster başına URL modeli** (uygulamada v0.10.128 kararı: V1'deki `cluster` varsayılanı per-cluster querier'ları — serilerde o etiket yoksa — boşaltırdı; tek querier operatörü alanı açıkça `cluster` yapar, UI önerir) |
 | `ThanosLabelValue` | o etiketin değeri | `Name` |
 | `SpanClusterValue` | span `cluster` kolonunda bu cluster'ın değeri | `Name` |
 

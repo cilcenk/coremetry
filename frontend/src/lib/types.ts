@@ -1427,8 +1427,15 @@ export interface DevOpsTestResult {
 // openshift.cluster.name value spans report.
 export type ThanosAuthType = 'none' | 'bearer';
 export interface ThanosClusterSnapshot {
+  /** v0.10.128 — opaque, immutable; entity hierarchy root (server-owned). */
+  id?: string;
   name: string;
   url: string;
+  /** v0.10.128 — external label binding series to this cluster on a shared querier; empty = no matcher. */
+  thanosLabelName?: string;
+  thanosLabelValue?: string;
+  /** v0.10.128 — value of the span `cluster` column for this cluster; empty = name. */
+  spanClusterValue?: string;
   authType?: ThanosAuthType;
   hasToken: boolean;
   namespaceFilter?: string;
@@ -1439,13 +1446,27 @@ export interface ThanosSnapshot {
   clusters: ThanosClusterSnapshot[];
 }
 export interface ThanosClusterInput {
+  id?: string;
   name: string;
   url: string;
+  thanosLabelName?: string;
+  thanosLabelValue?: string;
+  spanClusterValue?: string;
   authType?: ThanosAuthType;
   token?: string;
   namespaceFilter?: string;
   insecureSkipVerify?: boolean;
   enabled: boolean;
+}
+/** Mirrors api.probeClusterSource (thanos_identity.go, v0.10.128). */
+export interface ThanosClusterProbe {
+  cluster: string;
+  name: string;
+  label: string;
+  value: string;
+  series: number;
+  ok: boolean;
+  error?: string;
 }
 export interface ThanosSettingsInput {
   clusters: ThanosClusterInput[];

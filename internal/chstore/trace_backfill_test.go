@@ -399,7 +399,8 @@ func TestTraceBackfillLiveSQL(t *testing.T) {
 	if strings.Contains(s, "clusterAllReplicas") || !strings.Contains(s, "FROM system.processes") {
 		t.Errorf("tek düğüm kaynağı yanlış: %s", s)
 	}
-	for _, want := range []string{"INSERT INTO trace_summary_5m", "FROM spans", "LIMIT 20", "max_execution_time = 3", "is_initial_query"} {
+	for _, want := range []string{"INSERT INTO trace_summary_5m", "FROM spans", "LIMIT 20", "max_execution_time = 3", "is_initial_query",
+		"query NOT LIKE '%system.processes%'"} { // v0.10.121 — kendini eşlemez
 		if !strings.Contains(c, want) {
 			t.Errorf("eksik: %q", want)
 		}

@@ -100,11 +100,14 @@ type ClusterSnapshot struct {
 	SpanClusterValues     []string `json:"spanClusterValues,omitempty"`
 	ThanosLabelSource     string   `json:"thanosLabelSource,omitempty"`
 	ThanosLabelDetectedAt int64    `json:"thanosLabelDetectedAt,omitempty"`
-	AuthType              string   `json:"authType,omitempty"`
-	HasToken              bool     `json:"hasToken"`
-	NamespaceFilter       string   `json:"namespaceFilter,omitempty"`
-	InsecureSkipVerify    bool     `json:"insecureSkipVerify,omitempty"`
-	Enabled               bool     `json:"enabled"`
+	// LabelCheck — v0.10.140: periyodik doğrulama sonucu (bellek; auto
+	// etiketli kayıtlar). nil = henüz denetlenmedi.
+	LabelCheck         *LabelCheck `json:"labelCheck,omitempty"`
+	AuthType           string      `json:"authType,omitempty"`
+	HasToken           bool        `json:"hasToken"`
+	NamespaceFilter    string      `json:"namespaceFilter,omitempty"`
+	InsecureSkipVerify bool        `json:"insecureSkipVerify,omitempty"`
+	Enabled            bool        `json:"enabled"`
 }
 
 // Snapshot is what GET /api/settings/thanos returns.
@@ -232,8 +235,9 @@ type TrendPoint struct {
 // tempo's: RWMutex around the config, background refresh poll
 // keeping multi-pod deployments in sync via the shared blob.
 type Service struct {
-	mu  sync.RWMutex
-	cfg Settings
+	labelCheckState // v0.10.140 — periyodik etiket doğrulama sonuçları
+	mu              sync.RWMutex
+	cfg             Settings
 }
 
 func New() *Service { return &Service{} }
@@ -341,7 +345,8 @@ func (s *Service) Snapshot() Snapshot {
 			ThanosLabelName: c.ThanosLabelName, ThanosLabelValue: c.ThanosLabelValue,
 			ThanosLabelSource: c.ThanosLabelSource, ThanosLabelDetectedAt: c.ThanosLabelDetectedAt,
 			SpanClusterValue: c.SpanClusterValue, SpanClusterValues: c.ExplicitSpanClusterValues(),
-			HasToken: c.Token != "", NamespaceFilter: c.NamespaceFilter,
+			LabelCheck: s.labelCheckFor(c.EffectiveID()),
+			HasToken:   c.Token != "", NamespaceFilter: c.NamespaceFilter,
 			InsecureSkipVerify: c.InsecureSkipVerify, Enabled: c.Enabled,
 		})
 	}
@@ -455,10 +460,22 @@ type promSeries struct {
 const maxSeriesParsed = 1000
 
 func (s *Service) doQuery(ctx context.Context, c ClusterConfig, path string, params url.Values) ([]promSeries, error) {
+	return s.doQueryWith(ctx, c, path, params, true)
+}
+
+// doQueryRaw — v0.10.140: matcher ENJEKSİYONSUZ sorgu. Tek kullanım yeri
+// etiket algılama (cluster_detect.go): "hangi etiket cluster'ı ayırıyor"
+// sorusu, cevabı sorunun içine gömmeden sorulmalı. Diğer her sorgu
+// doQuery'den (enjeksiyonlu) geçer — görev kısıtı değişmedi.
+func (s *Service) doQueryRaw(ctx context.Context, c ClusterConfig, path string, params url.Values) ([]promSeries, error) {
+	return s.doQueryWith(ctx, c, path, params, false)
+}
+
+func (s *Service) doQueryWith(ctx context.Context, c ClusterConfig, path string, params url.Values, inject bool) ([]promSeries, error) {
 	// v0.10.128 — cluster matcher enjeksiyonu (cluster_matcher.go): tek
 	// querier'da her seçici <label>="<value>" taşır; etiket adı boşsa
 	// ifade aynen gider.
-	if label, value := c.EffectiveThanosLabel(); label != "" {
+	if label, value := c.EffectiveThanosLabel(); inject && label != "" {
 		if q := params.Get("query"); q != "" {
 			params = cloneValues(params)
 			params.Set("query", withClusterMatcher(q, label, value))

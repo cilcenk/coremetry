@@ -1441,6 +1441,7 @@ export interface ThanosClusterSnapshot {
   /** v0.10.139 — 'auto' (algılandı) | 'manual' | undefined (eski kayıt). */
   thanosLabelSource?: 'auto' | 'manual';
   thanosLabelDetectedAt?: number;
+  labelCheck?: ThanosLabelCheck;
   authType?: ThanosAuthType;
   hasToken: boolean;
   namespaceFilter?: string;
@@ -1475,7 +1476,27 @@ export interface ThanosClusterProbe {
   series: number;
   ok: boolean;
   error?: string;
+  labelSource?: 'auto' | 'manual';
+  /** v0.10.140 — etiket boşken test anında algılanan öneri (yazılmaz). */
+  detected?: ThanosLabelDetection;
 }
+/** thanos.Detection (v0.10.140) */
+export interface ThanosLabelDetection {
+  label: string;
+  value: string;
+  ambiguous: boolean;
+  candidates?: Record<string, string[]>;
+  series: number;
+}
+export interface ThanosDetectResponse {
+  cluster: string;
+  name: string;
+  applied: boolean;
+  detection?: ThanosLabelDetection;
+  error?: string;
+}
+/** thanos.LabelCheck (v0.10.140) — periyodik doğrulama. */
+export interface ThanosLabelCheck { ok: boolean; series: number; checkedAt: string; error?: string }
 export interface ThanosSettingsInput {
   clusters: ThanosClusterInput[];
 }

@@ -1000,6 +1000,12 @@ func main() {
 		log.Printf("[thanos] load persisted config: %v", err)
 	}
 	go thanosSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	// v0.10.140 — etiket doğrulama sonuçları blob'dan (lider worker yazar,
+	// her rol okur; api pod'ları Settings rozetini böyle görür).
+	if err := thanosSvc.LoadLabelChecks(ctx, store); err != nil {
+		log.Printf("[thanos] label checks load: %v", err)
+	}
+	go thanosSvc.StartLabelCheckRefresh(ctx, store, 30*time.Second)
 	// v0.10.129 — K8s entity katmanı: bayrak + vidalar her modda (uçlar
 	// okur), Thanos senkronizasyonu yalnız worker rolünde ve liderde
 	// (cache.LeaderHolder "entity-sync"). Bayrak kapalıyken Tick no-op.
@@ -1016,6 +1022,28 @@ func main() {
 		entityLeader.SetOnAcquire(func() { entitySyncer.Tick(ctx) })
 		entityLeader.Start(ctx)
 		go entitySyncer.Run(ctx, entityLeader.IsLeader)
+		// v0.10.140 — Thanos etiketi periyodik doğrulama (auto eşleme
+		// brief'i): 10 dk'da bir, yalnız lider; sonuç bellekte, Settings
+		// rozetinde ilan edilir. Entity bayrağından BAĞIMSIZ.
+		labelLeader := cache.NewLeaderHolder(lockImpl, "cluster-label-check", cache.LeaderTTL(time.Minute))
+		// Liderlik alınır alınmaz ilk denetim (entity-sync emsali) — yoksa ilk
+		// sonuç boot'tan 10 dk sonra görünür (lokal e2e: 100 s'de labelCheck yok).
+		labelLeader.SetOnAcquire(func() { thanosSvc.LabelCheckTickPersist(ctx, store) })
+		labelLeader.Start(ctx)
+		go func() {
+			t := time.NewTicker(10 * time.Minute)
+			defer t.Stop()
+			for {
+				if labelLeader.IsLeader() {
+					thanosSvc.LabelCheckTickPersist(ctx, store)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+				}
+			}
+		}()
 	}
 	// v0.9.1150 — dış VictoriaMetrics OKUMA backend'i (tempo/thanos
 	// simetriği): blob'u boot'ta yükle + 30s multi-pod senkron poll'u.

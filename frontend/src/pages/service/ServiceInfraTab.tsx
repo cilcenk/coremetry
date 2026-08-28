@@ -128,25 +128,38 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
     outlineOffset: 4, borderRadius: 8, transition: 'outline-color .35s',
   });
 
+  // v0.10.145 — entity tablosu (v0.10.131/136) Thanos ad-regex'i hiçbir
+  // pod bulamayınca ULAŞILAMAZDI: aşağıdaki erken dönüşler mount'tan önce
+  // geliyordu — tam da entity katmanının var olma sebebi olan durumda
+  // (`apianl-prod-*` pod'ları `api-analytics-*` kalıbına uymaz; API 2 pod
+  // döndürürken sekme "No pods matched" gösteriyordu). Tek örnek, her dalda.
+  const entityPods = <ServiceEntityPods service={service} range={range} cluster={icluster || undefined} />;
+
   // ── Kapılar (hook'lardan SONRA) ──
   if (metaQ.isPending || sourcesPending) return <Spinner />;
   if (noClusters) {
-    return <Empty icon="▦" title="No Thanos clusters configured">
-      Add a remote cluster under Settings → Remote clusters to see pod-level infrastructure here.
-    </Empty>;
+    return <>
+      {entityPods}
+      <Empty icon="▦" title="No Thanos clusters configured">
+        Add a remote cluster under Settings → Remote clusters to see pod-level infrastructure here.
+      </Empty>
+    </>;
   }
   if (rows.length === 0) {
     // v0.9.538 — spinner YALNIZ hiç eşleşme yokken; gelen cluster'lar
     // hemen çizilir (tek yavaş cluster tüm sayfayı bekletmesin).
     if (podsBlocking) return <Spinner />;
-    return <Empty icon="▦" title="No pods matched">
+    return <>
+      {entityPods}
+      <Empty icon="▦" title="No pods matched">
       {/* v0.9.536 — gerçek aday kalıbı (ServicePodsTab ile aynı düzeltme). */}
       Tried {ns && deploy ? `k8s.namespace=${ns} · ${deploy}` : 'the k8s metadata mapping'}
       {' '}and pod-name matching (<span className="mono">{servicePodRegex(service, deploy)}</span>) across{' '}
       {matched.length} Thanos cluster{matched.length > 1 ? 's' : ''} — nothing matched.
       Check that the pods follow the <span className="mono">&lt;service&gt;-&lt;hash&gt;-&lt;rand&gt;</span> naming
       or curate namespace/deployment in the service catalog.
-    </Empty>;
+      </Empty>
+    </>;
   }
 
   const phaseKnown = visRows.some(r => r.phase);
@@ -170,7 +183,7 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
         </div>
       )}
       {/* v0.10.131 — entity katmanı (bayrak açıkken): servisi taşıyan pod'lar, ömür + iş yükü + node. */}
-      <ServiceEntityPods service={service} range={range} cluster={icluster || undefined} />
+      {entityPods}
       <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
         {ns && deploy ? (
           <>Pods matched to <span className="mono">{service}</span> via{' '}

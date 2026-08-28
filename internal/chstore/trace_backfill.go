@@ -465,3 +465,61 @@ func TraceBackfillStateFragments() []string {
 	}
 	return out
 }
+
+// ── v0.10.120 — CANLI DİLİM (operatör: "Sihirbaza ekle") ───────────────
+//
+// Prod'da query_log kapalı; koşan INSERT SELECT'in maliyeti yalnız
+// system.processes'ta görünür. Sihirbaz bunu 2 sn'de bir okur: host,
+// geçen süre, okunan satır/bayt, bellek. Eski kodla koşan bir backfill'de
+// de çalışır (sorgu metni aynı). Ucuz: system.processes birkaç satır.
+
+// TraceBackfillProc — koşan bir backfill sorgusunun anlık hâli.
+type TraceBackfillProc struct {
+	Host        string  `json:"host"`
+	Initial     bool    `json:"initial"` // initiator mı (true) shard bacağı mı
+	ElapsedS    float64 `json:"elapsedS"`
+	ReadRows    uint64  `json:"readRows"`
+	ReadBytes   uint64  `json:"readBytes"`
+	MemoryBytes int64   `json:"memoryBytes"`
+	PeakBytes   int64   `json:"peakBytes"`
+}
+
+// traceBackfillLiveSQL — kaynak seçimi: kümede clusterAllReplicas (shard
+// bacakları da görünsün), tek düğümde system.processes. Saf; test pinler.
+func traceBackfillLiveSQL(cluster string) string {
+	src := "system.processes"
+	if cluster != "" {
+		src = fmt.Sprintf("clusterAllReplicas('%s', system.processes)", cluster)
+	}
+	return `SELECT hostName(), is_initial_query, elapsed, read_rows, read_bytes, memory_usage, peak_memory_usage
+		FROM ` + src + `
+		WHERE query LIKE '%INSERT INTO trace_summary_5m%' AND query LIKE '%FROM spans%'
+		ORDER BY is_initial_query DESC, hostName()
+		LIMIT 20
+		SETTINGS max_execution_time = 3`
+}
+
+// TraceBackfillLive — koşan backfill sorguları (boş dilim = şu an sorgu
+// yok: dilimler arası boşluk ya da DROP PARTITION anı).
+func (s *Store) TraceBackfillLive(ctx context.Context) ([]TraceBackfillProc, error) {
+	cluster := ""
+	if s.clusterMode() {
+		cluster = s.ClusterName()
+	}
+	rows, err := s.conn.Query(ctx, traceBackfillLiveSQL(cluster))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []TraceBackfillProc{}
+	for rows.Next() {
+		var p TraceBackfillProc
+		var initial uint8
+		if err := rows.Scan(&p.Host, &initial, &p.ElapsedS, &p.ReadRows, &p.ReadBytes, &p.MemoryBytes, &p.PeakBytes); err != nil {
+			return nil, err
+		}
+		p.Initial = initial == 1
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

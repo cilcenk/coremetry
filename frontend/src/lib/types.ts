@@ -5994,4 +5994,16 @@ export interface TraceBackfillRun {
   dayEtaMs?: number;
   runEtaMs?: number;
   dayStartedAt?: number;
+  /** v0.10.120 — system.processes'taki koşan backfill sorguları (canlı). */
+  live?: TraceBackfillProc[];
+  liveError?: string;
+}
+export interface TraceBackfillProc {
+  host: string;
+  initial: boolean;
+  elapsedS: number;
+  readRows: number;
+  readBytes: number;
+  memoryBytes: number;
+  peakBytes: number;
 }

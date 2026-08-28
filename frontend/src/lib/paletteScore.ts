@@ -29,3 +29,33 @@ export function scorePaletteEntry(q: string, label: string, aliases?: string[]):
   }
   return score;
 }
+
+// rankPaletteResults — ⌘K sonuç SIRASI (v0.10.126, operatör: "endpoint
+// veya servisler en altta çıkıyor, en üstte çıkmalarını isterim").
+//
+// Eski akış: sayfalar + servisler skorlanıp sıralanıyor, endpoint'ler
+// skorsuz EN SONA ekleniyordu; fuzzy (50) ile tutunan altı sayfa,
+// operatörün aradığı endpoint'in üstüne biniyordu. Yeni sıra: servis →
+// endpoint → sayfa (kendi içlerinde skora göre). Aksiyon ve trace-id
+// kısayolu çağıranda hâlâ en üstte. Sayfalar rotaya göre tekilleşir —
+// katalogda aynı rotanın navKey'li ve düz girişi birlikte duruyor ve
+// ikisi de eşleşince "Problems" dört kez listeleniyordu.
+export interface PaletteRankable {
+  kind: string;
+  to?: string;
+  score?: number;
+}
+export function rankPaletteResults<T extends PaletteRankable>(scored: T[], endpoints: T[], cap = 50): T[] {
+  const byScore = (a: T, b: T) => (b.score ?? 0) - (a.score ?? 0);
+  const services = scored.filter(r => r.kind === 'service').sort(byScore);
+  const seen = new Set<string>();
+  const pages: T[] = [];
+  for (const r of [...scored.filter(r => r.kind === 'page')].sort(byScore)) {
+    const key = r.to ?? '';
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    pages.push(r);
+  }
+  const other = scored.filter(r => r.kind !== 'service' && r.kind !== 'page');
+  return [...services, ...endpoints, ...other, ...pages].slice(0, cap);
+}

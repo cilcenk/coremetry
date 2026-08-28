@@ -1,7 +1,19 @@
-# K8s entity katmanı — AŞAMA 2: tasarım (ONAY BEKLİYOR)
+# K8s entity katmanı — AŞAMA 2: tasarım (ONAYLANDI 2026-08-28) · AŞAMA 3 GEMİDE
 
 **Tarih:** 2026-08-28 · **Girdi:** [entity-layer-discovery-2026-08-28.md](../audit/entity-layer-discovery-2026-08-28.md)
-· **Durum:** kod yok, şema yok. Onaydan sonra AŞAMA 3 adımları sırayla.
+· **Durum:** operatör onayı 2026-08-28 ("Onay"). AŞAMA 3 sürümleri:
+v0.10.127 şema + terfi kolonları + entity_seen MV (+ `migrations/0011`),
+v0.10.128 Remote Cluster kimliği + cluster matcher, v0.10.130 syncer + span
+geçişi + sorgu katmanı + pivot uçları, v0.10.131 UI (Settings → K8s entity
+katmanı, Service → Infra "Pods (entity layer)", /pod şeridi). Bayrak
+varsayılan KAPALI. Prod'da: `0011_entity_layer.sql` operatörde; Remote
+Cluster kayıtlarına Thanos etiket adı/değeri + span cluster değeri girilir
+(probe A2 sonucu), sonra Settings → K8s entity katmanı → Enable.
+**Uygulamada tasarımdan sapmalar:** `GET /api/entities/{id}` yerine
+`GET /api/entity?id=` (id `/` taşır); Thanos etiket varsayılanı boş
+(matcher yok) — §1.1; ayar blobu `updatedAt` damgası (kendi reload
+sinyali eski satırı okuyup değeri geri alıyordu); `system_settings`
+INSERT'i version'ı açık yazar (v0.10.129, Replicated dedup).
 
 > **Varsayımlar (probe gelmeden yazıldı, her biri konfigüre edilebilir):**
 > V1 Thanos external label adı `cluster` (UI önerisi; kayıt varsayılanı BOŞ = matcher yok, bkz. §1.1), değeri Remote Cluster `Name` ile

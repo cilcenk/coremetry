@@ -146,4 +146,19 @@ export const keys = {
     // anahtara girseydi her zoom yeni bir arama isteği doğururdu.
     metricUnit:  (name: string) => ['explore', 'metric-unit', name] as const,
   },
+  // v0.10.131 — K8s entity katmanı (entities.ts). Her anahtar TÜM girdileri
+  // taşır (cluster/tip/ns/arama/at/pencere) — sunucu anahtarının aynası.
+  entities: {
+    all:         ['entities'] as const,
+    clusters:    () => ['entities', 'clusters'] as const,
+    list:        (q: { cluster: string; type?: string; namespace?: string; q?: string; at?: number; limit?: number }) =>
+                   ['entities', 'list', q] as const,
+    get:         (id: string, at?: number) => ['entities', 'get', id, at ?? 0] as const,
+    services:    (id: string, range: { from: number; to: number }) => ['entities', 'services', id, range] as const,
+    metrics:     (id: string, range: { from: number; to: number }) => ['entities', 'metrics', id, range] as const,
+    servicePods: (service: string, cluster: string, range: { from: number; to: number }) =>
+                   ['entities', 'service-pods', service, cluster, range] as const,
+    settings:    () => ['entities', 'settings'] as const,
+    sync:        () => ['entities', 'sync'] as const,
+  },
 } as const;

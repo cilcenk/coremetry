@@ -3,6 +3,7 @@ import { Spinner } from '@/components/Spinner';
 import { Badge, Button, Field } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useSettingsLoad, SettingsLoadError } from './shared';
+import { fmtDateTime } from '@/lib/utils';
 import type { DevOpsFlavor, DevOpsResolveDryRun, DevOpsTestResult, SchemaCatalogSummary } from '@/lib/types';
 
 // DevOpsTab — Azure DevOps Server / TFS bağlantısı (v0.9.829),
@@ -552,7 +553,7 @@ export function DevOpsTab() {
         </p>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
           {schema && schema.importedAt > 0 ? (
-            <Badge tone="success">{schema.tables} tablo · {schema.columns} kolon · {new Date(schema.importedAt).toLocaleString()}{schema.flavor ? ` · ${schema.flavor}` : ''}</Badge>
+            <Badge tone="success">{schema.tables} tablo · {schema.columns} kolon · {fmtDateTime(new Date(schema.importedAt))}{schema.flavor ? ` · ${schema.flavor}` : ''}</Badge>
           ) : (
             <Badge>katalog yüklü değil</Badge>
           )}
@@ -575,7 +576,7 @@ export function DevOpsTab() {
           </div>
           <textarea value={schemaCsv} onChange={e => setSchemaCsv(e.target.value)} rows={5}
             placeholder={'TABSCHEMA,TABNAME,COLNAME,TYPENAME,LENGTH,SCALE,NULLS\nBSA,INT_TFRAUD,TELNO,VARCHAR,10,0,N'}
-            style={{ width: '100%', fontFamily: 'var(--mono)', fontSize: 11 }} />
+            className="mono" style={{ width: '100%' }} />
           <input type="file" accept=".csv,.txt,text/csv" style={{ marginTop: 6, fontSize: 12 }}
             onChange={e => readCsvFile(e.target.files?.[0])} />
         </label>

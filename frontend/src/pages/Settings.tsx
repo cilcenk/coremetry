@@ -27,6 +27,7 @@ import { MetricsBackendTab } from './settings/MetricsBackendTab';
 import { DevOpsTab } from './settings/DevOpsTab';
 import { McpServersTab } from './settings/McpServersTab';
 import { ClustersTab } from './settings/ClustersTab';
+import { EntitiesTab } from './settings/EntitiesTab';
 import { ElasticTab } from './settings/ElasticTab';
 import { KibanaTab } from './settings/KibanaTab';
 import { LogBridgeTab } from './settings/LogBridgeTab';
@@ -65,6 +66,7 @@ const TAB_COMPS: Record<string, ComponentType> = {
   'tempo': TempoTab,
   'metrics-backend': MetricsBackendTab,
   'clusters': ClustersTab,
+  'entities': EntitiesTab,
   'elastic': ElasticTab,
   'kibana': KibanaTab,
   'log-bridge': LogBridgeTab,

@@ -17,6 +17,7 @@ export const SETTINGS_TAB_INDEX: SettingsTabRef[] = [
   { slug: 'tempo', label: 'Tempo backend' },
   { slug: 'metrics-backend', label: 'Metrik backend’i' },
   { slug: 'clusters', label: 'Remote clusters' },
+  { slug: 'entities', label: 'K8s entity katmanı' },
   { slug: 'elastic', label: 'Elasticsearch logs' },
   { slug: 'kibana', label: 'Kibana link' },
   { slug: 'log-bridge', label: 'Log köprüsü' },

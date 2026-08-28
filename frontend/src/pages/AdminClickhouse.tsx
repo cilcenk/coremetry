@@ -2539,7 +2539,7 @@ function TraceBackfillWizardPanel() {
           </div>
         )}
         {(run?.notes?.length ?? 0) > 0 && (
-          <div style={{ fontSize: 11, color: 'var(--warn, #b8860b)', marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: 'var(--warn)', marginBottom: 10 }}>
             {run!.notes!.map((n, i) => <div key={i}>⚠ {n}</div>)}
           </div>
         )}

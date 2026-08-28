@@ -62,3 +62,7 @@ export { useInbox, useInboxCount } from './inbox';
 export { useProfiles, useProfileHotspots } from './profiles';
 export { useSlowQueries, useDBStmtDetail } from './databases';
 export { useEndpoints, useEndpointDetail, useEndpointSplit, useEndpointDownstream, useEndpointCallers } from './endpoints';
+export {
+  useEntityClusters, useEntityEnabled, useEntities, useEntity, useEntityServices, useEntityMetrics,
+  useServicePods as useEntityServicePods, useEntitySettings, useSaveEntitySettings, useEntitySync, useRunEntitySync,
+} from './entities';

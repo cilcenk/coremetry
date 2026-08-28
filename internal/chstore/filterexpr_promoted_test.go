@@ -130,3 +130,43 @@ func TestPromotedTakesPrecedenceOverWellKnown(t *testing.T) {
 		t.Fatalf("gösterim yolu farklı sıra kullanıyor — iki yer iki kural: %s", proj)
 	}
 }
+
+// v0.10.127 — resource.<anahtar> öneki de terfi kolonuna düşer.
+//
+// K8s kolonları resource kapsamından türer; FilterBuilder resource
+// kapsamındaki anahtarı `resource.` önekiyle önerir. Önek dalı yalnız
+// resourceWellKnown'a bakıp diziye düşseydi önerilen yol yine yavaş
+// yol olurdu (v0.9.619'un aynı dersi). Probe resource kapsamlı bir
+// anahtarı İKİ yazımla kaydeder: çıplak ve `resource.` önekli.
+func TestFilterRoutesPromotedResourceKeyUnderResourcePrefix(t *testing.T) {
+	prev := promotedColsPtr.Load()
+	registerTraceAttrMaterialized(map[string]string{
+		"k8s.pod.name":          "k8s_pod",
+		"resource.k8s.pod.name": "k8s_pod",
+	})
+	t.Cleanup(func() { promotedColsPtr.Store(prev) })
+	for _, key := range []string{"resource.k8s.pod.name", "k8s.pod.name"} {
+		f := FilterExpr{Key: key, Op: "=", Values: []string{"api-7d9f-x1"}}
+		sql, args, err := f.SQL()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(sql, "k8s_pod") || strings.Contains(sql, "indexOf(") {
+			t.Fatalf("%s terfi kolonuna yönlenmeliydi: %s", key, sql)
+		}
+		if len(args) != 1 || args[0] != "api-7d9f-x1" {
+			t.Fatalf("%s yalnız değer bind edilmeli: %v", key, args)
+		}
+	}
+}
+
+// probe kayıt çıktısı: resource kapsamlı anahtar iki yazımla, attr
+// kapsamlı anahtar tek yazımla haritaya girer (saf yardımcı).
+func TestPromotedProbeKeysForScope(t *testing.T) {
+	if got := promotedMapKeys(promotedAttr{res: true}, "k8s.pod.name"); len(got) != 2 || got[0] != "k8s.pod.name" || got[1] != "resource.k8s.pod.name" {
+		t.Fatalf("resource kapsamı iki yazım vermeli, alınan %v", got)
+	}
+	if got := promotedMapKeys(promotedAttr{}, "channel_code"); len(got) != 1 || got[0] != "channel_code" {
+		t.Fatalf("attr kapsamı tek yazım vermeli, alınan %v", got)
+	}
+}

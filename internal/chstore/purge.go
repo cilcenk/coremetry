@@ -22,6 +22,13 @@ type PurgeResult struct {
 // CREATE statements in store.go / chmigrate; TestPurgeAllowlistExcludesConfig
 // pins that no config table leaks in.
 var telemetryPurgeTables = []string{
+	// v0.10.127 — K8s entity katmanı: hepsi telemetriden/Thanos'tan
+	// TÜRER ve syncer + MV ile yeniden doğar; operatör içeriği taşımaz.
+	// entities/entity_relations ömür tarihçesi purge'la gider — purge
+	// zaten "her şeyi sil" demek, span-türevli tarihçe (entity_seen) de
+	// gidiyor.
+	"entities", "entity_relations", "entity_sync_runs",
+	"entity_seen_1m", "entity_seen_5m",
 	// raw signals (exemplars = OTLP metric exemplars, v0.8.328;
 	// span_links + span_links_reverse = OTel span links, v0.8.329 — pure
 	// telemetry, regenerates from new ingest. The reverse table is listed

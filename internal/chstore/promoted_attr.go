@@ -57,11 +57,64 @@ import (
 type promotedAttr struct {
 	col  string
 	keys []string
+	// res — v0.10.127: anahtar RESOURCE kapsamında (res_keys/res_values).
+	// K8s entity katmanının kolonları (k8s_namespace/k8s_pod/k8s_node)
+	// span attribute'undan değil resource'tan türer — prod'da k8s.*
+	// yalnız res_keys'te (k8s_coverage.go ölçümü). Kapsam bilinmezse
+	// ifade attr_values okur, kolon hep boş kalır, probe asla kaydetmez:
+	// v0.9.198'in "boş kolon" sınıfı, bu kez kapsam yüzünden.
+	res bool
+	// fallback — anahtar yoksa okunacak mevcut kolon (k8s_pod → host_name:
+	// prod'da host.name == k8s.pod.name, %98 ölçüldü; k8s.pod.name
+	// taşımayan üretici için köprü). Boş = yedek yok.
+	fallback string
 }
 
 var promotedAttrs = []promotedAttr{
 	{col: "attr_channel_code", keys: []string{"CHANNEL_CODE", "channel_code"}},
 	{col: "attr_function_code", keys: []string{"FUNCTION_CODE", "function_code"}},
+	// v0.10.127 — K8s entity katmanı (docs/plans/entity-layer-design-2026-08-28.md §2.3).
+	// Kanonik namespace zinciri identity.go'daki nsIdentityKeys'in k8s
+	// yarısı (service.namespace bilinçli DIŞARIDA: o "servis ad alanı",
+	// k8s namespace değil). LowCardinality: pod adı prod'da ≤10k/gün
+	// beklenir; 0011 başlığındaki uniq() kapısı ölçer.
+	{col: "k8s_namespace", keys: []string{"k8s.namespace.name", "kubernetes.namespace.name"}, res: true},
+	{col: "k8s_pod", keys: []string{"k8s.pod.name"}, res: true, fallback: "host_name"},
+	{col: "k8s_node", keys: []string{"k8s.node.name"}, res: true},
+}
+
+// promotedAttrArrays — kapsamın okuduğu (anahtar, değer) dizi kolonları.
+func promotedAttrArrays(a promotedAttr) (keysCol, valsCol string) {
+	if a.res {
+		return "res_keys", "res_values"
+	}
+	return "attr_keys", "attr_values"
+}
+
+// promotedMapKeys — probe'un haritaya yazacağı yazımlar. Resource
+// kapsamlı anahtar iki yazımla girer: çıplak (`k8s.pod.name`) ve
+// FilterBuilder'ın önerdiği `resource.` önekli — önek dalı da terfi
+// kolonuna düşsün (v0.9.619 dersi: önerilen yol yavaş yol olmasın).
+func promotedMapKeys(a promotedAttr, key string) []string {
+	if a.res {
+		return []string{key, "resource." + key}
+	}
+	return []string{key}
+}
+
+// promotedAttrExprFor — kolonun MATERIALIZED ifadesi, kapsam + yedek
+// kolon dahil. Attr kapsamında promotedAttrExpr ile birebir.
+func promotedAttrExprFor(a promotedAttr) string {
+	keysCol, valsCol := promotedAttrArrays(a)
+	parts := make([]string, 0, len(a.keys)+2)
+	for _, k := range a.keys {
+		parts = append(parts, fmt.Sprintf("nullIf(%s[indexOf(%s, '%s')], '')", valsCol, keysCol, k))
+	}
+	if a.fallback != "" {
+		parts = append(parts, fmt.Sprintf("nullIf(%s, '')", a.fallback))
+	}
+	parts = append(parts, "''")
+	return "coalesce(" + strings.Join(parts, ", ") + ")"
 }
 
 // promotedAttrExpr — kolonun MATERIALIZED ifadesi. SAF (tablo testli).
@@ -141,7 +194,7 @@ func promotedAttrDDL(a promotedAttr, have string, colExists, idxExists bool) []s
 	if !colExists || needsRepair {
 		out = append(out, fmt.Sprintf(
 			"ALTER TABLE spans ADD COLUMN IF NOT EXISTS %s LowCardinality(String) MATERIALIZED %s",
-			a.col, promotedAttrExpr(a.keys)))
+			a.col, promotedAttrExprFor(a)))
 	}
 	// Onarım indeksi düşürdüyse idxExists'e bakmadan geri konur.
 	if !idxExists || needsRepair {
@@ -189,10 +242,11 @@ func promotedAttrResolve(key string) (string, []any, bool) {
 				return col, nil, true
 			}
 		}
+		keysCol, valsCol := promotedAttrArrays(a)
 		parts := make([]string, 0, len(a.keys)+1)
 		args := make([]any, 0, len(a.keys))
 		for _, k := range a.keys {
-			parts = append(parts, "nullIf(attr_values[indexOf(attr_keys, ?)], '')")
+			parts = append(parts, "nullIf("+valsCol+"[indexOf("+keysCol+", ?)], '')")
 			args = append(args, k)
 		}
 		parts = append(parts, "''")
@@ -244,23 +298,36 @@ func (s *Store) spansIndexExists(ctx context.Context, name string) bool {
 // Dış Distributed + cluster_name boşken ATLANIR (v0.8.185/186 emsali,
 // distributed-column-safety): ALTER yerel tabloya yönlenemez, kolon
 // oluşmaz, okuma tarafı zaten probe ile kapalı kalır.
-func (s *Store) repairPromotedAttrCols(ctx context.Context) {
+//
+// v0.10.127 — DÖNÜŞ: "sağlanmış" kolonlar (zaten vardı ya da ADD COLUMN
+// hatasız gönderildi/kuyruklandı). entity_seen MV'lerinin kapısı bu:
+// küme kipinde DDL ERTELENİR, yani ADD kuyruğa girer, system.columns
+// hâlâ "yok" der ve kolona bakan bir kapı MV'yi bir sonraki boot'a
+// atardı (lokalde ölçüldü: 1. boot "k8s_pod çözülemedi", 2. boot MV).
+// ADD hatasız kuyruklandıysa MV CREATE aynı FIFO kuyruğa ONUN ARKASINA
+// girer ve ilk boot'ta çıkar; ADD arka planda düşerse MV de kod 47 ile
+// düşer — trigger kurulmaz, ingest etkilenmez, sonraki boot dener.
+func (s *Store) repairPromotedAttrCols(ctx context.Context) map[string]bool {
+	ensured := map[string]bool{}
 	if s.spansIsExternalDistributed(ctx) {
 		log.Printf("[chstore] dış Distributed `spans` (cluster_name boş) — terfi attribute kolonları ATLANDI; /traces dizi yolunda kalıyor")
-		return
+		return ensured
 	}
 	for _, a := range promotedAttrs {
 		have, colExists := s.spansColumnExpr(ctx, a.col)
 		idxExists := s.spansIndexExists(ctx, "idx_"+a.col)
 		stmts := promotedAttrDDL(a, have, colExists, idxExists)
 		if len(stmts) == 0 {
+			ensured[a.col] = true
 			continue
 		}
 		if colExists && promotedAttrNeedsRepair(have, a.keys) {
 			log.Printf("[chstore] %s ifadesi eksik yazım taşıyor — DROP+ADD ile onarılıyor (eski part'lar okuma anında hesaplanır)", a.col)
 		}
+		ensured[a.col] = true
 		for _, q := range stmts {
 			if err := s.execDDL(ctx, q); err != nil {
+				ensured[a.col] = false
 				// Soft-fail: terfi kolonu + indeksi saf birer hız
 				// optimizasyonu. Probe zaten dolmamış kolonu
 				// kaydetmiyor, yani başarısızlık "yavaş" demek,
@@ -301,6 +368,7 @@ func (s *Store) repairPromotedAttrCols(ctx context.Context) {
 			log.Printf("[chstore] %s skip index'i eklenemedi (yumuşak): %v", a.col, err)
 		}
 	}
+	return ensured
 }
 
 // probePromotedAttrs — hangi (yazım → kolon) eşleşmelerinin GERÇEKTEN
@@ -327,14 +395,15 @@ func (s *Store) probePromotedAttrs(ctx context.Context) map[string]string {
 			// count()/countIf() UInt64 döner — int'e taramak derlenir,
 			// testleri geçer, yalnız canlıda patlar (v0.9.595 dersi).
 			var bad, seen uint64
+			keysCol, valsCol := promotedAttrArrays(a)
 			q := fmt.Sprintf(`SELECT
-				countIf(has(attr_keys, ?) AND %[1]s != attr_values[indexOf(attr_keys, ?)]),
-				countIf(has(attr_keys, ?))
+				countIf(has(%[2]s, ?) AND %[1]s != %[3]s[indexOf(%[2]s, ?)]),
+				countIf(has(%[2]s, ?))
 			FROM (
-				SELECT attr_keys, attr_values, %[1]s FROM spans
+				SELECT %[2]s, %[3]s, %[1]s FROM spans
 				WHERE time >= now() - INTERVAL 30 MINUTE
 				LIMIT 50000
-			) SETTINGS max_execution_time = 10`, a.col)
+			) SETTINGS max_execution_time = 10`, a.col, keysCol, valsCol)
 			if err := s.conn.QueryRow(ctx, q, k, k, k).Scan(&bad, &seen); err != nil {
 				log.Printf("[chstore] %s çözülemedi (%v) — bu attribute dizi yolunda kalıyor", a.col, err)
 				break // kolon yok/okunamıyor: bu attribute'un HİÇBİR yazımı kaydedilmez
@@ -346,7 +415,9 @@ func (s *Store) probePromotedAttrs(ctx context.Context) map[string]string {
 				log.Printf("[chstore] %s, '%s' yazımını doğru taşımıyor (%d/%d uyuşmazlık) — o filtre dizi yolunda kalıyor", a.col, k, bad, seen)
 				continue
 			}
-			out[k] = a.col
+			for _, mk := range promotedMapKeys(a, k) {
+				out[mk] = a.col
+			}
 			log.Printf("[chstore] terfi kolonu doğrulandı: '%s' → %s (%d taze span)", k, a.col, seen)
 		}
 	}

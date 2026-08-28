@@ -2277,6 +2277,73 @@ func (s *Store) migrate(ctx context.Context) error {
 		PARTITION BY toYYYYMM(sent_at)
 		ORDER BY (sent_at, id)
 		TTL toDate(sent_at) + INTERVAL 90 DAY`,
+		// ── v0.10.127 — K8s ENTITY KATMANI (docs/plans/entity-layer-design-2026-08-28.md §2) ──
+		//
+		// Üç state tablosu. ORDER BY = dedup anahtarı; ömür ayrımı
+		// valid_from'da (aynı pod adı yeniden kullanılınca YENİ satır, eski
+		// ömür valid_to ile kapanır). PARTITION BY BİLİNÇLİ YOK (Kural P1:
+		// last_seen her tazelemede yeniden yazılır — partition'da olsaydı
+		// FINAL kopyaları asla temizleyemezdi; ai_feedback/rca_verdicts
+		// emsali). entity_id hiçbir shard/önbellek anahtarına girmez —
+		// state tablosu, tek replikasyon grubu (v0.9.1308). Etiketler
+		// allow-list'li Array çifti (hassas etiket taşınmaz).
+		`CREATE TABLE IF NOT EXISTS entities (
+			entity_type  LowCardinality(String),
+			cluster_id   LowCardinality(String),
+			entity_id    String,
+			valid_from   DateTime,
+			valid_to     DateTime DEFAULT 0,
+			namespace    LowCardinality(String) DEFAULT '',
+			name         String,
+			uid          String DEFAULT '',
+			parent_id    String DEFAULT '',
+			label_keys   Array(LowCardinality(String)),
+			label_values Array(String),
+			source       LowCardinality(String),
+			first_seen   DateTime,
+			last_seen    DateTime,
+			stale        UInt8 DEFAULT 0,
+			version      UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY (entity_type, cluster_id, entity_id, valid_from)
+		TTL last_seen + INTERVAL 180 DAY`,
+		// rel_type: parent (cluster→node, cluster→ns, ns→wl, wl→pod, pod→ctr)
+		// | runs_on (pod→node) | runs (pod→service). Ters yön nokta araması
+		// child_id üzerinde bloom (idx_child).
+		`CREATE TABLE IF NOT EXISTS entity_relations (
+			rel_type   LowCardinality(String),
+			cluster_id LowCardinality(String),
+			parent_id  String,
+			child_id   String,
+			valid_from DateTime,
+			valid_to   DateTime DEFAULT 0,
+			last_seen  DateTime,
+			source     LowCardinality(String),
+			version    UInt64 DEFAULT toUnixTimestamp64Nano(now64(9)),
+			INDEX idx_child child_id TYPE bloom_filter(0.01) GRANULARITY 4
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY (rel_type, cluster_id, parent_id, child_id, valid_from)
+		TTL last_seen + INTERVAL 180 DAY`,
+		// Sync koşu kaydı: kısmi başarı + eşlenemeyen cluster değeri
+		// sayaçları. started_at yeniden yazılmaz → partition P1-güvenli.
+		`CREATE TABLE IF NOT EXISTS entity_sync_runs (
+			cluster_id        LowCardinality(String),
+			started_at        DateTime,
+			finished_at       DateTime,
+			status            LowCardinality(String),
+			entities_written  UInt32 DEFAULT 0,
+			relations_written UInt32 DEFAULT 0,
+			closed            UInt32 DEFAULT 0,
+			unmapped_keys     Array(String),
+			unmapped_counts   Array(UInt32),
+			thanos_ms         UInt32 DEFAULT 0,
+			ch_ms             UInt32 DEFAULT 0,
+			error             String DEFAULT '',
+			version           UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		PARTITION BY toYYYYMM(started_at)
+		ORDER BY (cluster_id, started_at)
+		TTL started_at + INTERVAL 30 DAY`,
 	}
 
 	// v0.9.1308 — state tablolarının ZK yolu KODDAN değil KÜMEDEN
@@ -3114,7 +3181,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	// "yavaş" demek, "yanlış" değil. v0.9.604-615 boot krizinden sonra
 	// isteğe bağlı bir optimizasyonun pod'u ready olmaktan alıkoyması
 	// kabul edilemez.
-	s.repairPromotedAttrCols(ctx)
+	ensuredPromoted := s.repairPromotedAttrCols(ctx)
 	// v0.9.439 (Uptrace uyarlamaları — LC/kodek denetimi) — metric_points
 	// serbest kolonlarına ZSTD(1) (metadata-only MODIFY; v0.8.214 spans
 	// emsali). Taban ölçümü (lokal, 2026-07-30): res_values 34.5MiB
@@ -3148,6 +3215,14 @@ func (s *Store) migrate(ctx context.Context) error {
 	// ayrı ayrı "kolon, dizi aramasının verdiği değerin aynısını mı
 	// veriyor?" sorusunu veriyle cevaplıyor.
 	registerTraceAttrMaterialized(s.probePromotedAttrs(ctx))
+
+	// v0.10.127 — entity_seen MV'leri k8s_pod terfi kolonunu OKUR; kolon
+	// yoksa (dış Distributed: repairPromotedAttrCols atlandı, ya da DDL
+	// ertelendi) MV'yi yaratmak her span INSERT'ini kod 47 ile düşürürdü
+	// (v0.5.361 sınıfı). O yüzden MV'ler yalnız kolon VARSA listeye girer;
+	// prod'da kolon + MV 0011 migration'ıyla operatörde.
+	_, k8sPodColExists := s.spansColumnExpr(ctx, "k8s_pod")
+	hasK8sPodCol := k8sPodColExists || ensuredPromoted["k8s_pod"]
 
 	// Defensive recovery (mirrors the op_group guard, v0.8.186): when
 	// db_stmt_hash is genuinely absent, DROP db_statement_summary_5m if it
@@ -4001,6 +4076,15 @@ func (s *Store) migrate(ctx context.Context) error {
 		"operation_group_summary_5m",
 	}); err != nil {
 		return fmt.Errorf("promote doorway MVs: %w", err)
+	}
+
+	// v0.10.127 — K8s entity katmanı: entity_seen_1m/5m (entity_schema.go).
+	if hasK8sPodCol {
+		mvs = append(mvs,
+			entitySeenMVDDL("entity_seen_1m", "1 MINUTE", entitySeen1mTTLDays),
+			entitySeenMVDDL("entity_seen_5m", "5 MINUTE", entitySeen5mTTLDays))
+	} else {
+		log.Println("[chstore] k8s_pod terfi kolonu yok — entity_seen MV'leri ATLANDI (dış Distributed'da 0011 migration'ı)")
 	}
 
 	for _, q := range mvs {

@@ -226,7 +226,11 @@ func (f FilterExpr) sql(alias string, wellKnown, resourceWellKnown, promoted map
 		// `resource.deployment.environment` içeriyor ve canlı öneriler
 		// de resource kapsamındaki anahtarı `resource.` önekiyle
 		// sunuyor. Yani önerilen yol, yavaş yoldu.
-		if col, ok := resourceWellKnown[name]; ok {
+		// v0.10.127 — resource kapsamlı TERFİ kolonu önce (k8s_pod vb.);
+		// probe bu anahtarları `resource.` önekli yazımla da kaydeder.
+		if col, ok := promoted[f.Key]; ok {
+			lhs = qualCol(alias, col)
+		} else if col, ok := resourceWellKnown[name]; ok {
 			lhs = qualCol(alias, col)
 		} else {
 			lhs = qualArr(alias, "res_values[indexOf(res_keys, ?)]")

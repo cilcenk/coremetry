@@ -63,6 +63,6 @@ export { useProfiles, useProfileHotspots } from './profiles';
 export { useSlowQueries, useDBStmtDetail } from './databases';
 export { useEndpoints, useEndpointDetail, useEndpointSplit, useEndpointDownstream, useEndpointCallers } from './endpoints';
 export {
-  useEntityClusters, useEntityEnabled, useEntities, useEntity, useEntityServices, useEntityMetrics, useEntityContainers,
+  useEntityClusters, useEntityEnabled, useEntities, useEntity, useEntityServices, useEntityMetrics, useEntityContainers, useEntityLatency,
   useServicePods as useEntityServicePods, useEntitySettings, useSaveEntitySettings, useEntitySync, useRunEntitySync,
 } from './entities';

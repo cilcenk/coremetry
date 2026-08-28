@@ -9,6 +9,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 )
@@ -76,4 +77,63 @@ func (s *Store) PodLatencyForService(ctx context.Context, service string, cluste
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// ── v0.10.139 — adım 5 (node / namespace detay): giriş-span latency özeti ──
+// entity_seen_5m yüzdelik taşımaz; node/namespace için tek satır p50/p95/p99
+// ham spans'ten, terfi kolon (k8s_node / k8s_namespace, set index) + zaman
+// + cluster sınırıyla. Boyut BEYAZ LİSTE: SQL'e gömülür, bind edilemez.
+type EntityLatency struct {
+	EntrySpans int64   `json:"entrySpans"`
+	Errors     int64   `json:"errors"`
+	P50Ms      float64 `json:"p50Ms"`
+	P95Ms      float64 `json:"p95Ms"`
+	P99Ms      float64 `json:"p99Ms"`
+}
+
+var entityLatencyDims = map[string]bool{"k8s_node": true, "k8s_namespace": true}
+
+// entityLatencySQL — saf; tablo-testli. Dönen sayı bind arg adedi.
+func entityLatencySQL(dim string, clusterValues []string) (string, int, error) {
+	if !entityLatencyDims[dim] {
+		return "", 0, fmt.Errorf("entity latency: boyut %q desteklenmiyor", dim)
+	}
+	where := dim + " = ? AND time >= ? AND time <= ? AND kind IN ('server', 'consumer')"
+	n := 3
+	if len(clusterValues) > 0 { // çoklu değerli kayıt (v0.10.139): IN listesi
+		where += " AND cluster IN (?)"
+		n = 4
+	}
+	return `SELECT count()                                                          AS entry_spans,
+		       countIf(status_code = 'error')                                   AS errors,
+		       arrayElement(quantilesTDigest(0.5, 0.95, 0.99)(duration), 1) / 1e6 AS p50_ms,
+		       arrayElement(quantilesTDigest(0.5, 0.95, 0.99)(duration), 2) / 1e6 AS p95_ms,
+		       arrayElement(quantilesTDigest(0.5, 0.95, 0.99)(duration), 3) / 1e6 AS p99_ms
+		FROM spans
+		WHERE ` + where + `
+		SETTINGS max_execution_time = 15`, n, nil
+}
+
+func (s *Store) EntityLatencyFor(ctx context.Context, dim, value string, clusterValues []string, from, to time.Time) (EntityLatency, error) {
+	sql, _, err := entityLatencySQL(dim, clusterValues)
+	if err != nil {
+		return EntityLatency{}, err
+	}
+	args := []any{value, from, to}
+	if len(clusterValues) > 0 {
+		args = append(args, clusterValues)
+	}
+	var out EntityLatency
+	var n, e uint64
+	if err := s.telemetryReadConn().QueryRow(ctx, sql, args...).Scan(&n, &e, &out.P50Ms, &out.P95Ms, &out.P99Ms); err != nil {
+		return EntityLatency{}, fmt.Errorf("entity latency: %w", err)
+	}
+	out.EntrySpans, out.Errors = int64(n), int64(e)
+	// Boş küme: quantiles NaN döner, JSON kodlayıcı NaN'ı reddeder → 0.
+	for _, p := range []*float64{&out.P50Ms, &out.P95Ms, &out.P99Ms} {
+		if n == 0 || math.IsNaN(*p) || math.IsInf(*p, 0) {
+			*p = 0
+		}
+	}
+	return out, nil
 }

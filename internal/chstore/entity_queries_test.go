@@ -164,3 +164,29 @@ func TestPodLatencySQLShape(t *testing.T) {
 		t.Fatalf("cluster'lı: 4 arg + cluster IN (?); n=%d", n2)
 	}
 }
+
+// v0.10.139 — adım 5: node/namespace latency SQL — boyut beyaz listesi (SQL'e
+// gömülü ad bind edilemez → k8s_pod / host_name / keyfi metin reddedilir),
+// giriş-span + zaman + isteğe bağlı cluster yan tümcesi, GROUP BY yok.
+func TestEntityLatencySQL(t *testing.T) {
+	for _, bad := range []string{"k8s_pod", "host_name", "service_name; DROP", ""} {
+		if _, _, err := entityLatencySQL(bad, nil); err == nil {
+			t.Fatalf("boyut %q reddedilmeli", bad)
+		}
+	}
+	sql, n, err := entityLatencySQL("k8s_node", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"FROM spans", "k8s_node = ?", "time >= ? AND time <= ?", "kind IN ('server', 'consumer')", "quantilesTDigest(0.5, 0.95, 0.99)", "max_execution_time"} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("SQL %q içermeli:\n%s", want, sql)
+		}
+	}
+	if n != 3 || strings.Contains(sql, "GROUP BY") || strings.Contains(sql, "cluster IN (?)") {
+		t.Fatalf("cluster'sız: 3 arg, GROUP BY yok, cluster yok; n=%d", n)
+	}
+	if sql2, n2, _ := entityLatencySQL("k8s_namespace", []string{"prod-eu", "eu-legacy"}); n2 != 4 || !strings.Contains(sql2, "k8s_namespace = ?") || !strings.Contains(sql2, "AND cluster IN (?)") {
+		t.Fatalf("namespace + cluster: 4 arg + iki yan tümce; n=%d", n2)
+	}
+}

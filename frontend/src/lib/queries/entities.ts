@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { keys } from './keys';
 import type {
-  EntityClustersResponse, EntityDetailResponse, EntityListResponse, EntityMetricsResponse, EntityContainersResponse, EntityClusterInfo,
+  EntityClustersResponse, EntityDetailResponse, EntityListResponse, EntityMetricsResponse, EntityContainersResponse, EntityLatencyResponse, EntityClusterInfo,
   EntityServicesResponse, EntitySettings, EntitySettingsResponse, EntitySyncResponse, ServicePodsResponse,
 } from '@/lib/types';
 
@@ -66,6 +66,16 @@ export function useEntityMetrics(id: string, range: { from: number; to: number }
   return useQuery<EntityMetricsResponse>({
     queryKey: keys.entities.metrics(id, range),
     queryFn: ({ signal }) => api.entityMetrics(id, range.from, range.to, signal),
+    staleTime: 60_000,
+    enabled: enabled && !!id,
+  });
+}
+
+// v0.10.139 — node/namespace giriş-span latency özeti (sunucu 60 s).
+export function useEntityLatency(id: string, range: { from: number; to: number }, enabled = true) {
+  return useQuery<EntityLatencyResponse>({
+    queryKey: keys.entities.latency(id, range),
+    queryFn: ({ signal }) => api.entityLatency(id, range.from, range.to, signal),
     staleTime: 60_000,
     enabled: enabled && !!id,
   });

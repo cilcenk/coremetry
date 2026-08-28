@@ -6260,6 +6260,9 @@ export interface EntityServicesResponse {
   services: EntityServiceRow[];
   rows?: EntitySeenAgg[];
 }
+/** chstore.EntityLatency (v0.10.139) — node/namespace giriş-span latency özeti. */
+export interface EntityLatency { entrySpans: number; errors: number; p50Ms: number; p95Ms: number; p99Ms: number }
+export interface EntityLatencyResponse { entity: string; cluster: string; latency: EntityLatency; /** pencere 24 saate kelepçelendi (ham spans; servis öneki yok) */ clamped?: boolean; from?: number; to?: number }
 export interface EntityMetricsResponse { entity: string; cluster: string; points: ClusterPodTrendPoint[] }
 export interface ServicePodRow extends EntitySeenAgg {
   clusterId?: string;

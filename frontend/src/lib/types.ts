@@ -6208,10 +6208,36 @@ export interface ServicePodRow extends EntitySeenAgg {
   clusterId?: string;
   entityId?: string;
   entity?: EntityRecord;
+  /** v0.10.136 — Thanos KSM anlık durum; statusKnown=false → hücre '—'. */
+  phase?: string;
+  restarts?: number;
+  restartsUnknown?: boolean;
+  lastTermReason?: string;
+  cpuCores?: number;
+  memBytes?: number;
+  statusKnown?: boolean;
+  /** v0.10.136 — giriş-span latency (ham spans, pencere sınırlı); yoksa 0/undefined. */
+  entrySpans?: number;
+  p50Ms?: number;
+  p95Ms?: number;
+  p99Ms?: number;
+}
+/** v0.10.136 — pod'ların entity ebeveynleri (workload/namespace), pod sayısıyla. */
+export interface ServicePodsChainItem {
+  id: string;
+  type: EntityType;
+  name: string;
+  kind?: string;
+  namespace?: string;
+  clusterId: string;
+  pods: number;
 }
 export interface ServicePodsResponse {
   service: string;
   pods: ServicePodRow[];
   clusterAmbiguous?: string[];
   unmappedClusters?: string[];
+  chain?: ServicePodsChainItem[];
+  /** kısmilik ilanları: durum (seçici tavanı / Thanos hatası) + latency (200 pod tavanı / sorgu hatası). */
+  statusNotes?: string[];
 }

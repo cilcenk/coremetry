@@ -142,3 +142,25 @@ func TestEntityListSQLSiblingsAndExact(t *testing.T) {
 		t.Fatalf("cluster argümanı karışmış: %v / %v", argsA, argsB)
 	}
 }
+
+// v0.10.136 — adım 2 (servis detay): pod başına latency SQL sözleşmesi —
+// ham spans yalnız servis + pencere + giriş-span sınırıyla, terfi k8s_pod
+// kolonuyla gruplu, LIMIT + max_execution_time; cluster yan tümcesi yalnız
+// değer verilince (boş = cluster'lar AYRI satır, birleşmez).
+func TestPodLatencySQLShape(t *testing.T) {
+	sql, n := podLatencySQL("")
+	for _, want := range []string{"FROM spans", "service_name = ?", "time >= ? AND time <= ?", "k8s_pod != ''",
+		"kind IN ('server', 'consumer')", "quantilesTDigest(0.5, 0.95, 0.99)", "GROUP BY cluster, k8s_namespace, k8s_pod",
+		"LIMIT 200", "max_execution_time"} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("latency SQL %q içermeli:\n%s", want, sql)
+		}
+	}
+	if n != 3 || strings.Contains(sql, "cluster = ?") {
+		t.Fatalf("cluster'sız: 3 arg ve cluster yan tümcesi yok; n=%d", n)
+	}
+	sql2, n2 := podLatencySQL("prod-eu")
+	if n2 != 4 || !strings.Contains(sql2, "AND cluster = ?") {
+		t.Fatalf("cluster'lı: 4 arg + cluster = ?; n=%d", n2)
+	}
+}

@@ -17,6 +17,8 @@ INSERT'i version'ı açık yazar (v0.10.129, Replicated dedup).
 
 **v0.10.135 (DETAY SAYFALARI adım 1 — Pod detay):** /pod entity paneli (zincir linkleri cluster›node›ns›workload, live/stale/**artık yok** + tarihçe, ?at= zaman geçerliliği (atMatch), etiketler, KSM konteyner durumları `/api/entity/containers`, servisler, kardeş pod'lar); servis paramsız gelişte RED üçlüsü `k8s.pod.name` terfi kolonuyla; `/entity?id=` genel sayfa (node/ns/workload hedefi); `lib/entityHref.ts` bağlam taşıyan link kuralı; ölü/o-an-geçersiz kayıt 404 değil (en yeni ömür + atMatch=false). Sıradaki: servis detay → trace pivot → exceptions dağılımı → node/ns detay → traces kolonları.
 
+**v0.10.136 (DETAY SAYFALARI adım 2 — Servis detay):** Service → Infra "Pods (entity layer)" tablosu zenginleşti: durum (Thanos KSM anlık — cluster başına TEK hedefli `pod=~^(a|b)$` sorgusu, ≤200 ad, fazlası `statusNotes`), CPU/Mem, giriş-span p50/p95/p99 (ham spans, `entity_pod_latency.go`, servis+pencere sınırlı, LIMIT 200), Err %, son görülme; "runs in:" zinciri cluster › namespace › workload (pod sayısıyla); her hücre linki `entityHref` (range korunur), cluster eşlenmemiş satırda link YOK + ilan; ölü pod `gone` rozeti.
+
 > **Varsayımlar (probe gelmeden yazıldı, her biri konfigüre edilebilir):**
 > V1 Thanos external label adı `cluster` (UI önerisi; kayıt varsayılanı BOŞ = matcher yok, bkz. §1.1), değeri Remote Cluster `Name` ile
 > aynı (probe A2(b) aksini söylerse yalnız kayıt alanları değişir, model

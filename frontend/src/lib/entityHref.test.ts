@@ -28,6 +28,9 @@ describe('entityHref', () => {
     expect(p.get('range')).toBe(windowRangeParam(r));
     expect(p.get('at')).toBe('1700001000000');
     expect(p.get('cluster')).toBe('prod-eu');
+    // servis bağlamı (inceleme v0.10.136): /pod geri-linki + servis-kapsamlı RED
+    expect(params(entityHref(podA, { service: 'api' })).get('service')).toBe('api');
+    expect(params(entityHref(podA)).has('service')).toBe(false);
     const n = params(entityHref(node, { range: '6h', at: 5 }));
     expect(n.get('id')).toBe('node:c-a/w1');
     expect(n.get('range')).toBe('6h');

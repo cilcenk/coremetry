@@ -204,15 +204,19 @@ const summaryMemUsedQuery = `sum(node_memory_MemTotal_bytes) - sum(node_memory_M
 // "—" / rozet gizli).
 
 // Pod fazı (Pods tab Status): kube_pod_status_phase==1 → (ns,pod,phase).
-func podPhaseQuery(nsFilter string) string {
-	return fmt.Sprintf(`kube_pod_status_phase{pod!=""%s} == 1`, nsMatcher(nsFilter))
+// v0.10.136 — podRe: hedefli kip (entity katmanı servis pod'ları). Boş =
+// cluster geneli (eski davranış). İnceleme bulgusu: CPU/Mem hedefliyken
+// faz/restart/sebep cluster-geneli kalınca 1000-seri tavanında kırpılıp
+// tam da sorulan pod'ları düşürebiliyordu.
+func podPhaseQuery(nsFilter, podRe string) string {
+	return fmt.Sprintf(`kube_pod_status_phase{%s%s} == 1`, podMatcher(podRe), nsMatcher(nsFilter))
 }
 
 // Pod restart sayısı (Pods tab Restarts): container restart toplamı.
-func podRestartsQuery(nsFilter string) string {
+func podRestartsQuery(nsFilter, podRe string) string {
 	return fmt.Sprintf(
-		`sum by (namespace, pod) (kube_pod_container_status_restarts_total{pod!=""%s})`,
-		nsMatcher(nsFilter))
+		`sum by (namespace, pod) (kube_pod_container_status_restarts_total{%s%s})`,
+		podMatcher(podRe), nsMatcher(nsFilter))
 }
 
 // Pod son-sonlanma sebebi (v0.9.1276, Dynatrace-parite #5): restart
@@ -224,10 +228,10 @@ func podRestartsQuery(nsFilter string) string {
 // serilerini de 0 DEĞERLE basar (aynı container için Completed=0,
 // OOMKilled=1 gibi). Filtresiz okumak 0'lı bir seriyi "sebep" sanıp
 // yanlış rozet bastırır.
-func podLastTermQuery(nsFilter string) string {
+func podLastTermQuery(nsFilter, podRe string) string {
 	return fmt.Sprintf(
-		`max by (namespace, pod, reason) (kube_pod_container_status_last_terminated_reason{pod!=""%s} == 1)`,
-		nsMatcher(nsFilter))
+		`max by (namespace, pod, reason) (kube_pod_container_status_last_terminated_reason{%s%s} == 1)`,
+		podMatcher(podRe), nsMatcher(nsFilter))
 }
 
 // Node rolü (heatmap dot + Nodes tab): kube_node_role → (node,role).
@@ -667,4 +671,36 @@ func containerWaitingQuery(ns, pod string) string {
 
 func containerLastTermQuery(ns, pod string) string {
 	return "kube_pod_container_status_last_terminated_reason" + containerStatusMatcher(ns, pod) + " == 1"
+}
+
+// PodNamesRegex — v0.10.136 (adım 2): entity katmanının pod listesi için
+// hedefli pod=~ seçicisi; adlar QuoteMeta ile kaçışlanır, ^(a|b)$ ile
+// çevrelenir. Tavan 200 ad (seçici uzunluğu / Thanos URL sınırı); fazlası
+// düşer ve truncated=true — çağıran bunu İLAN eder.
+const podNamesRegexMax = 200
+
+// podNamesRegexMaxLen — seçici GET URL'sine gömülür (doQuery); ara vekiller /
+// OpenShift route'ları ~8 KB'de keser, PromQL'in kalanı + kaçışlar için pay
+// bırakılır. İnceleme bulgusu: 200 × 45 karakter ≈ 9 KB tek başına aşıyordu.
+const podNamesRegexMaxLen = 4000
+
+func PodNamesRegex(names []string) (re string, truncated bool) {
+	q := make([]string, 0, len(names))
+	total := 0
+	for _, n := range names {
+		if n == "" {
+			continue
+		}
+		qn := regexp.QuoteMeta(n)
+		if len(q) >= podNamesRegexMax || total+len(qn)+1 > podNamesRegexMaxLen {
+			truncated = true
+			break
+		}
+		q = append(q, qn)
+		total += len(qn) + 1
+	}
+	if len(q) == 0 {
+		return "", truncated
+	}
+	return "^(" + strings.Join(q, "|") + ")$", truncated
 }

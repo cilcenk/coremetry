@@ -127,6 +127,10 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// v0.9.751 — histogram rollup okuyucusu: rollup_metrics_* telemetri
 		// SELECT'i, RoundRobin havuzu doğru adres.
 		"metric_rollup_hist_read.go": true,
+		// v0.10.136 — SAF telemetri: spans üzerinde pod başına giriş-span
+		// latency (servis detay). State okumaz; entity_queries.go'dan bu
+		// yüzden ayrı dosya.
+		"entity_pod_latency.go": true,
 		// v0.9.777 — 0008 route tier'ı. Tek FROM'u rollup_metrics_route_*
 		// (AggregatingMergeTree telemetri rollup'ı, state DEĞİL); coverage
 		// probu da aynı tablolara min(ts) atıyor.

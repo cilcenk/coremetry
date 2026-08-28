@@ -183,3 +183,32 @@ func (s *Service) ProbeCluster(ctx context.Context, c ClusterConfig) (int, error
 	}
 	return int(f), nil
 }
+
+// Sample — anlık sorgu satırı: etiket seti + değer (entity syncer için
+// dışa açık şekil; promSeries paket-içi kalır).
+type Sample struct {
+	Labels map[string]string
+	Value  float64
+}
+
+// InstantSamples — matcher'lı anlık sorgu (doQuery enjeksiyonu). Görev
+// kısıtı: Thanos'a giden her sorgu seçici taşır — expr'in seçicisi
+// çağıranın sorumluluğu (entity.SnapshotQueries); cluster matcher burada.
+func (s *Service) InstantSamples(ctx context.Context, c ClusterConfig, expr string) ([]Sample, error) {
+	res, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {expr}})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Sample, 0, len(res))
+	for _, r := range res {
+		v := 0.0
+		if len(r.Value) >= 2 {
+			var raw string
+			if json.Unmarshal(r.Value[1], &raw) == nil {
+				v, _ = strconv.ParseFloat(raw, 64)
+			}
+		}
+		out = append(out, Sample{Labels: r.Metric, Value: v})
+	}
+	return out, nil
+}

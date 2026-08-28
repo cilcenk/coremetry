@@ -6232,6 +6232,36 @@ export interface ServicePodsChainItem {
   clusterId: string;
   pods: number;
 }
+/** chstore.ExceptionPodRow + Remote Cluster eşlemesi (v0.10.138). */
+export interface ExceptionPodRow {
+  cluster: string;
+  namespace: string;
+  pod: string;
+  node?: string;
+  occurrences: number;
+  lastSeen: string;
+  /** pod adı host.name yedeğinden (namespace yok) — Kubernetes pod'u değil, link yok. */
+  hostOnly?: boolean;
+  clusterId?: string;
+  clusterName?: string;
+}
+export interface ExceptionPodsResponse {
+  fingerprint: string;
+  rows: ExceptionPodRow[];
+  /** k8s.pod.name taşımayan oluşumlar — pivot yok, açık ilan. */
+  noContext: number;
+  /** gruba ait taranan oluşum (pay paydası). */
+  total: number;
+  /** taranan satır; sampled=true → en yeni N satır üzerinden. */
+  scanned: number;
+  sampled: boolean;
+  truncated: boolean;
+  /** k8s_* kolonları yok (0011 uygulanmamış) — hata değil, ilan. */
+  schemaMissing?: boolean;
+  from: string;
+  to: string;
+  unmappedClusters?: string[];
+}
 export interface ServicePodsResponse {
   service: string;
   pods: ServicePodRow[];

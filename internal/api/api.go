@@ -1209,6 +1209,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.registerThanosIdentityRoutes(mux) // v0.10.128 — Remote Cluster etiket rozeti, thanos_identity.go
 	s.registerEntityRoutes(mux)         // v0.10.129 — entity katmanı bayrak + sync yönetimi, entity_routes.go
 	s.registerEntityQueryRoutes(mux)    // v0.10.130 — entity pivot uçları, entities.go
+	s.registerExceptionPodRoutes(mux)   // v0.10.138 — hata grubu pod/node dağılımı, exception_pods.go
 	// External Tempo backend — admin-only because the token grants
 	// read access to every trace in the operator's Tempo cluster.
 	mux.HandleFunc("GET /api/settings/tempo", auth.RequireRole(auth.RoleAdmin, s.getTempoSettings))

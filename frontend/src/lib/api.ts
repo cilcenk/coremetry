@@ -23,7 +23,7 @@ import type {
   TempoSnapshot, TempoSettingsInput,
   VMSnapshot, VMSettingsInput, VMTestResult,
   DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult, DevOpsResolveDryRun,
-  EntityClustersResponse, EntityListResponse, EntityDetailResponse, EntityServicesResponse, EntityMetricsResponse, EntityContainersResponse,
+  EntityClustersResponse, EntityListResponse, EntityDetailResponse, EntityServicesResponse, EntityMetricsResponse, EntityContainersResponse, EntityLatencyResponse,
   ServicePodsResponse, EntitySettings, EntitySettingsResponse, EntitySyncResponse,
   ThanosClusterProbe,
   ThanosSnapshot, ThanosSettingsInput, ClusterPodsResponse, ClusterPodDetail,
@@ -1625,6 +1625,9 @@ export const api = {
     get<EntityServicesResponse>(`/api/entity/services?id=${encodeURIComponent(id)}&from=${from}&to=${to}`, signal),
   entityMetrics: (id: string, from: number, to: number, signal?: AbortSignal) =>
     get<EntityMetricsResponse>(`/api/entity/metrics?id=${encodeURIComponent(id)}&from=${from}&to=${to}`, signal),
+  // v0.10.139 — node/namespace giriş-span latency özeti (ham spans, terfi kolon).
+  entityLatency: (id: string, from: number, to: number, signal?: AbortSignal) =>
+    get<EntityLatencyResponse>(`/api/entity/latency?id=${encodeURIComponent(id)}&from=${from}&to=${to}`, signal),
   // v0.10.135 — pod konteyner durumları (Thanos KSM anlık; hata 200 + error).
   entityContainers: (id: string, signal?: AbortSignal) =>
     get<EntityContainersResponse>(`/api/entity/containers?id=${encodeURIComponent(id)}`, signal),
@@ -1663,9 +1666,9 @@ export const api = {
     request<{ explanation: string; exchangeId?: string; windowSec: number }>(
       `/api/copilot/explain-log-patterns?window=${windowSec}s`, { method: 'POST' }),
 
-  clusterResourceTrend: (cluster: string, metric: 'cpu' | 'mem', byNode: boolean, fromNs: number, toNs: number) =>
+  clusterResourceTrend: (cluster: string, metric: 'cpu' | 'mem', byNode: boolean, fromNs: number, toNs: number, node?: string) =>
     get<ClusterResourceTrendResponse>(`/api/clusters/resource-trend?cluster=${encodeURIComponent(cluster)}` +
-      `&metric=${metric}&byNode=${byNode ? 1 : 0}&from=${fromNs}&to=${toNs}`),
+      `&metric=${metric}&byNode=${byNode ? 1 : 0}&from=${fromNs}&to=${toNs}${node ? `&node=${encodeURIComponent(node)}` : ''}`),
   // v0.9.50 (handoff §8) — Service→Infra sekmesinin CPU/Mem grafiği.
   // v0.9.546 — netin/netout eklendi (operatör: JVM yokken CPU/Mem/Network
   // grafikleri). Sunucuda beyaz listeli: değer cache anahtarına giriyor.

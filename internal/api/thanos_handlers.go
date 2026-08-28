@@ -401,12 +401,21 @@ func (s *Server) getClusterResourceTrend(w http.ResponseWriter, r *http.Request)
 	}
 	from, to := parseFromTo(r, time.Hour)
 	from, to, _ = clampThanosWindow(from, to)
-	key := fmt.Sprintf("cluster-res-trend:%s:%s:%t:%s:%s",
-		name, metric, byNode, clusterCfgDigest(cfg), cacheBucket(from, to))
+	// v0.10.142 — node=<instance host|node adı>: tek node, topk yok (entity
+	// sayfası); anahtar node'u taşır.
+	node := strings.TrimSpace(q.Get("node"))
+	key := fmt.Sprintf("cluster-res-trend:%s:%s:%t:%s:%s:%s",
+		name, metric, byNode, node, clusterCfgDigest(cfg), cacheBucket(from, to))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		series, err := s.thanos.ResourceTrend(qctx, cfg, metric, byNode, from, to)
+		var series []thanos.NamedSeries
+		var err error
+		if node != "" {
+			series, err = s.thanos.NodeResourceTrend(qctx, cfg, metric, node, from, to)
+		} else {
+			series, err = s.thanos.ResourceTrend(qctx, cfg, metric, byNode, from, to)
+		}
 		if err != nil {
 			return nil, err
 		}

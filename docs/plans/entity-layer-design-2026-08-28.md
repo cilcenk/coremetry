@@ -23,6 +23,8 @@ INSERT'i version'ı açık yazar (v0.10.129, Replicated dedup).
 
 **v0.10.138 (DETAY SAYFALARI adım 4 — Exceptions dağılımı):** `GET /api/exception-groups/{fp}/pods` (exception_pods.go; grubun tarama penceresi + samples ile aynı eşleşme yüklemi, k8s_* terfi kolonlarıyla gruplu, LIMIT 50+1, max_execution_time 10; k8s bağlamsız oluşumlar `noContext`; Remote Cluster eşlemesi, eşlenmeyenler ilan). Problem detayında "Pods · nodes" kartı: pod/namespace/cluster/node, oluşum, pay, son görülme; pod/node pivotu (at = o pod'daki son oluşum, servis bağlamı), Traces linki. Bayrak kapalı → kart yok.
 
+**v0.10.142 (DETAY SAYFALARI adım 5 — Node / Namespace detay):** `/entity` sayfası node için kapasite/kullanım (clusterNodes), CPU/Mem trend (resource-trend byNode, node serisi), namespace için pods/CPU/Mem/restart/failing (clusterNamespaces) + çok-pod trend (ThanosTrendPanel); ikisinde etki şeridi (pod/servis/span/hata — entity_seen) + giriş-span p50/p95/p99 (`GET /api/entity/latency`, entity_pod_latency.go, boyut beyaz listesi k8s_node/k8s_namespace, cluster sınırlı). Bayrak kapalı → sayfa kapalı ilan.
+
 > **Varsayımlar (probe gelmeden yazıldı, her biri konfigüre edilebilir):**
 > V1 Thanos external label adı `cluster` (UI önerisi; kayıt varsayılanı BOŞ = matcher yok, bkz. §1.1), değeri Remote Cluster `Name` ile
 > aynı (probe A2(b) aksini söylerse yalnız kayıt alanları değişir, model

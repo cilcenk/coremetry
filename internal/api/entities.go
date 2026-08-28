@@ -43,6 +43,7 @@ func (s *Server) registerEntityQueryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/entity/services", s.getEntityServices)
 	mux.HandleFunc("GET /api/entity/metrics", s.getEntityMetrics)
 	mux.HandleFunc("GET /api/entity/containers", s.getEntityContainers) // v0.10.135 — pod konteyner durumları (Thanos KSM)
+	mux.HandleFunc("GET /api/entity/latency", s.getEntityLatency)       // v0.10.139 — node/namespace giriş-span latency özeti
 	mux.HandleFunc("GET /api/services/{name}/pods", s.getServicePods)
 }
 
@@ -635,4 +636,47 @@ func mergeSeenAgg(a, b chstore.EntitySeenAgg) chstore.EntitySeenAgg {
 		a.LastSeen = b.LastSeen
 	}
 	return a
+}
+
+// getEntityLatency — v0.10.139 (DETAY SAYFALARI adım 5). Node / namespace
+// giriş-span latency özeti (p50/p95/p99 + hata): entity_seen_5m yüzdelik
+// taşımaz; ham spans terfi kolonlu (set index), zaman + cluster sınırlı.
+// serveCached 60 s; anahtar id + pencere (entityPivotKey).
+func (s *Server) getEntityLatency(w http.ResponseWriter, r *http.Request) {
+	if !s.entityEnabled(w) {
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	ref, ok := entity.ParseID(id)
+	var dim string
+	switch {
+	case ok && ref.Type == entity.TypeNode:
+		dim = "k8s_node"
+	case ok && ref.Type == entity.TypeNamespace:
+		dim = "k8s_namespace"
+	default:
+		writeJSONError(w, http.StatusBadRequest, "node ya da namespace entity id gerekli")
+		return
+	}
+	c, ok := s.thanos.ClusterByID(ref.ClusterID)
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, "cluster kaydı yok")
+		return
+	}
+	from, to := parseFromTo(r, time.Hour)
+	// Ham spans, servis öneki YOK (PK budaması yalnız zaman): 7g/30g presetleri
+	// tüm pencereyi tarardı → 24 saate kelepçe + ilan (inceleme).
+	const maxLatencyWindow = 24 * time.Hour
+	clamped := false
+	if to.Sub(from) > maxLatencyWindow {
+		from, clamped = to.Add(-maxLatencyWindow), true
+	}
+	key := entityPivotKey("latency", id, from, to)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		lat, err := s.store.EntityLatencyFor(ctx, dim, ref.Name, c.SpanClusterKeys(), from, to) // tüm değerler (v0.10.139)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"entity": id, "cluster": c.EffectiveID(), "latency": lat, "clamped": clamped, "from": from.UnixNano(), "to": to.UnixNano()}, nil
+	})
 }

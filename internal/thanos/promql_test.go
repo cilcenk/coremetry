@@ -449,3 +449,15 @@ func TestPodNamesRegexLengthCapAndTargetedStatus(t *testing.T) {
 		t.Fatalf("boş podRe = cluster geneli: %s", q)
 	}
 }
+
+// v0.10.142 — tek node trendi: topk YOK, instance seçicisi port'a toleranslı ve kaçışlı.
+func TestNodeResourceTrendQuery(t *testing.T) {
+	q := nodeResourceTrendQuery("cpu", "10.0.1.5")
+	if strings.Contains(q, "topk") || !strings.Contains(q, `instance=~"^10\\.0\\.1\\.5(:\\d+)?$"`) || !strings.Contains(q, "sum by (instance)") {
+		t.Fatalf("cpu: %s", q)
+	}
+	m := nodeResourceTrendQuery("mem", "worker-3")
+	if strings.Count(m, `instance=~"^worker-3(:\\d+)?$"`) != 2 || !strings.Contains(m, "node_memory_MemAvailable_bytes") {
+		t.Fatalf("mem: %s", m)
+	}
+}

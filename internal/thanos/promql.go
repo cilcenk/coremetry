@@ -317,6 +317,21 @@ func resourceTrendQuery(metric string, byNode bool) string {
 	return "sum(" + expr + ")"
 }
 
+// nodeResourceTrendQuery — v0.10.142 (DETAY SAYFALARI adım 5): TEK node'un
+// CPU/Mem trendi, topk YOK (topk(8) cluster-genel "en yoğun" içindi; 9.
+// node'un grafiği boş kalıyordu — inceleme). Seçici node-exporter
+// `instance` host'u (port'suz; kube_node_info internal_ip ile aynı) ya da
+// relabel'lı kurulumlarda node adı: `^<host>(:\d+)?$`.
+func nodeResourceTrendQuery(metric, host string) string {
+	m := `instance=~"^` + escapeLabelValue(regexp.QuoteMeta(host)) + `(:\\d+)?$"`
+	switch metric {
+	case "mem":
+		return fmt.Sprintf(`sum by (instance) (node_memory_MemTotal_bytes{%s} - node_memory_MemAvailable_bytes{%s})`, m, m)
+	default:
+		return fmt.Sprintf(`sum by (instance) (rate(node_cpu_seconds_total{mode!="idle",%s}[5m]))`, m)
+	}
+}
+
 // ── multi-pod trend queries (v0.9.3, trend-upgrade audit §2.3) ──
 //
 // topk BİLEREK YOK: query_range'te topk her adım için ayrı

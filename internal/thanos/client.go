@@ -1390,9 +1390,18 @@ type ValuePoint struct {
 // Bucket adaptif step'e bağlı (stepForWindow); byNode'da instance
 // adı instanceHost ile güzelleştirilir.
 func (s *Service) ResourceTrend(ctx context.Context, c ClusterConfig, metric string, byNode bool, from, to time.Time) ([]NamedSeries, error) {
+	return s.resourceTrendWith(ctx, c, resourceTrendQuery(metric, byNode), byNode, from, to)
+}
+
+// NodeResourceTrend — v0.10.142: tek node (topk yok); seri adı instance host.
+func (s *Service) NodeResourceTrend(ctx context.Context, c ClusterConfig, metric, host string, from, to time.Time) ([]NamedSeries, error) {
+	return s.resourceTrendWith(ctx, c, nodeResourceTrendQuery(metric, host), true, from, to)
+}
+
+func (s *Service) resourceTrendWith(ctx context.Context, c ClusterConfig, query string, byNode bool, from, to time.Time) ([]NamedSeries, error) {
 	step := stepForWindow(from, to)
 	params := url.Values{
-		"query": {resourceTrendQuery(metric, byNode)},
+		"query": {query},
 		"start": {fmt.Sprintf("%d", from.Unix())},
 		"end":   {fmt.Sprintf("%d", to.Unix())},
 		"step":  {fmt.Sprintf("%d", step)},

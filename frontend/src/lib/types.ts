@@ -6172,6 +6172,28 @@ export interface EntityDetailResponse {
   lifetimes: EntityRecord[];
   node?: string;
   cluster?: { id: string; name: string };
+  /** v0.10.135 — dönen ömür istenen anı KAPSIYOR mu; false = o an geçerli değildi / artık yok (en yeni ömür döner, 404 değil). */
+  atMatch?: boolean;
+  /** v0.10.135 — pod: aynı workload'ın diğer pod'ları (kaydın zamanında geçerli, ≤50). */
+  siblings?: EntityRecord[];
+  /** v0.10.135 — pod: konteyner çocukları (entity kayıtları; durum için EntityContainersResponse). */
+  containers?: EntityRecord[];
+}
+/** thanos.ContainerStatus (v0.10.135) — KSM anlık konteyner durumu. */
+export interface EntityContainerStatus {
+  name: string;
+  ready: boolean;
+  /** kube_pod_container_status_ready serisi geldi mi; false = ready bilinmiyor. */
+  readyKnown: boolean;
+  restarts: number;
+  waitingReason?: string;
+  lastTermReason?: string;
+}
+export interface EntityContainersResponse {
+  entity: string;
+  containers: EntityContainerStatus[];
+  /** Thanos hatası: 5xx değil, 200 + bu alan (panel "bilinmiyor" der). */
+  error?: string;
 }
 export interface EntityServiceRow { service: string; pods: number; spans: number; errors: number; avgMs: number }
 export interface EntityServicesResponse {

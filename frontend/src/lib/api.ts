@@ -23,7 +23,7 @@ import type {
   TempoSnapshot, TempoSettingsInput,
   VMSnapshot, VMSettingsInput, VMTestResult,
   DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult, DevOpsResolveDryRun,
-  EntityClustersResponse, EntityListResponse, EntityDetailResponse, EntityServicesResponse, EntityMetricsResponse,
+  EntityClustersResponse, EntityListResponse, EntityDetailResponse, EntityServicesResponse, EntityMetricsResponse, EntityContainersResponse,
   ServicePodsResponse, EntitySettings, EntitySettingsResponse, EntitySyncResponse,
   ThanosClusterProbe,
   ThanosSnapshot, ThanosSettingsInput, ClusterPodsResponse, ClusterPodDetail,
@@ -1618,6 +1618,9 @@ export const api = {
     get<EntityServicesResponse>(`/api/entity/services?id=${encodeURIComponent(id)}&from=${from}&to=${to}`, signal),
   entityMetrics: (id: string, from: number, to: number, signal?: AbortSignal) =>
     get<EntityMetricsResponse>(`/api/entity/metrics?id=${encodeURIComponent(id)}&from=${from}&to=${to}`, signal),
+  // v0.10.135 — pod konteyner durumları (Thanos KSM anlık; hata 200 + error).
+  entityContainers: (id: string, signal?: AbortSignal) =>
+    get<EntityContainersResponse>(`/api/entity/containers?id=${encodeURIComponent(id)}`, signal),
   servicePods: (service: string, cluster: string, from: number, to: number, signal?: AbortSignal) =>
     get<ServicePodsResponse>(`/api/services/${encodeURIComponent(service)}/pods?from=${from}&to=${to}${cluster ? `&cluster=${encodeURIComponent(cluster)}` : ''}`, signal),
   entitySettings: () => get<EntitySettingsResponse>(`/api/settings/entities`),

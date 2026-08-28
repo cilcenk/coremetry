@@ -85,3 +85,60 @@ func TestWalkEntityParents(t *testing.T) {
 		t.Fatalf("bilinmeyen id boş zincir: %+v", got)
 	}
 }
+
+// v0.10.135 — DETAY SAYFALARI adım 1 (pod detay). Zaman geçerliliği: tarihsel
+// bir trace'ten gelen ?at= o an geçerli ömrü seçer; kapsayan ömür yoksa en
+// yeni kayıt + match=false (sayfa "o an geçerli değildi / artık yok" der).
+func TestPickLifetimeTimeValidity(t *testing.T) {
+	ts := func(h int) time.Time { return time.Date(2026, 8, 28, h, 0, 0, 0, time.UTC) }
+	closedTo := ts(10)
+	old := EntityRecord{ID: "pod:c/ns/api-1", ValidFrom: ts(1), ValidTo: &closedTo}
+	cur := EntityRecord{ID: "pod:c/ns/api-1", ValidFrom: ts(12)}
+	all := []EntityRecord{cur, old} // valid_from DESC — sorgunun sırası
+	cases := []struct {
+		name      string
+		all       []EntityRecord
+		at        time.Time
+		wantIdx   int
+		wantMatch bool
+	}{
+		{"at sıfır → açık ömür", all, time.Time{}, 0, true},
+		{"eski ömrün içi → eski kayıt", all, ts(5), 1, true},
+		{"iki ömür arası boşluk → en yeni, eşleşme yok", all, ts(11), 0, false},
+		{"sınır: valid_to anı dahil", all, ts(10), 1, true},
+		{"sınır: valid_from anı dahil", all, ts(12), 0, true},
+		{"gelecek an → açık ömür kapsar", all, ts(20), 0, true},
+		{"hepsi kapalı + at sıfır → en yeni, ölü", []EntityRecord{old}, time.Time{}, 0, false},
+		{"boş → -1", nil, ts(5), -1, false},
+	}
+	for _, c := range cases {
+		idx, match := pickLifetime(c.all, c.at)
+		if idx != c.wantIdx || match != c.wantMatch {
+			t.Errorf("%s: (%d,%v), beklenen (%d,%v)", c.name, idx, match, c.wantIdx, c.wantMatch)
+		}
+	}
+}
+
+// Kardeş/çocuk/tam-ad yan tümceleri; aynı pod adı iki cluster'da iki ayrı
+// sorgu argümanıdır (cluster_id daima ilk koşul).
+func TestEntityListSQLSiblingsAndExact(t *testing.T) {
+	sql, args := entityListSQL(EntityListQuery{ClusterID: "c-1", Type: "pod", ParentID: "wl:c-1/ns/Deployment/api", ExcludeID: "pod:c-1/ns/api-1", Name: "api-2"})
+	for _, want := range []string{"cluster_id = ?", "parent_id = ?", "entity_id != ?", "name = ?"} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("liste SQL %q içermeli:\n%s", want, sql)
+		}
+	}
+	for _, want := range []any{"wl:c-1/ns/Deployment/api", "pod:c-1/ns/api-1", "api-2"} {
+		if !containsArg(args, want) {
+			t.Fatalf("arg %v bind edilmeli: %v", want, args)
+		}
+	}
+	sqlA, argsA := entityListSQL(EntityListQuery{ClusterID: "c-a", Type: "pod", Name: "api-1"})
+	sqlB, argsB := entityListSQL(EntityListQuery{ClusterID: "c-b", Type: "pod", Name: "api-1"})
+	if sqlA != sqlB {
+		t.Fatal("SQL şekli cluster'dan bağımsız olmalı; ayrım yalnız argümanda")
+	}
+	if !containsArg(argsA, "c-a") || !containsArg(argsB, "c-b") || containsArg(argsA, "c-b") {
+		t.Fatalf("cluster argümanı karışmış: %v / %v", argsA, argsB)
+	}
+}

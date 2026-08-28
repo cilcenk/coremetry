@@ -384,3 +384,28 @@ func TestPodLastTermQuery(t *testing.T) {
 		t.Fatal("son-sonlanma sorgusu restart sayacına dokunmamalı")
 	}
 }
+
+// v0.10.135 — konteyner durum sorguları: tek pod TAM eşleşmeli (regex/topk
+// yok), reason serileri `== 1` filtreli, etiket değerleri kaçışlı.
+func TestContainerStatusQueries(t *testing.T) {
+	all := []string{
+		containerReadyQuery("pay", "api-1"), containerRestartsQuery("pay", "api-1"),
+		containerWaitingQuery("pay", "api-1"), containerLastTermQuery("pay", "api-1"),
+	}
+	for _, q := range all {
+		if !strings.Contains(q, `namespace="pay"`) || !strings.Contains(q, `pod="api-1"`) {
+			t.Fatalf("tam eşleşme yok: %s", q)
+		}
+		if strings.Contains(q, "=~") || strings.Contains(q, "topk") {
+			t.Fatalf("tek pod sorgusunda regex/topk olmamalı: %s", q)
+		}
+	}
+	for _, q := range all[2:] {
+		if !strings.HasSuffix(q, " == 1") {
+			t.Fatalf("reason serisi == 1 filtreli olmalı: %s", q)
+		}
+	}
+	if q := containerReadyQuery(`a"b`, `p\q`); !strings.Contains(q, `namespace="a\"b"`) || !strings.Contains(q, `pod="p\\q"`) {
+		t.Fatalf("etiket kaçışı: %s", q)
+	}
+}

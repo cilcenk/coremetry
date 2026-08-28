@@ -17,6 +17,8 @@ export function podDetailPath(opts: {
   service?: string;
   deploy?: string;
   range?: string | null;
+  /** v0.10.135 — ms epoch: tarihsel bağlam; /pod o an geçerli entity kaydını çözer. */
+  at?: number;
   from?: 'infra' | 'pods' | 'metrics' | 'clusters';
 }): string {
   const q = new URLSearchParams();
@@ -26,6 +28,7 @@ export function podDetailPath(opts: {
   if (opts.service) q.set('service', opts.service);
   if (opts.deploy) q.set('deploy', opts.deploy);
   if (opts.range) q.set('range', opts.range);
+  if (opts.at) q.set('at', String(opts.at));
   if (opts.from) q.set('from', opts.from);
   return '/pod?' + q.toString();
 }

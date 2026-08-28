@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { keys } from './keys';
 import type {
-  EntityClustersResponse, EntityDetailResponse, EntityListResponse, EntityMetricsResponse,
+  EntityClustersResponse, EntityDetailResponse, EntityListResponse, EntityMetricsResponse, EntityContainersResponse,
   EntityServicesResponse, EntitySettings, EntitySettingsResponse, EntitySyncResponse, ServicePodsResponse,
 } from '@/lib/types';
 
@@ -63,6 +63,17 @@ export function useEntityMetrics(id: string, range: { from: number; to: number }
     queryKey: keys.entities.metrics(id, range),
     queryFn: ({ signal }) => api.entityMetrics(id, range.from, range.to, signal),
     staleTime: 60_000,
+    enabled: enabled && !!id,
+  });
+}
+
+// v0.10.135 — pod konteyner durumları; yalnız canlı pod'da (ölü pod'da KSM
+// serisi zaten yok) ve panel açıkken (enabled).
+export function useEntityContainers(id: string, enabled = true) {
+  return useQuery<EntityContainersResponse>({
+    queryKey: keys.entities.containers(id),
+    queryFn: ({ signal }) => api.entityContainers(id, signal),
+    staleTime: 30_000,
     enabled: enabled && !!id,
   });
 }

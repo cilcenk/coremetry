@@ -644,3 +644,27 @@ func samplePair(pair []json.RawMessage) (float64, int64, bool) {
 	}
 	return v, int64(tsf), true
 }
+
+// ── v0.10.135 — pod detay konteyner durumları (DETAY SAYFALARI adım 1) ──
+// Tek pod: (namespace,pod) TAM eşleşme, topk gereksiz (bir pod ≤ onlarca
+// container). reason serileri `== 1` ŞART — podLastTermQuery gerekçesi:
+// KSM sebep dışı reason'ları da 0 değerle basar.
+func containerStatusMatcher(ns, pod string) string {
+	return fmt.Sprintf(`{namespace="%s",pod="%s"}`, escapeLabelValue(ns), escapeLabelValue(pod))
+}
+
+func containerReadyQuery(ns, pod string) string {
+	return "kube_pod_container_status_ready" + containerStatusMatcher(ns, pod)
+}
+
+func containerRestartsQuery(ns, pod string) string {
+	return "kube_pod_container_status_restarts_total" + containerStatusMatcher(ns, pod)
+}
+
+func containerWaitingQuery(ns, pod string) string {
+	return "kube_pod_container_status_waiting_reason" + containerStatusMatcher(ns, pod) + " == 1"
+}
+
+func containerLastTermQuery(ns, pod string) string {
+	return "kube_pod_container_status_last_terminated_reason" + containerStatusMatcher(ns, pod) + " == 1"
+}

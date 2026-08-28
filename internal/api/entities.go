@@ -40,6 +40,7 @@ func (s *Server) registerEntityQueryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/entity", s.getEntity)
 	mux.HandleFunc("GET /api/entity/services", s.getEntityServices)
 	mux.HandleFunc("GET /api/entity/metrics", s.getEntityMetrics)
+	mux.HandleFunc("GET /api/entity/containers", s.getEntityContainers) // v0.10.135 — pod konteyner durumları (Thanos KSM)
 	mux.HandleFunc("GET /api/services/{name}/pods", s.getServicePods)
 }
 
@@ -67,8 +68,13 @@ func parseAt(q string) time.Time {
 		return time.Time{}
 	}
 	if n, err := strconv.ParseInt(q, 10, 64); err == nil {
-		if n > 1e15 { // ns
+		// v0.10.135 — üç birim (ns / ms / s): FE linkleri ms taşır (Date.now
+		// ölçeği); ms'yi saniye sanmak 50k yıl ileri bir "an" üretirdi.
+		switch {
+		case n > 1e15: // ns
 			return time.Unix(0, n).UTC()
+		case n > 1e11: // ms
+			return time.UnixMilli(n).UTC()
 		}
 		return time.Unix(n, 0).UTC()
 	}
@@ -151,20 +157,41 @@ func (s *Server) getEntity(w http.ResponseWriter, r *http.Request) {
 	at := parseAt(r.URL.Query().Get("at"))
 	key := entityPivotKey("get", id+"@"+atBucket(at), time.Time{}, time.Time{})
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
-		cur, all, err := s.store.EntityLifetimes(ctx, id, at)
+		cur, match, all, err := s.store.EntityLifetimesAt(ctx, id, at)
 		if err != nil {
 			return nil, err
 		}
 		if cur == nil {
 			return nil, errNotFound
 		}
-		parents := s.store.EntityParents(ctx, id, at)
-		children, _ := s.store.EntityChildrenCounts(ctx, ref.ClusterID, id, at)
-		out := map[string]any{"entity": cur, "parents": parents, "children": children, "lifetimes": all}
+		// v0.10.135 — ölü / o-an-geçersiz kayıt 404 DEĞİL: en yeni ömür +
+		// atMatch=false döner; sayfa "artık mevcut değil, son görülme X" +
+		// tarihçe gösterir. Zincir ve çocuklar kaydın KENDİ zamanında çözülür
+		// (ölü pod'un konteynerleri bugün değil, son görüldüğü anda geçerliydi).
+		eff := at
+		if eff.IsZero() && cur.ValidTo != nil {
+			eff = cur.LastSeen
+		}
+		parents := s.store.EntityParents(ctx, id, eff)
+		children, _ := s.store.EntityChildrenCounts(ctx, ref.ClusterID, id, eff)
+		out := map[string]any{"entity": cur, "parents": parents, "children": children, "lifetimes": all, "atMatch": match}
 		if ref.Type == entity.TypePod {
-			// node: runs_on (geçerli)
-			if rels, err := s.store.EntityRelations(ctx, ref.ClusterID, entity.RelRunsOn, id, false, time.Now().Add(-time.Hour), time.Now()); err == nil && len(rels) > 0 {
+			// node: runs_on — kaydın zamanına DEĞEN ilişki (canlı pod: son 1 saat)
+			wFrom, wTo := time.Now().Add(-time.Hour), time.Now()
+			if !eff.IsZero() {
+				wFrom, wTo = eff.Add(-time.Hour), eff.Add(time.Hour)
+			}
+			if rels, err := s.store.EntityRelations(ctx, ref.ClusterID, entity.RelRunsOn, id, false, wFrom, wTo); err == nil && len(rels) > 0 {
 				out["node"] = rels[0].ChildID
+			}
+			// Kardeş pod'lar: aynı workload, kendisi hariç. Konteynerler: çocuklar.
+			if cur.ParentID != "" {
+				if sib, err := s.store.EntityList(ctx, chstore.EntityListQuery{ClusterID: ref.ClusterID, Type: entity.TypePod, ParentID: cur.ParentID, ExcludeID: id, At: eff, Limit: 50}); err == nil {
+					out["siblings"] = sib
+				}
+			}
+			if ctrs, err := s.store.EntityList(ctx, chstore.EntityListQuery{ClusterID: ref.ClusterID, Type: entity.TypeContainer, ParentID: id, At: eff, Limit: 50}); err == nil {
+				out["containers"] = ctrs
 			}
 		}
 		if c, ok := s.thanos.ClusterByID(ref.ClusterID); ok {
@@ -213,15 +240,22 @@ func (s *Server) getEntityServices(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case entity.TypeNamespace, entity.TypeWorkload:
-			list, err := s.store.EntityList(ctx, chstore.EntityListQuery{ClusterID: ref.ClusterID, Type: entity.TypePod, Namespace: ref.Namespace, At: to, Limit: 500})
+			// İnceleme (v0.10.135): `ns:` id'de ParseID namespace'i Name'e
+			// koyar — ref.Namespace BOŞ; süzgeç SQL'den düşüyor, LIMIT 500
+			// alfabetik ilk namespace'lerde kesiyor, Go süzgeci sıfır
+			// bırakıyordu. Süzgeç SQL'de: namespace → namespace = ?,
+			// workload → parent_id = ?. 500 tavanı namespace İÇİ.
+			q := chstore.EntityListQuery{ClusterID: ref.ClusterID, Type: entity.TypePod, At: to, Limit: 500}
+			if ref.Type == entity.TypeNamespace {
+				q.Namespace = ref.Name
+			} else {
+				q.Namespace, q.ParentID = ref.Namespace, id
+			}
+			list, err := s.store.EntityList(ctx, q)
 			if err != nil {
 				return nil, err
 			}
-			for _, p := range list {
-				if ref.Type == entity.TypeNamespace && p.Namespace == ref.Name || ref.Type == entity.TypeWorkload && p.ParentID == id {
-					pods = append(pods, p)
-				}
-			}
+			pods = append(pods, list...)
 		default:
 			return nil, errBadRequest
 		}
@@ -390,5 +424,41 @@ func (s *Server) getServicePods(w http.ResponseWriter, r *http.Request) {
 			resp["unmappedClusters"] = vals
 		}
 		return resp, nil
+	})
+}
+
+// getEntityContainers — v0.10.135 (DETAY SAYFALARI adım 1). Pod'un konteyner
+// durumları Thanos/KSM'den anlık (ready / restart / bekleme sebebi / son
+// sonlanma sebebi). Thanos hatası 5xx DEĞİL: 200 + error alanı — panel
+// "bilinmiyor" der, sayfanın geri kalanı yaşar (vmetrics probe duruşu).
+func (s *Server) getEntityContainers(w http.ResponseWriter, r *http.Request) {
+	if !s.entityEnabled(w) {
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	ref, ok := entity.ParseID(id)
+	if !ok || ref.Type != entity.TypePod {
+		writeJSONError(w, http.StatusBadRequest, "pod entity id gerekli")
+		return
+	}
+	c, ok := s.thanos.ClusterByID(ref.ClusterID)
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, "cluster kaydı yok")
+		return
+	}
+	key := entityPivotKey("containers", id, time.Time{}, time.Time{})
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		// Dört ardışık Thanos sorgusu; getEntityMetrics gibi 10 s üst sınır —
+		// takılan Querier isteği 60 s'e kadar asmasın (inceleme, v0.10.135).
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		rows, err := s.thanos.PodContainers(qctx, c, ref.Namespace, ref.Name)
+		if err != nil {
+			return map[string]any{"entity": id, "containers": []any{}, "error": err.Error()}, nil
+		}
+		if rows == nil {
+			rows = []thanos.ContainerStatus{}
+		}
+		return map[string]any{"entity": id, "containers": rows}, nil
 	})
 }

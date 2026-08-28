@@ -44,6 +44,7 @@ const External          = lazy(() => import('./pages/External'));
 const Hosts             = lazy(() => import('./pages/Hosts'));
 const Clusters          = lazy(() => import('./pages/Clusters'));
 const Pod               = lazy(() => import('./pages/Pod'));
+const EntityDetail      = lazy(() => import('./pages/EntityDetail')); // v0.10.135 — K8s entity (node/ns/workload) detay
 const SlowQueries       = lazy(() => import('./pages/SlowQueries'));
 const StatementDetail   = lazy(() => import('./pages/StatementDetail'));
 const Messaging         = lazy(() => import('./pages/Messaging'));
@@ -155,6 +156,7 @@ export default function App() {
             <Route path="/hosts"          element={<Hosts />} />
             <Route path="/clusters"       element={<Clusters />} />
             <Route path="/pod"            element={<Pod />} />
+            <Route path="/entity"         element={<EntityDetail />} />
             <Route path="/messaging"      element={<Messaging />} />
             <Route path="/dashboards"     element={<Dashboards />} />
             <Route path="/dashboard"      element={<Dashboard />} />

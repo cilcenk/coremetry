@@ -43,6 +43,9 @@ type EntityListQuery struct {
 	Type      string
 	Namespace string
 	Search    string
+	ParentID  string // v0.10.135 — kardeş/çocuk listesi: parent_id = ?
+	Name      string // v0.10.135 — tam ad: name = ?
+	ExcludeID string // v0.10.135 — kendisi hariç (kardeş listesi)
 	At        time.Time
 	Limit     int
 }
@@ -80,6 +83,21 @@ func entityListSQL(q EntityListQuery) (string, []any) {
 	if s := strings.TrimSpace(q.Search); s != "" {
 		where = append(where, "name ILIKE ?")
 		args = append(args, "%"+escapeLike(s)+"%")
+	}
+	// v0.10.135 — pivot yardımcıları: aynı workload'ın pod'ları (kardeşler),
+	// bir pod'un konteynerleri (çocuklar), tam ad çözümü. cluster_id her
+	// zaman ilk koşul: aynı pod adı iki cluster'da iki ayrı kayıttır.
+	if q.ParentID != "" {
+		where = append(where, "parent_id = ?")
+		args = append(args, q.ParentID)
+	}
+	if q.Name != "" {
+		where = append(where, "name = ?")
+		args = append(args, q.Name)
+	}
+	if q.ExcludeID != "" {
+		where = append(where, "entity_id != ?")
+		args = append(args, q.ExcludeID)
 	}
 	v, vargs := entityValidAtSQL(q.At)
 	where = append(where, v)
@@ -150,6 +168,15 @@ func (s *Store) EntityList(ctx context.Context, q EntityListQuery) ([]EntityReco
 // EntityLifetimes — bir id'nin tüm ömürleri (en yeni önce, ≤ 50) + at'e
 // göre geçerli olanı (yoksa en yeni).
 func (s *Store) EntityLifetimes(ctx context.Context, id string, at time.Time) (current *EntityRecord, all []EntityRecord, err error) {
+	cur, _, all, err := s.EntityLifetimesAt(ctx, id, at)
+	return cur, all, err
+}
+
+// EntityLifetimesAt — v0.10.135 (DETAY SAYFALARI: zaman geçerliliği).
+// match=false: dönen kayıt istenen anı KAPSAMIYOR (at verildiyse "o an
+// geçerli değildi", at sıfırsa "artık mevcut değil") — en yeni ömür yine
+// döner ki sayfa 404 yerine "son görülme X + tarihçe" gösterebilsin.
+func (s *Store) EntityLifetimesAt(ctx context.Context, id string, at time.Time) (current *EntityRecord, match bool, all []EntityRecord, err error) {
 	rows, err := s.conn.Query(ctx, `SELECT `+entityRecordCols+`
 		FROM entities FINAL
 		WHERE entity_id = ? AND last_seen >= now() - INTERVAL 180 DAY
@@ -157,35 +184,46 @@ func (s *Store) EntityLifetimes(ctx context.Context, id string, at time.Time) (c
 		LIMIT 50
 		SETTINGS max_execution_time = 10`, id)
 	if err != nil {
-		return nil, nil, fmt.Errorf("entity lifetimes: %w", err)
+		return nil, false, nil, fmt.Errorf("entity lifetimes: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		r, err := scanEntityRecord(rows)
 		if err != nil {
-			return nil, nil, err
+			return nil, false, nil, err
 		}
 		all = append(all, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, err
+		return nil, false, nil, err
 	}
+	idx, match := pickLifetime(all, at)
+	if idx < 0 {
+		return nil, false, all, nil
+	}
+	return &all[idx], match, all, nil
+}
+
+// pickLifetime — saf. `all` valid_from DESC sıralı. at sıfır → açık ömür;
+// at verili → at'i kapsayan ömür (sınırlar dahil). Kapsayan yoksa en yeni
+// kayıt (idx 0) + match=false; boş → -1.
+func pickLifetime(all []EntityRecord, at time.Time) (idx int, match bool) {
 	for i := range all {
-		r := all[i]
+		r := &all[i]
 		if at.IsZero() {
 			if r.ValidTo == nil {
-				return &r, all, nil
+				return i, true
 			}
 			continue
 		}
 		if !r.ValidFrom.After(at) && (r.ValidTo == nil || !r.ValidTo.Before(at)) {
-			return &r, all, nil
+			return i, true
 		}
 	}
 	if len(all) > 0 {
-		return &all[0], all, nil
+		return 0, false
 	}
-	return nil, all, nil
+	return -1, false
 }
 
 // walkEntityParents — parent_id ile yukarı (en çok 8, döngü korumalı). Saf.

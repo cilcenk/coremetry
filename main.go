@@ -1019,6 +1019,7 @@ func main() {
 		entitySyncer = entity.NewSyncer(entity.NewThanosSource(thanosSvc), entity.StoreFromCH(store), entitySettings.Resolved)
 		entitySyncer.SetSeenReader(entity.SeenFromCH(store))
 		entityLeader := cache.NewLeaderHolder(lockImpl, "entity-sync", cache.LeaderTTL(time.Minute))
+		entitySyncer.SetLeaderCheck(entityLeader.IsLeader) // v0.10.141 — API tetikli tick yalnız liderde
 		entityLeader.SetOnAcquire(func() { entitySyncer.Tick(ctx) })
 		entityLeader.Start(ctx)
 		go entitySyncer.Run(ctx, entityLeader.IsLeader)

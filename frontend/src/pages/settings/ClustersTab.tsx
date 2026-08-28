@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { fmtDateTime } from '@/lib/utils';
+import { SpanClusterValuesPanel } from './SpanClusterValuesPanel';
 import { Combobox } from '@/components/Combobox';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
@@ -364,6 +365,11 @@ export function ClustersTab() {
           </Button>
         </div>
       </form>
+      {/* v0.10.141 — span cluster değerleri: eşleşmemişleri bir kayda ata (teklik sunucuda). */}
+      <SpanClusterValuesPanel clusters={rows.map(r => ({ id: r.id || undefined, name: r.name }))}
+        onAssigned={(clusterId, values) => setRows(rs => rs.map(r => r.id === clusterId
+          ? { ...r, spanClusterValues: values.join(', '), spanClusterValue: values[0] ?? '' }
+          : r))} />
     </div>
   );
 }

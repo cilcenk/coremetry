@@ -66,4 +66,18 @@ etiket yok), `SpanClusterKeys` eşleşmesi, span-clusters SQL şekli.
   sonuç `labelCheck` (bellek; her tick sıfırdan; kayıt sonrası sıfırlanır +
   taze denetim); Settings'te "Detect label", auto/manual rozeti, aday çipleri,
   eşleşmeme uyarısı.
-- **Sıradaki (dilim 3):** span cluster değerleri listesi + atama + 24 s backfill.
+- **v0.10.141 (dilim 3):** `GET /api/settings/thanos/span-clusters` (entity_seen_5m
+  son 7 gün, yoksa spans 1 saat + ilan; değer / span / ilk-son görülme / sahip),
+  `POST /api/settings/thanos/assign-span-cluster` (admin, audit; AÇIK değer
+  listesine ekler; çakışma → conflict + sahip; `backfill` → entity ayarına
+  `backfillUntil` (+10 dk) + `backfillValue`: lider Tick 24 saatlik pencereyi
+  YALNIZ atanan değerin satırlarına uygular — canlılar (son görülme ≤ podGap)
+  normal diff'e, ölüler KAPALI ömür olarak (valid_from = ilk görülme, valid_to
+  = son görülme; yalnız hiç kaydı olmayanlar — idempotent; `entity_sync_runs`
+  status=backfill). İnceleme dersi: küresel 24 s pencere her cluster'ın ölü
+  pod'larını "şimdi açıldı" diye diriltiyordu. Anlık tick yalnız liderde ve
+  örtüşmesiz (`TryTick`); bayrak kapalıyken backfill "skipped" ilan edilir),
+  atama/kayıt/algılama sonrası liste cache'i düşer;
+  Settings → Remote Clusters altında "Span cluster values" paneli (ata + backfill
+  onay kutusu + çakışma mesajı). Lokal e2e: dr-eu-west → fake-ocp, 64 → 83 pod,
+  unmapped listesinden düştü.

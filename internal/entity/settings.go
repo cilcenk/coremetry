@@ -35,6 +35,15 @@ type Settings struct {
 	// eski bir blobu bellekteki yeninin üstüne yazmaz — PUT'un kendi reload
 	// sinyali replike olmamış eski satırı okuyup değeri geri alıyordu.
 	UpdatedAt int64 `json:"updatedAt,omitempty"`
+	// BackfillUntil — v0.10.141 (otomatik eşleme brief'i): bu ana (ms) kadar
+	// span geçişi 24 saatlik pencereyle koşar — bir span cluster değeri bir
+	// kayda ATANDIĞINDA geriye dönük pod/servis entity'leri üretilsin.
+	// Rol-güvenli: blob üzerinden yayılır, lider Tick'i okur.
+	BackfillUntil int64 `json:"backfillUntil,omitempty"`
+	// BackfillValue — geriye dönük geçiş YALNIZ bu span cluster değeri için
+	// (inceleme: küresel 24 s pencere her cluster'ın ölü pod'larını canlı
+	// olarak yeniden açıyordu). Boş = backfill yok.
+	BackfillValue string `json:"backfillValue,omitempty"`
 }
 
 // Resolved — kelepçelenmiş, çözülmüş vidalar.
@@ -44,6 +53,8 @@ type Resolved struct {
 	PodGap           time.Duration
 	StaleAfter       time.Duration
 	ParallelClusters int
+	BackfillUntil    time.Time // sıfır = yok
+	BackfillValue    string
 }
 
 func DefaultSettings() Settings {
@@ -89,6 +100,8 @@ func (s Settings) Resolved() Resolved {
 		PodGap:           clampDur(parseDur(s.PodGap, parseDur(d.PodGap, 10*time.Minute)), time.Minute, 24*time.Hour),
 		StaleAfter:       clampDur(parseDur(s.StaleAfter, parseDur(d.StaleAfter, 24*time.Hour)), time.Hour, 30*24*time.Hour),
 		ParallelClusters: s.ParallelClusters,
+		BackfillUntil:    backfillUntil(s.BackfillUntil),
+		BackfillValue:    strings.TrimSpace(s.BackfillValue),
 	}
 	if r.ParallelClusters == 0 {
 		r.ParallelClusters = d.ParallelClusters // ayarlanmadı
@@ -192,3 +205,14 @@ func (s *SettingsService) StartConfigRefresh(ctx context.Context, store settings
 		}
 	}
 }
+
+func backfillUntil(ms int64) time.Time {
+	if ms <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(ms)
+}
+
+// BackfillLookback — Tick'in span geçişi penceresi: atama sonrası kısa bir
+// süre (BackfillUntil) 24 saat, sonra normal seenLookback.
+const BackfillLookback = 24 * time.Hour

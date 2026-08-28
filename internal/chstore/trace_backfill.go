@@ -2,9 +2,10 @@ package chstore
 
 import (
 	"context"
-	"log"
 	"fmt"
+	"log"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -195,20 +196,31 @@ const traceBackfillStateSQL = `
 // Böylece kısmi yazım hiçbir zaman üstüne-eklenmez: gün ya boş ya
 // bütündür; tekrar koşmak da güvenlidir. 5 dk (MV'nin canlı bucket
 // maliyeti) da yetmezse hata dürüstçe yükselir.
-func (s *Store) TraceBackfillDayRun(ctx context.Context, day string, spanRows uint64, progress func(string)) error {
+//
+// v0.10.119 (operatör: "Çok yavaş") — dilimler `parallel` eşzamanlı koşar
+// (1 = eski davranış); ilerleme SAYI olarak (BackfillProgress) döner ki
+// durum ekranı dilim süresi/ETA gösterebilsin. Bugün ve gelecek günler
+// REDDEDİLİR: canlı MV o günün bucket'larına yazmaya devam ediyor, DROP
+// sonrası backfill SELECT'i aynı span'leri ikinci kez state'e çevirir →
+// çift sayım. Geçmiş günlerde canlı yazım yok (geç gelen tekil span'ler
+// ihmal edilebilir).
+func (s *Store) TraceBackfillDayRun(ctx context.Context, day string, spanRows uint64, parallel int, progress func(BackfillProgress)) error {
 	dayT, err := time.Parse("2006-01-02", day)
 	if err != nil {
 		return fmt.Errorf("geçersiz gün %q: %w", day, err)
 	}
+	if err := BackfillDayAllowed(day, time.Now()); err != nil {
+		return err
+	}
 	if progress == nil {
-		progress = func(string) {}
+		progress = func(BackfillProgress) {}
 	}
 	var lastErr error
 	for _, slice := range backfillLadderFor(spanRows) {
 		if err := s.dropTraceDayPartition(ctx, day); err != nil {
 			return fmt.Errorf("gün %s: partition düşürme: %w", day, err)
 		}
-		lastErr = s.backfillDaySlices(ctx, dayT, slice, progress)
+		lastErr = s.backfillDaySlices(ctx, dayT, slice, parallel, progress)
 		if lastErr == nil {
 			return nil
 		}
@@ -258,41 +270,149 @@ func (s *Store) dropTraceDayPartition(ctx context.Context, day string) error {
 		"ALTER TABLE "+target+s.onCluster()+" DROP PARTITION '"+day+"'"+purgeGuard)
 }
 
-// backfillDaySlices — günü sabit boy dilimlerle kurar; ilk hatada durur.
-func (s *Store) backfillDaySlices(ctx context.Context, day time.Time, slice time.Duration, progress func(string)) error {
+// BackfillProgress — dilim ilerlemesi (v0.10.119). İki olay: dilim
+// BAŞLADI (Finished=false) ve dilim BİTTİ (Finished=true, LastMs dolu).
+// Done biten dilim sayısıdır; Total günün dilim sayısı. Prose yok —
+// etiketi ve ETA'yı api katmanı kurar.
+type BackfillProgress struct {
+	Day      string
+	Slice    time.Duration
+	Index    int // başlayan dilimin sırası (1-tabanlı)
+	Done     int // biten dilim sayısı
+	Total    int
+	LastMs   int64
+	Finished bool
+}
+
+// BackfillDayAllowed — geri doldurulabilir gün: geçmiş (UTC) bir gün.
+// Bugün/gelecek → hata (canlı MV ile çift sayım). Saf; tablo-testli.
+func BackfillDayAllowed(day string, now time.Time) error {
+	d, err := time.Parse("2006-01-02", day)
+	if err != nil {
+		return fmt.Errorf("geçersiz gün %q: %w", day, err)
+	}
+	today := now.UTC().Truncate(24 * time.Hour)
+	if !d.Before(today) {
+		return fmt.Errorf("gün %s geri doldurulamaz: bugün/gelecek — canlı MV aynı bucket'lara yazıyor, backfill çift sayım üretir", day)
+	}
+	return nil
+}
+
+// backfillWindow — tek dilimin [from, to) aralığı.
+type backfillWindow struct{ from, to time.Time }
+
+// backfillSliceWindows — günü sabit boy dilimlere böler; son dilim gün
+// sonuna kırpılır. Saf.
+func backfillSliceWindows(day time.Time, slice time.Duration) []backfillWindow {
 	end := day.AddDate(0, 0, 1)
-	total := int(24*time.Hour/slice + 1)
-	n := 0
+	var out []backfillWindow
 	for from := day; from.Before(end); from = from.Add(slice) {
 		to := from.Add(slice)
 		if to.After(end) {
 			to = end
 		}
-		n++
-		progress(fmt.Sprintf("%s · %s dilim %d/%d",
-			day.Format("2006-01-02"), slice, n, total-1))
-		if err := s.conn.Exec(ctx, `
+		out = append(out, backfillWindow{from, to})
+	}
+	return out
+}
+
+// backfillMaxParallel — eşzamanlı dilim tavanı. 4: prod kümesi 4 host;
+// daha fazlası aynı shard'ı kendisiyle yarıştırır ve bellek (241)
+// merdiveni indirir — yani yavaşlatır.
+const backfillMaxParallel = 4
+
+// runBackfillSlices — dilimleri `parallel` eşzamanlı koşar (saf
+// orkestrasyon; exec enjekte edilir, tablo-testli). İlk hatada kalan
+// dilimler iptal edilir ve İLK hata döner: kaynak hatasıysa merdiven
+// iner (gün baştan düşer — yarım dilimler orada temizlenir), yapısal
+// hataysa yükselir. parallel=1 eski ardışık davranışla bire bir.
+func runBackfillSlices(ctx context.Context, day string, slice time.Duration, windows []backfillWindow, parallel int,
+	progress func(BackfillProgress), exec func(context.Context, time.Time, time.Time) error) error {
+	if parallel < 1 {
+		parallel = 1
+	}
+	if parallel > backfillMaxParallel {
+		parallel = backfillMaxParallel
+	}
+	total := len(windows)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var (
+		mu       sync.Mutex
+		firstErr error
+		done     int
+		wg       sync.WaitGroup
+		sem      = make(chan struct{}, parallel)
+	)
+	for i, w := range windows {
+		if ctx.Err() != nil {
+			break
+		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(i int, w backfillWindow) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if ctx.Err() != nil {
+				return
+			}
+			mu.Lock()
+			d := done
+			mu.Unlock()
+			progress(BackfillProgress{Day: day, Slice: slice, Index: i + 1, Done: d, Total: total})
+			t0 := time.Now()
+			err := exec(ctx, w.from, w.to)
+			ms := time.Since(t0).Milliseconds()
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				// İptal edilen kardeş dilimlerin "context canceled"ı ilk
+				// hatayı gölgelemesin.
+				if firstErr == nil && ctx.Err() == nil {
+					// Etiket dilim BOYUNU da söyler — 24h diliminde
+					// "00:00→00:00" (ertesi gün sarması) tek başına
+					// anlaşılmıyordu (prod ekranı).
+					firstErr = fmt.Errorf("dilim %s→%s (%s boy): %w",
+						w.from.UTC().Format("01-02 15:04"), w.to.UTC().Format("01-02 15:04"), slice, err)
+					cancel()
+				}
+				return
+			}
+			done++
+			progress(BackfillProgress{Day: day, Slice: slice, Index: i + 1, Done: done, Total: total, LastMs: ms, Finished: true})
+		}(i, w)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return firstErr
+	}
+	// Dış ctx (gün bütçesi) dolduysa ve hiçbir dilim hata üretmediyse —
+	// döngü kesildi; bunu da kaynak hatası olarak yükselt.
+	if err := ctx.Err(); err != nil && done < total {
+		return fmt.Errorf("dilim %d/%d sonrası: %w", done, total, err)
+	}
+	return nil
+}
+
+// backfillDaySlices — günü sabit boy dilimlerle kurar; ilk hatada durur.
+func (s *Store) backfillDaySlices(ctx context.Context, day time.Time, slice time.Duration, parallel int, progress func(BackfillProgress)) error {
+	return runBackfillSlices(ctx, day.Format("2006-01-02"), slice, backfillSliceWindows(day, slice), parallel, progress,
+		func(ctx context.Context, from, to time.Time) error {
+			return s.conn.Exec(ctx, `
 			INSERT INTO trace_summary_5m
 			  (trace_id, time_bucket, root_service_state, root_name_state,
 			   trace_start_state, trace_end_state, span_count_state,
 			   error_count_state, entry_route_state, entry_service_state)
 			SELECT trace_id, toStartOfInterval(time, INTERVAL 5 MINUTE),`+
-			traceBackfillStateSQL+`
+				traceBackfillStateSQL+`
 			FROM spans
 			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
 			GROUP BY trace_id, toStartOfInterval(time, INTERVAL 5 MINUTE)
 			SETTINGS max_execution_time = 25,
 			         max_bytes_before_external_group_by = 2000000000,
 			         distributed_product_mode = 'global'`,
-			from.UTC().Format("2006-01-02 15:04:05"), to.UTC().Format("2006-01-02 15:04:05")); err != nil {
-			// Etiket dilim BOYUNU da söyler — 24h diliminde "00:00→00:00"
-			// (ertesi gün sarması) tek başına anlaşılmıyordu (prod ekranı).
-			return fmt.Errorf("dilim %s→%s (%s boy): %w",
-				from.UTC().Format("01-02 15:04"), to.UTC().Format("01-02 15:04"),
-				slice, err)
-		}
-	}
-	return nil
+				from.UTC().Format("2006-01-02 15:04:05"), to.UTC().Format("2006-01-02 15:04:05"))
+		})
 }
 
 // isBackfillTimeout — merdiveni İNDİREN hata sınıfı: KAYNAK hataları.

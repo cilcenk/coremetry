@@ -1201,6 +1201,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// GET/PUT/test /api/settings/victoria-metrics → vmetrics_routes.go
 	// (v0.9.1150).
 	s.registerVMetricsRoutes(mux)
+	s.registerThanosIdentityRoutes(mux) // v0.10.128 — Remote Cluster etiket rozeti, thanos_identity.go
 	// External Tempo backend — admin-only because the token grants
 	// read access to every trace in the operator's Tempo cluster.
 	mux.HandleFunc("GET /api/settings/tempo", auth.RequireRole(auth.RoleAdmin, s.getTempoSettings))

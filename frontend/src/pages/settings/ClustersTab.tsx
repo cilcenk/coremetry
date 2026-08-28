@@ -22,8 +22,12 @@ import type { ThanosAuthType, ThanosClusterSnapshot } from '@/lib/types';
 // legitimate).
 
 interface EditRow {
+  id: string;       // server-owned; '' until first save
   name: string;
   url: string;
+  thanosLabelName: string;
+  thanosLabelValue: string;
+  spanClusterValue: string;
   authType: ThanosAuthType;
   token: string;    // only ever holds a NEW token; '' = keep stored
   hasToken: boolean;
@@ -34,7 +38,10 @@ interface EditRow {
 
 function fromSnapshot(c: ThanosClusterSnapshot): EditRow {
   return {
-    name: c.name, url: c.url,
+    id: c.id || '', name: c.name, url: c.url,
+    thanosLabelName: c.thanosLabelName || '',
+    thanosLabelValue: c.thanosLabelValue || '',
+    spanClusterValue: c.spanClusterValue || '',
     authType: (c.authType || 'none') as ThanosAuthType,
     token: '', hasToken: c.hasToken,
     namespaceFilter: c.namespaceFilter || '',
@@ -44,7 +51,8 @@ function fromSnapshot(c: ThanosClusterSnapshot): EditRow {
 }
 
 const EMPTY_ROW: EditRow = {
-  name: '', url: '', authType: 'bearer', token: '', hasToken: false,
+  id: '', name: '', url: '', authType: 'bearer', token: '', hasToken: false,
+  thanosLabelName: '', thanosLabelValue: '', spanClusterValue: '',
   namespaceFilter: '', insecureSkipVerify: false, enabled: true,
 };
 
@@ -52,6 +60,21 @@ export function ClustersTab() {
   const [rows, setRows] = useState<EditRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  // v0.10.128 — per-row "Test label" result (probe endpoint, on click only).
+  const [probe, setProbe] = useState<Record<string, string>>({});
+  const runProbe = async (r: EditRow) => {
+    const ref = r.id || r.name.trim();
+    if (!ref) return;
+    setProbe(p => ({ ...p, [ref]: '…' }));
+    try {
+      const res = await api.thanosClusterProbe(ref);
+      setProbe(p => ({ ...p, [ref]: res.ok
+        ? `✓ ${res.series} node series${res.label ? ` with ${res.label}="${res.value}"` : ''}`
+        : `✗ ${res.error || 'no series'}` }));
+    } catch (err) {
+      setProbe(p => ({ ...p, [ref]: `✗ ${err instanceof Error ? err.message : 'probe failed'}` }));
+    }
+  };
 
   // Observed cluster names from telemetry (last 24h) — the
   // suggestion source for the join-key warning. timeRange math
@@ -94,8 +117,12 @@ export function ClustersTab() {
     try {
       const next = await api.putThanosSettings({
         clusters: rows.map(r => ({
+          id: r.id || undefined, // server-owned: lets a rename keep its id + token
           name: r.name.trim(), url: r.url.trim(), authType: r.authType,
-          token: r.token, // '' keeps stored (server contract, name-matched)
+          token: r.token, // '' keeps stored (server contract, id/name-matched)
+          thanosLabelName: r.thanosLabelName.trim() || undefined,
+          thanosLabelValue: r.thanosLabelValue.trim() || undefined,
+          spanClusterValue: r.spanClusterValue.trim() || undefined,
           namespaceFilter: r.namespaceFilter.trim() || undefined,
           insecureSkipVerify: r.insecureSkipVerify, enabled: r.enabled,
         })),
@@ -146,6 +173,12 @@ export function ClustersTab() {
                 <label style={{ flex: 1 }}>
                   <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
                     Cluster name (join key)
+                    {r.id && (
+                      <span className="badge" style={{ marginLeft: 8, fontFamily: 'var(--mono)' }}
+                        title="Opaque, immutable cluster id — the root of the entity hierarchy. Renaming the cluster keeps it.">
+                        {r.id}
+                      </span>
+                    )}
                     {!nameKnown && (
                       <span className="badge b-warn" style={{ marginLeft: 8 }}
                         title="Name not seen in the last 24h of telemetry — Thanos data will not match service pages. The warning clears once the cluster starts reporting.">
@@ -195,6 +228,42 @@ export function ClustersTab() {
                       style={{ width: '100%' }} />
                   </label>
                 )}
+              </div>
+              {/* v0.10.128 — identity mapping (entity layer). Label name empty = no
+                  matcher = one Thanos URL per cluster (the classic model). */}
+              <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+                <label style={{ width: 200 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Thanos label name</div>
+                  <input value={r.thanosLabelName}
+                    onChange={e => patch(i, { thanosLabelName: e.target.value })}
+                    placeholder='cluster  ·  empty = per-cluster URL'
+                    style={{ width: '100%' }} />
+                </label>
+                <label style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Thanos label value</div>
+                  <input value={r.thanosLabelValue}
+                    onChange={e => patch(i, { thanosLabelValue: e.target.value })}
+                    placeholder={r.name.trim() ? `empty = ${r.name.trim()}` : 'empty = cluster name'}
+                    disabled={!r.thanosLabelName.trim()}
+                    style={{ width: '100%' }} />
+                </label>
+                <label style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Span cluster value</div>
+                  <input value={r.spanClusterValue}
+                    onChange={e => patch(i, { spanClusterValue: e.target.value })}
+                    placeholder={r.name.trim() ? `empty = ${r.name.trim()}` : 'empty = cluster name'}
+                    style={{ width: '100%' }} />
+                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 4, minWidth: 140 }}>
+                  <Button type="button" variant="ghost" size="sm" disabled={!r.id}
+                    title={r.id ? 'Query count(kube_node_info) with this cluster\'s label matcher (saved settings)' : 'Save first'}
+                    onClick={() => runProbe(r)}>
+                    Test label
+                  </Button>
+                  {probe[r.id || r.name.trim()] && (
+                    <span style={{ fontSize: 11, color: 'var(--text2)' }}>{probe[r.id || r.name.trim()]}</span>
+                  )}
+                </div>
               </div>
               <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
                 <label style={{ flex: 1 }}>

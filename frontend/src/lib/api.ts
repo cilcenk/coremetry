@@ -23,6 +23,7 @@ import type {
   TempoSnapshot, TempoSettingsInput,
   VMSnapshot, VMSettingsInput, VMTestResult,
   DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult, DevOpsResolveDryRun,
+  ThanosClusterProbe,
   ThanosSnapshot, ThanosSettingsInput, ClusterPodsResponse, ClusterPodDetail,
   ClusterNodesResponse, ClusterSummary, ClusterNamespacesResponse,
   ClusterPodsTrendResponse, ClusterNetworkTrendResponse, ClusterDeploymentsResponse, ClusterResourceTrendResponse, ClusterAlertsResponse, ClusterDeployTrendResponse, ClusterJMXTrendResponse, ClusterJMXMetricsResponse,
@@ -1602,6 +1603,9 @@ export const api = {
     get<ClusterNodesResponse>(`/api/clusters/nodes?cluster=${encodeURIComponent(cluster)}`),
   clusterSummary: (cluster: string) =>
     get<ClusterSummary>(`/api/clusters/summary?cluster=${encodeURIComponent(cluster)}`),
+  /** v0.10.128 — Settings "Test label": matcher'lı kube_node_info seri sayısı (200 + ok:false on failure). */
+  thanosClusterProbe: (cluster: string) =>
+    get<ThanosClusterProbe>(`/api/clusters/sources/probe?cluster=${encodeURIComponent(cluster)}`),
   clusterNamespaces: (cluster: string) =>
     get<ClusterNamespacesResponse>(`/api/clusters/namespaces?cluster=${encodeURIComponent(cluster)}`),
   clusterNamespaceDetail: (cluster: string, namespace: string, fromNs: number, toNs: number) =>

@@ -6,6 +6,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { RuntimeCharts, familyOf } from './RuntimeCharts';
 import { PodResourceCharts } from './PodResourceCharts';
 import { ServiceClusterPods } from './ServiceClusterPods';
+import { ServiceEntityPods } from './ServiceEntityPods';
 import { useServicePods } from './useServicePods';
 import { podDetailPath } from './podDetailPath';
 import { servicePodRegex } from '@/pages/clusters/podWorkload';
@@ -79,6 +80,10 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
   // sources beklerken heap/GC grafikleri de gizlenmesin.
   return (
     <>
+      {/* v0.10.145 — entity katmanı tablosu (bayrak açıkken) Thanos keşfinden
+          BAĞIMSIZ ve her boş-durumun ÜSTÜNDE: ad-regex eşleşmese de spans'ın
+          gördüğü pod'lar burada (ServiceInfraTab ile aynı düzeltme). */}
+      <ServiceEntityPods service={service} range={range} />
       {(metaQ.isPending || sourcesPending) ? (
         <Spinner />
       ) : sourcesError ? (

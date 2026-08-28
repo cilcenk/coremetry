@@ -5,7 +5,9 @@
 // tek-binary kısıtını bozardı (imajda migrations/ dizini yok, yalnız
 // /app/coremetry var).
 //
-// Yalnız 0001 + 0003 + 0008 gömülü — sihirbazın kapsamı BU ÜÇ AİLE:
+// v0.10.134: 0011 (entity katmanı şeması) da gömülü — Admin → ClickHouse
+// "K8s entity katmanı" adımı (operatör: "0011 sihirbazda yok").
+// Yalnız 0001 + 0003 + 0008 (+0011) gömülü — sihirbazın kapsamı:
 //   0001 → dar span rollup zinciri (10s→1m→5m→1h)
 //   0003 → metrik rollup zinciri (1m→5m→1h)
 //   0008 → route (endpoint) kırılımlı metrik zinciri (1m→5m→1h)
@@ -18,5 +20,5 @@ import "embed"
 
 // FS — gömülü DDL dosyaları. chstore.RollupApply okur.
 //
-//go:embed 0001_rollup_narrow.sql 0003_rollup_metrics.sql 0008_rollup_metrics_route.sql
+//go:embed 0001_rollup_narrow.sql 0003_rollup_metrics.sql 0008_rollup_metrics_route.sql 0011_entity_layer.sql
 var FS embed.FS

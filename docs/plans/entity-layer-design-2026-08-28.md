@@ -6,7 +6,7 @@ v0.10.127 şema + terfi kolonları + entity_seen MV (+ `migrations/0011`),
 v0.10.128 Remote Cluster kimliği + cluster matcher, v0.10.130 syncer + span
 geçişi + sorgu katmanı + pivot uçları, v0.10.131 UI (Settings → K8s entity
 katmanı, Service → Infra "Pods (entity layer)", /pod şeridi). Bayrak
-varsayılan KAPALI. Prod'da: `0011_entity_layer.sql` operatörde; Remote
+varsayılan KAPALI. Prod'da: `0011_entity_layer.sql` Admin → ClickHouse sihirbazından (v0.10.134; elle de olur); Remote
 Cluster kayıtlarına Thanos etiket adı/değeri + span cluster değeri girilir
 (probe A2 sonucu), sonra Settings → K8s entity katmanı → Enable.
 **Uygulamada tasarımdan sapmalar:** `GET /api/entities/{id}` yerine

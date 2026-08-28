@@ -3081,6 +3081,21 @@ export const api = {
   // bastıktan saniyeler sonra basılan "Yenile" bayat bir gövde
   // döndürürse operatör kurulumun tutmadığını sanar.
   /** Canlı durum: hangi rollup tablosu var, kaç satır, en eski ts. */
+  // v0.10.134 — 0011 entity katmanı şeması sihirbazı (rollup aynası).
+  entityLayerStatus: () =>
+    get<import('./types').EntityLayerStatusResult>('/api/admin/entity-layer/status'),
+  entityLayerPreflight: () =>
+    get<import('./types').EntityLayerPreflightResult>('/api/admin/entity-layer/preflight'),
+  entityLayerApply: (cluster: string) =>
+    request<import('./types').RollupActionResult>('/api/admin/entity-layer/apply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster }), timeoutMs: 330_000,
+    }),
+  entityLayerRollback: (cluster: string) =>
+    request<import('./types').RollupActionResult>('/api/admin/entity-layer/rollback', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster }), timeoutMs: 200_000,
+    }),
   rollupStatus: () =>
     get<import('./types').RollupStatusResult>('/api/admin/rollup/status'),
   /** Ön kontrol — hiçbir şey yazmaz. Supported hükmü + gerekçe. */

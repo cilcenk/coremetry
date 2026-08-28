@@ -2755,6 +2755,36 @@ export interface RollupActionResult {
   ok: boolean;
 }
 
+// ── 0011 entity katmanı şeması sihirbazı (v0.10.134) — chstore/entity_layer_admin.go ──
+export interface EntityLayerObjectStatus {
+  name: string;
+  kind: 'column' | 'index' | 'table' | 'mv' | 'distributed';
+  table?: string;
+  hosts: number;
+  haveHosts: number;
+  state: 'ok' | 'partial' | 'missing' | 'unknown';
+  err?: string;
+}
+export interface EntityLayerStatusResult {
+  cluster: string;
+  objects: EntityLayerObjectStatus[];
+  /** entity_seen_5m son 15 dk satır — MV gerçekten yazıyor mu. */
+  seenRows: number;
+  generated: number;
+}
+export interface EntityLayerPreflightResult {
+  clusters: string[];
+  suggestedCluster?: string;
+  spansLocal: boolean;
+  /** 0..1 — son 15 dk span'lerinde k8s.pod.name taşıyan oran. */
+  podAttrCoverage: number;
+  uniqPods1h: number;
+  probeErrors?: string[];
+  supported: boolean;
+  detail: string;
+  generated: number;
+}
+
 export interface MetricResolveResult {
   series: SpanMetricSeries[];
   tier: string;

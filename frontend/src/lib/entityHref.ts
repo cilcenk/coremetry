@@ -14,6 +14,8 @@ export interface EntityHrefOpts {
   at?: number;
   /** Remote Cluster adı — /pod ve /clusters isim de kabul eder (ClusterByRef); yoksa id. */
   clusterName?: string;
+  /** Pod linki için servis bağlamı: /pod geri-linki + servis-kapsamlı RED (inceleme, v0.10.136). */
+  service?: string;
 }
 
 function encRange(r: EntityHrefOpts['range']): string | undefined {
@@ -24,7 +26,7 @@ function encRange(r: EntityHrefOpts['range']): string | undefined {
 export function entityHref(rec: EntityLinkRecord, opts: EntityHrefOpts = {}): string {
   const range = encRange(opts.range);
   if (rec.type === 'pod') {
-    return podDetailPath({ pod: rec.name, cluster: opts.clusterName || rec.clusterId, namespace: rec.namespace, range, at: opts.at });
+    return podDetailPath({ pod: rec.name, cluster: opts.clusterName || rec.clusterId, namespace: rec.namespace, service: opts.service, range, at: opts.at });
   }
   const q = new URLSearchParams();
   if (rec.type === 'cluster') {

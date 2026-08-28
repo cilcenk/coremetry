@@ -21,10 +21,12 @@ package api
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -388,6 +390,18 @@ func (s *Server) getServicePods(w http.ResponseWriter, r *http.Request) {
 			ClusterID string                `json:"clusterId,omitempty"`
 			EntityID  string                `json:"entityId,omitempty"`
 			Entity    *chstore.EntityRecord `json:"entity,omitempty"`
+			// v0.10.136 — adım 2: durum (Thanos KSM anlık) + giriş-span latency (ham spans).
+			Phase           string  `json:"phase,omitempty"`
+			Restarts        int     `json:"restarts"`
+			RestartsUnknown bool    `json:"restartsUnknown,omitempty"`
+			LastTermReason  string  `json:"lastTermReason,omitempty"`
+			CPUCores        float64 `json:"cpuCores,omitempty"`
+			MemBytes        float64 `json:"memBytes,omitempty"`
+			StatusKnown     bool    `json:"statusKnown,omitempty"`
+			EntrySpans      int64   `json:"entrySpans,omitempty"`
+			P50Ms           float64 `json:"p50Ms,omitempty"`
+			P95Ms           float64 `json:"p95Ms,omitempty"`
+			P99Ms           float64 `json:"p99Ms,omitempty"`
 		}
 		out := make([]podRow, 0, len(aggs))
 		clusters := map[string]bool{}
@@ -406,7 +420,120 @@ func (s *Server) getServicePods(w http.ResponseWriter, r *http.Request) {
 			}
 			out = append(out, row)
 		}
-		resp := map[string]any{"service": name, "pods": out}
+		// v0.10.136 — adım 2 zenginleştirme. (a) Latency: ham spans, giriş-span,
+		// pod başına p50/p95/p99 (entity_seen_5m yalnız ortalama taşır); hata
+		// best-effort — 0011 kolonu olmayan CH'de yüzdelikler boş kalır, tablo
+		// yaşar. (b) Durum: cluster başına TEK Thanos envanter sorgusu, hedefli
+		// pod=~ regex (≤200 ad; fazlası statusNotes ile ilan). (c) Zincir:
+		// satırların entity ebeveynlerinden workload/namespace özeti.
+		statusNotes := []string{}
+		var notesMu sync.Mutex
+		note := func(n string) { notesMu.Lock(); statusNotes = append(statusNotes, n); notesMu.Unlock() }
+		if len(out) > 0 {
+			if lat, err := s.store.PodLatencyForService(ctx, name, clusterValue, from, to); err == nil {
+				byKey := make(map[[3]string]chstore.PodLatencyRow, len(lat))
+				for _, l := range lat {
+					byKey[[3]string{l.Cluster, l.Namespace, l.Pod}] = l
+				}
+				for i := range out {
+					if l, ok := byKey[[3]string{out[i].Cluster, out[i].Namespace, out[i].Pod}]; ok {
+						out[i].EntrySpans, out[i].P50Ms, out[i].P95Ms, out[i].P99Ms = l.EntrySpans, l.P50Ms, l.P95Ms, l.P99Ms
+					}
+				}
+				if len(lat) >= chstore.PodLatencyLimit {
+					note("latency yalnız en yoğun " + strconv.Itoa(chstore.PodLatencyLimit) + " pod için")
+				}
+			} else {
+				log.Printf("[entities] pod latency for %s: %v", name, err)
+				note("latency alınamadı (sunucu günlüğü)")
+			}
+		}
+		byCluster := map[string][]int{}
+		for i := range out {
+			if out[i].ClusterID != "" {
+				byCluster[out[i].ClusterID] = append(byCluster[out[i].ClusterID], i)
+			}
+		}
+		// Cluster'lar PARALEL, tek 10 s bütçe (inceleme: ardışık 10 s × N cluster
+		// serveCached 30 s TTL'ini aşıyordu). Her goroutine yalnız kendi
+		// cluster'ının satır indekslerine yazar — örtüşme yok.
+		sctx, scancel := context.WithTimeout(ctx, 10*time.Second)
+		var wg sync.WaitGroup
+		for cid, idxs := range byCluster {
+			c, ok := s.thanos.ClusterByID(cid)
+			if !ok {
+				continue
+			}
+			names := make([]string, 0, len(idxs))
+			for _, i := range idxs {
+				names = append(names, out[i].Pod)
+			}
+			re, truncated := thanos.PodNamesRegex(names)
+			if truncated {
+				note(c.Name + ": durum yalnız ilk pod'lar için (seçici tavanı)")
+			}
+			if re == "" {
+				continue
+			}
+			wg.Add(1)
+			go func(c thanos.ClusterConfig, idxs []int, re string) {
+				defer wg.Done()
+				prows, _, err := s.thanos.PodMetrics(sctx, c, re)
+				if err != nil {
+					note(c.Name + ": durum alınamadı")
+					return
+				}
+				byPod := make(map[string]thanos.PodRow, len(prows))
+				for _, p := range prows {
+					byPod[p.Namespace+"/"+p.Pod] = p
+				}
+				for _, i := range idxs {
+					if p, ok := byPod[out[i].Namespace+"/"+out[i].Pod]; ok {
+						out[i].Phase, out[i].Restarts, out[i].RestartsUnknown, out[i].LastTermReason = p.Phase, p.Restarts, p.RestartsUnknown, p.LastTermReason
+						out[i].CPUCores, out[i].MemBytes, out[i].StatusKnown = p.CPUCores, p.MemBytes, true
+					}
+				}
+			}(c, idxs, re)
+		}
+		wg.Wait()
+		scancel()
+		type chainItem struct {
+			ID        string `json:"id"`
+			Type      string `json:"type"`
+			Name      string `json:"name"`
+			Kind      string `json:"kind,omitempty"`
+			Namespace string `json:"namespace,omitempty"`
+			ClusterID string `json:"clusterId"`
+			Pods      int    `json:"pods"`
+		}
+		chainIdx := map[string]int{}
+		chain := []chainItem{}
+		for _, row := range out {
+			if row.Entity == nil || row.Entity.ParentID == "" {
+				continue
+			}
+			pid := row.Entity.ParentID
+			if j, ok := chainIdx[pid]; ok {
+				chain[j].Pods++
+				continue
+			}
+			pr, ok := entity.ParseID(pid)
+			if !ok {
+				continue
+			}
+			ci := chainItem{ID: pid, Type: pr.Type, Name: pr.Name, Kind: pr.Kind, Namespace: pr.Namespace, ClusterID: pr.ClusterID, Pods: 1}
+			if pr.Type == entity.TypeNamespace {
+				ci.Namespace = pr.Name
+			}
+			chainIdx[pid] = len(chain)
+			chain = append(chain, ci)
+		}
+		sort.SliceStable(chain, func(a, b int) bool { return chain[a].Pods > chain[b].Pods })
+		resp := map[string]any{"service": name, "pods": out, "chain": chain}
+		if len(statusNotes) > 0 {
+			sort.Strings(statusNotes)
+			resp["statusNotes"] = statusNotes
+		}
 		if clusterID == "" && len(clusters) > 1 {
 			ids := make([]string, 0, len(clusters))
 			for id := range clusters {

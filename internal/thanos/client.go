@@ -576,7 +576,7 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig, podRe string)
 
 	// v0.9.37 — best-effort faz + restart eşlemeleri.
 	phaseBy := map[string]string{}
-	if series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {podPhaseQuery(c.NamespaceFilter)}}); err == nil {
+	if series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {podPhaseQuery(c.NamespaceFilter, podRe)}}); err == nil {
 		for _, ser := range series {
 			if ser.Metric["phase"] != "" {
 				phaseBy[ser.Metric["namespace"]+"\x00"+ser.Metric["pod"]] = ser.Metric["phase"]
@@ -584,7 +584,7 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig, podRe string)
 		}
 	}
 	restartBy := map[string]int{}
-	if series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {podRestartsQuery(c.NamespaceFilter)}}); err == nil {
+	if series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {podRestartsQuery(c.NamespaceFilter, podRe)}}); err == nil {
 		for _, ser := range series {
 			if v, ok := sampleValue(ser.Value); ok {
 				restartBy[ser.Metric["namespace"]+"\x00"+ser.Metric["pod"]] = int(v)
@@ -596,7 +596,7 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig, podRe string)
 	// birebiri). KSM container başına seri basar: aynı pod'un iki
 	// container'ı farklı sebep taşıyabilir, satıra en kötüsü çıkar.
 	reasonBy := map[string]string{}
-	if series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {podLastTermQuery(c.NamespaceFilter)}}); err == nil {
+	if series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {podLastTermQuery(c.NamespaceFilter, podRe)}}); err == nil {
 		for _, ser := range series {
 			reason := ser.Metric["reason"]
 			if reason == "" {

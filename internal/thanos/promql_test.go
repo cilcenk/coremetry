@@ -361,12 +361,12 @@ func TestPodLastTermQuery(t *testing.T) {
 		query    string
 		wantSubs []string
 	}{
-		{"ns filtresiz", podLastTermQuery(""), []string{
+		{"ns filtresiz", podLastTermQuery("", ""), []string{
 			`max by (namespace, pod, reason)`,
 			`kube_pod_container_status_last_terminated_reason{pod!=""}`,
 			`== 1`,
 		}},
-		{"ns filtreli", podLastTermQuery("^app-"), []string{
+		{"ns filtreli", podLastTermQuery("^app-", ""), []string{
 			`kube_pod_container_status_last_terminated_reason{pod!="",namespace=~"^app-"}`,
 			`== 1`,
 		}},
@@ -380,7 +380,7 @@ func TestPodLastTermQuery(t *testing.T) {
 		})
 	}
 	// Restart sayacıyla karıştırılmamalı — ayrı metrik, ayrı eksen.
-	if strings.Contains(podLastTermQuery(""), "restarts_total") {
+	if strings.Contains(podLastTermQuery("", ""), "restarts_total") {
 		t.Fatal("son-sonlanma sorgusu restart sayacına dokunmamalı")
 	}
 }
@@ -407,5 +407,45 @@ func TestContainerStatusQueries(t *testing.T) {
 	}
 	if q := containerReadyQuery(`a"b`, `p\q`); !strings.Contains(q, `namespace="a\"b"`) || !strings.Contains(q, `pod="p\\q"`) {
 		t.Fatalf("etiket kaçışı: %s", q)
+	}
+}
+
+// v0.10.136 — pod adı regex'i: kaçış, çevreleme, 200 tavanı + ilan, boş.
+func TestPodNamesRegex(t *testing.T) {
+	re, tr := PodNamesRegex([]string{"api-1", "db.0", ""})
+	if tr || re != `^(api-1|db\.0)$` {
+		t.Fatalf("beklenmeyen: %q truncated=%v", re, tr)
+	}
+	many := make([]string, 250)
+	for i := range many {
+		many[i] = "p" + strings.Repeat("a", i%7)
+	}
+	re, tr = PodNamesRegex(many)
+	if !tr || strings.Count(re, "|") != 199 {
+		t.Fatalf("200 tavanı: truncated=%v ayraç=%d", tr, strings.Count(re, "|"))
+	}
+	if re, tr := PodNamesRegex(nil); re != "" || tr {
+		t.Fatalf("boş liste: %q %v", re, tr)
+	}
+}
+
+// v0.10.136 (inceleme) — uzunluk tavanı: 100 × 60 karakterlik ad 4000'i aşar →
+// kesilir + ilan; hedefli kipte faz/restart/sebep de podRe taşır.
+func TestPodNamesRegexLengthCapAndTargetedStatus(t *testing.T) {
+	long := make([]string, 100)
+	for i := range long {
+		long[i] = strings.Repeat("x", 55) + strings.Repeat("y", i%5)
+	}
+	re, tr := PodNamesRegex(long)
+	if !tr || len(re) > podNamesRegexMaxLen+16 {
+		t.Fatalf("uzunluk tavanı: truncated=%v len=%d", tr, len(re))
+	}
+	for _, q := range []string{podPhaseQuery("", "^(a|b)$"), podRestartsQuery("", "^(a|b)$"), podLastTermQuery("", "^(a|b)$")} {
+		if !strings.Contains(q, `pod=~"^(a|b)$"`) || strings.Contains(q, `pod!=""`) {
+			t.Fatalf("hedefli durum sorgusu podRe taşımalı: %s", q)
+		}
+	}
+	if q := podPhaseQuery("", ""); !strings.Contains(q, `pod!=""`) {
+		t.Fatalf("boş podRe = cluster geneli: %s", q)
 	}
 }

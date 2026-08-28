@@ -174,7 +174,7 @@ export function ClustersTab() {
                   <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
                     Cluster name (join key)
                     {r.id && (
-                      <span className="badge" style={{ marginLeft: 8, fontFamily: 'var(--mono)' }}
+                      <span className="badge mono" style={{ marginLeft: 8 }}
                         title="Opaque, immutable cluster id — the root of the entity hierarchy. Renaming the cluster keeps it.">
                         {r.id}
                       </span>

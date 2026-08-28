@@ -25,6 +25,7 @@ import { fmtCores, podPhaseBadge } from '@/pages/clusters/thresholds';
 import { resolvePodCluster } from '@/pages/service/podResolve';
 import { serviceHref } from '@/lib/serviceHref';
 import { PageShell } from '@/components/ui/PageShell';
+import { PodEntityStrip } from '@/pages/pod/PodEntityStrip';
 
 const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
@@ -198,6 +199,8 @@ function PodDetail() {
     <>
       <Topbar title={`Pod · ${pod}`} range={range} onRangeChange={setRange} />
       <PageShell>
+        {/* v0.10.131 — entity şeridi: cluster › node › ns › workload › pod + bu pod'daki servisler (bayrak açıkken). */}
+        <PodEntityStrip clusterRef={cluster || clusterParam} namespace={namespace || nsParam} pod={pod} range={{ from, to }} />
         {/* Geri + kimlik + KPI başlık satırı */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
           {/* v0.9.965 — GERİ linki penceresini taşımıyordu: pod'a özel

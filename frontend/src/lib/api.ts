@@ -23,6 +23,8 @@ import type {
   TempoSnapshot, TempoSettingsInput,
   VMSnapshot, VMSettingsInput, VMTestResult,
   DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult, DevOpsResolveDryRun,
+  EntityClustersResponse, EntityListResponse, EntityDetailResponse, EntityServicesResponse, EntityMetricsResponse,
+  ServicePodsResponse, EntitySettings, EntitySettingsResponse, EntitySyncResponse,
   ThanosClusterProbe,
   ThanosSnapshot, ThanosSettingsInput, ClusterPodsResponse, ClusterPodDetail,
   ClusterNodesResponse, ClusterSummary, ClusterNamespacesResponse,
@@ -1606,6 +1608,25 @@ export const api = {
   /** v0.10.128 — Settings "Test label": matcher'lı kube_node_info seri sayısı (200 + ok:false on failure). */
   thanosClusterProbe: (cluster: string) =>
     get<ThanosClusterProbe>(`/api/clusters/sources/probe?cluster=${encodeURIComponent(cluster)}`),
+  // ── K8s entity katmanı (v0.10.131) — entities.go / entity_routes.go ──
+  entityClusters: (signal?: AbortSignal) => get<EntityClustersResponse>(`/api/entities/clusters`, signal),
+  entities: (q: { cluster: string; type?: string; namespace?: string; q?: string; at?: number; limit?: number }, signal?: AbortSignal) =>
+    get<EntityListResponse>(`/api/entities?cluster=${encodeURIComponent(q.cluster)}${q.type ? `&type=${encodeURIComponent(q.type)}` : ''}${q.namespace ? `&namespace=${encodeURIComponent(q.namespace)}` : ''}${q.q ? `&q=${encodeURIComponent(q.q)}` : ''}${q.at ? `&at=${q.at}` : ''}${q.limit ? `&limit=${q.limit}` : ''}`, signal),
+  entity: (id: string, at?: number, signal?: AbortSignal) =>
+    get<EntityDetailResponse>(`/api/entity?id=${encodeURIComponent(id)}${at ? `&at=${at}` : ''}`, signal),
+  entityServices: (id: string, from: number, to: number, signal?: AbortSignal) =>
+    get<EntityServicesResponse>(`/api/entity/services?id=${encodeURIComponent(id)}&from=${from}&to=${to}`, signal),
+  entityMetrics: (id: string, from: number, to: number, signal?: AbortSignal) =>
+    get<EntityMetricsResponse>(`/api/entity/metrics?id=${encodeURIComponent(id)}&from=${from}&to=${to}`, signal),
+  servicePods: (service: string, cluster: string, from: number, to: number, signal?: AbortSignal) =>
+    get<ServicePodsResponse>(`/api/services/${encodeURIComponent(service)}/pods?from=${from}&to=${to}${cluster ? `&cluster=${encodeURIComponent(cluster)}` : ''}`, signal),
+  entitySettings: () => get<EntitySettingsResponse>(`/api/settings/entities`),
+  putEntitySettings: (s: EntitySettings) =>
+    request<EntitySettingsResponse>(`/api/settings/entities`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s),
+    }),
+  entitySync: () => get<EntitySyncResponse>(`/api/admin/entities/sync`),
+  runEntitySync: () => request<{ ok: boolean; started: boolean }>(`/api/admin/entities/sync/run`, { method: 'POST' }),
   clusterNamespaces: (cluster: string) =>
     get<ClusterNamespacesResponse>(`/api/clusters/namespaces?cluster=${encodeURIComponent(cluster)}`),
   clusterNamespaceDetail: (cluster: string, namespace: string, fromNs: number, toNs: number) =>

@@ -11,6 +11,7 @@ import { promQuote } from '@/pages/clusters/promQuote';
 import { fmtCores, restartColor } from '@/pages/clusters/thresholds';
 import { fmtBytes, fmtNum } from '@/lib/utils';
 import { useServicePods } from '@/pages/service/useServicePods';
+import { ServiceEntityPods } from '@/pages/service/ServiceEntityPods';
 import type { TimeRange } from '@/lib/types';
 
 // ServiceInfraTab — servis detayının Infrastructure sekmesi. CLUSTER-SEVİYESİ
@@ -168,6 +169,8 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
           <span className="mono" style={{ color: 'var(--text)' }}>{icluster}</span>
         </div>
       )}
+      {/* v0.10.131 — entity katmanı (bayrak açıkken): servisi taşıyan pod'lar, ömür + iş yükü + node. */}
+      <ServiceEntityPods service={service} range={range} cluster={icluster || undefined} />
       <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
         {ns && deploy ? (
           <>Pods matched to <span className="mono">{service}</span> via{' '}

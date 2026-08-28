@@ -23,6 +23,8 @@ import { readFileSync } from 'node:fs';
 const HEAVY: { file: string; hooks: string[] }[] = [
   { file: 'services.ts', hooks: ['api.services(', 'api.serviceMap('] },
   { file: 'logs.ts', hooks: ['api.logs('] },
+  // v0.10.131 — entity pivotları: entity_seen_5m taramaları + Thanos delegasyonu.
+  { file: 'entities.ts', hooks: ['api.entityServices(', 'api.servicePods(', 'api.entityMetrics('] },
   { file: 'endpoints.ts', hooks: ['api.endpoints(', 'api.endpointDetail(', 'api.endpointSplit(', 'api.endpointDownstream('] },
   // v0.9.810 — Explore'un fan-out'u. Bu dosya lib/queries'te DEĞİL
   // (pages/explore altında) ama kusur sınıfı birebir aynı ve ölçeği daha

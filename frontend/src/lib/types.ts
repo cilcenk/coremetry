@@ -6035,3 +6035,131 @@ export interface TraceBackfillProc {
   memoryBytes: number;
   peakBytes: number;
 }
+
+// ── K8s entity katmanı (v0.10.131) — mirrors internal/api/entities.go,
+// entity_routes.go, chstore/entity_queries.go, entity/syncer.go ──────────
+export type EntityType = 'cluster' | 'node' | 'namespace' | 'workload' | 'pod' | 'container' | 'service';
+/** chstore.EntityRecord */
+export interface EntityRecord {
+  type: EntityType;
+  clusterId: string;
+  id: string;
+  namespace?: string;
+  name: string;
+  uid?: string;
+  parentId?: string;
+  labels?: Record<string, string>;
+  source: 'thanos' | 'span';
+  validFrom: string;
+  validTo?: string;
+  firstSeen: string;
+  lastSeen: string;
+  stale?: boolean;
+  /** pod without uid → lifetime split relies on podGap (UI must say so). */
+  nameStable?: boolean;
+}
+/** chstore.EntityRelationRow */
+export interface EntityRelationRow {
+  type: 'parent' | 'runs_on' | 'runs';
+  parentId: string;
+  childId: string;
+  source: string;
+  validFrom: string;
+  validTo?: string;
+  lastSeen: string;
+}
+/** chstore.EntitySeenAgg — entity_seen_5m özeti (pod × servis). */
+export interface EntitySeenAgg {
+  cluster: string;
+  namespace: string;
+  pod: string;
+  node?: string;
+  service: string;
+  spans: number;
+  errors: number;
+  avgMs: number;
+  firstSeen: string;
+  lastSeen: string;
+}
+/** entity.Run — Go alan adları (json tag yok). */
+export interface EntitySyncRun {
+  ClusterID: string;
+  Status: 'ok' | 'partial' | 'failed' | 'skipped';
+  StartedAt: string;
+  FinishedAt: string;
+  EntitiesWritten: number;
+  RelationsWritten: number;
+  Closed: number;
+  UnmappedKeys: string[] | null;
+  UnmappedCounts: number[] | null;
+  ThanosMs: number;
+  CHMs: number;
+  Error: string;
+}
+export interface EntityObservability {
+  Ticks: number;
+  ClustersOK: number;
+  ClustersFailed: number;
+  EntitiesWritten: number;
+  RelationsWritten: number;
+  LastTickMs: number;
+  LastTickAt: string;
+}
+export interface EntitySettings {
+  enabled: boolean;
+  syncInterval?: string;
+  podGap?: string;
+  staleAfter?: string;
+  parallelClusters?: number;
+}
+export interface EntitySettingsResponse {
+  settings: EntitySettings;
+  resolved: { enabled: boolean; syncInterval: string; podGap: string; staleAfter: string; parallelClusters: number };
+  defaults: EntitySettings;
+}
+export interface EntitySyncResponse {
+  disabled?: boolean;
+  runs?: EntitySyncRun[];
+  workerOnThisPod?: boolean;
+  observability?: EntityObservability;
+}
+export interface EntityClusterInfo {
+  id: string;
+  name: string;
+  spanClusterValue: string;
+  lastRun?: EntitySyncRun;
+}
+export interface EntityClustersResponse {
+  disabled?: boolean;
+  clusters?: EntityClusterInfo[];
+  unmapped?: EntitySyncRun;
+}
+export interface EntityListResponse { cluster: string; items: EntityRecord[] }
+export interface EntityDetailResponse {
+  entity: EntityRecord;
+  parents: EntityRecord[];
+  children: Record<string, number>;
+  lifetimes: EntityRecord[];
+  node?: string;
+  cluster?: { id: string; name: string };
+}
+export interface EntityServiceRow { service: string; pods: number; spans: number; errors: number; avgMs: number }
+export interface EntityServicesResponse {
+  entity: string;
+  cluster?: string;
+  pods: EntityRecord[];
+  services: EntityServiceRow[];
+  rows?: EntitySeenAgg[];
+}
+export interface EntityMetricsResponse { entity: string; cluster: string; points: ClusterPodTrendPoint[] }
+export interface ServicePodRow extends EntitySeenAgg {
+  clusterId?: string;
+  entityId?: string;
+  entity?: EntityRecord;
+}
+export interface ServicePodsResponse {
+  service: string;
+  pods: ServicePodRow[];
+  clusterAmbiguous?: string[];
+  unmappedClusters?: string[];
+}

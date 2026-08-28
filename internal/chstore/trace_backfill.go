@@ -438,24 +438,38 @@ func runBackfillSlices(ctx context.Context, day string, slice time.Duration, win
 }
 
 // backfillDaySlices — günü sabit boy dilimlerle kurar; ilk hatada durur.
+//
+// v0.10.125 — exec seçimi: küme çözülüp her shard'a bağlanılırsa
+// SHARD-YEREL (her shard kendi span'lerinden kendi MV'sine), aksi hâlde
+// initiator yolu (Distributed INSERT SELECT). Seçim not olarak durumda.
 func (s *Store) backfillDaySlices(ctx context.Context, day time.Time, slice time.Duration, parallel int, progress func(BackfillProgress)) error {
-	return runBackfillSlices(ctx, day.Format("2006-01-02"), slice, backfillSliceWindows(day, slice), parallel, progress,
-		func(ctx context.Context, from, to time.Time) error {
-			return s.conn.Exec(ctx, `
+	exec, note := s.backfillShardMode(ctx)
+	progress(BackfillProgress{Day: day.Format("2006-01-02"), Slice: slice, Note: note})
+	if exec == nil {
+		exec = s.backfillInitiatorExec()
+	}
+	return runBackfillSlices(ctx, day.Format("2006-01-02"), slice, backfillSliceWindows(day, slice), parallel, progress, exec)
+}
+
+// backfillInitiatorExec — eski yol: Distributed spans → Distributed
+// trace_summary_5m, GROUP BY initiator'da birleşir.
+func (s *Store) backfillInitiatorExec() func(context.Context, time.Time, time.Time) error {
+	return func(ctx context.Context, from, to time.Time) error {
+		return s.conn.Exec(ctx, `
 			INSERT INTO trace_summary_5m
 			  (trace_id, time_bucket, root_service_state, root_name_state,
 			   trace_start_state, trace_end_state, span_count_state,
 			   error_count_state, entry_route_state, entry_service_state)
 			SELECT trace_id, toStartOfInterval(time, INTERVAL 5 MINUTE),`+
-				traceBackfillStateSQL+`
+			traceBackfillStateSQL+`
 			FROM spans
 			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
 			GROUP BY trace_id, toStartOfInterval(time, INTERVAL 5 MINUTE)
 			SETTINGS max_execution_time = 25,
 			         max_bytes_before_external_group_by = 2000000000,
 			         distributed_product_mode = 'global'`,
-				from.UTC().Format("2006-01-02 15:04:05"), to.UTC().Format("2006-01-02 15:04:05"))
-		})
+			from.UTC().Format("2006-01-02 15:04:05"), to.UTC().Format("2006-01-02 15:04:05"))
+	}
 }
 
 // isBackfillTimeout — merdiveni İNDİREN hata sınıfı: KAYNAK hataları.

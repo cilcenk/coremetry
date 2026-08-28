@@ -424,3 +424,67 @@ func TestNextBackfillAttempt(t *testing.T) {
 		t.Errorf("shortErr kısaltmadı: %d", len([]rune(got)))
 	}
 }
+
+// ── v0.10.125 — shard-yerel INSERT ─────────────────────────────────────
+
+func TestPickShardHosts(t *testing.T) {
+	rows := []clusterHostRow{
+		{Shard: 2, Replica: 2, Host: "b2", Port: 9000},
+		{Shard: 1, Replica: 2, Host: "a2", Port: 9000},
+		{Shard: 1, Replica: 1, Host: "a1", Port: 9000},
+		{Shard: 2, Replica: 1, Host: "b1", Port: 9000, Local: false},
+		{Shard: 2, Replica: 3, Host: "b3", Port: 9000, Local: true}, // yerel replika kazanır
+		{Shard: 3, Replica: 1, Host: "", Port: 9000},                // boş host elenir
+	}
+	got := pickShardHosts(rows)
+	if len(got) != 2 || got[0].Addr != "a1:9000" || got[1].Addr != "b3:9000" || got[0].Num != 1 || got[1].Num != 2 {
+		t.Fatalf("seçim: %+v", got)
+	}
+	if pickShardHosts(nil) != nil && len(pickShardHosts(nil)) != 0 {
+		t.Error("boş girdi boş çıktı olmalı")
+	}
+}
+
+func TestBackfillLocalInsertSQLMirrorsStates(t *testing.T) {
+	q := flatWSBF(backfillLocalInsertSQL())
+	for _, want := range []string{"INSERT INTO trace_summary_5m_local", "FROM spans_local", "max_execution_time = 25"} {
+		if !strings.Contains(q, want) {
+			t.Errorf("eksik: %q", want)
+		}
+	}
+	if strings.Contains(q, "distributed_product_mode") || strings.Contains(q, "FROM spans ") {
+		t.Error("shard-yerel SQL Distributed izleri taşıyor")
+	}
+	for _, frag := range TraceBackfillStateFragments() {
+		if !strings.Contains(q, flatWSBF(frag)) {
+			t.Errorf("state parçası shard-yerel SQL'de yok: %s", frag)
+		}
+	}
+}
+
+func TestBackfillShardExecFansOutAndReturnsFirstError(t *testing.T) {
+	shards := []backfillShard{{1, "a:9000"}, {2, "b:9000"}, {3, "c:9000"}}
+	var mu sync.Mutex
+	seen := map[int]int{}
+	exec := backfillShardExec(shards, func(ctx context.Context, sh backfillShard, from, to time.Time) error {
+		mu.Lock()
+		seen[sh.Num]++
+		mu.Unlock()
+		if sh.Num == 2 {
+			return fmt.Errorf("code: 241, message: Query memory limit exceeded")
+		}
+		return nil
+	})
+	from := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
+	err := exec(context.Background(), from, from.Add(15*time.Minute))
+	if err == nil || !isBackfillTimeout(err) || !strings.Contains(err.Error(), "shard 2 (b:9000)") {
+		t.Fatalf("shard hatası kaynak hatası olarak yükselmedi: %v", err)
+	}
+	if len(seen) != 3 || seen[1] != 1 || seen[2] != 1 || seen[3] != 1 {
+		t.Errorf("her shard bir kez koşmalı: %v", seen)
+	}
+	ok := backfillShardExec(shards, func(context.Context, backfillShard, time.Time, time.Time) error { return nil })
+	if err := ok(context.Background(), from, from.Add(time.Minute)); err != nil {
+		t.Errorf("temiz koşu hata verdi: %v", err)
+	}
+}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEscLayer } from '@/lib/escLayer';
-import { scorePaletteEntry } from '@/lib/paletteScore';
+import { scorePaletteEntry, rankPaletteResults } from '@/lib/paletteScore';
 import { useT } from '@/lib/i18n';
 import { SETTINGS_TAB_INDEX } from '@/pages/settings/tabIndex';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -392,11 +392,13 @@ export function CommandPalette() {
       // then the page catalog (v0.7.89).
       scored = [...pivotSvcs, ...localizedPages];
     } else {
-      scored = all
-        .map(r => ({ ...r, score: scorePaletteEntry(q, r.label, r.aliases) }))
-        .filter(r => r.score && r.score > 0)
-        .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-        .slice(0, 50);
+      // v0.10.126 — varlıklar önce: servis → endpoint → sayfa (lib/paletteScore).
+      scored = rankPaletteResults(
+        all
+          .map(r => ({ ...r, score: scorePaletteEntry(q, r.label, r.aliases) }))
+          .filter(r => r.score && r.score > 0),
+        endpoints,
+      );
     }
     // Action launcher results (v0.5.457). Verb-driven matches like
     // "ack" → Acknowledge problem float ABOVE navigation results
@@ -423,12 +425,8 @@ export function CommandPalette() {
         ...scored,
       ];
     }
-    // Endpoint matches (already server-filtered by the query) appended after
-    // the page/service hits so they're visible without crowding out an exact
-    // page/service name match. (UX pass #1.)
-    if (q && endpoints.length > 0) {
-      scored = [...scored, ...endpoints];
-    }
+    // v0.10.126 — endpoint'ler artık rankPaletteResults içinde (servisten
+    // sonra, sayfadan önce); burada ikinci kez eklenmez.
     return scored;
   }, [query, services, endpoints, pivotSvcs, user?.role, localizedPages]);
 

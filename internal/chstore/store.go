@@ -38,6 +38,10 @@ import (
 const roundRobinConnLifetime = 5 * time.Minute
 
 type Store struct {
+	// shardConns (v0.10.125) — backfill'in shard-yerel INSERT'i için host
+	// başına doğrudan bağlantı (trace_backfill_shards.go); tembel, önbellekli.
+	shardMu    sync.Mutex
+	shardConns map[string]driver.Conn
 	// mvCoverage (v0.10.124) — trace_summary_5m gün başına boşluk haritası,
 	// 60 sn önbellek (trace_mv_coverage.go).
 	mvCoverage traceMVCoverage

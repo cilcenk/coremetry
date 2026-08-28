@@ -3737,14 +3737,22 @@ func (s *Server) getAttributeKeys(w http.ResponseWriter, r *http.Request) {
 	// JSON-encoded FilterExpr[] under `filters`; empty / missing
 	// keeps the old global-scan behaviour.
 	rawFilters := q.Get("filters")
-	filters := parseFilters(rawFilters)
+	filters, ferr := parseFilters(rawFilters)
+	if ferr != nil {
+		writeErr(w, ferr)
+		return
+	}
 	// v0.8.x gap-2 — grouped AND/OR builder context. When the operator has a
 	// grouped filter set in /explore, the attribute-key suggester should scope
 	// to data UNDER that group. filterGroup supersedes the flat filters= (a
 	// flat-AND group is byte-identical); both strings enter the cache key so a
 	// grouped vs flat context can't cross-poison.
 	rawFilterGroup := q.Get("filterGroup")
-	root := parseFilterGroup(rawFilterGroup)
+	root, gerr := parseFilterGroup(rawFilterGroup)
+	if gerr != nil {
+		writeErr(w, gerr)
+		return
+	}
 
 	// Cache key carries EVERY input that changes the answer. The window is
 	// one key or the other, never both, so a relative and an absolute request
@@ -4208,7 +4216,11 @@ func parseTraceFilter(q url.Values) (chstore.TraceFilter, error) {
 	// it SUPERSEDES the flat filters= (a flat-AND group is byte-identical, an
 	// OR/nested group disqualifies the MV fast-path). filterGroup rides the
 	// raw query string so the "traces:"+RawQuery cache key already hashes it.
-	f.FilterRoot = parseFilterGroup(q.Get("filterGroup"))
+	root, gerr := parseFilterGroup(q.Get("filterGroup"))
+	if gerr != nil {
+		return chstore.TraceFilter{}, gerr
+	}
+	f.FilterRoot = root
 	// Extra attribute columns — shared parser in traces_extras.go (FAZ 2).
 	f.ExtraAttrs = parseExtraAttrs(q)
 	// count mode — opt-in for the expensive count(DISTINCT trace_id):
@@ -4336,7 +4348,12 @@ func (s *Server) exportTracesCSV(w http.ResponseWriter, r *http.Request) {
 	f.Filters = filters
 	// v0.8.x gap-2 — grouped builder parity with /api/traces so a CSV export
 	// matches exactly what's on screen.
-	f.FilterRoot = parseFilterGroup(q.Get("filterGroup"))
+	root, gerr := parseFilterGroup(q.Get("filterGroup"))
+	if gerr != nil {
+		writeErr(w, gerr)
+		return
+	}
+	f.FilterRoot = root
 	f.ExtraAttrs = parseExtraAttrs(q)
 
 	rows, _, _, err := s.store.GetTraces(r.Context(), f)
@@ -4448,7 +4465,12 @@ func (s *Server) getTraceAggregate(w http.ResponseWriter, r *http.Request) {
 	// v0.8.x gap-2 — grouped AND/OR builder supersedes flat filters= when
 	// present; rides the raw query string so the "traces-agg:"+RawQuery cache
 	// key already hashes it.
-	f.FilterRoot = parseFilterGroup(q.Get("filterGroup"))
+	root, gerr := parseFilterGroup(q.Get("filterGroup"))
+	if gerr != nil {
+		writeErr(w, gerr)
+		return
+	}
+	f.FilterRoot = root
 	// v0.8.453 (B2-c) — genel HAVING: ?having=[{"metric":"errorRate",
 	// "op":">","value":1},…]. Whitelist ValidateHaving'de; RawQuery
 	// cache key'i parametreyi zaten taşıyor. Bozuk JSON / bilinmeyen
@@ -4925,12 +4947,16 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 		// queryMetricNoted, kaynağın açıklayabildiği durumda notu da
 		// getirir (metricNoteSource); CH kaynağı bu yeteneği taşımıyor ve
 		// "" döner — yani bu satır CH davranışını değiştirmez.
+		mfilters, ferr := parseFilters(filtersRaw)
+		if ferr != nil {
+			return nil, ferr
+		}
 		series, note, qerr := queryMetricNoted(ctx, src, chstore.MetricQueryFilter{
 			Name:          name,
 			Service:       svc,
 			Instance:      inst,
 			Engine:        engine,
-			Filters:       parseFilters(filtersRaw),
+			Filters:       mfilters,
 			GroupBy:       splitNonEmpty(groupByRaw, ','),
 			Aggregation:   agg,
 			From:          from,
@@ -5006,10 +5032,14 @@ func (s *Server) getMetricHistogram(w http.ResponseWriter, r *http.Request) {
 		src.Name(), name, svc, step, filtersRaw, from.Unix()/60, to.Unix()/60,
 		s.store.MetricExclusions().Digest())
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		hfilters, ferr := parseFilters(filtersRaw)
+		if ferr != nil {
+			return nil, ferr
+		}
 		return src.QueryMetricHistogram(ctx, chstore.MetricQueryFilter{
 			Name:        name,
 			Service:     svc,
-			Filters:     parseFilters(filtersRaw),
+			Filters:     hfilters,
 			From:        from,
 			To:          to,
 			StepSeconds: step,
@@ -5143,7 +5173,12 @@ func (s *Server) spanMetric(w http.ResponseWriter, r *http.Request) {
 	// falls to the bounded raw-spans GROUP BY). Same precedence getTraces uses.
 	// The cache key (r.URL.RawQuery, below) already hashes filterGroup so
 	// distinct group shapes don't poison each other.
-	f.FilterRoot = parseFilterGroup(q.Get("filterGroup"))
+	root, gerr := parseFilterGroup(q.Get("filterGroup"))
+	if gerr != nil {
+		writeErr(w, gerr)
+		return
+	}
+	f.FilterRoot = root
 	// v0.8.32 (Phase-2 #1) — 30s cache. Explore's default latency/rate chart
 	// re-fires this on every keystroke + range nudge, and the compare-period
 	// overlay fires a second call per render. When a filter/DSL/sub-5min step
@@ -5503,30 +5538,36 @@ func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
 				// v0.9.1157 — queryMetricNoted: notu taşıyabilen kaynakta
 				// (VM) getirir, ClickHouse'ta "" döner. Tekil handler'la
 				// AYNI çağrı, çünkü ayrışma bu dalın bilinen bug sınıfı.
-				series, note, err = queryMetricNoted(r.Context(), metricSrc, chstore.MetricQueryFilter{
-					Name:        req.Name,
-					Service:     req.Service,
-					Aggregation: req.Agg,
-					GroupBy:     req.GroupBy,
-					// v0.9.566 — FİLTRELER. Bu dal Filters'ı hiç
-					// geçirmiyordu: istemci gönderiyor (Dashboard.tsx
-					// filters: cfg.filters), gövdede duruyor
-					// (req.Filters), ama SQL'e HİÇ inmiyordu.
-					//
-					// Sonuç boş panel DEĞİL — sessizce YANLIŞ SAYI. Bir
-					// jvm.memory.type="heap" filtresi uygulanmayınca
-					// panel heap + non-heap (Metaspace, CodeCache,
-					// Compressed Class Space) toplamını "heap" diye
-					// çiziyordu. Yanlış ama makul görünen bir sayı,
-					// boş panelden tehlikelidir: kimse sorgulamaz.
-					//
-					// Kardeş handler (/api/metrics/query) filtreyi
-					//ZATEN geçiriyordu — bu dal ondan ayrışmıştı.
-					Filters:     parseFilters(string(req.Filters)),
-					From:        from,
-					To:          to,
-					StepSeconds: req.Step,
-				})
+				// v0.10.118 — derlenemeyen filtre bu panelde HATA olur (slot
+				// Error), sessiz "filtresiz seri" değil — parseFilters sözleşmesi.
+				if mfilters, ferr := parseFilters(string(req.Filters)); ferr != nil {
+					err = ferr
+				} else {
+					series, note, err = queryMetricNoted(r.Context(), metricSrc, chstore.MetricQueryFilter{
+						Name:        req.Name,
+						Service:     req.Service,
+						Aggregation: req.Agg,
+						GroupBy:     req.GroupBy,
+						// v0.9.566 — FİLTRELER. Bu dal Filters'ı hiç
+						// geçirmiyordu: istemci gönderiyor (Dashboard.tsx
+						// filters: cfg.filters), gövdede duruyor
+						// (req.Filters), ama SQL'e HİÇ inmiyordu.
+						//
+						// Sonuç boş panel DEĞİL — sessizce YANLIŞ SAYI. Bir
+						// jvm.memory.type="heap" filtresi uygulanmayınca
+						// panel heap + non-heap (Metaspace, CodeCache,
+						// Compressed Class Space) toplamını "heap" diye
+						// çiziyordu. Yanlış ama makul görünen bir sayı,
+						// boş panelden tehlikelidir: kimse sorgulamaz.
+						//
+						// Kardeş handler (/api/metrics/query) filtreyi
+						//ZATEN geçiriyordu — bu dal ondan ayrışmıştı.
+						Filters:     mfilters,
+						From:        from,
+						To:          to,
+						StepSeconds: req.Step,
+					})
+				}
 			case "spanMetric":
 				filters, ferr := parseFiltersAndDSL(string(req.Filters), req.DSL)
 				if ferr != nil {
@@ -11885,24 +11926,37 @@ func writeErr(w http.ResponseWriter, err error) {
 
 // parseFilters decodes the JSON-encoded `filters` query parameter — a list
 // of {k, op, v} objects — into the typed FilterExpr slice consumed by the
-// query layer. Empty / malformed → no filters applied.
-func parseFilters(raw string) []chstore.FilterExpr {
-	if raw == "" {
-		return nil
+// query layer.
+//
+// v0.10.118 — bozuk JSON ya da derlenemeyen yan tümce (bilinmeyen op, boş
+// anahtar) artık HATA (errBadRequest → 400), sessizce "filtre yok" DEĞİL.
+// Ölçülen olay: geçersiz op'lu bir filtre ApplyFilters'ta atlanıyor, ama
+// yan tümcenin varlığı MV yolunu diskalifiye ettiği için ham GROUP BY 24h
+// penceresini tarıyor (1.57 M satır, 6.2 s) ve FİLTRESİZ 51 satır dönüyordu
+// — operatörün gördüğü "makul" ama yanlış bir liste. Sınırda reddetmek hem
+// doğruluğu hem taramayı kapatır; UI zaten geçerli op gönderir.
+func parseFilters(raw string) ([]chstore.FilterExpr, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
 	}
 	var out []chstore.FilterExpr
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		log.Printf("[api] filters parse: %v", err)
-		return nil
+		return nil, fmt.Errorf("%w: filters: %v", errBadRequest, err)
 	}
-	return out
+	if err := chstore.ValidateFilters(out); err != nil {
+		return nil, fmt.Errorf("%w: %v", errBadRequest, err)
+	}
+	return out, nil
 }
 
 // parseFiltersAndDSL merges the JSON `filters` param with a free-form `dsl`
 // param. Both are optional; conditions from each are AND-joined.
 // A DSL parse error is surfaced as a 4xx via the returned error.
 func parseFiltersAndDSL(jsonFilters, dsl string) ([]chstore.FilterExpr, error) {
-	out := parseFilters(jsonFilters)
+	out, err := parseFilters(jsonFilters)
+	if err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(dsl) == "" {
 		return out, nil
 	}
@@ -11920,16 +11974,22 @@ func parseFiltersAndDSL(jsonFilters, dsl string) ([]chstore.FilterExpr, error) {
 // additive, default-off upgrade and a bad blob must never break the page —
 // the flat path picks up the slack. The repo layer treats a flat-AND group
 // byte-identically to []FilterExpr, so this is pure additive behaviour.
-func parseFilterGroup(raw string) *chstore.FilterGroup {
+//
+// v0.10.118 — parseFilters ile aynı sözleşme: bozuk JSON / derlenemeyen
+// yaprak → errBadRequest (400), sessiz nil değil (buildGroupFragment'ın
+// atlaması son çare olarak kalır).
+func parseFilterGroup(raw string) (*chstore.FilterGroup, error) {
 	if strings.TrimSpace(raw) == "" {
-		return nil
+		return nil, nil
 	}
 	var g chstore.FilterGroup
 	if err := json.Unmarshal([]byte(raw), &g); err != nil {
-		log.Printf("[api] filterGroup parse: %v", err)
-		return nil
+		return nil, fmt.Errorf("%w: filterGroup: %v", errBadRequest, err)
 	}
-	return &g
+	if err := g.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", errBadRequest, err)
+	}
+	return &g, nil
 }
 
 // isSafeAttrKey allows only OTel-style attribute keys (alphanum + dot,

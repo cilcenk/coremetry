@@ -395,7 +395,9 @@ func jsonSetDigest(raw string) string {
 	if strings.TrimSpace(raw) == "" {
 		return "0"
 	}
-	exprs := parseFilters(raw)
+	// v0.10.118 — parseFilters artık hata dönüyor; anahtar üretimi için
+	// derlenemeyen girdi = ham baytların hash'i (aşağıdaki dal).
+	exprs, _ := parseFilters(raw)
 	h := fnv.New64a()
 	if len(exprs) == 0 {
 		// Unparseable / empty-after-parse — hash the raw bytes so distinct

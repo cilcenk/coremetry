@@ -2190,7 +2190,6 @@ func searchPredicate(search string) (string, []any) {
 	return sql, args
 }
 
-
 // traceDisplaySvcExpr — /traces listesinde GÖSTERİLEN servis (v0.10.97,
 // operatör-raporlu "iframe trace'leri"). Mutlak kök (parent'sız span)
 // mobil web/iframe telemetrisinden gelince servisi 'unknown' oluyor;
@@ -2643,6 +2642,14 @@ func traceExtrasProjection(attrs []string) (string, []any) {
 	sel := ""
 	args := []any{}
 	for i, key := range attrs {
+		// v0.10.143 — `cluster` kolon anahtarı spans'in terfi `cluster`
+		// kolonuna (k8s.cluster.name / openshift.cluster.name / cluster
+		// coalesce zinciri, v0.8.185) düşer; çıplak dizi araması yalnız
+		// literal `cluster` attribute'unu bulur (çoğu kurulumda boş — inceleme).
+		if key == "cluster" {
+			sel += fmt.Sprintf(", anyIf(cluster, cluster != '') AS extra_%d", i)
+			continue
+		}
 		if col, ok := promotedCols()[key]; ok {
 			sel += fmt.Sprintf(", anyIf(%s, %s != '') AS extra_%d", col, col, i)
 			continue
@@ -3239,7 +3246,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	stage2 := `
 		SELECT trace_id,
 		       argMaxIfMerge(root_name_state)                              AS root_name,
-		       `+s.traceDisplaySvcExpr()+`                           AS root_svc,
+		       ` + s.traceDisplaySvcExpr() + `                           AS root_svc,
 		       minMerge(trace_start_state)                                 AS trace_start,
 		       (maxMerge(trace_end_state) -
 		        toUnixTimestamp64Nano(minMerge(trace_start_state))) / 1e6  AS dur_ms,
@@ -3744,7 +3751,7 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 		    SELECT trace_id,
 		           ` + keyExpr + ` AS group_key,
 		           ` + extraExpr + ` AS group_extra,
-		           `+s.traceDisplaySvcExpr()+` AS root_svc,
+		           ` + s.traceDisplaySvcExpr() + ` AS root_svc,
 		           minMerge(trace_start_state) AS trace_start,
 		           (maxMerge(trace_end_state) -
 		            toUnixTimestamp64Nano(minMerge(trace_start_state))) / 1e6 AS dur_ms,

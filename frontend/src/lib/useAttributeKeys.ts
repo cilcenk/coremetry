@@ -29,6 +29,8 @@ export const SUGGESTED_KEYS = [
   'db.system', 'db.statement',
   'rpc.system', 'rpc.method',
   'peer.service', 'messaging.system',
+  // v0.10.143 — Kubernetes bağlamı (terfi kolonlar): filtre ve kolon önerilerinde görünsün.
+  'k8s.namespace.name', 'k8s.pod.name', 'k8s.node.name', 'cluster',
   'span.http.method', 'span.http.route', 'span.http.status_code',
   'span.db.system', 'span.db.statement',
   'span.peer.service',

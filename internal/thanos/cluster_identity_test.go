@@ -2,6 +2,7 @@ package thanos
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -151,5 +152,73 @@ func TestReconcileClusterSettings(t *testing.T) {
 	}
 	if ValidThanosLabelName("") != true || ValidThanosLabelName("cluster_id") != true || ValidThanosLabelName("9x") != false {
 		t.Fatal("etiket adı doğrulaması: boş ok, cluster_id ok, 9x hayır")
+	}
+}
+
+// v0.10.139 — otomatik eşleme brief'i: çoklu span değeri + teklik.
+func TestSpanClusterKeysAndUniqueness(t *testing.T) {
+	c := ClusterConfig{Name: "prod-eu", SpanClusterValue: "prod-eu-west", SpanClusterValues: []string{" prod-eu-west ", "prod-eu", ""}}
+	if got := c.SpanClusterKeys(); len(got) != 2 || got[0] != "prod-eu-west" || got[1] != "prod-eu" {
+		t.Fatalf("keys tekil+boşsuz olmalı: %v", got)
+	}
+	if !c.MatchesSpanCluster("prod-eu") || c.MatchesSpanCluster("prod-us") {
+		t.Fatal("MatchesSpanCluster")
+	}
+	if got := (ClusterConfig{Name: "solo"}).SpanClusterKeys(); len(got) != 1 || got[0] != "solo" {
+		t.Fatalf("değer yoksa Name: %v", got)
+	}
+	// Teklik: aynı değer iki kayıtta → hata + bağlı kayıt adı.
+	in := Settings{Clusters: []ClusterConfig{
+		{Name: "prod-eu", URL: "http://a", SpanClusterValues: []string{"prod-eu-west"}},
+		{Name: "prod-us", URL: "http://b", SpanClusterValues: []string{"prod-us-east", "prod-eu-west"}},
+	}}
+	if _, err := ReconcileClusterSettings(in, Settings{}); err == nil || !strings.Contains(err.Error(), `"prod-eu"`) || !strings.Contains(err.Error(), "prod-eu-west") {
+		t.Fatalf("çakışma reddedilmeli ve bağlı kaydı söylemeli: %v", err)
+	}
+	// Aynı etiket çifti iki kayıtta → hata.
+	in2 := Settings{Clusters: []ClusterConfig{
+		{Name: "a", URL: "http://q", ThanosLabelName: "cluster", ThanosLabelValue: "x"},
+		{Name: "b", URL: "http://q", ThanosLabelName: "cluster", ThanosLabelValue: "x"},
+	}}
+	if _, err := ReconcileClusterSettings(in2, Settings{}); err == nil || !strings.Contains(err.Error(), "cluster=") {
+		t.Fatalf("etiket çakışması reddedilmeli: %v", err)
+	}
+	// Geçerli çoklu değer: liste kanonikleşir, SpanClusterValue ilk eleman.
+	ok := Settings{Clusters: []ClusterConfig{{Name: "prod-eu", URL: "http://a", SpanClusterValues: []string{"v2", "v1", "v2"}}}}
+	out, err := ReconcileClusterSettings(ok, Settings{})
+	if err != nil || out.Clusters[0].SpanClusterValue != "v2" || len(out.Clusters[0].SpanClusterValues) != 2 {
+		t.Fatalf("kanonik liste: %+v %v", out.Clusters[0], err)
+	}
+	// Auto alanları korunur; etiket elle değişince manual'a düşer.
+	cur := Settings{Clusters: []ClusterConfig{{ID: "c-1", Name: "prod-eu", URL: "http://a", ThanosLabelName: "cluster", ThanosLabelValue: "eu", ThanosLabelSource: "auto", ThanosLabelDetectedAt: 5}}}
+	keep, _ := ReconcileClusterSettings(Settings{Clusters: []ClusterConfig{{ID: "c-1", Name: "prod-eu", URL: "http://a", ThanosLabelName: "cluster", ThanosLabelValue: "eu"}}}, cur)
+	if keep.Clusters[0].ThanosLabelSource != "auto" || keep.Clusters[0].ThanosLabelDetectedAt != 5 {
+		t.Fatalf("auto alanları korunmalı: %+v", keep.Clusters[0])
+	}
+	man, _ := ReconcileClusterSettings(Settings{Clusters: []ClusterConfig{{ID: "c-1", Name: "prod-eu", URL: "http://a", ThanosLabelName: "cluster", ThanosLabelValue: "eu2"}}}, cur)
+	if man.Clusters[0].ThanosLabelSource != "manual" {
+		t.Fatalf("elle değişen etiket manual olmalı: %+v", man.Clusters[0])
+	}
+}
+
+// İnceleme (v0.10.139): Snapshot/form yalnız AÇIK değerleri gösterir; Name
+// yedeği listeye yazılmaz — yeniden kaydetmek adı kalıcı değere çevirmez;
+// değer boşken ad değişimi etkin matcher'ı değiştirir → auto düşer.
+func TestExplicitValuesAndRenameKeepImplicitName(t *testing.T) {
+	c := ClusterConfig{Name: "prod-eu"}
+	if got := c.ExplicitSpanClusterValues(); len(got) != 0 {
+		t.Fatalf("açık değer yok: %v", got)
+	}
+	out, err := ReconcileClusterSettings(Settings{Clusters: []ClusterConfig{{Name: "prod-eu", URL: "http://a"}}}, Settings{})
+	if err != nil || out.Clusters[0].SpanClusterValue != "" || out.Clusters[0].SpanClusterValues != nil {
+		t.Fatalf("Name yedeği listeye yazılmamalı: %+v %v", out.Clusters[0], err)
+	}
+	if got := out.Clusters[0].SpanClusterKeys(); len(got) != 1 || got[0] != "prod-eu" {
+		t.Fatalf("etkin anahtar Name: %v", got)
+	}
+	cur := Settings{Clusters: []ClusterConfig{{ID: "c-1", Name: "prod-eu", URL: "http://a", ThanosLabelName: "cluster", ThanosLabelSource: "auto", ThanosLabelDetectedAt: 5}}}
+	ren, _ := ReconcileClusterSettings(Settings{Clusters: []ClusterConfig{{ID: "c-1", Name: "prod-eu-2", URL: "http://a", ThanosLabelName: "cluster"}}}, cur)
+	if ren.Clusters[0].ThanosLabelSource != "manual" {
+		t.Fatalf("değer boşken ad değişimi matcher'ı değiştirir → manual: %+v", ren.Clusters[0])
 	}
 }

@@ -138,12 +138,16 @@ function PodDetail() {
   // çıplak yazım o durumda attr_values'a düşüp SIFIR satır verirdi.
   const { enabled: entityOn, clusters: entityClusters } = useEntityEnabled();
   const clusterRef = cluster || clusterParam;
-  const spanCluster = entityClusters.find(c => c.id === clusterRef || c.name === clusterRef)?.spanClusterValue ?? '';
+  const entityCluster = entityClusters.find(c => c.id === clusterRef || c.name === clusterRef);
+  // v0.10.139 — bir kayıt birden çok span değeri taşır → DSL `in [..]` listesi
+  // (dsl.go: operatör KÜÇÜK harf, köşeli parantez, tırnaklı değerler — TestDSLClusterInList pinler).
+  const spanClusters = (entityCluster?.spanClusterValues?.length ? entityCluster.spanClusterValues : [entityCluster?.spanClusterValue ?? '']).filter(Boolean);
+  const spanCluster = spanClusters.join(', ');
   const esc = (v: string) => v.replace(/"/g, '\\"');
   const podScope = service
     ? `service.name = "${esc(service)}" AND host.name = "${esc(pod)}"`
-    : `resource.k8s.pod.name = "${esc(pod)}"${namespace ? ` AND resource.k8s.namespace.name = "${esc(namespace)}"` : ''} AND cluster = "${esc(spanCluster)}"`;
-  const redEnabled = !!pod && (!!service || (entityOn && !!spanCluster));
+    : `resource.k8s.pod.name = "${esc(pod)}"${namespace ? ` AND resource.k8s.namespace.name = "${esc(namespace)}"` : ''} AND cluster in [${spanClusters.map(v => `"${esc(v)}"`).join(', ')}]`;
+  const redEnabled = !!pod && (!!service || (entityOn && spanClusters.length > 0));
   // v0.9.391 (Faz B) — mdp + zarf select'i (Overview deseniyle aynı).
   const podMdp = panelMaxDataPoints(3);
   const redQ = useQuery({

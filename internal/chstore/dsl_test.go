@@ -90,3 +90,20 @@ name = "GET" AND duration > 500ms`
 		t.Errorf("duration alias not applied: %#v", got[2])
 	}
 }
+
+// v0.10.139 — Pod.tsx'in ürettiği çoklu-cluster kapsamı: `cluster in ["a", "b"]`
+// (küçük harf operatör, köşeli parantez, tırnaklı değerler). Büyük harf `IN`
+// dslLineRe'ye uymaz — sözleşme burada pinlenir ki FE yazımı sessizce 400'e
+// düşmesin (lokal e2e bunu yakaladı).
+func TestDSLClusterInList(t *testing.T) {
+	fs, err := ParseDSL(`resource.k8s.pod.name = "api-1" AND cluster in ["prod-eu-west", "fake-1"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fs) != 2 || fs[1].Key != "cluster" || fs[1].Op != "IN" || len(fs[1].Values) != 2 || fs[1].Values[1] != "fake-1" {
+		t.Fatalf("beklenmeyen çözüm: %+v", fs)
+	}
+	if _, err := ParseDSL(`cluster IN ["a"]`); err == nil {
+		t.Fatal("büyük harf IN reddedilir (regex küçük harf); FE küçük harf yazmalı")
+	}
+}

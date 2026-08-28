@@ -27,7 +27,9 @@ type ClusterRef struct {
 	ID               string
 	Name             string
 	NamespaceFilter  string // thanos.nsMatcher çıktısı DEĞİL, ham regex
-	SpanClusterValue string // span `cluster` kolonundaki değer (boş = Name)
+	SpanClusterValue string // span `cluster` kolonundaki birincil değer (boş = Name)
+	// SpanClusterValues — v0.10.139: tüm değerler (teklik Settings'te).
+	SpanClusterValues []string
 }
 
 // Source — Thanos kapısı (thanos.Service adaptörü; testte sahte).

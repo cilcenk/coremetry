@@ -52,8 +52,20 @@ type ClusterConfig struct {
 	ThanosLabelName  string `json:"thanosLabelName,omitempty"`
 	ThanosLabelValue string `json:"thanosLabelValue,omitempty"`
 	// SpanClusterValue — v0.10.128: span `cluster` kolonunda bu cluster'ın
-	// değeri; boşsa Name (bugünkü join anahtarı).
+	// değeri; boşsa Name (bugünkü join anahtarı). v0.10.139'dan itibaren
+	// LİSTENİN ilk elemanı (SpanClusterKeys) — eski kayıtlar okunmaya devam
+	// eder, yazımda liste kanoniktir.
 	SpanClusterValue string `json:"spanClusterValue,omitempty"`
+	// SpanClusterValues — v0.10.139 (otomatik eşleme brief'i): bir kayıt
+	// birden çok span cluster değeri taşır (geçiş dönemleri, farklı
+	// Collector konfigürasyonları). Teklik: bir değer aynı anda TEK kayda
+	// (ReconcileClusterSettings reddeder, bağlı kaydı söyler).
+	SpanClusterValues []string `json:"spanClusterValues,omitempty"`
+	// ThanosLabelSource — v0.10.139: "auto" (algılandı) | "manual" | "" (eski
+	// kayıt = elle). Auto değer UI'da rozetlenir, elle geçersiz kılınabilir;
+	// periyodik doğrulama eşleşmezse uyarı üretir, kaydı bozmaz.
+	ThanosLabelSource     string `json:"thanosLabelSource,omitempty"`
+	ThanosLabelDetectedAt int64  `json:"thanosLabelDetectedAt,omitempty"` // unix ms
 	// AuthType — none | bearer. Bearer covers the standard
 	// OpenShift path: a ServiceAccount token with the
 	// cluster-monitoring-view ClusterRole against the
@@ -79,17 +91,20 @@ type Settings struct {
 
 // ClusterSnapshot mirrors ClusterConfig with the token masked.
 type ClusterSnapshot struct {
-	ID                 string `json:"id,omitempty"`
-	Name               string `json:"name"`
-	URL                string `json:"url"`
-	ThanosLabelName    string `json:"thanosLabelName,omitempty"`
-	ThanosLabelValue   string `json:"thanosLabelValue,omitempty"`
-	SpanClusterValue   string `json:"spanClusterValue,omitempty"`
-	AuthType           string `json:"authType,omitempty"`
-	HasToken           bool   `json:"hasToken"`
-	NamespaceFilter    string `json:"namespaceFilter,omitempty"`
-	InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"`
-	Enabled            bool   `json:"enabled"`
+	ID                    string   `json:"id,omitempty"`
+	Name                  string   `json:"name"`
+	URL                   string   `json:"url"`
+	ThanosLabelName       string   `json:"thanosLabelName,omitempty"`
+	ThanosLabelValue      string   `json:"thanosLabelValue,omitempty"`
+	SpanClusterValue      string   `json:"spanClusterValue,omitempty"`
+	SpanClusterValues     []string `json:"spanClusterValues,omitempty"`
+	ThanosLabelSource     string   `json:"thanosLabelSource,omitempty"`
+	ThanosLabelDetectedAt int64    `json:"thanosLabelDetectedAt,omitempty"`
+	AuthType              string   `json:"authType,omitempty"`
+	HasToken              bool     `json:"hasToken"`
+	NamespaceFilter       string   `json:"namespaceFilter,omitempty"`
+	InsecureSkipVerify    bool     `json:"insecureSkipVerify,omitempty"`
+	Enabled               bool     `json:"enabled"`
 }
 
 // Snapshot is what GET /api/settings/thanos returns.
@@ -324,8 +339,9 @@ func (s *Service) Snapshot() Snapshot {
 		out.Clusters = append(out.Clusters, ClusterSnapshot{
 			ID: c.EffectiveID(), Name: c.Name, URL: c.URL, AuthType: c.AuthType,
 			ThanosLabelName: c.ThanosLabelName, ThanosLabelValue: c.ThanosLabelValue,
-			SpanClusterValue: c.SpanClusterValue,
-			HasToken:         c.Token != "", NamespaceFilter: c.NamespaceFilter,
+			ThanosLabelSource: c.ThanosLabelSource, ThanosLabelDetectedAt: c.ThanosLabelDetectedAt,
+			SpanClusterValue: c.SpanClusterValue, SpanClusterValues: c.ExplicitSpanClusterValues(),
+			HasToken: c.Token != "", NamespaceFilter: c.NamespaceFilter,
 			InsecureSkipVerify: c.InsecureSkipVerify, Enabled: c.Enabled,
 		})
 	}

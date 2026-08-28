@@ -107,7 +107,7 @@ func (s *Server) getEntityClusters(w http.ResponseWriter, r *http.Request) {
 			if !c.Enabled {
 				continue
 			}
-			m := map[string]any{"id": c.EffectiveID(), "name": c.Name, "spanClusterValue": c.SpanClusterKey()}
+			m := map[string]any{"id": c.EffectiveID(), "name": c.Name, "spanClusterValue": c.SpanClusterKey(), "spanClusterValues": c.SpanClusterKeys()}
 			if ru, ok := last[c.EffectiveID()]; ok {
 				m["lastRun"] = ru
 			}
@@ -271,7 +271,7 @@ func (s *Server) getEntityServices(w http.ResponseWriter, r *http.Request) {
 		}
 		var aggs []chstore.EntitySeenAgg
 		for ns, names := range byNS {
-			a, err := s.store.EntitySeenForPods(ctx, c.SpanClusterKey(), ns, names, from, to)
+			a, err := s.store.EntitySeenForPods(ctx, c.SpanClusterKeys(), ns, names, from, to)
 			if err != nil {
 				return nil, err
 			}
@@ -363,18 +363,19 @@ func (s *Server) getServicePods(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := parseFromTo(r, time.Hour)
 	clusterRef := strings.TrimSpace(r.URL.Query().Get("cluster"))
-	var clusterValue, clusterID string
+	var clusterValues []string
+	var clusterID string
 	if clusterRef != "" {
 		c, ok := s.resolveCluster(clusterRef)
 		if !ok {
 			writeJSONError(w, http.StatusNotFound, "cluster not configured")
 			return
 		}
-		clusterValue, clusterID = c.SpanClusterKey(), c.EffectiveID()
+		clusterValues, clusterID = c.SpanClusterKeys(), c.EffectiveID() // v0.10.139 — çoklu değer
 	}
 	key := servicePodsKey(name, clusterID, from, to)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		aggs, err := s.store.EntitySeenForService(ctx, name, clusterValue, from, to)
+		aggs, err := s.store.EntitySeenForService(ctx, name, clusterValues, from, to)
 		if err != nil {
 			return nil, err
 		}
@@ -382,7 +383,9 @@ func (s *Server) getServicePods(w http.ResponseWriter, r *http.Request) {
 		byValue := map[string]thanos.ClusterConfig{}
 		for _, c := range s.thanos.CurrentSettings().Clusters {
 			if c.Enabled {
-				byValue[c.SpanClusterKey()] = c
+				for _, k := range c.SpanClusterKeys() { // v0.10.139 — bir kayıt birden çok değer
+					byValue[k] = c
+				}
 			}
 		}
 		type podRow struct {
@@ -426,11 +429,33 @@ func (s *Server) getServicePods(w http.ResponseWriter, r *http.Request) {
 		// yaşar. (b) Durum: cluster başına TEK Thanos envanter sorgusu, hedefli
 		// pod=~ regex (≤200 ad; fazlası statusNotes ile ilan). (c) Zincir:
 		// satırların entity ebeveynlerinden workload/namespace özeti.
+		// v0.10.139 (inceleme) — çoklu değerli kayıtta aynı pod iki ham cluster
+		// değeriyle iki satır veriyordu (yinelenen pod, şişen workload sayısı):
+		// (clusterId, namespace, pod) üzerinden birleştir.
+		{
+			type key struct{ cid, ns, pod string }
+			idx := map[key]int{}
+			merged := make([]podRow, 0, len(out))
+			for _, row := range out {
+				if row.ClusterID == "" {
+					merged = append(merged, row)
+					continue
+				}
+				k := key{row.ClusterID, row.Namespace, row.Pod}
+				if j, ok := idx[k]; ok {
+					merged[j].EntitySeenAgg = mergeSeenAgg(merged[j].EntitySeenAgg, row.EntitySeenAgg)
+					continue
+				}
+				idx[k] = len(merged)
+				merged = append(merged, row)
+			}
+			out = merged
+		}
 		statusNotes := []string{}
 		var notesMu sync.Mutex
 		note := func(n string) { notesMu.Lock(); statusNotes = append(statusNotes, n); notesMu.Unlock() }
 		if len(out) > 0 {
-			if lat, err := s.store.PodLatencyForService(ctx, name, clusterValue, from, to); err == nil {
+			if lat, err := s.store.PodLatencyForService(ctx, name, clusterValues, from, to); err == nil {
 				byKey := make(map[[3]string]chstore.PodLatencyRow, len(lat))
 				for _, l := range lat {
 					byKey[[3]string{l.Cluster, l.Namespace, l.Pod}] = l
@@ -588,4 +613,26 @@ func (s *Server) getEntityContainers(w http.ResponseWriter, r *http.Request) {
 		}
 		return map[string]any{"entity": id, "containers": rows}, nil
 	})
+}
+
+// mergeSeenAgg — v0.10.139 (inceleme): aynı pod'un iki ham cluster değerli
+// satırı (çoklu değerli Remote Cluster kaydı) tek satıra: sayımlar toplanır,
+// ortalama ağırlıklı, ilk/son görülme uç değerler, cluster BİRİNCİL değer
+// (ilk satır). Saf; tablo-testli.
+func mergeSeenAgg(a, b chstore.EntitySeenAgg) chstore.EntitySeenAgg {
+	total := a.Spans + b.Spans
+	if total > 0 {
+		a.AvgMs = (a.AvgMs*float64(a.Spans) + b.AvgMs*float64(b.Spans)) / float64(total)
+	}
+	a.Spans, a.Errors = total, a.Errors+b.Errors
+	if a.Node == "" {
+		a.Node = b.Node
+	}
+	if b.FirstSeen.Before(a.FirstSeen) {
+		a.FirstSeen = b.FirstSeen
+	}
+	if b.LastSeen.After(a.LastSeen) {
+		a.LastSeen = b.LastSeen
+	}
+	return a
 }

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // cluster_identity.go — REMOTE CLUSTER KAYDI = ENTITY HİYERARŞİSİNİN KÖKÜ
@@ -62,12 +63,76 @@ func (c ClusterConfig) EffectiveThanosLabel() (string, string) {
 	return c.ThanosLabelName, c.Name
 }
 
-// SpanClusterKey — span `cluster` kolonunda bu cluster'ın değeri.
+// SpanClusterKey — span `cluster` kolonunda bu cluster'ın BİRİNCİL değeri
+// (listenin ilki). Eşleşme için SpanClusterKeys / MatchesSpanCluster.
 func (c ClusterConfig) SpanClusterKey() string {
-	if c.SpanClusterValue != "" {
-		return c.SpanClusterValue
+	return c.SpanClusterKeys()[0]
+}
+
+// SpanClusterKeys — v0.10.139: kaydın TÜM span cluster değerleri
+// (SpanClusterValue + SpanClusterValues, tekil, boşlar atılmış); hiçbiri
+// yoksa Name. Okuma tarafı haritaları BUNU anahtarlar — atama geriye
+// dönük çalışır (tarihsel entity_seen satırları okuma anında bağlanır).
+func (c ClusterConfig) SpanClusterKeys() []string {
+	out := make([]string, 0, 1+len(c.SpanClusterValues))
+	seen := map[string]bool{}
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			return
+		}
+		seen[v] = true
+		out = append(out, v)
 	}
-	return c.Name
+	add(c.SpanClusterValue)
+	for _, v := range c.SpanClusterValues {
+		add(v)
+	}
+	if len(out) == 0 {
+		out = append(out, c.Name)
+	}
+	return out
+}
+
+// ExplicitSpanClusterValues — kayda AÇIKÇA yazılmış değerler (Name yedeği
+// HARİÇ). Snapshot/Settings formu bunu gösterir: yedeği değer gibi
+// göstermek, yeniden kaydetmede eski adı kalıcı değere çevirirdi (inceleme).
+func (c ClusterConfig) ExplicitSpanClusterValues() []string {
+	out := make([]string, 0, 1+len(c.SpanClusterValues))
+	seen := map[string]bool{}
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			return
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	add(c.SpanClusterValue)
+	for _, v := range c.SpanClusterValues {
+		add(v)
+	}
+	return out
+}
+
+// MatchesSpanCluster — değer bu kayda mı ait.
+func (c ClusterConfig) MatchesSpanCluster(v string) bool {
+	for _, k := range c.SpanClusterKeys() {
+		if k == v {
+			return true
+		}
+	}
+	return false
+}
+
+// SpanClusterOwner — değerin bağlı olduğu kayıt (teklik kuralının okuma yüzü).
+func SpanClusterOwner(cfg Settings, value string) (ClusterConfig, bool) {
+	for _, c := range cfg.Clusters {
+		if c.MatchesSpanCluster(value) {
+			return c, true
+		}
+	}
+	return ClusterConfig{}, false
 }
 
 // ValidThanosLabelName — PUT doğrulaması: boş ya da Prometheus etiket adı.
@@ -155,11 +220,58 @@ func ReconcileClusterSettings(in, cur Settings) (Settings, error) {
 			if c.Token == "" {
 				c.Token = prev.Token
 			}
+			// v0.10.139 — otomatik algılama alanları sunucu sahipli: istemci
+			// göndermediyse saklı değer korunur; etiket ELLE değiştirildiyse
+			// kaynak manual'a düşer (auto rozeti yalan söylemesin).
+			if c.ThanosLabelSource == "" {
+				c.ThanosLabelSource, c.ThanosLabelDetectedAt = prev.ThanosLabelSource, prev.ThanosLabelDetectedAt
+				// ETKİN çift karşılaştırılır: değer boşken ad değişimi de matcher'ı
+				// değiştirir (inceleme) — auto rozeti o durumda da düşer.
+				pl, pv := prev.EffectiveThanosLabel()
+				cl, cv := c.EffectiveThanosLabel()
+				if prev.ThanosLabelSource == "auto" && (cl != pl || cv != pv) {
+					c.ThanosLabelSource, c.ThanosLabelDetectedAt = "manual", 0
+				}
+			}
 		default:
 			c.ID = derivedClusterID(c.Name)
 		}
+		// Liste kanonik: yalnız AÇIK değerler (tekil, boşsuz); SpanClusterValue =
+		// ilk eleman. Açık değer yoksa Name yedeği örtük kalır (listeye yazılmaz).
+		if keys := c.ExplicitSpanClusterValues(); len(keys) > 0 {
+			c.SpanClusterValue, c.SpanClusterValues = keys[0], keys
+		} else {
+			c.SpanClusterValue, c.SpanClusterValues = "", nil
+		}
+	}
+	// v0.10.139 — TEKLİK: bir span cluster değeri ve bir (etiket, değer) çifti
+	// aynı anda yalnız BİR kayda. Çakışma reddedilir, bağlı kayıt söylenir.
+	if err := checkClusterUniqueness(out); err != nil {
+		return Settings{}, err
 	}
 	return out, nil
+}
+
+// checkClusterUniqueness — saf; tablo-testli. Hata metni operatöre gider.
+func checkClusterUniqueness(cfg Settings) error {
+	spanOwner := map[string]string{}
+	labelOwner := map[string]string{}
+	for _, c := range cfg.Clusters {
+		for _, v := range c.SpanClusterKeys() {
+			if o, dup := spanOwner[v]; dup && o != c.Name {
+				return fmt.Errorf("span cluster değeri %q zaten %q kaydına bağlı; bir değer aynı anda tek kayda bağlanabilir", v, o)
+			}
+			spanOwner[v] = c.Name
+		}
+		if l, v := c.EffectiveThanosLabel(); l != "" {
+			k := l + "=" + v
+			if o, dup := labelOwner[k]; dup && o != c.Name {
+				return fmt.Errorf("Thanos etiketi %s=%q zaten %q kaydına bağlı", l, v, o)
+			}
+			labelOwner[k] = c.Name
+		}
+	}
+	return nil
 }
 
 // ProbeCluster — rozet: matcher'lı `count(kube_node_info)` kaç seri

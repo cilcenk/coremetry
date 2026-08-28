@@ -1434,8 +1434,13 @@ export interface ThanosClusterSnapshot {
   /** v0.10.128 — external label binding series to this cluster on a shared querier; empty = no matcher. */
   thanosLabelName?: string;
   thanosLabelValue?: string;
-  /** v0.10.128 — value of the span `cluster` column for this cluster; empty = name. */
+  /** v0.10.128 — value of the span `cluster` column for this cluster; empty = name. v0.10.139: listenin ilki. */
   spanClusterValue?: string;
+  /** v0.10.139 — tüm span cluster değerleri (bir değer aynı anda tek kayda; sunucu reddeder). */
+  spanClusterValues?: string[];
+  /** v0.10.139 — 'auto' (algılandı) | 'manual' | undefined (eski kayıt). */
+  thanosLabelSource?: 'auto' | 'manual';
+  thanosLabelDetectedAt?: number;
   authType?: ThanosAuthType;
   hasToken: boolean;
   namespaceFilter?: string;
@@ -1452,6 +1457,9 @@ export interface ThanosClusterInput {
   thanosLabelName?: string;
   thanosLabelValue?: string;
   spanClusterValue?: string;
+  spanClusterValues?: string[];
+  /** göndermeyince sunucu saklı kaynağı korur; etiket elle değişirse 'manual'a düşer. */
+  thanosLabelSource?: 'auto' | 'manual';
   authType?: ThanosAuthType;
   token?: string;
   namespaceFilter?: string;
@@ -6157,6 +6165,8 @@ export interface EntityClusterInfo {
   id: string;
   name: string;
   spanClusterValue: string;
+  /** v0.10.139 — tüm değerler; eşleşme bunlara karşı. */
+  spanClusterValues?: string[];
   lastRun?: EntitySyncRun;
 }
 export interface EntityClustersResponse {

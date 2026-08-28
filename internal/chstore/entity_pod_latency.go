@@ -33,11 +33,11 @@ type PodLatencyRow struct {
 // PodLatencyLimit — satır tavanı; dolunca çağıran "yalnız en yoğun N pod" der.
 const PodLatencyLimit = 200
 
-func podLatencySQL(clusterValue string) (string, int) {
+func podLatencySQL(clusterValues []string) (string, int) {
 	where := "service_name = ? AND time >= ? AND time <= ? AND k8s_pod != '' AND kind IN ('server', 'consumer')"
 	n := 3
-	if clusterValue != "" {
-		where += " AND cluster = ?"
+	if len(clusterValues) > 0 { // v0.10.139 — bir kayıt birden çok değer
+		where += " AND cluster IN (?)"
 		n = 4
 	}
 	return `SELECT cluster, k8s_namespace, k8s_pod,
@@ -54,11 +54,11 @@ func podLatencySQL(clusterValue string) (string, int) {
 		SETTINGS max_execution_time = 15`, n
 }
 
-func (s *Store) PodLatencyForService(ctx context.Context, service, clusterValue string, from, to time.Time) ([]PodLatencyRow, error) {
-	sql, _ := podLatencySQL(clusterValue)
+func (s *Store) PodLatencyForService(ctx context.Context, service string, clusterValues []string, from, to time.Time) ([]PodLatencyRow, error) {
+	sql, _ := podLatencySQL(clusterValues)
 	args := []any{service, from, to}
-	if clusterValue != "" {
-		args = append(args, clusterValue)
+	if len(clusterValues) > 0 {
+		args = append(args, clusterValues)
 	}
 	rows, err := s.telemetryReadConn().Query(ctx, sql, args...)
 	if err != nil {

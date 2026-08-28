@@ -1796,6 +1796,10 @@ type TraceFilter struct {
 	TraceID  string // exact 32-hex match only (prefix search removed v0.9.82)
 	From, To time.Time
 	HasError bool
+	// MVGap (v0.10.124) — pencere trace_summary_5m'de BOŞLUK olan bir güne
+	// değiyor (trace_mv_coverage.go); Store girişinde doldurulur ve
+	// tracesMVEligible'ı düşürür → ham yol. Çağıran vermez.
+	MVGap bool
 	// RootOnly hides traces where the root span ((parent_id = '' OR parent_id = '0000000000000000')) was
 	// never ingested — typically partial / fragmented traces where
 	// only sub-spans landed in storage. The list view exposes this
@@ -2124,7 +2128,8 @@ func stage2IsBounded(serviceSubquery bool, holders string) bool {
 //
 // SAF — tablo testli.
 func tracesMVEligible(f TraceFilter) bool {
-	return !f.From.IsZero() && !f.To.IsZero() &&
+	return !f.MVGap && // v0.10.124 — MV'de boş gün: ham yol
+		!f.From.IsZero() && !f.To.IsZero() &&
 		f.To.Sub(f.From) >= 5*time.Minute &&
 		f.Search == "" && f.TraceID == "" &&
 		// v0.8.383 — an env filter disqualifies the MV fast-path:
@@ -2242,6 +2247,8 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// now the COMMON phase-2 of BOTH paths (raw list no longer inlines the
 	// projection) and is time-bounded by the page rows' real min/max
 	// timestamps, so partition pruning + the trace_id bloom compose.
+	// v0.10.124 — MV boşluğu (sihirbaz henüz doldurmadıysa) ham yola düşürür.
+	f.MVGap = s.TraceMVGap(ctx, f.From, f.To)
 	if tracesMVEligible(f) && countModeAllowsMV(f.CountMode) {
 		out, total, hasMore, err := s.getTracesFromMV(ctx, f)
 		if err == nil {
@@ -3383,7 +3390,8 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 		len(f.Filters) == 0 &&
 		!f.FilterRoot.hasPredicate() &&
 		!f.From.IsZero() && !f.To.IsZero() &&
-		f.To.Sub(f.From) >= 5*time.Minute {
+		f.To.Sub(f.From) >= 5*time.Minute &&
+		!s.TraceMVGap(ctx, f.From, f.To) { // v0.10.124 — MV'de boş gün: ham yol
 		if rows, err := s.getTraceAggregateFromMV(ctx, f); err == nil {
 			return rows, nil
 		}

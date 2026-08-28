@@ -2159,6 +2159,10 @@ export interface TracesResponse {
   // window — the UI shows a "ranked within newest N" hint. Absent =
   // exact/global ordering.
   rankedWithinRecent?: number;
+  /** v0.10.124 — pencere trace_summary_5m'de boş bir güne değiyor; liste
+   *  ham span'lerden okundu (daha yavaş). Tarihçe sihirbazı doldurunca
+   *  kaybolur. */
+  mvGap?: boolean;
   // v0.9.297 — present when the backend could NOT afford the requested
   // window and halved it to answer at all. The rows below describe
   // [narrowedFromNs, to], not the range the operator picked; a top-N

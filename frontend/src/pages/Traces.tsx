@@ -1353,6 +1353,13 @@ function TracesPageInner() {
                     </>
                   )}
                   {' · '}sorted by <b>{sort}</b> {order}
+                  {/* v0.10.124 — MV boşluğu: ham yoldan okundu, dürüstçe söyle. */}
+                  {data?.mvGap && (
+                    <span style={{ marginLeft: 8, color: 'var(--warn, #b8860b)' }}
+                      title="Bu pencerede özet tablo (trace_summary_5m) boş bir güne değiyor — liste ham span'lerden okundu (daha yavaş). Sistem → ClickHouse → tarihçe geri doldurma o günü doldurunca hızlı yola dönülür.">
+                      · MV boşluğu: ham yol
+                    </span>
+                  )}
                   {/* v0.8.369 — Dynatrace-style honesty hint: non-time
                       sorts rank within the newest-N slice, not the
                       whole window. */}

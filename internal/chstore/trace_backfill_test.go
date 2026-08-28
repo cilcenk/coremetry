@@ -407,3 +407,20 @@ func TestTraceBackfillLiveSQL(t *testing.T) {
 		}
 	}
 }
+
+// v0.10.123 — kaynak hatasında eşzamanlılık ÖNCE düşer, basamak SONRA.
+func TestNextBackfillAttempt(t *testing.T) {
+	err := fmt.Errorf("code: 241, message: Query memory limit exceeded")
+	if p, d := nextBackfillAttempt(2, err); p != 1 || d {
+		t.Errorf("2 eşzamanlı → (1,false) bekleniyordu, (%d,%v)", p, d)
+	}
+	if p, d := nextBackfillAttempt(4, err); p != 1 || d {
+		t.Errorf("4 eşzamanlı → (1,false) bekleniyordu, (%d,%v)", p, d)
+	}
+	if p, d := nextBackfillAttempt(1, err); p != 1 || !d {
+		t.Errorf("1 eşzamanlı → (1,true) bekleniyordu, (%d,%v)", p, d)
+	}
+	if got := shortErr(fmt.Errorf("%s", strings.Repeat("x", 200))); len([]rune(got)) != 141 {
+		t.Errorf("shortErr kısaltmadı: %d", len([]rune(got)))
+	}
+}

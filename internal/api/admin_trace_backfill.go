@@ -17,6 +17,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -35,6 +36,16 @@ type traceBackfillRun struct {
 	Done      int      `json:"done"`
 	Current   string   `json:"current,omitempty"`
 	Errors    []string `json:"errors,omitempty"`
+	// v0.10.119 — SAYILAR (operatör: "Çok yavaş" — süre/ETA görünmüyordu).
+	Parallel     int    `json:"parallel"`
+	SliceSize    string `json:"sliceSize,omitempty"`
+	SliceDone    int    `json:"sliceDone"`
+	SliceTotal   int    `json:"sliceTotal"`
+	LastSliceMs  int64  `json:"lastSliceMs,omitempty"`
+	AvgSliceMs   int64  `json:"avgSliceMs,omitempty"`
+	DayEtaMs     int64  `json:"dayEtaMs,omitempty"`
+	RunEtaMs     int64  `json:"runEtaMs,omitempty"`
+	DayStartedAt int64  `json:"dayStartedAt,omitempty"`
 }
 
 type traceBackfillFlight struct {
@@ -76,6 +87,8 @@ func (s *Server) postTraceBackfillApply(w http.ResponseWriter, r *http.Request) 
 	var in struct {
 		Days    []string `json:"days"`
 		Confirm string   `json:"confirm"`
+		// Parallel (v0.10.119) — eşzamanlı dilim; 0/1 = ardışık (eski).
+		Parallel int `json:"parallel"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "geçersiz JSON: "+err.Error())
@@ -91,6 +104,20 @@ func (s *Server) postTraceBackfillApply(w http.ResponseWriter, r *http.Request) 
 		writeJSONError(w, http.StatusBadRequest, "1-31 gün seçilmeli")
 		return
 	}
+	// v0.10.119 — bugün/gelecek gün reddedilir (canlı MV ile çift sayım).
+	for _, d := range in.Days {
+		if err := chstore.BackfillDayAllowed(d, time.Now()); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	parallel := in.Parallel
+	if parallel < 1 {
+		parallel = 1
+	}
+	if parallel > 4 {
+		parallel = 4
+	}
 	user := ""
 	if c := auth.FromContext(r.Context()); c != nil {
 		user = c.Email
@@ -103,11 +130,11 @@ func (s *Server) postTraceBackfillApply(w http.ResponseWriter, r *http.Request) 
 	}
 	traceBackfill.run = traceBackfillRun{
 		Running: true, StartedBy: user,
-		StartedAt: time.Now().UnixMilli(), Days: in.Days,
+		StartedAt: time.Now().UnixMilli(), Days: in.Days, Parallel: parallel,
 	}
 	traceBackfill.mu.Unlock()
 
-	details, _ := json.Marshal(map[string]any{"days": in.Days})
+	details, _ := json.Marshal(map[string]any{"days": in.Days, "parallel": parallel})
 	s.audit(r, "admin.trace_backfill.apply", "clickhouse", "trace_summary_5m", string(details))
 
 	// v0.10.108 — gün hacimleri preflight'tan: hacme-göre başlangıç
@@ -119,15 +146,34 @@ func (s *Server) postTraceBackfillApply(w http.ResponseWriter, r *http.Request) 
 			rowsByDay[d.Day] = d.SpanTraces
 		}
 	}
-	go s.runTraceBackfill(in.Days, rowsByDay)
-	writeJSON(w, map[string]any{"ok": true, "days": len(in.Days)})
+	go s.runTraceBackfill(in.Days, rowsByDay, parallel)
+	writeJSON(w, map[string]any{"ok": true, "days": len(in.Days), "parallel": parallel})
+}
+
+// backfillEta — kalan süre tahmini (ms). Saf; tablo-testli.
+// dayEta = kalan dilim × ortalama / paralellik; runEta = dayEta + kalan
+// gün × (bu günün projeksiyonu). Ortalama yoksa 0 (bilinmiyor).
+func backfillEta(sliceDone, sliceTotal int, avgMs int64, parallel, daysLeftAfterThis int) (dayEta, runEta int64) {
+	if avgMs <= 0 || sliceTotal <= 0 {
+		return 0, 0
+	}
+	if parallel < 1 {
+		parallel = 1
+	}
+	perSlice := avgMs / int64(parallel)
+	dayEta = int64(sliceTotal-sliceDone) * perSlice
+	if dayEta < 0 {
+		dayEta = 0
+	}
+	runEta = dayEta + int64(daysLeftAfterThis)*int64(sliceTotal)*perSlice
+	return dayEta, runEta
 }
 
 // runTraceBackfill — kopuk goroutine: istek ctx'inden BİLİNÇLİ bağımsız
 // (WithoutCancel sınıfı — tarayıcı kapansa da gün yarım kalmasın; her
 // günün kendi 600s tavanı var). Panik guard'ı şart: api'de recover
 // middleware yok, kopuk goroutine'de panik süreci öldürür.
-func (s *Server) runTraceBackfill(days []string, rowsByDay map[string]uint64) {
+func (s *Server) runTraceBackfill(days []string, rowsByDay map[string]uint64, parallel int) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[trace-backfill] panik: %v", r)
@@ -138,23 +184,44 @@ func (s *Server) runTraceBackfill(days []string, rowsByDay map[string]uint64) {
 		}
 	}()
 	ctx := context.Background()
-	for _, day := range days {
+	for di, day := range days {
 		traceBackfill.mu.Lock()
 		traceBackfill.run.Current = day
+		traceBackfill.run.DayStartedAt = time.Now().UnixMilli()
+		traceBackfill.run.SliceDone, traceBackfill.run.SliceTotal = 0, 0
+		traceBackfill.run.LastSliceMs, traceBackfill.run.AvgSliceMs = 0, 0
+		traceBackfill.run.DayEtaMs, traceBackfill.run.RunEtaMs = 0, 0
 		traceBackfill.mu.Unlock()
 
-		// Dilim ilerlemesi durumda görünür — "yavaş" hissinin yarısı
-		// görünmezlikti; artık operatör hangi dilimde olduğumuzu okur.
-		progress := func(p string) {
+		// v0.10.119 — ilerleme SAYI: dilim süresi, ortalama, ETA. "Yavaş"
+		// hissinin öbür yarısı ölçüsüzlüktü; log satırı da prod'da
+		// (query_log kapalı) dilim maliyetinin tek kaynağı.
+		var sumMs int64
+		var cnt int64
+		daysLeft := len(days) - di - 1
+		progress := func(p chstore.BackfillProgress) {
 			traceBackfill.mu.Lock()
-			traceBackfill.run.Current = p
-			traceBackfill.mu.Unlock()
+			defer traceBackfill.mu.Unlock()
+			r := &traceBackfill.run
+			r.SliceSize, r.SliceTotal = p.Slice.String(), p.Total
+			if p.Finished {
+				sumMs += p.LastMs
+				cnt++
+				r.SliceDone, r.LastSliceMs, r.AvgSliceMs = p.Done, p.LastMs, sumMs/cnt
+				r.DayEtaMs, r.RunEtaMs = backfillEta(p.Done, p.Total, r.AvgSliceMs, parallel, daysLeft)
+				log.Printf("[trace-backfill] %s dilim %d/%d (%s): %d ms · ort %d ms · gün ≈ %s kaldı · koşu ≈ %s",
+					p.Day, p.Done, p.Total, p.Slice, p.LastMs, r.AvgSliceMs,
+					(time.Duration(r.DayEtaMs) * time.Millisecond).Round(time.Second),
+					(time.Duration(r.RunEtaMs) * time.Millisecond).Round(time.Second))
+			}
+			r.Current = fmt.Sprintf("%s · %s dilim %d/%d", p.Day, p.Slice, p.Index, p.Total)
 		}
-		// v0.10.108 — gün tavanı 15dk→60dk: prod'da milyarlık gün 15m
-		// dilimlerle bile 15 dakikayı aşabiliyor; tavan artık gün
-		// bütçesi, dilim bütçesi değil.
-		dayCtx, cancel := context.WithTimeout(ctx, 60*time.Minute)
-		err := s.store.TraceBackfillDayRun(dayCtx, day, rowsByDay[day], progress)
+		// v0.10.108 gün tavanı 60 dk idi; v0.10.119 — 3 saat: 5 dk
+		// merdiveni 288 dilim × 25 s tavan = 2 saat, 60 dk'da matematiksel
+		// olarak bitemiyordu (gün bütçesi ladder'ı düşürüp yine bütçeye
+		// çarpıyordu).
+		dayCtx, cancel := context.WithTimeout(ctx, 3*time.Hour)
+		err := s.store.TraceBackfillDayRun(dayCtx, day, rowsByDay[day], parallel, progress)
 		cancel()
 
 		traceBackfill.mu.Lock()

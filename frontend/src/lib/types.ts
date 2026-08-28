@@ -5984,4 +5984,14 @@ export interface TraceBackfillRun {
   done: number;
   current?: string;
   errors?: string[];
+  /** v0.10.119 — dilim sayıları ve ETA (ms). */
+  parallel?: number;
+  sliceSize?: string;
+  sliceDone?: number;
+  sliceTotal?: number;
+  lastSliceMs?: number;
+  avgSliceMs?: number;
+  dayEtaMs?: number;
+  runEtaMs?: number;
+  dayStartedAt?: number;
 }

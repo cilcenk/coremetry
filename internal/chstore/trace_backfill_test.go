@@ -3,10 +3,12 @@ package chstore
 // trace_backfill_test.go — v0.10.103 sihirbaz sözleşmeleri.
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -82,10 +84,10 @@ func TestTraceBackfillDropsBeforeInsert(t *testing.T) {
 
 func TestTraceBackfillDayValidation(t *testing.T) {
 	s := &Store{}
-	if err := s.TraceBackfillDayRun(nil, "26-08-2026", 0, nil); err == nil {
+	if err := s.TraceBackfillDayRun(context.Background(), "26-08-2026", 0, 1, nil); err == nil {
 		t.Error("bozuk gün biçimi kabul edildi")
 	}
-	if err := s.TraceBackfillDayRun(nil, "2026-08-26'; DROP TABLE spans;--", 0, nil); err == nil {
+	if err := s.TraceBackfillDayRun(context.Background(), "2026-08-26'; DROP TABLE spans;--", 0, 1, nil); err == nil {
 		t.Error("enjeksiyon denemesi tarih doğrulamasından geçti")
 	}
 }
@@ -174,11 +176,11 @@ func TestBackfillLadderForVolume(t *testing.T) {
 		rows  uint64
 		first time.Duration
 	}{
-		{0, 24 * time.Hour},              // bilinmiyor → tam merdiven
-		{100_000_000, 24 * time.Hour},    // küçük gün → tek atış
-		{600_000_000, 6 * time.Hour},     // orta → 6h'den başla
-		{4_000_000_000, time.Hour},       // büyük → 1h
-		{8_000_000_000, 15 * time.Minute}, // prod günü → 15m
+		{0, 24 * time.Hour},                // bilinmiyor → tam merdiven
+		{100_000_000, 24 * time.Hour},      // küçük gün → tek atış
+		{600_000_000, 6 * time.Hour},       // orta → 6h'den başla
+		{4_000_000_000, time.Hour},         // büyük → 1h
+		{8_000_000_000, 15 * time.Minute},  // prod günü → 15m
 		{200_000_000_000, 5 * time.Minute}, // uç → taban
 	}
 	for _, tc := range cases {
@@ -242,5 +244,145 @@ func TestEntrySvcProbeChecksSchemaNotWire(t *testing.T) {
 	}
 	if m := regexp.MustCompile(`SELECT \w+_state FROM`).FindString(src); m != "" {
 		t.Errorf("ham state kolonu tele biniyor: %q", m)
+	}
+}
+
+// ── v0.10.119 — operatör: "Çok yavaş" ─────────────────────────────────
+//
+// Dilimler ardışık ve süre/ETA görünmüyordu. runBackfillSlices saf
+// orkestrasyon: exec enjekte, paralellik ve iptal tablo-testli.
+
+func TestBackfillSliceWindowsCoverDay(t *testing.T) {
+	day := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
+	ws := backfillSliceWindows(day, 15*time.Minute)
+	if len(ws) != 96 || !ws[0].from.Equal(day) || !ws[95].to.Equal(day.AddDate(0, 0, 1)) {
+		t.Fatalf("15m: %d pencere, ilk %v, son %v", len(ws), ws[0].from, ws[len(ws)-1].to)
+	}
+	for i := 1; i < len(ws); i++ {
+		if !ws[i].from.Equal(ws[i-1].to) {
+			t.Fatalf("boşluk/çakışma %d: %v ≠ %v", i, ws[i].from, ws[i-1].to)
+		}
+	}
+	// 7 saatlik boy: son dilim gün sonuna kırpılır (3 tam + 1 kısa).
+	ws = backfillSliceWindows(day, 7*time.Hour)
+	if len(ws) != 4 || !ws[3].to.Equal(day.AddDate(0, 0, 1)) || ws[3].to.Sub(ws[3].from) != 3*time.Hour {
+		t.Fatalf("7h kırpma: %+v", ws)
+	}
+}
+
+func TestRunBackfillSlicesParallelCoversEachWindowOnce(t *testing.T) {
+	day := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
+	ws := backfillSliceWindows(day, time.Hour) // 24 dilim
+	var mu sync.Mutex
+	seen := map[time.Time]int{}
+	inflight, maxInflight := 0, 0
+	var finished, started int
+	exec := func(ctx context.Context, from, to time.Time) error {
+		mu.Lock()
+		seen[from]++
+		inflight++
+		if inflight > maxInflight {
+			maxInflight = inflight
+		}
+		mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+		mu.Lock()
+		inflight--
+		mu.Unlock()
+		return nil
+	}
+	err := runBackfillSlices(context.Background(), "2026-08-23", time.Hour, ws, 3,
+		func(p BackfillProgress) {
+			mu.Lock()
+			defer mu.Unlock()
+			if p.Finished {
+				finished++
+				if p.LastMs < 0 || p.Total != 24 {
+					t.Errorf("bitiş olayı: %+v", p)
+				}
+			} else {
+				started++
+			}
+		}, exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 24 {
+		t.Fatalf("%d pencere koştu, 24 bekleniyordu", len(seen))
+	}
+	for from, n := range seen {
+		if n != 1 {
+			t.Errorf("pencere %v %d kez koştu", from, n)
+		}
+	}
+	if maxInflight < 2 || maxInflight > 3 {
+		t.Errorf("eşzamanlılık %d, 2..3 bekleniyordu", maxInflight)
+	}
+	if started != 24 || finished != 24 {
+		t.Errorf("ilerleme olayları: başladı=%d bitti=%d", started, finished)
+	}
+	// parallel=1 → hiç örtüşme yok (eski davranış).
+	maxInflight, seen = 0, map[time.Time]int{}
+	if err := runBackfillSlices(context.Background(), "2026-08-23", time.Hour, ws[:6], 1, func(BackfillProgress) {}, exec); err != nil || maxInflight != 1 || len(seen) != 6 {
+		t.Errorf("ardışık: err=%v inflight=%d seen=%d", err, maxInflight, len(seen))
+	}
+}
+
+func TestRunBackfillSlicesFirstErrorCancelsAndDescends(t *testing.T) {
+	day := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
+	ws := backfillSliceWindows(day, time.Hour)
+	var mu sync.Mutex
+	ran := 0
+	exec := func(ctx context.Context, from, to time.Time) error {
+		mu.Lock()
+		ran++
+		mu.Unlock()
+		if from.Hour() == 5 {
+			return fmt.Errorf("code: 241, message: Query memory limit exceeded: would use 3.74 GiB")
+		}
+		select {
+		case <-time.After(20 * time.Millisecond):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	err := runBackfillSlices(context.Background(), "2026-08-23", time.Hour, ws, 4, func(BackfillProgress) {}, exec)
+	if err == nil || !isBackfillTimeout(err) || !strings.Contains(err.Error(), "08-23 05:00→08-23 06:00 (1h0m0s boy)") {
+		t.Fatalf("ilk hata kaynak hatası olarak yükselmedi: %v", err)
+	}
+	if strings.Contains(err.Error(), "context canceled") {
+		t.Errorf("kardeşlerin iptali ilk hatayı gölgeledi: %v", err)
+	}
+	if ran >= len(ws) {
+		t.Errorf("hata sonrası kalan dilimler iptal edilmedi (%d/%d koştu)", ran, len(ws))
+	}
+	// Gün bütçesi DOLARSA (deadline): hata yok ama eksik → kaynak hatası
+	// olarak yükselir (merdiven iner). Düz iptal (canceled) ise kaynak
+	// hatası DEĞİLDİR — operatör durdurduysa merdiven inmemeli.
+	dctx, dcancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer dcancel()
+	time.Sleep(time.Millisecond)
+	err = runBackfillSlices(dctx, "2026-08-23", time.Hour, ws, 2, func(BackfillProgress) {}, exec)
+	if err == nil || !isBackfillTimeout(err) {
+		t.Errorf("dolan bütçe kaynak hatası değil: %v", err)
+	}
+	cctx, ccancel := context.WithCancel(context.Background())
+	ccancel()
+	if err := runBackfillSlices(cctx, "2026-08-23", time.Hour, ws, 2, func(BackfillProgress) {}, exec); err == nil || isBackfillTimeout(err) {
+		t.Errorf("düz iptal kaynak hatası sayıldı: %v", err)
+	}
+}
+
+func TestBackfillDayAllowed(t *testing.T) {
+	now := time.Date(2026, 8, 28, 9, 24, 0, 0, time.FixedZone("TRT", 3*3600)) // 06:24 UTC
+	for day, ok := range map[string]bool{"2026-08-27": true, "2026-08-01": true, "2026-08-28": false, "2026-08-29": false, "bozuk": false} {
+		err := BackfillDayAllowed(day, now)
+		if (err == nil) != ok {
+			t.Errorf("%s: err=%v, izin=%v bekleniyordu", day, err, ok)
+		}
+	}
+	if err := BackfillDayAllowed("2026-08-28", now); err == nil || !strings.Contains(err.Error(), "çift sayım") {
+		t.Errorf("bugün reddi sebebi eksik: %v", err)
 	}
 }

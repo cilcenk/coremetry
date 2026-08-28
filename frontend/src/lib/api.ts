@@ -3126,10 +3126,10 @@ export const api = {
     get<{ days: import('./types').TraceBackfillDay[] }>(`/api/admin/clickhouse/trace-backfill/preflight`),
   traceBackfillStatus: () =>
     get<import('./types').TraceBackfillRun>(`/api/admin/clickhouse/trace-backfill/status`),
-  traceBackfillApply: (days: string[]) =>
-    request<{ ok: boolean; days: number }>(`/api/admin/clickhouse/trace-backfill/apply`, {
+  traceBackfillApply: (days: string[], parallel = 1) =>
+    request<{ ok: boolean; days: number; parallel: number }>(`/api/admin/clickhouse/trace-backfill/apply`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ days, confirm: 'BACKFILL' }),
+      body: JSON.stringify({ days, confirm: 'BACKFILL', parallel }),
     }),
   stateRepartPreflight: () =>
     get<import('./types').StateRepartPreflightResult>('/api/admin/state-repart/preflight'),

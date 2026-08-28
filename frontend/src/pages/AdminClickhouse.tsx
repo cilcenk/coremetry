@@ -2397,6 +2397,16 @@ function fmtAge(ms: number): string {
 // ham spans'ten GÜN GÜN yeniden kurar (önce günün MV partition'ı düşer —
 // AggregatingMergeTree'de çifte-insert sayıları şişirir; span'lere
 // dokunulmaz). 0010 panelinin deseni: 2s poll + document.hidden.
+// fmtMs — "12 s" / "3 dk 20 s" / "1 sa 5 dk" (ETA okunurluğu).
+function fmtMs(ms?: number): string {
+  if (!ms || ms <= 0) return '—';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} dk ${s % 60} s`;
+  return `${Math.floor(m / 60)} sa ${m % 60} dk`;
+}
+
 function TraceBackfillWizardPanel() {
   const [days, setDays] = useState<TraceBackfillDay[] | null>(null);
   const [sel, setSel] = useState<Record<string, boolean>>({});
@@ -2404,7 +2414,11 @@ function TraceBackfillWizardPanel() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
+  // v0.10.119 — eşzamanlı dilim (1 = ardışık, eski). Prod'da dilim süresi
+  // ölçülmeden 2'nin üstüne çıkma: bellek (241) merdiveni indirir.
+  const [parallel, setParallel] = useState(1);
   const pollRef = useRef<number | null>(null);
+  const todayUtc = new Date().toISOString().slice(0, 10);
 
   async function preflight() {
     setBusy(true); setErr(null);
@@ -2412,7 +2426,8 @@ function TraceBackfillWizardPanel() {
       const r = await api.traceBackfillPreflight();
       setDays(r.days);
       const next: Record<string, boolean> = {};
-      for (const d of r.days) if (d.gap) next[d.day] = true;
+      // Bugün seçilemez: canlı MV aynı bucket'lara yazıyor (çift sayım).
+      for (const d of r.days) if (d.gap && d.day < todayUtc) next[d.day] = true;
       setSel(next);
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
@@ -2437,9 +2452,9 @@ function TraceBackfillWizardPanel() {
     const chosen = Object.keys(sel).filter(d => sel[d]).sort();
     setConfirm(false); setBusy(true); setErr(null);
     try {
-      await api.traceBackfillApply(chosen);
+      await api.traceBackfillApply(chosen, parallel);
       startPolling();
-      setRun({ running: true, days: chosen, done: 0 });
+      setRun({ running: true, days: chosen, done: 0, parallel });
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   }
@@ -2469,13 +2484,31 @@ function TraceBackfillWizardPanel() {
         {confirm && (
           <div style={{ marginBottom: 10, fontSize: 12 }}>
             Seçili günlerin MV partition'ları düşürülüp yeniden kurulacak.{' '}
+            <label style={{ marginRight: 8 }}>
+              Eşzamanlı dilim{' '}
+              <select value={parallel} onChange={e => setParallel(Number(e.target.value))}>
+                {[1, 2, 3, 4].map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
             <Button variant="danger" size="sm" onClick={apply}>Onayla</Button>{' '}
             <Button variant="ghost" size="sm" onClick={() => setConfirm(false)}>Vazgeç</Button>
+            <div style={{ color: 'var(--text3)', marginTop: 4 }}>
+              1 = ardışık (bugünkü davranış). İlk gün dilim süresini görmeden 2'nin üstüne çıkmayın:
+              eşzamanlılık shard belleğini çarpar, 241 hatası merdiveni 5 dk dilime indirir.
+            </div>
           </div>
         )}
         {running && run && (
           <div style={{ fontSize: 12, marginBottom: 10 }}>
             ⏳ {run.done}/{run.days.length} gün · şu an: <code>{run.current || '—'}</code>
+            {(run.sliceTotal ?? 0) > 0 && (
+              <span style={{ marginLeft: 8, color: 'var(--text2)' }}>
+                · son dilim {fmtMs(run.lastSliceMs)} · ort {fmtMs(run.avgSliceMs)}
+                {run.parallel && run.parallel > 1 ? ` · ${run.parallel} eşzamanlı` : ''}
+                {run.dayEtaMs ? ` · gün ≈ ${fmtMs(run.dayEtaMs)} kaldı` : ''}
+                {run.runEtaMs ? ` · toplam ≈ ${fmtMs(run.runEtaMs)}` : ''}
+              </span>
+            )}
           </div>
         )}
         {run && !run.running && (run.errors?.length ?? 0) > 0 && (
@@ -2497,7 +2530,8 @@ function TraceBackfillWizardPanel() {
               {days.map(d => (
                 <tr key={d.day}>
                   <td style={{ padding: '2px 10px 2px 0' }}>
-                    <input type="checkbox" checked={!!sel[d.day]} disabled={running}
+                    <input type="checkbox" checked={!!sel[d.day]} disabled={running || d.day >= todayUtc}
+                      title={d.day >= todayUtc ? 'Bugün geri doldurulamaz: canlı MV aynı bucket\'lara yazıyor (çift sayım)' : undefined}
                       onChange={e => setSel(s2 => ({ ...s2, [d.day]: e.target.checked }))} />
                   </td>
                   <td style={{ padding: '2px 10px 2px 0', fontFamily: 'ui-monospace, monospace' }}>{d.day}</td>

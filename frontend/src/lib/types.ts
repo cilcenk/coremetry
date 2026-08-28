@@ -5997,6 +5997,9 @@ export interface TraceBackfillRun {
   /** v0.10.120 — system.processes'taki koşan backfill sorguları (canlı). */
   live?: TraceBackfillProc[];
   liveError?: string;
+  /** v0.10.123 — merdiven/eşzamanlılık kararları; Durdur ile iptal. */
+  notes?: string[];
+  cancelled?: boolean;
 }
 export interface TraceBackfillProc {
   host: string;

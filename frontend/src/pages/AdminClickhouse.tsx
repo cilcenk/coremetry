@@ -2508,6 +2508,11 @@ function TraceBackfillWizardPanel() {
         {running && run && (
           <div style={{ fontSize: 12, marginBottom: 10 }}>
             ⏳ {run.done}/{run.days.length} gün · şu an: <code>{run.current || '—'}</code>
+            {/* v0.10.123 — Durdur: günün partition'ı düşmüş kalır (boşluk), yeniden koşmak güvenli. */}
+            <Button variant="ghost" size="sm" disabled={busy || !!run.cancelled} style={{ marginLeft: 8 }}
+              onClick={async () => { setBusy(true); try { await api.traceBackfillCancel(); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } }}>
+              {run.cancelled ? 'Durduruluyor…' : 'Durdur'}
+            </Button>
             {(run.sliceTotal ?? 0) > 0 && (
               <span style={{ marginLeft: 8, color: 'var(--text2)' }}>
                 · son dilim {fmtMs(run.lastSliceMs)} · ort {fmtMs(run.avgSliceMs)}
@@ -2531,6 +2536,11 @@ function TraceBackfillWizardPanel() {
                 {p.peakBytes > p.memoryBytes ? ` (tepe ${fmtBytes(p.peakBytes)})` : ''}
               </span>
             ))}
+          </div>
+        )}
+        {(run?.notes?.length ?? 0) > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--warn, #b8860b)', marginBottom: 10 }}>
+            {run!.notes!.map((n, i) => <div key={i}>⚠ {n}</div>)}
           </div>
         )}
         {run?.liveError && (

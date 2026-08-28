@@ -50,11 +50,17 @@ type traceBackfillRun struct {
 	// durum çağrısında doldurulur, koşu kaydına yazılmaz.
 	Live      []chstore.TraceBackfillProc `json:"live,omitempty"`
 	LiveError string                      `json:"liveError,omitempty"`
+	// Notes (v0.10.123) — merdiven/eşzamanlılık kararları, sırayla.
+	Notes []string `json:"notes,omitempty"`
+	// Cancelled (v0.10.123) — operatör Durdur dedi; gün boşluk olarak
+	// kalır (partition düşmüş), yeniden koşmak güvenli.
+	Cancelled bool `json:"cancelled,omitempty"`
 }
 
 type traceBackfillFlight struct {
-	mu  sync.Mutex
-	run traceBackfillRun
+	mu     sync.Mutex
+	run    traceBackfillRun
+	cancel context.CancelFunc // v0.10.123 — koşan koşunun iptali
 }
 
 var traceBackfill traceBackfillFlight
@@ -66,6 +72,29 @@ func (s *Server) registerTraceBackfillRoutes(mux *http.ServeMux) {
 		auth.RequireRole(auth.RoleAdmin, http.HandlerFunc(s.getTraceBackfillStatus)))
 	mux.Handle("POST /api/admin/clickhouse/trace-backfill/apply",
 		auth.RequireRole(auth.RoleAdmin, http.HandlerFunc(s.postTraceBackfillApply)))
+	mux.Handle("POST /api/admin/clickhouse/trace-backfill/cancel",
+		auth.RequireRole(auth.RoleAdmin, http.HandlerFunc(s.postTraceBackfillCancel)))
+}
+
+// postTraceBackfillCancel (v0.10.123) — koşan koşuyu iptal eder. Koşan
+// dilimler ctx ile kesilir; günün partition'ı zaten düşmüş olduğundan gün
+// preflight'ta "boşluk" görünür ve yeniden koşmak güvenlidir (idempotens).
+// Prod 08-25 dersi: merdiven yanlış basamağa inince 26 dk beklemek yerine
+// durdurup 1 eşzamanlı/15 dk ile 11 dk'da bitirmek mümkün olmalı.
+func (s *Server) postTraceBackfillCancel(w http.ResponseWriter, r *http.Request) {
+	traceBackfill.mu.Lock()
+	running, cancel := traceBackfill.run.Running, traceBackfill.cancel
+	if running {
+		traceBackfill.run.Cancelled = true
+	}
+	traceBackfill.mu.Unlock()
+	if !running || cancel == nil {
+		writeJSONError(w, http.StatusConflict, "koşan bir geri doldurma yok")
+		return
+	}
+	cancel()
+	s.audit(r, "admin.trace_backfill.cancel", "clickhouse", "trace_summary_5m", `{}`)
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) getTraceBackfillPreflight(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +178,8 @@ func (s *Server) postTraceBackfillApply(w http.ResponseWriter, r *http.Request) 
 		Running: true, StartedBy: user,
 		StartedAt: time.Now().UnixMilli(), Days: in.Days, Parallel: parallel,
 	}
+	runCtx, runCancel := context.WithCancel(context.Background())
+	traceBackfill.cancel = runCancel
 	traceBackfill.mu.Unlock()
 
 	details, _ := json.Marshal(map[string]any{"days": in.Days, "parallel": parallel})
@@ -163,7 +194,7 @@ func (s *Server) postTraceBackfillApply(w http.ResponseWriter, r *http.Request) 
 			rowsByDay[d.Day] = d.SpanTraces
 		}
 	}
-	go s.runTraceBackfill(in.Days, rowsByDay, parallel)
+	go s.runTraceBackfill(runCtx, in.Days, rowsByDay, parallel)
 	writeJSON(w, map[string]any{"ok": true, "days": len(in.Days), "parallel": parallel})
 }
 
@@ -190,7 +221,7 @@ func backfillEta(sliceDone, sliceTotal int, avgMs int64, parallel, daysLeftAfter
 // (WithoutCancel sınıfı — tarayıcı kapansa da gün yarım kalmasın; her
 // günün kendi 600s tavanı var). Panik guard'ı şart: api'de recover
 // middleware yok, kopuk goroutine'de panik süreci öldürür.
-func (s *Server) runTraceBackfill(days []string, rowsByDay map[string]uint64, parallel int) {
+func (s *Server) runTraceBackfill(ctx context.Context, days []string, rowsByDay map[string]uint64, parallel int) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[trace-backfill] panik: %v", r)
@@ -200,7 +231,6 @@ func (s *Server) runTraceBackfill(days []string, rowsByDay map[string]uint64, pa
 			traceBackfill.mu.Unlock()
 		}
 	}()
-	ctx := context.Background()
 	for di, day := range days {
 		traceBackfill.mu.Lock()
 		traceBackfill.run.Current = day
@@ -220,6 +250,13 @@ func (s *Server) runTraceBackfill(days []string, rowsByDay map[string]uint64, pa
 			traceBackfill.mu.Lock()
 			defer traceBackfill.mu.Unlock()
 			r := &traceBackfill.run
+			if p.Note != "" {
+				r.Notes = append(r.Notes, p.Day+": "+p.Note)
+				log.Printf("[trace-backfill] %s: %s", p.Day, p.Note)
+				sumMs, cnt = 0, 0 // yeni deneme: ortalama sıfırdan
+				r.SliceDone, r.LastSliceMs, r.AvgSliceMs, r.DayEtaMs, r.RunEtaMs = 0, 0, 0, 0, 0
+				return
+			}
 			r.SliceSize, r.SliceTotal = p.Slice.String(), p.Total
 			if p.Finished {
 				sumMs += p.LastMs
@@ -243,6 +280,15 @@ func (s *Server) runTraceBackfill(days []string, rowsByDay map[string]uint64, pa
 
 		traceBackfill.mu.Lock()
 		traceBackfill.run.Done++
+		if err != nil && ctx.Err() != nil {
+			// v0.10.123 — operatör durdurdu: hata değil, kayıt.
+			traceBackfill.run.Errors = append(traceBackfill.run.Errors, day+": durduruldu (gün boşluk kaldı — yeniden koşmak güvenli)")
+			traceBackfill.run.Running = false
+			traceBackfill.run.DoneAt = time.Now().UnixMilli()
+			traceBackfill.mu.Unlock()
+			log.Printf("[trace-backfill] gün %s: operatör durdurdu", day)
+			return
+		}
 		if err != nil {
 			// Hata GÜNÜ atlatmaz, koşuyu DURDURUR: yarım bir gün yok
 			// (partition ya düştü-yeniden kuruldu ya hiç dokunulmadı),

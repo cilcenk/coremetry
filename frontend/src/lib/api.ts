@@ -3131,6 +3131,8 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ days, confirm: 'BACKFILL', parallel }),
     }),
+  traceBackfillCancel: () =>
+    request<{ ok: boolean }>(`/api/admin/clickhouse/trace-backfill/cancel`, { method: 'POST' }),
   stateRepartPreflight: () =>
     get<import('./types').StateRepartPreflightResult>('/api/admin/state-repart/preflight'),
   /** Koşan/bitmiş göçün anlık hâli. */

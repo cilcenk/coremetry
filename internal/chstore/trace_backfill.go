@@ -216,20 +216,60 @@ func (s *Store) TraceBackfillDayRun(ctx context.Context, day string, spanRows ui
 		progress = func(BackfillProgress) {}
 	}
 	var lastErr error
+	par := parallel
 	for _, slice := range backfillLadderFor(spanRows) {
-		if err := s.dropTraceDayPartition(ctx, day); err != nil {
-			return fmt.Errorf("gün %s: partition düşürme: %w", day, err)
+		for {
+			if err := s.dropTraceDayPartition(ctx, day); err != nil {
+				return fmt.Errorf("gün %s: partition düşürme: %w", day, err)
+			}
+			lastErr = s.backfillDaySlices(ctx, dayT, slice, par, progress)
+			if lastErr == nil {
+				return nil
+			}
+			if !isBackfillTimeout(lastErr) {
+				return fmt.Errorf("gün %s: %w", day, lastErr)
+			}
+			next, descend := nextBackfillAttempt(par, lastErr)
+			// v0.10.123 — eşzamanlılık ÖNCE düşer, basamak SONRA (prod
+			// 08-25: 15 dk × 2 eşzamanlı kaynak hatası aldı, merdiven günü
+			// 5 dk'ya indirdi → 288 dilim, 2.5× daha yavaş; oysa 15 dk × 1
+			// bir gün önce 7 s/dilimle bitmişti).
+			if descend {
+				progress(BackfillProgress{Day: day, Slice: slice, Note: fmt.Sprintf(
+					"%s basamağında kaynak hatası (%s) → bir alt basamağa iniliyor", slice, shortErr(lastErr))})
+				par = next
+				break
+			}
+			progress(BackfillProgress{Day: day, Slice: slice, Note: fmt.Sprintf(
+				"%s basamağında %d eşzamanlıda kaynak hatası (%s) → aynı basamak, eşzamanlılık 1", slice, par, shortErr(lastErr))})
+			par = next
 		}
-		lastErr = s.backfillDaySlices(ctx, dayT, slice, parallel, progress)
-		if lastErr == nil {
-			return nil
-		}
-		if !isBackfillTimeout(lastErr) {
-			return fmt.Errorf("gün %s: %w", day, lastErr)
-		}
-		// zaman aşımı → bir alt dilim boyuyla, temiz zeminde yeniden
 	}
 	return fmt.Errorf("gün %s: en küçük dilim (5 dk) de zaman aştı: %w", day, lastErr)
+}
+
+// nextBackfillAttempt — kaynak hatasından sonraki hamle. Saf; tablo-testli.
+// parallel > 1 → aynı basamak, eşzamanlılık 1 (descend=false);
+// parallel == 1 → bir alt basamak (descend=true), eşzamanlılık 1 kalır.
+// Gerekçe: eşzamanlılık belleği ÇARPAR, basamak inişi ise dilim sayısını
+// 3× büyütür — ucuz olanı önce dene.
+func nextBackfillAttempt(parallel int, err error) (int, bool) {
+	if parallel > 1 {
+		return 1, false
+	}
+	return 1, true
+}
+
+// shortErr — durum satırına sığacak hata özeti (ilk 140 rune).
+func shortErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	r := []rune(err.Error())
+	if len(r) > 140 {
+		return string(r[:140]) + "…"
+	}
+	return string(r)
 }
 
 // backfillSliceLadder — deneme sırasıyla dilim boyları.
@@ -282,6 +322,9 @@ type BackfillProgress struct {
 	Total    int
 	LastMs   int64
 	Finished bool
+	// Note (v0.10.123) — merdiven kararı gibi tek seferlik olay metni;
+	// dolu olduğunda Index/Done anlamsızdır, api not listesine ekler.
+	Note string
 }
 
 // BackfillDayAllowed — geri doldurulabilir gün: geçmiş (UTC) bir gün.

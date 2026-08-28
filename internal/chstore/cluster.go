@@ -298,6 +298,8 @@ var tablesWithoutTraceID = map[string]bool{
 	// v0.9.1317 — service lifecycle MV: (service_name) + min/max time
 	// states. No trace_id projected.
 	"service_seen":         true,
+	"entity_seen_1m":       true,
+	"entity_seen_5m":       true,
 	"topology_edges_5m":    true,
 	"topology_op_edges_5m": true,
 	// v0.5.435 — MVs/aggregates that join highVolumeTables in
@@ -425,7 +427,9 @@ var defaultShardPolicy = map[string]string{
 	// shards where a merge could not reach them. minMerge/maxMerge are
 	// idempotent across shards regardless, which is the second reason the
 	// column set stops at min/max.
-	"service_seen": "cityHash64(service_name)",
+	"service_seen":   "cityHash64(service_name)",
+	"entity_seen_1m": "cityHash64(service_name)",
+	"entity_seen_5m": "cityHash64(service_name)",
 	// v0.5.435 — remaining sharded MVs/aggregates. For MVs the
 	// shard key is largely decorative (auto-triggered writes land
 	// local, reads always fan-out via Distributed) but is honest
@@ -983,6 +987,9 @@ var highVolumeTables = map[string]bool{
 	// ONE shard's services, which for a LIFECYCLE table is worse than an
 	// undercount — a service living on another shard reads as "never seen".
 	"service_seen": true,
+	// v0.10.127 — K8s entity katmanı: entity_seen MV'leri gün-bir kayıtlı.
+	"entity_seen_1m": true,
+	"entity_seen_5m": true,
 	// v0.5.435 — remaining sharded MVs/aggregates the post-v0.5.426
 	// /scale-audit revealed. Same gap shape: bare-name Replicated
 	// per shard, no Distributed wrapper → cluster reads silently

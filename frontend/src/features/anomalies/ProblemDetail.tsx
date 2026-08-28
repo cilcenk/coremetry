@@ -19,6 +19,7 @@ import type { ChartTimeRegion } from '@/lib/chart/overlays';
 import { statusColor } from '@/lib/statusColor';
 import { fmtDurationNs, fmtStartedTs } from './problemTime';
 import { emptySamplesNote } from './exceptionSamples';
+import { ExceptionPodsPanel } from './ExceptionPodsPanel';
 import type { ExceptionGroup, ExceptionGroupState, Problem } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 import { PageShell } from '@/components/ui/PageShell';
@@ -551,6 +552,10 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
           )}
         </div>
       </div>
+
+      {/* v0.10.138 (DETAY SAYFALARI adım 4) — oluşumların pod/node dağılımı +
+          pod pivotu; bayrak kapalı → hiç çizilmez. */}
+      <ExceptionPodsPanel fingerprint={group.fingerprint} service={group.service} groupOccurrences={group.occurrences} />
 
       {/* Stack trace (left) · Sample traces (right). minWidth:0 on the columns
           so the long Java stack frames don't force the left column past 1.4fr

@@ -2642,6 +2642,9 @@ export const api = {
   // sonuna kadar okunduğunu söyler (dürüst-boş).
   exceptionGroupSamples: (fingerprint: string, limit = 10) =>
     get<{ samples: ExceptionSample[]; scanned: number; scanCapped: boolean; windowExhausted?: boolean } | null>(`/api/exception-groups/${fingerprint}/samples?limit=${limit}`),
+  // v0.10.138 — hata grubunun pod/node dağılımı (entity katmanı; 404 disabled → panel gizli).
+  exceptionGroupPods: (fingerprint: string, signal?: AbortSignal) =>
+    get<import('./types').ExceptionPodsResponse>(`/api/exception-groups/${encodeURIComponent(fingerprint)}/pods`, signal),
   exceptionGroupOccurrences: (fingerprint: string) =>
     get<OccurrencePoint[] | null>(`/api/exception-groups/${fingerprint}/occurrences`),
   // v0.9.252 — bulk sibling. One request, one audit row, one set of

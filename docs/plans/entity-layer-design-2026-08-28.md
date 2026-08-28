@@ -19,6 +19,10 @@ INSERT'i version'ı açık yazar (v0.10.129, Replicated dedup).
 
 **v0.10.136 (DETAY SAYFALARI adım 2 — Servis detay):** Service → Infra "Pods (entity layer)" tablosu zenginleşti: durum (Thanos KSM anlık — cluster başına TEK hedefli `pod=~^(a|b)$` sorgusu, ≤200 ad, fazlası `statusNotes`), CPU/Mem, giriş-span p50/p95/p99 (ham spans, `entity_pod_latency.go`, servis+pencere sınırlı, LIMIT 200), Err %, son görülme; "runs in:" zinciri cluster › namespace › workload (pod sayısıyla); her hücre linki `entityHref` (range korunur), cluster eşlenmemiş satırda link YOK + ilan; ölü pod `gone` rozeti.
 
+**v0.10.137 (DETAY SAYFALARI adım 3 — Trace pivotları):** span detayında "Kubernetes" bölümü (cluster › namespace › pod › node linkleri, at = span başlangıcı, servis bağlamı; bağlam yok / cluster değeri yok / cluster eşlenmemiş → link YOK + açık ilan), trace başlığında TracePodsStrip (ayrık pod'lar, span/hata sayısı, servisler; k8s bağlamsız span sayısı). Saf çekirdek `lib/spanK8s.ts` (+7 vitest: bağlamsız, eşlenmemiş, aynı ad iki cluster, at ms, tracePods). Public trace'te kapalı. Backend değişikliği yok.
+
+**v0.10.138 (DETAY SAYFALARI adım 4 — Exceptions dağılımı):** `GET /api/exception-groups/{fp}/pods` (exception_pods.go; grubun tarama penceresi + samples ile aynı eşleşme yüklemi, k8s_* terfi kolonlarıyla gruplu, LIMIT 50+1, max_execution_time 10; k8s bağlamsız oluşumlar `noContext`; Remote Cluster eşlemesi, eşlenmeyenler ilan). Problem detayında "Pods · nodes" kartı: pod/namespace/cluster/node, oluşum, pay, son görülme; pod/node pivotu (at = o pod'daki son oluşum, servis bağlamı), Traces linki. Bayrak kapalı → kart yok.
+
 > **Varsayımlar (probe gelmeden yazıldı, her biri konfigüre edilebilir):**
 > V1 Thanos external label adı `cluster` (UI önerisi; kayıt varsayılanı BOŞ = matcher yok, bkz. §1.1), değeri Remote Cluster `Name` ile
 > aynı (probe A2(b) aksini söylerse yalnız kayıt alanları değişir, model

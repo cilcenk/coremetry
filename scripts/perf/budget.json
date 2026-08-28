@@ -40,7 +40,7 @@
       "name": "GET /api/problems", "scenario": "cold", "cold": true,
       "path": "/api/problems",
       "budget": { "achievableMs": 2500, "aspirationalMs": 200 },
-      "note": "P6 — problems FINAL 6.5k satır; perfcheck taban p50 1.54 s (curl tabanı 0.59 s — lokal VM oynak); sıcak yol 15 s cache"
+      "note": "P6 — KAPANDI v0.10.144: FINAL 13–100 ms (7k satır); gecikme lokal CH CPU kuyruğu (query_log OSCPUWait 1.4–4.4 s vs CPU 60–290 ms), FINAL'sız okuma daha yavaş ölçüldü → kod değişikliği yok; perfcheck taban p50 0.78–1.54 s oynak; sıcak yol 15 s cache"
     }
   ]
 }

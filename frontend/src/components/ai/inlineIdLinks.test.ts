@@ -91,7 +91,11 @@ describe('kablolama', () => {
   });
 
   it('CopilotExplain sunucudan gelen links\'i geçiriyor', () => {
-    expect(ex).toContain('idLinks={links}');
+    // v0.10.165 — kart gövdesi ExplainBody'ye taşındı: CopilotExplain links'i
+    // ExplainBody'ye, o da RenderedMarkdown'a (idLinks) geçirir — zincir pinli.
+    expect(ex).toContain('links={links}');
+    const body = readFileSync(new URL('./ExplainBody.tsx', import.meta.url), 'utf8');
+    expect(body).toContain('idLinks={links}');
   });
 
   it('Markdown ham HTML basmıyor — model çıktısı yolu', () => {

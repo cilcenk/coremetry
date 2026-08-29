@@ -3663,3 +3663,14 @@ thead th:hover .th-remove { opacity: 1; }
 
 /* v0.10.162 — Service Overview «Anomaliler · bu pencere» bloğu (ov-mb yalnız .ov-grid ile çalışır). */
 .anom-win { margin-bottom: 16px; }
+
+/* v0.10.165 — kod alıntısı: satır numarası oluğu, dosya başlığı, stack katlama
+   (etüt «cevap paneli» A, dilim 1). Aynı .cm-md-code ailesi. */
+.cm-md-code-no { display: inline-block; min-width: 5ch; margin-right: 10px; text-align: right; color: var(--text3); user-select: none; }
+.cm-md-code-file { font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.cm-md-code-res { color: var(--text3); font-style: italic; }
+.cm-md-code-fold { padding: 2px 6px 4px; border-top: 1px solid var(--border); background: var(--bg2); }
+/* CoSRE cevap kartı anatomisi: Karar + Kanıt satırları */
+.cx-verdict { margin: 0 0 8px; padding: 6px 10px; border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; font-weight: 600; }
+.cx-verdict-k { display: inline-block; font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: .06em; color: var(--accent2); margin-right: 8px; font-weight: 700; }
+.cx-evidence { margin: 0 0 8px; font-size: var(--fs-xs); color: var(--text2); }

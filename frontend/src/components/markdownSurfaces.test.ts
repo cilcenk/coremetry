@@ -30,8 +30,13 @@ describe('yorum sıyırma', () => {
 describe('AI açıklama yüzeyi markdown basıyor', () => {
   const src = read('./CopilotExplain.tsx');
 
-  it('RenderedMarkdown kullanıyor', () => {
-    expect(src).toContain('<RenderedMarkdown text={text}');
+  it('RenderedMarkdown kullanıyor (v0.10.165: ExplainBody üzerinden)', () => {
+    // v0.10.165 — kart gövdesi ExplainBody'ye taşındı (Karar/Kanıt/kod
+    // alıntısı anatomisi); markdown basımı orada RenderedMarkdown ile.
+    // İki halka birden pinli: CopilotExplain → ExplainBody → RenderedMarkdown.
+    expect(src).toContain('<ExplainBody text={text}');
+    const body = read('./ai/ExplainBody.tsx');
+    expect(body).toContain('<RenderedMarkdown text={hoisted.rest}');
   });
 
   it('ham {text} bırakılmadı', () => {

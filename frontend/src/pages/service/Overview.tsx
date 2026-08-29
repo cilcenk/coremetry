@@ -9,6 +9,8 @@ import { panelMaxDataPoints, stepForWidth } from '@/lib/chartStep';
 import { encodeFilters } from '@/lib/urlState';
 import { useServiceDeploys, useAnomalyEvents, useAnomalySilences, useCreateAnomalySilence } from '@/lib/queries';
 import { windowAnomalies, anomalyRegions, silencedSet, silenceKey } from '@/lib/anomalyRegions';
+import { readBandsParam, writeBandsParam } from '@/lib/bandsParam';
+import { LinkButton } from '@/components/ui';
 import { AnomalyWindowTable } from '@/features/anomalies/AnomalyWindowTable';
 // v0.10.162 — çekmece TEMBEL: CopilotExplain/RootCauseRibbon/LogsHistogram'ı en sıcak sayfanın chunk'ına sokmasın (yalnız satır tıkında yüklenir).
 const AnomalyDetailDrawerLazy = lazy(() => import('@/features/anomalies/AnomalyDetailDrawer').then(m => ({ default: m.AnomalyDetailDrawer })));
@@ -390,11 +392,15 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   const canEditAnomaly = user?.role === 'admin' || user?.role === 'editor';
   const windowEvents = useMemo(() => windowAnomalies(anomaliesQ.data?.items, service, from, to), [anomaliesQ.data, service, from, to]);
   const silenced = useMemo(() => silencedSet(silencesQ.data), [silencesQ.data]);
+  // v0.10.170 — bantlar varsayılan KAPALI (?bands=1 açar; operatör "2 de olsun");
+  // tablo her zaman, bantlar yalnız açıkken. Deploy ▼ anahtara bağlı değil.
+  const bandsOn = readBandsParam(searchParams);
+  const toggleBands = () => setSearchParams(prev => writeBandsParam(prev, !bandsOn), { replace: true });
   const chartRegions = useMemo(() => {
-    const a = anomalyRegions(windowEvents, silenced, from, to);
+    const a = bandsOn ? anomalyRegions(windowEvents, silenced, from, to) : [];
     if (!deployRegions && a.length === 0) return undefined;
     return [...(deployRegions ?? []), ...a];
-  }, [deployRegions, windowEvents, silenced, from, to]);
+  }, [deployRegions, windowEvents, silenced, from, to, bandsOn]);
   const anomalyParam = searchParams.get('anomaly') ?? '';
   const inList = useMemo(() => (anomalyParam ? (anomaliesQ.data?.items ?? []).find(e => e.id === anomalyParam) ?? null : null), [anomalyParam, anomaliesQ.data]);
   // v0.9.465 deseni (streams.tsx rescueQ): ?anomaly= hedefi 24 s/200'lük zarfın
@@ -962,7 +968,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           anomali varken çizilir ve çakışan bantları satır satır ayırır. */}
       {windowEvents.length > 0 && (
         <div className="anom-win">
-          <PanelTitle sub={`${windowEvents.length} anomali · bantlar grafiklerde · satır → çekmece`}>Anomaliler · bu pencere</PanelTitle>
+          <PanelTitle sub={<>{windowEvents.length} anomali · bantlar grafiklerde: {bandsOn ? 'açık' : 'kapalı'} · <LinkButton onClick={toggleBands}>{bandsOn ? 'kapat' : 'aç'}</LinkButton> · satır → çekmece</>}>Anomaliler · bu pencere</PanelTitle>
           <AnomalyWindowTable events={windowEvents} silences={silencesQ.data} canEdit={canEditAnomaly}
             onOpen={openAnomaly} onMute={muteAnomaly} truncated={!!anomaliesQ.data?.truncated} />
         </div>

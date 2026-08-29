@@ -8,7 +8,8 @@ import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
 import { timeRangeToNs } from '@/lib/utils';
 import { clampThanosWindow, THANOS_MAX_WINDOW_LABEL } from '@/lib/thanosWindow';
 import { Topbar } from '@/components/Topbar';
-import { Card, DisclosureButton, Badge } from '@/components/ui';
+import { Card, DisclosureButton, Badge, LinkButton } from '@/components/ui';
+import { readBandsParam, writeBandsParam } from '@/lib/bandsParam';
 import { PanelTitle } from '@/components/ui/PanelTitle';
 import { Spinner, Empty } from '@/components/Spinner';
 import { MultiLineChart } from '@/components/MultiLineChart';
@@ -71,7 +72,7 @@ export default function PodPage() {
 }
 
 function PodDetail() {
-  const [sp] = useSearchParams();
+  const [sp, setSp] = useSearchParams();
   const clusterParam = sp.get('cluster') ?? '';
   const nsParam = sp.get('namespace') ?? '';
   const pod = sp.get('pod') ?? '';
@@ -215,13 +216,16 @@ function PodDetail() {
   // kapsamlı pod'da; anomali olayında pod boyutu yok → servis düzeyi,
   // paneldeki altyazı söyler). Sorgu global anahtar (60 s), sayfa başına
   // ek yük yok.
+  // v0.10.170 — bantlar varsayılan KAPALI; ?bands=1 açar (Overview ile aynı anahtar).
   const anomaliesQ = useAnomalyEvents(!!service);
   const silencesQ = useAnomalySilences(!!service);
+  const bandsOn = readBandsParam(sp);
+  const toggleBands = () => setSp(prev => writeBandsParam(prev, !bandsOn), { replace: true });
+  const podWindowEvents = useMemo(() => (service ? windowAnomalies(anomaliesQ.data?.items, service, from, to) : []), [service, anomaliesQ.data, from, to]);
   const podAnomalyRegions = useMemo(() => {
-    if (!service) return undefined;
-    const evs = windowAnomalies(anomaliesQ.data?.items, service, from, to);
-    return evs.length ? anomalyRegions(evs, silencedSet(silencesQ.data), from, to) : undefined;
-  }, [service, anomaliesQ.data, silencesQ.data, from, to]);
+    if (!bandsOn || podWindowEvents.length === 0) return undefined;
+    return anomalyRegions(podWindowEvents, silencedSet(silencesQ.data), from, to);
+  }, [bandsOn, podWindowEvents, silencesQ.data, from, to]);
 
   // v0.10.160 — KPI şeridi + «Yavaş» eşiği grafik serilerinden (podPage.ts, ek sorgu yok).
   const totals = useMemo(() => (redEnabled
@@ -336,7 +340,7 @@ function PodDetail() {
 
         {/* RED — servisin kümülatif metrikleri, bu pod'a scope'lu */}
         <div className="pod-sec">
-          <PanelTitle sub={redEnabled ? `${scopeLabel} · paylaşılan crosshair${podAnomalyRegions ? ' · anomali bantları servis düzeyi' : ''}` : undefined}
+          <PanelTitle sub={redEnabled ? <>{scopeLabel} · paylaşılan crosshair{podWindowEvents.length > 0 && <> · anomali bantları (servis düzeyi): {bandsOn ? 'açık' : 'kapalı'} · <LinkButton onClick={toggleBands}>{bandsOn ? 'kapat' : 'aç'}</LinkButton></>}</> : undefined}
             right={service ? <Link to={serviceHref(service, { range })} className="sec">→ {service} · Overview</Link> : undefined}>
             Servis metrikleri · bu pod
           </PanelTitle>

@@ -132,3 +132,55 @@ describe('podChipLabel / podChipWhere (v0.10.148)', () => {
     expect(src).toMatch(/podChipLabel\(c, multiCluster\)/);
   });
 });
+
+// v0.10.150 — resource attribute satırları entity odağına (operator-reported:
+// "trace attribute'larından tıklanabilsin"); şeritte çip başına "link yok"
+// yok, toplu not var.
+import { k8sAttrHref } from './spanK8s';
+import { unlinkedReason } from '@/components/TracePodsStrip';
+
+describe('k8sAttrHref (v0.10.150)', () => {
+  const ok = spanK8sContext(span({ 'k8s.pod.name': 'api-1', 'k8s.namespace.name': 'pay', 'k8s.node.name': 'w1', 'k8s.cluster.name': 'prod-eu-west' }), clusters);
+  it.each([
+    ['k8s.pod.name', 'pod=api-1'],
+    ['k8s.namespace.name', 'ns%3Ac-a%2Fpay'],
+    ['k8s.node.name', 'w1'],
+    ['k8s.cluster.name', 'cluster=prod-eu'],
+    ['openshift.cluster.name', 'cluster=prod-eu'],
+    ['cluster', 'cluster=prod-eu'],
+  ])('%s → entity href', (key, needle) => {
+    const href = k8sAttrHref(key, ok);
+    expect(href).toBeDefined();
+    expect(decodeURIComponent(href!)).toContain(decodeURIComponent(needle));
+  });
+  it('non-k8s keys and null ctx → undefined', () => {
+    expect(k8sAttrHref('http.method', ok)).toBeUndefined();
+    expect(k8sAttrHref('k8s.pod.name', null)).toBeUndefined();
+  });
+  it('no-namespace ctx: pod/namespace undefined, cluster/node still resolve', () => {
+    const ctx = spanK8sContext(span({ 'k8s.pod.name': 'api-1', 'k8s.node.name': 'w1', 'k8s.cluster.name': 'prod-eu-west' }), clusters);
+    expect(k8sAttrHref('k8s.pod.name', ctx)).toBeUndefined();
+    expect(k8sAttrHref('k8s.namespace.name', ctx)).toBeUndefined();
+    expect(k8sAttrHref('k8s.node.name', ctx)).toBeDefined();
+    expect(k8sAttrHref('cluster', ctx)).toBeDefined();
+  });
+});
+
+describe('TracePodsStrip aggregate note (v0.10.150)', () => {
+  it('unlinkedReason picks the dominant reason', () => {
+    expect(unlinkedReason(['unmapped-cluster', 'unmapped-cluster', 'no-namespace'])).toBe('cluster değeri Remote Cluster kaydına eşlenmemiş');
+    expect(unlinkedReason(['no-cluster'])).toBe('span cluster değeri taşımıyor');
+    expect(unlinkedReason(['no-namespace'])).toBe('k8s.namespace.name yok');
+    expect(unlinkedReason([])).toBe('link yok');
+  });
+  it('chips never carry a per-chip "link yok" suffix; the strip carries one aggregate note (source scan)', () => {
+    const src = readFileSync(resolvePath(__dirname, '../components/TracePodsStrip.tsx'), 'utf8').replace(/^\s*\/\/.*$/gm, '');
+    expect(src).not.toMatch(/\{label\} · link yok/);
+    expect(src).toMatch(/unlinked > 0 && /);
+  });
+  it('SpanDetail rows resolve k8s attribute links through the provider (source scan)', () => {
+    const src = readFileSync(resolvePath(__dirname, '../components/SpanDetail.tsx'), 'utf8').replace(/^\s*\/\/.*$/gm, '');
+    expect(src).toMatch(/k8sAttrHref\(k, k8s\)/);
+    expect(src).toMatch(/<SpanK8sCtx\.Provider value=\{k8sCtx\}>/);
+  });
+});

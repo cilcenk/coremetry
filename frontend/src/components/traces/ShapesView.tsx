@@ -60,7 +60,7 @@ export function ShapesView({ range, service }: { range: TimeRange; service?: str
     if (!rows) return [];
     const groups = new Map<string, { svc: string; op: string; durs: number[]; errs: number; exErr?: string; exAny?: string }>();
     for (const t of rows) {
-      const sig = `${t.serviceName}${t.rootName}`;
+      const sig = `${t.serviceName}\x01${t.rootName}`;
       let g = groups.get(sig);
       if (!g) { g = { svc: t.serviceName, op: t.rootName, durs: [], errs: 0, exAny: undefined, exErr: undefined }; groups.set(sig, g); }
       g.durs.push(t.durationMs);

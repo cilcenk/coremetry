@@ -211,7 +211,7 @@ const widthCache = new Map<string, number>();
  *  measureText'i fontu sabit 'Inter' yazdığı için kullanılamıyor (dosya
  *  başı). Canvas yoksa kaba tahmine düşer — asla 0 döndürmez. */
 export function measureLabelWidthPx(label: string, font: string): number {
-  const key = `${font} ${label}`;
+  const key = `${font}\0${label}`;
   const hit = widthCache.get(key);
   if (hit != null) return hit;
   if (ctx === undefined) {

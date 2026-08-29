@@ -8,7 +8,7 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Row, Badge } from '@/components/ui';
 import { useEntityEnabled } from '@/lib/queries';
-import { tracePods, spanK8sNote } from '@/lib/spanK8s';
+import { tracePods, spanK8sNote, podChipLabel, podChipWhere } from '@/lib/spanK8s';
 import type { SpanRow, TimeRange } from '@/lib/types';
 
 const MAX_CHIPS = 16;
@@ -34,8 +34,10 @@ export function TracePodsStrip({ spans, range }: { spans: SpanRow[]; range: Time
       <span className="field-hint">pods ({pods.length}{nodes ? ` · ${nodes} node` : ''}):</span>
       {pods.slice(0, MAX_CHIPS).map(p => {
         const c = p.ctx;
-        const where = `${c.clusterName ?? c.clusterValue ?? '?'} / ${c.namespace ?? '?'} / ${c.pod}`;
-        const label = `${multiCluster ? `${c.clusterName ?? c.clusterValue ?? '?'} › ` : ''}${c.namespace ?? '?'}/${c.pod}`;
+        // v0.10.148 (operator-reported, prod "?/pod"): '?' yok — etiket bilinen
+        // parçalardan, eksik olan tooltip'te açıkça (podChipWhere).
+        const where = podChipWhere(c);
+        const label = podChipLabel(c, multiCluster);
         const note = spanK8sNote(c);
         const title = `${where} · ${p.spans} span · ${p.errors} hata · ${p.services.join(', ')}${note ? ` · ${note}` : ''}`;
         return c.podHref

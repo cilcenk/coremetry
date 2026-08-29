@@ -10,7 +10,12 @@ import { resolveResource } from './otel/semconv';
 import { entityHref } from './entityHref';
 import type { EntityClusterInfo, SpanRow, TimeRange } from './types';
 
-export type SpanK8sReason = 'ok' | 'no-k8s' | 'no-cluster' | 'unmapped-cluster';
+// v0.10.148 — 'no-namespace': pod adı var, cluster eşlenmiş ama
+// k8s.namespace.name yok (Tempo-fallback / yalnız pod adı çıkaran
+// k8sattributes). Pod adı tek başına cluster içinde belirsiz → pod linki YOK
+// (traces kolonu traceK8sLinks ile aynı kural); node/cluster linkleri kalır.
+// Eskiden `pod:<cid>//<pod>` diye bozuk bir link üretiliyordu.
+export type SpanK8sReason = 'ok' | 'no-k8s' | 'no-cluster' | 'unmapped-cluster' | 'no-namespace';
 
 export interface SpanK8sContext {
   reason: SpanK8sReason;
@@ -44,16 +49,36 @@ export function spanK8sContext(span: SpanLike, clusters: EntityClusterInfo[], ra
   if (!c) return { ...base, reason: 'unmapped-cluster' };
   const ns = r.k8s.namespace ?? '';
   const opts = { range, at: atMs, clusterName: c.name, service: span.serviceName || undefined };
-  return {
+  const linked = {
     ...base,
-    reason: 'ok',
     clusterId: c.id,
     clusterName: c.name,
-    podHref: entityHref({ type: 'pod', id: `pod:${c.id}/${ns}/${r.k8s.pod}`, name: r.k8s.pod, namespace: ns, clusterId: c.id }, opts),
     nodeHref: r.k8s.node ? entityHref({ type: 'node', id: `node:${c.id}/${r.k8s.node}`, name: r.k8s.node, clusterId: c.id }, opts) : undefined,
-    namespaceHref: ns ? entityHref({ type: 'namespace', id: `ns:${c.id}/${ns}`, name: ns, clusterId: c.id }, opts) : undefined,
     clusterHref: entityHref({ type: 'cluster', id: `cluster:${c.id}`, name: c.name, clusterId: c.id }, { range }),
   };
+  if (!ns) return { ...linked, reason: 'no-namespace' };
+  return {
+    ...linked,
+    reason: 'ok',
+    podHref: entityHref({ type: 'pod', id: `pod:${c.id}/${ns}/${r.k8s.pod}`, name: r.k8s.pod, namespace: ns, clusterId: c.id }, opts),
+    namespaceHref: entityHref({ type: 'namespace', id: `ns:${c.id}/${ns}`, name: ns, clusterId: c.id }, opts),
+  };
+}
+
+// podChipLabel / podChipWhere — v0.10.148 (operator-reported, prod:
+// "?/bsa-…" çipleri). Etiket YALNIZ bilinen parçalardan kurulur; bilinmeyen
+// parça için '?' basılmaz — eksik ne ise tooltip (where) AÇIKÇA söyler.
+export function podChipLabel(ctx: Pick<SpanK8sContext, 'clusterName' | 'clusterValue' | 'namespace' | 'pod'>, multiCluster: boolean): string {
+  const cluster = ctx.clusterName ?? ctx.clusterValue;
+  const head = multiCluster && cluster ? `${cluster} › ` : '';
+  return `${head}${ctx.namespace ? `${ctx.namespace}/` : ''}${ctx.pod ?? ''}`;
+}
+
+export function podChipWhere(ctx: Pick<SpanK8sContext, 'clusterName' | 'clusterValue' | 'namespace' | 'pod' | 'reason'>): string {
+  const cluster = ctx.clusterName
+    ?? (ctx.clusterValue ? `${ctx.clusterValue} (Remote Cluster kaydına eşlenmemiş)` : 'bilinmiyor (span cluster değeri taşımıyor)');
+  const ns = ctx.namespace ?? 'yok (k8s.namespace.name taşımıyor)';
+  return `cluster: ${cluster} · namespace: ${ns} · pod: ${ctx.pod ?? ''}`;
 }
 
 /** Operatöre gösterilecek açık ilan — link olmayan üç durumun gerekçesi. */
@@ -62,6 +87,7 @@ export function spanK8sNote(ctx: SpanK8sContext): string | null {
     case 'no-k8s': return 'Bu span\'de Kubernetes bağlamı yok (k8s.pod.name taşımıyor).';
     case 'no-cluster': return `Pod ${ctx.pod} — span cluster değeri taşımıyor; hangi cluster bilinmiyor, link yok.`;
     case 'unmapped-cluster': return `Pod ${ctx.pod} — cluster değeri "${ctx.clusterValue}" bir Remote Cluster kaydına eşlenmemiş; link yok.`;
+    case 'no-namespace': return `Pod ${ctx.pod} — span k8s.namespace.name taşımıyor; pod adı tek başına cluster içinde belirsiz, pod linki yok.`;
     default: return null;
   }
 }

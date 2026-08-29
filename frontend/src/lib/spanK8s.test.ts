@@ -86,3 +86,49 @@ describe('tracePods', () => {
     expect(pods[2].ctx.clusterId).toBe('c-b');
   });
 });
+
+// v0.10.148 — operator-reported (prod, Tempo fallback trace): pod çipleri
+// "?/bsa-…" çıkıyordu. (1) '?' yok: etiket bilinen parçalardan, eksik olan
+// tooltip'te açıkça; (2) namespace'siz pod eşlenmiş cluster'da bile pod linki
+// ALMAZ (eskiden `pod:<cid>//<pod>` bozuk link) — traces kolonuyla aynı kural.
+import { podChipLabel, podChipWhere } from './spanK8s';
+import { readFileSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
+
+describe('podChipLabel / podChipWhere (v0.10.148)', () => {
+  it.each([
+    [{ clusterName: 'prod-eu', namespace: 'pay', pod: 'api-1' }, true, 'prod-eu › pay/api-1'],
+    [{ clusterName: 'prod-eu', namespace: 'pay', pod: 'api-1' }, false, 'pay/api-1'],
+    [{ clusterValue: 'lab', namespace: 'pay', pod: 'api-1' }, true, 'lab › pay/api-1'],
+    [{ pod: 'api-1' }, true, 'api-1'],
+    [{ pod: 'api-1' }, false, 'api-1'],
+    [{ clusterName: 'prod-eu', pod: 'api-1' }, false, 'api-1'],
+  ] as const)('label %j multi=%s → %s (never "?")', (ctx, multi, want) => {
+    const got = podChipLabel(ctx, multi);
+    expect(got).toBe(want);
+    expect(got).not.toContain('?');
+  });
+
+  it('where names each missing part explicitly', () => {
+    expect(podChipWhere({ pod: 'api-1', reason: 'no-cluster' })).toBe('cluster: bilinmiyor (span cluster değeri taşımıyor) · namespace: yok (k8s.namespace.name taşımıyor) · pod: api-1');
+    expect(podChipWhere({ clusterValue: 'lab', namespace: 'pay', pod: 'api-1', reason: 'unmapped-cluster' })).toContain('lab (Remote Cluster kaydına eşlenmemiş)');
+    expect(podChipWhere({ clusterName: 'prod-eu', namespace: 'pay', pod: 'api-1', reason: 'ok' })).toBe('cluster: prod-eu · namespace: pay · pod: api-1');
+  });
+
+  it('mapped cluster but no namespace → no-namespace: no pod link, cluster/node links stay', () => {
+    const ctx = spanK8sContext(span({ 'k8s.pod.name': 'api-1', 'k8s.cluster.name': 'prod-eu-west', 'k8s.node.name': 'w1' }), clusters);
+    expect(ctx.reason).toBe('no-namespace');
+    expect(ctx.podHref).toBeUndefined();
+    expect(ctx.namespaceHref).toBeUndefined();
+    expect(ctx.clusterHref).toContain('cluster=prod-eu');
+    expect(ctx.nodeHref).toBeDefined();
+    expect(ctx.nodeHref).toContain('w1');
+    expect(spanK8sNote(ctx)).toMatch(/k8s\.namespace\.name/);
+  });
+
+  it('TracePodsStrip never renders a "?" placeholder (source scan)', () => {
+    const src = readFileSync(resolvePath(__dirname, '../components/TracePodsStrip.tsx'), 'utf8').replace(/^\s*\/\/.*$/gm, '');
+    expect(src).not.toMatch(/\?\?\s*'\?'/);
+    expect(src).toMatch(/podChipLabel\(c, multiCluster\)/);
+  });
+});

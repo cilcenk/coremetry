@@ -1297,11 +1297,10 @@ func (e *Evaluator) promoteStrongAnomalies(ctx context.Context) {
 	// her Upsert memo'yu düşürür, olay başına Get yeniden tarardı. Aynı
 	// (kural, servis) bir süpürmede bir kez işlenir; süpürme-yerel görünüm
 	// evaluateOne'ın tick-yerel snapshot disipliniyle aynı (v0.8.520).
-	// Hata: nil snapshot → ByKey nil → "yeni" kabul (eski `open, _ :=` dalı).
-	snap, snapErr := e.store.OpenProblemsSnapshot(ctx)
-	if snapErr != nil {
-		log.Printf("[evaluator] anomaly promotion: open snapshot: %v", snapErr)
-	}
+	// v0.10.158 — TEMBEL: aktif olay yoksa tarama yok. Hata: nil snapshot →
+	// ByKey nil → "yeni" kabul (eski `open, _ :=` dalı), bir kez loglanır.
+	lazy := e.store.LazyOpenSnapshot()
+	snapWarned := false
 	for _, ev := range events {
 		if ev.Status != "active" {
 			continue
@@ -1338,6 +1337,11 @@ func (e *Evaluator) promoteStrongAnomalies(ctx context.Context) {
 		// in flight for the same fingerprint — keeps the
 		// notify channel from refiring on every sweep.
 		isNew := false
+		snap, snapErr := lazy.Get(ctx) // v0.10.158 — ilk ihtiyaçta bir kez
+		if snapErr != nil && !snapWarned {
+			log.Printf("[evaluator] anomaly promotion: open snapshot: %v", snapErr)
+			snapWarned = true
+		}
 		open := snap.ByKey(ruleID, ev.Service) // v0.10.156 — süpürme-yerel snapshot, kopya
 		if open == nil {
 			isNew = true

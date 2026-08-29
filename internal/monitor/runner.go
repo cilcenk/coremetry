@@ -71,7 +71,11 @@ type Runner struct {
 	// memo'yu düşürür; monitör başına Get yeniden tarardı. tick eşzamanlı
 	// DEĞİL (probe'lar sırayla), alan yalnız tick içinde dolu; nil iken
 	// findOpen memo'ya düşer (test/heartbeat dışı yollar).
-	tickSnap *chstore.OpenProblems
+	//
+	// v0.10.158: TEMBEL — 156 koşulsuz okuyordu ve 5 s'lik tick sessizken
+	// de tam tarama yapıyordu (ölçüm: snapshot 47 → 93 / 10 dk). Artık ilk
+	// findOpen'da okunur; durum değişimi/keep-alive yoksa tarama YOK.
+	tickSnap *chstore.LazySnapshot
 }
 
 func New(store *chstore.Store, notifier *notify.Notifier, lock cache.Lock) *Runner {
@@ -115,12 +119,10 @@ func (r *Runner) tick(ctx context.Context) {
 		log.Printf("[monitor] list: %v", err)
 		return
 	}
-	// v0.10.156 — tick-yerel snapshot (bkz. tickSnap). Okuma hatası: alan
-	// nil kalır, findOpen memo'ya düşer (her çağrı kendi hatasını görür —
-	// keep-alive'ın "hatada yeniden AÇMA" muhafızı korunur).
-	if snap, serr := r.store.OpenProblemsSnapshot(ctx); serr == nil {
-		r.tickSnap = snap
-	}
+	// v0.10.158 — tick-yerel TEMBEL snapshot (bkz. tickSnap): ilk findOpen
+	// okur, sonrakiler paylaşır; hata tick boyunca sabit (keep-alive'ın
+	// "hatada yeniden AÇMA" muhafızı her çağrıda aynı hatayı görür).
+	r.tickSnap = r.store.LazyOpenSnapshot()
 	defer func() { r.tickSnap = nil }()
 	last, err := r.store.LastMonitorStatus(ctx)
 	if err != nil {
@@ -458,7 +460,11 @@ func (r *Runner) handleStateChange(ctx context.Context, m chstore.Monitor, statu
 // bulunamadı → (nil, nil); satır tam (Upsert ileri taşımaya uygun).
 func (r *Runner) findOpen(ctx context.Context, ruleID, service string) (*chstore.Problem, error) {
 	if r.tickSnap != nil {
-		return r.tickSnap.ByKey(ruleID, service), nil
+		snap, err := r.tickSnap.Get(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return snap.ByKey(ruleID, service), nil
 	}
 	snap, err := r.store.OpenProblemsSnapshot(ctx)
 	if err != nil {

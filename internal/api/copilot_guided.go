@@ -1235,6 +1235,15 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// BUGÜNKÜ pencereyi cevaplıyordu. Sayılar gerçek olduğu için hata
 	// sessiz kalıyordu. anchorTo göreli aralıkta zaten `now()`dur
 	// (chat_anchor.go); mutlak seçimde operatörün penceresidir.
+	return s.runGuidedRoute(ctx, emit, route, rangeS, question, msgs, explain, ctxService, ctxOperation, followBase, anchorTo)
+}
+
+// runGuidedRoute — v0.10.172: ÇÖZÜLMÜŞ bir rota için prefetch → anlatım →
+// answer. copilotChatGuided'dan ayrıldı ki LLM niyet sınıflandırıcısı
+// (copilot_intent.go) deterministik router'ı atlayıp aynı paketleri ve aynı
+// anlatım çağrısını kullanabilsin: iki yolun cevabı, çipleri ve linkleri
+// birebir aynı üretimden çıkar. Davranış değişmedi — gövde olduğu gibi taşındı.
+func (s *Server) runGuidedRoute(ctx context.Context, emit func(string, any), route guidedRoute, rangeS int64, question string, msgs []copilot.ChatMessage, explain, ctxService, ctxOperation, followBase string, anchorTo time.Time) (handled, ok bool) {
 	to := anchorTo
 	if to.IsZero() {
 		to = time.Now()

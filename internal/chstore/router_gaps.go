@@ -37,6 +37,9 @@ type RouterGap struct {
 // surface='chat' = serbest tool döngüsü (guided 'chat-guided' yazar).
 // Boş prompt_sample elenir: kayıt var ama soru yok demek, sıralamada
 // gürültü.
+// v0.10.172 — 'chat-intent-none': niyet sınıflandırıcısı none dediği sorular
+// (on_no_loop kipinde serbest döngü koşmaz, 'chat' satırı yazılmaz — rapor
+// kör kalmasın; copilot_intent.go).
 func (s *Store) RouterGaps(ctx context.Context, since time.Duration, limit int) ([]RouterGap, error) {
 	if since <= 0 {
 		since = 7 * 24 * time.Hour
@@ -50,7 +53,7 @@ func (s *Store) RouterGaps(ctx context.Context, since time.Duration, limit int) 
 		       toUnixTimestamp64Nano(max(created_at)) AS last_at,
 		       uniqExact(user_id)                   AS users
 		FROM ai_calls
-		WHERE surface = 'chat'
+		WHERE surface IN ('chat', 'chat-intent-none')
 		  AND created_at >= ?
 		  AND prompt_sample != ''
 		GROUP BY q

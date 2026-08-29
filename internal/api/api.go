@@ -8629,6 +8629,8 @@ func (s *Server) getAISettings(w http.ResponseWriter, r *http.Request) {
 		"temperature": temperature,
 		"timeoutS":    timeoutS,
 		"autoExplain": autoExplain,
+		// v0.10.172 — serbest soru sınıflandırıcısı kipi (copilot_intent.go).
+		"intentClassify": s.copilot.IntentClassifyMode(),
 	})
 }
 
@@ -8661,9 +8663,21 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		// Enabled idyomu: alanı bilmeyen eski istemci nil gönderir ve
 		// nil⇒açık — kazara kapatamaz.
 		AutoExplain *bool `json:"autoExplain"`
+		// v0.10.172 — bkz. copilot.IntentOff/On/OnNoLoop. *string: alanı
+		// bilmeyen eski istemci nil gönderir → MEVCUT değer korunur (autoExplain
+		// deyimi; "" kabul edilseydi bayat bundle açık 'off'u sessizce sıfırlardı).
+		IntentClassify *string `json:"intentClassify"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	intentClassify := s.copilot.IntentClassifyMode()
+	if in.IntentClassify != nil {
+		intentClassify = *in.IntentClassify
+	}
+	if err := copilot.ValidateIntentClassify(intentClassify); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if in.Provider != "" &&
@@ -8681,7 +8695,7 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	enabled := in.Enabled == nil || *in.Enabled
-	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model, in.BaseURL, in.SkipTLS, enabled, in.MaxTokens, in.Temperature, in.TimeoutS, in.AutoExplain); err != nil {
+	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model, in.BaseURL, in.SkipTLS, enabled, in.MaxTokens, in.Temperature, in.TimeoutS, in.AutoExplain, intentClassify); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -8699,18 +8713,21 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 	details, _ := json.Marshal(map[string]any{
 		"provider": provider, "model": model, "baseUrl": baseURL, "hasKey": hasKey, "skipTls": skipTLS, "enabled": enabledNow,
 		"maxTokens": maxTokensNow, "temperature": temperatureNow, "timeoutS": timeoutSNow,
+		"intentClassify": s.copilot.IntentClassifyMode(),
 	})
 	s.audit(r, "settings.ai.update", "settings", "ai", string(details))
 	writeJSON(w, map[string]any{
-		"provider":    provider,
-		"model":       model,
-		"baseUrl":     baseURL,
-		"hasKey":      hasKey,
-		"skipTls":     skipTLS,
-		"enabled":     enabledNow,
-		"maxTokens":   maxTokensNow,
-		"temperature": temperatureNow,
-		"timeoutS":    timeoutSNow,
+		"provider":       provider,
+		"model":          model,
+		"baseUrl":        baseURL,
+		"hasKey":         hasKey,
+		"skipTls":        skipTLS,
+		"enabled":        enabledNow,
+		"maxTokens":      maxTokensNow,
+		"temperature":    temperatureNow,
+		"timeoutS":       timeoutSNow,
+		"autoExplain":    s.copilot.AutoExplainEnabled(),
+		"intentClassify": s.copilot.IntentClassifyMode(),
 	})
 }
 

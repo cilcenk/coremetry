@@ -267,6 +267,17 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// v0.10.172 — kademe 3.5: LLM niyet sınıflandırıcısı (copilot_intent.go).
+	// Deterministik router (kademe 1) ve RAG eşleşmeyen serbest soruyu
+	// küçük model tek katı-JSON çağrısıyla kılavuz niyetine eşler; eşlerse
+	// cevap AYNI prefetch→anlatım yolundan (runGuidedRoute). Eşlemezse
+	// ayara göre öneri çipleri (on_no_loop, prod varsayılanı) ya da aşağıdaki
+	// serbest döngü (on). Sınıflandırıcı hatası sessizce düşer — döngü sürer.
+	if handled, iok := s.copilotChatIntent(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain, req.Context.RangeS, req.Context.Env, anchorTo); handled {
+		emit("done", map[string]bool{"ok": iok})
+		return
+	}
+
 	// Build the tool set once (closures over the live store + logs)
 	// and the LLM-facing specs from the same list.
 	//

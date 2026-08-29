@@ -56,6 +56,18 @@ func chatTiers() map[string]string {
 	}
 }
 
+// v0.10.172 — niyet sınıflandırıcısı chatTiers'a GİRMEZ (tool seçmez, cevap
+// üretmez) ama kendi kalkanını taşır: sorudan talimat almaz. Sabitin kendisi
+// aranır ki kopyalanmış yazım sessizce kayamasın.
+func TestIntentClassifierRefusesInstructions(t *testing.T) {
+	if !strings.Contains(SystemPromptIntentClassify(), IntentNoInstructionLine) {
+		t.Fatal("IntentClassify enjeksiyon kalkanı (IntentNoInstructionLine) kayıp")
+	}
+	if strings.Contains(SystemPromptIntentClassify(), DataNotInstruction) {
+		t.Fatal("IntentClassify chatTiers'ın DataNotInstruction'ını taşıyor — anlamı ters (orada talimat sorudan gelir)")
+	}
+}
+
 func TestChatTiersFrameDataAsData(t *testing.T) {
 	for name, p := range chatTiers() {
 		t.Run(name, func(t *testing.T) {

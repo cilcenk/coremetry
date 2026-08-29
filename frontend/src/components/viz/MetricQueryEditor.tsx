@@ -612,8 +612,8 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
     //   yazar yazmaz metriğin TÜM anahtarları listelenir (Grafana davranışı).
     if (labelPhase && labelMetric && (labelPhase === 'key' || labelKey)) {
       const p = labelPhase === 'key'
-        ? cachedSugList(`k ${labelMetric}`, () => api.metricAttrKeys(labelMetric, '', '24h'))
-        : cachedSugList(`v ${labelMetric} ${labelKey}`, () => api.metricLabels(labelMetric, labelKey, '24h'));
+        ? cachedSugList(`k\0${labelMetric}`, () => api.metricAttrKeys(labelMetric, '', '24h'))
+        : cachedSugList(`v\0${labelMetric}\0${labelKey}`, () => api.metricLabels(labelMetric, labelKey, '24h'));
       p.then(all => { if (alive) { setSug(filterSugList(all, labelPartial)); setSugIdx(0); } })
         .catch(() => { if (alive) setSug([]); });
       return () => { alive = false; };

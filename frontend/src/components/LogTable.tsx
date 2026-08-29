@@ -276,7 +276,7 @@ export function LogTable({
   const colIds = useMemo(() => normalizeLogColumns(columns), [columns]);
   // Stable string key so the memo below doesn't rebuild on every
   // render from a fresh array identity.
-  const colKey = colIds.join('');
+  const colKey = colIds.join('\x1f');
   // Resize-only DataTable wiring. No column defines `sortValue`, so
   // dt.sortedRows is `logs` unchanged (server time-desc order preserved)
   // and the headers render as plain resizable labels. Persisted widths

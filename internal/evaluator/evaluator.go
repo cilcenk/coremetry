@@ -1172,14 +1172,13 @@ func (e *Evaluator) escalateStaleProblems(ctx context.Context) {
 	if !esc.Enabled {
 		return
 	}
-	problems, err := e.store.ListProblems(ctx, chstore.ProblemFilter{
-		Status: "open",
-		Limit:  500,
-	})
+	// v0.10.156 — tick'in snapshot'ından (5 s memo), ayrı FINAL taraması yok.
+	snap, err := e.store.OpenProblemsSnapshot(ctx)
 	if err != nil {
 		log.Printf("[evaluator] escalation sweep: list problems: %v", err)
 		return
 	}
+	problems := snap.Filter("open", "", 500)
 	now := time.Now()
 	for i := range problems {
 		p := problems[i]
@@ -1294,6 +1293,15 @@ func (e *Evaluator) promoteStrongAnomalies(ctx context.Context) {
 		muted = nil
 	}
 	now := time.Now()
+	// v0.10.156 (inceleme D3) — süpürme başına TEK snapshot: döngü içindeki
+	// her Upsert memo'yu düşürür, olay başına Get yeniden tarardı. Aynı
+	// (kural, servis) bir süpürmede bir kez işlenir; süpürme-yerel görünüm
+	// evaluateOne'ın tick-yerel snapshot disipliniyle aynı (v0.8.520).
+	// Hata: nil snapshot → ByKey nil → "yeni" kabul (eski `open, _ :=` dalı).
+	snap, snapErr := e.store.OpenProblemsSnapshot(ctx)
+	if snapErr != nil {
+		log.Printf("[evaluator] anomaly promotion: open snapshot: %v", snapErr)
+	}
 	for _, ev := range events {
 		if ev.Status != "active" {
 			continue
@@ -1330,7 +1338,7 @@ func (e *Evaluator) promoteStrongAnomalies(ctx context.Context) {
 		// in flight for the same fingerprint — keeps the
 		// notify channel from refiring on every sweep.
 		isNew := false
-		open, _ := e.store.FindOpenProblem(ctx, ruleID, ev.Service)
+		open := snap.ByKey(ruleID, ev.Service) // v0.10.156 — süpürme-yerel snapshot, kopya
 		if open == nil {
 			isNew = true
 		}

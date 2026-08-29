@@ -11,7 +11,8 @@ import { promQuote } from '@/pages/clusters/promQuote';
 import { fmtCores, restartColor } from '@/pages/clusters/thresholds';
 import { fmtBytes, fmtNum } from '@/lib/utils';
 import { useServicePods } from '@/pages/service/useServicePods';
-import { ServiceEntityPods } from '@/pages/service/ServiceEntityPods';
+import { useEntityEnabled } from '@/lib/queries';
+import { Link } from 'react-router-dom';
 import type { TimeRange } from '@/lib/types';
 
 // ServiceInfraTab — servis detayının Infrastructure sekmesi. CLUSTER-SEVİYESİ
@@ -128,38 +129,35 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
     outlineOffset: 4, borderRadius: 8, transition: 'outline-color .35s',
   });
 
-  // v0.10.145 — entity tablosu (v0.10.131/136) Thanos ad-regex'i hiçbir
-  // pod bulamayınca ULAŞILAMAZDI: aşağıdaki erken dönüşler mount'tan önce
-  // geliyordu — tam da entity katmanının var olma sebebi olan durumda
-  // (`apianl-prod-*` pod'ları `api-analytics-*` kalıbına uymaz; API 2 pod
-  // döndürürken sekme "No pods matched" gösteriyordu). Tek örnek, her dalda.
-  const entityPods = <ServiceEntityPods service={service} range={range} cluster={icluster || undefined} />;
+  // v0.10.149 (operator-reported: "pod entity hem Infra hem Pods'ta"):
+  // entity tablosu YALNIZ Pods sekmesinde yaşar (v0.10.131 burada, 145
+  // her iki sekmede mount etmişti → tekrar). Infra = Thanos metrikleri;
+  // ad-regex eşleşmeyince boş durum Pods sekmesine işaret eder (F5).
+  const { enabled: entityEnabled } = useEntityEnabled();
+  const podsTabHref = `/service?${new URLSearchParams({ name: service, tab: 'pods' }).toString()}`;
+  const entityHint = entityEnabled
+    ? <> Entity katmanı (span'lerin gördüğü pod'lar) <Link to={podsTabHref} className="sec">Pods sekmesinde</Link>.</>
+    : null;
 
   // ── Kapılar (hook'lardan SONRA) ──
   if (metaQ.isPending || sourcesPending) return <Spinner />;
   if (noClusters) {
-    return <>
-      {entityPods}
-      <Empty icon="▦" title="No Thanos clusters configured">
-        Add a remote cluster under Settings → Remote clusters to see pod-level infrastructure here.
-      </Empty>
-    </>;
+    return <Empty icon="▦" title="No Thanos clusters configured">
+      Add a remote cluster under Settings → Remote clusters to see pod-level infrastructure here.{entityHint}
+    </Empty>;
   }
   if (rows.length === 0) {
     // v0.9.538 — spinner YALNIZ hiç eşleşme yokken; gelen cluster'lar
     // hemen çizilir (tek yavaş cluster tüm sayfayı bekletmesin).
     if (podsBlocking) return <Spinner />;
-    return <>
-      {entityPods}
-      <Empty icon="▦" title="No pods matched">
+    return <Empty icon="▦" title="No pods matched">
       {/* v0.9.536 — gerçek aday kalıbı (ServicePodsTab ile aynı düzeltme). */}
       Tried {ns && deploy ? `k8s.namespace=${ns} · ${deploy}` : 'the k8s metadata mapping'}
       {' '}and pod-name matching (<span className="mono">{servicePodRegex(service, deploy)}</span>) across{' '}
       {matched.length} Thanos cluster{matched.length > 1 ? 's' : ''} — nothing matched.
       Check that the pods follow the <span className="mono">&lt;service&gt;-&lt;hash&gt;-&lt;rand&gt;</span> naming
-      or curate namespace/deployment in the service catalog.
-      </Empty>
-    </>;
+      or curate namespace/deployment in the service catalog.{entityHint}
+    </Empty>;
   }
 
   const phaseKnown = visRows.some(r => r.phase);
@@ -182,8 +180,6 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
           <span className="mono" style={{ color: 'var(--text)' }}>{icluster}</span>
         </div>
       )}
-      {/* v0.10.131 — entity katmanı (bayrak açıkken): servisi taşıyan pod'lar, ömür + iş yükü + node. */}
-      {entityPods}
       <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
         {ns && deploy ? (
           <>Pods matched to <span className="mono">{service}</span> via{' '}

@@ -1,4 +1,7 @@
 // v0.10.145 — entity pod tablosu her kapıdan ÖNCE mount edilir (kaynak taraması).
+// v0.10.149 — operatör: tablo hem Infra hem Pods'ta çıkıyor + Pods'ta altta
+// Thanos listesi tekrar → tek yer (Pods), Infra boş durumu oraya işaret eder,
+// envanter entity satırı varken kapalı başlar.
 //
 // Bug: ServiceInfraTab'ın "No pods matched" / "No Thanos clusters configured"
 // erken dönüşleri <ServiceEntityPods> mount'unun ÜSTÜNDEYDİ; Thanos ad-regex'i
@@ -19,22 +22,22 @@ function firstMount(src: string): number {
   return i;
 }
 
-describe('ServiceEntityPods reachability (v0.10.145)', () => {
-  it('Infra tab mounts the entity table before every empty-state gate', () => {
-    const src = read('ServiceInfraTab.tsx');
-    const mount = firstMount(src);
-    for (const gate of ['title="No pods matched"', 'title="No Thanos clusters configured"']) {
-      const g = src.indexOf(gate);
-      expect(g, `${gate} bulunamadı`).toBeGreaterThan(-1);
-      expect(mount, `${gate} mount'tan önce dönüyor — tablo ulaşılamaz`).toBeLessThan(g);
-    }
+describe('ServiceEntityPods reachability (v0.10.145 → v0.10.149)', () => {
+  it('Infra tab does NOT mount the entity table (it lives in the Pods tab only) but points at it', () => {
+    const src = read('ServiceInfraTab.tsx').replace(/^\s*\/\/.*$/gm, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+    expect(src).not.toContain('<ServiceEntityPods');
+    expect(src).toMatch(/entityHint/);
+    expect(src).toMatch(/tab: 'pods'/);
   });
 
-  it('Pods tab mounts the entity table before its empty state', () => {
-    const src = read('ServicePodsTab.tsx');
+  it('Pods tab mounts the entity table before its empty state and collapses the Thanos inventory when entity rows exist', () => {
+    const src = read('ServicePodsTab.tsx').replace(/^\s*\/\/.*$/gm, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
     const mount = firstMount(src);
     const g = src.indexOf('title="No pods matched"');
     expect(g).toBeGreaterThan(-1);
     expect(mount).toBeLessThan(g);
+    expect(src).toMatch(/onRows=\{setEntityRows\}/);
+    expect(src).toMatch(/entityRows > 0 && !thanosOpen\) \? null/);
+    expect(src).toMatch(/<DisclosureButton[^>]*expanded=\{thanosOpen\}/);
   });
 });

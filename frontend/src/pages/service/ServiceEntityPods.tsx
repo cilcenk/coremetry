@@ -5,7 +5,7 @@
 // workload, pod sayısıyla). HER link entityHref üzerinden — doğru cluster,
 // range korunur; cluster eşlenmemiş satırda link YOK, rozet açık ilan eder
 // (brief kuralı 4). Bayrak kapalı → null.
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Stack, Row } from '@/components/ui';
 import { Badge } from '@/components/ui/Badge';
@@ -75,11 +75,15 @@ function ChainStrip({ chain, range, nameOf }: { chain: ServicePodsChainItem[]; r
   );
 }
 
-export function ServiceEntityPods({ service, range, cluster }: { service: string; range: TimeRange; cluster?: string }) {
+// onRows (v0.10.149) — üst bileşen (Pods sekmesi) entity satırı varken Thanos
+// envanterini kapalı başlatır; bayrak kapalı ya da 0 satır → 0.
+export function ServiceEntityPods({ service, range, cluster, onRows }: { service: string; range: TimeRange; cluster?: string; onRows?: (n: number) => void }) {
   const { enabled, clusters } = useEntityEnabled();
   const win = useMemo(() => timeRangeToNs(range), [range]);
   const q = useEntityServicePods(service, cluster ?? '', win, enabled);
   const rows = q.data?.pods ?? [];
+  const rowCount = enabled ? rows.length : 0;
+  useEffect(() => { onRows?.(rowCount); }, [rowCount, onRows]);
   const dt = useDataTable<ServicePodRow>({
     storageKey: 'service-entity-pods',
     columns: COLS,

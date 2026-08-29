@@ -13,6 +13,7 @@ import { RenderedMarkdown } from '@/components/Markdown';
 import type { IdLink } from '@/components/ai/inlineIdLinks';
 import { readAiCodeParam, writeAiCodeParam } from '@/lib/aiSubject';
 import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
+import { shouldAskForCode, type CodeAskState } from './codeAsk';
 
 // CopilotExplain — drop-in Explain button that calls the
 // CoSRE (copilot) endpoint for the given subject and renders the
@@ -127,6 +128,15 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   const [code, setCode] = useState<AICodeContext | null>(null);
   // v0.10.83 — isabet yaşı; null = taze LLM cevabı.
   const [cachedAtMs, setCachedAtMs] = useState<number | null>(null);
+  // v0.10.153 — "Kodu da inceleyeyim mi?" akışı (codeAsk.ts): ikinci geçiş
+  // kendi state'ine akar, ilk cevap (text) DOKUNULMAZ.
+  const [codeAsk, setCodeAsk] = useState<CodeAskState>('idle');
+  const [codeText, setCodeText] = useState<string | null>(null);
+  const [codeBusy, setCodeBusy] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [codeLinks, setCodeLinks] = useState<IdLink[] | undefined>(undefined);
+  const [codeExchangeId, setCodeExchangeId] = useState<string | undefined>(undefined);
+  const codeAbortRef = useRef<AbortController | null>(null);
 
   // applyText — cevabı hem panele yaz hem üst bileşene duyur (v0.9.479).
   // BOŞ model cevabı bağlam olamaz: onAnswer'a boş string gider, çekmece
@@ -173,6 +183,9 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
     setBusy(true); setError(null); setText(null); setMeta(null); setCode(null);
     setExchangeId(undefined);
     setCachedAtMs(null);
+    // v0.10.153 — yeni ilk geçiş: kod geçişi ve karar sıfırlanır.
+    codeAbortRef.current?.abort();
+    setCodeAsk('idle'); setCodeText(null); setCodeBusy(false); setCodeError(null); setCodeLinks(undefined); setCodeExchangeId(undefined);
     onAnswer?.(''); // "Yeniden sor" bayat bağlamı taşımasın
     try {
       if (kind === 'runbook') {
@@ -228,7 +241,44 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   // Unmount: uçuştaki akışı kes. Çekmece kapanınca sunucuya doğru açık
   // kalan bir SSE bağlantısı, kimsenin okumadığı token'ları akıtmaya
   // devam eder.
-  useEffect(() => () => abortRef.current?.abort(), []);
+  // v0.10.153 — Evet: ikinci explain (includeCode=true) "Kod incelemesi"
+  // ayracı altına akar. İlk cevap korunur; kanıt span'leri kod geçişinden
+  // gelirse vurgu güncellenir; URL'e ai=code yazılır ki paylaşılan/yenilenen
+  // sayfa doğrudan kodlu açsın (eski davranış, aiCodeParam sözleşmesi).
+  const runCode = async () => {
+    codeAbortRef.current?.abort();
+    const ac = new AbortController();
+    codeAbortRef.current = ac;
+    setCodeAsk('accepted');
+    setCodeBusy(true); setCodeError(null); setCodeText(null); setCode(null);
+    // Evet = kutuyu da işaretle (operatör: "Chip de kalsın"): "Yeniden sor"
+    // artık tek turda kodlu koşar; URL'e de yazılır (deep link).
+    setIncludeCode(true);
+    writeAiCodeParam(true);
+    const opts = { onDelta: (d: string) => setCodeText(prev => (prev ?? '') + d), signal: ac.signal, fresh: false };
+    try {
+      const finish = (r: { explanation: string; links?: IdLink[]; exchangeId?: string; code?: AICodeContext; evidenceSpanIds?: string[] }) => {
+        if (r.evidenceSpanIds?.length) onEvidence?.(r.evidenceSpanIds);
+        setCode(r.code ?? null);
+        setCodeLinks(r.links);
+        setCodeExchangeId(r.exchangeId);
+        setCodeText(r.explanation || '⚠ Model boş yanıt döndürdü.');
+      };
+      if (kind === 'trace') {
+        finish(await api.copilotExplainTrace(id, true, opts));
+      } else {
+        const r = await api.copilotExplainException(id, true, opts);
+        if (r.evidenceTraceIds?.length) onEvidenceTraces?.(r.evidenceTraceIds);
+        finish(r);
+      }
+    } catch (e: unknown) {
+      if (ac.signal.aborted) return;
+      setCodeError(e instanceof Error ? e.message : 'Kod incelemesi başarısız');
+    } finally {
+      if (codeAbortRef.current === ac) setCodeBusy(false);
+    }
+  };
+  useEffect(() => () => { abortRef.current?.abort(); codeAbortRef.current?.abort(); }, []);
 
   // Explain→chat köprüsü (v0.9.165): açıklamayı okuduktan sonra tek tıkla
   // global CoSRE penceresinde devam et — konuya uygun bir soruyla açılır.
@@ -264,7 +314,14 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
       display: 'inline-flex', flexDirection: 'column', gap: 8,
       alignItems: 'flex-start', maxWidth: '100%',
     }}>
-      {codeCapable && (
+            {/* v0.10.60 — DEPO LİNKİ KUTUNUN ALTINDA (operatör isteği).
+          Depo adı çoğu kurulumda bir KONVANSİYON TAHMİNİ; operatörün o
+          tahmini doğrulamasının tek yolu linke bakmak. Link SUNUCUDAN
+          geliyor (taban adres + koleksiyon + proje yalnız orada biliniyor);
+          burada yeniden kurmak iki yazımın sessizce ayrışmasına izin
+          verirdi. URL yoksa hiç çizilmiyor — yanlış link, link
+          olmamasından kötüdür. */}
+{codeCapable && (
         // v0.9.1184 (operatör: "Kodu incele checkboxı da çok küçük daha
         // belirgin olabilir") — 11px'lik çıplak etiket dipnot gibi
         // okunuyordu, oysa bu bir KARAR: cevabın koda bakıp bakmayacağını
@@ -295,13 +352,6 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
           <span>Kodu da incele</span>
         </Chip>
       )}
-      {/* v0.10.60 — DEPO LİNKİ KUTUNUN ALTINDA (operatör isteği).
-          Depo adı çoğu kurulumda bir KONVANSİYON TAHMİNİ; operatörün o
-          tahmini doğrulamasının tek yolu linke bakmak. Link SUNUCUDAN
-          geliyor (taban adres + koleksiyon + proje yalnız orada biliniyor);
-          burada yeniden kurmak iki yazımın sessizce ayrışmasına izin
-          verirdi. URL yoksa hiç çizilmiyor — yanlış link, link
-          olmamasından kötüdür. */}
       {includeCode && code?.browseUrl && (
         <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, wordBreak: 'break-all' }}>
           <a href={code.browseUrl} target="_blank" rel="noreferrer noopener"
@@ -456,6 +506,58 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
               </LinkButton>
             </div>
           )}
+        </div>
+      )}
+      {/* v0.10.153 — soru satırı: yalnız ilk cevap bittikten sonra, kod-yetenekli
+          türde, URL kodlu değilken ve karar verilmemişken (codeAsk.ts). */}
+      {shouldAskForCode({ codeCapable, includeCode, hasText: text !== null, busy, hasError: error !== null, state: codeAsk }) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 13, maxWidth: 'min(720px, 100%)' }}>
+          <IconSparkles size={13} />
+          <span>Kodu da inceleyeyim mi?</span>
+          <Button variant="accent" size="sm" onClick={() => void runCode()}
+            title="Stack trace'teki uygulama satırlarının kaynak kodunu da modele ver (Ayarlar → Kod entegrasyonu gerekir)">Evet</Button>
+          <Button variant="secondary" size="sm" onClick={() => setCodeAsk('declined')}>Hayır, yeterli</Button>
+        </div>
+      )}
+      {codeAsk === 'accepted' && (
+        <div style={{
+          padding: 12, borderRadius: 6, fontSize: 13, lineHeight: 1.5,
+          background: 'color-mix(in srgb, var(--accent) 8%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--accent) 25%, transparent)',
+          color: 'var(--text)', maxWidth: 'min(720px, 100%)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+            <IconSparkles size={13} /> Kod incelemesi
+            <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text3)' }}>· kaynak kodla yeniden değerlendirildi; yukarıdaki ilk cevap korunur</span>
+          </div>
+          {codeBusy && codeText === null && (
+            <div style={{ display: 'grid', placeItems: 'center', minHeight: 200, padding: '24px 16px' }}>
+              <LoaderMark size="lg" label="CoSRE kodu okuyor…" hint="Kanıt span'leri, trace ve ilgili kaynak kodu birlikte inceleniyor." />
+            </div>
+          )}
+          {codeError && (
+            <div style={{ padding: 10, borderRadius: 6, fontSize: 12, background: 'rgba(255,82,82,.10)', color: 'var(--err)', border: '1px solid rgba(255,82,82,.25)' }}>{codeError}</div>
+          )}
+          {code && !code.files?.length && (
+            <div style={{ fontSize: 11, color: 'var(--warn, var(--text3))', marginBottom: 8, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+              <span>⚠</span>
+              <span>Kod okunamadı — <strong>kodsuz</strong> analiz.{code.reason ? ` (${code.reason})` : ''}</span>
+            </div>
+          )}
+          {codeText && <RenderedMarkdown text={codeText} idLinks={codeLinks} />}
+          {codeBusy && codeText !== null && <span className="cm-ai-cursor" />}
+          {code && !!code.files?.length && (
+            <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--text3)', lineHeight: 1.6 }}>
+              <div>📄 Kaynak: <strong>{code.repo}</strong>{code.branch ? ` · ${code.branch}` : ''}{code.source === 'pin' ? ' · katalog pini' : code.source === 'convention' ? ' · ad konvansiyonu' : ''}</div>
+              {code.reason && <div style={{ color: 'var(--warn, var(--text3))' }}>{code.reason}</div>}
+              {code.files.map(f => (
+                <div key={`${f.path}:${f.fromLine}`} style={{ fontFamily: 'var(--mono, monospace)' }}>
+                  {f.path}:{f.fromLine}-{f.toLine}{!!f.line && <span style={{ color: 'var(--text3)' }}> · hata satırı {f.line}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+          {!codeBusy && codeText && <AIFeedbackButtons exchangeId={codeExchangeId} />}
         </div>
       )}
     </div>

@@ -20,6 +20,7 @@ import { __resetCopilotEnabledCache } from './ai/useCopilotEnabled';
 import { api } from '@/lib/api';
 import type { ExplainStreamOpts } from '@/lib/api';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
+import { writeAiCodeParam } from '@/lib/aiSubject';
 
 let host: HTMLDivElement;
 let root: Root;
@@ -282,6 +283,122 @@ describe('CopilotExplain — "Kodu da incele" kutusu (v0.9.1184)', () => {
     expect(chip()!.getAttribute('aria-pressed')).toBe('true');
     expect(chip()!.textContent).toContain('☑');
     expect(chip()!.className).toContain('active');
+  });
+});
+
+// ── v0.10.153 — "Kodu da inceleyeyim mi?" (operatör) ─────────────────────
+//
+// "Kodu da incele" kutusu KALIR (operatör: "Chip de kalsın"): işaretleyen
+// doğrudan kodlu koşar (soru yok); işaretlemeyen ilk (kodsuz) cevabın SONUNDA
+// sorulur — Evet kutuyu da işaretler, ikinci explain turu (includeCode=true)
+// "Kod incelemesi" ayracı altına akar; ilk cevap KORUNUR. Hayır soruyu
+// kapatır (yalnız o çekmece örneği). ?aicode (deep link) doğrudan kodlu.
+//
+// Neden gerçek mount: dördü de çalışma zamanı dalı — soru ancak ilk akış
+// BİTİNCE çıkar; Evet'in ikinci çağrısı includeCode=true ile gider; ikinci
+// akışın delta'ları ilk cevabı BÜYÜTMEZ; "Yeniden sor" ikisini de sıfırlar.
+describe('CopilotExplain — "Kodu da inceleyeyim mi?" (v0.10.153)', () => {
+  const chip = () => host.querySelector<HTMLButtonElement>('button.btn-chip');
+  const question = () => panelText().includes('Kodu da inceleyeyim mi?');
+  const btn = (label: string) =>
+    Array.from(host.querySelectorAll('button')).find(b => b.textContent?.trim() === label);
+  /** Trace ucunun AKAN sahtesi — her çağrının includeCode bayrağını ayrı tutar. */
+  function fakeTraceStream() {
+    const seen: (FakeCall & { includeCode?: boolean })[] = [];
+    vi.spyOn(api, 'copilotExplainTrace').mockImplementation(
+      (_id: string, includeCode?: boolean, opts?: ExplainStreamOpts) => {
+        let resolve!: (v: { explanation: string; exchangeId?: string }) => void;
+        let reject!: (e: unknown) => void;
+        const p = new Promise<{ explanation: string; exchangeId?: string }>((res, rej) => { resolve = res; reject = rej; });
+        seen.push({
+          includeCode,
+          emit: async t => { await act(async () => { opts?.onDelta?.(t); }); },
+          finish: async (explanation, exchangeId = 'x1') => { await act(async () => { resolve({ explanation, exchangeId }); }); },
+          fail: async e => { reject(e); await act(async () => { await p.catch(() => {}); }); },
+          aborted: () => opts?.signal?.aborted ?? false,
+        });
+        return p;
+      });
+    return { call: (i = 0) => seen[i], count: () => seen.length };
+  }
+
+  it('kutu işaretsiz; soru yalnız ilk cevap BİTİNCE çıkar (trace)', async () => {
+    const f = fakeTraceStream();
+    await mount(<CopilotExplain kind="trace" id="t1" auto />);
+    expect(chip()!.textContent).toContain('☐');
+    expect(f.count()).toBe(1);
+    expect(f.call(0).includeCode).toBe(false);
+    await f.call(0).emit('kök neden: ');
+    expect(question()).toBe(false);              // akış sürüyor
+    await f.call(0).finish('kök neden: havuz doldu');
+    expect(question()).toBe(true);
+    expect(btn('Evet')).toBeTruthy();
+    expect(btn('Hayır, yeterli')).toBeTruthy();
+  });
+
+  it('kod okunamayan türde soru HİÇ çıkmaz', async () => {
+    const f = fakeExplain();
+    await mount(<CopilotExplain kind="problem" id="p1" auto />);
+    await f.finish('cevap');
+    expect(question()).toBe(false);
+  });
+
+  it('Hayır → soru kapanır, ikinci çağrı YOK', async () => {
+    const f = fakeTraceStream();
+    await mount(<CopilotExplain kind="trace" id="t1" auto />);
+    await f.call(0).finish('ilk cevap');
+    await act(async () => { btn('Hayır, yeterli')!.click(); });
+    expect(question()).toBe(false);
+    expect(f.count()).toBe(1);
+    expect(panelText()).toContain('ilk cevap');
+  });
+
+  it('Evet → includeCode=true ikinci tur "Kod incelemesi" altına akar, ilk cevap korunur', async () => {
+    const f = fakeTraceStream();
+    await mount(<CopilotExplain kind="trace" id="t1" auto />);
+    await f.call(0).finish('ilk cevap: havuz doldu');
+    await act(async () => { btn('Evet')!.click(); });
+    expect(question()).toBe(false);
+    expect(f.count()).toBe(2);
+    expect(f.call(1).includeCode).toBe(true);
+    expect(panelText()).toContain('Kod incelemesi');
+    expect(panelText()).toContain('CoSRE kodu okuyor');       // ilk token'a kadar
+    await f.call(1).emit('kodda: ');
+    await f.call(1).emit('maxPoolSize=5');
+    expect(panelText()).toContain('kodda: maxPoolSize=5');
+    expect(panelText()).toContain('ilk cevap: havuz doldu');  // ilk cevap EZİLMEDİ
+    expect(panelText()).not.toContain('CoSRE kodu okuyor');
+    await f.call(1).finish('kodda: maxPoolSize=5 — havuz küçük');
+    expect(panelText()).toContain('havuz küçük');
+    expect(chip()!.textContent).toContain('☑');                 // Evet kutuyu da işaretledi
+    // v0.10.60 sözleşmesi taşındı: karar localStorage'a YAZILMAZ.
+    expect(getRaw(STORAGE_KEYS.aiIncludeCode)).toBeNull();
+  });
+
+  it('"Yeniden sor" kod turunu da sıfırlar ve soru yeniden çıkar', async () => {
+    const f = fakeTraceStream();
+    await mount(<CopilotExplain kind="trace" id="t1" auto />);
+    await f.call(0).finish('ilk');
+    await act(async () => { btn('Evet')!.click(); });
+    await f.call(1).finish('kod turu');
+    expect(panelText()).toContain('kod turu');
+    await act(async () => { rerunButton()!.click(); });
+    expect(panelText()).not.toContain('kod turu');
+    expect(panelText()).not.toContain('Kod incelemesi');
+    // Evet kutuyu işaretlediği için "Yeniden sor" tek turda KODLU gider,
+    // soru gerekmez.
+    expect(f.call(2).includeCode).toBe(true);
+    await f.call(2).finish('yeni cevap');
+    expect(question()).toBe(false);
+  });
+
+  it('?aicode ile açılınca ilk tur kodlu, soru yok (deep link)', async () => {
+    writeAiCodeParam(true);
+    const f = fakeTraceStream();
+    await mount(<CopilotExplain kind="trace" id="t1" auto />);
+    expect(f.call(0).includeCode).toBe(true);
+    await f.call(0).finish('kodlu cevap');
+    expect(question()).toBe(false);
   });
 });
 

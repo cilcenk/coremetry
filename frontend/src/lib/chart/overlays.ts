@@ -146,10 +146,24 @@ const REGION_STRIP_H = 3;
 // valToPos canlı ölçeği okur → drag-zoom / kontrollü zoomWindow'da bölge
 // DOĞRU konumda kalır (EventMarkers'ın zoom-körlüğünün tersine). Threshold /
 // deploy overlay'lerinden ÖNCE çağrılır ki gölge en arkada kalsın.
-export function drawTimeRegions(u: uPlot, regions: ChartTimeRegion[]): void {
+//
+// v0.10.164 — `xUnit`: bölgeler unix SANİYE, ama CorePanel'in x ölçeği MS
+// (xRange.ts timeScaleRange, Grafana frame sözleşmesi). Dönüşümsüz çağrıda
+// clampRegion sn'yi ms penceresiyle kesiştirip null döndürüyordu — v0.9.945'te
+// RED üçlüsü CorePanel'e taşındığından beri deploy ▼ / Problem / anomali
+// bantları o panellerde HİÇ çizilmiyordu (kimse bakmadı: bant yokluğu
+// sessiz). Saniye-eksenli eski motorlar (TimeChart / TimeSeriesPanel /
+// OverviewChart) varsayılan 1 ile aynen. Saf yardımcı regionsToScale test
+// edilir; CorePanel'in 1000 geçtiğini corePanelContracts.test.ts pinler.
+export function regionsToScale(regions: ChartTimeRegion[], xUnit: number): ChartTimeRegion[] {
+  return xUnit === 1 ? regions : regions.map(r => ({ ...r, fromSec: r.fromSec * xUnit, toSec: r.toSec * xUnit }));
+}
+
+export function drawTimeRegions(u: uPlot, regions: ChartTimeRegion[], xUnit = 1): void {
   if (regions.length === 0) return;
   const xMin = u.scales.x.min ?? 0;
   const xMax = u.scales.x.max ?? 0;
+  regions = regionsToScale(regions, xUnit);
   const dpr = (typeof devicePixelRatio !== 'undefined' ? devicePixelRatio : 1) || 1;
   const ctx = u.ctx;
   ctx.save();

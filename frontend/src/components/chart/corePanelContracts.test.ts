@@ -1020,3 +1020,13 @@ describe('CorePanel tam seri adı (v0.9.1369)', () => {
     expect(m![0]).toMatch(/typeof v === 'string'/);
   });
 });
+
+// v0.10.164 — CorePanel'in x ölçeği MS; bölgeler saniye gelir → 1000 ile
+// ölçeklenmeden çizilirse clampRegion hepsini eler (deploy ▼ / Problem /
+// anomali bantları sessizce yok olur, v0.9.945'ten beri öyleydi).
+describe('CorePanel bölge çizimi ms ölçeğinde (v0.10.164)', () => {
+  it('drawTimeRegions 1000 xUnit ile çağrılır', () => {
+    const src = readFileSync(resolve(__dirname, 'CorePanel.tsx'), 'utf8').replace(/^\s*\/\/.*$/gm, '');
+    expect(src).toMatch(/drawTimeRegions\(u, regions, 1000\)/);
+  });
+});

@@ -33,8 +33,8 @@
     {
       "name": "POST /api/dashboards/data", "scenario": "preset-dependencies-1h", "window": "1h", "cold": false,
       "method": "POST", "path": "/api/dashboards/data", "bodyFromDashboard": "preset-dependencies",
-      "budget": { "achievableMs": 3000, "aspirationalMs": 1000, "maxBytes": 6000000 },
-      "note": "P5 — v0.10.146: probe step 60→15 (FE ile aynı), gövde gerçekte 5.0 MB (666 seri × 240 nokta × 50 B); panel-başı 30 s SWR cache gemide (soğuk gövde değişmez); gövde kazancı = kuyruk ön-toplamları spec (arzu ≤500 KB)"
+      "budget": { "achievableMs": 3000, "aspirationalMs": 1000, "maxBytes": 2000000 },
+      "note": "P5 — v0.10.147: top-N 16 + kuyruk ön-toplamı → gövde 5.2 MB → 1.31 MB (122 seri); v0.10.146 panel-başı 30 s SWR cache; probe step 15 (FE ile aynı); arzu ≤500 KB için kalan kol nokta kodlaması"
     },
     {
       "name": "GET /api/problems", "scenario": "cold", "cold": true,

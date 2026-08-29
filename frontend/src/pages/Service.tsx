@@ -604,12 +604,39 @@ function ServiceDetailInner() {
                         service.name ile filtreleniyor (metric_points'te
                         operasyon boyutu yok) → kapsam DIŞI. */}
                     <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-                      kapsam: Performance ✓ ·{' '}
+                      kapsam: <span style={{ opacity: .65 }}>Clusters ✗ · Database ✗ · </span>
+                      Performance ✓ ·{' '}
                       {hasMetricPanels && <span style={{ opacity: .65 }}>Metrikler ✗ · </span>}
-                      Latency ✓ · <span style={{ opacity: .65 }}>Database ✗ · Runtime ✗</span>
+                      Latency ✓ · <span style={{ opacity: .65 }}>Runtime ✗</span>
                     </span>
                   </div>
                 )}
+                {/* v0.10.151 (operatör): Clusters ve Database EN ÜSTTE —
+                    çok-cluster'lı prod'da ilk soru "hangi cluster'da ne
+                    oluyor?" ve "hangi sorgu?"; Performance/Latency aşağı indi.
+                    Per-cluster breakdown Runtime & rollouts'tan buraya taşındı
+                    (kendi çapası dtl-clusters). */}
+                <div className="dtl-sech" id="dtl-clusters">Clusters
+                  {opScope && <span className="badge b-gray" style={{ textTransform: 'none', letterSpacing: 0 }}>tüm servis</span>}
+                </div>
+                <div className="ov-mb">
+                  <LazyMount minHeight={140}>
+                    <ServiceClusterBreakdown service={svc} range={range} />
+                  </LazyMount>
+                </div>
+                {/* v0.9.141 (operatör) — Structure paneli kaldırıldı; bölüm
+                    yalnız DB sorgularına indi, başlık "Database" oldu. */}
+                <div className="dtl-sech" id="dtl-db">Database
+                  {opScope && <span className="badge b-gray" style={{ textTransform: 'none', letterSpacing: 0 }}>tüm servis</span>}
+                </div>
+                <div className="ov-mb">
+                  <LazyMount minHeight={300}>
+                    <DBQueriesPanel service={svc}
+                                    from={rangeNs.from}
+                                    to={rangeNs.to}
+                                    defaultOpen />
+                  </LazyMount>
+                </div>
                 <div className="dtl-sech" id="dtl-perf">Performance
                   {opScope && <span className="badge b-info" style={{ textTransform: 'none', letterSpacing: 0 }}>op kapsamı</span>}
                 </div>
@@ -647,27 +674,8 @@ function ServiceDetailInner() {
                                            operation={opScope} rootOnly env={env} />
                   </LazyMount>
                 </div>
-                {/* v0.9.141 (operatör) — Structure paneli kaldırıldı; bölüm
-                    yalnız DB sorgularına indi, başlık "Database" oldu. */}
-                <div className="dtl-sech" id="dtl-db">Database
-                  {opScope && <span className="badge b-gray" style={{ textTransform: 'none', letterSpacing: 0 }}>tüm servis</span>}
-                </div>
-                <div className="ov-mb">
-                  <LazyMount minHeight={300}>
-                    <DBQueriesPanel service={svc}
-                                    from={rangeNs.from}
-                                    to={rangeNs.to}
-                                    defaultOpen />
-                  </LazyMount>
-                </div>
                 <div className="dtl-sech" id="dtl-runtime">Runtime &amp; rollouts
                   {opScope && <span className="badge b-gray" style={{ textTransform: 'none', letterSpacing: 0 }}>tüm servis</span>}
-                </div>
-                {/* v0.9.141 (operatör) — Attributes-emitted paneli kaldırıldı. */}
-                <div className="ov-mb">
-                  <LazyMount minHeight={140}>
-                    <ServiceClusterBreakdown service={svc} range={range} />
-                  </LazyMount>
                 </div>
                 {/* Recent rollouts — #deploys anchor preserved so the
                     /deploys "history →" link still scrolls here. */}

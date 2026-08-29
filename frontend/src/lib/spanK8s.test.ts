@@ -1,9 +1,9 @@
 // v0.10.137 — adım 3 sözleşmeleri: k8s bağlamsız span → link yok + açık ilan;
 // eşlenmemiş cluster → link yok + değer; eşlenmiş → at = span zamanı (ms),
-// cluster id linkte; aynı pod adı iki cluster'da iki ayrı link; tracePods
+// cluster id linkte; aynı pod adı iki cluster'da iki ayrı link
 // ayrık pod sayımı + hata sayısı + servisler.
 import { describe, it, expect } from 'vitest';
-import { spanK8sContext, spanK8sNote, tracePods } from './spanK8s';
+import { spanK8sContext, spanK8sNote } from './spanK8s';
 import type { EntityClusterInfo } from './types';
 
 const clusters: EntityClusterInfo[] = [
@@ -65,28 +65,6 @@ describe('spanK8sContext', () => {
   });
 });
 
-describe('tracePods', () => {
-  it('distinct pods with span/error counts and services; no-context spans counted separately', () => {
-    const base = 1_700_000_000_000_000_000; // ns; ofsetler ms cinsinden
-    const spans = [
-      span({ 'k8s.pod.name': 'api-1', 'k8s.namespace.name': 'pay', 'k8s.cluster.name': 'prod-eu-west' }, base + 3e6, { serviceName: 'api' }),
-      span({ 'k8s.pod.name': 'api-1', 'k8s.namespace.name': 'pay', 'k8s.cluster.name': 'prod-eu-west' }, base + 1e6, { serviceName: 'api', statusCode: 'error' }),
-      span({ 'k8s.pod.name': 'db-0', 'k8s.namespace.name': 'pay', 'k8s.cluster.name': 'prod-eu-west' }, base + 2e6, { serviceName: 'db' }),
-      span({ 'k8s.pod.name': 'api-1', 'k8s.namespace.name': 'pay', 'k8s.cluster.name': 'prod-us-east' }, base + 2.5e6, { serviceName: 'api' }),
-      span({ 'service.name': 'legacy' }, base + 0.5e6, { serviceName: 'legacy' }),
-    ];
-    const { pods, noContext } = tracePods(spans, clusters);
-    expect(noContext).toBe(1);
-    expect(pods.map(p => p.key)).toEqual(['prod-eu-west/pay/api-1', 'prod-eu-west/pay/db-0', 'prod-us-east/pay/api-1']);
-    expect(pods[0].spans).toBe(2);
-    expect(pods[0].errors).toBe(1);
-    expect(pods[0].services).toEqual(['api']);
-    // at = pod'un EN ERKEN span'i (ms): base + 1 ms
-    expect(params(pods[0].ctx.podHref!).get('at')).toBe('1700000000001');
-    expect(pods[2].ctx.clusterId).toBe('c-b');
-  });
-});
-
 // v0.10.148 — operator-reported (prod, Tempo fallback trace): pod çipleri
 // "?/bsa-…" çıkıyordu. (1) '?' yok: etiket bilinen parçalardan, eksik olan
 // tooltip'te açıkça; (2) namespace'siz pod eşlenmiş cluster'da bile pod linki
@@ -126,18 +104,12 @@ describe('podChipLabel / podChipWhere (v0.10.148)', () => {
     expect(spanK8sNote(ctx)).toMatch(/k8s\.namespace\.name/);
   });
 
-  it('TracePodsStrip never renders a "?" placeholder (source scan)', () => {
-    const src = readFileSync(resolvePath(__dirname, '../components/TracePodsStrip.tsx'), 'utf8').replace(/^\s*\/\/.*$/gm, '');
-    expect(src).not.toMatch(/\?\?\s*'\?'/);
-    expect(src).toMatch(/podChipLabel\(c, multiCluster\)/);
-  });
 });
 
 // v0.10.150 — resource attribute satırları entity odağına (operator-reported:
 // "trace attribute'larından tıklanabilsin"); şeritte çip başına "link yok"
 // yok, toplu not var.
 import { k8sAttrHref } from './spanK8s';
-import { unlinkedReason } from '@/components/TracePodsStrip';
 
 describe('k8sAttrHref (v0.10.150)', () => {
   const ok = spanK8sContext(span({ 'k8s.pod.name': 'api-1', 'k8s.namespace.name': 'pay', 'k8s.node.name': 'w1', 'k8s.cluster.name': 'prod-eu-west' }), clusters);
@@ -166,18 +138,8 @@ describe('k8sAttrHref (v0.10.150)', () => {
   });
 });
 
-describe('TracePodsStrip aggregate note (v0.10.150)', () => {
-  it('unlinkedReason picks the dominant reason', () => {
-    expect(unlinkedReason(['unmapped-cluster', 'unmapped-cluster', 'no-namespace'])).toBe('cluster değeri Remote Cluster kaydına eşlenmemiş');
-    expect(unlinkedReason(['no-cluster'])).toBe('span cluster değeri taşımıyor');
-    expect(unlinkedReason(['no-namespace'])).toBe('k8s.namespace.name yok');
-    expect(unlinkedReason([])).toBe('link yok');
-  });
-  it('chips never carry a per-chip "link yok" suffix; the strip carries one aggregate note (source scan)', () => {
-    const src = readFileSync(resolvePath(__dirname, '../components/TracePodsStrip.tsx'), 'utf8').replace(/^\s*\/\/.*$/gm, '');
-    expect(src).not.toMatch(/\{label\} · link yok/);
-    expect(src).toMatch(/unlinked > 0 && /);
-  });
+// v0.10.163 — şerit kaldırıldı; span detayındaki k8s linkleri pod'a giden TEK yol, kapı burada kalır.
+describe('SpanDetail k8s attribute links (v0.10.150, v0.10.163 tek yol)', () => {
   it('SpanDetail rows resolve k8s attribute links through the provider (source scan)', () => {
     const src = readFileSync(resolvePath(__dirname, '../components/SpanDetail.tsx'), 'utf8').replace(/^\s*\/\/.*$/gm, '');
     expect(src).toMatch(/k8sAttrHref\(k, k8s\)/);

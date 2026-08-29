@@ -92,41 +92,6 @@ export function spanK8sNote(ctx: SpanK8sContext): string | null {
   }
 }
 
-export interface TracePodSummary {
-  key: string;
-  ctx: SpanK8sContext;
-  spans: number;
-  errors: number;
-  services: string[];
-}
-
-type TraceSpanLike = SpanLike & Pick<SpanRow, 'serviceName' | 'statusCode'>;
-
-/** tracePods — trace'in span'lerinden AYRIK pod'lar (çok-pod görünürlüğü); at = trace'in en erken span'i. */
-export function tracePods(spans: TraceSpanLike[], clusters: EntityClusterInfo[], range?: TimeRange | string | null): { pods: TracePodSummary[]; noContext: number } {
-  const byKey = new Map<string, TracePodSummary & { svc: Set<string> }>();
-  let noContext = 0;
-  const sorted = [...spans].sort((a, b) => a.startTime - b.startTime);
-  for (const s of sorted) {
-    // Ucuz anahtar önce; entity linkleri yalnız pod'un İLK (en erken) span'inde
-    // kurulur — span başına dört href üretmek 5k span'lik trace'te boşa işti (inceleme).
-    const r = resolveResource(s.resourceAttributes);
-    if (!r.k8s.pod) { noContext++; continue; }
-    const key = `${r.cluster ?? ''}/${r.k8s.namespace ?? ''}/${r.k8s.pod}`;
-    let e = byKey.get(key);
-    if (!e) {
-      e = { key, ctx: spanK8sContext(s, clusters, range), spans: 0, errors: 0, services: [], svc: new Set() };
-      byKey.set(key, e);
-    }
-    e.spans++;
-    if (s.statusCode === 'error') e.errors++;
-    if (s.serviceName) e.svc.add(s.serviceName);
-  }
-  const pods = [...byKey.values()].map(({ svc, ...rest }) => ({ ...rest, services: [...svc].sort() }));
-  pods.sort((a, b) => b.spans - a.spans || a.key.localeCompare(b.key));
-  return { pods, noContext };
-}
-
 // k8sAttrHref — v0.10.150 (operator-reported: "trace attribute'larından
 // odaklara tıklanabilsin"). Span detayındaki resource attribute satırının
 // DEĞERİ, çözülmüş bağlamdaki entity linkine gider; çözülemeyen (link yok)

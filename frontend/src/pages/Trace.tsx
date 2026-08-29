@@ -26,7 +26,6 @@ import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
 import type { LogRow, SpanRow, TimeRange, PivotAnchor } from '@/lib/types';
 import { TraceWaterfall, TraceServiceBreakdown } from '@/components/TraceWaterfall';
 import { SpanDetail } from '@/components/SpanDetail';
-import { TracePodsStrip } from '@/components/TracePodsStrip';
 import { TraceHonesty } from '@/components/traces/TraceHonesty';
 import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer';
 // v0.8.550 — this file used to OWN the strongest of the three hand-rolled
@@ -505,9 +504,12 @@ function TraceDetailInner() {
                 Renders NOTHING for the (vast) majority of traces that carry
                 no links; see LinkedTracesSection. */}
             <LinkedTracesSection id={id} pageRange={range} />
-            {/* v0.10.137 (DETAY SAYFALARI adım 3) — trace'in geçtiği pod'lar: çok-pod
-                görünürlüğü + pod pivotu (at = span zamanı). Bayrak kapalı → hiç çizilmez. */}
-            {spans && spans.length > 0 && <TracePodsStrip spans={spans} range={range} />}
+            {/* v0.10.163 — pod şeridi (v0.10.137 TracePodsStrip) KALDIRILDI.
+                Operatör (prod, 16 pod'lu trace): "üstte pod çok yer kaplıyor,
+                gereksiz; kullanıcı isterse span'lerden pod'lara gider". Pod
+                pivotu span detayındaki k8s attribute linklerinde (v0.10.150,
+                SpanDetail k8sAttrHref + SpanK8sSection) — kapı:
+                pages/traceNoPodsStrip.test.ts. */}
             <div style={{ marginBottom: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {/* v0.9.477 — satır-içi panel yerine tek sağ-kenar AI
                   çekmecesi (?ai=trace:<id>); kanıt span'leri window

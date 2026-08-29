@@ -119,15 +119,13 @@ func (e *ProblemExplainer) tickIfLeader(ctx context.Context) {
 // resolved / acknowledged / info-warning rows — they're either
 // already-actioned or low-value-to-explain.
 func (e *ProblemExplainer) run(ctx context.Context) {
-	problems, err := e.store.ListProblems(ctx, chstore.ProblemFilter{
-		Status:   "open",
-		Severity: "critical",
-		Limit:    200,
-	})
+	// v0.10.156 — snapshot (5 s memo); ayrı `problems FINAL` taraması yok.
+	snap, err := e.store.OpenProblemsSnapshot(ctx)
 	if err != nil {
 		log.Printf("[problem-explainer] list: %v", err)
 		return
 	}
+	problems := snap.Filter("open", "critical", 200)
 	// Candidate pass first (empty-summary rows up to the batch cap) so an
 	// all-cached tick still costs nothing extra — the evidence + hypothesis
 	// reads below only fire when there is real work.

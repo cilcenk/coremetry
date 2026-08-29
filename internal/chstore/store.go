@@ -269,6 +269,10 @@ type Store struct {
 	// gösterir (db özneli satır da servis özneli görünür, bugünkü hâl).
 	// Kolon inince bir sonraki boot true okur.
 	hasProblemKindCol bool
+	// openSnap (v0.10.156) — OpenProblemsSnapshot'ın 5 s'lik süreç-içi memo'su
+	// (memo.go): arka plan işleri tick içinde tek FINAL taraması paylaşır;
+	// UpsertProblem/UpsertProblemAISummary düşürür.
+	openSnap *ttlMemo[*OpenProblems]
 
 	// hasTopoClusterCol — `topology_edges_5m` üstünde queue düğümünün
 	// messaging cluster'ını taşıyan `cluster` kolonu var mı (v0.9.1025).
@@ -775,7 +779,8 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 		chOpts: chOpts,
 		// v0.9.975 — the SQL sites (topology/backtrace writers, the heavy
 		// raw-spans scans, the SQL playground) clamp against this.
-		memPlan: memPlan,
+		memPlan:  memPlan,
+		openSnap: newTTLMemo[*OpenProblems](openSnapshotTTL),
 	}
 	// v0.5.437 — self-heal pass. Detects HighVolumeTables `_local`
 	// MVs/aggregates that exist in system.tables (engine

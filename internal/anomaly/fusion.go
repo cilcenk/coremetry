@@ -97,8 +97,9 @@ type evidenceInputs struct {
 // error degrades to a smaller bundle rather than failing the explain.
 func gatherEvidenceInputs(ctx context.Context, store *chstore.Store) evidenceInputs {
 	var in evidenceInputs
-	if ps, err := store.ListProblems(ctx, chstore.ProblemFilter{Status: "open", Limit: 500}); err == nil {
-		in.openProblems = ps
+	// v0.10.156 — snapshot (5 s memo); ayrı `problems FINAL` taraması yok.
+	if snap, err := store.OpenProblemsSnapshot(ctx); err == nil {
+		in.openProblems = snap.Filter("open", "", 500)
 	}
 	if ev, err := store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{
 		SinceNs: time.Now().Add(-evidenceWindow).UnixNano(),

@@ -221,7 +221,7 @@ func (e *Evaluator) evaluateWatcher(ctx context.Context, r chstore.AlertRule) {
 		// the 3×tick stale sweep can't resolve it "source silent"
 		// between runs (review F0/F9 — see watcherTickPlanDue). The
 		// extra store round-trip only happens while a problem is open.
-		open, err := e.store.FindOpenProblem(ctx, r.ID, "")
+		open, err := e.findOpenViaSnapshot(ctx, r.ID, "")
 		hasOpen := err == nil && open != nil && open.ID != ""
 		if watcherTickPlanDue(false, hasOpen) == watcherTickKeepAlive {
 			if err := e.store.UpsertProblem(ctx, *open); err != nil {
@@ -367,7 +367,7 @@ func (e *Evaluator) watcherMeasureFailed(ctx context.Context, r chstore.AlertRul
 	if !watcherSourceBroken(fails) {
 		return
 	}
-	open, err := e.store.FindOpenProblem(ctx, r.ID, "")
+	open, err := e.findOpenViaSnapshot(ctx, r.ID, "")
 	if err != nil || open == nil || open.ID == "" {
 		return
 	}
@@ -591,7 +591,7 @@ func (e *Evaluator) settleCountAlert(ctx context.Context, r chstore.AlertRule, n
 		e.clearBreach(ctx, key)
 	}
 
-	open, err := e.store.FindOpenProblem(ctx, r.ID, "")
+	open, err := e.findOpenViaSnapshot(ctx, r.ID, "")
 	hasOpen := err == nil && open != nil && open.ID != ""
 
 	switch {
@@ -655,4 +655,15 @@ func (e *Evaluator) settleCountAlert(ctx context.Context, r chstore.AlertRule, n
 			log.Printf("[evaluator] PROBLEM RESOLVED (%s): %s", metric, r.Name)
 		}
 	}
+}
+
+// findOpenViaSnapshot — v0.10.156: (rule, service) dedup araması tick'in 5 s
+// memo'lu snapshot'ından; kural başına ayrı `problems FINAL` taraması yok.
+// Sözleşme FindOpenProblem ile aynı: bulunamadı → (nil, nil).
+func (e *Evaluator) findOpenViaSnapshot(ctx context.Context, ruleID, service string) (*chstore.Problem, error) {
+	snap, err := e.store.OpenProblemsSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return snap.ByKey(ruleID, service), nil
 }

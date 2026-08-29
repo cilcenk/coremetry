@@ -80,11 +80,13 @@ func (d *Detector) checkExceptionStorm(ctx context.Context) {
 		log.Printf("[exception-storm] okuma düştü (tik atlandı): %v", err)
 		return
 	}
-	open, err := d.store.FindOpenProblem(ctx, exceptionStormRuleID, "")
+	// v0.10.156 — snapshot (5 s memo) üzerinden; ayrı FINAL taraması yok.
+	snap, err := d.store.OpenProblemsSnapshot(ctx)
 	if err != nil {
 		log.Printf("[exception-storm] açık problem okunamadı (tik atlandı): %v", err)
 		return
 	}
+	open := snap.ByKey(exceptionStormRuleID, "")
 	hasOpen := open != nil && open.ID != ""
 
 	if len(cands) >= minSvc {

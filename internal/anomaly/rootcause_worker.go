@@ -220,13 +220,12 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 	// explainer's batch. buildEvidenceBundle is the existing pure fuser over
 	// the shared inputs; we distil its bundle into the synthesis input.
 	if done < s.batch {
-		problems, err := s.store.ListProblems(ctx, chstore.ProblemFilter{
-			Status:   "open",
-			Severity: "critical",
-			Limit:    s.batch,
-		})
-		if err != nil {
+		// v0.10.156 — snapshot (5 s memo); ayrı `problems FINAL` taraması yok.
+		var problems []chstore.Problem
+		if snap, err := s.store.OpenProblemsSnapshot(ctx); err != nil {
 			log.Printf("[rootcause-synth] list problems: %v", err)
+		} else {
+			problems = snap.Filter("open", "critical", s.batch)
 		}
 		for _, p := range problems {
 			if done >= s.batch {

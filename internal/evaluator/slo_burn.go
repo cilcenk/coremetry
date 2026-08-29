@@ -83,7 +83,7 @@ func (e *Evaluator) evaluateSLOBurn(ctx context.Context, slo chstore.SLO, pol bu
 	breached := hasTraffic && fastRate >= pol.fastRate && slowRate >= pol.slowRate
 
 	ruleID := fmt.Sprintf("slo:%s:%s", slo.ID, pol.severity)
-	open, _ := e.store.FindOpenProblem(ctx, ruleID, slo.Service)
+	open, _ := e.findOpenViaSnapshot(ctx, ruleID, slo.Service) // v0.10.156 — snapshot
 	hasOpen := open != nil && open.ID != ""
 
 	switch {

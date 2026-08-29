@@ -7,6 +7,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1433,11 +1434,21 @@ type OpenProblems struct {
 
 // ByKey — (kural, servis) araması. nil alıcı güvenli: snapshot hatasında
 // çağıranlar nil geçiyor ve "açık problem yok" davranışı korunuyor.
+//
+// v0.10.156 — KOPYA döner: snapshot 5 s memo ile goroutine'ler arasında
+// PAYLAŞILIR (evaluator, monitor runner, anomaly, API); çağıranlar dönen
+// satırı MarkResolved/Value/Description ile değiştirip Upsert eder. Paylaşılan
+// nesneyi değiştirmek Filter'ın `*p` kopyasıyla veri yarışıydı (inceleme D1).
 func (o *OpenProblems) ByKey(ruleID, service string) *Problem {
 	if o == nil {
 		return nil
 	}
-	return o.byKey[OpenProblemKey(ruleID, service)]
+	p, ok := o.byKey[OpenProblemKey(ruleID, service)]
+	if !ok || p == nil {
+		return nil
+	}
+	q := *p
+	return &q
 }
 
 // ByID — deterministik problem ID araması (per-pod granülerlik).
@@ -1445,11 +1456,18 @@ func (o *OpenProblems) ByID(id string) *Problem {
 	if o == nil {
 		return nil
 	}
-	return o.byID[id]
+	p, ok := o.byID[id]
+	if !ok || p == nil {
+		return nil
+	}
+	q := *p // v0.10.156 — kopya (ByKey ile aynı gerekçe)
+	return &q
 }
 
 // All — her açık problem TAM BİR KEZ. Dolaşan kod bunu kullanmalı;
 // indeks map'lerini dolaşmak çift sayım üretir.
+// All — SALT-OKUNUR görünüm (v0.10.156): işaretçiler paylaşılan snapshot'a
+// bakar; değiştirmeden önce `q := *p` kopyala (tüm tüketiciler böyle).
 func (o *OpenProblems) All() []*Problem {
 	if o == nil {
 		return nil
@@ -1465,12 +1483,60 @@ func (o *OpenProblems) Len() int {
 	return len(o.all)
 }
 
+// Filter — v0.10.156: arka plan işlerinin ListProblems(status, severity,
+// limit) çağrılarının snapshot karşılığı. status/severity boş = süzme yok;
+// started_at DESC (ListProblems ile aynı sıra), limit ≤0 = sınırsız. Kopya
+// döner (çağıran satırı değiştirebilir; snapshot paylaşımlı).
+func (o *OpenProblems) Filter(status, severity string, limit int) []Problem {
+	if o == nil {
+		return nil
+	}
+	out := make([]Problem, 0, len(o.all))
+	for _, p := range o.all {
+		if status != "" && p.Status != status {
+			continue
+		}
+		if severity != "" && p.Severity != severity {
+			continue
+		}
+		out = append(out, *p)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].StartedAt > out[j].StartedAt })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
 // OpenProblemsSnapshot returns every open/acknowledged problem in ONE
 // FINAL scan, indexed BOTH ways (bkz. OpenProblems). v0.8.520 (perf
 // raporu #9): the evaluator called FindOpenProblem once per (rule,
 // service) pair — ~657 nokta FINAL sorgusu/tick prod'da — hepsi aynı
 // küçük state tablosunu okuyor. Tick başında tek snapshot + map lookup.
+//
+// v0.10.156 — 5 s memo (store.openSnap): lokal ölçüm 2026-08-29'da bu
+// tarama + kardeşleri (ListProblems/FindOpenProblem arka planda) 15/dk,
+// 2.0 CPU-s/dk idi (%12 app CH CPU). Tick ≥10 s; memo tick-içi tekrarları
+// tek taramaya indirir, yazımda düşürülür. Test için `openSnap` nil
+// olabilir (doğrudan okuma).
 func (s *Store) OpenProblemsSnapshot(ctx context.Context) (*OpenProblems, error) {
+	if s.openSnap == nil {
+		return s.openProblemsSnapshotUncached(ctx)
+	}
+	return s.openSnap.Get(ctx, s.openProblemsSnapshotUncached)
+}
+
+// openSnapshotTTL — evaluator tick'i (≥10 s) altında; kazanç tick-içi paylaşım.
+const openSnapshotTTL = 5 * time.Second
+
+// invalidateOpenSnapshot — problems tablosuna her yazımdan sonra.
+func (s *Store) invalidateOpenSnapshot() {
+	if s.openSnap != nil {
+		s.openSnap.Invalidate()
+	}
+}
+
+func (s *Store) openProblemsSnapshotUncached(ctx context.Context) (*OpenProblems, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT `+s.problemSelectExpr()+`
 		FROM problems FINAL
@@ -1687,7 +1753,9 @@ func (s *Store) UpsertProblem(ctx context.Context, p Problem) error {
 	if err := batch.Append(problemInsertArgs(p, s.problemCols())...); err != nil {
 		return fmt.Errorf("append problem: %w", err)
 	}
-	return batch.Send()
+	err = batch.Send()
+	s.invalidateOpenSnapshot() // v0.10.156
+	return err
 }
 
 // UpsertProblemAISummary writes just the AI-explain blurb without
@@ -1722,7 +1790,9 @@ func (s *Store) UpsertProblemAISummary(ctx context.Context, problemID, summary s
 	if err := batch.Append(problemInsertArgs(*row, s.problemCols())...); err != nil {
 		return fmt.Errorf("append problem ai-summary: %w", err)
 	}
-	return batch.Send()
+	err = batch.Send()
+	s.invalidateOpenSnapshot() // v0.10.156
+	return err
 }
 
 // ── Service backtrace queries ────────────────────────────────────────────────

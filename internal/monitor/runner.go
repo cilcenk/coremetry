@@ -65,6 +65,13 @@ type Runner struct {
 	// this monitor just flip?" — combined with the lockKey acquire
 	// only one instance writes anyway.
 	lastStatus map[string]string
+
+	// tickSnap — v0.10.156 (inceleme D3): tick başına TEK açık-problem
+	// snapshot'ı. keepDownProblemAlive her down monitörde Upsert eder ve
+	// memo'yu düşürür; monitör başına Get yeniden tarardı. tick eşzamanlı
+	// DEĞİL (probe'lar sırayla), alan yalnız tick içinde dolu; nil iken
+	// findOpen memo'ya düşer (test/heartbeat dışı yollar).
+	tickSnap *chstore.OpenProblems
 }
 
 func New(store *chstore.Store, notifier *notify.Notifier, lock cache.Lock) *Runner {
@@ -108,6 +115,13 @@ func (r *Runner) tick(ctx context.Context) {
 		log.Printf("[monitor] list: %v", err)
 		return
 	}
+	// v0.10.156 — tick-yerel snapshot (bkz. tickSnap). Okuma hatası: alan
+	// nil kalır, findOpen memo'ya düşer (her çağrı kendi hatasını görür —
+	// keep-alive'ın "hatada yeniden AÇMA" muhafızı korunur).
+	if snap, serr := r.store.OpenProblemsSnapshot(ctx); serr == nil {
+		r.tickSnap = snap
+	}
+	defer func() { r.tickSnap = nil }()
 	last, err := r.store.LastMonitorStatus(ctx)
 	if err != nil {
 		log.Printf("[monitor] last status: %v", err)
@@ -357,11 +371,12 @@ func (r *Runner) record(ctx context.Context, m chstore.Monitor, status string,
 // keepDownProblemAlive — down kalan monitörün problemini canlı tutar:
 // updated_at her probe'da ilerler (stale sweep bağışıklığı); satır
 // yoksa (yanlış süpürülmüş/silinmiş) state-change yolundan yeniden
-// açılır. FindOpenProblem tam satırı okur; Upsert bütün alanları
-// aynen ileri taşır (ack/assignee dahil).
+// açılır. Snapshot satırı tam satırdır (problemSelectExpr, FindOpenProblem
+// ile aynı); Upsert bütün alanları aynen ileri taşır (ack/assignee dahil).
 func (r *Runner) keepDownProblemAlive(ctx context.Context, m chstore.Monitor, msg string) {
 	ruleID := "monitor:" + m.ID
-	open, err := r.store.FindOpenProblem(ctx, ruleID, m.Name)
+	// v0.10.156 — snapshot (5 s memo) üzerinden; monitor başına FINAL taraması yok.
+	open, err := r.findOpen(ctx, ruleID, m.Name)
 	if err == nil && open != nil {
 		if err := r.store.UpsertProblem(ctx, *open); err != nil {
 			log.Printf("[monitor] keep-alive %s: %v", m.Name, err)
@@ -377,15 +392,15 @@ func (r *Runner) keepDownProblemAlive(ctx context.Context, m chstore.Monitor, ms
 }
 
 func (r *Runner) handleStateChange(ctx context.Context, m chstore.Monitor, status, msg string) {
-	const ruleIDPrefix = "monitor:" // synthetic rule id — keyed by monitor for FindOpenProblem
+	const ruleIDPrefix = "monitor:" // synthetic rule id — keyed by monitor for the open-problem lookup
 	ruleID := ruleIDPrefix + m.ID
 
 	switch status {
 	case "down":
 		// Open a fresh problem (the existing pattern stamps it with a
-		// random ID; FindOpenProblem will skip if one's already open
+		// random ID; the snapshot lookup skips if one's already open
 		// for the same rule + service combo).
-		existing, err := r.store.FindOpenProblem(ctx, ruleID, m.Name)
+		existing, err := r.findOpen(ctx, ruleID, m.Name)
 		if err == nil && existing != nil {
 			return
 		}
@@ -424,7 +439,7 @@ func (r *Runner) handleStateChange(ctx context.Context, m chstore.Monitor, statu
 			go r.notifier.SendProblemAlert(context.Background(), p)
 		}
 	case "up":
-		open, err := r.store.FindOpenProblem(ctx, ruleID, m.Name)
+		open, err := r.findOpen(ctx, ruleID, m.Name)
 		if err != nil || open == nil {
 			return
 		}
@@ -435,6 +450,21 @@ func (r *Runner) handleStateChange(ctx context.Context, m chstore.Monitor, statu
 		}
 		log.Printf("[monitor] %s recovered — resolved problem", m.Name)
 	}
+}
+
+// findOpen — v0.10.156: (rule, service) araması tick'in 5 s memo'lu
+// snapshot'ından (OpenProblemsSnapshot.ByKey); monitor başına ayrı
+// `problems FINAL` taraması yok. Sözleşme FindOpenProblem ile aynı:
+// bulunamadı → (nil, nil); satır tam (Upsert ileri taşımaya uygun).
+func (r *Runner) findOpen(ctx context.Context, ruleID, service string) (*chstore.Problem, error) {
+	if r.tickSnap != nil {
+		return r.tickSnap.ByKey(ruleID, service), nil
+	}
+	snap, err := r.store.OpenProblemsSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return snap.ByKey(ruleID, service), nil
 }
 
 func newProblemID() string {

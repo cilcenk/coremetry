@@ -1,3 +1,6 @@
+import { useState } from 'react';
+import { DisclosureButton } from '@/components/ui/DisclosureButton';
+import { splitHeader, hasGutter, gutterLines, resourceLabel, isStackTrace, foldStack } from '@/lib/codeQuote';
 import { idLinkPattern, type IdLink, type IdLinkPattern } from '@/components/ai/inlineIdLinks';
 import { normalizeMathEscapes } from './mathEscapes';
 import { CopyButton } from './CopyButton';
@@ -20,8 +23,10 @@ import { CopyButton } from './CopyButton';
 // TEK satır (hata hangi servisten hangisine yayıldı) gürültüye
 // gömülmüştü. `normalizeMathEscapes` girişte bir kez uygulanıyor;
 // gerekçesi ve neden prompt'la çözülmediği o dosyada.
-export function RenderedMarkdown({ text, idLinks }: {
+export function RenderedMarkdown({ text, idLinks, anatomy }: {
   text: string;
+  /** v0.10.165 — kod çitlerinde oluk/dosya başlığı/stack katlama (yalnız CoSRE kartı; runbook vb. operatör metni dokunulmaz) */
+  anatomy?: boolean;
   // v0.10.35 — SUNUCUNUN linklenebilir saydığı kimlikler. Verilirse
   // metinde geçtikleri yerde satır içi link olurlar. Hangi kimliğin
   // linklenebilir olduğuna sunucu karar veriyor (anahtar-kelime kapısı,
@@ -59,7 +64,7 @@ export function RenderedMarkdown({ text, idLinks }: {
         code.push(lines[i]);
         i++;
       }
-      blocks.push(<CodeBlock key={blocks.length} lang={lang} lines={dedent(code)} />);
+      blocks.push(<CodeBlock key={blocks.length} lang={lang} lines={dedent(code)} anatomy={anatomy} />);
       i++; continue;
     }
     if (line.startsWith('### ')) {
@@ -111,21 +116,62 @@ export function codeLineMark(l: string): { text: string; hl: boolean } {
 }
 
 // CodeBlock — ChatBubble'ın kod paneliyle AYNI sınıf ailesi (cm-md-code:
-// dil şeridi + kopyala + pre); iki renderer'ın kod bloğu aynı görünür.
-function CodeBlock({ lang, lines }: { lang: string; lines: string[] }) {
-  const marked = lines.map(codeLineMark);
-  const plain = marked.map(m => m.text).join('\n');
+// dil şeridi + kopyala + pre); temel görünüm iki renderer'da aynı.
+//
+// v0.10.165 (etüt «cevap paneli» A, dilim 1): `anatomy` ile AÇILAN üç
+// istemci-tarafı çözümleme (varsayılan kapalı — runbook/shift/logs gibi
+// operatörün KENDİ yazdığı metinde stack katlamak içerik gizlemek olurdu;
+// ChatBubble'ın özel CodeBlock'u da bunları çizmez, sohbet ↔ kart farkı
+// bilinçli) —
+//   - OLUK: sunucunun `246|` önekleri (code.go) gerçek satır numarası
+//     sütununa; yalnız TÜM satırlar önekliyse (küçük model bozarsa düz kalır,
+//     numara UYDURULMAZ). `>>>` → .hl (v0.10.154 ile aynı).
+//   - DOSYA BAŞLIĞI: ilk satır `// yol:a-b` gövdeden şeride; .xml/.sql →
+//     «kaynak penceresi» etiketi (uzantı sezgisi; DTO alanı dilim 2).
+//   - STACK KATLAMA: ≥6 kareli çit ilk N kareyi gösterir (N en derin
+//     uygulama karesini kapsar), kalanı DisclosureButton ile açılır.
+export function CodeBlock({ lang, lines, anatomy }: { lang: string; lines: string[]; anatomy?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const split = anatomy ? splitHeader(lines) : { ref: null, headerText: null, body: lines };
+  const { ref, headerText, body } = split;
+  const gutter = anatomy ? hasGutter(body) : false;
+  const stack = anatomy && !gutter && isStackTrace(body);
+  const fold = stack ? foldStack(body) : null;
+  const shown = fold && !open ? fold.head : body;
+  const rows = gutter ? gutterLines(shown) : shown.map(l => { const m = codeLineMark(l); return { no: null as number | null, text: m.text, hl: m.hl }; });
+  // Kopya = yapıştırılabilir kod: numara öneki YOK (fare seçimiyle aynı
+  // sonuç; .cm-md-code-no user-select:none), dosya başlığı yorum olarak
+  // başta kalır ki referans kaybolmasın (inceleme #7).
+  const plain = ((ref ? [`// ${ref.path}:${ref.from}-${ref.to}`] : headerText ? [`// ${headerText}`] : []) as string[])
+    .concat(gutter ? gutterLines(body).map(g => g.text) : body.map(l => codeLineMark(l).text)).join('\n');
+  const res = resourceLabel(ref?.path);
   return (
     <div className="cm-md-code">
       <div className="cm-md-code-h">
-        <span className="cm-md-code-lang">{lang || 'kod'}</span>
+        <span className="cm-md-code-lang">{lang || (stack ? 'stacktrace' : 'kod')}</span>
+        {ref && (
+          <span className="cm-md-code-file" title={`${ref.path} · satır ${ref.from}-${ref.to}${res ? ` · ${res}` : ''}`}>
+            {ref.path}:{ref.from}-{ref.to}{res ? <span className="cm-md-code-res"> · {res}</span> : null}
+          </span>
+        )}
+        {!ref && headerText && <span className="cm-md-code-file" title={headerText}>{headerText}</span>}
         <CopyButton value={plain} title="Kodu kopyala" />
       </div>
       <pre><code>
-        {marked.map((m, k) => (
-          <span key={k} className={m.hl ? 'cm-md-code-line hl' : 'cm-md-code-line'}>{m.text}{'\n'}</span>
+        {rows.map((m, k) => (
+          <span key={k} className={m.hl ? 'cm-md-code-line hl' : 'cm-md-code-line'}>
+            {gutter && <span className="cm-md-code-no" aria-hidden="true">{m.no ?? ''}</span>}
+            {m.text}{'\n'}
+          </span>
         ))}
       </code></pre>
+      {fold && fold.rest.length > 0 && (
+        <div className="cm-md-code-fold">
+          <DisclosureButton anatomy="row" expanded={open} onClick={() => setOpen(v => !v)}>
+            {open ? 'daha az' : `${fold.rest.length} kare daha`}
+          </DisclosureButton>
+        </div>
+      )}
     </div>
   );
 }

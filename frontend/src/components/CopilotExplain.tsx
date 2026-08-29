@@ -9,7 +9,7 @@ import { aiSubjectQuestion } from '@/components/ai/drawerChat';
 import type { AIKind } from '@/lib/aiSubject';
 import type { AICodeContext } from '@/lib/types';
 import { IconSparkles } from './icons';
-import { RenderedMarkdown } from '@/components/Markdown';
+import { ExplainBody, type ExplainEvidence } from '@/components/ai/ExplainBody';
 import type { IdLink } from '@/components/ai/inlineIdLinks';
 import { readAiCodeParam, writeAiCodeParam } from '@/lib/aiSubject';
 import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
@@ -80,6 +80,8 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   const enabled = useCopilotEnabled();
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState<string | null>(null);
+  // v0.10.165 — kanıt kimlik SAYILARI (listeleri AIDrawer taşır); kart üstündeki Kanıt satırı.
+  const [evidence, setEvidence] = useState<ExplainEvidence>({ spans: 0, traces: 0 });
   // v0.10.35 — sunucunun linklenebilir saydığı kimlikler (request_id).
   // Aynı köprü, çipin kullandığının aynısı; burada SATIR İÇİ çiziliyor.
   const [links, setLinks] = useState<IdLink[] | undefined>(undefined);
@@ -180,7 +182,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
     const opts = { ...streamOpts(ac), fresh };
 
     setUsed(true);
-    setBusy(true); setError(null); setText(null); setMeta(null); setCode(null);
+    setBusy(true); setError(null); setText(null); setMeta(null); setCode(null); setEvidence({ spans: 0, traces: 0 });
     setExchangeId(undefined);
     setCachedAtMs(null);
     // v0.10.153 — yeni ilk geçiş: kod geçişi ve karar sıfırlanır.
@@ -202,14 +204,17 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
           : `No past resolutions found — first-principles only.`);
       } else {
         const r = kind === 'trace'          ? await api.copilotExplainTrace(id, withCode, opts).then(rr => {
-                                                  if (rr.evidenceSpanIds?.length) onEvidence?.(rr.evidenceSpanIds);
+                                                  if (rr.evidenceSpanIds?.length) { onEvidence?.(rr.evidenceSpanIds); setEvidence(e => ({ ...e, spans: rr.evidenceSpanIds?.length ?? 0 })); }
                                                   setCode(rr.code ?? null);
                                                   setLinks(rr.links);
                                                   return rr;
                                                 })
                 : kind === 'exception'      ? await api.copilotExplainException(id, withCode, opts).then(rr => {
+                                                  // Kanıt satırı span SAYMAZ: exception sayfasında span listesi
+                                                  // çizilmiyor (AIDrawer v0.9.408 — gidilecek satır yok); yalnız
+                                                  // trace kimlikleri listelenir, yalnız onlar sayılır.
                                                   if (rr.evidenceSpanIds?.length) onEvidence?.(rr.evidenceSpanIds);
-                                                  if (rr.evidenceTraceIds?.length) onEvidenceTraces?.(rr.evidenceTraceIds);
+                                                  if (rr.evidenceTraceIds?.length) { onEvidenceTraces?.(rr.evidenceTraceIds); setEvidence(e => ({ ...e, traces: rr.evidenceTraceIds?.length ?? 0 })); }
                                                   setCode(rr.code ?? null);
                                                   setLinks(rr.links);
                                                   return rr;
@@ -258,7 +263,8 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
     const opts = { onDelta: (d: string) => setCodeText(prev => (prev ?? '') + d), signal: ac.signal, fresh: false };
     try {
       const finish = (r: { explanation: string; links?: IdLink[]; exchangeId?: string; code?: AICodeContext; evidenceSpanIds?: string[] }) => {
-        if (r.evidenceSpanIds?.length) onEvidence?.(r.evidenceSpanIds);
+        // kod geçişi listeyi değiştirirse Kanıt sayısı da onu izler (trace: liste çizilir)
+        if (r.evidenceSpanIds?.length) { onEvidence?.(r.evidenceSpanIds); if (kind === 'trace') setEvidence(e => ({ ...e, spans: r.evidenceSpanIds?.length ?? 0 })); }
         setCode(r.code ?? null);
         setCodeLinks(r.links);
         setCodeExchangeId(r.exchangeId);
@@ -457,7 +463,8 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
               ♻ önbellekten{cachedAtMs > 0 ? ` · ${Math.max(1, Math.round((Date.now() - cachedAtMs) / 60000))} dk önce üretildi` : ''} — taze cevap için “Yeniden sor”
             </div>
           )}
-          <RenderedMarkdown text={text} idLinks={links} />
+          {/* kod kartı açıkken Karar'ı o kart taşır — iki rakip KARAR şeridi olmaz */}
+          <ExplainBody text={text} busy={busy} links={links} evidence={evidence} verdict={codeAsk !== 'accepted'} />
           {/* v0.9.1127 — akan cevabın imleci (ChatBubble'ın `.cm-ai-cursor`
               atomu). Cevap BİTMEDEN de metin görünür olduğu için, bittiğini
               gösteren bir işaret gerekiyor: imleçsiz akan metin yarıda
@@ -548,7 +555,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
               <span>Kod okunamadı — <strong>kodsuz</strong> analiz.{code.reason ? ` (${code.reason})` : ''}</span>
             </div>
           )}
-          {codeText && <RenderedMarkdown text={codeText} idLinks={codeLinks} />}
+          {codeText && <ExplainBody text={codeText} busy={codeBusy} links={codeLinks} />}
           {codeBusy && codeText !== null && <span className="cm-ai-cursor" />}
           {code && !!code.files?.length && (
             <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--text3)', lineHeight: 1.6 }}>

@@ -3305,6 +3305,14 @@ thead th:hover .th-remove { opacity: 1; }
   font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre; color: var(--text);
 }
+/* v0.10.154 — kaynak-kod alıntısında modelin `>>>` ile işaretlediği hata
+   satırı (v0.9.1254 prompt sözleşmesi): satır bloğu, uyarı tonunda zemin. */
+.cm-md-code-line { display: block; }
+.cm-md-code-line.hl {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  box-shadow: inset 3px 0 0 var(--warn);
+  margin: 0 -9px; padding: 0 9px;
+}
 /* Kod bloğu durum etiketi: "yazılıyor…" (akıyor) / "kesildi" (çit hiç
    kapanmadı). Kopyala butonunun YOKLUĞUNU açıklıyor. */
 .cm-md-code-st {

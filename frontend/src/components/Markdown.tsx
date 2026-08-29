@@ -1,5 +1,6 @@
 import { idLinkPattern, type IdLink, type IdLinkPattern } from '@/components/ai/inlineIdLinks';
 import { normalizeMathEscapes } from './mathEscapes';
+import { CopyButton } from './CopyButton';
 // RenderedMarkdown — a deliberately small markdown renderer extracted
 // from the old Notebook page (v0.7.0, when Notebook was replaced by
 // Runbooks). Handles the subset operators actually use in incident
@@ -43,22 +44,22 @@ export function RenderedMarkdown({ text, idLinks }: {
   };
   while (i < lines.length) {
     const line = lines[i];
-    if (line.startsWith('```')) {
-      // fenced code block
+    if (line.trimStart().startsWith('```')) {
+      // fenced code block — v0.10.154 (operatör: "kod bloğu gösterimi çok
+      // kötü"): çit GİRİNTİLİ olabilir (model kod bloğunu bir madde işaretinin
+      // altına 2-4 boşlukla yazıyor) — eskiden `startsWith` girintiyi kaçırıp
+      // ```java ve kapanış çitini düz metin olarak basıyordu. Girinti yok
+      // sayılır, ortak girinti soyulur; blok gerçek kod paneli gibi çizilir:
+      // dil etiketi, modelin `>>>` ile işaretlediği hata satırı vurgulu.
       flushBullets();
+      const lang = line.trimStart().slice(3).trim();
       i++;
       const code: string[] = [];
-      while (i < lines.length && !lines[i].startsWith('```')) {
+      while (i < lines.length && !lines[i].trimStart().startsWith('```')) {
         code.push(lines[i]);
         i++;
       }
-      blocks.push(
-        <pre key={blocks.length} style={{
-          padding: 8, background: 'var(--bg)', borderRadius: 4,
-          fontSize: 12, overflowX: 'auto',
-          fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-        }}>{code.join('\n')}</pre>
-      );
+      blocks.push(<CodeBlock key={blocks.length} lang={lang} lines={dedent(code)} />);
       i++; continue;
     }
     if (line.startsWith('### ')) {
@@ -88,6 +89,47 @@ export function RenderedMarkdown({ text, idLinks }: {
   return <div className="cm-md-wrap">{blocks}</div>;
 }
 
+// dedent — çitli bloğun ortak sol girintisini soyar (boş satırlar sayılmaz).
+// SAF; mdCodeFence.test.tsx piner.
+export function dedent(lines: string[]): string[] {
+  let min = Infinity;
+  for (const l of lines) {
+    if (l.trim() === '') continue;
+    const n = l.length - l.trimStart().length;
+    if (n < min) min = n;
+  }
+  if (!isFinite(min) || min === 0) return lines;
+  return lines.map(l => (l.trim() === '' ? '' : l.slice(min)));
+}
+
+// codeLineMark — modelin kaynak-kod alıntısında hata satırını `>>> 32|`
+// ile işaretlemesi (v0.9.1254 prompt sözleşmesi). SAF: satır işaretliyse
+// işareti soyulmuş metni ve vurgu bayrağını döner.
+export function codeLineMark(l: string): { text: string; hl: boolean } {
+  const m = l.match(/^(\s*)>>>\s?(.*)$/);
+  return m ? { text: m[1] + m[2], hl: true } : { text: l, hl: false };
+}
+
+// CodeBlock — ChatBubble'ın kod paneliyle AYNI sınıf ailesi (cm-md-code:
+// dil şeridi + kopyala + pre); iki renderer'ın kod bloğu aynı görünür.
+function CodeBlock({ lang, lines }: { lang: string; lines: string[] }) {
+  const marked = lines.map(codeLineMark);
+  const plain = marked.map(m => m.text).join('\n');
+  return (
+    <div className="cm-md-code">
+      <div className="cm-md-code-h">
+        <span className="cm-md-code-lang">{lang || 'kod'}</span>
+        <CopyButton value={plain} title="Kodu kopyala" />
+      </div>
+      <pre><code>
+        {marked.map((m, k) => (
+          <span key={k} className={m.hl ? 'cm-md-code-line hl' : 'cm-md-code-line'}>{m.text}{'\n'}</span>
+        ))}
+      </code></pre>
+    </div>
+  );
+}
+
 // stripMarkdown — işaretleri ATAR, düz metin döndürür (v0.9.696).
 //
 // Operatör-bildirimi: "Burada neden açıklama da hata tipi falan bold
@@ -109,7 +151,7 @@ export function RenderedMarkdown({ text, idLinks }: {
 export function stripMarkdown(s: string): string {
   return s
     // ``` çitleri: yalnız çit satırı gider, kod durur.
-    .replace(/^```.*$/gm, '')
+    .replace(/^\s*```.*$/gm, '')
     // Başlıklar ve madde imleri satır BAŞINDA.
     .replace(/^\s{0,3}#{1,6}\s+/gm, '')
     .replace(/^\s{0,3}[-*]\s+/gm, '')

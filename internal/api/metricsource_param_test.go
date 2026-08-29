@@ -456,7 +456,9 @@ func TestDashboardBundleHonoursTheParam(t *testing.T) {
 	// proof it went to VictoriaMetrics rather than silently to ClickHouse.
 	vm := vmetrics.New()
 	vm.Configure(vmetrics.Settings{BaseURL: "http://127.0.0.1:1/vm"})
-	s = &Server{store: &chstore.Store{}, vmetrics: vm}
+	// v0.10.146 — bundle slot'ları cachedJSON'dan geçer: L1/L2/stats
+	// kablolu olmalı (fakeCache Get'i her zaman miss döner → slot hesaplanır).
+	s = &Server{store: &chstore.Store{}, vmetrics: vm, cache: &fakeCache{}, l1: newL1Cache(8), stats: newCacheStats()}
 	rec = httptest.NewRecorder()
 	s.dashboardsData(rec, httptest.NewRequest("POST", "/api/dashboards/data?metricsrc=vm", strings.NewReader(body)))
 	if rec.Code != 200 {
@@ -481,7 +483,13 @@ func TestMetricHandlersResolveSourcePerRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src := stripGoComments(string(raw))
+	// v0.10.146 — dashboardsData api.go'dan dashboards_data.go'ya taşındı;
+	// tarama iki dosyayı tek metin olarak okur (sayım 6 sabit kalır).
+	braw, err := os.ReadFile("dashboards_data.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := stripGoComments(string(raw) + "\n" + string(braw))
 
 	// Vacuous-pass guard: if comment stripping ate the handlers, the scan
 	// below proves nothing (the v0.9.982 lesson — a gate that stopped
@@ -515,7 +523,7 @@ func TestMetricHandlersResolveSourcePerRequest(t *testing.T) {
 	// honoured ?metricsrc=, and nothing failed — the page rendered, from the
 	// wrong store.
 	if got := len(regexp.MustCompile(`s\.metricSourceFor\(r\)`).FindAllString(src, -1)); got != 6 {
-		t.Errorf("found %d s.metricSourceFor(r) call sites in api.go, want 6 "+
+		t.Errorf("found %d s.metricSourceFor(r) call sites in api.go+dashboards_data.go, want 6 "+
 			"(names, query, labels, attr-keys, dashboards bundle, histogram)", got)
 	}
 

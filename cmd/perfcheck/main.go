@@ -313,7 +313,10 @@ func (r *runner) dashboardBody(id string, from, to int64) ([]byte, error) {
 		if cfg.GroupBy != "" {
 			rq.GroupBy = []string{cfg.GroupBy}
 		}
-		rq.Step = 60
+		// v0.10.146 — step FE ile aynı: Dashboard.tsx 1h penceresinde ~600 px
+		// panel için stepForWidth → 15 s gönderir; 60 s ile probe gerçek
+		// sayfanın gövdesini 3× eksik ölçüyordu (1.6 MB vs 5.0 MB).
+		rq.Step = 15
 		reqs = append(reqs, *rq)
 	}
 	if len(reqs) == 0 {

@@ -21,43 +21,38 @@ import (
 )
 
 func TestDashboardBundleMetricBranchPassesFilters(t *testing.T) {
-	b, err := os.ReadFile("api.go")
+	// v0.10.146 — handler api.go'dan dashboards_data.go'ya taşındı ve dal
+	// bundleSlot'a çıktı; çapa yine GÜNCELLENDİ, test silinmedi. İki
+	// düzeltme daha: (a) yorumlar soyulur — eski pencere "req.Filters"ı bir
+	// YORUMDAN buluyordu (gate kendi metnini ısırıyordu), (b) pencere
+	// `case "metric":` ile `case "spanMetric":` arası — parseFilters çağrısı
+	// da içinde kalır.
+	b, err := os.ReadFile("dashboards_data.go")
 	if err != nil {
-		t.Fatalf("api.go okunamadı: %v", err)
+		t.Fatalf("dashboards_data.go okunamadı: %v", err)
 	}
-	src := string(b)
+	src := stripGoComments(string(b))
 
-	// Toplu yolun metric dalını bul: QueryMetric + MetricQueryFilter.
-	//
-	// v0.9.1150 — çapa `s.store.QueryMetric` idi; okuma metrik kaynağı
-	// SEAM'ine taşındığı (metricsource.go, CH ya da VictoriaMetrics) için
-	// `metricSrc.QueryMetric` olmuştu. v0.9.1157'da bir daha kaydı:
-	// çağrı `queryMetricNoted(...)` yardımcısına geçti (VM yolunda boş bir
-	// yüzdeliğin SEBEBİNİ de taşıyor).
-	//
-	// Kapının SÖZLEŞMESİ iki kez de değişmedi — dal hâlâ req.Filters'ı
-	// geçirmek zorunda — değişen çapa. Sayıyı düşürmek ya da testi silmek
-	// yerine çapa GÜNCELLENDİ: bayat bir çapa t.Fatal ile bağırıyor, ki
-	// doğru davranış bu (sessizce sıfır dosya tarayıp yeşil kalmak
-	// korumanın görüntüsü olurdu).
-	const anchor = "queryMetricNoted(r.Context(), metricSrc, chstore.MetricQueryFilter{"
+	const anchor = `case "metric":`
 	i := strings.Index(src, anchor)
 	if i < 0 {
 		t.Fatalf("dashboard bundle metric dalı bulunamadı (çapa: %q) — dal yeniden "+
 			"yazıldıysa çapayı güncelle, testi silme", anchor)
 	}
 	body := src[i:]
-	if end := strings.Index(body, "})"); end > 0 {
+	if end := strings.Index(body, `case "spanMetric":`); end > 0 {
 		body = body[:end]
 	}
-
-	if !strings.Contains(body, "Filters:") {
-		t.Error("metric dalı Filters geçirmiyor — panel filtresi SQL'e inmez ve " +
-			"panel FİLTRESİZ veriyi filtreliymiş gibi çizer (boş panel değil, " +
-			"sessizce yanlış sayı)")
+	if !strings.Contains(body, "queryMetricNoted(ctx, metricSrc, chstore.MetricQueryFilter{") {
+		t.Fatalf("metric dalı queryMetricNoted seam'inden geçmiyor — pencere:\n%s", body)
 	}
-	if !strings.Contains(body, "req.Filters") {
-		t.Error("Filters gövdedeki req.Filters'tan gelmiyor — sabit ya da boş " +
+	if !strings.Contains(body, "parseFilters(string(req.Filters))") {
+		t.Error("Filters gövdedeki req.Filters'tan derlenmiyor — sabit ya da boş " +
 			"bir değer geçiriliyor olabilir")
+	}
+	if !strings.Contains(body, "Filters:     mfilters,") && !strings.Contains(body, "Filters: mfilters,") {
+		t.Error("metric dalı derlenen filtreleri MetricQueryFilter.Filters'a geçirmiyor — " +
+			"panel filtresi SQL'e inmez ve panel FİLTRESİZ veriyi filtreliymiş gibi " +
+			"çizer (boş panel değil, sessizce yanlış sayı)")
 	}
 }

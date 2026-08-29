@@ -33,8 +33,8 @@
     {
       "name": "POST /api/dashboards/data", "scenario": "preset-dependencies-1h", "window": "1h", "cold": false,
       "method": "POST", "path": "/api/dashboards/data", "bodyFromDashboard": "preset-dependencies",
-      "budget": { "achievableMs": 3000, "aspirationalMs": 1000, "maxBytes": 2000000 },
-      "note": "P5 — bundle cache'siz, 12 panel; perfcheck taban p50 1.89 s / 1.62 MB"
+      "budget": { "achievableMs": 3000, "aspirationalMs": 1000, "maxBytes": 6000000 },
+      "note": "P5 — v0.10.146: probe step 60→15 (FE ile aynı), gövde gerçekte 5.0 MB (666 seri × 240 nokta × 50 B); panel-başı 30 s SWR cache gemide (soğuk gövde değişmez); gövde kazancı = kuyruk ön-toplamları spec (arzu ≤500 KB)"
     },
     {
       "name": "GET /api/problems", "scenario": "cold", "cold": true,

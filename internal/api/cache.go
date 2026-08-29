@@ -215,17 +215,36 @@ const staleFactor = 3
 // entries only advanced on a full miss at ≥3×TTL (a "30s-fresh"
 // surface frozen for 90s).
 func (s *Server) serveCached(w http.ResponseWriter, r *http.Request, key string, ttl time.Duration, fn func(ctx context.Context) (any, error)) {
-	skipRead := r.URL.Query().Get("refresh") == "1"
+	body, tier, err := s.cachedJSON(r.Context(), key, ttl, r.URL.Query().Get("refresh") == "1", fn)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeCacheHit(w, tier, body)
+}
 
-	if !skipRead {
+// cachedJSON — serveCached'in HTTP'siz çekirdeği (v0.10.146, perf P5).
+//
+// Neden ayrı: bir HTTP yanıtı olmayan tüketiciler de aynı katmanı
+// istiyor — /api/dashboards/data bundle'ı her panelini kendi anahtarıyla
+// önbelleklerken tek bir gövde yazar. Çekirdeği kopyalamak yerine
+// serveCached bunun üstüne ince bir sarmalayıcı oldu: iki yolun
+// davranışı (L1 → L2 taze/bayat-SWR/eski-zarf → singleflight'lı
+// miss → L1 senkron + L2 ayrık yazım) TEK yerde yaşar; bundle
+// bir kez daha kardeşinden ayrışamaz (v0.9.566 sınıfı).
+//
+// Dönüş: JSON gövdesi + X-Cache katmanı (HIT-L1 / HIT / STALE /
+// HIT-LEGACY / MISS / BYPASS). `bypass` = ?refresh=1 semantiği: okuma
+// katmanları atlanır, sonuç yine yazılır.
+func (s *Server) cachedJSON(ctx context.Context, key string, ttl time.Duration, bypass bool, fn func(ctx context.Context) (any, error)) ([]byte, string, error) {
+	if !bypass {
 		// ── L1 ────────────────────────────────────────────────
 		if data, ok := s.l1.get(key); ok {
 			s.stats.record("HIT-L1", key)
-			writeCacheHit(w, "HIT-L1", data)
-			return
+			return data, "HIT-L1", nil
 		}
 		// ── L2 with SWR ───────────────────────────────────────
-		if raw, ok, err := s.cache.Get(r.Context(), key); err == nil && ok {
+		if raw, ok, err := s.cache.Get(ctx, key); err == nil && ok {
 			if written, body, envOK := unwrapEnvelope(raw); envOK {
 				age := time.Since(written)
 				if age < ttl {
@@ -234,8 +253,7 @@ func (s *Server) serveCached(w http.ResponseWriter, r *http.Request, key string,
 					// burst reads on this node skip Redis too.
 					s.l1.set(key, body, minDur(ttl-age, l1TTL))
 					s.stats.record("HIT", key)
-					writeCacheHit(w, "HIT", body)
-					return
+					return body, "HIT", nil
 				}
 				if age < ttl*staleFactor {
 					// Stale-but-usable. Serve immediately,
@@ -244,8 +262,7 @@ func (s *Server) serveCached(w http.ResponseWriter, r *http.Request, key string,
 					// share one upstream call).
 					go s.refreshKey(key, ttl, fn)
 					s.stats.record("STALE", key)
-					writeCacheHit(w, "STALE", body)
-					return
+					return body, "STALE", nil
 				}
 				// Past hard window → fall through to miss.
 			} else {
@@ -253,29 +270,15 @@ func (s *Server) serveCached(w http.ResponseWriter, r *http.Request, key string,
 				// let Redis TTL evict it; new writes go
 				// through the envelope path.
 				s.stats.record("HIT-LEGACY", key)
-				writeCacheHit(w, "HIT-LEGACY", raw)
-				return
+				return raw, "HIT-LEGACY", nil
 			}
 		}
 	}
 
 	// ── Miss path with singleflight dedupe ────────────────────
-	v, err, _ := s.sf.Do(key, func() (any, error) {
-		return fn(r.Context())
-	})
+	body, err := s.computeBody(ctx, key, fn)
 	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	// v0.5.303 — scrub NaN/Inf floats anywhere in the result
-	// tree before json.Marshal. Defence-in-depth for the
-	// "encoding/json: unsupported value NaN" 500s; complements
-	// the per-Scan safeF guards from v0.5.301.
-	sanitizeFloats(v)
-	body, err := json.Marshal(v)
-	if err != nil {
-		writeErr(w, err)
-		return
+		return nil, "", err
 	}
 	// v0.8.350 (HA 🟡5) — the response must not wait on Redis. L1 is
 	// set synchronously (in-process, same-node burst coalescing needs
@@ -292,15 +295,12 @@ func (s *Server) serveCached(w http.ResponseWriter, r *http.Request, key string,
 		defer cancel()
 		s.storeL2(ctx, key, body, ttl)
 	}()
-	w.Header().Set("Content-Type", "application/json")
-	if skipRead {
-		s.stats.record("BYPASS", key)
-		w.Header().Set("X-Cache", "BYPASS")
-	} else {
-		s.stats.record("MISS", key)
-		w.Header().Set("X-Cache", "MISS")
+	tier := "MISS"
+	if bypass {
+		tier = "BYPASS"
 	}
-	w.Write(body)
+	s.stats.record(tier, key)
+	return body, tier, nil
 }
 
 // writeCacheHit emits the standard headers + body for a tier
@@ -341,31 +341,56 @@ func (s *Server) storeL2(ctx context.Context, key string, body []byte, ttl time.
 // Deduped via singleflight under the cache key so concurrent
 // stale-hits don't fan out into N parallel CH queries.
 func (s *Server) refreshKey(key string, ttl time.Duration, fn func(ctx context.Context) (any, error)) {
-	s.sf.Do(key, func() (any, error) {
-		// Defensive timeout — same as the warmer's queryBudg.
-		// A refresh that hangs longer than this would block
-		// the singleflight slot for new concurrent refreshes
-		// in the same window.
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		// v0.8.319 — the fresh context now actually reaches the
-		// upstream query. fn() used to close over the (already
-		// cancelled) request context, so every background refresh
-		// aborted with context.Canceled.
-		v, err := fn(ctx)
+	// Defensive timeout — same as the warmer's queryBudg.
+	// A refresh that hangs longer than this would block
+	// the singleflight slot for new concurrent refreshes
+	// in the same window.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	// v0.8.319 — the fresh context now actually reaches the
+	// upstream query. fn() used to close over the (already
+	// cancelled) request context, so every background refresh
+	// aborted with context.Canceled.
+	body, err := s.computeBody(ctx, key, fn)
+	if err != nil {
+		log.Printf("[cache] refresh %s: %v", key, err)
+		return
+	}
+	s.storeCached(ctx, key, body, ttl)
+}
+
+// computeBody — singleflight altındaki TEK hesaplama noktası (v0.10.146):
+// fn → NaN/Inf temizliği → json.Marshal, hepsi sf.Do'nun İÇİNDE; slot'u
+// paylaşan her bekleyen aynı DEĞİŞMEZ bayt dilimini alır.
+//
+// İki HEAD hatası burada kapanır (inceleme, v0.10.146):
+//   - bekleyenler ortak `v`yi kendi başlarına sanitizeFloats'lıyor ve
+//     marshal'lıyordu — reflect ile yazılan float'lar üstünde veri
+//     yarışı (bundle'da aynı anahtarı paylaşan iki panel bunu tek
+//     istekte tetikliyordu);
+//   - refreshKey aynı sf anahtarında (nil, nil) dönüyordu: SWR
+//     tazelemesi sürerken sert pencereyi geçip miss'e düşen bir ön plan
+//     çağrısı slot'a katılıp `null` gövdesini servis edip cache'liyordu.
+//
+// Şimdi katılan kim olursa olsun bayt alır.
+//
+// v0.5.303 — scrub NaN/Inf floats anywhere in the result tree before
+// json.Marshal. Defence-in-depth for the "encoding/json: unsupported
+// value NaN" 500s; complements the per-Scan safeF guards from v0.5.301.
+func (s *Server) computeBody(ctx context.Context, key string, fn func(ctx context.Context) (any, error)) ([]byte, error) {
+	v, err, _ := s.sf.Do(key, func() (any, error) {
+		val, err := fn(ctx)
 		if err != nil {
-			log.Printf("[cache] refresh %s: %v", key, err)
 			return nil, err
 		}
-		sanitizeFloats(v) // v0.5.303 — same NaN scrub as the miss path
-		body, err := json.Marshal(v)
-		if err != nil {
-			log.Printf("[cache] refresh marshal %s: %v", key, err)
-			return nil, err
-		}
-		s.storeCached(ctx, key, body, ttl)
-		return nil, nil
+		sanitizeFloats(val)
+		return json.Marshal(val)
 	})
+	if err != nil {
+		return nil, err
+	}
+	body, _ := v.([]byte)
+	return body, nil
 }
 
 // invalidateCacheChannel is the Redis pub/sub channel that

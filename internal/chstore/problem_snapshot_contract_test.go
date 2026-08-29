@@ -108,3 +108,30 @@ func TestOpenProblemsLookupsReturnCopies(t *testing.T) {
 		t.Fatalf("Filter must see the untouched row: %+v", got)
 	}
 }
+
+// v0.10.158 — tick/süpürme hoist'leri TEMBEL: tick gövdesi snapshot'ı
+// koşulsuz OKUMAZ (156'da 5 s'lik monitor tick'i sessizken de tam tarama
+// yapıyordu). runner.go'da doğrudan OpenProblemsSnapshot yalnız findOpen'ın
+// memo yedeği; promoteStrongAnomalies gövdesinde doğrudan çağrı yok.
+func TestTickHoistsAreLazy(t *testing.T) {
+	runner := readRepo(t, "internal/monitor/runner.go")
+	if n := strings.Count(runner, ".OpenProblemsSnapshot("); n != 1 {
+		t.Errorf("runner.go: expected exactly 1 direct OpenProblemsSnapshot (findOpen fallback), got %d — tick must use LazyOpenSnapshot", n)
+	}
+	if !strings.Contains(runner, "r.tickSnap = r.store.LazyOpenSnapshot()") {
+		t.Error("runner.go: tick must arm a LazyOpenSnapshot, not fetch eagerly")
+	}
+	ev := readRepo(t, "internal/evaluator/evaluator.go")
+	i := strings.Index(ev, "func (e *Evaluator) promoteStrongAnomalies(")
+	j := strings.Index(ev[i:], "\nfunc ")
+	if i < 0 || j < 0 {
+		t.Fatal("promoteStrongAnomalies not found")
+	}
+	body := ev[i : i+j]
+	if strings.Contains(body, ".OpenProblemsSnapshot(") {
+		t.Error("promoteStrongAnomalies must not fetch the snapshot eagerly — use LazyOpenSnapshot")
+	}
+	if !strings.Contains(body, "LazyOpenSnapshot()") {
+		t.Error("promoteStrongAnomalies must arm a LazyOpenSnapshot")
+	}
+}

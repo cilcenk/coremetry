@@ -204,6 +204,12 @@ export function drawTimeRegions(u: uPlot, regions: ChartTimeRegion[], xUnit = 1)
   const ctx = u.ctx;
   ctx.save();
   ctx.font = `${10 * dpr}px ui-monospace, monospace`;
+  // v0.10.168 — hiza AÇIKÇA sol/üst: uPlot'un y-ekseni tik etiketleri
+  // textAlign='right' bırakıyor ve save() o sızıntıyı yakalıyor; etiket
+  // x1'den SOLA uzayıp eksen etiketlerini eziyordu (166 canlı görüntüsü:
+  // «op ×175.0» kırpık). drawTimeRegions.test.ts sahte canvas'la pinler.
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
   // Arka-plan gölgesi: birleşik aralıklar, TEK kat (çakışma koyulaştırmaz).
   for (const mg of mergeIntervals(regions)) {
     const cl = clampRegion(mg.fromSec, mg.toSec, xMin, xMax);

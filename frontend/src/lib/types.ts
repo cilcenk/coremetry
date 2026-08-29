@@ -2615,9 +2615,21 @@ export interface SpanMetricSeries {
 // happened — consumers default it to `series.length`. The resolver + batch
 // paths return the bare series slice and never set totalSeries, so it stays
 // optional and they keep working unchanged.
+// TailPoint (v0.10.147) — sunucu top-N kırpmasının DIŞINDA kalan serilerin
+// bir bucket'taki ham toplamı + o bucket'ta değeri olan seri sayısı
+// (chstore.TailPoint aynası). foldTopN bunu kendi kuyruğuna ekler → "others"
+// çizgisi kırpmadan bağımsız kesin. Birim kararı FE'de (foldTopN).
+export interface TailPoint {
+  time: number;  // unix ns, SpanMetricSeries.points ile aynı eksen
+  sum: number;
+  count: number;
+}
+
 export interface SpanMetricResult {
   series: SpanMetricSeries[];
   totalSeries?: number;
+  // v0.10.147 — yalnız kırpma olduysa gelir; foldTopN(…, tail).
+  tail?: TailPoint[];
   // v0.9.458 (dürüstlük A1) — 50k satır tavanı doldu: alfabetik-son
   // seriler eksik olabilir (top-N kırpmasından AYRI sinyal).
   rowsCapped?: boolean;

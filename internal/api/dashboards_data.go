@@ -19,14 +19,13 @@ package api
 //     sayıyor (PanelDataOverride) — boş panel bundle'a rağmen bir kez daha
 //     sorguluyordu.
 //
-// BİLİNÇLİ OLARAK YAPILMAYAN — top-N kırpması. Tekil uç QuerySpanMetricTopN
-// ile top-50'yi döner; bundle'ı ona yakınsatmak gövdeyi ~yarıya indirirdi
-// (peer/caller panelleri 95-96 seri). Ama dashboard'ın "others" katlaması
-// (foldTopN, v0.9.946) kuyruğu TAM seriden toplar: kırpılmış girdiyle
-// "others" çizgisi kuyruk kütlesini sessizce kaybeder — boş panelden
-// tehlikeli olan "makul görünen yanlış sayı" sınıfı. Doğru yol kuyruk
-// ön-toplamları (othersSum/othersCount, birim-bağımsız; FE kesin katlar) —
-// ayrı spec. O gelene dek spanMetric dalı QuerySpanMetric (tam seri).
+// v0.10.147 — top-N (chstore.DashboardTopN=16) + KUYRUK ÖN-TOPLAMI. v0.10.146'da
+// tail'siz top-N reddedilmişti: dashboard'ın "others" katlaması (foldTopN,
+// v0.9.946) kuyruğu tam seriden toplar, kırpılmış girdiyle kuyruk kütlesi
+// sessizce kaybolurdu. Şimdi sunucu kırpılan serilerin zaman-başı ham
+// sum/count'unu (tail) yollar; FE kendi kuyruğuna ekler → others çizgisi ve
+// notu TAM seriyle katlamaya eşit (eşdeğerlik testi chstore'da). Gövde:
+// 95 seri → 16 + tail (≈%80 küçülme, ölçüm budget doc P5).
 //
 // Request body:
 //
@@ -66,6 +65,8 @@ import (
 // görünmesi demek olurdu.
 const dashPanelTTL = 30 * time.Second
 
+// Seri tavanı chstore.DashboardTopN (16) — gerekçesi ve eşdeğerlik testi orada.
+
 // bundleReq — bundle gövdesindeki tek panel isteği. Adlandırıldı çünkü
 // dashPanelKey (saf) ve bundleSlot onu paylaşıyor.
 type bundleReq struct {
@@ -88,6 +89,11 @@ type bundleReq struct {
 type bundleSlot struct {
 	// Series omitempty DEĞİL — boş sonuç `[]` yazılır (dosya başlığı).
 	Series []chstore.SpanMetricSeries `json:"series"`
+	// TotalSeries + Tail (v0.10.147) — tekil spanMetricResponse ile aynı:
+	// kırpma öncesi seri sayısı ve kırpılan kuyruğun zaman-başı ham
+	// sum/count'u; yalnız kırpma olduysa yazılır.
+	TotalSeries int                 `json:"totalSeries,omitempty"`
+	Tail        []chstore.TailPoint `json:"tail,omitempty"`
 	// RowsCapped (v0.9.459, dürüstlük A1b) — 50k satır tavanı doldu:
 	// alfabetik-son seriler eksik olabilir. Bundle yolu tekil
 	// endpoint'lerin v0.9.458 zarfını atlıyordu.
@@ -145,7 +151,7 @@ func dashPanelKey(srcTag string, q bundleReq, from, to time.Time) string {
 		h.Write([]byte{':'})
 		h.Write([]byte(part))
 	}
-	return fmt.Sprintf("dash-panel:v1:%s:%x", q.Type, h.Sum64())
+	return fmt.Sprintf("dash-panel:v2:%s:%x", q.Type, h.Sum64()) // v2: v0.10.147 tail/totalSeries
 }
 
 func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
@@ -283,9 +289,10 @@ func (s *Server) bundleSlot(ctx context.Context, metricSrc metricSource, req bun
 		if ferr != nil {
 			return nil, ferr
 		}
-		// TAM seri — top-N bilinçli olarak YOK (dosya başlığı: "others"
-		// katlaması kuyruğu tam seriden toplar).
-		series, err := s.store.QuerySpanMetric(ctx, chstore.SpanMetricFilter{
+		// v0.10.147 — top-N (chstore.DashboardTopN) + kuyruk ön-toplamı: panel 8 +
+		// "others" çizer; tail sayesinde others çizgisi ve notu TAM seriyle
+		// katlamaya eşit (v0.10.146'da tail'siz top-N bu yüzden reddedilmişti).
+		series, tail, total, capped, err := s.store.QuerySpanMetricTopNTail(ctx, chstore.SpanMetricFilter{
 			Filters:     filters,
 			Aggregation: req.Agg,
 			Field:       req.Field,
@@ -293,12 +300,16 @@ func (s *Server) bundleSlot(ctx context.Context, metricSrc metricSource, req bun
 			From:        from,
 			To:          to,
 			StepSeconds: req.Step,
-		})
+		}, chstore.DashboardTopN)
 		if err != nil {
 			return nil, err
 		}
 		slot.Series = series
-		slot.RowsCapped = chstore.SeriesRowsCapped(series)
+		slot.RowsCapped = capped
+		if total > len(series) {
+			slot.TotalSeries = total
+			slot.Tail = tail
+		}
 	default:
 		return nil, fmt.Errorf("unknown panel type %q", req.Type)
 	}

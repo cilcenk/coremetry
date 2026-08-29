@@ -29,7 +29,7 @@
 //   • series.length <= n ise dizi AYNEN (aynı referans) döner — katlama
 //     olmayan yolda tek bir nesne bile ayrılmaz.
 
-import type { SpanMetricSeries } from '@/lib/types';
+import type { SpanMetricSeries, TailPoint } from '@/lib/types';
 
 // Katlanmış serinin groupKey'i. Renk kanalı bunu tanır: v1 gövdesi
 // mutedGray'e, v2 yolu 'muted' seri ROLÜNE eşler (seriesRoleColor →
@@ -46,12 +46,21 @@ function isMeanUnit(unit: string | undefined): boolean {
   return u === '%' || u === 'ms' || u === 's';
 }
 
+// v0.10.147 — `serverTail`: sunucunun top-N DIŞINDA bıraktığı serilerin
+// zaman-başı ham toplam + sayısı (SpanMetricResult.tail). Kuyruk
+// birleştirmesine aynen katılır: toplanabilir birimde Σ'ya, oran biriminde
+// hem Σ'ya hem sayaca — yani "others" çizgisi ve notu TAM seriyle
+// katlamaya eşit (sunucu kırpmasından bağımsız). Sunucu birim BİLMEZ,
+// birim kuralı yalnız burada (v0.9.946 tek-çekirdek ilkesi korunur).
+// Tail yok/boşsa davranış bayt-bayt eski.
 export function foldTopN(
   series: SpanMetricSeries[],
   unit: string | undefined,
   n = DEFAULT_MAX_SERIES,
+  serverTail?: readonly TailPoint[],
 ): SpanMetricSeries[] {
-  if (series.length <= n) return series;
+  const hasServerTail = !!serverTail && serverTail.length > 0;
+  if (series.length <= n && !hasServerTail) return series;
   const mean = isMeanUnit(unit);
   const ranked = series
     .map(s => ({ s, area: s.points.reduce((a, p) => a + Math.abs(p.value ?? 0), 0) }))
@@ -67,8 +76,14 @@ export function foldTopN(
       cntByTime.set(p.time, (cntByTime.get(p.time) ?? 0) + 1);
     }
   }
+  if (hasServerTail) {
+    for (const t of serverTail!) {
+      sumByTime.set(t.time, (sumByTime.get(t.time) ?? 0) + t.sum);
+      cntByTime.set(t.time, (cntByTime.get(t.time) ?? 0) + t.count);
+    }
+  }
   const others: SpanMetricSeries = {
-    ...tail[0],
+    ...(tail[0] ?? {}),
     groupKey: [OTHERS_KEY],
     // v0.9.1369 — tail[0]'ın fullKey'i MİRAS ALINMAZ. Yayılma operatörü
     // "+N others" çizgisine rastgele bir pod adını tooltip'te yazdırırdı;

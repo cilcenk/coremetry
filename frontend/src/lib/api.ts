@@ -36,7 +36,7 @@ import type {
   OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
   ExceptionTriageConfig, ProblemPriorityConfig, FailureSLOConfig, MetricExclusions, AnomalyTrackedConfig,
   InsightKind, InsightResponse, InsightSignal, InsightLink, InsightChartSpec,
-  AnomalySensitivityConfig } from './types';
+  AnomalySensitivityConfig, TailPoint } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // withMetricSource — v0.9.1151 deneme modu. Sayfa URL'sindeki
 // ?metricsrc=vm|ch işaretini metrik uçlarının sorgu dizesine basar. TEK
@@ -2313,7 +2313,7 @@ export const api = {
     // dalın kardeş handler'dan ayrışması bilinen bir bug sınıfı (v0.9.566),
     // o yüzden notu orada koyup burada atlamak, aynı yüzdeliğin Explore'da
     // SEBEBİYLE, dashboard panelinde SESSİZCE boş görünmesi olurdu.
-    request<Record<string, { series?: SpanMetricSeries[] | null; rowsCapped?: boolean; note?: string; error?: string }>>(
+    request<Record<string, { series?: SpanMetricSeries[] | null; totalSeries?: number; tail?: TailPoint[]; rowsCapped?: boolean; note?: string; error?: string }>>(
       // v0.9.1151 — deneme modu POST'ta da geçerli. İşaret SORGU
       // DİZESİNDE taşınıyor, gövdede değil: aynı merkezî yardımcı hem GET
       // hem POST uçlarını damgalıyor ve sunucu tarafında tek bir

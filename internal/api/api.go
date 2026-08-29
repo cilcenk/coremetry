@@ -5201,7 +5201,9 @@ func (s *Server) spanMetric(w http.ResponseWriter, r *http.Request) {
 	// callers with the same predicate share the warm entry (same shape as
 	// the traces-agg cache key); from/to are frontend-memoised so they don't
 	// tick now() and poison the key (v0.5.184 class).
-	key := "span-metric:" + r.URL.RawQuery
+	// v0.10.147 — v2: zarfa `tail` eklendi; rolling deploy'da eski pod'un
+	// tail'siz gövdesi 90 s servis edilmesin (v0.9.1157 anahtar-bump kuralı).
+	key := "span-metric:v2:" + r.URL.RawQuery
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.x — trim the wire payload on a high-cardinality groupBy. The
 		// frontend (PanelStack) only ever renders the top ≤TOP_N_MAX series by
@@ -5209,13 +5211,14 @@ func (s *Server) spanMetric(w http.ResponseWriter, r *http.Request) {
 		// keeps the top-50 by the SAME area metric and reports the pre-trim
 		// total so the "+N more" stays accurate. totalSeries omitted (== len)
 		// when no trim happened, keeping the response compact.
-		series, total, capped, err := s.store.QuerySpanMetricTopN(ctx, f)
+		series, tail, total, capped, err := s.store.QuerySpanMetricTopN(ctx, f)
 		if err != nil {
 			return nil, err
 		}
 		resp := spanMetricResponse{Series: series, RowsCapped: capped}
 		if total > len(series) {
 			resp.TotalSeries = total
+			resp.Tail = tail // v0.10.147 — kırpılan kuyruğun ön-toplamı
 		}
 		return resp, nil
 	})
@@ -5229,6 +5232,9 @@ func (s *Server) spanMetric(w http.ResponseWriter, r *http.Request) {
 type spanMetricResponse struct {
 	Series      []chstore.SpanMetricSeries `json:"series"`
 	TotalSeries int                        `json:"totalSeries,omitempty"`
+	// Tail (v0.10.147) — top-N dışında kalan serilerin zaman-başı ham
+	// sum/count'u; yalnız kırpma olduysa. FE foldTopN kesin "others" için.
+	Tail []chstore.TailPoint `json:"tail,omitempty"`
 	// RowsCapped (v0.9.458, dürüstlük A1) — 50k satır tavanı doldu:
 	// ORDER BY gk alfabetik olduğundan geç-harfli seriler eksik
 	// olabilir; totalSeries'in anlattığı top-N kırpmasından AYRI yalan.

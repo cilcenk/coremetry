@@ -77,9 +77,12 @@ export function LoaderMark({ label, hint, size = 'md' }: { label: string; hint?:
         }} />
         <img src="/opentelemetry.svg" width={mark} height={mark} alt="OpenTelemetry" style={{ display: 'block' }} />
       </div>
+      {/* v0.10.155 (operatör: "CoSRE şeklinde yazsın, hepsi büyük harf değil")
+          — lg etiket YAZILDIĞI GİBİ; büyük-harf dönüşümü yalnız md
+          (PageLoader'ın "LOADING" splash görünümü). */}
       <div style={{
         fontSize: size === 'lg' ? 14 : 12, color: size === 'lg' ? 'var(--text2)' : 'var(--text3)',
-        letterSpacing: 0.4, textTransform: 'uppercase', fontWeight: 600,
+        letterSpacing: size === 'lg' ? 0 : 0.4, textTransform: size === 'lg' ? 'none' : 'uppercase', fontWeight: 600,
       }}>
         {label}
       </div>

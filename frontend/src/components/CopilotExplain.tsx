@@ -310,9 +310,13 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   const showButton = !auto || (!busy && (text !== null || error !== null));
 
   return (
+    // v0.10.155 (operatör: "sayfanın ortasında değil") — çekmece (auto)
+    // modunda kök TAM GENİŞLİK blok: inline-flex + flex-start, yükleniyor
+    // bloğunu içerik genişliğinde sol-üste sıkıştırıyordu. Satır-içi
+    // yüzeylerde (buton) inline-flex aynen kalır.
     <div style={{
-      display: 'inline-flex', flexDirection: 'column', gap: 8,
-      alignItems: 'flex-start', maxWidth: '100%',
+      display: auto ? 'flex' : 'inline-flex', flexDirection: 'column', gap: 8,
+      alignItems: 'flex-start', maxWidth: '100%', width: auto ? '100%' : undefined,
     }}>
             {/* v0.10.60 — DEPO LİNKİ KUTUNUN ALTINDA (operatör isteği).
           Depo adı çoğu kurulumda bir KONVANSİYON TAHMİNİ; operatörün o
@@ -365,7 +369,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
       {auto && busy && text === null && (
         // v0.10.152 (operatör): küçük köşe spinner'ı yerine gövde ortasında
         // BÜYÜK, OTel işaretli yükleniyor durumu — "loading page" gibi.
-        <div style={{ display: 'grid', placeItems: 'center', minHeight: 260, padding: '32px 16px' }}>
+        <div style={{ display: 'grid', placeItems: 'center', width: '100%', alignSelf: 'stretch', minHeight: 'min(60vh, 420px)', padding: '32px 16px' }}>
           <LoaderMark size="lg"
             label={includeCode ? 'CoSRE kodu okuyor…' : 'CoSRE düşünüyor…'}
             hint={includeCode ? 'Kanıt span\'leri, trace ve ilgili kaynak kodu birlikte inceleniyor.' : 'Kanıt span\'leri ve trace bağlamı üzerinden açıklama üretiliyor.'} />

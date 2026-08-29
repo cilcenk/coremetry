@@ -509,6 +509,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 				emit("step-result", map[string]any{
 					"i": stepN, "tool": tc.Name, "ok": false,
 					"preview": msg, "truncated": false, "bytes": len(msg),
+					"durationMs": 0, // v0.10.161 — yürütülmedi; Σ süre hesaplanabilir kalsın
 				})
 				results = append(results, copilot.ToolResult{
 					CallID: tc.ID, Name: tc.Name, IsError: true,
@@ -525,6 +526,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 				emit("step-result", map[string]any{
 					"i": stepN, "tool": tc.Name, "ok": false,
 					"preview": preview, "truncated": false, "bytes": len(repeatedCallJSON),
+					"durationMs": 0, // v0.10.161 — tekrar koruması, yürütülmedi
 				})
 				results = append(results, copilot.ToolResult{
 					CallID: tc.ID, Name: tc.Name, IsError: true,
@@ -532,7 +534,14 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 				})
 				continue
 			}
+			// v0.10.161 — araç çağrısı SÜRESİ tele biner (step-result.durationMs):
+			// şeffaflık paneli «N araç · M hata · Σ s» ve satır başına çubuk
+			// bundan; alan yoksa frontend «—» çizer (guided ön-yüklemeleri
+			// ölçülmez). Ölçüm yalnız gerçekten çalışan araç için — bilinmeyen
+			// araç / tekrar koruması yürütülmez, süre yazılmaz.
+			toolT0 := time.Now()
 			out, herr := runChatTool(ctx, h, tc.Input)
+			toolDur := time.Since(toolT0)
 			// CoSRE Faz-2 — intercept render_chart: parse the handler's
 			// validated output (never tc.Input — the model's raw args may
 			// name a service that doesn't exist) into a ```chart``` fence.
@@ -569,6 +578,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			stepEv := map[string]any{
 				"i": stepN, "tool": tc.Name, "ok": !tr.IsError,
 				"preview": preview, "truncated": truncated, "bytes": len(tr.Content),
+				"durationMs": toolDur.Milliseconds(),
 			}
 			// v0.9.1228 — çipe ürün köprüsü: başarılı çağrının hedef
 			// görünümü (K4-denetimli harita, chat_tool_links.go). Eski FE

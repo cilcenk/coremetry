@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import { chatErrorText } from './chatErrorText';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
@@ -9,6 +9,8 @@ import { traceHref } from '@/lib/traceHref';
 import { CosreChart, type CosreChartSpec } from '@/components/CosreChart';
 import { parseChatBlocks, type ChatBlock } from './chatMarkdown';
 import { parseStepPreview, fmtPreviewBytes } from './stepPreview';
+import { DisclosureButton } from '@/components/ui/DisclosureButton';
+import { summarizeSteps, parseToolError, previewFirstLine, visibleRows, isDeadlineError, fmtMs, VISIBLE_ROWS } from './toolSteps';
 
 // ChatBubble — bir sohbet turunun ÇİZİMİ. v0.9.479'da CopilotChat.tsx'ten
 // buraya taşındı: AI çekmecesi içindeki sohbet (AIDrawer) aynı balonu
@@ -228,12 +230,16 @@ export function rateTurn(
 // detay taşımaz (chatPersist yalnız {role,text} saklar) ve eski bir sunucuya
 // karşı akan FE de taşımaz; ikisinde de çip eskisi gibi düz bir etiket kalır.
 // Boş açılan bir "veriyi göster" ölü affordance olurdu (v0.9.592 dersi).
-function ToolChips({ steps, details, hasText }: {
+function ToolChips({ steps, details, hasText, evId, setEvId }: {
   steps: string[];
   details?: ChatStepDetail[];
   hasText: boolean;
+  /** v0.10.161 — açık kanıtın adım kimliği (d.i), şeffaflık paneliyle PAYLAŞILIR: aynı kanıt iki kez açılmaz. */
+  evId: number | null;
+  setEvId: (i: number | null) => void;
 }) {
-  const [openIdx, setOpenIdx] = useState<number | null>(null);
+  const openIdx = evId == null ? null : (details ?? []).findIndex(d => d.i === evId);
+  const setOpenIdx = (i: number | null) => setEvId(i == null ? null : (details?.[i]?.i ?? null));
   // Çip sırası ile detay sırası aynı: ikisi de `step` olayında birlikte
   // büyüyor. Yine de indeksle DEĞİL, dizideki konumla eşliyoruz ve detayın
   // varlığını ayrıca kontrol ediyoruz — kısa detay dizisi (rolling deploy)
@@ -329,10 +335,124 @@ function ToolEvidence({ d }: { d: ChatStepDetail }) {
   );
 }
 
+// ToolStepsPanel — v0.10.161 (tasarım etüdü seçenek A «Adım listesi»).
+// Çip şeridi KAPALI hâl olarak aynen kalır (regresyon yok); altına özet
+// satırı («⚙ N araç · M hata · Σ s») ve açılınca balon içi tablo gelir:
+// Araç · Argümanlar · Süre · Sonuç ilk satırı · Durum. Kanıt bakışı, veri
+// sayfası DEĞİL — useDataTable yok (ToolEvidence gerekçesi aynen).
+//   - Süre çubuğu NÖTR (--accent), yalnız hatalı satır kırmızı — araç
+//     gecikmesi için üründe eşik/rampa yok (yargıç must-fix).
+//   - Toplam süre bir adımın durationMs'i yoksa «—» (ölçüm gibi çizilmez).
+//   - «ön-yükleme» rozeti tek, özet satırında; step.origin'den.
+//   - 10+ çağrı: ilk 5 satır + «▸ N daha».
+//   - Bütçe aşımı (chatDeadlineMessageTR) → özet satırında rozet (metnin
+//     kendisi zaten hata balonunda; tavan MODEL turunda düşer, "N. çağrıdan
+//     sonra" iddiası yapılmaz).
+// Arşivden geri yüklenen turlarda detay yok → panel çizilmez (chatPersist
+// yalnız {role,text} saklar; çipler eskisi gibi düz etiket).
+export function ToolStepsPanel({ details: allDetails, error, turnDone, evId, setEvId, initialOpen = false }: {
+  details: ChatStepDetail[]; error?: string; turnDone: boolean;
+  evId: number | null; setEvId: (i: number | null) => void;
+  /** test dikişi — tablo gövdesini kapalı DisclosureButton'a tıklamadan çizdirir */
+  initialOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(initialOpen);
+  const [all, setAll] = useState(false);
+  // Yalnız ARAÇ satırları (inceleme blocker): `tool`suz etiket adımları
+  // (ekran bağlamı, pencere çapası, taşma yeniden denemesi) araç değil —
+  // sayılsalar «N araç» künyeyle çelişir ve Σ süre hep «—» kalırdı.
+  const details = allDetails.filter(d => !!d.tool);
+  const sum = summarizeSteps(details, turnDone);
+  const budget = isDeadlineError(error);
+  const rows = visibleRows(details, all);
+  const maxMs = details.reduce((m, d) => Math.max(m, d.durationMs ?? 0), 0);
+  const ev = evId == null ? undefined : details.find(d => d.i === evId);
+  if (details.length === 0) return null;
+  return (
+    <div className="cm-steps">
+      <div className="cm-steps-sum">
+        <DisclosureButton anatomy="row" expanded={open} onClick={() => setOpen(v => !v)}
+          title={sum.totalMs === null ? 'Toplam süre: en az bir adımın süresi ölçülmedi' : 'Araç sürelerinin toplamı (model süresi hariç)'}>
+          ⚙ {sum.count} araç
+          {sum.errors > 0 && <> · <span style={{ color: 'var(--err)' }}>{sum.errors} hata</span></>}
+          {sum.pending > 0 && <> · {sum.pending} sürüyor</>}
+          {sum.noEvidence > 0 && <> · {sum.noEvidence} kanıtsız</>}
+          {' · '}{sum.totalMs === null ? '—' : fmtMs(sum.totalMs)}
+        </DisclosureButton>
+        {sum.guided && <span className="badge b-info" title="Rehberli kip: model araç çağırmadı, kanıt sunucuda önceden toplandı">ön-yükleme</span>}
+        {budget && <span className="badge b-warn" title={error}>⏱ bütçe aşıldı</span>}
+      </div>
+      {open && (
+        <div className="cm-steps-tw">
+          <table className="cm-steps-t">
+            <thead><tr><th>#</th><th>Araç</th><th>Argümanlar</th><th className="num">Süre</th><th>Sonuç</th><th>Durum</th></tr></thead>
+            <tbody>
+              {rows.map(d => {
+                const err = d.ok === false ? parseToolError(d.preview) : null;
+                const isOpen = evId === d.i;
+                const settled = d.preview !== undefined;
+                const noEv = !settled && turnDone; // kanıt hiç yayınlanmadı (boş metin)
+                const first = err ? `${err.cls}${err.hint ? ` — ${err.hint}` : ''}` : previewFirstLine(d.preview, 90);
+                return (
+                  <Fragment key={d.i}>
+                    <tr className={[d.ok === false ? 'is-err' : '', isOpen ? 'is-open' : ''].filter(Boolean).join(' ')}>
+                      <td className="num">{d.i}</td>
+                      <td className="cm-steps-tool">
+                        {/* Gerçek düğme (aria-expanded) — çiplerle aynı çıta; DisclosureButton ATOMU
+                            (taban sınıfları ui/ dışında elle yazılmaz — primitiveClasses gate'i). */}
+                        <DisclosureButton anatomy="row" expanded={isOpen} disabled={!settled}
+                          onClick={() => setEvId(isOpen ? null : d.i)}
+                          title={settled ? 'Kanıtı göster' : noEv ? 'Bu adım için kanıt yayınlanmadı' : 'Sonuç bekleniyor'}>
+                          {d.tool}
+                        </DisclosureButton>
+                      </td>
+                      <td className="cm-steps-args" title={d.args}>{d.args && d.args !== '{}' ? d.args : '—'}</td>
+                      <td className="num">
+                        {typeof d.durationMs === 'number' ? fmtMs(d.durationMs) : (settled || noEv ? '—' : '…')}
+                        {typeof d.durationMs === 'number' && maxMs > 0 && (
+                          <span className="cm-steps-bar" aria-hidden="true"><i style={{ width: `${Math.max(2, (100 * d.durationMs) / maxMs)}%` }} /></span>
+                        )}
+                      </td>
+                      <td className="cm-steps-res" title={err?.detail ?? d.preview}>
+                        {settled ? first : noEv ? 'kanıt yok (boş sonuç)' : 'sürüyor…'}
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {!settled ? <span className="badge b-gray">{noEv ? 'kanıt yok' : '…'}</span>
+                          : d.ok === false ? <span className="badge b-err" title={err?.retryable ? 'tekrar denenebilir' : undefined}>⚠ hata{err?.retryable ? ' · tekrar' : ''}</span>
+                          : <span className="badge b-ok">ok</span>}
+                        {d.truncated && <span className="badge b-warn" style={{ marginLeft: 4 }} title={`önizleme 4 KB'a kırpıldı; gerçek boy ${fmtPreviewBytes(d.bytes ?? 0)}`}>kırpık</span>}
+                      </td>
+                    </tr>
+                    {isOpen && ev && (
+                      <tr className="cm-steps-ev"><td colSpan={6}><ToolEvidence d={ev} /></td></tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+          {details.length > VISIBLE_ROWS && (
+            <div className="cm-steps-more">
+              <DisclosureButton anatomy="row" expanded={all} onClick={() => setAll(v => !v)}>
+                {all ? 'daha az' : `${details.length - VISIBLE_ROWS} daha`}
+              </DisclosureButton>
+            </div>
+          )}
+          <div className="field-hint" style={{ marginTop: 4 }}>
+            Sıra: step/step-result olayları · süre: sunucu ölçümü (araç başına; model süresi dâhil değil) · önizleme 4 KB tel tavanı, «bytes» gerçek boy · sayfa yenilenince panel gider (arşiv yalnız metin saklar).
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | -1) => void }) {
   const isUser = turn.role === 'user';
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
+  // v0.10.161 — açık kanıt kimliği (d.i): çip şeridi ve şeffaflık paneli paylaşır.
+  const [evId, setEvId] = useState<number | null>(null);
   // v0.9.419 — mdLite'ın enjekte ettiği data-nav linkleri (trace id'ler)
   // SPA içi gider: tam sayfa yenilenmesi efemer chat'i sıfırlardı.
   const onBodyClick = (e: React.MouseEvent) => {
@@ -369,7 +489,11 @@ export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | 
         {/* Tool-call progress chips (assistant only). v0.9.1181 (Faz 4.3):
             veri gelmişse çip TIKLANABİLİR ve altında kanıt bloğu açılır. */}
         {!isUser && turn.steps && turn.steps.length > 0 && (
-          <ToolChips steps={turn.steps} details={turn.stepDetails} hasText={!!turn.text} />
+          <ToolChips steps={turn.steps} details={turn.stepDetails} hasText={!!turn.text} evId={evId} setEvId={setEvId} />
+        )}
+        {/* v0.10.161 — şeffaflık paneli yalnız detay (i'li step) varken; açık kanıt çiplerle ortak. */}
+        {!isUser && !!turn.stepDetails?.length && (
+          <ToolStepsPanel details={turn.stepDetails} error={turn.error} turnDone={!turn.pending} evId={evId} setEvId={setEvId} />
         )}
         {turn.error ? (
           /* v0.10.22 — HAM SAĞLAYICI METNİ DEĞİL. Operatör

@@ -3637,3 +3637,26 @@ thead th:hover .th-remove { opacity: 1; }
 .pod-ek > * + * { margin-top: 8px; }
 .pod-ek-body { padding: 10px 14px 12px; }
 .pod-ek-prom { max-width: 720px; }
+
+/* ── Copilot araç-çağrısı paneli — v0.10.161 (etüt seçenek A «Adım listesi»).
+   Çipler kapalı hâl; DisclosureButton özet satırı + balon içi tablo. ── */
+.cm-steps { margin-top: 6px; white-space: normal; }
+.cm-steps-sum { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11px; color: var(--text2); }
+.cm-steps-sum .badge { font-size: 10px; padding: 1px 6px; }
+.cm-steps-tw { margin-top: 6px; overflow-x: auto; max-width: 100%; }
+.cm-steps-t { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+.cm-steps-t th { text-align: left; font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text3); padding: 3px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.cm-steps-t td { padding: 3px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.cm-steps-t tr.is-open td { background: var(--accent-bg); }
+.cm-steps-t tr.is-err td.cm-steps-tool, .cm-steps-t tr.is-err td.cm-steps-res { color: var(--err); }
+.cm-steps-t td.num { text-align: right; white-space: nowrap; }
+.cm-steps-tool { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+.cm-steps-tool button { font: inherit; }
+.cm-steps-args { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text3); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-steps-res { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text2); }
+.cm-steps-bar { display: inline-block; width: 44px; height: 5px; border-radius: 3px; background: var(--bg3); vertical-align: middle; margin-left: 6px; overflow: hidden; }
+.cm-steps-bar i { display: block; height: 100%; background: var(--accent); min-width: 2%; }
+.cm-steps-t tr.is-err .cm-steps-bar i { background: var(--err); }
+.cm-steps-more { margin-top: 4px; }
+.cm-steps-ev td { padding: 0 0 6px; }
+.cm-steps-t tr.is-budget td { color: var(--warn); }

@@ -4980,11 +4980,19 @@ export interface ChatStepDetail {
   // v0.9.1228 — çağrının ürün görünümü (sunucu K4-denetimli haritadan
   // üretir; model metninden asla). Yoksa köprü çizilmez.
   href?: string;
+  /** v0.10.161 — aracın çalışma süresi (sunucu ölçümü); yoksa panel «—» çizer. */
+  durationMs?: number;
+  /** v0.10.161 — çip kökeni: 'guided' = sunucu ön-yüklemesi (model araç çağırmadı). */
+  origin?: string;
+  /** v0.10.161 — etiket adımı (araç değil): `tool` boş, panel bu satırı çizmez. */
+  label?: string;
 }
 
 export type ChatStreamEvent =
-  | { kind: 'step'; i?: number; tool: string; args: string }
-  | { kind: 'step-result'; i: number; tool: string; ok: boolean; preview: string; truncated: boolean; bytes: number; href?: string }
+  // v0.10.161 — `tool`suz etiket adımları da gelir (ekran bağlamı / pencere
+  // çapası / taşma yeniden denemesi: {label}); şeffaflık paneli onları saymaz.
+  | { kind: 'step'; i?: number; tool?: string; label?: string; args?: string; origin?: string }
+  | { kind: 'step-result'; i: number; tool: string; ok: boolean; preview: string; truncated: boolean; bytes: number; href?: string; durationMs?: number }
   | { kind: 'delta'; text: string }
   // suggestions (v0.9.411) — guided cevabın rotasından türetilen
   // konuya-duyarlı takip önerileri; yoksa frontend statik listesine düşer.

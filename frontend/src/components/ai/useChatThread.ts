@@ -174,10 +174,12 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
           // görünmeli (ilerleme geri bildirimi), veri sonra doluyor.
           patchLast(t => ({
             ...t,
-            steps: [...(t.steps ?? []), e.tool],
+            // v0.10.161 — etiket adımı (tool yok) çipte etiketiyle görünür;
+            // detayda tool '' kalır → şeffaflık paneli o satırı çizmez/saymaz.
+            steps: [...(t.steps ?? []), e.tool ?? e.label ?? ''],
             stepDetails: e.i == null
               ? t.stepDetails
-              : [...(t.stepDetails ?? []), { i: e.i, tool: e.tool, args: e.args }],
+              : [...(t.stepDetails ?? []), { i: e.i, tool: e.tool ?? '', label: e.label, args: e.args, origin: e.origin }],
           }));
         } else if (e.kind === 'step-result') {
           // Sonuç, `i` ile kendi çipine yazılır. Eşleşme bulunamazsa
@@ -189,7 +191,7 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
             ...t,
             stepDetails: (t.stepDetails ?? []).map(d =>
               d.i === e.i
-                ? { ...d, ok: e.ok, preview: e.preview, truncated: e.truncated, bytes: e.bytes, href: e.href }
+                ? { ...d, ok: e.ok, preview: e.preview, truncated: e.truncated, bytes: e.bytes, href: e.href, durationMs: e.durationMs }
                 : d),
           }));
         } else if (e.kind === 'delta') {

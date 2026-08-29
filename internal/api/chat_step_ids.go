@@ -70,7 +70,18 @@ func withStepIDs(emit func(string, any)) func(string, any) {
 // `step-result` frontend'de hiçbir çiple eşleşmez, en iyi ihtimalle
 // gürültüdür.
 func emitStepChip(emit func(string, any), tool, args string) int {
+	return emitStepChipOrigin(emit, tool, args, "")
+}
+
+// emitStepChipOrigin — v0.10.161: çip kökeni. "guided" = sunucu ön-yüklemesi
+// (model araç çağırmadı; copilot_guided.go), boş = modelin araç çağrısı.
+// Frontend rozeti ("ön-yükleme") bu alandan okur — `delta` olayından
+// çıkarım YAPMAZ (drawer katmanı da delta yayınlıyor; inceleme must-fix).
+func emitStepChipOrigin(emit func(string, any), tool, args, origin string) int {
 	m := map[string]any{"tool": tool, "args": args}
+	if origin != "" {
+		m["origin"] = origin
+	}
 	emit("step", m)
 	if i, ok := m["i"].(int); ok {
 		return i

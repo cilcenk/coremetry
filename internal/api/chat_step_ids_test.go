@@ -258,3 +258,43 @@ func stepSourceNoComments(t *testing.T, name string) string {
 	}
 	return sb.String()
 }
+
+// v0.10.161 — çip kökeni: guided ön-yüklemeleri "guided" taşır, model araç
+// çağrısı taşımaz. Frontend rozeti bu alandan okur, delta'dan çıkarmaz.
+func TestStepChipOrigin(t *testing.T) {
+	var got []recEv
+	emit := withStepIDs(recEmit(&got))
+	emitGuidedStep(emit, "list_problems", `{"service":"a"}`)
+	emitGuidedContextStep(emit, "bağlam: ekrandaki trace (abc)")
+	emitStepChip(emit, "search_traces", `{}`)
+	if len(got) != 3 {
+		t.Fatalf("3 olay bekleniyordu, %d", len(got))
+	}
+	if o, _ := got[0].payload["origin"].(string); o != "guided" {
+		t.Errorf("guided çip origin=%q, beklenen guided", o)
+	}
+	if o, _ := got[1].payload["origin"].(string); o != "guided" {
+		t.Errorf("bağlam çipi origin=%q, beklenen guided", o)
+	}
+	if _, has := got[2].payload["origin"]; has {
+		t.Errorf("model araç çipi origin taşımamalı: %v", got[2].payload)
+	}
+}
+
+// v0.10.161 — tool döngüsündeki step-result durationMs taşır (kaynak
+// sözleşmesi: alan ölçümün hemen ardından stepEv'e yazılır; saf seam yok,
+// bu yüzden bağlanma kaynak taramasıyla pinlenir — "test edilmiş ama
+// ulaşılamaz" sınıfına düşmesin).
+func TestToolLoopStepResultCarriesDuration(t *testing.T) {
+	src, err := os.ReadFile("copilot_chat.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	if !strings.Contains(s, `"durationMs": toolDur.Milliseconds(),`) {
+		t.Fatal("copilot_chat.go: step-result stepEv durationMs taşımıyor")
+	}
+	if !regexp.MustCompile(`toolT0 := time\.Now\(\)\s*\n\s*out, herr := runChatTool\(`).MatchString(s) {
+		t.Fatal("copilot_chat.go: süre ölçümü runChatTool çağrısını sarmalamıyor")
+	}
+}

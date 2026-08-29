@@ -3,7 +3,7 @@ import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Chip } from '@/components/ui/Chip';
 import { LinkButton } from '@/components/ui/LinkButton';
-import { Spinner } from '@/components/Spinner';
+import { Spinner, LoaderMark } from '@/components/Spinner';
 import { useCopilotEnabled } from '@/components/ai/useCopilotEnabled';
 import { aiSubjectQuestion } from '@/components/ai/drawerChat';
 import type { AIKind } from '@/lib/aiSubject';
@@ -313,7 +313,13 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
           başladıktan sonra ilerlemeyi metnin kendisi gösteriyor; ikisini
           birlikte çizmek "hem bekliyor hem yazıyor" gibi okunur. */}
       {auto && busy && text === null && (
-        <Spinner label={includeCode ? 'CoSRE kodu okuyor…' : 'CoSRE düşünüyor…'} />
+        // v0.10.152 (operatör): küçük köşe spinner'ı yerine gövde ortasında
+        // BÜYÜK, OTel işaretli yükleniyor durumu — "loading page" gibi.
+        <div style={{ display: 'grid', placeItems: 'center', minHeight: 260, padding: '32px 16px' }}>
+          <LoaderMark size="lg"
+            label={includeCode ? 'CoSRE kodu okuyor…' : 'CoSRE düşünüyor…'}
+            hint={includeCode ? 'Kanıt span\'leri, trace ve ilgili kaynak kodu birlikte inceleniyor.' : 'Kanıt span\'leri ve trace bağlamı üzerinden açıklama üretiliyor.'} />
+        </div>
       )}
       {showButton && (
         <Button variant="accent" size="sm" onClick={() => void run(includeCode, true)} disabled={busy}

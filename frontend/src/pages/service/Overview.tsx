@@ -395,7 +395,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // v0.10.170 — bantlar varsayılan KAPALI (?bands=1 açar; operatör "2 de olsun");
   // tablo her zaman, bantlar yalnız açıkken. Deploy ▼ anahtara bağlı değil.
   const bandsOn = readBandsParam(searchParams);
-  const toggleBands = () => setSearchParams(prev => writeBandsParam(prev, !bandsOn), { replace: true });
+  const toggleBands = () => setSearchParams(prev => writeBandsParam(prev, !bandsOn, window.location.search), { replace: true });
   const chartRegions = useMemo(() => {
     const a = bandsOn ? anomalyRegions(windowEvents, silenced, from, to) : [];
     if (!deployRegions && a.length === 0) return undefined;
@@ -964,11 +964,12 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
 
       {/* v0.10.162 — penceredeki anomaliler TABLOSU (etüt: C'nin tablosu A'nın
           bantlarına aşılandı). Şerit DEĞİL (v0.9.1035 operatör kararı: ikinci
-          zaman ekseni yok) — bantlar grafik içinde kalır, tablo yalnız
-          anomali varken çizilir ve çakışan bantları satır satır ayırır. */}
+          zaman ekseni yok) — bantlar grafik içinde kalır (v0.10.170: yalnız
+          ?bands=1 iken; varsayılan kapalı), tablo yalnız anomali varken
+          çizilir ve çakışan bantları satır satır ayırır. */}
       {windowEvents.length > 0 && (
         <div className="anom-win">
-          <PanelTitle sub={<>{windowEvents.length} anomali · bantlar grafiklerde: {bandsOn ? 'açık' : 'kapalı'} · <LinkButton onClick={toggleBands}>{bandsOn ? 'kapat' : 'aç'}</LinkButton> · satır → çekmece</>}>Anomaliler · bu pencere</PanelTitle>
+          <PanelTitle sub={<>{windowEvents.length} anomali · bantlar grafiklerde: {bandsOn ? 'açık' : 'kapalı'} · <LinkButton onClick={toggleBands} aria-pressed={bandsOn} title="Anomali bantlarını grafiklerde göster/gizle (?bands=1)" className="bands-toggle">{bandsOn ? 'kapat' : 'aç'}</LinkButton> · satır → çekmece</>}>Anomaliler · bu pencere</PanelTitle>
           <AnomalyWindowTable events={windowEvents} silences={silencesQ.data} canEdit={canEditAnomaly}
             onOpen={openAnomaly} onMute={muteAnomaly} truncated={!!anomaliesQ.data?.truncated} />
         </div>

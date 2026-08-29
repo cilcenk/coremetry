@@ -3619,3 +3619,21 @@ thead th:hover .th-remove { opacity: 1; }
    kazanan sıralamayla belirlenir. `@media (max-width: 640px)` içindeki
    `#content` (1,0,0) ise özgüllükle zaten yeniliyor. */
 #content.is-full { padding: 0; overflow: hidden; }
+
+/* ── /pod — v0.10.160 A anatomisi (kimlik satırı, KPI şeridi, bağlam ızgarası).
+   Mockup: scratchpad/pod-detail/option-A.html. Statik geometri sınıfta,
+   satır-içi değil (frontend-design-system §8). ── */
+.pod-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 12px; }
+.pod-pivots { display: flex; gap: 8px; flex-wrap: wrap; }
+.pod-pivot { padding: 5px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--fs-xs); color: var(--text); text-decoration: none; background: var(--bg1); white-space: nowrap; }
+.pod-pivot:hover { background: var(--bg2); color: var(--text); }
+.pod-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.pod-kpi-sub { display: block; font-family: -apple-system, 'Segoe UI', sans-serif; font-size: var(--fs-xs); font-weight: 400; color: var(--text3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pod-cap { font-size: var(--fs-xs); color: var(--text3); margin: 6px 0 0; }
+.pod-sec { margin-top: 18px; }
+.pod-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+@media (max-width: 1024px) { .pod-two { grid-template-columns: 1fr; } }
+.pod-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+.pod-ek > * + * { margin-top: 8px; }
+.pod-ek-body { padding: 10px 14px 12px; }
+.pod-ek-prom { max-width: 720px; }

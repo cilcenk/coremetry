@@ -31,9 +31,10 @@ export type StatTileProps = {
  * is exactly how three copies happened.
  *
  * SCOPE, stated plainly: this merges the three DETAIL-PAGE tiles. Six
- * more `Stat`-shaped locals live on other surfaces (Pod, Traces,
+ * more `Stat`-shaped locals live on other surfaces (Traces,
  * DBQueriesPanel, FocusedNeighborhood, dependencies/shared,
- * endpoints/MetricTile) with different frames, sizes and props. They are
+ * endpoints/MetricTile; Pod's copy was replaced by this tile in
+ * v0.10.160) with different frames, sizes and props. They are
  * NOT the same component wearing different names, so folding them in
  * here would mean redesigning those surfaces under cover of a refactor.
  */

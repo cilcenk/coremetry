@@ -4044,7 +4044,8 @@ export interface ServiceInstance {
 export interface AnomalySilence {
   id: string;
   fingerprint: string;
-  kind: 'log_pattern' | 'trace_op';
+  /** v0.10.162 — servis sayfası her türü susturabilir; sunucu string alır. */
+  kind: AnomalyEvent['kind'] | string;
   pattern: string;
   service: string;
   createdBy: string;
@@ -4114,7 +4115,9 @@ export interface AnomalyEvent {
   // v0.9.936 added `behavior_change` — davranış motorunun (haftanın
   // saati baseline'ı, 28 gün) bulduğu KALICI kayma. Diğerlerinden farkı:
   // `sample` alanı serbest metin değil, BehaviorChangeDetails JSON'u.
-  kind: 'log_pattern' | 'trace_op' | 'elastic_ml' | 'log_template_new' | 'behavior_change';
+  // v0.10.162 — `trace_op_latency`: recorder.go:187 (v0.9.1064) bu türü yazıyor,
+  // birleşimde yoktu (tablo rengi/etiketi boş kalırdı).
+  kind: 'log_pattern' | 'trace_op' | 'trace_op_latency' | 'elastic_ml' | 'log_template_new' | 'behavior_change';
   pattern: string;
   service: string;
   startedAt: number;     // unix ns — first observation

@@ -3660,3 +3660,6 @@ thead th:hover .th-remove { opacity: 1; }
 .cm-steps-more { margin-top: 4px; }
 .cm-steps-ev td { padding: 0 0 6px; }
 .cm-steps-t tr.is-budget td { color: var(--warn); }
+
+/* v0.10.162 — Service Overview «Anomaliler · bu pencere» bloğu (ov-mb yalnız .ov-grid ile çalışır). */
+.anom-win { margin-bottom: 16px; }

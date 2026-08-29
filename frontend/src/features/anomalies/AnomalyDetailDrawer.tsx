@@ -53,6 +53,7 @@ function Fact({ k, v, title }: { k: string; v: React.ReactNode; title?: string }
 const KIND_LABEL: Record<AnomalyEvent['kind'], string> = {
   log_pattern: 'LOG PATTERN',
   trace_op: 'TRACE OP',
+  trace_op_latency: 'TRACE OP · LATENCY',
   elastic_ml: 'ELASTIC ML',
   log_template_new: 'NEW LOG SHAPE',
   behavior_change: 'BEHAVIOR',

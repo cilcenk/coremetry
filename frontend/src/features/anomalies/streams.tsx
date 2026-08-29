@@ -13,7 +13,7 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Check, ChevronRight, ChevronDown, ArrowDownToLine } from 'lucide-react';
-import { Badge, Button, Card, MenuItem, Row, useConfirm } from '@/components/ui';
+import { Badge, Button, Card, Row, useConfirm } from '@/components/ui';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { ClusterChips } from '@/components/ClusterChips';
@@ -32,6 +32,7 @@ import {
 import { fmtNum, tsLong } from '@/lib/utils';
 import { logsHref } from '@/lib/logsUrl';
 import { AnomalyDetailDrawer } from './AnomalyDetailDrawer';
+import { SnoozeButton } from './SnoozeButton';
 import { serviceHref, inboxItemWindow, pointEventWindow, eventLifespanWindow } from '@/lib/serviceHref';
 import { traceHref } from '@/lib/traceHref';
 import type {
@@ -176,40 +177,6 @@ function TraceOpsSection({ items, onMute, canEdit }: {
         ))}
       </div>
     </AnomalyShell>
-  );
-}
-
-function SnoozeButton({ onMute }: { onMute: (durationSec: number) => void }) {
-  const [open, setOpen] = useState(false);
-  const opts: { label: string; sec: number }[] = [
-    { label: '1 hour',  sec: 3600 },
-    { label: '8 hours', sec: 8 * 3600 },
-    { label: '24 hours', sec: 24 * 3600 },
-    { label: '7 days', sec: 7 * 24 * 3600 },
-  ];
-  return (
-    <span style={{ position: 'relative', flexShrink: 0 }}>
-      <Button variant="ghost" size="sm"
-        onClick={() => setOpen(o => !o)}
-        title="Mute this anomaly">
-        Mute
-      </Button>
-      {open && (
-        <div style={{
-          position: 'absolute', top: '100%', right: 0,
-          marginTop: 4, padding: 4, borderRadius: 4, zIndex: 'var(--z-dropdown)',
-          background: 'var(--bg1)', border: '1px solid var(--border)',
-          boxShadow: '0 6px 18px rgba(0,0,0,0.25)',
-          display: 'flex', flexDirection: 'column', gap: 2,
-        }} onClick={e => e.stopPropagation()}>
-          {opts.map(o => (
-            <MenuItem key={o.sec} onClick={() => { setOpen(false); onMute(o.sec); }}>
-              {o.label}
-            </MenuItem>
-          ))}
-        </div>
-      )}
-    </span>
   );
 }
 

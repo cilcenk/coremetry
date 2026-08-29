@@ -13,6 +13,19 @@ import type { SpanRow, TimeRange } from '@/lib/types';
 
 const MAX_CHIPS = 16;
 
+// unlinkedReason — SAF: linksiz pod'ların baskın nedeni, tek kısa ifade.
+export function unlinkedReason(reasons: string[]): string {
+  const n = (r: string) => reasons.filter(x => x === r).length;
+  const top = (['unmapped-cluster', 'no-cluster', 'no-namespace'] as const)
+    .map(r => [r, n(r)] as const).sort((a, b) => b[1] - a[1])[0];
+  if (!top || top[1] === 0) return 'link yok';
+  switch (top[0]) {
+    case 'unmapped-cluster': return 'cluster değeri Remote Cluster kaydına eşlenmemiş';
+    case 'no-cluster': return 'span cluster değeri taşımıyor';
+    case 'no-namespace': return 'k8s.namespace.name yok';
+  }
+}
+
 export function TracePodsStrip({ spans, range }: { spans: SpanRow[]; range: TimeRange }) {
   const { enabled, clusters } = useEntityEnabled();
   // Tarama yalnız bayrak açıkken (inceleme: kapı memo'dan önceydi, her render'da
@@ -28,6 +41,10 @@ export function TracePodsStrip({ spans, range }: { spans: SpanRow[]; range: Time
     );
   }
   const multiCluster = new Set(pods.map(p => p.ctx.clusterValue ?? '')).size > 1;
+  // Toplu link-yok notu: sayı + baskın neden (tek kısa cümle).
+  const unlinkedPods = pods.filter(p => !p.ctx.podHref);
+  const unlinked = unlinkedPods.length;
+  const unlinkedWhy = unlinkedReason(unlinkedPods.map(p => p.ctx.reason));
   const nodes = new Set(pods.map(p => p.ctx.node).filter(Boolean)).size;
   return (
     <Row gap={2} wrap>
@@ -40,11 +57,15 @@ export function TracePodsStrip({ spans, range }: { spans: SpanRow[]; range: Time
         const label = podChipLabel(c, multiCluster);
         const note = spanK8sNote(c);
         const title = `${where} · ${p.spans} span · ${p.errors} hata · ${p.services.join(', ')}${note ? ` · ${note}` : ''}`;
+        // v0.10.150 (operator-reported, prod 26 pod): çip başına "· link yok"
+        // KALDIRILDI — kalabalık. Linksiz çip sönük Badge, nedeni tooltip'te;
+        // toplu bir not çiplerin sonunda (aşağıda).
         return c.podHref
           ? <Link key={p.key} to={c.podHref} className="sec" title={title}>{label}{p.errors > 0 ? ` · ${p.errors}✕` : ''}</Link>
-          : <Badge key={p.key} tone="neutral" title={title}>{label} · link yok</Badge>;
+          : <Badge key={p.key} tone="neutral" title={title}>{label}{p.errors > 0 ? ` · ${p.errors}✕` : ''}</Badge>;
       })}
       {pods.length > MAX_CHIPS && <span className="field-hint">+{pods.length - MAX_CHIPS}</span>}
+      {unlinked > 0 && <span className="field-hint" title={unlinkedWhy}>· {unlinked} pod linksiz ({unlinkedWhy})</span>}
       {noContext > 0 && <span className="field-hint">· {noContext} span Kubernetes bağlamsız</span>}
     </Row>
   );

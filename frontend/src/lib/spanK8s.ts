@@ -126,3 +126,21 @@ export function tracePods(spans: TraceSpanLike[], clusters: EntityClusterInfo[],
   pods.sort((a, b) => b.spans - a.spans || a.key.localeCompare(b.key));
   return { pods, noContext };
 }
+
+// k8sAttrHref — v0.10.150 (operator-reported: "trace attribute'larından
+// odaklara tıklanabilsin"). Span detayındaki resource attribute satırının
+// DEĞERİ, çözülmüş bağlamdaki entity linkine gider; çözülemeyen (link yok)
+// durumda undefined → satır düz metin kalır (neden Kubernetes bölümünde).
+// Saf; SpanDetail.Row'daki spanAttrHref (servis/endpoint) çözücüsünün ikizi.
+export function k8sAttrHref(key: string, ctx: SpanK8sContext | null | undefined): string | undefined {
+  if (!ctx) return undefined;
+  switch (key) {
+    case 'k8s.pod.name': return ctx.podHref;
+    case 'k8s.namespace.name': return ctx.namespaceHref;
+    case 'k8s.node.name': return ctx.nodeHref;
+    case 'k8s.cluster.name':
+    case 'openshift.cluster.name':
+    case 'cluster': return ctx.clusterHref;
+    default: return undefined;
+  }
+}

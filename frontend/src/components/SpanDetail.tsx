@@ -15,6 +15,7 @@ import { AIExplainButton } from './ai/AIExplainButton';
 import { BreakdownBar, KindBadge } from './KindBadge';
 import { useEntityEnabled } from '@/lib/queries';
 import { SpanK8sSection } from './SpanK8sSection';
+import { spanK8sContext, k8sAttrHref, type SpanK8sContext } from '@/lib/spanK8s';
 
 const PANEL_MIN = 300;
 const PANEL_MAX = 1100;
@@ -110,6 +111,11 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   // v0.10.137 (DETAY SAYFALARI adım 3) — Kubernetes bölümü: bayrak açık VE
   // uygulama-içi linkler açıkken (public trace'te kapalı). Hook koşulsuz.
   const { enabled: k8sOn, clusters: entityClusters } = useEntityEnabled(serviceLinks);
+  // v0.10.150 — Row'lar için tek çözüm (SpanK8sCtx); gösterim kararı
+  // Kubernetes bölümüyle aynı: serviceLinks && bayrak.
+  const k8sCtx = useMemo(
+    () => (serviceLinks && k8sOn) ? spanK8sContext(span, entityClusters, pageRange) : null,
+    [serviceLinks, k8sOn, span, entityClusters, pageRange]);
   const spanLinkCtx = useMemo(() => ({
     on: serviceLinks,
     window: logsFromBound && logsToBound
@@ -232,6 +238,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   useEscLayer(true, onClose);
 
   return (
+    <SpanK8sCtx.Provider value={k8sCtx}>
     <ServiceLinkCtx.Provider value={spanLinkCtx}>
     <div id="span-panel" style={{ width: panelW }}>
       <div className="span-panel-resizer"
@@ -485,6 +492,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
       </div>
     </div>
     </ServiceLinkCtx.Provider>
+    </SpanK8sCtx.Provider>
   );
 }
 
@@ -590,6 +598,12 @@ const ServiceLinkCtx = createContext<SpanLinkCtx & {
   window?: { fromNs: number; toNs: number };
 }>({ on: true });
 
+// SpanK8sCtx — v0.10.150: span başına TEK çözülmüş Kubernetes bağlamı;
+// Resource satırları (k8s.pod.name / namespace / node / cluster) değeri
+// entity odağına link yapar (operator-reported: "attribute'lardan
+// tıklanabilsin"). null = bayrak kapalı / uygulama-içi link yok.
+const SpanK8sCtx = createContext<SpanK8sContext | null>(null);
+
 function Row({ k, v, mono, pre, copyable }: {
   k: string; v: string; mono?: boolean; pre?: boolean; copyable?: boolean;
 }) {
@@ -597,14 +611,18 @@ function Row({ k, v, mono, pre, copyable }: {
   if (mono) style.wordBreak = 'break-all';
   if (pre) style.whiteSpace = 'pre-wrap';
   const links = useContext(ServiceLinkCtx);
+  const k8s = useContext(SpanK8sCtx);
   // v0.10.34 — servis + endpoint tek çözücüde (spanEntityLinks.ts).
-  const href = spanAttrHref(k, v, links);
+  // v0.10.150 — k8s attribute'ları entity odağına (k8sAttrHref).
+  const svcHref = spanAttrHref(k, v, links);
+  const k8sHref = svcHref ? undefined : k8sAttrHref(k, k8s);
+  const href = svcHref ?? k8sHref;
   return (
     <tr>
       <td>{k}</td>
       <td style={style}>
         {href
-          ? <Link to={href} title={`Open ${v} service page`}
+          ? <Link to={href} title={k8sHref ? `${k} → entity detayı (span anı)` : `Open ${v} service page`}
               >{v}</Link>
           : v}
         {copyable && v && <CopyButton value={v} title={`Copy ${k.toLowerCase()}`} />}

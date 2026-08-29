@@ -29,7 +29,8 @@ import { logsHref } from '@/lib/logsUrl';
 import { encodeFiltersParam } from '@/lib/logFilters';
 import { tracesPivotHref } from '@/lib/pivotHref';
 import { PageShell } from '@/components/ui/PageShell';
-import { useEntityEnabled, useEntity, useEntityServices, useEntityContainers } from '@/lib/queries';
+import { useEntityEnabled, useEntity, useEntityServices, useEntityContainers, useAnomalyEvents, useAnomalySilences } from '@/lib/queries';
+import { windowAnomalies, anomalyRegions, silencedSet } from '@/lib/anomalyRegions';
 import { entityHref, entityLiveness } from '@/lib/entityHref';
 import { PodIdentityLine, type PodPivot } from '@/pages/pod/PodIdentityLine';
 import { PodKpiStrip, type RedState } from '@/pages/pod/PodKpiStrip';
@@ -210,6 +211,18 @@ function PodDetail() {
   const latStatus: 'loading' | 'error' | 'ready' = latQ.isLoading ? 'loading' : latQ.isError ? 'error' : 'ready';
   const redState: RedState = !redEnabled ? 'off' : (redStatus === 'loading' || latStatus === 'loading') ? 'loading' : (redStatus === 'error' || latStatus === 'error') ? 'error' : 'ready';
 
+  // v0.10.162 — servis anomalileri bant olarak RED panellerinde (servis
+  // kapsamlı pod'da; anomali olayında pod boyutu yok → servis düzeyi,
+  // paneldeki altyazı söyler). Sorgu global anahtar (60 s), sayfa başına
+  // ek yük yok.
+  const anomaliesQ = useAnomalyEvents(!!service);
+  const silencesQ = useAnomalySilences(!!service);
+  const podAnomalyRegions = useMemo(() => {
+    if (!service) return undefined;
+    const evs = windowAnomalies(anomaliesQ.data?.items, service, from, to);
+    return evs.length ? anomalyRegions(evs, silencedSet(silencesQ.data), from, to) : undefined;
+  }, [service, anomaliesQ.data, silencesQ.data, from, to]);
+
   // v0.10.160 — KPI şeridi + «Yavaş» eşiği grafik serilerinden (podPage.ts, ek sorgu yok).
   const totals = useMemo(() => (redEnabled
     ? windowTotals(s?.rate?.[0]?.points ?? [], s?.error_rate?.[0]?.points ?? [], lat?.avg?.[0]?.points ?? [], stepSec)
@@ -323,7 +336,7 @@ function PodDetail() {
 
         {/* RED — servisin kümülatif metrikleri, bu pod'a scope'lu */}
         <div className="pod-sec">
-          <PanelTitle sub={redEnabled ? `${scopeLabel} · paylaşılan crosshair` : undefined}
+          <PanelTitle sub={redEnabled ? `${scopeLabel} · paylaşılan crosshair${podAnomalyRegions ? ' · anomali bantları servis düzeyi' : ''}` : undefined}
             right={service ? <Link to={serviceHref(service, { range })} className="sec">→ {service} · Overview</Link> : undefined}>
             Servis metrikleri · bu pod
           </PanelTitle>
@@ -335,6 +348,7 @@ function PodDetail() {
                   storageKey="pod-response-time" height={200}
                   unit="ms" viz="line" xRange={xRange}
                   syncKey={podChartSync}
+                  regions={podAnomalyRegions}
                   loading={latStatus === 'loading'}
                   error={latStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
                   defaultHidden={[...defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])]}
@@ -352,6 +366,7 @@ function PodDetail() {
                   storageKey="pod-throughput" height={200}
                   unit="reqps" viz="stacked" xRange={xRange}
                   syncKey={podChartSync}
+                  regions={podAnomalyRegions}
                   loading={redStatus === 'loading'}
                   error={redStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
                   items={throughputBands}
@@ -363,6 +378,7 @@ function PodDetail() {
                   storageKey="pod-failure-rate" height={200}
                   unit="percent" viz="area" xRange={xRange}
                   syncKey={podChartSync}
+                  regions={podAnomalyRegions}
                   loading={redStatus === 'loading'}
                   error={redStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
                   items={[{ name: 'errors', role: 'error', series: s?.error_rate ?? [] }]}

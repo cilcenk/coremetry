@@ -123,7 +123,7 @@ func (s *Server) createAnomalySilence(w http.ResponseWriter, r *http.Request) {
 	id := newRandID(8)
 	sil := chstore.AnomalySilence{
 		ID:          id,
-		Fingerprint: body.Fingerprint,
+		Fingerprint: silenceFingerprint(body.Fingerprint, body.Kind, body.Pattern, body.Service),
 		Kind:        body.Kind,
 		Pattern:     body.Pattern,
 		Service:     body.Service,
@@ -438,4 +438,20 @@ func newRandID(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// silenceFingerprint — v0.10.162 (inceleme, ön-var kusur): UI susturmayı
+// `kind|pattern|service` düz metniyle gönderiyordu, sunucu olduğu gibi
+// saklıyordu; ama HER tüketici (getTraceOpAnomalies / getLogPatternAnomalies
+// / evaluator promotion gate) sha1 parmak izini (chstore.FingerprintAnomaly)
+// karşılaştırır — düz ≠ sha1, yani susturma listeyi gizliyor ama akışı ve
+// Problem terfisini HİÇ susturmuyordu. Desen+servis varsa kanonik sha1
+// yazılır; desensiz eski çağıranlar (Cmd-K vb.) gönderdiklerini korur.
+// Frontend eşleyicisi (lib/anomalyRegions.ts isSilenced) iki yazımı da kabul
+// eder — eski düz satırlar için köprü.
+func silenceFingerprint(raw, kind, pattern, service string) string {
+	if pattern != "" && service != "" {
+		return chstore.FingerprintAnomaly(kind, pattern, service)
+	}
+	return raw
 }

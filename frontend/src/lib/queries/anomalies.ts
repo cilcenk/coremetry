@@ -54,11 +54,14 @@ export function useMetricAnomalies() {
   });
 }
 
-export function useAnomalyEvents() {
+// v0.10.162 — `enabled`: bant çizmeyen sayfa (servissiz pod) 60 s'lik
+// zenginleştirilmiş /events sorgusunu HİÇ atmasın (fetch-on-need disiplini).
+export function useAnomalyEvents(enabled = true) {
   // v0.9.465 — zarf; null gövde boş-dürüst zarfa normalize edilir.
   return useQuery<{ items: AnomalyEvent[]; activeTotal: number; clearedTotal: number; truncated: boolean }>({
     queryKey: keys.anomalies.events,
     queryFn: async () => (await api.anomalyEvents()) ?? { items: [], activeTotal: 0, clearedTotal: 0, truncated: false },
+    enabled,
     refetchInterval: 60_000,
     // staleTime matches refetchInterval so a re-mount inside the
     // poll window doesn't fire a duplicate refetch on top of the
@@ -69,10 +72,11 @@ export function useAnomalyEvents() {
   });
 }
 
-export function useAnomalySilences() {
+export function useAnomalySilences(enabled = true) {
   return useQuery<AnomalySilence[]>({
     queryKey: keys.anomalies.silences,
     queryFn: async () => (await api.anomalySilences()) ?? [],
+    enabled,
     refetchInterval: 60_000,
     // staleTime matches refetchInterval so a re-mount inside the
     // poll window doesn't fire a duplicate refetch on top of the

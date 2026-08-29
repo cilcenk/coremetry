@@ -1,13 +1,19 @@
 import { useId, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { Service, TimeRange, SpanMetricSeries, OperationSummary } from '@/lib/types';
+import type { Service, TimeRange, SpanMetricSeries, OperationSummary, AnomalyEvent } from '@/lib/types';
 import { timeRangeToNs, rangeToSince } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { entryLatencyDSL, envDSL } from '@/lib/entrySpans';
 import { panelMaxDataPoints, stepForWidth } from '@/lib/chartStep';
 import { encodeFilters } from '@/lib/urlState';
-import { useServiceDeploys } from '@/lib/queries';
+import { useServiceDeploys, useAnomalyEvents, useAnomalySilences, useCreateAnomalySilence } from '@/lib/queries';
+import { windowAnomalies, anomalyRegions, silencedSet, silenceKey } from '@/lib/anomalyRegions';
+import { AnomalyWindowTable } from '@/features/anomalies/AnomalyWindowTable';
+// v0.10.162 — çekmece TEMBEL: CopilotExplain/RootCauseRibbon/LogsHistogram'ı en sıcak sayfanın chunk'ına sokmasın (yalnız satır tıkında yüklenir).
+const AnomalyDetailDrawerLazy = lazy(() => import('@/features/anomalies/AnomalyDetailDrawer').then(m => ({ default: m.AnomalyDetailDrawer })));
+import { useAuth } from '@/components/AuthProvider';
+import { PanelTitle } from '@/components/ui/PanelTitle';
 // ChartLine — throughput memo'sunun taşıyıcı şekli. TİP-ONLY import:
 // ChartCard BİLEŞENİ v0.9.844'te bu sayfadan çıktı (eski motor söküldü),
 // dosyası ise yaşıyor (Runtime paneli tüketiyor).
@@ -331,7 +337,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // kayıtlı link: ?rtops=1 taşıyan bir URL artık YOK SAYILIR (parametre
   // okunmuyor), sayfa metrik panelini açar — kırık ekran değil, farklı
   // panel.
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   // v0.9.742 (operatör tercihi) — metrik paneline tık Metrics sayfasına
   // götürür (tam ekran yerine); mevcut ?range korunur.
   const navigate = useNavigate();
@@ -369,6 +375,47 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
       color: 'var(--purple)', label: `▼ ${deploy.label}`,
     }];
   }, [deploy, from, to]);
+
+  // v0.10.162 — ANOMALİ bantları aynı `regions` kanalından (etüt seçenek A,
+  // dilim 1: sıfır backend). /api/anomalies/events (son 24 saat, en yeni
+  // 200; servis süzgeci istemcide) + susturmalar; bant [startedAt, lastSeen],
+  // tür rengi (lib/anomalyRegions.ts), sessiz → soluk. Deploy bandı önce,
+  // anomali bantları sonra (çakışan bantlar bileşik boyanır; lane/hit-test
+  // dilim 2). Altındaki tablo (AnomalyWindowTable) çakışmayı satır satır
+  // ayırt eder; satır → mevcut AnomalyDetailDrawer (?anomaly=, replace:true).
+  const anomaliesQ = useAnomalyEvents();
+  const silencesQ = useAnomalySilences();
+  const createSilence = useCreateAnomalySilence();
+  const { user } = useAuth();
+  const canEditAnomaly = user?.role === 'admin' || user?.role === 'editor';
+  const windowEvents = useMemo(() => windowAnomalies(anomaliesQ.data?.items, service, from, to), [anomaliesQ.data, service, from, to]);
+  const silenced = useMemo(() => silencedSet(silencesQ.data), [silencesQ.data]);
+  const chartRegions = useMemo(() => {
+    const a = anomalyRegions(windowEvents, silenced, from, to);
+    if (!deployRegions && a.length === 0) return undefined;
+    return [...(deployRegions ?? []), ...a];
+  }, [deployRegions, windowEvents, silenced, from, to]);
+  const anomalyParam = searchParams.get('anomaly') ?? '';
+  const inList = useMemo(() => (anomalyParam ? (anomaliesQ.data?.items ?? []).find(e => e.id === anomalyParam) ?? null : null), [anomalyParam, anomaliesQ.data]);
+  // v0.9.465 deseni (streams.tsx rescueQ): ?anomaly= hedefi 24 s/200'lük zarfın
+  // dışına düştüyse (paylaşılan link, 60 s sonra kayan liste) tek-olay ucundan çek.
+  const rescueQ = useQuery({
+    queryKey: ['anomaly-event-rescue', anomalyParam],
+    queryFn: () => api.anomalyEvent(anomalyParam),
+    enabled: !!anomalyParam && anomaliesQ.data !== undefined && !inList,
+    staleTime: 60_000,
+  });
+  const drawerEvent = inList ?? (rescueQ.data ?? null);
+  const openAnomaly = (id: string | null) => setSearchParams(prev => {
+    const p = new URLSearchParams(prev);
+    if (id) p.set('anomaly', id); else p.delete('anomaly');
+    return p;
+  }, { replace: true });
+  const muteAnomaly = (e: AnomalyEvent, durationSec: number) => {
+    // /anomalies sayfasının anahtarı (streams.tsx onMute); sunucu kanonik sha1'e
+    // çevirir (v0.10.162 anomaly_extra.go silenceFingerprint) — akış + terfi kapısı okur.
+    void createSilence.mutateAsync({ fingerprint: silenceKey(e), kind: e.kind, pattern: e.pattern, service: e.service, durationSec, reason: 'operator: değil (servis sayfası)' });
+  };
 
   // Throughput series (OK vs Errors) derived from the MV-backed rate +
   // error_rate series — no extra query, no raw-spans scan (invariant #3).
@@ -795,7 +842,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 // yalnız üstteki karo okuyor.
                 queryText={`avg(${metricName || '?'}) by (http.route), service.name="${service}", step=${rtStep}s`
                   + (rtAvgQ.isError ? `\n\nHATA: ${String(rtAvgQ.error)}` : '')}
-                regions={deployRegions}
+                regions={chartRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
               />
             </Suspense>
@@ -841,7 +888,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                     : `metrik (${metricTputQ.data?.matchedBy ?? 'job'})`,
                   role: 'data' as const,
                 }))}
-                regions={deployRegions}
+                regions={chartRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset}
                 syncKey={chartSync}
                 queryText={`metric=${metricTputQ.data?.metric ?? '?'} · instrument=${metricTputQ.data?.instrument ?? '?'} · eşleşme=${metricTputQ.data?.matchedBy ?? '?'} · mdp=${redMdp}`}
@@ -899,7 +946,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                   { name: 'OK', role: 'success', series: throughput[0]?.series ?? [] },
                   { name: 'Errors', role: 'error', series: throughput[1]?.series ?? [] },
                 ]}
-                regions={deployRegions}
+                regions={chartRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
               />
             </Suspense>
@@ -908,6 +955,19 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         {/* v0.9.491 — v0.9.476 Apdex grafiği kaldırıldı (operatör kararı);
             RED üçlüsü ov-charts-3'ü tam dolduruyor. */}
       </div>
+
+      {/* v0.10.162 — penceredeki anomaliler TABLOSU (etüt: C'nin tablosu A'nın
+          bantlarına aşılandı). Şerit DEĞİL (v0.9.1035 operatör kararı: ikinci
+          zaman ekseni yok) — bantlar grafik içinde kalır, tablo yalnız
+          anomali varken çizilir ve çakışan bantları satır satır ayırır. */}
+      {windowEvents.length > 0 && (
+        <div className="anom-win">
+          <PanelTitle sub={`${windowEvents.length} anomali · bantlar grafiklerde · satır → çekmece`}>Anomaliler · bu pencere</PanelTitle>
+          <AnomalyWindowTable events={windowEvents} silences={silencesQ.data} canEdit={canEditAnomaly}
+            onOpen={openAnomaly} onMute={muteAnomaly} truncated={!!anomaliesQ.data?.truncated} />
+        </div>
+      )}
+      {drawerEvent && <Suspense fallback={null}><AnomalyDetailDrawerLazy event={drawerEvent} onClose={() => openAnomaly(null)} /></Suspense>}
 
       {/* v0.9.1035 (operatör kararı 2026-08-15: "şerit pilot kalksın") —
           v0.9.397'de buraya yayılan annotation şeridi Overview'dan

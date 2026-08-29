@@ -159,36 +159,83 @@ export function regionsToScale(regions: ChartTimeRegion[], xUnit: number): Chart
   return xUnit === 1 ? regions : regions.map(r => ({ ...r, fromSec: r.fromSec * xUnit, toSec: r.toSec * xUnit }));
 }
 
+// assignLanes — v0.10.166 (etüt «anomali işaretleri» dilim 2, şerit parçası):
+// zamanda ÇAKIŞAN bölgelerin şerit+etiketleri aynı piksele yazılmasın diye
+// her bölgeye bir şerit numarası (0..n). Açgözlü aralık bölme: başlangıca
+// göre sıralı, bir bölge bitişi kendisinden önce olan ilk boş şeride girer.
+// 164 canlı görüntüsü: günlerdir aktif 3 anomali tam pencere → üç 7 % dolgu
+// üst üste (%20 turuncu zemin) + üç etiket aynı yerde. Şimdi: dolgu
+// BİRLEŞİK aralıklarla tek kat (mergeIntervals), şerit + etiket şerit
+// numarası kadar aşağıda kendi satırında. SAF, testli.
+export function assignLanes(regions: { fromSec: number; toSec: number }[]): number[] {
+  const order = regions.map((r, i) => i).sort((a, b) => regions[a].fromSec - regions[b].fromSec || regions[a].toSec - regions[b].toSec);
+  const laneEnd: number[] = [];
+  const lanes = new Array<number>(regions.length).fill(0);
+  for (const i of order) {
+    const r = regions[i];
+    let lane = laneEnd.findIndex(end => end <= r.fromSec);
+    if (lane < 0) { lane = laneEnd.length; laneEnd.push(r.toSec); } else laneEnd[lane] = r.toSec;
+    lanes[i] = lane;
+  }
+  return lanes;
+}
+
+/** Çakışan/bitişik aralıkların birleşimi (dolgu tek kat çizilsin diye); ilk bölgenin rengi. */
+export function mergeIntervals(regions: { fromSec: number; toSec: number; color?: string }[]): { fromSec: number; toSec: number; color?: string }[] {
+  const s = regions.slice().sort((a, b) => a.fromSec - b.fromSec);
+  const out: { fromSec: number; toSec: number; color?: string }[] = [];
+  for (const r of s) {
+    const last = out[out.length - 1];
+    if (last && r.fromSec <= last.toSec) { if (r.toSec > last.toSec) last.toSec = r.toSec; }
+    else out.push({ fromSec: r.fromSec, toSec: r.toSec, color: r.color });
+  }
+  return out;
+}
+
+const LANE_H = 12; // şerit satırı yüksekliği (css px): 3px şerit + 10px mono etiket
+
 export function drawTimeRegions(u: uPlot, regions: ChartTimeRegion[], xUnit = 1): void {
   if (regions.length === 0) return;
   const xMin = u.scales.x.min ?? 0;
   const xMax = u.scales.x.max ?? 0;
   regions = regionsToScale(regions, xUnit);
+  const lanes = assignLanes(regions);
   const dpr = (typeof devicePixelRatio !== 'undefined' ? devicePixelRatio : 1) || 1;
   const ctx = u.ctx;
   ctx.save();
   ctx.font = `${10 * dpr}px ui-monospace, monospace`;
-  for (const rg of regions) {
+  // Arka-plan gölgesi: birleşik aralıklar, TEK kat (çakışma koyulaştırmaz).
+  for (const mg of mergeIntervals(regions)) {
+    const cl = clampRegion(mg.fromSec, mg.toSec, xMin, xMax);
+    if (!cl) continue;
+    const x1 = u.valToPos(cl.from, 'x', true);
+    const x2 = u.valToPos(cl.to, 'x', true);
+    ctx.globalAlpha = REGION_FILL_ALPHA;
+    ctx.fillStyle = resolveVar(mg.color ?? 'var(--err)');
+    ctx.fillRect(x1, u.bbox.top, Math.max(1, x2 - x1), u.bbox.height);
+  }
+  ctx.globalAlpha = 1;
+  for (let ri = 0; ri < regions.length; ri++) {
+    const rg = regions[ri];
     const cl = clampRegion(rg.fromSec, rg.toSec, xMin, xMax);
     if (!cl) continue;
     const colour = resolveVar(rg.color ?? 'var(--err)');
     const x1 = u.valToPos(cl.from, 'x', true);
     const x2 = u.valToPos(cl.to, 'x', true);
     const w = Math.max(1, x2 - x1);
-    // Arka-plan gölgesi.
-    ctx.globalAlpha = REGION_FILL_ALPHA;
-    ctx.fillStyle = colour;
-    ctx.fillRect(x1, u.bbox.top, w, u.bbox.height);
-    // Üst şerit — bölgenin "başlık çubuğu".
+    const laneTop = u.bbox.top + lanes[ri] * LANE_H * dpr;
+    if (laneTop >= u.bbox.top + u.bbox.height) continue; // çizim alanını aşan şerit çizilmez
+    // Şerit — bölgenin "başlık çubuğu", kendi şerit satırında.
     ctx.globalAlpha = REGION_STRIP_ALPHA;
-    ctx.fillRect(x1, u.bbox.top, w, REGION_STRIP_H * dpr);
+    ctx.fillStyle = colour;
+    ctx.fillRect(x1, laneTop, w, REGION_STRIP_H * dpr);
     ctx.globalAlpha = 1;
-    // Küçük etiket — sığmazsa kısalt, hiç sığmazsa çizme (fitLabel).
+    // Küçük etiket — şeridin altında; sığmazsa kısalt, hiç sığmazsa çizme (fitLabel).
     if (rg.label) {
       const text = fitLabel('▮ ' + rg.label, w - 8 * dpr, s => ctx.measureText(s).width);
       if (text) {
         ctx.fillStyle = colour;
-        ctx.fillText(text, x1 + 4 * dpr, u.bbox.top + (REGION_STRIP_H + 10) * dpr);
+        ctx.fillText(text, x1 + 4 * dpr, laneTop + (REGION_STRIP_H + 10) * dpr);
       }
     }
   }

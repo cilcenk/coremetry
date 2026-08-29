@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { clampRegion, fitLabel, thresholdVisible, regionsToScale } from './overlays';
+import { clampRegion, fitLabel, thresholdVisible, regionsToScale, assignLanes, mergeIntervals } from './overlays';
 
 // overlays.test.ts (Grafana-parite M3) — paylaşımlı threshold/bölge çizim
 // çekirdeğinin SAF yardımcılarını sabitler. Çizim fonksiyonlarının kendisi
@@ -97,3 +97,28 @@ describe('regionsToScale — sn → ms', () => {
   });
 });
 
+// v0.10.166 — çakışan bölgeler ayrı şeritlere; ayrık olanlar şerit 0'ı paylaşır.
+describe('assignLanes — çakışan bölge etiketleri alt alta', () => {
+  const R = (fromSec: number, toSec: number) => ({ fromSec, toSec });
+  it('üç tam-pencere bölge → 0,1,2; girdi sırası korunur', () => {
+    expect(assignLanes([R(0, 100), R(0, 100), R(0, 100)])).toEqual([0, 1, 2]);
+  });
+  it('ayrık bölgeler şerit 0; bitişik (bitiş == başlangıç) çakışmaz', () => {
+    expect(assignLanes([R(0, 10), R(10, 20), R(30, 40)])).toEqual([0, 0, 0]);
+  });
+  it('kısmi çakışma: sonrakinin başlangıcı öncekinin bitişinden önceyse yeni şerit; boşalan şerit yeniden kullanılır', () => {
+    expect(assignLanes([R(0, 50), R(40, 60), R(55, 70)])).toEqual([0, 1, 0]);
+    expect(assignLanes([R(40, 60), R(0, 50)])).toEqual([1, 0]); // sıralama başlangıca göre
+  });
+  it('boş → boş', () => { expect(assignLanes([])).toEqual([]); });
+});
+
+// v0.10.166 — dolgu birleşik aralıklarla tek kat; çakışma koyulaştırmaz.
+describe('mergeIntervals — dolgu birleşimi', () => {
+  it('çakışan/bitişik aralıklar birleşir, ilk rengi taşır; ayrık kalır; girdi bozulmaz', () => {
+    const inp = [{ fromSec: 40, toSec: 60, color: 'b' }, { fromSec: 0, toSec: 50, color: 'a' }, { fromSec: 60, toSec: 70 }, { fromSec: 100, toSec: 110, color: 'c' }];
+    expect(mergeIntervals(inp)).toEqual([{ fromSec: 0, toSec: 70, color: 'a' }, { fromSec: 100, toSec: 110, color: 'c' }]);
+    expect(inp[0]).toEqual({ fromSec: 40, toSec: 60, color: 'b' });
+    expect(mergeIntervals([])).toEqual([]);
+  });
+});

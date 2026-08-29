@@ -802,7 +802,9 @@ export function CorePanel({
     // themeTick yalnız seri renklerini tazeler.
     {
       b.addHook('draw', (u) => {
-        if (regions?.length) drawTimeRegions(u, regions);
+        // v0.10.164 — x ölçeği MS: bölgeler saniye gelir, 1000 ile ölçeklenir
+        // (yoksa clampRegion hepsini eler — bant sessizce yok olurdu).
+        if (regions?.length) drawTimeRegions(u, regions, 1000);
         // v0.9.744 — exemplar ◆'ları en son (çizgilerin üstünde);
         // ref'ten canlı okunur, halo panel arka planından.
         //

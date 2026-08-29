@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { clampRegion, fitLabel, thresholdVisible } from './overlays';
+import { clampRegion, fitLabel, thresholdVisible, regionsToScale } from './overlays';
 
 // overlays.test.ts (Grafana-parite M3) — paylaşımlı threshold/bölge çizim
 // çekirdeğinin SAF yardımcılarını sabitler. Çizim fonksiyonlarının kendisi
@@ -79,3 +79,21 @@ describe('fitLabel — etiket sığdırma (sığdır / kısalt / sustur)', () =>
     expect(fitLabel('', 100, mono)).toBe('');
   });
 });
+
+// v0.10.164 — saniye bölgeleri ms ekseni için ölçeklenir; 1 = kimlik (aynı dizi).
+describe('regionsToScale — sn → ms', () => {
+  const rg = [{ fromSec: 1_700_000_000, toSec: 1_700_000_600, color: 'var(--warn)', label: 'x' }];
+  it('1000 ile fromSec/toSec ms olur, öteki alanlar aynen', () => {
+    expect(regionsToScale(rg, 1000)).toEqual([{ fromSec: 1_700_000_000_000, toSec: 1_700_000_600_000, color: 'var(--warn)', label: 'x' }]);
+  });
+  it('1 → aynı referans (eski saniye motorları için bedava)', () => {
+    expect(regionsToScale(rg, 1)).toBe(rg);
+  });
+  it('ms penceresine karşı saniye bölgesi clampRegion ile ELENİRDİ; ölçekli hâli kesişir', () => {
+    const xMin = 1_699_999_000_000, xMax = 1_700_001_000_000; // ms
+    expect(clampRegion(rg[0].fromSec, rg[0].toSec, xMin, xMax)).toBeNull();
+    const m = regionsToScale(rg, 1000)[0];
+    expect(clampRegion(m.fromSec, m.toSec, xMin, xMax)).toEqual({ from: 1_700_000_000_000, to: 1_700_000_600_000 });
+  });
+});
+

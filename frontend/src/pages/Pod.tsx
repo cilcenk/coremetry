@@ -214,13 +214,14 @@ function PodDetail() {
 
   // v0.10.162 — servis anomalileri bant olarak RED panellerinde (servis
   // kapsamlı pod'da; anomali olayında pod boyutu yok → servis düzeyi,
-  // paneldeki altyazı söyler). Sorgu global anahtar (60 s), sayfa başına
-  // ek yük yok.
+  // paneldeki altyazı söyler) — v0.10.170'ten beri yalnız ?bands=1 iken.
+  // Sorgu global anahtar (60 s), sayfa başına ek yük yok; kapalıyken de
+  // çekilir — «aç» bağlantısı anomali varken gösterilsin diye.
   // v0.10.170 — bantlar varsayılan KAPALI; ?bands=1 açar (Overview ile aynı anahtar).
   const anomaliesQ = useAnomalyEvents(!!service);
   const silencesQ = useAnomalySilences(!!service);
   const bandsOn = readBandsParam(sp);
-  const toggleBands = () => setSp(prev => writeBandsParam(prev, !bandsOn), { replace: true });
+  const toggleBands = () => setSp(prev => writeBandsParam(prev, !bandsOn, window.location.search), { replace: true });
   const podWindowEvents = useMemo(() => (service ? windowAnomalies(anomaliesQ.data?.items, service, from, to) : []), [service, anomaliesQ.data, from, to]);
   const podAnomalyRegions = useMemo(() => {
     if (!bandsOn || podWindowEvents.length === 0) return undefined;
@@ -340,7 +341,7 @@ function PodDetail() {
 
         {/* RED — servisin kümülatif metrikleri, bu pod'a scope'lu */}
         <div className="pod-sec">
-          <PanelTitle sub={redEnabled ? <>{scopeLabel} · paylaşılan crosshair{podWindowEvents.length > 0 && <> · anomali bantları (servis düzeyi): {bandsOn ? 'açık' : 'kapalı'} · <LinkButton onClick={toggleBands}>{bandsOn ? 'kapat' : 'aç'}</LinkButton></>}</> : undefined}
+          <PanelTitle sub={redEnabled ? <>{scopeLabel} · paylaşılan crosshair{podWindowEvents.length > 0 && <> · anomali bantları (servis düzeyi): {bandsOn ? 'açık' : 'kapalı'} · <LinkButton onClick={toggleBands} aria-pressed={bandsOn} title="Anomali bantlarını grafiklerde göster/gizle (?bands=1)" className="bands-toggle">{bandsOn ? 'kapat' : 'aç'}</LinkButton></>}</> : undefined}
             right={service ? <Link to={serviceHref(service, { range })} className="sec">→ {service} · Overview</Link> : undefined}>
             Servis metrikleri · bu pod
           </PanelTitle>

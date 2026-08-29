@@ -3663,6 +3663,8 @@ thead th:hover .th-remove { opacity: 1; }
 
 /* v0.10.162 — Service Overview «Anomaliler · bu pencere» bloğu (ov-mb yalnız .ov-grid ile çalışır). */
 .anom-win { margin-bottom: 16px; }
+/* v0.10.171 — başlık altyazısındaki bant toggle'ı: 10.5px çıplak sözcük yerine dokunulabilir alan (inceleme #7). */
+.bands-toggle { padding: var(--sp-1) var(--sp-3); margin: calc(-1 * var(--sp-1)) 0; font-weight: 600; }
 
 /* v0.10.165 — kod alıntısı: satır numarası oluğu, dosya başlığı, stack katlama
    (etüt «cevap paneli» A, dilim 1). Aynı .cm-md-code ailesi. */

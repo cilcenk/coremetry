@@ -120,17 +120,12 @@ type SpanMetricPoint struct {
 // Only the primary /api/spans/metric handler uses this. The resolver, DQL, RED
 // and batch paths keep calling QuerySpanMetric directly (they either already
 // bound cardinality or need every series), so their behaviour is unchanged.
-func (s *Store) QuerySpanMetricTopN(ctx context.Context, f SpanMetricFilter) (series []SpanMetricSeries, total int, capped bool, err error) {
-	all, err := s.QuerySpanMetric(ctx, f)
-	if err != nil {
-		return nil, 0, false, err
-	}
-	// v0.9.458 (dürüstlük A1) — satır tavanı TRIM'den ÖNCE ölçülür:
-	// totalSeries top-N kırpmasını anlatır, capped ise LIMIT'in alfabetik
-	// kestiğini — ikisi ayrı yalanlardır.
-	capped = SeriesRowsCapped(all)
-	kept, total := trimTopNByArea(all, spanMetricTopN)
-	return kept, total, capped, nil
+//
+// v0.10.147 — kuyruk ön-toplamı da döner (tail; spanmetric_tail.go):
+// kırpılan serilerin zaman-başı ham sum/count'u, FE "others" katlamasını
+// kırpmadan bağımsız kesin yapar. Tavan spanMetricTopN (Explore TOP_N_MAX).
+func (s *Store) QuerySpanMetricTopN(ctx context.Context, f SpanMetricFilter) (series []SpanMetricSeries, tail []TailPoint, total int, capped bool, err error) {
+	return s.QuerySpanMetricTopNTail(ctx, f, spanMetricTopN)
 }
 
 // QuerySpanMetric computes the requested aggregation over the matching spans,

@@ -6,9 +6,8 @@ package api
 // Sözleşme: dashPanelKey yanıtı değiştiren HER girdiyi taşır (v0.5.187
 // sınıfı çapraz zehirlenme yok), yanıtı DEĞİŞTİRMEYEN farkları (filtre
 // JSON'unda boşluk, aynı 30 s kovasındaki from/to) tek girdide toplar.
-// Kaynak taraması: bundle spanMetric dalı tam seriyi okur (top-N YOK —
-// others katlaması), cachedJSON'dan geçer, ve handler api.go'da değil bu
-// dosyada yaşar.
+// Kaynak taraması: bundle spanMetric dalı top-N + tail okur (v0.10.147),
+// cachedJSON'dan geçer, ve handler api.go'da değil bu dosyada yaşar.
 
 import (
 	"encoding/json"
@@ -112,7 +111,7 @@ func TestDashPanelKey_NormalisesNonSemanticDifferences(t *testing.T) {
 		t.Errorf("from/to inside the same 30s bucket must share the entry")
 	}
 	// Anahtar şekli: okunur önek + tür + hash (stats/invalidation önekleri için).
-	if k := dashPanelKey("", a, from, to); !regexp.MustCompile(`^dash-panel:v1:spanMetric:[0-9a-f]{1,16}$`).MatchString(k) {
+	if k := dashPanelKey("", a, from, to); !regexp.MustCompile(`^dash-panel:v2:spanMetric:[0-9a-f]{1,16}$`).MatchString(k) {
 		t.Errorf("unexpected key shape %q", k)
 	}
 }
@@ -134,14 +133,16 @@ func TestDashboardBundle_ConvergesWithSingleEndpoints(t *testing.T) {
 			t.Fatalf("comment stripping ate real code — %q missing, scan proves nothing", marker)
 		}
 	}
-	// Top-N bilinçli olarak YOK: dashboard'ın "others" katlaması (foldTopN)
-	// kuyruğu tam seriden toplar; kırpılmış girdi kuyruk kütlesini sessizce
-	// kaybederdi. Kuyruk ön-toplamları gelene dek tam seri.
-	if !regexp.MustCompile(`s\.store\.QuerySpanMetric\(`).MatchString(src) {
-		t.Errorf("bundle spanMetric slot must read the FULL series (QuerySpanMetric) — the others-fold needs the whole tail")
+	// v0.10.147 — top-N YALNIZ kuyruk ön-toplamıyla: tail'siz kırpma
+	// foldTopN'in others çizgisini sessizce küçültürdü (146 incelemesi).
+	if !regexp.MustCompile(`s\.store\.QuerySpanMetricTopNTail\(`).MatchString(src) {
+		t.Errorf("bundle spanMetric slot must use QuerySpanMetricTopNTail (top-N WITH tail pre-aggregates)")
 	}
-	if regexp.MustCompile(`s\.store\.QuerySpanMetricTopN\(`).MatchString(src) {
-		t.Errorf("bundle must not trim to top-N: foldTopN's others line would silently lose tail mass (see dashboards_data.go header)")
+	if regexp.MustCompile(`s\.store\.QuerySpanMetric\(|s\.store\.QuerySpanMetricTopN\(`).MatchString(src) {
+		t.Errorf("bundle must not call the untrimmed QuerySpanMetric or the tail-less QuerySpanMetricTopN")
+	}
+	if !regexp.MustCompile(`slot\.Tail = tail`).MatchString(src) {
+		t.Errorf("bundle must forward the tail pre-aggregate into the slot")
 	}
 	if !regexp.MustCompile(`s\.cachedJSON\(`).MatchString(src) {
 		t.Errorf("bundle slots must go through cachedJSON (per-panel SWR cache)")

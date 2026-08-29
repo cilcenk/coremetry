@@ -4,7 +4,7 @@ import type {
   Panel, MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, GaugePanelConfig, MarkdownPanelConfig,
   HeatmapPanelConfig, HistogramResult, LatencyHeatmap as HeatmapData, PromqlPanelConfig,
   SpanMetricSeries, TimeRange, PanelHeight, TopNPanelConfig, PanelVizType,
-} from '@/lib/types';
+ TailPoint } from '@/lib/types';
 import { timeRangeToNs, substituteVars } from '@/lib/utils';
 import { fmtSmart } from '@/lib/chartFmt';
 import { lazy, Suspense } from 'react';
@@ -38,8 +38,12 @@ const DashCorePanelLazy = lazy(() =>
 // kaybederdi (foldTopN.ts sözleşmesi).
 import { foldTopN, foldNote, isOthersSeries } from '@/lib/chart/foldTopN';
 
-function DashChart({ series, viz = 'line', unit, syncKey, onZoom, onZoomReset, storageKey, height }: {
+function DashChart({ series, tail, totalSeries, viz = 'line', unit, syncKey, onZoom, onZoomReset, storageKey, height }: {
   series: import('@/lib/types').SpanMetricSeries[];
+  // v0.10.147 — sunucu kuyruğu (top-N dışı serilerin ham sum/count'u) +
+  // kırpma öncesi toplam; foldTopN/foldNote kesin katlama için.
+  tail?: TailPoint[];
+  totalSeries?: number;
   // v0.9.808 — dashboard'ın BEŞ markı da buraya gelir; ayıklama yok.
   viz?: PanelVizType;
   unit?: string;
@@ -65,8 +69,10 @@ function DashChart({ series, viz = 'line', unit, syncKey, onZoom, onZoomReset, s
   // AYNI saf çekirdek (ikinci bir kopya, oran birimlerinde toplama/
   // ortalama ayrımını bir gün kaybederdi). ≤8 seride foldTopN girdiyi
   // AYNEN döndürür — mevcut panellerin çıktısı bayt-bayt aynı.
-  const folded = foldTopN(series, unit);
-  const note = foldNote(series.length);
+  // v0.10.147 — tail: sunucu top-N'in dışında bıraktığı kuyruğun ham
+  // toplamı foldTopN'in kendi kuyruğuna eklenir; not GERÇEK toplamdan.
+  const folded = foldTopN(series, unit, undefined, tail);
+  const note = foldNote(totalSeries ?? series.length);
   return (
     <Suspense fallback={<div style={{ height: h, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
       <DashCorePanelLazy
@@ -126,6 +132,11 @@ import { Link } from 'react-router-dom';
 // blank out the entire grid.
 export type PanelDataOverride = {
   series?: SpanMetricSeries[] | null;
+  // v0.10.147 — bundle top-N (16) + kuyruk ön-toplamı: kırpma öncesi
+  // toplam ve kırpılan kuyruğun zaman-başı sum/count'u. DashChart'ın
+  // "others" katlaması ve notu bunlarla kırpmadan bağımsız kesin.
+  totalSeries?: number;
+  tail?: TailPoint[];
   // v0.9.459 (dürüstlük A1b) — 50k satır tavanı: alfabetik-son seriler
   // eksik olabilir; panel köşesinde ⚠ ipucu.
   rowsCapped?: boolean;
@@ -754,6 +765,9 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, refreshTick
   const boxPx = panelChartHeight(height);
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
   const [capped, setCapped] = useState(false);
+  // v0.10.147 — sunucu kuyruğu + kırpma öncesi toplam (iki yoldan da).
+  const [tail, setTail] = useState<TailPoint[] | undefined>(undefined);
+  const [total, setTotal] = useState<number | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   // GRAN-C (v0.8.248) — same width-aware auto step as MetricPanel above.
   const { ref, widthPx } = usePanelWidth();
@@ -767,6 +781,8 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, refreshTick
       } else {
         setSeries(dataOverride!.series ?? []);
         setCapped(dataOverride!.rowsCapped ?? false);
+        setTail(dataOverride!.tail);
+        setTotal(dataOverride!.totalSeries);
         setError(null);
       }
       return;
@@ -780,7 +796,7 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, refreshTick
       agg: cfg.agg, field: cfg.field, groupBy: cfg.groupBy,
       filters: cfg.filters, dsl: cfg.dsl,
       from, to, step,
-    }).then(r => { setSeries(r?.series ?? []); setCapped(r?.rowsCapped ?? false); })
+    }).then(r => { setSeries(r?.series ?? []); setCapped(r?.rowsCapped ?? false); setTail(r?.tail); setTotal(r?.totalSeries); })
       .catch(e => setError(e.message));
     // refreshTick: v0.9.779 — auto-refresh. Override'lı yolda istek yok
     // (aynı veri yeniden uygulanır); bundle kapsamayan panelde refetch.
@@ -802,7 +818,7 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, refreshTick
         // zaten alıyor ve hem y-ekseni etiketlerinde hem hover
         // okumasında fmtSmart'a veriyor. Geçilmeyince aynı panelin
         // çizgi hali "142 ms", bar hali çıplak "142" yazıyordu.
-        : <DashChart series={series} viz={viz} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-s-${cfg.agg}-${cfg.groupBy ?? ''}`} height={boxPx} />}
+        : <DashChart series={series} tail={tail} totalSeries={total} viz={viz} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-s-${cfg.agg}-${cfg.groupBy ?? ''}`} height={boxPx} />}
     </div>
   );
 }

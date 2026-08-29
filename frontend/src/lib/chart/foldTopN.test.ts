@@ -208,7 +208,9 @@ describe('dashboard katlaması (v0.9.946)', () => {
     // Notu vermeden katlamak, spagettiyi "temiz panel" sanmakla aynı
     // sınıfa girerdi: kırpıldığını söylemeyen bir grafik yalan söyler.
     expect(dash).toMatch(/note=\{note\}/);
-    expect(dash).toMatch(/foldNote\(series\.length\)/);
+    // v0.10.147 — not GERÇEK toplamdan (sunucu kırpmasından bağımsız);
+    // kırpma yoksa alınan sayı.
+    expect(dash).toMatch(/foldNote\(totalSeries \?\? series\.length\)/);
   });
 
   it('katlanan kuyruk "muted" rolünde — MLC yoluyla aynı gri', () => {
@@ -230,5 +232,48 @@ describe('foldTopN — others fullKey taşımaz (v0.9.1369)', () => {
     expect(others.fullKey).toBeUndefined();
     // korunan seriler tam adlarını KAYBETMEZ
     expect(out[0].fullKey).toEqual(['deploy-a']);
+  });
+});
+
+// v0.10.147 — kuyruk ön-toplamları: sunucu top-N + tail {time,sum,count}
+// gönderir; foldTopN kendi kuyruğuna tail'i ekleyince sonuç TAM seriyle
+// katlamaya eşit olmalı (sum ve mean birimlerinde). Tail yoksa davranış
+// bayt-bayt eski.
+describe('foldTopN — sunucu kuyruğu (tail) ile kesin katlama', () => {
+  const full = [s('a', 100, 100), s('b', 50, 50), s('c', 10, 20), s('d', 30, 40), s('e', 1, 2)];
+  // Sunucu top-3 tutup d+e'yi ön-topladı (d: 30,40 · e: 1,2).
+  const kept = [full[0], full[1], full[3]]; // a, b, d (alan bazlı top-3: a=200, b=100, d=70)
+  const tail = [{ time: 0, sum: 10 + 1, count: 2 }, { time: 60e9, sum: 20 + 2, count: 2 }];
+  // Dikkat: sunucu alan bazlı kırptı → kept = a,b,d; c ve e kuyrukta.
+  const tailCE = [{ time: 0, sum: 11, count: 2 }, { time: 60e9, sum: 22, count: 2 }];
+
+  it('rps (toplam): kept + tail katlaması == tam seri katlaması', () => {
+    const want = foldTopN(full, 'rps', 1);
+    const got = foldTopN(kept, 'rps', 1, tailCE);
+    expect(got[1].points).toEqual(want[1].points);
+    expect(got[0]).toBe(kept[0]);
+  });
+
+  it.each(['%', 'ms', 's'])('oran birimi (%s): kept + tail == tam seri (ORTALAMA)', (unit) => {
+    const want = foldTopN(full, unit, 1);
+    const got = foldTopN(kept, unit, 1, tailCE);
+    expect(got[1].points).toEqual(want[1].points);
+  });
+
+  it('kept ≤ n ama tail var: yalnız tail\'den "others" üretilir', () => {
+    const got = foldTopN([full[0]], 'rps', 1, tailCE);
+    expect(got).toHaveLength(2);
+    expect(isOthersSeries(got[1])).toBe(true);
+    expect(got[1].points).toEqual([{ time: 0, value: 11 }, { time: 60e9, value: 22 }]);
+  });
+
+  it('tail boş/undefined: davranış eski (aynı referans)', () => {
+    const arr = [full[0]];
+    expect(foldTopN(arr, 'rps', 1, undefined)).toBe(arr);
+    expect(foldTopN(arr, 'rps', 1, [])).toBe(arr);
+  });
+
+  it('foldNote toplamı totalSeries ile: kırpılmış sayı değil gerçek', () => {
+    expect(foldNote(95, 8)).toBe('+87 seri katlandı (alan bazlı)');
   });
 });

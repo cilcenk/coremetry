@@ -22,6 +22,12 @@ export type TracesPivot = {
   services?: string[];
   /** Free-text search (endpoint path, operation name…). */
   search?: string;
+  /**
+   * v0.10.160 — k8s/openshift cluster adı (/traces `?cluster=`, v0.9.943/B3).
+   * Pod sayfası pivotları için eklendi; ExceptionPodsPanel/ServiceEntityPods
+   * elle kurduğu URL'de aynı anahtarı yazıyordu.
+   */
+  cluster?: string;
   /** Pre-encoded FilterExpr[] JSON, as produced by encodeFilters(). */
   filters?: string;
   /**
@@ -84,6 +90,7 @@ export function tracesPivotHref(p: TracesPivot): string {
   if (p.services?.length) q.set('services', p.services.join(','));
   else if (p.service) q.set('service', p.service);
   if (p.search) q.set('search', p.search);
+  if (p.cluster) q.set('cluster', p.cluster);
   // Mutually exclusive by /traces' contract — never emit both.
   if (p.filterGroup) q.set('filterGroup', p.filterGroup);
   else if (p.filters) q.set('filters', p.filters);

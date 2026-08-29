@@ -1466,7 +1466,7 @@ func (s *Server) guidedTeamNames(ctx context.Context) []string {
 // (emitGuidedStepResult) yayınlar. Kimlik üretimi chat_step_ids.go'da,
 // tek sayaçta.
 func emitGuidedStep(emit func(string, any), tool, args string) int {
-	return emitStepChip(emit, tool, args)
+	return emitStepChipOrigin(emit, tool, args, "guided") // v0.10.161 — köken rozeti
 }
 
 // emitGuidedStepResult — adımın KANITI (v0.9.1229).
@@ -1489,7 +1489,7 @@ func emitGuidedStepResult(emit func(string, any), i int, tool, segment string, e
 // hizada kalsın) ama eşli kanıt YAYINLAMAZ: okunan bir şey yok, yani
 // çip düz etiket olarak kalır — doğrusu da bu.
 func emitGuidedContextStep(emit func(string, any), label string) {
-	_ = emitStepChip(emit, label, "")
+	_ = emitStepChipOrigin(emit, label, "", "guided")
 }
 
 // guidedStepSegment — b'ye adım açıldığından beri YAZILAN metin.

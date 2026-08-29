@@ -380,6 +380,7 @@ export function ToolStepsPanel({ details: allDetails, error, turnDone, evId, set
           {' · '}{sum.totalMs === null ? '—' : fmtMs(sum.totalMs)}
         </DisclosureButton>
         {sum.guided && <span className="badge b-info" title="Rehberli kip: model araç çağırmadı, kanıt sunucuda önceden toplandı">ön-yükleme</span>}
+        {sum.intent && <span className="badge b-info" title="Serbest soru tek JSON çağrısıyla kılavuz niyetine sınıflandırıldı; kanıt sunucuda toplandı (v0.10.172)">niyet</span>}
         {budget && <span className="badge b-warn" title={error}>⏱ bütçe aşıldı</span>}
       </div>
       {open && (

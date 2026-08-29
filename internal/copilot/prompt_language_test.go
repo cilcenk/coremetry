@@ -79,13 +79,14 @@ func promptRegistry() map[string]promptClass {
 		// buraya taşındı: metin artık Türkçe yazılmış. ChatRoundCap aynı
 		// döngünün tur-tavanı hâli; sicile girmesiyle copilot_chat.go'daki
 		// satır-içi İngilizce ek de dil kapısının kapsamına girdi.
-		"Chat":          classTurkishNative,
-		"ChatRoundCap":  classTurkishNative,
-		"ShiftSummary":  classTurkishNative,
-		"AlertNoise":    classTurkishNative,
-		"LogPatterns":   classTurkishNative,
-		"Postmortem":    classTurkishNative, // Faz 5.4 — markdown taslak, Türkçe talimat
-		"RunbookUpdate": classTurkishNative, // Faz 5.5 — güncelleme önerisi bloğu
+		"Chat":           classTurkishNative,
+		"IntentClassify": classTurkishNative, // v0.10.172 — JSON çıktı, Türkçe talimat (RCAVerdict emsali)
+		"ChatRoundCap":   classTurkishNative,
+		"ShiftSummary":   classTurkishNative,
+		"AlertNoise":     classTurkishNative,
+		"LogPatterns":    classTurkishNative,
+		"Postmortem":     classTurkishNative, // Faz 5.4 — markdown taslak, Türkçe talimat
+		"RunbookUpdate":  classTurkishNative, // Faz 5.5 — güncelleme önerisi bloğu
 		// ── Makine-parse edilen çıktı
 		"NLToQuery":       classStructured,
 		"CHQueryOptimize": classStructured,
@@ -106,8 +107,9 @@ func promptTexts() map[string]string {
 		"Runbook": SystemPromptRunbook(), "CompareTraces": SystemPromptCompareTraces(),
 		"DeployImpact": SystemPromptDeployImpact(), "SLOBurn": SystemPromptSLOBurn(),
 		"SlowQuery": SystemPromptSlowQuery(), "GuidedChat": SystemPromptGuidedChat(),
-		"SelfMeta":   SystemPromptSelfMeta(),
-		"DrawerChat": SystemPromptDrawerChat(), "Chat": SystemPromptChat(),
+		"SelfMeta":       SystemPromptSelfMeta(),
+		"IntentClassify": SystemPromptIntentClassify(),
+		"DrawerChat":     SystemPromptDrawerChat(), "Chat": SystemPromptChat(),
 		"ChatRoundCap": SystemPromptChatRoundCap(),
 		"RCAVerdict":   SystemPromptRCAVerdict(), "ServiceAnalysis": SystemPromptServiceAnalysis(),
 		"RAGChat": SystemPromptRAGChat(), "ShiftSummary": SystemPromptShiftSummary(),

@@ -154,7 +154,7 @@ func TestPersistedTuning_RoundTrip(t *testing.T) {
 			saver := New("anthropic", "", "")
 			if err := saver.SavePersisted(context.Background(), store,
 				"anthropic", "sk-ant", "claude-sonnet-4-6", "", false, true,
-				tc.mt, tc.temp, tc.to, nil); err != nil {
+				tc.mt, tc.temp, tc.to, nil, ""); err != nil {
 				t.Fatalf("SavePersisted: %v", err)
 			}
 			disk := string(store.m[settingsKey])

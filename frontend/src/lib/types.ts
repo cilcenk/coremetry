@@ -1187,7 +1187,12 @@ export interface AISettings {
   // worker'ları). Kapatmak yalnız OTOMATİK LLM harcamasını durdurur;
   // tıklamalı ✨ yüzeyleri etkilenmez. Eksik alan = açık.
   autoExplain?: boolean;
+  // v0.10.172 — serbest soru → kılavuz niyeti sınıflandırıcısı (copilot_intent.go).
+  // 'on_no_loop' = none'da öneri çipleri, tool döngüsü YOK (yerel küçük model
+  // varsayılanı); 'on' = none'da serbest döngü; 'off' = kapalı. Eksik = on_no_loop.
+  intentClassify?: AIIntentClassify;
 }
+export type AIIntentClassify = 'off' | 'on' | 'on_no_loop';
 export interface AISettingsInput {
   provider: AIProvider;
   apiKey: string;
@@ -1205,6 +1210,8 @@ export interface AISettingsInput {
   timeoutS?: number;
   // v0.9.1138 — bkz. AISettings.autoExplain; form her zaman gönderir.
   autoExplain?: boolean;
+  // v0.10.172 — bkz. AISettings.intentClassify; form her zaman gönderir.
+  intentClassify?: AIIntentClassify;
 }
 
 // External Tempo backend (v0.5.208) — fallback for trace-by-id
@@ -4985,7 +4992,7 @@ export interface ChatStepDetail {
   href?: string;
   /** v0.10.161 — aracın çalışma süresi (sunucu ölçümü); yoksa panel «—» çizer. */
   durationMs?: number;
-  /** v0.10.161 — çip kökeni: 'guided' = sunucu ön-yüklemesi (model araç çağırmadı). */
+  /** v0.10.161 — çip kökeni: 'guided' = sunucu ön-yüklemesi (model araç çağırmadı); v0.10.172 'intent' = niyet sınıflandırma çağrısı. */
   origin?: string;
   /** v0.10.161 — etiket adımı (araç değil): `tool` boş, panel bu satırı çizmez. */
   label?: string;

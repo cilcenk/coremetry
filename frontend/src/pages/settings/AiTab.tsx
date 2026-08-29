@@ -3,7 +3,7 @@ import { Spinner } from '@/components/Spinner';
 import { Button, useConfirm } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useSettingsLoad, SettingsLoadError, Field } from './shared';
-import type { AIProvider, AISettings } from '@/lib/types';
+import type { AIProvider, AISettings, AIIntentClassify } from '@/lib/types';
 import { tuningToForm, tuningToWire } from './aiTuning';
 import { IconSparkles } from '@/components/icons';
 import { Link } from 'react-router-dom';
@@ -31,6 +31,8 @@ export function AITab() {
   const [enabled, setEnabled] = useState(true);
   // v0.9.1138 — arka plan otomatik açıklayıcı vidası (nil⇒açık).
   const [autoExplain, setAutoExplain] = useState(true);
+  // v0.10.172 — serbest soru sınıflandırıcısı kipi (eksik ⇒ on_no_loop).
+  const [intentClassify, setIntentClassify] = useState<AIIntentClassify>('on_no_loop');
   // v0.9.1120 (Faz 0.5) — LLM call tuning. Held as STRINGS, not
   // numbers, and that is the whole design:
   //
@@ -72,6 +74,7 @@ export function AITab() {
       setSkipTls(s.skipTls ?? false);
       setEnabled(s.enabled ?? true);
       setAutoExplain(s.autoExplain ?? true);
+      setIntentClassify(s.intentClassify ?? 'on_no_loop');
       applyTuning(s);
     },
   );
@@ -87,7 +90,7 @@ export function AITab() {
     e.preventDefault();
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey, model, baseUrl, skipTls, enabled, autoExplain, ...tuning() });
+      const next = await api.putAISettings({ provider, apiKey, model, baseUrl, skipTls, enabled, autoExplain, intentClassify, ...tuning() });
       setHasKey(next.hasKey);
       setSkipTls(next.skipTls ?? false);
       setEnabled(next.enabled ?? true);
@@ -119,7 +122,7 @@ export function AITab() {
     })) return;
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl, skipTls, enabled, autoExplain, ...tuning() });
+      const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl, skipTls, enabled, autoExplain, intentClassify, ...tuning() });
       setHasKey(next.hasKey);
       setSkipTls(next.skipTls ?? false);
       setEnabled(next.enabled ?? true);
@@ -256,6 +259,20 @@ export function AITab() {
             </div>
           </div>
         </label>
+        {/* v0.10.172 — serbest soru sınıflandırıcısı. Deterministik kılavuza
+            oturmayan soruyu küçük model tek JSON çağrısıyla kılavuz niyetine
+            eşler; none'da döngü yerine öneri çipleri (yerel küçük model). */}
+        <Field label="Serbest soru sınıflandırıcısı (sohbet)">
+          <select value={intentClassify} onChange={e => setIntentClassify(e.target.value as AIIntentClassify)} style={{ width: '100%' }}>
+            <option value="on_no_loop">Açık — eşleşmezse öneri çipleri, araç döngüsü yok (yerel küçük model için önerilen)</option>
+            <option value="on">Açık — eşleşmezse serbest araç döngüsü (frontier model)</option>
+            <option value="off">Kapalı — eski davranış</option>
+          </select>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.5 }}>
+            Kılavuz kalıplarına uymayan soruyu model yalnız <em>sınıflandırır</em> (tek kısa JSON çağrısı, ~1 s);
+            cevap yine sunucunun topladığı kanıtla üretilir. Adım panelinde «niyet» rozeti olarak görünür.
+          </div>
+        </Field>
 
         <label style={{ display: 'block', marginBottom: 12 }}>
           <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Provider</div>

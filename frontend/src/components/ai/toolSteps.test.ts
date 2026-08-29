@@ -69,3 +69,15 @@ describe('previewFirstLine + visibleRows + deadline', () => {
     expect(isDeadlineError(undefined)).toBe(false);
   });
 });
+
+// v0.10.172 — «niyet» rozeti yalnız sınıflandırma dispatch ettiyse (intent + guided adımları); none/hata sonrası serbest döngü → rozet yok.
+describe('summarizeSteps intent rozeti', () => {
+  const st = (origin: string | undefined, preview = 'x', durationMs = 5) => ({ i: 1, tool: 't', args: '', preview, ok: true, truncated: false, bytes: 1, durationMs, origin });
+  it('intent + guided → intent=true', () => {
+    expect(summarizeSteps([st('intent'), st('guided'), st('guided')], true).intent).toBe(true);
+  });
+  it('intent + araç döngüsü adımı → intent=false; yalnız guided → false', () => {
+    expect(summarizeSteps([st('intent'), st(undefined)], true).intent).toBe(false);
+    expect(summarizeSteps([st('guided')], true).intent).toBe(false);
+  });
+});

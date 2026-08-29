@@ -423,7 +423,7 @@ function RouterGapsPanel() {
       <div className="ov-card-h">
         <h3>Router boşlukları</h3>
         <span className="ov-sub">
-          guided intent'e OTURMAYAN sorular — serbest tool döngüsüne düştüler
+          guided intent'e OTURMAYAN sorular — serbest tool döngüsüne düştüler ya da sınıflandırıcı «none» dedi (v0.10.172)
         </span>
         <span className="segmented sg-sm" style={{ marginLeft: 'auto' }}>
           {([1, 7, 30] as const).map(d => (

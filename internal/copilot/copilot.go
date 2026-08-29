@@ -117,6 +117,8 @@ type Service struct {
 	timeoutS int
 	// autoExplain — v0.9.1138 (bkz. SetAutoExplain). nil ⇒ açık.
 	autoExplain *bool
+	// intentClassify — v0.10.172 (bkz. SetIntentClassify). "" ⇒ IntentOnNoLoop.
+	intentClassify string
 
 	// GitHub session token cache. We exchange ghu_ → session token
 	// once and reuse until ~30s before the server-stated expiry.
@@ -1053,6 +1055,8 @@ type persisted struct {
 	// worker'ları). *bool, Enabled idyomu: eski blob nil çözülür ve
 	// nil⇒AÇIK — mevcut kurulumların davranışı upgrade'de değişmez.
 	AutoExplain *bool `json:"autoExplain,omitempty"`
+	// v0.10.172 — serbest soru → kılavuz niyeti sınıflandırıcısı (copilot_intent.go).
+	IntentClassify string `json:"intentClassify,omitempty"`
 }
 
 // SettingsStore is the small slice of *chstore.Store we need —
@@ -1089,6 +1093,7 @@ func (s *Service) LoadPersisted(ctx context.Context, store SettingsStore) error 
 	// at zero, which the getters read as "default".
 	s.ConfigureTuning(p.MaxTokens, p.Temperature, p.TimeoutS)
 	s.SetAutoExplain(p.AutoExplain)
+	s.SetIntentClassify(p.IntentClassify)
 	return nil
 }
 
@@ -1109,6 +1114,46 @@ func (s *Service) AutoExplainEnabled() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.autoExplain == nil || *s.autoExplain
+}
+
+// Intent classifier modes — v0.10.172 (operatör: "serbest sorular da
+// sorulursa işe yarar mı" → spec onayı). Serbest soru deterministik
+// router'a takılmazsa küçük model YALNIZ sınıflandırır (tek katı-JSON
+// çağrısı) ve cevap mevcut prefetch→anlatım yolundan gelir.
+//
+//	off        — sınıflandırıcı kapalı; eski davranış (RAG → serbest döngü)
+//	on         — sınıflandır; none → serbest tool döngüsü (frontier model)
+//	on_no_loop — sınıflandır; none → öneri çipleri, döngü YOK (yerel küçük
+//	             model — prod varsayılanı; tool-roulette yerine dürüst "şöyle sor")
+const (
+	IntentOff      = "off"
+	IntentOn       = "on"
+	IntentOnNoLoop = "on_no_loop"
+)
+
+// ValidateIntentClassify — "" kabul (varsayılan), aksi üç değerden biri.
+func ValidateIntentClassify(v string) error {
+	switch v {
+	case "", IntentOff, IntentOn, IntentOnNoLoop:
+		return nil
+	}
+	return fmt.Errorf("intentClassify 'off', 'on' ya da 'on_no_loop' olmalı")
+}
+
+func (s *Service) SetIntentClassify(v string) {
+	s.mu.Lock()
+	s.intentClassify = v
+	s.mu.Unlock()
+}
+
+// IntentClassifyMode — boş ayar IntentOnNoLoop'a düşer (prod yerel gemma4).
+func (s *Service) IntentClassifyMode() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.intentClassify == "" {
+		return IntentOnNoLoop
+	}
+	return s.intentClassify
 }
 
 // StartConfigRefresh — v0.5.324. Background poll: keeps the
@@ -1147,12 +1192,15 @@ func (s *Service) StartConfigRefresh(ctx context.Context, store SettingsStore, i
 // purpose: the Settings form PUTs the whole AI config, so a two-step
 // write would open a lost-update window between two pods. 0 / nil for
 // any of them persists as "absent" (omitempty) = use the default.
-func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provider, apiKey, model, baseURL string, skipTLS, enabled bool, maxTokens int, temperature *float64, timeoutS int, autoExplain *bool) error {
+func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provider, apiKey, model, baseURL string, skipTLS, enabled bool, maxTokens int, temperature *float64, timeoutS int, autoExplain *bool, intentClassify string) error {
+	if err := ValidateIntentClassify(intentClassify); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(persisted{
 		Provider: provider, APIKey: apiKey, Model: model, BaseURL: baseURL,
 		SkipTLS: skipTLS, Enabled: &enabled,
 		MaxTokens: maxTokens, Temperature: temperature, TimeoutS: timeoutS,
-		AutoExplain: autoExplain,
+		AutoExplain: autoExplain, IntentClassify: intentClassify,
 	})
 	if err != nil {
 		return err
@@ -1163,6 +1211,7 @@ func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provid
 	s.Configure(provider, apiKey, model, baseURL, skipTLS, enabled)
 	s.ConfigureTuning(maxTokens, temperature, timeoutS)
 	s.SetAutoExplain(autoExplain)
+	s.SetIntentClassify(intentClassify)
 	return nil
 }
 

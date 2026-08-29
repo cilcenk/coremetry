@@ -27,6 +27,8 @@ export interface StepsSummary {
   unknownDuration: number;
   /** tüm adımlar sunucu ön-yüklemesi (step.origin === 'guided') */
   guided: boolean;
+  /** v0.10.172 — serbest soru niyet sınıflandırmasından geçti (step.origin === 'intent') */
+  intent: boolean;
 }
 
 /**
@@ -34,9 +36,10 @@ export interface StepsSummary {
  * «sürüyor» değil «kanıt yok» (emitStepEvidence boş metinde yayınlamaz).
  */
 export function summarizeSteps(details: ChatStepDetail[], turnDone = false): StepsSummary {
-  let errors = 0, pending = 0, noEvidence = 0, total = 0, unknown = 0, guidedN = 0;
+  let errors = 0, pending = 0, noEvidence = 0, total = 0, unknown = 0, guidedN = 0, intentN = 0;
   for (const d of details) {
     if (d.origin === 'guided') guidedN++;
+    if (d.origin === 'intent') intentN++;
     if (d.preview === undefined) { if (turnDone) { noEvidence++; unknown++; } else pending++; continue; }
     if (d.ok === false) errors++;
     if (typeof d.durationMs === 'number' && d.durationMs >= 0) total += d.durationMs; else unknown++;
@@ -47,6 +50,8 @@ export function summarizeSteps(details: ChatStepDetail[], turnDone = false): Ste
     totalMs: details.length > 0 && unknown === 0 && pending === 0 ? total : null,
     unknownDuration: unknown,
     guided: details.length > 0 && guidedN === details.length,
+    // yalnız sınıflandırma GERÇEKTEN dispatch ettiyse (kalan adımlar ön-yükleme); none/hata → serbest döngü, rozet yalan olurdu
+    intent: intentN > 0 && guidedN + intentN === details.length,
   };
 }
 

@@ -1,0 +1,54 @@
+{
+  "pkg": "coremetry-ui",
+  "globalName": "CoremetryUI",
+  "shape": "package",
+  "buildCmd": "cd frontend && npm run build:ds",
+  "tsconfig": "tsconfig.json",
+  "cssEntry": "src/styles/globals.css",
+  "componentSrcMap": {
+    "useConfirm": null
+  },
+  "projectId": "0e492a81-7fe2-49fe-beee-6a802a4a1ef9",
+  "readmeHeader": ".design-sync/conventions.md",
+  "extraEntries": [
+    "react-router-dom"
+  ],
+  "overrides": {
+    "Drawer": {
+      "cardMode": "single",
+      "primaryStory": "EntityDetail"
+    },
+    "ConfirmProvider": {
+      "cardMode": "single",
+      "primaryStory": "Destructive"
+    },
+    "Modal": {
+      "cardMode": "single",
+      "primaryStory": "Confirm"
+    },
+    "Card": {
+      "cardMode": "column"
+    },
+    "DrawerSection": {
+      "cardMode": "column"
+    },
+    "DrawerTrendRow": {
+      "cardMode": "column"
+    },
+    "LinkButton": {
+      "cardMode": "column"
+    },
+    "SectionUnavailable": {
+      "cardMode": "column"
+    },
+    "VirtualList": {
+      "cardMode": "column"
+    },
+    "ActionRow": {
+      "cardMode": "column"
+    },
+    "Badge": {
+      "cardMode": "column"
+    }
+  }
+}

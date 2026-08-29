@@ -105,3 +105,8 @@ perf/out/
 
 # go build ./cmd/perfcheck çıktısı repo köküne düşmesin
 /perfcheck
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules

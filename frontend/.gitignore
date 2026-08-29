@@ -5,3 +5,4 @@ out/
 .env*.local
 .DS_Store
 next-env.d.ts.bak
+dist-ds/

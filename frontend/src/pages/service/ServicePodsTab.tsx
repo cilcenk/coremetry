@@ -7,6 +7,8 @@ import { RuntimeCharts, familyOf } from './RuntimeCharts';
 import { PodResourceCharts } from './PodResourceCharts';
 import { ServiceClusterPods } from './ServiceClusterPods';
 import { ServiceEntityPods } from './ServiceEntityPods';
+import { DisclosureButton } from '@/components/ui';
+import { useState, useCallback } from 'react';
 import { useServicePods } from './useServicePods';
 import { podDetailPath } from './podDetailPath';
 import { servicePodRegex } from '@/pages/clusters/podWorkload';
@@ -75,6 +77,11 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
     service, deploy: effDeploy, range: params.get('range'), from: 'pods',
   }));
 
+  // v0.10.149 — entity satırı sayısı (ServiceEntityPods bildirir) + envanter açık/kapalı.
+  const [entityRows, setEntityRowsRaw] = useState(0);
+  const setEntityRows = useCallback((n: number) => setEntityRowsRaw(n), []);
+  const [thanosOpen, setThanosOpen] = useState(false);
+
   // Pod bölümü Thanos keşfine kapılı; RuntimeCharts (OTel, Thanos'suz) HER
   // ZAMAN render — erken-return ardında değil (review v0.9.159 #2): cold-nav'da
   // sources beklerken heap/GC grafikleri de gizlenmesin.
@@ -82,9 +89,18 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
     <>
       {/* v0.10.145 — entity katmanı tablosu (bayrak açıkken) Thanos keşfinden
           BAĞIMSIZ ve her boş-durumun ÜSTÜNDE: ad-regex eşleşmese de spans'ın
-          gördüğü pod'lar burada (ServiceInfraTab ile aynı düzeltme). */}
-      <ServiceEntityPods service={service} range={range} />
-      {(metaQ.isPending || sourcesPending) ? (
+          gördüğü pod'lar burada. v0.10.149 (operator-reported: "altta yine
+          podlar geliyor"): entity satırı varsa Thanos envanteri KAPALI başlar —
+          per-pod CPU/mem/net + JVM/GC/datasource genişleticileri korunur,
+          ikinci bir pod listesi olarak görünmez. */}
+      <ServiceEntityPods service={service} range={range} onRows={setEntityRows} />
+      {entityRows > 0 && (
+        <DisclosureButton anatomy="section" expanded={thanosOpen} onClick={() => setThanosOpen(o => !o)}
+          title="Thanos kube-state-metrics/cAdvisor envanteri: per-pod CPU/mem/net + JVM/GC/datasource genişleticileri">
+          Thanos envanteri{rows.length > 0 ? ` (${rows.length} pod · ${clustersWithPods.length} cluster)` : ''}
+        </DisclosureButton>
+      )}
+      {(entityRows > 0 && !thanosOpen) ? null : (metaQ.isPending || sourcesPending) ? (
         <Spinner />
       ) : sourcesError ? (
         /* v0.9.363 — başarısızlık, boşlukmuş gibi çizilmez. */

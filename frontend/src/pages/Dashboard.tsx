@@ -958,7 +958,14 @@ function DashboardGrid({
                                    onZoom={onZoom}
                                    onZoomReset={onZoomReset}
                                    refreshTick={refreshTick}
-                                   dataOverride={bundlePanelData[p.id]} />
+                                   // v0.10.146 — düzenlerken override YOK: bundle kayıtlı doc'un
+                                   // konfigiyle dolar (bundleablePanels doc.panels'a memoize) ve
+                                   // tick edit'te durur; PanelEditor'ün ayrı önizlemesi yok — bu
+                                   // grid paneli ÖNİZLEMENİN kendisi. Override geçilince taslak
+                                   // konfig ekrana hiç yansımıyordu (dolu slot bayat kalır, boş
+                                   // slot "No data"da donar). Edit modunda her panel taslak
+                                   // konfigiyle kendi fetch'ini yapar.
+                                   dataOverride={editing ? undefined : bundlePanelData[p.id]} />
                   </div>
                 ))}
               </div>

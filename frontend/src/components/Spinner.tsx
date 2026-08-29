@@ -50,35 +50,40 @@ export function PageLoader({ label }: { label?: string }) {
         // kapısıyla çivili (D3).
         background: 'var(--bg0)',
       }}>
-      <div style={{
-        display: 'flex', flexDirection: 'column',
-        alignItems: 'center', gap: 16,
-      }}>
-        {/* Animated ring sized to wrap the OTel mark — same
-            stroke as the inline .spinner so the visual identity
-            stays consistent across the app's load surfaces. */}
+      <LoaderMark label={label ?? 'Loading'} />
+    </div>
+  );
+}
+
+// LoaderMark — v0.10.152: PageLoader'ın halka + OTel işareti, KENDİ BAŞINA
+// (fixed splash değil). Bir çekmece/panel gövdesinin ortasında "aktif
+// yükleniyor" durumu için (CoSRE Explain: "CoSRE kodu okuyor…" küçük
+// spinner satırı boş gövdenin köşesinde kayboluyordu — operatör). `size`
+// 'md' = PageLoader'ın kendisi; 'lg' = daha büyük halka + 14px etiket +
+// isteğe bağlı alt satır (hint).
+export function LoaderMark({ label, hint, size = 'md' }: { label: string; hint?: string; size?: 'md' | 'lg' }) {
+  const ring = size === 'lg' ? 96 : 72;
+  const mark = size === 'lg' ? 52 : 40;
+  return (
+    <div role="status" aria-busy="true" aria-label={label}
+      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+      <div style={{ position: 'relative', width: ring, height: ring, display: 'grid', placeItems: 'center' }}>
         <div style={{
-          position: 'relative', width: 72, height: 72,
-          display: 'grid', placeItems: 'center',
-        }}>
-          <div style={{
-            position: 'absolute', inset: 0,
-            border: '2px solid var(--border)',
-            borderTopColor: 'var(--accent)',
-            borderRadius: '50%',
-            animation: 'spin 0.9s linear infinite',
-          }} />
-          <img src="/opentelemetry.svg" width={40} height={40}
-            alt="OpenTelemetry"
-            style={{ display: 'block' }} />
-        </div>
-        <div style={{
-          fontSize: 12, color: 'var(--text3)',
-          letterSpacing: 0.4, textTransform: 'uppercase', fontWeight: 600,
-        }}>
-          {label ?? 'Loading'}
-        </div>
+          position: 'absolute', inset: 0,
+          border: '2px solid var(--border)',
+          borderTopColor: 'var(--accent)',
+          borderRadius: '50%',
+          animation: 'spin 0.9s linear infinite',
+        }} />
+        <img src="/opentelemetry.svg" width={mark} height={mark} alt="OpenTelemetry" style={{ display: 'block' }} />
       </div>
+      <div style={{
+        fontSize: size === 'lg' ? 14 : 12, color: size === 'lg' ? 'var(--text2)' : 'var(--text3)',
+        letterSpacing: 0.4, textTransform: 'uppercase', fontWeight: 600,
+      }}>
+        {label}
+      </div>
+      {hint && <div style={{ fontSize: 12, color: 'var(--text3)', textAlign: 'center', maxWidth: 360 }}>{hint}</div>}
     </div>
   );
 }

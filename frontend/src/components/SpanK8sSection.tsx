@@ -25,7 +25,7 @@ export function SpanK8sSection({ span, clusters, range }: { span: SpanRow; clust
       {ctx.clusterHref && <Link to={ctx.clusterHref} className="sec" title={ctx.clusterId}>{ctx.clusterName}</Link>}
       {ctx.namespaceHref && <><span className="field-hint">›</span><Link to={ctx.namespaceHref} className="sec">{ctx.namespace}</Link></>}
       <span className="field-hint">›</span>
-      <Link to={ctx.podHref!} className="sec" title={`Pod detayı · ${ctx.clusterName} / ${ctx.namespace ?? '?'} / ${ctx.pod} · span anı`}>{ctx.pod}</Link>
+      <Link to={ctx.podHref!} className="sec" title={`Pod detayı · ${ctx.clusterName} / ${ctx.namespace} / ${ctx.pod} · span anı`}>{ctx.pod}</Link>
       {ctx.nodeHref && <><span className="field-hint">on</span><Link to={ctx.nodeHref} className="sec" title="Node detayı">{ctx.node}</Link></>}
     </Row>
   );

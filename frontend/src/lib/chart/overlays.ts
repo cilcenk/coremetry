@@ -194,6 +194,16 @@ export function mergeIntervals(regions: { fromSec: number; toSec: number; color?
 
 const LANE_H = 12; // şerit satırı yüksekliği (css px): 3px şerit + 10px mono etiket
 
+// v0.10.169 (operatör: "neden bantlar var" → "1 kalsın"): pencerenin en az
+// bu kadarını kaplayan bölge KRONİKTİR (günlerdir aktif anomali) — dolgusu
+// bilgi taşımaz, zemini boyar. Dolgu çizilmez; şerit + etiket («· pencere
+// boyu» ekiyle) kalır. Kısa/gerçek anomali dolgusunu korur.
+export const CHRONIC_COVERAGE = 0.9;
+export function isChronic(from: number, to: number, xMin: number, xMax: number): boolean {
+  const span = xMax - xMin;
+  return span > 0 && (to - from) / span >= CHRONIC_COVERAGE;
+}
+
 export function drawTimeRegions(u: uPlot, regions: ChartTimeRegion[], xUnit = 1): void {
   if (regions.length === 0) return;
   const xMin = u.scales.x.min ?? 0;
@@ -210,8 +220,11 @@ export function drawTimeRegions(u: uPlot, regions: ChartTimeRegion[], xUnit = 1)
   // «op ×175.0» kırpık). drawTimeRegions.test.ts sahte canvas'la pinler.
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  // Arka-plan gölgesi: birleşik aralıklar, TEK kat (çakışma koyulaştırmaz).
-  for (const mg of mergeIntervals(regions)) {
+  // Arka-plan gölgesi: birleşik aralıklar, TEK kat (çakışma koyulaştırmaz);
+  // kronik (pencere boyu) bölgeler dolguya GİRMEZ (v0.10.169).
+  const clamped = regions.map(r => clampRegion(r.fromSec, r.toSec, xMin, xMax));
+  const chronic = clamped.map(cl => !!cl && isChronic(cl.from, cl.to, xMin, xMax));
+  for (const mg of mergeIntervals(regions.filter((_, i) => clamped[i] && !chronic[i]))) {
     const cl = clampRegion(mg.fromSec, mg.toSec, xMin, xMax);
     if (!cl) continue;
     const x1 = u.valToPos(cl.from, 'x', true);
@@ -223,7 +236,7 @@ export function drawTimeRegions(u: uPlot, regions: ChartTimeRegion[], xUnit = 1)
   ctx.globalAlpha = 1;
   for (let ri = 0; ri < regions.length; ri++) {
     const rg = regions[ri];
-    const cl = clampRegion(rg.fromSec, rg.toSec, xMin, xMax);
+    const cl = clamped[ri];
     if (!cl) continue;
     const colour = resolveVar(rg.color ?? 'var(--err)');
     const x1 = u.valToPos(cl.from, 'x', true);
@@ -238,7 +251,7 @@ export function drawTimeRegions(u: uPlot, regions: ChartTimeRegion[], xUnit = 1)
     ctx.globalAlpha = 1;
     // Küçük etiket — şeridin altında; sığmazsa kısalt, hiç sığmazsa çizme (fitLabel).
     if (rg.label) {
-      const text = fitLabel('▮ ' + rg.label, w - 8 * dpr, s => ctx.measureText(s).width);
+      const text = fitLabel('▮ ' + rg.label + (chronic[ri] ? ' · pencere boyu' : ''), w - 8 * dpr, s => ctx.measureText(s).width);
       if (text) {
         ctx.fillStyle = colour;
         ctx.fillText(text, x1 + 4 * dpr, laneTop + (REGION_STRIP_H + 10) * dpr);

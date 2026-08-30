@@ -20,6 +20,7 @@ import type {
   StatusPageConfig, StatusComponent, StatusSubscriber,
   RetentionSpec,
   AISettings, AISettingsInput, AIModelProfileInput, AIProfilesPayload, AIProfileTestResult, AISurfaceMap,
+  AnomalyVerdict, AnomalyVerdictKind,
   TempoSnapshot, TempoSettingsInput,
   VMSnapshot, VMSettingsInput, VMTestResult,
   DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult, DevOpsResolveDryRun,
@@ -934,6 +935,11 @@ export const api = {
   // Anomaly silences (mute / snooze).
   anomalySilences:     () =>
     get<import('./types').AnomalySilence[]>(`/api/anomalies/silences`),
+  // v0.10.181 — «anomali / değil» kararı (editor+); events ucu kararı satıra ekler.
+  putAnomalyVerdict: (id: string, body: { verdict: AnomalyVerdictKind; note?: string; kind: string; pattern: string; service: string }) =>
+    request<AnomalyVerdict>(`/api/anomalies/${encodeURIComponent(id)}/verdict`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }),
   createAnomalySilence: (body: {
     fingerprint: string; kind: string; pattern: string;
     service: string; reason?: string; durationSec: number;

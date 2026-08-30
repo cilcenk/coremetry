@@ -4193,7 +4193,15 @@ export interface AnomalyEvent {
   // RootCauseRibbon's collapsed chip; the expand reads the full
   // /anomalies/{id}/rootcause fan-out.
   rootCause?: RootCauseSummary;
+  // v0.10.181 — operatör kararı (anomaly_verdicts; PUT /api/anomalies/{id}/verdict),
+  // okuma zamanı eklenir. Susturmadan bağımsız: «değil» kararı bandı soluk çizer,
+  // akışı kapatmaz (onu susturma yapar).
+  verdict?: AnomalyVerdictKind;
+  verdictBy?: string;
+  verdictAt?: number; // unix ns
 }
+export type AnomalyVerdictKind = 'anomaly' | 'not_anomaly';
+export interface AnomalyVerdict { eventId: string; fingerprint: string; kind: string; pattern: string; service: string; verdict: AnomalyVerdictKind; note?: string; createdBy: string; createdAt: number }
 
 // ── Deployment analysis report ──────────────────────────────────────────────
 // Fleet-wide, read-only, generated on demand from an operator-supplied

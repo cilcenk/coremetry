@@ -9,7 +9,7 @@ export { useProblems, useProblemByID, useOpenProblemCount, useOpenCriticalCount,
 export {
   useLogPatternAnomalies, useTraceOpAnomalies, useMetricAnomalies,
   useAnomalyEvents, useAnomalySilences,
-  useCreateAnomalySilence, useDeleteAnomalySilence,
+  useCreateAnomalySilence, usePutAnomalyVerdict, useDeleteAnomalySilence,
   useBulkDeleteAnomalySilences,
 } from './anomalies';
 export {

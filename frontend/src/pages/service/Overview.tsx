@@ -7,7 +7,7 @@ import { api } from '@/lib/api';
 import { entryLatencyDSL, envDSL } from '@/lib/entrySpans';
 import { panelMaxDataPoints, stepForWidth } from '@/lib/chartStep';
 import { encodeFilters } from '@/lib/urlState';
-import { useServiceDeploys, useAnomalyEvents, useAnomalySilences, useCreateAnomalySilence } from '@/lib/queries';
+import { useServiceDeploys, useAnomalyEvents, useAnomalySilences, useCreateAnomalySilence, usePutAnomalyVerdict } from '@/lib/queries';
 import { windowAnomalies, anomalyRegions, silencedSet, silenceKey } from '@/lib/anomalyRegions';
 import { readBandsParam, writeBandsParam } from '@/lib/bandsParam';
 import type { ChartTimeRegion } from '@/lib/chart/overlays';
@@ -389,6 +389,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   const anomaliesQ = useAnomalyEvents();
   const silencesQ = useAnomalySilences();
   const createSilence = useCreateAnomalySilence();
+  const putVerdict = usePutAnomalyVerdict(); // v0.10.181
   const { user } = useAuth();
   const canEditAnomaly = user?.role === 'admin' || user?.role === 'editor';
   const windowEvents = useMemo(() => windowAnomalies(anomaliesQ.data?.items, service, from, to), [anomaliesQ.data, service, from, to]);
@@ -422,6 +423,11 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     // /anomalies sayfasının anahtarı (streams.tsx onMute); sunucu kanonik sha1'e
     // çevirir (v0.10.162 anomaly_extra.go silenceFingerprint) — akış + terfi kapısı okur.
     void createSilence.mutateAsync({ fingerprint: silenceKey(e), kind: e.kind, pattern: e.pattern, service: e.service, durationSec, reason: 'operator: değil (servis sayfası)' });
+    // v0.10.181 — «Değil» aynı zamanda karardır (susturma süresi dolsa da kayıt kalır).
+    void putVerdict.mutateAsync({ id: e.id, verdict: 'not_anomaly', kind: e.kind, pattern: e.pattern, service: e.service });
+  };
+  const verdictAnomaly = (e: AnomalyEvent, verdict: 'anomaly' | 'not_anomaly') => {
+    void putVerdict.mutateAsync({ id: e.id, verdict, kind: e.kind, pattern: e.pattern, service: e.service });
   };
 
   // v0.10.180 — banda tık → ?anomaly=<id> çekmecesi (deploy ▼ id taşımaz, no-op).
@@ -974,7 +980,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         <div className="anom-win">
           <PanelTitle sub={<>{windowEvents.length} anomali · bantlar grafiklerde: {bandsOn ? 'açık' : 'kapalı'} · <LinkButton onClick={toggleBands} aria-pressed={bandsOn} title="Anomali bantlarını grafiklerde göster/gizle (?bands=1)" className="bands-toggle">{bandsOn ? 'kapat' : 'aç'}</LinkButton> · satır → çekmece</>}>Anomaliler · bu pencere</PanelTitle>
           <AnomalyWindowTable events={windowEvents} silences={silencesQ.data} canEdit={canEditAnomaly}
-            onOpen={openAnomaly} onMute={muteAnomaly} truncated={!!anomaliesQ.data?.truncated} />
+            onOpen={openAnomaly} onMute={muteAnomaly} onVerdict={verdictAnomaly} truncated={!!anomaliesQ.data?.truncated} />
         </div>
       )}
       {drawerEvent && <Suspense fallback={null}><AnomalyDetailDrawerLazy event={drawerEvent} onClose={() => openAnomaly(null)} /></Suspense>}

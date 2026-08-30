@@ -40,6 +40,11 @@ type AnomalyEvent struct {
 	// the "did this break because of a deploy?" question into
 	// a single glance.
 	RecentDeploy *RecentDeploy `json:"recentDeploy,omitempty"`
+	// v0.10.181 — operatör kararı (anomaly_verdicts, okuma zamanı eklenir):
+	// 'anomaly' | 'not_anomaly'; yoksa boş. Susturmadan bağımsız.
+	Verdict   string `json:"verdict,omitempty"`
+	VerdictBy string `json:"verdictBy,omitempty"`
+	VerdictAt int64  `json:"verdictAt,omitempty"` // unix ns
 	// RootCause — compact top-suspect summary of the persisted
 	// root-cause hypothesis the worker synthesized for this anomaly
 	// (rc #3 of the anomaly → root-cause feature). Attached at READ

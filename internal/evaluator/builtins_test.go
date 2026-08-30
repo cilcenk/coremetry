@@ -99,3 +99,31 @@ func TestBuiltinRules_HardeningInvariants(t *testing.T) {
 		}
 	}
 }
+
+// v0.10.207 — operatör isteği: "failure rate başarıların üzerine çıkarsa
+// alarm üret". Sözleşme: başarısızlık > başarı ⇔ hata payı > %50 — eşik
+// TAM 50 olmalı (49 erken çalar, 51 çoğunluk-hata durumunu kaçırır) ve
+// kural critical + anti-gürültü kitiyle gelmeli. Bu test slice'ı pinler;
+// boot'ta seedBuiltinRules eksikse tabloya eker.
+func TestBuiltinRules_FailureMajority(t *testing.T) {
+	idx := -1
+	for i := range builtins {
+		if builtins[i].ID == "builtin-error-majority-50pct" {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		t.Fatal("builtin-error-majority-50pct yok — operatör alarmı gemiden düşmüş")
+	}
+	r := &builtins[idx]
+	if r.Metric != "error_rate" || r.Comparator != ">" || r.Threshold != 50 {
+		t.Fatalf("failures>successes ⇔ error_rate>50 sözleşmesi bozuk: metric=%q cmp=%q thr=%v", r.Metric, r.Comparator, r.Threshold)
+	}
+	if r.Severity != "critical" {
+		t.Fatalf("çoğunluk-hata critical olmalı, %q geldi", r.Severity)
+	}
+	if r.WindowSec != 5*60 || r.ForSec == 0 || r.CooldownSec == 0 || r.MinSamples == 0 {
+		t.Fatalf("anti-gürültü kiti eksik: window=%d for=%d cooldown=%d min=%d", r.WindowSec, r.ForSec, r.CooldownSec, r.MinSamples)
+	}
+}

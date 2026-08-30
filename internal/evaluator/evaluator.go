@@ -285,6 +285,17 @@ var builtins = []chstore.AlertRule{
 		Severity: "critical", Enabled: true, BuiltIn: true,
 		MinSamples: 50, ForSec: 120, CooldownSec: 300},
 
+	// v0.10.207 (operatör isteği): başarısızlık BAŞARIYI aşarsa — servis
+	// genelinde hata payı > %50 ⇔ error_count > success_count. 15%'lik
+	// kural genel bozulmayı yakalar; bu kural "çoğunluk artık hata"
+	// çizgisinin kendisini adlandırır ve düşük hacimde de anlamlı olduğu
+	// için tabanı daha alçak (20 örnek). Aynı ölçü ailesi (service_summary_5m,
+	// TÜM span'ler) — giriş-span/trace kapsamı farkı için bkz. commit gövdesi.
+	{ID: "builtin-error-majority-50pct", Name: "Failures exceed successes (>50% over 5 min)",
+		Metric: "error_rate", Comparator: ">", Threshold: 50, WindowSec: 5 * 60,
+		Severity: "critical", Enabled: true, BuiltIn: true,
+		MinSamples: 20, ForSec: 120, CooldownSec: 300},
+
 	// HTTP latency. P99 >5s in a banking call chain is SLO-
 	// violating territory regardless of which service.
 	{ID: "builtin-http-p99-5s", Name: "HTTP P99 latency >5s (5 min)",

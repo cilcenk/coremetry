@@ -4,7 +4,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { Card } from '@/components/ui/Card';
 import {
   COVERAGE_FIELDS, fieldSeen, fieldState, fieldPct, fleetSummary,
-  podSeenWindow, podStabilityWarning,
+  podSeenWindow, podStabilityWarning, coverageHeaderTitle,
 } from '@/pages/k8s/coverageRows';
 import type { K8sCoverageRow, PodRow } from '@/lib/types';
 import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
@@ -59,13 +59,14 @@ const COVERAGE_COLS: DataTableColumn<K8sCoverageRow>[] = [
   { id: 'sampled', label: 'Örneklem', sortValue: r => r.sampled, numeric: true, naturalDir: 'desc', width: 110 },
   ...COVERAGE_FIELDS.map(f => ({
     id: f.key,
-    label: f.label,
+    // v0.10.196 — kısa başlık (kırpılmaz); tam anahtar title'da (renderLabel).
+    label: f.short,
     // Kapsama ORANINA göre sırala: ham sayı servisler arası
     // karşılaştırılamaz (örneklem boyları farklı).
     sortValue: (r: K8sCoverageRow) => fieldPct(fieldSeen(r, f.key), r.sampled) ?? -1,
     numeric: true,
     naturalDir: 'asc' as const,
-    width: 96,
+    width: 64,
   })),
 ];
 
@@ -174,7 +175,7 @@ export default function AdminK8sCoveragePage() {
           <div className="table-wrap is-fit">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} />
-              <DataTableHead dt={dt} />
+              <DataTableHead dt={dt} renderLabel={c => <span title={coverageHeaderTitle(c.id)}>{c.label}</span>} />
               <tbody>
                 {dt.sortedRows.map(r => (
                   <tr key={r.service} style={{ contentVisibility: 'auto' }}>

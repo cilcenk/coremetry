@@ -22,7 +22,7 @@ import type { TraceRow } from '@/lib/types';
 import { parseSpansParam, writeSpansParam, podTraceParams, POD_TRACE_PAGE, type PodTraceCtx, type SpansMode } from './podPage';
 
 const COLS: DataTableColumn<TraceRow>[] = [
-  { id: 'time', label: 'Zaman', width: 150 },
+  { id: 'time', label: 'Zaman', width: 176 }, // v0.10.191 — fmtDateTime 19 karakter mono; 150'de saniye kırpılıyordu (operatör, prod)
   { id: 'trace', label: 'Trace', width: 150 },
   { id: 'service', label: 'Servis', width: 180 },
   { id: 'op', label: 'Operasyon', width: 320 },

@@ -4,6 +4,14 @@
 // range = grubun tarama penceresi, servis bağlamı). k8s bağlamsız oluşumlar,
 // tavan ve eşlenmemiş cluster'lar AÇIK ilan; eşlenmemişte link yok.
 // Bayrak kapalı → null.
+//
+// v0.10.173 (operatör, prod: "taşma olmasın") — sekiz kolonlu tablo kartı
+// yatay kaydırıyordu (node adları + namespace + cluster + tarih). Şimdi
+// table-layout:fixed + colgroup: cluster › namespace pod hücresinin alt
+// satırına indi (bilgi kaybı yok, title'da tam yol), pod/node hücreleri
+// ellipsis + title (CLAUDE.md tuzağı: fixed + nowrap + küçük genişlik
+// sessizce kırpar → min/max + ellipsis + title), sayısal kolonlar sabit dar.
+// Kart genişliği ne olursa olsun yatay kaydırma yok.
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Row, Badge } from '@/components/ui';
@@ -52,9 +60,12 @@ export function ExceptionPodsPanel({ fingerprint, service, groupOccurrences }: {
           </div>
         ) : (
           <>
-            <table>
+            <table className="exc-pods-t">
+              <colgroup>
+                <col className="exc-pods-c-pod" /><col className="exc-pods-c-node" /><col className="exc-pods-c-n" /><col className="exc-pods-c-n" /><col className="exc-pods-c-t" /><col className="exc-pods-c-a" />
+              </colgroup>
               <thead>
-                <tr><th>pod</th><th>namespace</th><th>cluster</th><th>node</th><th className="num">occurrences</th><th className="num">share</th><th>last seen</th><th></th></tr>
+                <tr><th>pod · cluster › namespace</th><th>node</th><th className="num">occurrences</th><th className="num">share</th><th>last seen</th><th></th></tr>
               </thead>
               <tbody>
                 {rows.map(r => {
@@ -67,19 +78,20 @@ export function ExceptionPodsPanel({ fingerprint, service, groupOccurrences }: {
                   const share = (100 * r.occurrences) / denom;
                   return (
                     <tr key={`${r.cluster}/${r.namespace}/${r.pod}`}>
-                      <td className="mono" title={`${r.clusterName ?? r.cluster} / ${r.namespace} / ${r.pod}`}>
-                        {podHref
-                          ? <Link to={podHref} className="sec">{r.pod}</Link>
-                          : <span title={r.hostOnly ? 'k8s.namespace.name yok — pod adı host.name yedeğinden; Kubernetes pod\'u değil, link yok' : 'Cluster eşlenmemiş — entity kaydı yok, link yok'}>{r.pod}</span>}
-                        {r.hostOnly && <Badge tone="neutral" style={{ marginLeft: 6 }} title="host.name yedeği (k8s bağlamı yok)">host</Badge>}
+                      <td className="mono exc-pods-cell" title={`${r.clusterName ?? r.cluster} › ${r.namespace} › ${r.pod}${cid ? '' : ' (cluster eşlenmemiş)'}`}>
+                        <div className="exc-pods-pod">
+                          {podHref
+                            ? <Link to={podHref} className="sec">{r.pod}</Link>
+                            : <span title={r.hostOnly ? 'k8s.namespace.name yok — pod adı host.name yedeğinden; Kubernetes pod\'u değil, link yok' : 'Cluster eşlenmemiş — entity kaydı yok, link yok'}>{r.pod}</span>}
+                          {r.hostOnly && <Badge tone="neutral" style={{ marginLeft: 6 }} title="host.name yedeği (k8s bağlamı yok)">host</Badge>}
+                        </div>
+                        <div className="exc-pods-sub">{r.clusterName ?? r.cluster} › {r.namespace}</div>
                       </td>
-                      <td className="mono">{r.namespace}</td>
-                      <td className="mono" title={cid || 'unmapped'}>{r.clusterName ?? r.cluster}</td>
-                      <td className="mono">{nodeHref ? <Link to={nodeHref} className="sec">{r.node}</Link> : (r.node ?? '')}</td>
+                      <td className="mono exc-pods-cell" title={r.node ?? ''}>{nodeHref ? <Link to={nodeHref} className="sec">{r.node}</Link> : (r.node ?? '')}</td>
                       <td className="num">{r.occurrences.toLocaleString()}</td>
                       <td className="num">{share.toFixed(1)}%</td>
-                      <td className="mono">{fmtDateTime(new Date(r.lastSeen))}</td>
-                      <td><Link to={tracesHref} className="sec">Traces</Link></td>
+                      <td className="mono exc-pods-cell" title={fmtDateTime(new Date(r.lastSeen))}>{fmtDateTime(new Date(r.lastSeen))}</td>
+                      <td><Link to={tracesHref} className="sec" title="Bu pod'un hatalı trace'leri">Traces</Link></td>
                     </tr>
                   );
                 })}

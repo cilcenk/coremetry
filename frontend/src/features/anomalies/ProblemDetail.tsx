@@ -553,10 +553,6 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
         </div>
       </div>
 
-      {/* v0.10.138 (DETAY SAYFALARI adım 4) — oluşumların pod/node dağılımı +
-          pod pivotu; bayrak kapalı → hiç çizilmez. */}
-      <ExceptionPodsPanel fingerprint={group.fingerprint} service={group.service} groupOccurrences={group.occurrences} />
-
       {/* Stack trace (left) · Sample traces (right). minWidth:0 on the columns
           so the long Java stack frames don't force the left column past 1.4fr
           (the v0.8.61 ratio fix — stack trace forced into the left column). */}
@@ -643,6 +639,12 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
           </div>
         </div>
       </div>
+
+      {/* v0.10.138 (DETAY SAYFALARI adım 4) — oluşumların pod/node dağılımı +
+          pod pivotu; bayrak kapalı → hiç çizilmez. v0.10.173 (operatör, prod):
+          EN ALTA — 12 pod'luk tablo grafiğin ve stack'in önüne geçip sayfayı
+          itiyordu; dağılım ikincil bağlam. */}
+      <ExceptionPodsPanel fingerprint={group.fingerprint} service={group.service} groupOccurrences={group.occurrences} />
     </PageShell>
   );
 }

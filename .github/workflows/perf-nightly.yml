@@ -1,0 +1,85 @@
+# perf-nightly — v0.10.184: perf bütçesi (docs/perf/perf-budget-2026-08-28.md)
+# gece koşusu. cmd/perfcheck CANLI bir Coremetry ister (giriş + HTTP);
+# burada compose ile tek-node CH + Redis + uygulama kalkar, cmd/demo 3 dk
+# veri basar, perfcheck 3 koşu ölçer.
+#
+# DÜRÜST SINIR: paylaşımlı GitHub koşucusu gürültülüdür; mutlak eşikler
+# minikube tabanına göre yazıldı (budget.json). Bu yüzden iş ADVISORY:
+# kırmızı olsa da pipeline'ı kırmaz (ESLint emsali, ci.yml). Değerli sinyal
+# koşudan koşuya KIYAS (perfcheck -compare, tolerans %25): önceki gecenin
+# JSON'u cache'ten gelir, bu gecenin çıktısı artefakt + cache olarak kalır.
+# [memory: feedback-perf-benchmark-discipline] — tek ölçüm yalan söyler;
+# runs=3 medyan, ısınma 1.
+name: Perf nightly
+
+on:
+  schedule:
+    - cron: '17 3 * * *' # her gece 03:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: perf-nightly
+  cancel-in-progress: false
+
+jobs:
+  perfcheck:
+    name: perfcheck (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Restore previous night's baseline
+        id: baseline
+        uses: actions/cache/restore@v5
+        with:
+          path: perf/baseline
+          key: perf-baseline-${{ github.run_id }}
+          restore-keys: |
+            perf-baseline-
+      - name: Bring up stack (clickhouse + redis + coremetry)
+        env:
+          VERSION: nightly
+        run: |
+          docker compose up -d --build clickhouse redis coremetry
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8088/api/health >/dev/null && break
+            sleep 5
+          done
+          curl -sf http://localhost:8088/api/version
+      - name: Seed telemetry (cmd/demo, 3 dk)
+        run: |
+          go run ./cmd/demo -endpoint http://localhost:8088 -duration 3m
+          sleep 30 # MV/rollup gecikmesi
+      - name: perfcheck (3 koşu, önceki geceyle kıyas)
+        run: |
+          mkdir -p perf/out perf/baseline
+          PREV=""; [ -f perf/baseline/latest.json ] && PREV="-compare perf/baseline/latest.json"
+          go run ./cmd/perfcheck -budget scripts/perf/budget.json -base http://localhost:8088 -runs 3 -out perf/out/nightly.json $PREV | tee perf/out/nightly.log
+      - name: Publish summary
+        if: always()
+        run: |
+          { echo '## perfcheck (advisory)'; echo; echo '```'; tail -60 perf/out/nightly.log 2>/dev/null || echo 'koşu çıktısı yok'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep tonight as tomorrow's baseline
+        if: always()
+        run: |
+          mkdir -p perf/baseline
+          [ -f perf/out/nightly.json ] && cp perf/out/nightly.json perf/baseline/latest.json || true
+      - uses: actions/cache/save@v5
+        if: always()
+        with:
+          path: perf/baseline
+          key: perf-baseline-${{ github.run_id }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: perfcheck-${{ github.run_id }}
+          path: perf/out/
+          retention-days: 30
+      - name: Tear down
+        if: always()
+        run: docker compose down -v || true

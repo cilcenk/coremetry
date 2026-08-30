@@ -124,6 +124,9 @@ func (s *Store) GetPodInventory(ctx context.Context, from, to time.Time, limit i
 	if limit <= 0 || limit > 1000 {
 		limit = 300
 	}
+	// v0.10.195 — kota ZAMAN DİLİMİNE bölünür (sample_slices.go); önek
+	// örneklemesi "252 span, 0 sn boyunca görüldü" üretiyordu.
+	bucketSec, perBucket := sampleSlices(int64(to.Sub(from).Seconds()), podInventoryPerService)
 	q := fmt.Sprintf(`
 		SELECT ns, pod,
 		       any(service_name)      AS svc,
@@ -139,14 +142,14 @@ func (s *Store) GetPodInventory(ctx context.Context, from, to time.Time, limit i
 			FROM spans
 			WHERE time >= ? AND time <= ?
 			  AND has(res_keys, 'k8s.pod.name')
-			LIMIT %d BY service_name
+			LIMIT %d BY service_name, toStartOfInterval(time, INTERVAL %d SECOND)
 			LIMIT %d
 		)
 		WHERE pod != ''
 		GROUP BY ns, pod
 		ORDER BY spans DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 25`, namespaceExpr(), podInventoryPerService, podInventorySampleRows)
+		SETTINGS max_execution_time = 25`, namespaceExpr(), perBucket, bucketSec, podInventorySampleRows)
 
 	rows, err := s.telemetryReadConn().Query(ctx, q, from, to, limit)
 	if err != nil {

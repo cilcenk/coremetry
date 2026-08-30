@@ -53,7 +53,7 @@ import { readSSE } from './sse';
 // GoDuration — every `since` below is forwarded to Go's time.ParseDuration,
 // which has no day unit; see the type's comment in utils.ts.
 import type { GoDuration } from './utils';
-import { decodeBundle, type CompactSeries } from './seriesCompact';
+import { decodeBundle, SERIES_ENC, type CompactSeries } from './seriesCompact';
 
 // Empty base = same origin (works in production where Go serves both UI and API).
 // In dev, Next.js rewrites /api/* to http://localhost:8088 (see next.config.mjs).
@@ -2348,7 +2348,7 @@ export const api = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          enc: 'col', // v0.10.186 — sütunsal seri opt-in (lib/seriesCompact.ts çözer)
+          enc: SERIES_ENC, // v0.10.186 — sütunsal seri opt-in (lib/seriesCompact.ts çözer; 189: col2)
           from: body.from,
           to: body.to,
           // server takes filters as raw JSON; if a request

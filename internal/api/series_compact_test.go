@@ -1,9 +1,10 @@
 package api
 
-// series_compact_test.go — v0.10.186 sözleşmesi (series_compact.go başlığı).
+// series_compact_test.go — v0.10.186 sözleşmesi + v0.10.189 null dolgulu ızgara (series_compact.go başlığı).
 
 import (
 	"encoding/json"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -35,8 +36,35 @@ func TestCompactSeriesShapes(t *testing.T) {
 	if cs[2].Step != 0 || len(cs[2].V) != 0 || cs[2].T0 != 0 {
 		t.Fatalf("boş: %+v", cs[2])
 	}
-	if cs[3].T == nil || cs[3].Step != 0 || !reflect.DeepEqual(cs[3].T, []int64{0, 15e9, 45e9}) {
-		t.Fatalf("düzensiz açık zaman dizisi bekleniyor: %+v", cs[3])
+	// v0.10.189 — ızgaralı boşluk (kapsama 3/4): null dolgulu adımlı şekil
+	if cs[3].T != nil || cs[3].Step != 15e9 || len(cs[3].V) != 4 || !reflect.DeepEqual(cs[3].Gap, []bool{false, false, true, false}) || cs[3].V[3] != 3 {
+		t.Fatalf("ızgaralı seyrek seri null dolgulu adımlı olmalı: %+v", cs[3])
+	}
+	if j, _ := json.Marshal(cs[3]); string(j) != `{"groupKey":["g"],"step":15000000000,"v":[1,2,null,3]}` {
+		t.Fatalf("tel şekli: %s", j)
+	}
+	// kapsama < %20 → açık t[]; adım saniye-altı OBEB → açık t[]
+	sparse := chstore.SpanMetricSeries{GroupKey: []string{"s"}, Points: []chstore.SpanMetricPoint{{Time: 0, Value: 1}, {Time: 15e9, Value: 2}, {Time: 15e9 * 200, Value: 3}}}
+	if c := compactOne(sparse); c.T == nil || c.Gap != nil || !reflect.DeepEqual(c.T, []int64{0, 15e9, 15e9 * 200}) {
+		t.Fatalf("seyrek (%%1,5) seri açık t[] kalmalı: %+v", c)
+	}
+	subSec := chstore.SpanMetricSeries{GroupKey: []string{"m"}, Points: []chstore.SpanMetricPoint{{Time: 0, Value: 1}, {Time: 500e6, Value: 2}, {Time: 1500e6, Value: 3}}}
+	if c := compactOne(subSec); c.T == nil || c.Gap != nil {
+		t.Fatalf("saniye-altı OBEB açık t[] kalmalı: %+v", c)
+	}
+	if g, ok := gridStep([]chstore.SpanMetricPoint{{Time: 0}, {Time: 30e9}, {Time: 75e9}}); !ok || g != 15e9 {
+		t.Fatalf("OBEB 15e9 bekleniyor: %d %v", g, ok)
+	}
+	// NaN/Inf tel üstünde null (emniyet; prod yolunda cache.go sanitizeFloats 0'a çeker)
+	if j, err := json.Marshal(compactSeries{GroupKey: []string{"n"}, V: []float64{1, math.NaN(), math.Inf(1)}}); err != nil || string(j) != `{"groupKey":["n"],"v":[1,null,null]}` {
+		t.Fatalf("NaN/Inf: %s %v", j, err)
+	}
+	// float biçimi encoding/json ile birebir (inceleme #1: 'g' 1e6 üstünü şişiriyordu)
+	for _, v := range []float64{536870912, 1234567, 0.5, 1e-7, 1e21, 123456789012345678, 0, -2.5, 1e-5} {
+		want, _ := json.Marshal(v)
+		if got := appendJSONFloat(nil, v); string(got) != string(want) {
+			t.Fatalf("float %v: %s ≠ encoding/json %s", v, got, want)
+		}
 	}
 	if cs[4].Step != 300e9 || cs[4].T != nil {
 		t.Fatalf("tekdüze boşluk düzenli sayılmalı: %+v", cs[4])
@@ -45,7 +73,7 @@ func TestCompactSeriesShapes(t *testing.T) {
 		t.Fatal("sıfır adım düzenli sayıldı")
 	}
 	// yuvarlak-yolculuk: FE formülünün Go aynası girdiyi birebir geri verir
-	for _, s := range []chstore.SpanMetricSeries{reg, one, gap, uniformGap} {
+	for _, s := range []chstore.SpanMetricSeries{reg, one, gap, uniformGap, sparse, subSec} {
 		if got := expandCompact(compactOne(s)); !reflect.DeepEqual(got.Points, s.Points) {
 			t.Fatalf("round-trip bozuk: %+v → %+v", s.Points, got.Points)
 		}
@@ -69,7 +97,7 @@ func TestCompactSeriesBytesSmaller(t *testing.T) {
 	// kodlanmış slot: series:null + cols (FE null≠undefined kuralı: cols çözülür)
 	slot := bundleSlot{Series: nil, Enc: seriesEncColumnar, Cols: compactSeriesSet(s)}
 	b, _ := json.Marshal(slot)
-	if !strings.Contains(string(b), `"series":null`) || !strings.Contains(string(b), `"cols":[`) || !strings.Contains(string(b), `"enc":"col"`) {
+	if !strings.Contains(string(b), `"series":null`) || !strings.Contains(string(b), `"cols":[`) || !strings.Contains(string(b), `"enc":"`+seriesEncColumnar+`"`) {
 		t.Fatalf("kodlanmış slot şekli: %s", b[:120])
 	}
 }

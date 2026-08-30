@@ -31,6 +31,7 @@ var availablePages = []AvailablePage{
 	{ID: "/incidents", Label: "nav.incidents", Group: "navGroup.triage"},
 	{ID: "/problems", Label: "nav.problems", Group: "navGroup.triage"},
 	{ID: "/anomalies", Label: "nav.anomalies", Group: "navGroup.triage"},
+	{ID: "/rollouts", Label: "nav.rollouts", Group: "navGroup.triage"}, // v0.10.201 — custom rol ızgarası (eski /deployment-report hiç kayıtlı değildi)
 
 	{ID: "/services", Label: "nav.services", Group: "navGroup.services"},
 	{ID: "/endpoints", Label: "nav.endpoints", Group: "navGroup.services"},

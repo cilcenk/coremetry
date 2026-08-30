@@ -59,7 +59,7 @@ const Incident          = lazy(() => import('./pages/Incident'));
 // observation-only page (live streams + 24h history).
 const Problems          = lazy(() => import('./features/anomalies'));
 const Anomalies         = lazy(() => import('./features/anomalies/AnomalyStreamsPage'));
-const DeploymentReport  = lazy(() => import('./pages/DeploymentReport'));
+const Rollouts          = lazy(() => import('./pages/Rollouts')); // v0.10.201 — Deployment Report → Rollouts
 const Inbox             = lazy(() => import('./pages/Inbox'));
 const Shift             = lazy(() => import('./pages/Shift'));
 const Alerts            = lazy(() => import('./pages/Alerts'));
@@ -98,6 +98,20 @@ function AdminRedirect() {
 function TopologyRedirect() {
   const loc = useLocation();
   return <Navigate to={`/service-map${loc.search}`} replace />;
+}
+// v0.10.201 — /deployment-report emekli: eski linkler (?since=&owner=&sre=)
+// sorgu dizesiyle /rollouts'a iner (TopologyRedirect deseni; statik Navigate
+// paylaşılan linki boş sayfaya düşürürdü).
+function DeploymentReportRedirect() {
+  // Eski paylaşılan linkin PENCERESİ korunur: ?since=<ns> → ?range=custom:<ms>-<ms>
+  // (customRangeToken biçimi); owner/sre süzgeçlerinin karşılığı yok, ölü param taşınmaz.
+  const loc = useLocation();
+  const p = new URLSearchParams(loc.search);
+  const since = Number(p.get('since'));
+  for (const k of ['since', 'ownerTeam', 'sreTeam', 'owner', 'sre']) p.delete(k);
+  if (Number.isFinite(since) && since > 0) p.set('range', `custom:${Math.floor(since / 1e6)}-${Date.now()}`);
+  const q = p.toString();
+  return <Navigate to={`/rollouts${q ? '?' + q : ''}`} replace />;
 }
 
 // v0.8.477 (perf dalga-2) — '/' açılışı: eski lazy Home chunk'ı 203
@@ -166,7 +180,8 @@ export default function App() {
             <Route path="/shift"          element={<Shift />} />
             <Route path="/problems"       element={<Problems />} />
             <Route path="/anomalies"      element={<Anomalies />} />
-            <Route path="/deployment-report" element={<DeploymentReport />} />
+            <Route path="/rollouts"          element={<Rollouts />} />
+            <Route path="/deployment-report" element={<DeploymentReportRedirect />} />
             <Route path="/exceptions"     element={<Navigate to="/problems" replace />} />
             <Route path="/alerts"         element={<Alerts />} />
             <Route path="/watchers"       element={<Watchers />} />

@@ -6082,6 +6082,33 @@ export interface StateRepartRun {
   current: string; results: StateRepartTableResult[]; error?: string;
 }
 
+// ── ROLLOUTS (v0.10.201) — chstore.RolloutRow / RolloutStats / rollout.Run ──
+/** workload_rollouts satırı; zamanlar ms (0 = yok). Ad WorkloadRollout:
+ * eski `Rollout` (pod-churn deploy/restart marker'ı, v0.8.405) ile çakışmasın. */
+export interface WorkloadRollout {
+  clusterId: string; namespace: string; workload: string; kind: string; revision: string;
+  startedAt: number; status: 'in_progress' | 'completed' | 'rolled_back' | 'superseded' | 'stalled' | string;
+  prevRevision: string; image: string; imageTag: string; prevImage: string; prevImageTag: string;
+  firstSpanAt: number; trafficConfirmedAt: number; ksmStartedAt: number; podsReadyAt: number; ksmNotReadySince: number; completedAt: number;
+  detectedBy: string; spanCount: number; note: string; updatedAt: number;
+}
+export interface RolloutListResponse { rollouts: WorkloadRollout[]; from: number; to: number; limit: number; capped?: boolean; note?: string; disabled?: boolean }
+export interface RolloutWorkloadN { clusterId: string; namespace: string; workload: string; n: number }
+export interface RolloutStats {
+  total: number; completed: number; rolledBack: number; inProgress: number; stalled: number; superseded: number;
+  from: number; to: number;
+  perDay: number; rollbackRate: number; meanDurationSec: number; p95DurationSec: number;
+  topRollback: RolloutWorkloadN[]; topDeploy: RolloutWorkloadN[]; byDay: { day: string; total: number; rolledBack: number }[];
+  /** 404 {disabled:true} sentineli (queries/rollouts.ts) — hata değil, kapalı bayrak. */
+  disabled?: boolean;
+}
+/** rollout.Run — sunucu MarshalJSON'u camelCase + epoch-ms yazar (reconciler.go); istemci normalize ETMEZ. */
+export interface RolloutRun { startedAt: number; finishedAt: number; host?: string; status: string; clusters: number; rolloutsWritten: number; spanMs: number; ksmMs: number; error?: string }
+export interface RolloutRunsResponse { runs: RolloutRun[] }
+export interface RolloutSettings { enabled: boolean; interval?: string; bucket?: string; threshold?: number; hysteresis?: number; exitHysteresis?: number; overlapMax?: string; lookback?: string; weakSignal?: boolean; stalledMin?: string; updatedAt?: number }
+/** GET/PUT /api/settings/rollouts cevabı: settings + resolved (uygulanan) + defaults. */
+export interface RolloutSettingsResponse { settings: RolloutSettings; resolved: Record<string, unknown>; defaults: RolloutSettings }
+
 // K8sCoverageRow / K8sCoverage (v0.10.36) — K8s bağlam kapsama kartı,
 // entity katmanı Faz 0. Bir servisin hangi k8s resource alanını YAYDIĞI.
 //

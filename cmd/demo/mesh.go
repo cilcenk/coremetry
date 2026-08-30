@@ -65,7 +65,7 @@ var meshServices = []Service{
 	svc("device-registry", rtGo, "devreg-prod-1", "devreg-prod-2"),
 	svc("preferences-service", rtNode, "prefs-prod-1", "prefs-prod-2"),
 	// Fraud-ML pipeline
-	svc("feature-store", rtGo, "featst-prod-1", "featst-prod-2", "featst-prod-3"),
+	svc("feature-store", rtGo, "feature-store-0", "feature-store-1", "feature-store-2"), // v0.10.192 — StatefulSet: kararlı pod adları
 	svc("model-serving", rtPy, "mdlsrv-prod-1", "mdlsrv-prod-2", "mdlsrv-prod-3", "mdlsrv-prod-4"),
 	svc("fraud-scoring-v2", rtPy, "fscore-prod-1", "fscore-prod-2", "fscore-prod-3"),
 	svc("case-manager", rtJava21, "casemgr-prod-1", "casemgr-prod-2"),

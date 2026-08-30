@@ -161,10 +161,10 @@ var demoClusters = []string{"prod-eu-west", "prod-eu-central", "prod-us-east", "
 // consistent. Some services (frontend, api-gateway) get pinned
 // to a single cluster so the trace topology stays readable.
 func clusterFor(serviceName string) string {
-	switch serviceName {
-	case "mobile-bff", "api-gateway", "web-bff":
+	if channelTierServices[serviceName] {
 		// Channel tier pinned to the EU-west "primary" cluster so
-		// the trace waterfall has a stable entry point.
+		// the trace waterfall has a stable entry point (v0.10.192:
+		// namespaceFor ile aynı küme — session-gateway dahil).
 		return demoClusters[0]
 	}
 	var h uint32 = 2166136261
@@ -329,8 +329,19 @@ func (t *Trace) pickPod(svc string) string {
 // version-based deploy markers were noise). v0.8.x.
 func rollPodGeneration() {
 	gen := fmt.Sprintf("r%d", 1000+mrand.IntN(9000)) // distinct per process start
+	podGeneration = gen
+	// v0.10.192 — imaj tag'i NESİLLE BİRLİKTE, bir kez: "sürüm ancak süreç
+	// rollandığında değişir" (inceleme: her yayımda time.Now() gece yarısı 56
+	// servise sahte deploy dalgası üretirdi; 9 değerlik n ise 1/9 çakışırdı).
+	imageTag = fmt.Sprintf("release.%s.%s", time.Now().Format("20060102"), gen)
 	for name, s := range services {
 		if len(s.Pods) == 0 {
+			continue
+		}
+		// StatefulSet pod adları KARARLIDIR (kafka-0 gibi): nesil soneki almaz —
+		// yeniden başlatma aynı pod adıyla döner (pod_inventory.go'nun
+		// "sessiz birleşmiş ömür" uyarısını yerelde gerçekten icra eder).
+		if statefulServices[name] {
 			continue
 		}
 		np := make([]string, len(s.Pods))
@@ -341,6 +352,92 @@ func rollPodGeneration() {
 		services[name] = s
 	}
 	log.Printf("  pod generation:   %s (each redeploy rolls all pods → a rollout marker)", gen)
+}
+
+// ── v0.10.192 — K8s İŞYÜKÜ KİMLİĞİ (rollouts audit «ön koşul») ─────────────
+//
+// Rollout dedektörü (workload_revision_activity_1m MV) revision = ReplicaSet
+// ADI, image = container.image.name/tag ister; demo bunları yaymıyordu → span
+// tabanlı dedektör lokalde HİÇ icra edilemezdi (feedback-local-data-is-a-
+// fixture). Üç kural:
+//   • replicaset = <deployment>-<pod-template-hash>; hash her pod
+//     NESLİNDE değişir (rollPodGeneration) → her demo yeniden başlatması
+//     gerçek bir rollout gibi görünür (gen sabit → tekrar yok).
+//   • image tag = release.<YYYYMMDD>.<n>, n nesilden; image name sabit
+//     registry yolu → image diff nesilden nesile değişir.
+//   • namespace tek "demo" değil: kanal katmanı "channels", geri kalanı
+//     "demo" → MV'nin namespace boyutu ve pod sayfasının namespace çözümü
+//     yerelde iki değerle sınanır (lokal sahte Thanos betiği — scratchpad,
+//     repo DIŞI — aynı haritayı taşımalı).
+//   • statefulServices: StatefulSet iş yükü — k8s.statefulset.name yayar,
+//     k8s.deployment.name ve replicaset YAYMAZ (STS'de RS yok; revision
+//     controller-revision-hash — audit'te açık soru).
+// Üç sinyal (span/log/metrik) aynı yardımcıyı kullanır (v0.8.383 tutarlılık).
+
+var podGeneration string
+
+// imageTag — rollPodGeneration'da nesille birlikte bir kez hesaplanır.
+var imageTag string
+
+// statefulServices — StatefulSet iş yükleri: k8s.statefulset.name yayar,
+// deployment/replicaset yaymaz, pod adları kararlı (<svc>-0..N).
+var statefulServices = map[string]bool{"feature-store": true}
+
+// channelTierServices — kanal katmanı: tek cluster'a pinli (clusterFor) VE
+// "channels" namespace'inde (namespaceFor) — iki fonksiyon aynı kümeyi okur.
+var channelTierServices = map[string]bool{"mobile-bff": true, "api-gateway": true, "web-bff": true, "session-gateway": true}
+
+// k8sHashAlphabet — Kubernetes rand.SafeEncodeString alfabesi: gerçek
+// pod-template-hash'ler HEX DEĞİLDİR (bcdfghjklmnpqrstvwxz2456789). Demo
+// gerçek biçimi yayar ki yalnız hex kabul eden bir doğrulayıcı fixture'la
+// onaylanmasın (isReplicaSetHash bu yüzden [0-9a-z]'ye genişletildi).
+const k8sHashAlphabet = "bcdfghjklmnpqrstvwxz2456789"
+
+// rsHashFor — pod-template-hash biçimli (10 karakter, k8s alfabesi)
+// deterministik hash: servis + nesil.
+func rsHashFor(serviceName string) string {
+	h := uint64(fnv32(serviceName+"|"+podGeneration))<<32 | uint64(fnv32(podGeneration+"|"+serviceName))
+	b := make([]byte, 10)
+	for i := range b {
+		b[i] = k8sHashAlphabet[h%uint64(len(k8sHashAlphabet))]
+		h /= uint64(len(k8sHashAlphabet))
+	}
+	return string(b)
+}
+
+func namespaceFor(serviceName string) string {
+	if channelTierServices[serviceName] {
+		return "channels"
+	}
+	return "demo"
+}
+
+func imageNameFor(serviceName string) string {
+	return "registry.demo.local/coremetry-demo/" + serviceName
+}
+
+// imageTagFor — nesille sabit tag; nesil henüz yoksa (testler) sabit dolgu.
+func imageTagFor() string {
+	if imageTag == "" {
+		return "release.00000000.r0000"
+	}
+	return imageTag
+}
+
+// k8sWorkloadAttrs — namespace + iş yükü kimliği + imaj; üç sinyalde ortak.
+func k8sWorkloadAttrs(s Service) []*commonpb.KeyValue {
+	out := []*commonpb.KeyValue{
+		kvStr("k8s.namespace.name", namespaceFor(s.Name)),
+		kvStr("k8s.container.name", s.Name),
+		kvStr("container.image.name", imageNameFor(s.Name)),
+		kvStr("container.image.tag", imageTagFor()),
+	}
+	if statefulServices[s.Name] {
+		return append(out, kvStr("k8s.statefulset.name", s.Name))
+	}
+	return append(out,
+		kvStr("k8s.deployment.name", s.Name),
+		kvStr("k8s.replicaset.name", s.Name+"-"+rsHashFor(s.Name)))
 }
 
 // Add inserts a span and returns its ID for use as a parent.
@@ -476,7 +573,6 @@ func (t *Trace) Send() error {
 			kvStr("service.instance.id", pod),
 			kvStr("k8s.pod.name", pod),
 			kvStr("k8s.pod.ip", podIP(pod)),
-			kvStr("k8s.namespace.name", "demo"),
 			// v0.9.684 — K8s İŞYÜKÜ KİMLİĞİ. Demo bugüne kadar yalnız pod
 			// adını yayıyordu; deployment/container adı YOKTU.
 			//
@@ -495,8 +591,7 @@ func (t *Trace) Send() error {
 			// görünürdü: kapatmaya çalıştığım sınıfın ta kendisi.
 			// Gerçek k8s'te de service.name genellikle deployment adıdır.
 			// Üç sinyalde de aynı (kaynak tutarlılığı, v0.8.383 ilkesi).
-			kvStr("k8s.deployment.name", s.Name),
-			kvStr("k8s.container.name", s.Name),
+			// v0.10.192 — namespace + işyükü kimliği + imaj (k8sWorkloadAttrs)
 			kvStr("k8s.cluster.name", clusterFor(s.Name)),
 			// v0.8.383 — per-INSTANCE environment, current semconv key
 			// only (see demoEnvs). Resource-level: every span this pod
@@ -508,6 +603,7 @@ func (t *Trace) Send() error {
 		// Coremetry's team-derive job auto-populates the service catalog.
 		ugTeam, syTeam := teamsFor(s.Name)
 		attrs = append(attrs, kvStr("ug-team", ugTeam), kvStr("sy-team", syTeam))
+		attrs = append(attrs, k8sWorkloadAttrs(s)...)
 		if s.Lang != "" {
 			attrs = append(attrs,
 				kvStr("telemetry.sdk.language", s.Lang),
@@ -1316,7 +1412,7 @@ func sendLog(service string, severity int32, sevText, body string, traceID, span
 	}
 	pod := s.Pods[mrand.IntN(len(s.Pods))]
 	req := &logscollpb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{
-		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{
+		Resource: &resourcepb.Resource{Attributes: append([]*commonpb.KeyValue{
 			kvStr("service.name", s.Name),
 			kvStr("host.name", pod),
 			kvStr("service.instance.id", pod),
@@ -1339,14 +1435,13 @@ func sendLog(service string, severity int32, sevText, body string, traceID, span
 			// görünürdü: kapatmaya çalıştığım sınıfın ta kendisi.
 			// Gerçek k8s'te de service.name genellikle deployment adıdır.
 			// Üç sinyalde de aynı (kaynak tutarlılığı, v0.8.383 ilkesi).
-			kvStr("k8s.deployment.name", s.Name),
-			kvStr("k8s.container.name", s.Name),
+			// v0.10.192 — namespace + işyükü kimliği + imaj (k8sWorkloadAttrs)
 			kvStr("k8s.cluster.name", clusterFor(s.Name)),
 			// v0.8.383 — logs carry the pod's env too (resource-level
 			// coherence across signals; readies the Phase-4 log-env
 			// derive with real data).
 			kvStr("deployment.environment.name", envForPod(s, pod)),
-		}},
+		}, k8sWorkloadAttrs(s)...)},
 		ScopeLogs: []*logspb.ScopeLogs{{
 			Scope:      &commonpb.InstrumentationScope{Name: "coremetry-demo"},
 			LogRecords: []*logspb.LogRecord{rec},
@@ -1810,7 +1905,7 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 		}
 		pod := s.Pods[mrand.IntN(len(s.Pods))]
 		rms = append(rms, &metricspb.ResourceMetrics{
-			Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{
+			Resource: &resourcepb.Resource{Attributes: append([]*commonpb.KeyValue{
 				kvStr("service.name", s.Name),
 				kvStr("host.name", pod),
 				kvStr("service.instance.id", pod),
@@ -1829,12 +1924,11 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 				// "billpay-prod-2-r7402", ondan çıkarılan ad servisle
 				// eşleşmiyordu (bkz. spans dalındaki uzun not).
 				// Üç sinyalde de aynı (kaynak tutarlılığı, v0.8.383 ilkesi).
-				kvStr("k8s.deployment.name", s.Name),
-				kvStr("k8s.container.name", s.Name),
+				// v0.10.192 — namespace + işyükü kimliği + imaj (k8sWorkloadAttrs)
 				kvStr("k8s.cluster.name", clusterFor(s.Name)),
 				// v0.8.383 — same per-instance env as the pod's spans.
 				kvStr("deployment.environment.name", envForPod(s, pod)),
-			}},
+			}, k8sWorkloadAttrs(s)...)},
 			ScopeMetrics: []*metricspb.ScopeMetrics{{
 				Scope:   &commonpb.InstrumentationScope{Name: "coremetry-demo"},
 				Metrics: mts,

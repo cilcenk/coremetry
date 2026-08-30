@@ -64,7 +64,7 @@ func TestCoverageKeyCarriesEveryInput(t *testing.T) {
 	if !strings.Contains(src, "sec = snapK8sCoverageRange(sec)") {
 		t.Error("pencere basamağa oturtulmuyor — her tık yeni cache anahtarı, cache ölü kalır")
 	}
-	if !strings.Contains(src, `"k8s-coverage:v1:r=%d:l=%d"`) {
+	if !strings.Contains(src, `"k8s-coverage:v2:r=%d:l=%d"`) {
 		t.Error("cache anahtarı TÜM girdileri taşımıyor (pencere + limit)")
 	}
 	// Uç yalnız admin: filo genelinde servis adı listeliyor.

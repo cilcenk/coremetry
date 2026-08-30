@@ -6071,6 +6071,11 @@ export interface K8sCoverageRow {
   node: number;
   container: number;
   cluster: number;
+  /** v0.10.192 — rollout girdileri + cluster anahtarı ayrımı (eski önbellek yükünde yok → ?) */
+  replicaset?: number;
+  image?: number;
+  clusterK8s?: number;
+  clusterOpenshift?: number;
 }
 
 export interface K8sCoverage {

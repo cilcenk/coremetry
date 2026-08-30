@@ -74,7 +74,15 @@ type K8sCoverageRow struct {
 	PodUID     uint64 `json:"podUid"`
 	Node       uint64 `json:"node"`
 	Container  uint64 `json:"container"`
-	Cluster    uint64 `json:"cluster"`
+	// Cluster — k8s.cluster.name VEYA openshift.cluster.name (geriye uyum).
+	Cluster uint64 `json:"cluster"`
+	// v0.10.192 (rollouts audit ön koşul) — rollout dedektörünün girdileri:
+	// ReplicaSet adı + imaj; ve cluster'ın HANGİ anahtarla geldiği (tasarım
+	// statik k8s.cluster.name ister; OR sayacı ikisini birleştiriyordu).
+	ReplicaSet       uint64 `json:"replicaset"`
+	Image            uint64 `json:"image"`
+	ClusterK8s       uint64 `json:"clusterK8s"`
+	ClusterOpenshift uint64 `json:"clusterOpenshift"`
 }
 
 // K8sCoverage — servis × k8s alanı kapsama tablosu.
@@ -125,7 +133,11 @@ func (s *Store) GetK8sCoverage(ctx context.Context, from, to time.Time, limit in
 		       countIf(has(res_keys, 'k8s.node.name'))       AS node,
 		       countIf(has(res_keys, 'k8s.container.name'))  AS cont,
 		       countIf(has(res_keys, 'k8s.cluster.name')
-		               OR has(res_keys, 'openshift.cluster.name')) AS clus
+		               OR has(res_keys, 'openshift.cluster.name')) AS clus,
+		       countIf(has(res_keys, 'k8s.replicaset.name'))    AS rs,
+		       countIf(has(res_keys, 'container.image.name'))    AS img,
+		       countIf(has(res_keys, 'k8s.cluster.name'))        AS clus_k8s,
+		       countIf(has(res_keys, 'openshift.cluster.name'))  AS clus_ocp
 		FROM (
 			SELECT service_name, res_keys FROM spans
 			WHERE time >= ? AND time <= ?
@@ -152,7 +164,8 @@ func (s *Store) GetK8sCoverage(ctx context.Context, from, to time.Time, limit in
 	for rows.Next() {
 		var r K8sCoverageRow
 		if err := rows.Scan(&r.Service, &r.Sampled, &r.Namespace, &r.Deployment,
-			&r.Pod, &r.PodUID, &r.Node, &r.Container, &r.Cluster); err != nil {
+			&r.Pod, &r.PodUID, &r.Node, &r.Container, &r.Cluster,
+			&r.ReplicaSet, &r.Image, &r.ClusterK8s, &r.ClusterOpenshift); err != nil {
 			continue
 		}
 		out.Rows = append(out.Rows, r)

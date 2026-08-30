@@ -3665,6 +3665,18 @@ thead th:hover .th-remove { opacity: 1; }
 .anom-win { margin-bottom: 16px; }
 /* v0.10.171 — başlık altyazısındaki bant toggle'ı: 10.5px çıplak sözcük yerine dokunulabilir alan (inceleme #7). */
 .bands-toggle { padding: var(--sp-1) var(--sp-3); margin: calc(-1 * var(--sp-1)) 0; font-weight: 600; }
+/* v0.10.173 — exception detayı «Pods · nodes» tablosu: sabit yerleşim, yatay taşma yok
+   (pod hücresi: ad + cluster › namespace alt satırı; ellipsis + title). */
+.exc-pods-t { table-layout: fixed; width: 100%; }
+.exc-pods-t th, .exc-pods-t td { overflow: hidden; }
+.exc-pods-cell { white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+.exc-pods-pod { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exc-pods-sub { color: var(--text3); font-size: var(--fs-2xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exc-pods-c-pod { width: 38%; }
+.exc-pods-c-node { width: 26%; }
+.exc-pods-c-n { width: 9%; }
+.exc-pods-c-t { width: 12%; min-width: 120px; }
+.exc-pods-c-a { width: 6%; }
 
 /* v0.10.165 — kod alıntısı: satır numarası oluğu, dosya başlığı, stack katlama
    (etüt «cevap paneli» A, dilim 1). Aynı .cm-md-code ailesi. */

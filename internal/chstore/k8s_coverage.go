@@ -123,6 +123,10 @@ func (s *Store) GetK8sCoverage(ctx context.Context, from, to time.Time, limit in
 	}
 	// has() ile sayım: anahtar dizide var mı. indexOf+değer okumaya gerek
 	// yok — soru "alan GELİYOR MU", değeri ne değil.
+	// v0.10.195 — kota ZAMAN DİLİMİNE bölünür (sample_slices.go): salt
+	// `LIMIT n BY service_name` birincil anahtar önekini, yani pencerenin
+	// ilk saniyelerini örnekliyordu.
+	bucketSec, perBucket := sampleSlices(int64(to.Sub(from).Seconds()), k8sCoveragePerService)
 	q := fmt.Sprintf(`
 		SELECT service_name,
 		       count()                                  AS sampled,
@@ -141,13 +145,13 @@ func (s *Store) GetK8sCoverage(ctx context.Context, from, to time.Time, limit in
 		FROM (
 			SELECT service_name, res_keys FROM spans
 			WHERE time >= ? AND time <= ?
-			LIMIT %d BY service_name
+			LIMIT %d BY service_name, toStartOfInterval(time, INTERVAL %d SECOND)
 			LIMIT %d
 		)
 		GROUP BY service_name
 		ORDER BY sampled DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 25`, k8sCoveragePerService, k8sCoverageSampleRows)
+		SETTINGS max_execution_time = 25`, perBucket, bucketSec, k8sCoverageSampleRows)
 
 	rows, err := s.telemetryReadConn().Query(ctx, q, from, to, limit)
 	if err != nil {

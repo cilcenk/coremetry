@@ -83,12 +83,18 @@ type bundleReq struct {
 	// span metric
 	Filters json.RawMessage `json:"filters"`
 	DSL     string          `json:"dsl"`
+	// v0.10.186 — gövde düzeyi opt-in'in slot'a kopyası (anahtara srcTag ile girer; JSON'a girmez).
+	Enc string `json:"-"`
 }
 
 // bundleSlot — tek panelin yanıtı.
 type bundleSlot struct {
 	// Series omitempty DEĞİL — boş sonuç `[]` yazılır (dosya başlığı).
 	Series []chstore.SpanMetricSeries `json:"series"`
+	// v0.10.186 — sütunsal kodlama: Enc=="col" ise Series nil, Cols dolu
+	// (series_compact.go; FE lib/seriesCompact.ts çözer).
+	Enc  string          `json:"enc,omitempty"`
+	Cols []compactSeries `json:"cols,omitempty"`
 	// TotalSeries + Tail (v0.10.147) — tekil spanMetricResponse ile aynı:
 	// kırpma öncesi seri sayısı ve kırpılan kuyruğun zaman-başı ham
 	// sum/count'u; yalnız kırpma olduysa yazılır.
@@ -151,7 +157,7 @@ func dashPanelKey(srcTag string, q bundleReq, from, to time.Time) string {
 		h.Write([]byte{':'})
 		h.Write([]byte(part))
 	}
-	return fmt.Sprintf("dash-panel:v2:%s:%x", q.Type, h.Sum64()) // v2: v0.10.147 tail/totalSeries
+	return fmt.Sprintf("dash-panel:v3:%s:%x", q.Type, h.Sum64()) // v2: v0.10.147 tail/totalSeries · v3: v0.10.186 sütunsal (enc anahtarda, srcTag üzerinden)
 }
 
 func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
@@ -175,6 +181,9 @@ func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
 		From     int64       `json:"from"`
 		To       int64       `json:"to"`
 		Requests []bundleReq `json:"requests"`
+		// v0.10.186 — istemci opt-in: "col" → sütunsal seriler (series_compact.go).
+		// Eski sekme göndermez → düz şekil (boş panel yerine doğru veri).
+		Enc string `json:"enc"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -212,6 +221,10 @@ func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
 			tag := ""
 			if req.Type == "metric" {
 				tag = metricTag
+			}
+			req.Enc = body.Enc
+			if req.Enc != "" {
+				tag += "|enc=" + req.Enc // kodlama önbellek anahtarında (#2)
 			}
 			key := dashPanelKey(tag, req, from, to)
 			raw, tier, err := s.cachedJSON(r.Context(), key, dashPanelTTL, bypass, func(ctx context.Context) (any, error) {
@@ -315,6 +328,12 @@ func (s *Server) bundleSlot(ctx context.Context, metricSrc metricSource, req bun
 	}
 	if slot.Series == nil {
 		slot.Series = []chstore.SpanMetricSeries{}
+	}
+	// v0.10.186 — P5 nokta kodlaması: istemci enc:"col" dediyse seriler
+	// sütunsal (series_compact.go; düzenli → t0/step, düzensiz → t[]); FE
+	// api.dashboardData çözer, tüketiciler {time,value} görmeye devam eder.
+	if req.Enc == seriesEncColumnar && len(slot.Series) > 0 {
+		slot.Enc, slot.Cols, slot.Series = seriesEncColumnar, compactSeriesSet(slot.Series), nil
 	}
 	return slot, nil
 }

@@ -25,7 +25,7 @@ const HEAVY: { file: string; hooks: string[] }[] = [
   { file: 'logs.ts', hooks: ['api.logs('] },
   // v0.10.131 — entity pivotları: entity_seen_5m taramaları + Thanos delegasyonu.
   { file: 'entities.ts', hooks: ['api.entityServices(', 'api.servicePods(', 'api.entityMetrics(', 'api.entityContainers(', 'api.entityLatency('] },
-  { file: 'rollouts.ts', hooks: ['api.rollouts(', 'api.rolloutStats(', 'api.rolloutRuns('] }, // v0.10.201
+  { file: 'rollouts.ts', hooks: ['api.rollouts(', 'api.rolloutStats(', 'api.rolloutRuns(', 'api.rolloutDetail('] }, // v0.10.201
   { file: 'endpoints.ts', hooks: ['api.endpoints(', 'api.endpointDetail(', 'api.endpointSplit(', 'api.endpointDownstream('] },
   // v0.9.810 — Explore'un fan-out'u. Bu dosya lib/queries'te DEĞİL
   // (pages/explore altında) ama kusur sınıfı birebir aynı ve ölçeği daha

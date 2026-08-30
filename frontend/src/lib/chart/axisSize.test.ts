@@ -4,6 +4,7 @@ import {
   niceIncr, maxTicksFor, axisTickPlan, decimalsForIncr,
   estimateLabelWidthPx, axisGutterPx, widestLabelPx,
   seriesExtent, paddedExtent, decimalsForScaledIncr, displayScaleOf, scaleRefTick,
+  labelWidthFloorPx, AXIS_EM_PER_CHAR_FLOOR, AXIS_FONT_SIZE,
 } from './axisSize';
 
 // v0.9.799 — İKİ operatör-bildirimli kusurun saf çekirdeği:
@@ -260,3 +261,16 @@ describe('scaleRefTick', () => {
     expect(scaleRefTick([NaN, Infinity])).toBe(0);
   });
 });
+
+// v0.10.191 — ölçüm tabanı: yedek/dar font ölçümü oluğu kırptırmaz.
+describe('labelWidthFloorPx (v0.10.191)', () => {
+  it('punto font dizesinden, 0.55 em/karakter; punto yoksa AXIS_FONT_SIZE', () => {
+    expect(labelWidthFloorPx('4.407 GiB', '12px Inter, Arial')).toBeCloseTo(9 * 12 * AXIS_EM_PER_CHAR_FLOOR, 6);
+    expect(labelWidthFloorPx('0.15 cores', '10px x')).toBeCloseTo(10 * 10 * AXIS_EM_PER_CHAR_FLOOR, 6);
+    expect(labelWidthFloorPx('ab', 'bold serif')).toBeCloseTo(2 * AXIS_FONT_SIZE * AXIS_EM_PER_CHAR_FLOOR, 6);
+  });
+  it('taban kaba tahminin (0.62 em) ALTINDA — normal ölçümü büyütmez', () => {
+    expect(labelWidthFloorPx('100 req/s', '12px Inter')).toBeLessThan(estimateLabelWidthPx('100 req/s'));
+  });
+});
+

@@ -41,6 +41,13 @@ export const AXIS_SMALL_PLOT_PX = 150;
  *  harflerin üstünde BİLEREK: fazla tahmin birkaç piksel yer yer, eksik
  *  tahmin etiketi kırpar (düzeltmeye çalıştığımız kusurun ta kendisi). */
 export const AXIS_EM_PER_CHAR = 0.62;
+/** v0.10.191 (operatör-bildirimi, prod Windows/Edge: "0.15 cores" → "15 cores",
+ *  "4.407 GiB" → "407 GiB"; lokalde ÜRETİLEMEDİ). Canvas ölçümü hangi
+ *  sebeple olursa olsun (yedek font, DPR/ölçekleme, eksik font) çizilenden
+ *  dar çıkarsa oluk yine kırpar. Ölçülen genişlik karakter tabanlı bir
+ *  TABANIN altına inemez: 0.55 em ≈ Arial/Helvetica basamak genişliği —
+ *  normal ölçümü büyütmez, yalnız gerçek-dışı küçük ölçümü yakalar. */
+export const AXIS_EM_PER_CHAR_FLOOR = 0.55;
 
 // ── Tick planı ────────────────────────────────────────────────────────────
 //
@@ -227,11 +234,21 @@ export function measureLabelWidthPx(label: string, font: string): number {
     w = ctx.measureText(label).width;
     // jsdom gibi ölçmeyen ortamlar 0 döndürür — tahmine düş.
     if (!(w > 0)) w = estimateLabelWidthPx(label);
+    // v0.10.191 — taban: ölçüm çizilenden dar çıkarsa (yedek font) kırpma.
+    w = Math.max(w, labelWidthFloorPx(label, font));
   }
   // Sınırsız büyümesin: eksen etiketi kümesi küçüktür, 500 fazlasıyla yeter.
   if (widthCache.size > 500) widthCache.clear();
   widthCache.set(key, w);
   return w;
+}
+
+/** labelWidthFloorPx — font dizesindeki punto × karakter × 0.55 em; font
+ *  punto taşımıyorsa AXIS_FONT_SIZE. SAF; axisSize.test.ts pinler. */
+export function labelWidthFloorPx(label: string, font: string): number {
+  const m = /(\d+(?:\.\d+)?)px/.exec(font);
+  const px = m ? parseFloat(m[1]) : AXIS_FONT_SIZE;
+  return label.length * px * AXIS_EM_PER_CHAR_FLOOR;
 }
 
 /** widestLabelPx — etiket kümesinin en geniş ölçüsü. */

@@ -56,12 +56,10 @@ import (
 // silently and never streamed; if the model emits ONLY reasoning, the
 // salvaged answer (v0.8.384 chain) is emitted as one final delta.
 func (s *Service) StreamText(ctx context.Context, systemPrompt, userPrompt string, onDelta func(string)) (string, error) {
-	if !s.Active() {
+	if !s.activeFor(ctx, true) { // v0.10.175 — çözülen profilin kimliği (#1)
 		return "", errors.New("AI copilot not available (disabled or not configured — open Settings → AI Copilot)")
 	}
-	s.mu.RLock()
-	provider, model, baseURL := s.provider, s.model, s.baseURL
-	s.mu.RUnlock()
+	provider, model, baseURL := s.profileIdentity(ctx) // v0.10.175
 
 	started := time.Now()
 	var (
@@ -152,7 +150,7 @@ func (s *Service) streamFallback(fe *aiprov.StreamFallbackError, provider, baseU
 // ─── OpenAI-compat streaming (policy shell) ─────────────────────────
 
 func (s *Service) streamOpenAIWithUsage(ctx context.Context, systemPrompt, userPrompt string, onDelta func(string)) (string, uint32, uint32, error) {
-	cfg, req, _, base, model := s.callSnapshot()
+	cfg, req, _, base, model := s.callSnapshot(ctx)
 	req.System, req.User = systemPrompt, userPrompt
 	// Verdict anahtarı VARSAYILANLARI UYGULANMIŞ hâli kullanır — aynı uç
 	// bir çağrıda boş model, bir çağrıda "gpt-4o-mini" olarak
@@ -184,7 +182,7 @@ func (s *Service) streamOpenAIWithUsage(ctx context.Context, systemPrompt, userP
 // ─── Anthropic streaming (policy shell) ─────────────────────────────
 
 func (s *Service) streamAnthropicWithUsage(ctx context.Context, systemPrompt, userPrompt string, onDelta func(string)) (string, uint32, uint32, error) {
-	cfg, req, _, _, model := s.callSnapshot()
+	cfg, req, _, _, model := s.callSnapshot(ctx)
 	req.System, req.User = systemPrompt, userPrompt
 	if model == "" {
 		model = "claude-sonnet-4-6"

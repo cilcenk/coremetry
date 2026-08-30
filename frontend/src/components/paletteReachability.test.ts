@@ -46,6 +46,7 @@ const INTENTIONALLY_UNLISTED: Record<string, string> = {
   '/database': 'detay — /databases satırından açılır',
   '/endpoint': 'detay — /endpoints satırından açılır',
   '/entity': 'detay — /pod entity paneli zincirinden (node/namespace/workload) açılır (v0.10.135)',
+  '/deployment-report': 'emekli rota, yönlendirme (→ /rollouts, v0.10.201)',
   '/errors': 'emekli rota, yönlendirme',
   '/exceptions': 'detay — /problems Exceptions sekmesinden açılır',
   '/incident': 'detay — /incidents listesinden açılır',

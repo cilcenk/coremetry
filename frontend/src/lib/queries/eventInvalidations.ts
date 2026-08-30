@@ -11,7 +11,8 @@ import { keys } from './keys';
 // a blanket refetch.
 export type EventKind =
   | 'problem.open' | 'problem.resolve'
-  | 'anomaly.open' | 'anomaly.clear';
+  | 'anomaly.open' | 'anomaly.clear'
+  | 'rollout'; // v0.10.201 — workload_rollouts satırı değişti (pod tail'i, PublishLocal)
 
 export function eventInvalidations(kind: EventKind | string): QueryKey[] {
   switch (kind) {
@@ -26,6 +27,11 @@ export function eventInvalidations(kind: EventKind | string): QueryKey[] {
     case 'anomaly.open':
     case 'anomaly.clear':
       return [keys.anomalies.all, keys.inbox.all];
+    // v0.10.201 — Plan A (audit §3): payload taşınmaz, satır snapshot refetch'iyle gelir.
+    case 'rollout':
+      // yalnız liste: stats/runs kendi TTL'lerinde kalır (sunucu tail'i de
+      // zaten tik başına tek olay + tek süpürme garantisi verir, rollouts.go)
+      return [keys.rollouts.listAll];
     default:
       return [];
   }
@@ -42,5 +48,6 @@ export function catchupInvalidations(): QueryKey[] {
     keys.anomalies.metrics,
     keys.incidents.all,
     keys.inbox.all,
+    keys.rollouts.all, // v0.10.201
   ];
 }

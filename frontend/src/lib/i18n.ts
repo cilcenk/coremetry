@@ -38,7 +38,7 @@ const EN: Catalog = {
   'nav.incidents':   'Incidents',
   'nav.problems':    'Exceptions',
   'nav.anomalies':   'Anomalies',
-  'nav.deploymentReport': 'Deployment Report',
+  'nav.rollouts':    'Rollouts', // v0.10.201 — Deployment Report → Rollouts
   'nav.analysis':    'Analysis',
   'nav.services':    'Services',
   'nav.endpoints':   'Endpoints',
@@ -174,7 +174,7 @@ const TR: Catalog = {
   'nav.incidents':   'Olaylar',
   'nav.problems':    'Exception grupları',
   'nav.anomalies':   'Anomaliler',
-  'nav.deploymentReport': 'Dağıtım Raporu',
+  'nav.rollouts':    'Rollout’lar',
   'nav.analysis':    'Sistem Analizi',
   'nav.services':    'Servisler',
   'nav.endpoints':   'Endpoint’ler',

@@ -8,7 +8,7 @@ import type {
   MetricQueryResult,
   MetricResolveResult,
   EndpointRow, EndpointsListResponse, EndpointDetail, EndpointSplitResponse, EndpointDownstream, EndpointCallersResponse, ServiceAttrsResponse,
-  AlertRule, Problem, EvaluatorHealth, WatcherImportResult, WatcherSummaryEntry, WatcherHistory, DeploymentReport,
+  AlertRule, Problem, EvaluatorHealth, WatcherImportResult, WatcherSummaryEntry, WatcherHistory,
   Runbook, RunbookExecution,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel, ChannelHealthRow,
@@ -2743,12 +2743,19 @@ export const api = {
   // parametre eklemek gereksiz cache parçalanması olurdu.
   evaluatorHealth: () => get<EvaluatorHealth>('/api/problems/evaluator'),
 
-  // Deployment analysis report — fleet-wide, generated on demand.
-  // `sinceNs` is unix nanoseconds (same convention as from/to
-  // elsewhere in this client), not milliseconds. ownerTeam/sreTeam
-  // mirror the Problems inbox's team filter (v0.8.310).
-  deploymentReport: (sinceNs: number, params: { ownerTeam?: string; sreTeam?: string } = {}) =>
-    get<DeploymentReport>(`/api/deployment-report?${qs({ since: sinceNs, ...params })}`),
+  // v0.10.201 — ROLLOUTS (rollouts.go). Liste/istatistik signal taşır (cancellation.test.ts).
+  rollouts: (p: { from: number; to: number; cluster?: string; namespace?: string; workload?: string; status?: string; kind?: string; limit?: number }, signal?: AbortSignal) =>
+    get<import('./types').RolloutListResponse>(`/api/rollouts?from=${p.from}&to=${p.to}${amp(qs({ cluster: p.cluster, namespace: p.namespace, workload: p.workload, status: p.status, kind: p.kind, limit: p.limit }))}`, signal),
+  rolloutStats: (p: { from: number; to: number; cluster?: string; namespace?: string; topN?: number }, signal?: AbortSignal) =>
+    get<import('./types').RolloutStats>(`/api/rollouts/stats?from=${p.from}&to=${p.to}${amp(qs({ cluster: p.cluster, namespace: p.namespace, topN: p.topN }))}`, signal),
+  // admin ucu (koşu hatası ham CH dizesi taşıyabilir); sunucu camelCase/ms yazar
+  rolloutRuns: (signal?: AbortSignal) =>
+    get<import('./types').RolloutRunsResponse>('/api/rollouts/runs', signal),
+  rolloutSettings: () => get<import('./types').RolloutSettingsResponse>('/api/settings/rollouts'),
+  putRolloutSettings: (cfg: import('./types').RolloutSettings) =>
+    request<import('./types').RolloutSettingsResponse>('/api/settings/rollouts', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg),
+    }),
 
   // ── SLOs ─────────────────────────────────────────────────────────────────
   listSLOs: () => get<SLORow[] | null>('/api/slos'),
@@ -3643,6 +3650,9 @@ export interface MetricsParams {
   to?: number;
   limit?: number;
 }
+
+// amp — v0.10.201: qs() çıktısını mevcut sorgu dizesine '&' ile ekler (boşsa hiçbir şey).
+function amp(q: string): string { return q ? '&' + q : ''; }
 
 function qs(params: Record<string, unknown> | object): string {
   const u = new URLSearchParams();

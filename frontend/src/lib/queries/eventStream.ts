@@ -40,7 +40,7 @@ function applyCatchup(qc: QueryClient) {
   }
 }
 
-const EVENT_KINDS: EventKind[] = ['problem.open', 'problem.resolve', 'anomaly.open', 'anomaly.clear'];
+const EVENT_KINDS: EventKind[] = ['problem.open', 'problem.resolve', 'anomaly.open', 'anomaly.clear', 'rollout']; // v0.10.201 rollout
 
 export function useEventStream(enabled: boolean) {
   const qc = useQueryClient();

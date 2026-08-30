@@ -79,7 +79,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/inbox',     label: 'nav.inbox',     icon: Inbox },
       { href: '/problems',  label: 'nav.problems',  icon: Bug },
       { href: '/incidents', label: 'nav.incidents', icon: TriangleAlert },
-      { href: '/deployment-report', label: 'nav.deploymentReport', icon: Rocket },
+      { href: '/rollouts',  label: 'nav.rollouts',  icon: Rocket }, // v0.10.201 — Deployment Report → Rollouts (olay tabanlı)
     ],
   },
   {

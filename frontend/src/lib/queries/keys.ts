@@ -146,6 +146,16 @@ export const keys = {
     // anahtara girseydi her zoom yeni bir arama isteği doğururdu.
     metricUnit:  (name: string) => ['explore', 'metric-unit', name] as const,
   },
+  // v0.10.201 — ROLLOUTS (rollouts.ts). SSE `rollout` → listAll invalidation
+  // (stats 60 s TTL'ini süpürmesin); catchup'ta all.
+  rollouts: {
+    all:     ['rollouts'] as const,
+    listAll: ['rollouts', 'list'] as const,
+    list:  (p: { from: number; to: number; cluster?: string; namespace?: string; workload?: string; status?: string; kind?: string; limit?: number }) =>
+             ['rollouts', 'list', p] as const,
+    stats: (p: { from: number; to: number; cluster?: string; namespace?: string; topN?: number }) => ['rollouts', 'stats', p] as const,
+    runs:  () => ['rollouts', 'runs'] as const,
+  },
   // v0.10.131 — K8s entity katmanı (entities.ts). Her anahtar TÜM girdileri
   // taşır (cluster/tip/ns/arama/at/pencere) — sunucu anahtarının aynası.
   entities: {

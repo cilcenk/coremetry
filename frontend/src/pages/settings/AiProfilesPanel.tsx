@@ -81,7 +81,7 @@ export function AiProfilesPanel({ payload, onChange }: { payload: AIProfilesPayl
       </Row>
       <div className="table-wrap is-fit" style={{ marginTop: 8 }}>
         <table style={{ tableLayout: 'fixed', width: '100%' }}>
-          <DataTableColgroup dt={dt} trailing={[300]} />
+          <DataTableColgroup dt={dt} trailing={[330]} />
           <DataTableHead dt={dt} trailing={<th></th>} />
           <tbody>
             {dt.sortedRows.map(p => {
@@ -97,7 +97,7 @@ export function AiProfilesPanel({ payload, onChange }: { payload: AIProfilesPayl
                   <td className="mono" style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={endpointLabel(p.provider, p.baseUrl)}>{endpointLabel(p.provider, p.baseUrl)}</td>
                   <td>{p.hasKey ? <span className="badge b-ok">stored</span> : profileUsable(p) ? <span className="badge b-gray">no auth</span> : <span className="badge b-warn">yok</span>}</td>
                   <td style={{ fontSize: 11, color: 'var(--text2)' }}>{tuningSummary(p)}</td>
-                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <td style={{ textAlign: 'right' }}>
                     <Button variant="secondary" size="sm" onClick={() => { setIsNew(false); setDraft(draftOf(p)); }}>Düzenle</Button>{' '}
                     {!p.default && <Button variant="secondary" size="sm" disabled={busy} onClick={() => run(() => api.defaultAIProfile(p.id), `Varsayılan: ${p.id}`)}>Varsayılan yap</Button>}{' '}
                     <Button variant="secondary" size="sm" loading={t === 'pending'} onClick={() => test(p.id)}>Bağlantıyı dene</Button>{' '}

@@ -182,7 +182,10 @@ export function AITab() {
     'Anthropic';
 
   return (
-    <div style={{ maxWidth: 640 }}>
+    // v0.10.178 — kök 1100: profil tablosu (6 sütun + eylemler) 640'ta sıkışıyordu
+    // (176 canlı görüntüsü: «PRO… S… MO…»); metin/form 640'lık iç sargıda kalır.
+    <div style={{ maxWidth: 1100 }}>
+      <div style={{ maxWidth: 640 }}>
       <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>CoSRE</h2>
       <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 16 }}>
         Inline natural-language explanations for traces, Problems and exceptions.
@@ -218,6 +221,7 @@ export function AITab() {
         );
       })()}
 
+      </div>
       {profiles && profiles.profiles.length > 0 && (
         <AiProfilesPanel payload={profiles} onChange={p => {
           setProfiles(p);
@@ -226,6 +230,7 @@ export function AITab() {
           if (d) { setProvider(d.provider); setModel(d.model ?? ''); setBaseUrl(d.baseUrl ?? ''); setHasKey(d.hasKey); setSkipTls(!!d.skipTls); }
         }} />
       )}
+      <div style={{ maxWidth: 640 }}>
       <form onSubmit={save} style={{
         marginTop: 18, padding: 16, borderRadius: 8,
         background: 'var(--bg2)', border: '1px solid var(--border)',
@@ -452,6 +457,7 @@ export function AITab() {
           </ul>
         </div>
       )}
+      </div>
     </div>
   );
 }

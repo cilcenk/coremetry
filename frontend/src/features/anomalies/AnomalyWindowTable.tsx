@@ -80,6 +80,12 @@ export function AnomalyWindowTable({ events, silences, canEdit, onOpen, onMute, 
                       <SnoozeButton label="Değil → sessize al" title="Bu bir anomali değil: kararı kaydet + parmak izini sustur" onMute={sec => onMute(e, sec)} />
                     </span>
                   )}
+                  {/* v0.10.184 (inceleme #5) — zaten susturulmuş olayda «değil» kararı yine verilebilsin (susturma değil, yalnız kayıt) */}
+                  {canEdit && silence && e.verdict !== 'not_anomaly' && (
+                    <span style={{ marginLeft: 8 }}>
+                      <LinkButton onClick={() => onVerdict(e, 'not_anomaly')} title="Bu bir anomali değil: kararı kaydet (zaten susturulmuş)">Değil</LinkButton>
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}

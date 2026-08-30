@@ -15,7 +15,7 @@ const ev = (over: Partial<AnomalyEvent>): AnomalyEvent => ({
 });
 // createdAt/untilAt unix NS (anomaly_silence.go) — inceleme blocker: saniye sanılıp ×1000 ile Invalid Date basılıyordu.
 const sil = (fp: string): AnomalySilence => ({ id: 's', fingerprint: fp, kind: 'trace_op', pattern: '', service: '', createdBy: 'cenk', createdAt: 1_700_000_000 * 1e9, untilAt: 1_700_600_000 * 1e9, reason: '', active: true });
-const html = (p: Omit<Parameters<typeof AnomalyWindowTable>[0], 'onVerdict'> & { onVerdict?: Parameters<typeof AnomalyWindowTable>[0]['onVerdict'] }) => renderToStaticMarkup(<MemoryRouter><AnomalyWindowTable onVerdict={() => {}} {...p} /></MemoryRouter>);
+const html = (p: Omit<Parameters<typeof AnomalyWindowTable>[0], 'onVerdict'> & { onVerdict?: Parameters<typeof AnomalyWindowTable>[0]['onVerdict'] }) => renderToStaticMarkup(<MemoryRouter><AnomalyWindowTable {...p} onVerdict={p.onVerdict ?? (() => {})} /></MemoryRouter>);
 const noop = () => {};
 
 describe('AnomalyWindowTable (v0.10.162)', () => {
@@ -59,5 +59,14 @@ describe('AnomalyWindowTable karar (v0.10.181)', () => {
     const h = html({ events: [ev({ verdict: 'anomaly' })], silences: [], canEdit: false, onOpen: noop, onMute: noop, truncated: false });
     expect(h).toContain('anomali ✓');
     expect(h).not.toContain('>Anomali<');
+  });
+});
+
+// v0.10.184 — susturulmuş olayda «Değil» (karar) düğmesi
+describe('AnomalyWindowTable susturulmuş + karar (v0.10.184)', () => {
+  it('sessiz satırda snooze yok ama «Değil» kararı var; değil kararı verilmişse yok', () => {
+    const h = html({ events: [ev({}), ev({ id: 'v2', verdict: 'not_anomaly' })], silences: [sil('sha1'), sil('v2')], canEdit: true, onOpen: noop, onMute: noop, truncated: false });
+    expect(h).not.toContain('Değil → sessize al');
+    expect(h.match(/>Değil</g)?.length).toBe(1);
   });
 });

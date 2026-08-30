@@ -10,6 +10,7 @@ import { encodeFilters } from '@/lib/urlState';
 import { useServiceDeploys, useAnomalyEvents, useAnomalySilences, useCreateAnomalySilence, usePutAnomalyVerdict } from '@/lib/queries';
 import { windowAnomalies, anomalyRegions, silencedSet, silenceKey } from '@/lib/anomalyRegions';
 import { readBandsParam, writeBandsParam } from '@/lib/bandsParam';
+import { toast } from '@/lib/toast';
 import type { ChartTimeRegion } from '@/lib/chart/overlays';
 import { LinkButton } from '@/components/ui';
 import { AnomalyWindowTable } from '@/features/anomalies/AnomalyWindowTable';
@@ -419,15 +420,21 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     if (id) p.set('anomaly', id); else p.delete('anomaly');
     return p;
   }, { replace: true });
-  const muteAnomaly = (e: AnomalyEvent, durationSec: number) => {
+  const muteAnomaly = async (e: AnomalyEvent, durationSec: number) => {
     // /anomalies sayfasının anahtarı (streams.tsx onMute); sunucu kanonik sha1'e
     // çevirir (v0.10.162 anomaly_extra.go silenceFingerprint) — akış + terfi kapısı okur.
-    void createSilence.mutateAsync({ fingerprint: silenceKey(e), kind: e.kind, pattern: e.pattern, service: e.service, durationSec, reason: 'operator: değil (servis sayfası)' });
-    // v0.10.181 — «Değil» aynı zamanda karardır (susturma süresi dolsa da kayıt kalır).
-    void putVerdict.mutateAsync({ id: e.id, verdict: 'not_anomaly', kind: e.kind, pattern: e.pattern, service: e.service });
+    // v0.10.181 — «Değil» aynı zamanda karardır; v0.10.184 (inceleme #6): iki
+    // yazım birlikte beklenir, biri düşerse operatör toast'la görür (sessiz no-op yok).
+    const results = await Promise.allSettled([
+      createSilence.mutateAsync({ fingerprint: silenceKey(e), kind: e.kind, pattern: e.pattern, service: e.service, durationSec, reason: 'operator: değil (servis sayfası)' }),
+      putVerdict.mutateAsync({ id: e.id, verdict: 'not_anomaly', kind: e.kind, pattern: e.pattern, service: e.service }),
+    ]);
+    const failed = results.map((r, i) => (r.status === 'rejected' ? (i === 0 ? 'susturma' : 'karar') : null)).filter(Boolean);
+    if (failed.length) toast.error(`«Değil» yazılamadı: ${failed.join(' + ')} — ${String((results.find(r => r.status === 'rejected') as PromiseRejectedResult).reason)}`);
   };
-  const verdictAnomaly = (e: AnomalyEvent, verdict: 'anomaly' | 'not_anomaly') => {
-    void putVerdict.mutateAsync({ id: e.id, verdict, kind: e.kind, pattern: e.pattern, service: e.service });
+  const setVerdict = async (e: AnomalyEvent, verdict: 'anomaly' | 'not_anomaly') => {
+    try { await putVerdict.mutateAsync({ id: e.id, verdict, kind: e.kind, pattern: e.pattern, service: e.service }); }
+    catch (err) { toast.error(`Karar yazılamadı: ${err instanceof Error ? err.message : String(err)}`); }
   };
 
   // v0.10.180 — banda tık → ?anomaly=<id> çekmecesi (deploy ▼ id taşımaz, no-op).
@@ -980,7 +987,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         <div className="anom-win">
           <PanelTitle sub={<>{windowEvents.length} anomali · bantlar grafiklerde: {bandsOn ? 'açık' : 'kapalı'} · <LinkButton onClick={toggleBands} aria-pressed={bandsOn} title="Anomali bantlarını grafiklerde göster/gizle (?bands=1)" className="bands-toggle">{bandsOn ? 'kapat' : 'aç'}</LinkButton> · satır → çekmece</>}>Anomaliler · bu pencere</PanelTitle>
           <AnomalyWindowTable events={windowEvents} silences={silencesQ.data} canEdit={canEditAnomaly}
-            onOpen={openAnomaly} onMute={muteAnomaly} onVerdict={verdictAnomaly} truncated={!!anomaliesQ.data?.truncated} />
+            onOpen={openAnomaly} onMute={muteAnomaly} onVerdict={setVerdict} truncated={!!anomaliesQ.data?.truncated} />
         </div>
       )}
       {drawerEvent && <Suspense fallback={null}><AnomalyDetailDrawerLazy event={drawerEvent} onClose={() => openAnomaly(null)} /></Suspense>}

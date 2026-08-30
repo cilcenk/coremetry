@@ -644,6 +644,8 @@ FROM (
       has(res_keys, 'kubernetes.deployment.name'), res_values[indexOf(res_keys, 'kubernetes.deployment.name')],
       has(res_keys, 'kubernetes.deployment_name'), res_values[indexOf(res_keys, 'kubernetes.deployment_name')],
       has(res_keys, 'openshift.deployment.name'), res_values[indexOf(res_keys, 'openshift.deployment.name')],
+      has(res_keys, 'k8s.statefulset.name'), res_values[indexOf(res_keys, 'k8s.statefulset.name')],
+      has(res_keys, 'k8s.daemonset.name'), res_values[indexOf(res_keys, 'k8s.daemonset.name')],
       has(attr_keys, 'k8s.deployment.name'), attr_values[indexOf(attr_keys, 'k8s.deployment.name')],
       has(attr_keys, 'kubernetes.deployment.name'), attr_values[indexOf(attr_keys, 'kubernetes.deployment.name')],
       has(attr_keys, 'kubernetes.deployment_name'), attr_values[indexOf(attr_keys, 'kubernetes.deployment_name')],

@@ -20,6 +20,7 @@ import type { K8sCoverageRow, PodRow } from '@/lib/types';
 const row = (o: Partial<K8sCoverageRow> = {}): K8sCoverageRow => ({
   service: 'svc-a', sampled: 100,
   namespace: 0, deployment: 0, pod: 0, podUid: 0, node: 0, container: 0, cluster: 0,
+  replicaset: 0, image: 0, clusterK8s: 0, clusterOpenshift: 0,
   ...o,
 });
 
@@ -65,9 +66,9 @@ describe('fieldSeen — her alan doğru sayıya bağlı', () => {
     ['pod', 4], ['podUid', 5], ['node', 6], ['container', 7],
   ] as const)('%s → %i', (k, want) => expect(fieldSeen(r, k)).toBe(want));
 
-  it('kartta yedi alan var ve sıra hiyerarşiyi izliyor', () => {
+  it('kartta on bir alan var (v0.10.192) ve sıra hiyerarşiyi izliyor', () => {
     expect(COVERAGE_FIELDS.map(f => f.key)).toEqual([
-      'cluster', 'namespace', 'deployment', 'pod', 'podUid', 'node', 'container',
+      'cluster', 'clusterK8s', 'clusterOpenshift', 'namespace', 'deployment', 'replicaset', 'pod', 'podUid', 'node', 'container', 'image',
     ]);
   });
 });

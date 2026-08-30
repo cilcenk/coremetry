@@ -620,12 +620,17 @@ func isPodRandomSuffix(s string) bool {
 	return true
 }
 
+// isReplicaSetHash — pod-template-hash mi? v0.10.192: gerçek k8s hash'leri
+// rand.SafeEncodeString alfabesiyle (bcdfghjklmnpqrstvwxz2456789) üretilir,
+// yani HEX DEĞİL — yalnız hex kabul eden eski sürüm gerçek RS'lerin çoğunu
+// reddediyordu (demo hex yaydığı için fixture bunu onaylıyordu). Küçük
+// harf + rakam, 8-10 karakter.
 func isReplicaSetHash(s string) bool {
 	if len(s) < 8 || len(s) > 10 {
 		return false
 	}
 	for _, c := range s {
-		if !strings.ContainsRune("0123456789abcdef", c) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'z') {
 			return false
 		}
 	}

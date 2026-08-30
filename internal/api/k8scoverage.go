@@ -98,7 +98,7 @@ func (s *Server) getK8sCoverage(w http.ResponseWriter, r *http.Request) {
 	}
 	// Anahtar TÜM girdileri taşıyor (CLAUDE.md sert kısıtı). Pencere
 	// basamaklı olduğu için kardinalite sınırlı ve cache gerçekten tutar.
-	key := fmt.Sprintf("k8s-coverage:v1:r=%d:l=%d", sec, limit)
+	key := fmt.Sprintf("k8s-coverage:v2:r=%d:l=%d", sec, limit) // v2: v0.10.192 rs/img/cluster ayrımı alanları
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		to := time.Now()
 		from := to.Add(-time.Duration(sec) * time.Second)

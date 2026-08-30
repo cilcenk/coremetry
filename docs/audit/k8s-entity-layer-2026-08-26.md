@@ -1,5 +1,7 @@
 # K8s altyapı entity katmanı — durum denetimi ve aşamalı plan
 
+> **⚠ BAYAT (2026-08-30, rollouts audit):** buradaki "prod span'inde uid/deployment/container/replicaset YOK" tespiti EN AZ bir prod cluster'ında artık geçerli değil — k8sattributes (ya da eşdeğeri) açık, `k8s.replicaset.name` ve `container.image.*` dahil tam set görüldü (n=1 pod). Öte yandan İKİNCİ bir cluster `k8s.namespace.name` bile basmıyor (v0.10.190). Kapsama CLUSTER BAŞINA ölçülür: Admin → System → K8s Coverage (v0.10.192 sayaçları).
+
 **Tarih:** 2026-08-26 · **Yöntem:** kod okuması + canlı ölçüm + üç düşmanca sınama
 **Kod DEĞİŞTİRİLMEDİ.**
 

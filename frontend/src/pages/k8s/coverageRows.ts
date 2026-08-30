@@ -50,14 +50,21 @@ export function fieldPct(seen: number, sampled: number): number | null {
 }
 
 /** Kartta gösterilen alanlar — sıra ENTITY hiyerarşisini izliyor. */
+// v0.10.192 (rollouts audit ön koşul): attr = TAM anahtar (kart bunu basar;
+// eskiden `k8s.` önekini elle ekliyordu ve container.image.* o öneke
+// sığmıyor). cluster üçe ayrıldı: birleşik (geriye uyum) + hangi anahtar.
 export const COVERAGE_FIELDS = [
-  { key: 'cluster', label: 'cluster' },
-  { key: 'namespace', label: 'namespace' },
-  { key: 'deployment', label: 'deployment' },
-  { key: 'pod', label: 'pod' },
-  { key: 'podUid', label: 'pod.uid' },
-  { key: 'node', label: 'node' },
-  { key: 'container', label: 'container' },
+  { key: 'cluster', label: 'cluster', attr: 'k8s.cluster.name | openshift.cluster.name' },
+  { key: 'clusterK8s', label: 'cluster (k8s)', attr: 'k8s.cluster.name' },
+  { key: 'clusterOpenshift', label: 'cluster (openshift)', attr: 'openshift.cluster.name' },
+  { key: 'namespace', label: 'namespace', attr: 'k8s.namespace.name' },
+  { key: 'deployment', label: 'deployment', attr: 'k8s.deployment.name' },
+  { key: 'replicaset', label: 'replicaset', attr: 'k8s.replicaset.name' },
+  { key: 'pod', label: 'pod', attr: 'k8s.pod.name' },
+  { key: 'podUid', label: 'pod.uid', attr: 'k8s.pod.uid' },
+  { key: 'node', label: 'node', attr: 'k8s.node.name' },
+  { key: 'container', label: 'container', attr: 'k8s.container.name' },
+  { key: 'image', label: 'image', attr: 'container.image.name' },
 ] as const;
 
 export type CoverageFieldKey = (typeof COVERAGE_FIELDS)[number]['key'];
@@ -66,6 +73,10 @@ export type CoverageFieldKey = (typeof COVERAGE_FIELDS)[number]['key'];
 export function fieldSeen(r: K8sCoverageRow, k: CoverageFieldKey): number {
   switch (k) {
     case 'cluster': return r.cluster;
+    case 'clusterK8s': return r.clusterK8s ?? 0;
+    case 'clusterOpenshift': return r.clusterOpenshift ?? 0;
+    case 'replicaset': return r.replicaset ?? 0;
+    case 'image': return r.image ?? 0;
     case 'namespace': return r.namespace;
     case 'deployment': return r.deployment;
     case 'pod': return r.pod;
@@ -79,6 +90,8 @@ export function fieldSeen(r: K8sCoverageRow, k: CoverageFieldKey): number {
 export interface FleetSummary {
   field: CoverageFieldKey;
   label: string;
+  /** tam attribute anahtarı (v0.10.192) */
+  attr: string;
   /** Alanı TAM yayan servis sayısı. */
   full: number;
   /** Kısmi yayan (bazı span'lerinde var). */
@@ -107,7 +120,7 @@ export function fleetSummary(rows: K8sCoverageRow[] | undefined): FleetSummary[]
         // 'unknown' bilerek sayılmıyor.
       }
     }
-    return { field: f.key, label: f.label, full, partial, none };
+    return { field: f.key, label: f.label, attr: f.attr, full, partial, none };
   });
 }
 

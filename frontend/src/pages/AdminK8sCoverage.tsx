@@ -154,7 +154,7 @@ export default function AdminK8sCoveragePage() {
             <tbody>
               {fleet.map(f => (
                 <tr key={f.field}>
-                  <td className="mono">k8s.{f.label}</td>
+                  <td className="mono" title={f.label}>{f.attr}</td>
                   <td style={{ textAlign: 'right', color: f.full > 0 ? 'var(--ok)' : 'var(--text3)' }}>{f.full}</td>
                   <td style={{ textAlign: 'right', color: f.partial > 0 ? 'var(--warn)' : 'var(--text3)' }}>{f.partial}</td>
                   <td style={{ textAlign: 'right', color: f.none > 0 ? 'var(--err)' : 'var(--text3)' }}>{f.none}</td>

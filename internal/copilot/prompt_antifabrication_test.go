@@ -71,6 +71,19 @@ func TestSystemProblemCarriesAntiFabricationRules(t *testing.T) {
 // bozar ve few-shot'ın ağırlığını seyreltir (aynı gerekçe
 // TestSystemProblemPrompt'un tek-few-shot ve tek-dil-direktifi
 // sayımlarında da var).
+// v0.10.194 — genel bilgi cevabı (systemGeneralChat) SIFIR kanıtla konuşan
+// tek yüzey; güvenlik hikâyesinin tamamı iki cümle: operatörün sistemi
+// hakkında UYDURMA + ortam sorusunda "erişemediğini söyle" (küçük modele
+// ne DEMESİ gerektiğini söyleyen yarı, yük taşıyan yarıdır).
+func TestSystemGeneralChatCarriesAntiFabricationRules(t *testing.T) {
+	p := SystemPromptGeneralChat()
+	for _, want := range []string{"UYDURMA", "erişemediğini söyle", "EŞLEŞMEDİ", answerInTurkishLine} {
+		if !strings.Contains(p, want) {
+			t.Errorf("GeneralChat %q cümlesini taşımıyor", want)
+		}
+	}
+}
+
 func TestAntiFabricationRulesNotDuplicatedInBody(t *testing.T) {
 	p := SystemPromptProblem()
 	for _, phrase := range []string{"kanıt yetersiz", "SEBEP olarak"} {

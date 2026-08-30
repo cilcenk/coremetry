@@ -111,6 +111,44 @@ func TestIntentClassifyTimeout(t *testing.T) {
 	}
 }
 
+// TestIntentGeneralAnswer — v0.10.194 sözleşmesi: none artık çipli red
+// değil; model metni notla açılır, boş metin eski redde kalır (çipler için).
+func TestIntentGeneralAnswer(t *testing.T) {
+	cases := []struct {
+		name, raw string
+		general   bool
+		prefix    string
+	}{
+		{name: "model cevabı → not + cevap, oylanabilir", raw: "Ankara.", general: true, prefix: intentGeneralNoteTR + "\n\nAnkara."},
+		{name: "kenar boşluğu kırpılır", raw: "  \n Ankara. \n", general: true, prefix: intentGeneralNoteTR + "\n\nAnkara."},
+		{name: "boş çıktı → eski red, oylanamaz", raw: "", general: false, prefix: intentNoneAnswerTR},
+		{name: "yalnız boşluk → eski red", raw: " \n\t", general: false, prefix: intentNoneAnswerTR},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			text, general := intentGeneralAnswer(tc.raw)
+			if general != tc.general || text != tc.prefix {
+				t.Fatalf("got (%q, %v), want (%q, %v)", text, general, tc.prefix, tc.general)
+			}
+		})
+	}
+	if !strings.Contains(intentGeneralNoteTR, "telemetriyle eşleşmedi") {
+		t.Fatalf("not, cevabın telemetriden gelmediğini SÖYLEMELİ: %q", intentGeneralNoteTR)
+	}
+	// Kaynak kapısı: on_no_loop'un none dalı genel anlatım yüzeyini ÇAĞIRIYOR
+	// ([[feedback-tested-but-unreachable]] sınıfı) ve mode kontrolünden SONRA
+	// (on kipinde serbest döngü sürmeli).
+	b, err := os.ReadFile("copilot_intent.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	gate, call := strings.Index(src, "if mode != copilot.IntentOnNoLoop {"), strings.Index(src, `copilotStreamSurface(ctx, "chat-general"`)
+	if gate < 0 || call < 0 || call < gate {
+		t.Fatalf("genel cevap çağrısı on_no_loop kapısının ardında değil: gate=%d call=%d", gate, call)
+	}
+}
+
 func TestIntentNoneSuggestions(t *testing.T) {
 	if got := intentNoneSuggestions(""); len(got) == 0 {
 		t.Fatal("küresel çip listesi boş")

@@ -122,7 +122,7 @@ export function AiProfilesPanel({ payload, onChange }: { payload: AIProfilesPayl
       </div>
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginTop: 12, flexWrap: 'wrap' }}>
-        <SelectField label="Niyet sınıflandırıcısı (chat-intent)" value={surface.intent} onChange={e => setSurface(s => ({ ...s, intent: e.target.value }))} hint="Serbest soru sınıflandırma çağrısı için profil; boş = varsayılan (küçük yerel model önerilir).">
+        <SelectField label="Niyet sınıflandırıcısı (chat-intent)" value={surface.intent} onChange={e => setSurface(s => ({ ...s, intent: e.target.value }))} hint="Serbest soru sınıflandırma çağrısı için profil; boş = varsayılan (küçük yerel model önerilir). Eşleşmeyen sorunun genel bilgi cevabı (chat-general) VARSAYILAN profilden gelir — sınıflandırıcıya seçilen küçük model genel cevap yazmaz.">
           <option value="">varsayılan</option>{options}
         </SelectField>
         <SelectField label="Arka plan açıklayıcılar (auto-explain)" value={surface.background} onChange={e => setSurface(s => ({ ...s, background: e.target.value }))} hint="Problem/exception otomatik özetleri için profil; boş = varsayılan.">

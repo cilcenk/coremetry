@@ -17,6 +17,9 @@ func TestAllAnswerTiersCarryRequestIDLinks(t *testing.T) {
 		"copilot_chat.go":   "answerRequestIDLinks(",
 		"copilot_drawer.go": "answerRequestIDLinks(",
 		"rag.go":            "answerRequestIDLinks(",
+		// v0.10.194 — none → genel cevap kademesi. Bu kapı alt-dize arar;
+		// erişilebilirlik copilot_intent_test.go'daki kapı/çağrı sırası pininde.
+		"copilot_intent.go": "answerRequestIDLinks(",
 	}
 	for f, needle := range tiers {
 		b, err := os.ReadFile(f)

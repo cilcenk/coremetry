@@ -112,10 +112,16 @@ func epochIfZero(t time.Time) time.Time {
 func scanRollout(rows interface{ Scan(...any) error }) (rollout.Rollout, time.Time, error) {
 	var r rollout.Rollout
 	var updated time.Time
+	// span_count UInt64 (DDL) — clickhouse-go *int64'e taramayı REDDEDER
+	// ("converting UInt64 to *int64 is unsupported"); ilk satır yazılana dek
+	// hiçbir okuma bu satıra gelmediği için gate'ler yeşildi, canlı smoke
+	// yakaladı (v0.10.202). Upsert zaten uint64(r.SpanCount) yazar.
+	var spanCount uint64
 	err := rows.Scan(&r.ClusterID, &r.Namespace, &r.Workload, &r.Kind, &r.Revision, &r.StartedAt, &r.Status,
 		&r.PrevRevision, &r.Image, &r.ImageTag, &r.PrevImage, &r.PrevImageTag,
 		&r.FirstSpanAt, &r.TrafficConfirmedAt, &r.KSMStartedAt, &r.PodsReadyAt, &r.KSMNotReadySince, &r.CompletedAt,
-		&r.DetectedBy, &r.SpanCount, &r.Note, &updated)
+		&r.DetectedBy, &spanCount, &r.Note, &updated)
+	r.SpanCount = int64(spanCount)
 	r.FirstSpanAt, r.TrafficConfirmedAt, r.CompletedAt = zeroIfEpoch(r.FirstSpanAt), zeroIfEpoch(r.TrafficConfirmedAt), zeroIfEpoch(r.CompletedAt)
 	r.KSMStartedAt, r.PodsReadyAt, r.KSMNotReadySince = zeroIfEpoch(r.KSMStartedAt), zeroIfEpoch(r.PodsReadyAt), zeroIfEpoch(r.KSMNotReadySince)
 	return r, updated, err

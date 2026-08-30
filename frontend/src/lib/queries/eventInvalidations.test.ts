@@ -23,6 +23,9 @@ describe('eventInvalidations', () => {
       expect(eventInvalidations(kind)).toEqual([keys.anomalies.all, keys.inbox.all]);
     }
   });
+  it('rollout yalnız listeyi geçersiz kılar (stats 60 s TTL korunur)', () => {
+    expect(eventInvalidations('rollout')).toEqual([keys.rollouts.listAll]);
+  });
   it('bilinmeyen kind → boş (blanket refetch YOK)', () => {
     expect(eventInvalidations('garbage.kind')).toEqual([]);
     expect(eventInvalidations('')).toEqual([]);

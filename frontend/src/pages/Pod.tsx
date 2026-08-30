@@ -322,7 +322,8 @@ function PodDetail() {
     { href: tracesHref, label: 'Trace\'ler ↗', title: 'k8s.pod.name = pod, hatalı önce' },
     { href: logsHref({ window: range, service: service || undefined, cluster: traceCluster || undefined, filters: logsPodPill }), label: 'Loglar ↗', title: 'kubernetes.pod_name pili (ES alan süzgeci; CH lokalde gövde araması — pili kaldırınca servis kapsamı kalır)' },
   ];
-  const scopeLabel = service || `bu pod'dan geçen tüm servisler${spanCluster ? ` · cluster ${spanCluster}` : ''}`;
+  // v0.10.187 (görsel inceleme F2) — 5 cluster değeri başlığı taşırıyordu: >2 ise «N cluster» (tam liste KPI şeridi title'ında).
+  const scopeLabel = service || `bu pod'dan geçen tüm servisler${spanClusters.length > 2 ? ` · ${spanClusters.length} cluster` : spanCluster ? ` · cluster ${spanCluster}` : ''}`;
 
   return (
     <>

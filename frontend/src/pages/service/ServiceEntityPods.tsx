@@ -20,7 +20,7 @@ import type { ServicePodRow, ServicePodsChainItem, TimeRange } from '@/lib/types
 
 const COLS: DataTableColumn<ServicePodRow>[] = [
   { id: 'pod', label: 'Pod', width: 240, sortValue: r => r.pod },
-  { id: 'status', label: 'Status', width: 160, sortValue: r => (r.statusKnown ? r.phase ?? '' : '') },
+  { id: 'status', label: 'Status', width: 220, sortValue: r => (r.statusKnown ? r.phase ?? '' : '') },
   { id: 'ns', label: 'Namespace', width: 120, sortValue: r => r.namespace },
   { id: 'cluster', label: 'Cluster', width: 110, sortValue: r => r.cluster },
   { id: 'node', label: 'Node', width: 120, sortValue: r => r.node ?? '' },
@@ -139,9 +139,9 @@ export function ServiceEntityPods({ service, range, cluster, onRows }: { service
                       {live === 'stale' && <Badge tone="warning" style={{ marginLeft: 6 }} title="Son senkronda görülmedi">stale</Badge>}
                       {r.entity?.nameStable && <Badge tone="neutral" style={{ marginLeft: 6 }} title="No pod uid — lifetimes split by podGap only">name-stable</Badge>}
                     </td>
-                    <td>
+                    <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {r.statusKnown ? (
-                        <span title={r.lastTermReason ? `last terminated: ${r.lastTermReason}` : undefined}>
+                        <span title={`${r.phase || '?'}${r.restartsUnknown ? '' : r.restarts ? ` · ${r.restarts} restart` : ''}${r.lastTermReason ? ` · last terminated: ${r.lastTermReason}` : ''}`}>
                           <span className={`badge ${podPhaseBadge(r.phase ?? '')}`}>{r.phase || '?'}</span>
                           {r.restartsUnknown ? '' : r.restarts ? ` · ${r.restarts}↻` : ''}
                           {r.lastTermReason ? ` · ${r.lastTermReason}` : ''}

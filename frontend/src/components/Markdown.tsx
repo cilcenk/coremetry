@@ -161,6 +161,7 @@ export function CodeBlock({ lang, lines, anatomy }: { lang: string; lines: strin
         {rows.map((m, k) => (
           <span key={k} className={m.hl ? 'cm-md-code-line hl' : 'cm-md-code-line'}>
             {gutter && <span className="cm-md-code-no" aria-hidden="true">{m.no ?? ''}</span>}
+            {m.hl && <span className="sr-only">hata satırı: </span>}
             {m.text}{'\n'}
           </span>
         ))}

@@ -3668,15 +3668,17 @@ thead th:hover .th-remove { opacity: 1; }
 /* v0.10.173 — exception detayı «Pods · nodes» tablosu: sabit yerleşim, yatay taşma yok
    (pod hücresi: ad + cluster › namespace alt satırı; ellipsis + title). */
 .exc-pods-t { table-layout: fixed; width: 100%; }
-.exc-pods-t th, .exc-pods-t td { overflow: hidden; }
-.exc-pods-cell { white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+.exc-pods-t th, .exc-pods-t td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exc-pods-cell { min-width: 0; }
 .exc-pods-pod { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .exc-pods-sub { color: var(--text3); font-size: var(--fs-2xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.exc-pods-c-pod { width: 38%; }
-.exc-pods-c-node { width: 26%; }
-.exc-pods-c-n { width: 9%; }
-.exc-pods-c-t { width: 12%; min-width: 120px; }
-.exc-pods-c-a { width: 6%; }
+/* yüzdeler toplam 100 → hiçbir kart genişliğinde taşma yok; dar kartta metin sütunları ellipsis'e düşer (title'da tam değer) */
+.exc-pods-c-pod { width: 34%; }
+.exc-pods-c-node { width: 24%; }
+.exc-pods-c-n { width: 10%; }
+.exc-pods-c-s { width: 8%; }
+.exc-pods-c-t { width: 15%; }
+.exc-pods-c-a { width: 9%; }
 
 /* v0.10.165 — kod alıntısı: satır numarası oluğu, dosya başlığı, stack katlama
    (etüt «cevap paneli» A, dilim 1). Aynı .cm-md-code ailesi. */

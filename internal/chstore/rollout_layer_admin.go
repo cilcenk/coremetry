@@ -195,7 +195,11 @@ func (s *Store) RolloutLayerStatus(ctx context.Context) (RolloutLayerStatusResul
 		case "table", "mv", "distributed":
 			name := o.Name
 			if cluster == "" && strings.HasSuffix(name, "_local") {
-				name = strings.TrimSuffix(name, "_local")
+				// v0.10.208 — tek düğümde `_local` ile sarmalayıcı AYNI tabloya
+				// eşlenir; aynı şeyi iki satır "VAR" göstermek yanıltıyordu →
+				// `_local` satırı tek düğümde listelenmez (apply/rollback nesne
+				// listesi ve küme kipi değişmedi).
+				continue
 			}
 			have, err = count(`SELECT count() FROM `+tblSrc+` WHERE database = currentDatabase() AND name = ?`, name)
 		}

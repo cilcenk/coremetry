@@ -1,6 +1,7 @@
 package rollout
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -958,5 +959,25 @@ func TestReconcile_UnobservedBaseUsesRunLevel(t *testing.T) {
 		if len(out) != 0 {
 			t.Fatalf("ws=%d: düz canary devralamaz: %+v", ws, out)
 		}
+	}
+}
+
+// v0.10.206 — operatör bildirimi: "rollout bitmesine rağmen sürüyor
+// yazıyor". Sözleşme: karar beklerken in_progress satır BEKLEYİŞİ söyler
+// (notePendingExit), karar düşünce not kaybolur, ilk revizyonda hiç çıkmaz.
+func TestReconcile_PendingExitNote(t *testing.T) {
+	cfg := DefaultConfig()
+	acts := append(span("api-aaaa", -10, 3, 100), span("api-bbbb", 3, 12, 80)...)
+	eb := find(recon(cfg, b(8), nil, acts), "api-bbbb")
+	if eb == nil || eb.Status != StatusInProgress || !strings.Contains(eb.Note, notePendingExit) {
+		t.Fatalf("histerezis dolarken bekleme notu yazılmalı: %+v", eb)
+	}
+	bb := find(recon(cfg, b(13), nil, acts), "api-bbbb")
+	if bb == nil || bb.Status != StatusCompleted || strings.Contains(bb.Note, notePendingExit) {
+		t.Fatalf("karar düşünce geçici not kalkmalı: %+v", bb)
+	}
+	fb := find(recon(cfg, b(8), nil, span("new-cccc", 2, 12, 60)), "new-cccc")
+	if fb != nil && strings.Contains(fb.Note, notePendingExit) {
+		t.Fatalf("ilk revizyonda eski-revizyon notu olmamalı: %+v", fb)
 	}
 }

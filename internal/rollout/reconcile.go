@@ -343,6 +343,10 @@ const (
 	noteNoTraffic   = "revizyon çekildi, iş yükü trafik üretmiyor"
 	noteWeakSignal  = "yeni revizyon son kovada eşik altında kaldı (zayıf sinyal; stalled kararı KSM'den)"
 	noteSteadyState = "çok-revizyonlu durağan durum: eski revizyon hâlâ trafik alıyor"
+	// v0.10.206 (operatör bildirimi): completed kararı ≥EH kova gözlenmiş
+	// sessizlik ister; bekleyiş satırda okunmuyordu ve "bitti ama sürüyor
+	// yazıyor" algısı üretiyordu. Geçici not — karar düşünce silinir.
+	notePendingExit = "eski revizyonun sessizliği gözleniyor — tamamlandı kararı çıkış histerezisini bekliyor"
 )
 
 func isOpen(r Rollout) bool { return r.CompletedAt.IsZero() && r.Status == StatusInProgress }
@@ -757,6 +761,7 @@ func reconcileKey(cfg Config, lastFull, ws time.Time, k Key, byBucket map[time.T
 			row.Note = stripNote(row.Note, noteNoTraffic)
 			row.Note = stripNote(row.Note, noteWeakSignal)
 			row.Note = stripNote(row.Note, noteSteadyState)
+			row.Note = stripNote(row.Note, notePendingExit)
 			withdrawn := !isLast || lastFull.Sub(rn.endAlive) >= exitSpan
 			if withdrawn {
 				decideWithdrawn(&row, rn.endAlive, rn.endAlive.Add(B), lastFull)
@@ -789,6 +794,12 @@ func reconcileKey(cfg Config, lastFull, ws time.Time, k Key, byBucket map[time.T
 					}
 				} else if !lastOther.IsZero() && lastFull.Sub(row.StartedAt) > cfg.OverlapMax && lastOther.Equal(lastFull) {
 					row.Note = appendNote(row.Note, noteSteadyState)
+				}
+				// v0.10.206 — bekleyişi adlandır: eski revizyon sustu ama karar
+				// için gözlem henüz EH kovaya ulaşmadı. İlk revizyonda (önceki
+				// yok: lastOther boş VE PrevRevision boş) yazılmaz.
+				if (!lastOther.IsZero() || row.PrevRevision != "") && quiet >= 1 && quiet < cfg.ExitHysteresis && isActive(lastFull, rev) {
+					row.Note = appendNote(row.Note, notePendingExit)
 				}
 				if cfg.WeakSignal && !isActive(lastFull, rev) {
 					if _, ok := othersActiveAt(lastFull, rev); ok {
@@ -835,7 +846,7 @@ func reconcileKey(cfg Config, lastFull, ws time.Time, k Key, byBucket map[time.T
 			inCall[rev] = append(inCall[rev], last)
 			continue // hâlâ span üretiyor (eşik altı / tek kova): çekilmedi
 		}
-		row.Note = stripNote(stripNote(stripNote(row.Note, noteNoTraffic), noteWeakSignal), noteSteadyState)
+		row.Note = stripNote(stripNote(stripNote(stripNote(row.Note, noteNoTraffic), noteWeakSignal), noteSteadyState), notePendingExit)
 		decideWithdrawn(&row, endedAt, endedAt.Add(B), lastFull)
 		if !rolloutEqual(last, row) {
 			emit(row)

@@ -105,7 +105,7 @@ func TestSplitSQLStatementsEmbedded(t *testing.T) {
 // bir küme adına elle güncellenirse) Adapt sessizce hiçbir şey
 // değiştirmez ve DDL yanlış kümeye gider.
 func TestEmbeddedFilesCarryClusterToken(t *testing.T) {
-	for _, f := range []string{"0001_rollup_narrow.sql", "0003_rollup_metrics.sql", "0008_rollup_metrics_route.sql"} {
+	for _, f := range []string{"0001_rollup_narrow.sql", "0003_rollup_metrics.sql", "0008_rollup_metrics_route.sql", "0011_entity_layer.sql", "0012_rollout_layer.sql"} {
 		raw, err := migrations.FS.ReadFile(f)
 		if err != nil {
 			t.Fatalf("%s okunamadı: %v", f, err)

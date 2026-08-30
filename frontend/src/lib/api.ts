@@ -3139,6 +3139,21 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cluster }), timeoutMs: 200_000,
     }),
+  // v0.10.197 — 0012 rollouts katmanı şeması sihirbazı (0011 aynası).
+  rolloutLayerStatus: () =>
+    get<import('./types').RolloutLayerStatusResult>('/api/admin/rollout-layer/status'),
+  rolloutLayerPreflight: () =>
+    get<import('./types').RolloutLayerPreflightResult>('/api/admin/rollout-layer/preflight'),
+  rolloutLayerApply: (cluster: string, withMV: boolean) =>
+    request<import('./types').RollupActionResult & { withMV?: boolean }>('/api/admin/rollout-layer/apply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster, withMV }), timeoutMs: 630_000, // sunucu bütçesi 10 dk (23 ON CLUSTER ifadesi)
+    }),
+  rolloutLayerRollback: (cluster: string) =>
+    request<import('./types').RollupActionResult>('/api/admin/rollout-layer/rollback', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster }), timeoutMs: 200_000,
+    }),
   rollupStatus: () =>
     get<import('./types').RollupStatusResult>('/api/admin/rollup/status'),
   /** Ön kontrol — hiçbir şey yazmaz. Supported hükmü + gerekçe. */

@@ -2885,6 +2885,33 @@ export interface EntityLayerStatusResult {
   seenRows: number;
   generated: number;
 }
+/** v0.10.197 — 0012 rollouts katmanı sihirbazı (chstore.RolloutLayer*). */
+export interface RolloutLayerStatusResult {
+  cluster: string;
+  objects: EntityLayerObjectStatus[];
+  /** workload_revision_activity_1m son 15 dk satır — MV yazıyor mu. */
+  activityRows: number;
+  generated: number;
+}
+/** total = tam pencere sayımı; sampled = hash örneklemi (oranların paydası); total>0 && sampled=0 → kapı kapalı. */
+export interface RolloutLayerClusterCoverage { cluster: string; total: number; sampled: number; replicaset: number; image: number; namespace: number }
+export interface RolloutLayerPreflightResult {
+  clusters: string[];
+  suggestedCluster?: string;
+  spansLocal: boolean;
+  /** 0011 kolonları (cluster / k8s_namespace) var mı — MV onları okur. */
+  layer0011: boolean;
+  /** span cluster değeri başına kapsama (son 15 dk örneklem). */
+  coverage: RolloutLayerClusterCoverage[] | null;
+  /** her cluster'da replicaset ≥ %95 → MV (ADIM 6) uygulanabilir. */
+  mvGate: boolean;
+  uniqRs1h: number;
+  uniqImage1h: number;
+  probeErrors?: string[];
+  supported: boolean;
+  detail: string;
+  generated: number;
+}
 export interface EntityLayerPreflightResult {
   clusters: string[];
   suggestedCluster?: string;

@@ -39,18 +39,24 @@ const STATUSES = ['', 'in_progress', 'completed', 'rolled_back', 'superseded', '
 
 // Sunucu sıralı sayfa: sortValue YOK (kesik 200 satırı sıralamak yanıltır —
 // dataTable.ts serverSort sözleşmesi; Services emsali).
+// v0.10.205 — operatör bildirimi: prod'da (uzun workload/imaj adları) fit
+// kolonları 48px tabanına kadar ezdi, hücreler ve BAŞLIKLAR ortadan
+// kırpıldı ("KA…", "SP…"). minWidth tabanı = fit'in ezemeyeceği okunabilir
+// genişlik; toplam kabı aşarsa .table-wrap zaten overflow-x:auto kaydırır
+// (v0.9.1078). Başlık kırpılması da biter: taban her başlığın tam adını
+// taşıyacak kadar geniş.
 const COLS: DataTableColumn<WorkloadRollout>[] = [
-  { id: 'status', label: 'Durum', width: 120 },
-  { id: 'workload', label: 'Workload', width: 300 },
-  { id: 'kind', label: 'Tür', width: 100 },
-  { id: 'revision', label: 'Revizyon', width: 150 },
-  { id: 'image', label: 'İmaj (eski → yeni)', width: 300 },
-  { id: 'started', label: 'Başladı', width: 170, numeric: true },
-  { id: 'dur', label: 'Süre', width: 90, numeric: true },
-  { id: 'spans', label: 'Span', width: 90, numeric: true },
-  { id: 'by', label: 'Kaynak', width: 90 },
-  { id: 'note', label: 'Not', width: 260 },
-  { id: 'links', label: '', width: 120 },
+  { id: 'status', label: 'Durum', width: 120, minWidth: 96 },
+  { id: 'workload', label: 'Workload', width: 300, minWidth: 200 },
+  { id: 'kind', label: 'Tür', width: 100, minWidth: 64 },
+  { id: 'revision', label: 'Revizyon', width: 150, minWidth: 120 },
+  { id: 'image', label: 'İmaj (eski → yeni)', width: 300, minWidth: 170 },
+  { id: 'started', label: 'Başladı', width: 170, minWidth: 140, numeric: true },
+  { id: 'dur', label: 'Süre', width: 90, minWidth: 64, numeric: true },
+  { id: 'spans', label: 'Span', width: 90, minWidth: 64, numeric: true },
+  { id: 'by', label: 'Kaynak', width: 90, minWidth: 76 },
+  { id: 'note', label: 'Not', width: 260, minWidth: 120 },
+  { id: 'links', label: '', width: 120, minWidth: 96 },
 ];
 
 const ROW_CV = { contentVisibility: 'auto', containIntrinsicSize: '0 32px' } as const;
@@ -172,13 +178,13 @@ export default function RolloutsPage() {
                         <tr key={rolloutKey(r)} style={rows.length > 100 ? { ...ROW_CV, cursor: 'pointer' } : { cursor: 'pointer' }}
                           onClick={e => { if ((e.target as HTMLElement).closest('a, button')) return; setParam('rollout', encodeRolloutParam(r)); }}>
                           <td><Badge tone={statusTone(r.status)} title={r.completedAt ? `tamamlandı ${fmtDateTime(new Date(r.completedAt))}` : undefined}>{statusLabel(r.status)}</Badge></td>
-                          <td title={`${cname} / ${r.namespace} / ${r.workload}`}>
+                          <td title={`${cname} / ${r.namespace} / ${r.workload}`} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             <Link to={wlHref} className="sec">{r.workload}</Link>
                             <span className="field-hint"> · {r.namespace} · {cname}</span>
                           </td>
                           <td className="field-hint">{r.kind || '—'}</td>
-                          <td className="mono" title={r.revision}>{shortRevision(r.revision, r.workload)}{r.prevRevision ? <span className="field-hint"> ← {shortRevision(r.prevRevision, r.workload)}</span> : null}</td>
-                          <td className="mono" title={r.image || undefined}>{imageDiff(r)}</td>
+                          <td className="mono" title={r.revision} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{shortRevision(r.revision, r.workload)}{r.prevRevision ? <span className="field-hint"> ← {shortRevision(r.prevRevision, r.workload)}</span> : null}</td>
+                          <td className="mono" title={r.image || undefined} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{imageDiff(r)}</td>
                           <td className="mono">{fmtDateTime(new Date(r.startedAt))}</td>
                           <td className="num mono">{fmtDurShort(rolloutDurationSec(r, Date.now()))}</td>
                           <td className="num mono">{fmtNum(r.spanCount)}</td>

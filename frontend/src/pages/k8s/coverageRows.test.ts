@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-  fieldState, fieldPct, fleetSummary, fieldSeen, COVERAGE_FIELDS,
+  fieldState, fieldPct, fleetSummary, fieldSeen, COVERAGE_FIELDS, coverageHeaderTitle,
   podSeenWindow, podStabilityWarning,
 } from './coverageRows';
 import type { K8sCoverageRow, PodRow } from '@/lib/types';
@@ -296,5 +296,20 @@ describe('pod envanteri tablosu ve hata durumu', () => {
     expect(src).toContain('podDt.sortedRows.map');
     // Elle yazılmış başlık satırı KALMAMALI.
     expect(src).not.toContain('<th style={{ width: 140 }}>namespace</th>');
+  });
+});
+
+// v0.10.196 — kısa başlıklar: hepsi ≤4 karakter (40 px'e sığar), benzersiz
+// (iki "CLU…" bir daha olmasın), title tam anahtarı taşır.
+describe('coverage short headers (v0.10.196)', () => {
+  it('short ≤ 4 chars and unique', () => {
+    const shorts = COVERAGE_FIELDS.map(f => f.short);
+    for (const s of shorts) expect(s.length).toBeLessThanOrEqual(4);
+    expect(new Set(shorts).size).toBe(shorts.length);
+  });
+  it('header title carries the full attribute key', () => {
+    expect(coverageHeaderTitle('clusterOpenshift')).toBe('openshift.cluster.name — cluster (openshift)');
+    expect(coverageHeaderTitle('image')).toContain('container.image.name');
+    expect(coverageHeaderTitle('nope')).toBeUndefined();
   });
 });

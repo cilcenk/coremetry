@@ -53,19 +53,31 @@ export function fieldPct(seen: number, sampled: number): number | null {
 // v0.10.192 (rollouts audit ön koşul): attr = TAM anahtar (kart bunu basar;
 // eskiden `k8s.` önekini elle ekliyordu ve container.image.* o öneke
 // sığmıyor). cluster üçe ayrıldı: birleşik (geriye uyum) + hangi anahtar.
+// v0.10.196 (Operator-reported: servis tablosunda "CLU… CLU… NA… DE…"):
+// `short` = servis tablosunun BAŞLIĞI. 11 alan + servis + örneklem 1366 px
+// laptop'ta ~40 px'lik kolonlara sıkışıyor ve "cluster (openshift)" ile
+// "cluster (k8s)" aynı "CLU…"ya kırpılıyordu (CLAUDE.md tuzak kuralı:
+// fixed + nowrap + dar kolon sessizce kırpar). Kısa etiket 40 px'e sığar;
+// tam anahtar başlığın title'ında (AdminK8sCoverage renderLabel).
 export const COVERAGE_FIELDS = [
-  { key: 'cluster', label: 'cluster', attr: 'k8s.cluster.name | openshift.cluster.name' },
-  { key: 'clusterK8s', label: 'cluster (k8s)', attr: 'k8s.cluster.name' },
-  { key: 'clusterOpenshift', label: 'cluster (openshift)', attr: 'openshift.cluster.name' },
-  { key: 'namespace', label: 'namespace', attr: 'k8s.namespace.name' },
-  { key: 'deployment', label: 'deployment', attr: 'k8s.deployment.name' },
-  { key: 'replicaset', label: 'replicaset', attr: 'k8s.replicaset.name' },
-  { key: 'pod', label: 'pod', attr: 'k8s.pod.name' },
-  { key: 'podUid', label: 'pod.uid', attr: 'k8s.pod.uid' },
-  { key: 'node', label: 'node', attr: 'k8s.node.name' },
-  { key: 'container', label: 'container', attr: 'k8s.container.name' },
-  { key: 'image', label: 'image', attr: 'container.image.name' },
+  { key: 'cluster', label: 'cluster', short: 'clu', attr: 'k8s.cluster.name | openshift.cluster.name' },
+  { key: 'clusterK8s', label: 'cluster (k8s)', short: 'k8s', attr: 'k8s.cluster.name' },
+  { key: 'clusterOpenshift', label: 'cluster (openshift)', short: 'ocp', attr: 'openshift.cluster.name' },
+  { key: 'namespace', label: 'namespace', short: 'ns', attr: 'k8s.namespace.name' },
+  { key: 'deployment', label: 'deployment', short: 'dep', attr: 'k8s.deployment.name' },
+  { key: 'replicaset', label: 'replicaset', short: 'rs', attr: 'k8s.replicaset.name' },
+  { key: 'pod', label: 'pod', short: 'pod', attr: 'k8s.pod.name' },
+  { key: 'podUid', label: 'pod.uid', short: 'uid', attr: 'k8s.pod.uid' },
+  { key: 'node', label: 'node', short: 'node', attr: 'k8s.node.name' },
+  { key: 'container', label: 'container', short: 'ctr', attr: 'k8s.container.name' },
+  { key: 'image', label: 'image', short: 'img', attr: 'container.image.name' },
 ] as const;
+
+/** Başlık ipucu: tam anahtar + okunur ad (servis tablosu başlığı `short`). */
+export function coverageHeaderTitle(key: string): string | undefined {
+  const f = COVERAGE_FIELDS.find(x => x.key === key);
+  return f ? `${f.attr} — ${f.label}` : undefined;
+}
 
 export type CoverageFieldKey = (typeof COVERAGE_FIELDS)[number]['key'];
 

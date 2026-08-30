@@ -120,6 +120,13 @@ type Service struct {
 	// intentClassify — v0.10.172 (bkz. SetIntentClassify). "" ⇒ IntentOnNoLoop.
 	intentClassify string
 
+	// v0.10.175 — model profilleri (profiles.go). Düz alanlar varsayılanın aynası.
+	profiles        map[string]*profileRuntime
+	profileOrder    []string
+	defaultID       string
+	surfaceProfiles map[string]string
+	saveMu          sync.Mutex // profil oku-değiştir-yaz sırası (profiles.go)
+
 	// GitHub session token cache. We exchange ghu_ → session token
 	// once and reuse until ~30s before the server-stated expiry.
 	ghSessTok string
@@ -290,7 +297,7 @@ func New(provider, apiKey, model string) *Service {
 	if provider == "" {
 		provider = ProviderAnthropic
 	}
-	return &Service{
+	s := &Service{
 		provider: provider,
 		apiKey:   apiKey,
 		model:    model,
@@ -306,6 +313,9 @@ func New(provider, apiKey, model string) *Service {
 		// override so it gets defaultTimeout (the same 180s).
 		cli: buildCopilotHTTPClient(false, defaultTimeout),
 	}
+	// v0.10.175 — başlangıç konfigi tek 'default' profildir (göçle aynı şekil).
+	s.setProfilesLocked([]ModelProfile{{ID: DefaultProfileID, Provider: provider, APIKey: apiKey, Model: model}}, DefaultProfileID, nil)
+	return s
 }
 
 // Configure swaps live credentials. Used by PUT /api/settings/ai.
@@ -325,22 +335,43 @@ func (s *Service) Configure(provider, apiKey, model, baseURL string, skipTLS, en
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Provider or key changed → drop any cached GitHub session token.
 	if s.provider != provider || s.apiKey != apiKey {
 		s.ghSessTok, s.ghSessExp = "", time.Time{}
 	}
-	s.provider, s.apiKey, s.model, s.baseURL, s.skipTLS = provider, apiKey, model, baseURL, skipTLS
+	// v0.10.175 — düz Configure = VARSAYILAN profili düzenle (etiket ve profil
+	// tuning'i korunur, öteki profillere dokunulmaz); düz alanların aynası
+	// setProfilesLocked'ta. Yetenek önbellekleri eski davranışla sıfırlanır.
+	id := s.defaultID
+	if id == "" {
+		id = DefaultProfileID
+	}
+	list := s.profilesLocked()
+	if i, ok := indexProfileIdx(list, id); ok {
+		list[i].Provider, list[i].APIKey, list[i].Model, list[i].BaseURL, list[i].SkipTLS = provider, apiKey, model, baseURL, skipTLS
+	} else {
+		list = append(list, ModelProfile{ID: id, Provider: provider, APIKey: apiKey, Model: model, BaseURL: baseURL, SkipTLS: skipTLS})
+	}
+	s.setProfilesLocked(list, id, s.surfaceProfiles)
 	s.enabled = enabled
-	// v0.9.1120 — the rebuild decision moved into rebuildClientLocked
-	// so BOTH inputs (skipTLS, timeout) are compared in one place. It
-	// runs AFTER s.skipTLS is assigned: the helper compares the live
-	// fields against the live client, not against arguments.
-	s.rebuildClientLocked()
-	// v0.8.404 — the streaming-support verdicts were probed against
-	// the OLD endpoint config; a swap must re-probe.
 	s.streamUnsupported = nil
 	s.jsonModeUnsupported = nil
 	s.jsonSchemaUnsupported = nil
+}
+
+func indexProfileIdx(list []ModelProfile, id string) (int, bool) {
+	for i := range list {
+		if list[i].ID == id {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+// SetEnabled — profil yolunda Configure çağrılmaz; ana anahtar ayrı.
+func (s *Service) SetEnabled(v bool) {
+	s.mu.Lock()
+	s.enabled = v
+	s.mu.Unlock()
 }
 
 // ── LLM call tuning ─────────────────────────────────────────────────────────
@@ -500,6 +531,13 @@ func (s *Service) clientTimeoutLocked() time.Duration {
 // with nothing changed it does nothing, so both Configure and
 // ConfigureTuning can call it unconditionally.
 func (s *Service) rebuildClientLocked() {
+	if len(s.profiles) > 0 { // v0.10.175 — profil başına istemci, ayna dahil
+		for _, rt := range s.profiles {
+			rt.ensureClient(s.clientTimeoutLocked())
+		}
+		s.mirrorDefaultLocked()
+		return
+	}
 	want := s.clientTimeoutLocked()
 	if s.cli != nil && s.cli.Timeout == want && s.cliSkipTLS == s.skipTLS {
 		return
@@ -627,12 +665,16 @@ func (s *Service) ActiveModel() string {
 // on a goroutine so the user doesn't pay ingest cost in their
 // request path.
 func (s *Service) Explain(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
-	if !s.Active() {
+	return s.explain(ctx, systemPrompt, userPrompt, true)
+}
+
+// explain — requireEnabled=false yalnız ProbeProfile (ana anahtar kapalıyken
+// bağlantı testi). Kimlik kontrolü çağrının ÇÖZÜLEN profilinde (activeFor).
+func (s *Service) explain(ctx context.Context, systemPrompt, userPrompt string, requireEnabled bool) (string, error) {
+	if !s.activeFor(ctx, requireEnabled) {
 		return "", errors.New("AI copilot not available (disabled or not configured — open Settings → AI Copilot)")
 	}
-	s.mu.RLock()
-	provider, model, baseURL := s.provider, s.model, s.baseURL
-	s.mu.RUnlock()
+	provider, model, baseURL := s.profileIdentity(ctx) // v0.10.175 — çağrının profili
 
 	started := time.Now()
 	var (
@@ -967,16 +1009,14 @@ func (s *Service) markLevelUnsupported(lvl jsonLevel, provider, baseURL, model s
 // githubSessionToken returns a valid Copilot session token, refreshing
 // from api.github.com when the cached one is missing or near expiry.
 func (s *Service) githubSessionToken(ctx context.Context) (string, error) {
+	// v0.10.175 — jeton profil başına (anahtar profilin); küme boşsa geçici ayna.
 	s.mu.RLock()
-	tok, exp := s.ghSessTok, s.ghSessExp
+	rt := s.resolveProfileLocked(ctx)
+	tok, exp, apiKey := rt.ghSessTok, rt.ghSessExp, rt.cfg.APIKey
 	s.mu.RUnlock()
 	if tok != "" && time.Until(exp) > 30*time.Second {
 		return tok, nil
 	}
-
-	s.mu.RLock()
-	apiKey := s.apiKey
-	s.mu.RUnlock()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		"https://api.github.com/copilot_internal/v2/token", nil)
@@ -988,7 +1028,10 @@ func (s *Service) githubSessionToken(ctx context.Context) (string, error) {
 	req.Header.Set("Editor-Plugin-Version", "copilot-chat/0.12.0")
 	req.Header.Set("User-Agent", "GithubCopilot/1.155.0")
 
-	resp, err := s.httpClient().Do(req)
+	s.mu.RLock()
+	cli := s.clientForLocked(rt)
+	s.mu.RUnlock()
+	resp, err := cli.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("github token exchange: %w", err)
 	}
@@ -1013,8 +1056,12 @@ func (s *Service) githubSessionToken(ctx context.Context) (string, error) {
 		expiry = time.Now().Add(25 * time.Minute)
 	}
 	s.mu.Lock()
-	s.ghSessTok = parsed.Token
-	s.ghSessExp = expiry
+	if cur := s.profiles[rt.cfg.ID]; cur != nil { // refresh araya girdiyse CANLI runtime'a yaz (#9)
+		cur.ghSessTok, cur.ghSessExp = parsed.Token, expiry
+	}
+	if rt.cfg.ID == s.defaultID {
+		s.ghSessTok, s.ghSessExp = parsed.Token, expiry
+	}
 	s.mu.Unlock()
 	return parsed.Token, nil
 }
@@ -1057,7 +1104,14 @@ type persisted struct {
 	AutoExplain *bool `json:"autoExplain,omitempty"`
 	// v0.10.172 — serbest soru → kılavuz niyeti sınıflandırıcısı (copilot_intent.go).
 	IntentClassify string `json:"intentClassify,omitempty"`
+	// v0.10.175 — model profilleri; düz alanlar VARSAYILANIN aynası olarak da
+	// yazılır (eski binary rolling deploy'da düz alanları okur — profiles.go).
+	Profiles        []ModelProfile    `json:"profiles,omitempty"`
+	DefaultProfile  string            `json:"defaultProfile,omitempty"`
+	SurfaceProfiles map[string]string `json:"surfaceProfiles,omitempty"`
 }
+
+func marshalPersisted(p persisted) ([]byte, error) { return json.Marshal(p) }
 
 // SettingsStore is the small slice of *chstore.Store we need —
 // declared as an interface here so this package doesn't import chstore
@@ -1086,7 +1140,14 @@ func (s *Service) LoadPersisted(ctx context.Context, store SettingsStore) error 
 	// installs keep AI on across the upgrade; only an explicit
 	// "enabled":false from the Settings toggle disables it.
 	enabled := p.Enabled == nil || *p.Enabled
-	s.Configure(p.Provider, p.APIKey, p.Model, p.BaseURL, p.SkipTLS, enabled)
+	if len(p.Profiles) > 0 {
+		// v0.10.175 — profil blobu: küme + varsayılan + yüzey haritası; düz
+		// alanlar yok sayılır (varsayılanın kopyası).
+		s.SetProfiles(p.Profiles, p.DefaultProfile, p.SurfaceProfiles)
+		s.SetEnabled(enabled)
+	} else {
+		s.Configure(p.Provider, p.APIKey, p.Model, p.BaseURL, p.SkipTLS, enabled) // eski düz blob → tek 'default' profil
+	}
 	// v0.9.1120 — tuning rides the SAME load, so the 30s
 	// StartConfigRefresh poll propagates a knob change across pods
 	// exactly like a credential change. A legacy blob leaves all three
@@ -1196,11 +1257,30 @@ func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provid
 	if err := ValidateIntentClassify(intentClassify); err != nil {
 		return err
 	}
-	raw, err := json.Marshal(persisted{
+	if provider == "" {
+		provider = ProviderAnthropic
+	}
+	// v0.10.175 — düz kayıt VARSAYILAN profili düzenler; öteki profiller ve
+	// yüzey haritası korunur; blob hem listeyi hem düz aynayı taşır.
+	s.mu.Lock()
+	id := s.defaultID
+	if id == "" {
+		id = DefaultProfileID
+	}
+	list := s.profilesLocked()
+	if i, ok := indexProfileIdx(list, id); ok {
+		list[i].Provider, list[i].APIKey, list[i].Model, list[i].BaseURL, list[i].SkipTLS = provider, apiKey, model, baseURL, skipTLS
+	} else {
+		list = append(list, ModelProfile{ID: id, Provider: provider, APIKey: apiKey, Model: model, BaseURL: baseURL, SkipTLS: skipTLS})
+	}
+	surface := s.surfaceProfiles
+	s.mu.Unlock()
+	raw, err := marshalPersisted(persisted{
 		Provider: provider, APIKey: apiKey, Model: model, BaseURL: baseURL,
 		SkipTLS: skipTLS, Enabled: &enabled,
 		MaxTokens: maxTokens, Temperature: temperature, TimeoutS: timeoutS,
 		AutoExplain: autoExplain, IntentClassify: intentClassify,
+		Profiles: list, DefaultProfile: id, SurfaceProfiles: surface,
 	})
 	if err != nil {
 		return err

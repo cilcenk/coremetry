@@ -40,23 +40,34 @@ import (
 // VARSAYILANLARI UYGULANMIŞ hâli kullanılmalı — aynı uç, bir çağrıda
 // boş model bir çağrıda "gpt-4o-mini" olarak anahtarlanırsa karar
 // kaybolur.
-func (s *Service) callSnapshot() (cfg provider.Config, req provider.Request, prov, base, model string) {
+func (s *Service) callSnapshot(ctx context.Context) (cfg provider.Config, req provider.Request, prov, base, model string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	prov, base, model = s.provider, s.baseURL, s.model
+	// v0.10.175 — çağrının profili (WithProfile > yüzey haritası > varsayılan);
+	// profil tuning'i küreseli ezer (0/nil = küresel).
+	rt := s.resolveProfileLocked(ctx)
+	p := rt.cfg
+	prov, base, model = p.Provider, p.BaseURL, p.Model
 	cfg = provider.Config{
 		BaseURL:    base,
-		APIKey:     s.apiKey,
+		APIKey:     p.APIKey,
 		Model:      model,
-		HTTPClient: s.cli,
+		HTTPClient: s.clientForLocked(rt),
+	}
+	maxTok := s.tuneMaxTokensLocked()
+	if p.MaxTokens > 0 {
+		maxTok = p.MaxTokens
 	}
 	req = provider.Request{
 		Model:     model,
-		MaxTokens: s.tuneMaxTokensLocked(),
+		MaxTokens: maxTok,
 		System:    "", // çağıran dolduruyor
 		User:      "",
 	}
-	if t, ok := s.tuneTemperatureLocked(); ok {
+	if p.Temperature != nil {
+		temp := *p.Temperature
+		req.Temperature = &temp
+	} else if t, ok := s.tuneTemperatureLocked(); ok {
 		temp := t
 		req.Temperature = &temp
 	}
@@ -78,7 +89,7 @@ func (s *Service) callSnapshot() (cfg provider.Config, req provider.Request, pro
 //	                   karar önbelleğe yazılır mı. Hepsi durum.
 //	provider         → seçilen basamağın gövde şekli. Saf.
 func (s *Service) explainOpenAI(ctx context.Context, systemPrompt, userPrompt string) (string, uint32, uint32, error) {
-	cfg, req, prov, base, model := s.callSnapshot()
+	cfg, req, prov, base, model := s.callSnapshot(ctx)
 	req.System, req.User = systemPrompt, userPrompt
 	// Varsayılanlar yetenek-anahtarı için burada uygulanır (transport
 	// aynısını kendi içinde de yapıyor; anahtar ile gövde ayrışmasın).
@@ -164,7 +175,7 @@ func (s *Service) explainOpenAIAtLevel(ctx context.Context, cfg provider.Config,
 // dilim davranış taşıyor, değiştirmiyor. Bir yüzey WithJSONMode ile
 // gelirse anthropic'te bugün olduğu gibi kısıtsız çağrı yapılır.
 func (s *Service) explainAnthropic(ctx context.Context, systemPrompt, userPrompt string) (string, uint32, uint32, error) {
-	cfg, req, _, _, _ := s.callSnapshot()
+	cfg, req, _, _, _ := s.callSnapshot(ctx)
 	req.System, req.User = systemPrompt, userPrompt
 	req.JSONLevel = provider.JSONPlain
 	// v0.9.1261 — determinizm kuralı sağlayıcıdan bağımsız: niyet
@@ -194,7 +205,7 @@ func (s *Service) explainGitHub(ctx context.Context, systemPrompt, userPrompt st
 	if err != nil {
 		return "", 0, 0, err
 	}
-	cfg, req, _, _, _ := s.callSnapshot()
+	cfg, req, _, _, _ := s.callSnapshot(ctx)
 	cfg.APIKey = sessTok
 	req.System, req.User = systemPrompt, userPrompt
 	req.JSONLevel = provider.JSONPlain

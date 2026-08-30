@@ -19,7 +19,7 @@ import type {
   Incident, IncidentEvent,
   StatusPageConfig, StatusComponent, StatusSubscriber,
   RetentionSpec,
-  AISettings, AISettingsInput,
+  AISettings, AISettingsInput, AIModelProfileInput, AIProfilesPayload, AIProfileTestResult, AISurfaceMap,
   TempoSnapshot, TempoSettingsInput,
   VMSnapshot, VMSettingsInput, VMTestResult,
   DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult, DevOpsResolveDryRun,
@@ -1501,6 +1501,21 @@ export const api = {
     request<AISettings>(`/api/settings/ai`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
+    }),
+  // v0.10.175 — model profilleri (admin). Anahtar yanıtta yok; boş apiKey = korunur.
+  putAIProfile: (id: string, body: AIModelProfileInput) =>
+    request<AIProfilesPayload>(`/api/settings/ai/profiles/${encodeURIComponent(id)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }),
+  deleteAIProfile: (id: string) =>
+    request<AIProfilesPayload>(`/api/settings/ai/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  defaultAIProfile: (id: string) =>
+    request<AIProfilesPayload>(`/api/settings/ai/profiles/${encodeURIComponent(id)}/default`, { method: 'POST' }),
+  testAIProfile: (id: string) =>
+    request<AIProfileTestResult>(`/api/settings/ai/profiles/${encodeURIComponent(id)}/test`, { method: 'POST', timeoutMs: 30_000 }),
+  putAISurfaceMap: (m: AISurfaceMap) =>
+    request<AIProfilesPayload>('/api/settings/ai/surface-map', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(m),
     }),
 
   // Runtime settings: external Tempo backend (v0.5.208).

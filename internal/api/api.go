@@ -8618,6 +8618,7 @@ func (s *Server) getAISettings(w http.ResponseWriter, r *http.Request) {
 	// the stored blob.
 	maxTokens, temperature, timeoutS := s.copilot.TuningSnapshot()
 	autoExplain := s.copilot.AutoExplainEnabled()
+	pp := s.aiProfilesPayload() // tek snapshot (#15)
 	writeJSON(w, map[string]any{
 		"provider":    provider,
 		"model":       model,
@@ -8631,6 +8632,10 @@ func (s *Server) getAISettings(w http.ResponseWriter, r *http.Request) {
 		"autoExplain": autoExplain,
 		// v0.10.172 — serbest soru sınıflandırıcısı kipi (copilot_intent.go).
 		"intentClassify": s.copilot.IntentClassifyMode(),
+		// v0.10.175 — model profilleri (ai_settings_profiles.go); düz alanlar VARSAYILAN profildir.
+		"profiles":       pp["profiles"],
+		"defaultProfile": pp["defaultProfile"],
+		"surfaceMap":     pp["surfaceMap"],
 	})
 }
 
@@ -8663,6 +8668,9 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		// Enabled idyomu: alanı bilmeyen eski istemci nil gönderir ve
 		// nil⇒açık — kazara kapatamaz.
 		AutoExplain *bool `json:"autoExplain"`
+		// v0.10.175 — boş apiKey = MEVCUT korunur (resolveLegacyAPIKey); açık
+		// temizleme yalnız clearKey:true ile (AiTab "Clear key" yolu).
+		ClearKey bool `json:"clearKey"`
 		// v0.10.172 — bkz. copilot.IntentOff/On/OnNoLoop. *string: alanı
 		// bilmeyen eski istemci nil gönderir → MEVCUT değer korunur (autoExplain
 		// deyimi; "" kabul edilseydi bayat bundle açık 'off'u sessizce sıfırlardı).
@@ -8695,7 +8703,16 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	enabled := in.Enabled == nil || *in.Enabled
-	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model, in.BaseURL, in.SkipTLS, enabled, in.MaxTokens, in.Temperature, in.TimeoutS, in.AutoExplain, intentClassify); err != nil {
+	curKey := ""
+	if profiles, def, _ := s.copilot.ProfilesSnapshot(); def != "" {
+		for _, p := range profiles {
+			if p.ID == def {
+				curKey = p.APIKey
+			}
+		}
+	}
+	apiKey := resolveLegacyAPIKey(in.APIKey, curKey, in.ClearKey)
+	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, apiKey, in.Model, in.BaseURL, in.SkipTLS, enabled, in.MaxTokens, in.Temperature, in.TimeoutS, in.AutoExplain, intentClassify); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -8716,6 +8733,7 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		"intentClassify": s.copilot.IntentClassifyMode(),
 	})
 	s.audit(r, "settings.ai.update", "settings", "ai", string(details))
+	pp := s.aiProfilesPayload() // tek snapshot (#15)
 	writeJSON(w, map[string]any{
 		"provider":       provider,
 		"model":          model,
@@ -8728,6 +8746,9 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		"timeoutS":       timeoutSNow,
 		"autoExplain":    s.copilot.AutoExplainEnabled(),
 		"intentClassify": s.copilot.IntentClassifyMode(),
+		"profiles":       pp["profiles"],
+		"defaultProfile": pp["defaultProfile"],
+		"surfaceMap":     pp["surfaceMap"],
 	})
 }
 

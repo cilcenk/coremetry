@@ -63,12 +63,10 @@ type ChatTurn struct {
 // message after the agentic loop settles (RecordUsage), summing
 // the per-turn token usage, so one chat exchange = one ai_calls row.
 func (s *Service) ChatWithTools(ctx context.Context, system string, msgs []ChatMessage, tools []ToolSpec) (ChatTurn, error) {
-	if !s.Active() {
+	if !s.activeFor(ctx, true) { // v0.10.175 — çözülen profilin kimliği (#1)
 		return ChatTurn{}, errors.New("AI copilot not available (disabled or not configured — open Settings → AI Copilot)")
 	}
-	s.mu.RLock()
-	provider := s.provider
-	s.mu.RUnlock()
+	provider, _, _ := s.profileIdentity(ctx) // v0.10.175
 	switch provider {
 	case ProviderGitHub:
 		return s.chatGitHubWithTools(ctx, system, msgs, tools)
@@ -87,9 +85,7 @@ func (s *Service) RecordUsage(ctx context.Context, inTok, outTok uint32, status,
 	if s.recorder == nil {
 		return
 	}
-	s.mu.RLock()
-	provider, model, baseURL := s.provider, s.model, s.baseURL
-	s.mu.RUnlock()
+	provider, model, baseURL := s.profileIdentity(ctx) // v0.10.175 — kullanılan profil
 	meta := MetaFromContext(ctx)
 	rec := CallRecord{
 		CreatedAt:      time.Now(),
@@ -144,13 +140,13 @@ func chatTurnFrom(r aiprov.ChatResponse) ChatTurn {
 }
 
 func (s *Service) chatAnthropicWithTools(ctx context.Context, system string, msgs []ChatMessage, tools []ToolSpec) (ChatTurn, error) {
-	cfg, req, _, _, _ := s.callSnapshot()
+	cfg, req, _, _, _ := s.callSnapshot(ctx)
 	resp, err := aiprov.ChatAnthropicTools(ctx, cfg, chatRequest(req, system, msgs, tools))
 	return chatTurnFrom(resp), err
 }
 
 func (s *Service) chatOpenAIWithTools(ctx context.Context, system string, msgs []ChatMessage, tools []ToolSpec) (ChatTurn, error) {
-	cfg, req, _, _, _ := s.callSnapshot()
+	cfg, req, _, _, _ := s.callSnapshot(ctx)
 	resp, err := aiprov.ChatOpenAITools(ctx, cfg, chatRequest(req, system, msgs, tools))
 	return chatTurnFrom(resp), err
 }
@@ -165,7 +161,7 @@ func (s *Service) chatGitHubWithTools(ctx context.Context, system string, msgs [
 	if err != nil {
 		return ChatTurn{}, err
 	}
-	cfg, req, _, _, _ := s.callSnapshot()
+	cfg, req, _, _, _ := s.callSnapshot(ctx)
 	cfg.APIKey = sessTok
 	resp, err := aiprov.ChatGitHubTools(ctx, cfg, chatRequest(req, system, msgs, tools))
 	return chatTurnFrom(resp), err

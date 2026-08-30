@@ -1191,8 +1191,44 @@ export interface AISettings {
   // 'on_no_loop' = none'da öneri çipleri, tool döngüsü YOK (yerel küçük model
   // varsayılanı); 'on' = none'da serbest döngü; 'off' = kapalı. Eksik = on_no_loop.
   intentClassify?: AIIntentClassify;
+  // v0.10.175 — model profilleri (ai_settings_profiles.go): her profil kendi
+  // sağlayıcı/endpoint/anahtar/model'iyle; düz alanlar VARSAYILAN profilin
+  // aynası. Anahtar asla dönmez (hasKey).
+  profiles?: AIModelProfile[];
+  defaultProfile?: string;
+  surfaceMap?: AISurfaceMap;
 }
 export type AIIntentClassify = 'off' | 'on' | 'on_no_loop';
+export interface AIModelProfile {
+  id: string;
+  label?: string;
+  provider: AIProvider;
+  baseUrl?: string;
+  model?: string;
+  skipTls?: boolean;
+  hasKey: boolean;
+  // profil başına tuning; eksik = küresel değer
+  maxTokens?: number;
+  temperature?: number | null;
+  timeoutS?: number;
+  default?: boolean;
+}
+/** Yüzey grubu → profil kimliği ('' = varsayılan). intent = chat-intent; background = *-auto-explain. */
+export interface AISurfaceMap { intent?: string; background?: string }
+export interface AIModelProfileInput {
+  label?: string;
+  provider: AIProvider;
+  baseUrl?: string;
+  /** boş = mevcut anahtar korunur */
+  apiKey?: string;
+  model?: string;
+  skipTls?: boolean;
+  maxTokens?: number;
+  temperature?: number | null;
+  timeoutS?: number;
+}
+export interface AIProfilesPayload { profiles: AIModelProfile[]; defaultProfile: string; surfaceMap: AISurfaceMap }
+export interface AIProfileTestResult { ok: boolean; ms: number; profile: string; error?: string; sample?: string }
 export interface AISettingsInput {
   provider: AIProvider;
   apiKey: string;
@@ -1212,6 +1248,8 @@ export interface AISettingsInput {
   autoExplain?: boolean;
   // v0.10.172 — bkz. AISettings.intentClassify; form her zaman gönderir.
   intentClassify?: AIIntentClassify;
+  // v0.10.175 — boş apiKey = mevcut korunur; anahtarı silmek yalnız clearKey:true ile.
+  clearKey?: boolean;
 }
 
 // External Tempo backend (v0.5.208) — fallback for trace-by-id

@@ -216,6 +216,12 @@ type KBCandidate struct {
 // response_sample boş satırlar elenir: gövdesi olmayan bir cevabı KB'ye
 // almak boş chunk üretirdi. Negatif ikizle (ListNegativeFeedbackCalls)
 // aynı maliyet sınıfı: iki küçük state tablosu, admin paneli okuması.
+//
+// v0.10.194 — `chat-general` (telemetriyle eşleşmeyen sorunun GENEL BİLGİ
+// cevabı, copilot_intent.go) aday OLAMAZ: kanıtsız bir cevabı 👍 ile
+// rag_chunks'a (source='curated') yazmak, RAG kademesinin onu "kaynak" diye
+// atıflamasıdır; üstelik response_sample sunucunun "telemetriyle eşleşmedi"
+// notunu taşımaz. Oylanabilir kalır (kalite sinyali), KB'ye girmez.
 func (s *Store) ListKBCandidates(ctx context.Context, from, to time.Time, limit int) ([]KBCandidate, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
@@ -227,6 +233,7 @@ func (s *Store) ListKBCandidates(ctx context.Context, from, to time.Time, limit 
 		LEFT JOIN ai_calls AS c ON c.exchange_id = f.exchange_id
 		WHERE f.verdict = 1 AND f.created_at >= ? AND f.created_at <= ?
 		  AND c.response_sample != ''
+		  AND c.surface != 'chat-general'
 		  AND f.exchange_id GLOBAL NOT IN (
 		      SELECT source_ref FROM rag_chunks FINAL
 		      WHERE source = 'curated' AND source_ref != '')

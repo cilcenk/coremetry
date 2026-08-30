@@ -1188,8 +1188,9 @@ export interface AISettings {
   // tıklamalı ✨ yüzeyleri etkilenmez. Eksik alan = açık.
   autoExplain?: boolean;
   // v0.10.172 — serbest soru → kılavuz niyeti sınıflandırıcısı (copilot_intent.go).
-  // 'on_no_loop' = none'da öneri çipleri, tool döngüsü YOK (yerel küçük model
-  // varsayılanı); 'on' = none'da serbest döngü; 'off' = kapalı. Eksik = on_no_loop.
+  // 'on_no_loop' = none'da tool'suz genel bilgi cevabı + not + öneri çipleri
+  // (v0.10.194), tool döngüsü YOK (yerel küçük model varsayılanı); 'on' =
+  // none'da serbest döngü; 'off' = kapalı. Eksik = on_no_loop.
   intentClassify?: AIIntentClassify;
   // v0.10.175 — model profilleri (ai_settings_profiles.go): her profil kendi
   // sağlayıcı/endpoint/anahtar/model'iyle; düz alanlar VARSAYILAN profilin

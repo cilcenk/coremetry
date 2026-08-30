@@ -278,16 +278,19 @@ export function AITab() {
         </label>
         {/* v0.10.172 — serbest soru sınıflandırıcısı. Deterministik kılavuza
             oturmayan soruyu küçük model tek JSON çağrısıyla kılavuz niyetine
-            eşler; none'da döngü yerine öneri çipleri (yerel küçük model). */}
+            eşler; none'da döngü yerine genel bilgi cevabı + öneri çipleri
+            (v0.10.194; yerel küçük model). */}
         <Field label="Serbest soru sınıflandırıcısı (sohbet)">
           <select value={intentClassify} onChange={e => setIntentClassify(e.target.value as AIIntentClassify)} style={{ width: '100%' }}>
-            <option value="on_no_loop">Açık — eşleşmezse öneri çipleri, araç döngüsü yok (yerel küçük model için önerilen)</option>
+            <option value="on_no_loop">Açık — eşleşmezse genel bilgiyle cevaplar + öneri çipleri, araç döngüsü yok (yerel küçük model için önerilen)</option>
             <option value="on">Açık — eşleşmezse serbest araç döngüsü (frontier model)</option>
             <option value="off">Kapalı — eski davranış</option>
           </select>
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.5 }}>
             Kılavuz kalıplarına uymayan soruyu model yalnız <em>sınıflandırır</em> (tek kısa JSON çağrısı, ~1 s);
             cevap yine sunucunun topladığı kanıtla üretilir. Adım panelinde «niyet» rozeti olarak görünür.
+            Hiçbir kalıba oturmayan soru (v0.10.194) araçsız tek çağrıyla genel bilgiyle cevaplanır ve
+            cevabın başında «telemetriyle eşleşmedi» notu bulunur — sayılar operatörün verisinden gelmez.
           </div>
         </Field>
 

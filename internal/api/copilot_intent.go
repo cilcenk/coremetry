@@ -20,10 +20,12 @@ package api
 //   - trace/span kimliği hex kontrolü, pencere snapRangeS basamağına,
 //   - sınıflandırıcı hatası sessizce düşer (sonraki basamak), asla cevabı
 //     kesmez.
-// none → ayara göre (copilot.IntentClassifyMode): on_no_loop = öneri
-// çipleriyle dürüst "şöyle sor" (prod yerel model varsayılanı), on =
-// serbest tool döngüsü (frontier). Saf çekirdek parseIntentJSON,
-// copilot_intent_test.go'da tablo-testli; basamak sırası kaynak kapısıyla.
+// none → ayara göre (copilot.IntentClassifyMode): on_no_loop = tool'suz
+// TEK anlatım çağrısıyla genel bilgi cevabı, başında "telemetriyle
+// eşleşmedi" notu, altında öneri çipleri (v0.10.194; prod yerel model
+// varsayılanı), on = serbest tool döngüsü (frontier). Saf çekirdekler
+// parseIntentJSON + intentGeneralAnswer, copilot_intent_test.go'da
+// tablo-testli; basamak sırası kaynak kapısıyla.
 
 import (
 	"context"
@@ -243,6 +245,23 @@ func systemPromptIntentText() string { return copilot.SystemPromptIntentClassify
 
 const intentNoneAnswerTR = "Bu soruyu telemetriyle eşleyemedim — kılavuz soru şekillerinden hiçbirine oturmadı. Şu biçimlerde sorabilirsin:"
 
+// intentGeneralNoteTR — v0.10.194: genel cevabın ÜSTÜNE sunucunun koyduğu not.
+// Operatör direktifi "ama söylesin": cevabın telemetriden gelmediği modele
+// bırakılmaz, sunucu yazar. Kapanışta "şöyle de sorabilirsin" — çipler altında.
+const intentGeneralNoteTR = "_Bu soru telemetriyle eşleşmedi — genel bilgiyle cevaplıyorum; aşağıdakiler senin sisteminin verisine dayanmaz._"
+
+// intentGeneralAnswer — SAF: model çıktısı → ekrana giden metin. Boş çıktı
+// (model sustu) eski deterministik reddi döndürür ki operatör hiç değilse
+// çipleri görsün; general=false ⇒ exchangeId yazılmaz (oylanacak model
+// metni yok, #3 ile aynı gerekçe).
+func intentGeneralAnswer(raw string) (text string, general bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return intentNoneAnswerTR, false
+	}
+	return intentGeneralNoteTR + "\n\n" + raw, true
+}
+
 // copilotChatIntent — kademe 3.5 (bkz. dosya başlığı). handled=false ⇒
 // sonraki basamak (serbest döngü) sürer.
 func (s *Server) copilotChatIntent(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation, explain string, ctxRangeS int64, ctxEnv string, anchorTo time.Time) (handled, ok bool) {
@@ -303,11 +322,48 @@ func (s *Server) copilotChatIntent(ctx context.Context, emit func(string, any), 
 		if mode != copilot.IntentOnNoLoop {
 			return false, false
 		}
-		// exchangeId YOK: deterministik sunucu metni oylanamaz (#3).
-		emit("answer", map[string]any{
-			"text":        intentNoneAnswerTR,
-			"suggestions": intentNoneSuggestions(ctxService),
-		})
+		// v0.10.194 — Operator-reported ("türkiyenin başkenti neresi" → çipli
+		// red): "eşleştiremese de cevap versin, LLM'e sorup ama söylesin".
+		// none artık son söz değil: tool'suz TEK anlatım çağrısı (chat-general
+		// yüzeyi, varsayılan profil) genel bilgiyle cevaplar; not sunucudan,
+		// çipler yine altında. Model hata verirse eski deterministik red gider —
+		// cevap hiçbir zaman kesilmez. Akış (delta) AÇIK: RAG'ın "önce reddi gör,
+		// sonra gerçek cevap" çift-cevap riski burada yok, altında basamak yok.
+		// Şeffaflık paneli iki LLM çağrısını da görür (inceleme #5); soru
+		// sınıflandırıcıyla aynı 1500 rune'luk kırpık kopya (#7).
+		const gtool = "general_answer"
+		gi := emitStepChipOrigin(emit, gtool, intentStepArgs(q), "intent")
+		gt0 := time.Now()
+		emit("delta", map[string]string{"text": intentGeneralNoteTR + "\n\n"})
+		graw, gerr := s.copilotStreamSurface(ctx, "chat-general", copilot.SystemPromptGeneralChat(), q,
+			func(d string) { emit("delta", map[string]string{"text": d}) })
+		text, general := intentGeneralAnswer(graw)
+		// Akış ORTASINDA kopan çağrı (yerel model, kesik stream) metni TAŞIR
+		// (stream.go: "mid-stream hatası token sayılarını taşır"); operatörün
+		// ekranda gördüğü kısmi cevap redde çevrilmez — yalnız hiç metin
+		// yoksa eski red (inceleme #1).
+		if gerr != nil && strings.TrimSpace(graw) == "" {
+			text, general = intentNoneAnswerTR, false
+		}
+		if gerr != nil {
+			emitStepEvidence(emit, gi, gtool, "", gerr)
+		} else if gi > 0 {
+			preview, trunc := clipStepPreview(strings.TrimSpace(graw))
+			emit("step-result", map[string]any{
+				"i": gi, "tool": gtool, "ok": true, "preview": preview, "truncated": trunc,
+				"bytes": len(graw), "durationMs": time.Since(gt0).Milliseconds(),
+			})
+		}
+		ans := map[string]any{"text": text, "suggestions": intentNoneSuggestions(ctxService)}
+		if general {
+			// Model metni oylanabilir (exchangeId = sohbetin kendi alışverişi;
+			// sınıflandırma çağrısı exchange'siz kalmaya devam eder, #2).
+			ans["exchangeId"] = copilot.MetaFromContext(ctx).ExchangeID
+			ans["links"] = s.answerRequestIDLinks(ctx, graw, ctxService)
+		} else {
+			// exchangeId YOK: deterministik sunucu metni oylanamaz (#3).
+		}
+		emit("answer", ans)
 		return true, true
 	}
 	if route.Env == "" && ctxEnv != "" {

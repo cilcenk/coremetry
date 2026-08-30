@@ -81,6 +81,7 @@ func promptRegistry() map[string]promptClass {
 		// satır-içi İngilizce ek de dil kapısının kapsamına girdi.
 		"Chat":           classTurkishNative,
 		"IntentClassify": classTurkishNative, // v0.10.172 — JSON çıktı, Türkçe talimat (RCAVerdict emsali)
+		"GeneralChat":    classTurkishNative, // v0.10.194 — none → genel bilgi cevabı (tool'suz)
 		"ChatRoundCap":   classTurkishNative,
 		"ShiftSummary":   classTurkishNative,
 		"AlertNoise":     classTurkishNative,
@@ -109,6 +110,7 @@ func promptTexts() map[string]string {
 		"SlowQuery": SystemPromptSlowQuery(), "GuidedChat": SystemPromptGuidedChat(),
 		"SelfMeta":       SystemPromptSelfMeta(),
 		"IntentClassify": SystemPromptIntentClassify(),
+		"GeneralChat":    SystemPromptGeneralChat(),
 		"DrawerChat":     SystemPromptDrawerChat(), "Chat": SystemPromptChat(),
 		"ChatRoundCap": SystemPromptChatRoundCap(),
 		"RCAVerdict":   SystemPromptRCAVerdict(), "ServiceAnalysis": SystemPromptServiceAnalysis(),

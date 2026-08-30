@@ -1184,8 +1184,11 @@ func (s *Service) AutoExplainEnabled() bool {
 //
 //	off        — sınıflandırıcı kapalı; eski davranış (RAG → serbest döngü)
 //	on         — sınıflandır; none → serbest tool döngüsü (frontier model)
-//	on_no_loop — sınıflandır; none → öneri çipleri, döngü YOK (yerel küçük
-//	             model — prod varsayılanı; tool-roulette yerine dürüst "şöyle sor")
+//	on_no_loop — sınıflandır; none → tool'suz TEK anlatım çağrısıyla genel
+//	             bilgi cevabı + "telemetriyle eşleşmedi" notu + öneri çipleri,
+//	             döngü YOK (yerel küçük model — prod varsayılanı; v0.10.194'e
+//	             kadar none = yalnız çipli red; operatör: "eşleştiremese de
+//	             cevap versin, ama söylesin")
 const (
 	IntentOff      = "off"
 	IntentOn       = "on"

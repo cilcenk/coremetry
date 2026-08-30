@@ -3,7 +3,8 @@ import { Spinner } from '@/components/Spinner';
 import { Button, useConfirm } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useSettingsLoad, SettingsLoadError, Field } from './shared';
-import type { AIProvider, AISettings, AIIntentClassify } from '@/lib/types';
+import type { AIProvider, AISettings, AIIntentClassify, AIProfilesPayload } from '@/lib/types';
+import { AiProfilesPanel } from './AiProfilesPanel';
 import { tuningToForm, tuningToWire } from './aiTuning';
 import { IconSparkles } from '@/components/icons';
 import { Link } from 'react-router-dom';
@@ -33,6 +34,8 @@ export function AITab() {
   const [autoExplain, setAutoExplain] = useState(true);
   // v0.10.172 — serbest soru sınıflandırıcısı kipi (eksik ⇒ on_no_loop).
   const [intentClassify, setIntentClassify] = useState<AIIntentClassify>('on_no_loop');
+  // v0.10.176 — model profilleri (dilim B); eski form varsayılan profili düzenler.
+  const [profiles, setProfiles] = useState<AIProfilesPayload | null>(null);
   // v0.9.1120 (Faz 0.5) — LLM call tuning. Held as STRINGS, not
   // numbers, and that is the whole design:
   //
@@ -75,6 +78,7 @@ export function AITab() {
       setEnabled(s.enabled ?? true);
       setAutoExplain(s.autoExplain ?? true);
       setIntentClassify(s.intentClassify ?? 'on_no_loop');
+      if (s.profiles) setProfiles({ profiles: s.profiles, defaultProfile: s.defaultProfile ?? '', surfaceMap: s.surfaceMap ?? {} });
       applyTuning(s);
     },
   );
@@ -122,7 +126,7 @@ export function AITab() {
     })) return;
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl, skipTls, enabled, autoExplain, intentClassify, ...tuning() });
+      const next = await api.putAISettings({ provider, apiKey: '', clearKey: true, model, baseUrl, skipTls, enabled, autoExplain, intentClassify, ...tuning() });
       setHasKey(next.hasKey);
       setSkipTls(next.skipTls ?? false);
       setEnabled(next.enabled ?? true);
@@ -214,6 +218,14 @@ export function AITab() {
         );
       })()}
 
+      {profiles && profiles.profiles.length > 0 && (
+        <AiProfilesPanel payload={profiles} onChange={p => {
+          setProfiles(p);
+          // varsayılan değişince eski form da o profili göstersin (sunucu düz alanları = varsayılan)
+          const d = p.profiles.find(x => x.id === p.defaultProfile);
+          if (d) { setProvider(d.provider); setModel(d.model ?? ''); setBaseUrl(d.baseUrl ?? ''); setHasKey(d.hasKey); setSkipTls(!!d.skipTls); }
+        }} />
+      )}
       <form onSubmit={save} style={{
         marginTop: 18, padding: 16, borderRadius: 8,
         background: 'var(--bg2)', border: '1px solid var(--border)',

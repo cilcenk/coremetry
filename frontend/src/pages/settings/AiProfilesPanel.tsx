@@ -13,8 +13,8 @@ import { Field2, FlashBox, Row } from './shared';
 import { slugifyProfileId, PROFILE_ID_RE, tuningSummary, endpointLabel, profileUsable } from './aiProfiles';
 
 const COLS: DataTableColumn<AIModelProfile>[] = [
-  { id: 'label',    label: 'Profil',    sortValue: p => p.label || p.id,                naturalDir: 'asc', width: 170 },
-  { id: 'provider', label: 'Sağlayıcı', sortValue: p => p.provider,                     naturalDir: 'asc', width: 100 },
+  { id: 'label',    label: 'Profil',    sortValue: p => p.label || p.id,                naturalDir: 'asc', width: 230 },
+  { id: 'provider', label: 'Sağlayıcı', sortValue: p => p.provider,                     naturalDir: 'asc', width: 115 },
   { id: 'model',    label: 'Model',     sortValue: p => p.model ?? '',                  naturalDir: 'asc', width: 160 },
   { id: 'endpoint', label: 'Endpoint',  sortValue: p => endpointLabel(p.provider, p.baseUrl), naturalDir: 'asc', width: 210 },
   { id: 'key',      label: 'Anahtar',   sortValue: p => (p.hasKey ? 1 : 0),             width: 90 },
@@ -88,9 +88,12 @@ export function AiProfilesPanel({ payload, onChange }: { payload: AIProfilesPayl
               const t = tests[p.id];
               return (
                 <tr key={p.id}>
-                  <td style={{ fontWeight: 600 }} title={p.id}>
-                    {p.label || p.id}{p.default && <Badge tone="success" style={{ marginLeft: 6 }}>varsayılan</Badge>}
-                    {p.label && <div className="field-hint mono">{p.id}</div>}
+                  <td style={{ fontWeight: 600, overflow: 'hidden' }} title={p.id}>
+                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.label || p.id}</div>
+                    {/* v0.10.179 — rozet kendi satırında: ellipsis rozeti yutuyordu (178 canlı görüntüsü) */}
+                    <div className="field-hint mono" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      {p.label ? p.id : null}{p.default && <Badge tone="success">varsayılan</Badge>}
+                    </div>
                   </td>
                   <td><span className="badge b-gray">{p.provider}</span></td>
                   <td className="mono" style={{ fontSize: 11 }} title={p.model}>{p.model || '—'}</td>

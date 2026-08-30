@@ -89,6 +89,10 @@ function AiMark({ size = 26 }: { size?: number }) {
 
 export function CopilotChat() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  // v0.10.183 — model profili seçici (>1 profil); boş = sunucu varsayılanı.
+  const [profiles, setProfiles] = useState<{ id: string; label?: string; model?: string }[]>([]);
+  const [defaultProfile, setDefaultProfile] = useState('');
+  const [profile, setProfile] = useState('');
   const [open, setOpen] = useState(false);
   // v0.9.169 — proaktif rozet: açık KRİTİK problem sayısı (chat kapalıyken
   // FAB'da kırmızı rozet). Yalnız copilot açıkken pollar; RQ tab gizliyken durur.
@@ -173,6 +177,7 @@ export function CopilotChat() {
   const { turns, busy, send, stop, rate, clear, load, conversationId, last, showFollowups } =
     useChatThread({
       service: currentService, operation: currentOp, rangeS, toMs, trace: currentTrace, env,
+      profile: profile || undefined,
       persist: true,
     });
 
@@ -255,7 +260,7 @@ export function CopilotChat() {
   const p1s = p1q.data?.items;
 
   useEffect(() => {
-    api.copilotConfig().then(c => setEnabled(c.enabled)).catch(() => setEnabled(false));
+    api.copilotConfig().then(c => { setEnabled(c.enabled); setProfiles(c.profiles ?? []); setDefaultProfile(c.defaultProfile ?? ''); }).catch(() => setEnabled(false));
   }, []);
 
   useEffect(() => {
@@ -345,6 +350,13 @@ export function CopilotChat() {
               {/* v0.9.1139 — konuşma arşivi. Menü değil bir BÖLÜM:
                   çekmece zaten sağ kenarda ve ikinci bir uçan katman
                   (dropdown) sohbetin üstüne binerdi. */}
+              {profiles.length > 1 && (
+                <select value={profile} onChange={e => setProfile(e.target.value)} aria-label="Model profili"
+                  title="Bu konuşma için model profili (boş = sunucu varsayılanı / yüzey eşlemesi)" style={{ maxWidth: 180 }}>
+                  <option value="">model: varsayılan{defaultProfile ? ` · ${profiles.find(p => p.id === defaultProfile)?.label || defaultProfile}` : ''}</option>
+                  {profiles.filter(p => p.id !== defaultProfile).map(p => <option key={p.id} value={p.id}>{p.label || p.id}{p.model ? ` · ${p.model}` : ''}</option>)}
+                </select>
+              )}
               <Button variant="ghost" size="sm" onClick={() => setShowHistory(h => !h)}
                 aria-expanded={showHistory}
                 title="Konuşma geçmişi">🕘 Geçmiş</Button>

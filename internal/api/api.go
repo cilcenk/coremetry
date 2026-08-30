@@ -8585,19 +8585,38 @@ func (s *Server) putProblemEscalation(w http.ResponseWriter, r *http.Request) {
 //     Helm values'ında duran bir tanımlayıcı; baseURL bir ADRES,
 //     apiKey bir SIR. Yanıt tipi bu üçünü taşıyamayacak şekilde DAR
 //     yazıldı (getAISettings admin yüzeyi ayrı ve öyle kalıyor).
+// copilotProfileOption — v0.10.183: sohbet seçicisi için SIRSIZ görünüm
+// (kimlik + etiket + model adı); baseUrl/apiKey/provider ASLA (şekil testi).
+type copilotProfileOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+	Model string `json:"model,omitempty"`
+}
+
 type copilotConfigResponse struct {
 	Enabled bool `json:"enabled"`
 	// omitempty: kapalı/modelsiz kurulumda alan hiç görünmez, yani
 	// istemci "boş string mi yoksa yok mu" ayrımını yapmak zorunda
 	// kalmaz — çip yoksa alan da yok.
 	Model string `json:"model,omitempty"`
+	// v0.10.183 — birden çok profil varsa seçici için liste + varsayılan; tek
+	// profilde alanlar hiç görünmez (eski şekil aynen).
+	Profiles       []copilotProfileOption `json:"profiles,omitempty"`
+	DefaultProfile string                 `json:"defaultProfile,omitempty"`
 }
 
 func (s *Server) copilotConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, copilotConfigResponse{
+	resp := copilotConfigResponse{
 		Enabled: s.copilot.Active(),
 		Model:   s.copilot.ActiveModel(),
-	})
+	}
+	if profiles, def, _ := s.copilot.ProfilesSnapshot(); len(profiles) > 1 {
+		resp.DefaultProfile = def
+		for _, p := range profiles {
+			resp.Profiles = append(resp.Profiles, copilotProfileOption{ID: p.ID, Label: p.Label, Model: p.Model})
+		}
+	}
+	writeJSON(w, resp)
 }
 
 // getAISettings returns the current Copilot config minus the actual

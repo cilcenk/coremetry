@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cilcenk/coremetry/internal/auth"
@@ -56,6 +57,14 @@ func TestCopilotConfigResponseShape(t *testing.T) {
 		if _, ok := got[forbidden]; ok {
 			t.Fatalf("%q /api/copilot/config yanıtına girmiş — bu uç kimlikli "+
 				"ama yine de yalnız GÖSTERİM verisi taşır", forbidden)
+		}
+	}
+	// v0.10.183 — profil listesi de SIRSIZ: yalnız id/label/model.
+	raw2, _ := json.Marshal(copilotConfigResponse{Enabled: true, Model: "m", DefaultProfile: "a",
+		Profiles: []copilotProfileOption{{ID: "a", Label: "Büyük", Model: "m"}, {ID: "b", Model: "q"}}})
+	for _, forbidden := range []string{"baseUrl", "apiKey", "provider", "skipTls", "hasKey"} {
+		if strings.Contains(string(raw2), forbidden) {
+			t.Fatalf("profil listesi %q sızdırıyor: %s", forbidden, raw2)
 		}
 	}
 }

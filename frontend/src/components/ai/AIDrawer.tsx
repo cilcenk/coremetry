@@ -223,9 +223,15 @@ function AIDrawerChat({ subject, explainText, spanIds, traceIds }: {
   );
   // service-health öznesinde sayfa bağlamı da geçer: guided router
   // servisi mesajda bulamazsa bunu varsayılan alır (v0.9.164 sözleşmesi).
+  // v0.10.183 — model profili seçici (çoklu model dilim C): >1 profil varsa
+  // görünür; boş = sunucu varsayılanı / yüzey eşlemesi. Çekmece ömrü kadar
+  // yaşar (URL/kalıcılık yok — operatör: "kalıcı olmasın" sınıfı).
+  const cfgP = useCopilotConfig(true);
+  const [profile, setProfile] = useState('');
   const { turns, busy, send, last, showFollowups } = useChatThread({
     explain, seed, subject: subjectParam,
     service: subject.kind === 'service-health' ? subject.id : undefined,
+    profile: profile || undefined,
     // persist (v0.10.55, operatör ürün kararı) — çekmece sohbeti artık
     // global CoSRE penceresiyle AYNI arşive yazılıyor; kapatılan çekmece
     // "🕘 Geçmiş"ten yeniden açılabilir (gerekçe useChatThread.ts).
@@ -251,8 +257,17 @@ function AIDrawerChat({ subject, explainText, spanIds, traceIds }: {
   return (
     <div style={{ marginTop: 16 }}>
       <DrawerSection title="Sohbet">
-        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
-          Bu sohbet yukarıdaki açıklamayı bilir — takip sorusu sorabilirsin.
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span>Bu sohbet yukarıdaki açıklamayı bilir — takip sorusu sorabilirsin.</span>
+          {cfgP?.profiles && cfgP.profiles.length > 1 && (
+            <label style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              model
+              <select value={profile} onChange={e => setProfile(e.target.value)} title="Bu sohbet için model profili (boş = sunucu varsayılanı)">
+                <option value="">varsayılan{cfgP.defaultProfile ? ` · ${cfgP.profiles.find(p => p.id === cfgP.defaultProfile)?.label || cfgP.defaultProfile}` : ''}</option>
+                {cfgP.profiles.filter(p => p.id !== cfgP.defaultProfile).map(p => <option key={p.id} value={p.id}>{p.label || p.id}{p.model ? ` · ${p.model}` : ''}</option>)}
+              </select>
+            </label>
+          )}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

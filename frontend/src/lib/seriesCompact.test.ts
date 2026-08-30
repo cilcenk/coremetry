@@ -1,6 +1,6 @@
-// seriesCompact.test.ts — v0.10.186 sözleşmesi (seriesCompact.ts başlığı; Go series_compact_test.go aynası).
+// seriesCompact.test.ts — v0.10.186 + v0.10.189 (null delik) sözleşmesi (seriesCompact.ts başlığı; Go series_compact_test.go aynası).
 import { describe, it, expect } from 'vitest';
-import { expandCompactSeries, decodeBundle } from './seriesCompact';
+import { expandCompactSeries, decodeBundle, SERIES_ENC } from './seriesCompact';
 
 describe('seriesCompact', () => {
   it('düzenli: t0 + i·step; düzensiz: t[]; tek/boş seri', () => {
@@ -8,6 +8,11 @@ describe('seriesCompact', () => {
     expect(expandCompactSeries({ groupKey: ['g'], t: [0, 15, 45], v: [1, 2, 3] }).points.map(p => p.time)).toEqual([0, 15, 45]);
     expect(expandCompactSeries({ groupKey: ['b'], t0: 7, v: [0] })).toEqual({ groupKey: ['b'], points: [{ time: 7, value: 0 }] });
     expect(expandCompactSeries({ groupKey: ['c'], v: [] }).points).toEqual([]);
+  });
+  it('v0.10.189 — adımlı şekilde null = delik: nokta yok, ızgara indeksi ilerler', () => {
+    expect(expandCompactSeries({ groupKey: ['g'], t0: 0, step: 15, v: [1, 2, null, 3] })).toEqual({ groupKey: ['g'], points: [{ time: 0, value: 1 }, { time: 15, value: 2 }, { time: 45, value: 3 }] });
+    expect(expandCompactSeries({ groupKey: ['h'], t0: 0, step: 15, v: [null, null, 7] }).points).toEqual([{ time: 30, value: 7 }]);
+    expect(expandCompactSeries({ groupKey: ['t'], t: [0, 15, 45], v: [1, null, 3] }).points).toEqual([{ time: 0, value: 1 }, { time: 45, value: 3 }]);
   });
   it('2^53 üstü unix ns: step tam saniye → t0 + i·step TAM (son nokta birebir)', () => {
     const t0 = 1_700_000_000_000_000_000, step = 15_000_000_000;
@@ -17,7 +22,7 @@ describe('seriesCompact', () => {
   });
   it('decodeBundle: kodlu slot açılır (enc/cols düşer, öteki alanlar kalır); düz slot aynen; bilinmeyen enc → series SİLİNİR (self-fetch)', () => {
     const b = decodeBundle({
-      p1: { enc: 'col', cols: [{ groupKey: ['x'], t0: 1, step: 1, v: [9] }], series: null, totalSeries: 5, tail: [{ time: 1, sum: 2, count: 1 }] },
+      p1: { enc: 'col2', cols: [{ groupKey: ['x'], t0: 1, step: 1, v: [9] }], series: null, totalSeries: 5, tail: [{ time: 1, sum: 2, count: 1 }] },
       p2: { series: [{ groupKey: ['y'], points: [{ time: 1, value: 1 }] }] },
       p3: { enc: 'zzz', series: null },
     });
@@ -27,5 +32,8 @@ describe('seriesCompact', () => {
     expect(b.p1.totalSeries).toBe(5);
     expect(b.p2.series?.[0].points[0].value).toBe(1);
     expect('series' in b.p3).toBe(false);
+    // 189: eski 'col' etiketi de bilinmeyen sayılır → self-fetch
+    expect('series' in decodeBundle({ q: { enc: 'col', cols: [], series: null } }).q).toBe(false);
+    expect(SERIES_ENC).toBe('col2');
   });
 });

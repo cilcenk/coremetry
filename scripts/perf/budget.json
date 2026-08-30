@@ -34,7 +34,7 @@
       "name": "POST /api/dashboards/data", "scenario": "preset-dependencies-1h", "window": "1h", "cold": false,
       "method": "POST", "path": "/api/dashboards/data", "bodyFromDashboard": "preset-dependencies",
       "budget": { "achievableMs": 3000, "aspirationalMs": 1000, "maxBytes": 2000000 },
-      "note": "P5 — v0.10.147: top-N 16 + kuyruk ön-toplamı → gövde 5.2 MB → 1.31 MB (122 seri); v0.10.146 panel-başı 30 s SWR cache; probe step 15 (FE ile aynı); v0.10.186 sütunsal nokta kodlaması (gövde enc:col opt-in, probe v0.10.188'den beri FE ile aynı gövdeyi gönderir — ölçüm perf/out/p5-188.json)"
+      "note": "P5 — v0.10.147: top-N 16 + kuyruk ön-toplamı → gövde 5.2 MB → 1.31 MB (122 seri); v0.10.146 panel-başı 30 s SWR cache; probe step 15 (FE ile aynı); v0.10.186 sütunsal nokta kodlaması (gövde enc opt-in, probe v0.10.188'den beri FE ile aynı gövdeyi gönderir): 1,33 MB → 765 KB; v0.10.189 null-dolgulu ızgara (enc col2): aynı preset curl 1 311 846 → 444 389 B (gzip 177,6 → 110,4 KB) — ≤500 KB arzusu KARŞILANDI"
     },
     {
       "name": "GET /api/problems", "scenario": "cold", "cold": true,

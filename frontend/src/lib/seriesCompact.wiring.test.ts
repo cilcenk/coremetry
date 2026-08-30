@@ -11,6 +11,6 @@ describe('sütunsal nokta kodlaması kablolaması', () => {
     expect(i).toBeGreaterThan(0);
     expect(src.slice(i, i + 900)).toMatch(/\.then\(decodeBundle\)/);
     expect(src).toMatch(/enc\?: string; cols\?: CompactSeries\[\]/);
-    expect(src.slice(i, i + 900)).toMatch(/enc: 'col'/); // opt-in gövdede (eski sekme düz şekil alır)
+    expect(src.slice(i, i + 900)).toMatch(/enc: SERIES_ENC/); // opt-in gövdede, sabit tek yerde (189: col2; eski sekme düz şekil alır)
   });
 });

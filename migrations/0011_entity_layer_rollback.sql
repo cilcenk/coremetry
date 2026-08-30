@@ -20,6 +20,9 @@ DROP TABLE IF EXISTS entities ON CLUSTER uptrace_all SYNC;
 
 ALTER TABLE spans_local ON CLUSTER uptrace_all DROP INDEX IF EXISTS idx_k8s_pod;
 ALTER TABLE spans_local ON CLUSTER uptrace_all DROP INDEX IF EXISTS idx_k8s_node;
+-- v0.10.197: 0012 k8s_namespace üstüne idx_k8s_namespace ekler; indeksi duran
+-- kolon düşmez (Code 47) — 0012 geri alınmadan 0011 geri alınabilsin.
+ALTER TABLE spans_local ON CLUSTER uptrace_all DROP INDEX IF EXISTS idx_k8s_namespace;
 
 ALTER TABLE spans ON CLUSTER uptrace_all DROP COLUMN IF EXISTS k8s_node;
 ALTER TABLE spans ON CLUSTER uptrace_all DROP COLUMN IF EXISTS k8s_pod;

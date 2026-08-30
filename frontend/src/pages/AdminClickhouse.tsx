@@ -11,6 +11,7 @@ import { Button, Modal } from '@/components/ui';
 import type {
   RollupActionResult, RollupPreflightResult, RollupTableStatus, RollupTarget,
   EntityLayerObjectStatus, EntityLayerStatusResult, EntityLayerPreflightResult,
+  RolloutLayerStatusResult, RolloutLayerPreflightResult,
   StateUnifyPreflightResult, StateUnifyRun, StateUnifyTable,
   StateRepartPreflightResult, StateRepartRun, StateRepartTable,
   TraceBackfillDay, TraceBackfillRun,
@@ -729,6 +730,8 @@ export default function AdminClickhousePage() {
             <StateUnifyWizardPanel />
             {/* v0.10.134 — 0011 entity katmanı şeması (operatör: "0011 sihirbazda yok"). */}
             <EntityLayerWizardPanel />
+            {/* v0.10.197 — 0012 rollouts katmanı şeması (audit §5(j)). */}
+            <RolloutLayerWizardPanel />
 
             {/* v0.9.1341 — 0010 partition sökme sihirbazı. 0009'un
                 hemen ALTINDA ve bu SIRA anlamlı: 0010'un önkoşulu
@@ -2762,6 +2765,196 @@ function TraceBackfillWizardPanel() {
           </table>
         )}
       </div>
+    </Section>
+  );
+}
+
+// ── 0012 rollouts katmanı şeması sihirbazı — v0.10.197 ─────────────────
+// docs/audits/rollouts-audit.md §5(j): 0011 panelinin aynası. Fark: ön
+// kontrol kapsamayı CLUSTER BAŞINA gösterir (2026-08-30 dersi — bir cluster
+// tam set, öteki namespace bile yok) ve MV kapısı (her cluster'da replicaset
+// ≥ %95) kapalıyken «Uygula» kolon+index+tabloyu basar, MV'yi ATLAR
+// (Faz 1a/1b ayrımı; sunucu da kapıyı kendi doğrular).
+function RolloutLayerWizardPanel() {
+  const [status, setStatus] = useState<RolloutLayerStatusResult | null>(null);
+  const [statusErr, setStatusErr] = useState<string | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [pre, setPre] = useState<RolloutLayerPreflightResult | null>(null);
+  const [preBusy, setPreBusy] = useState(false);
+  const [preErr, setPreErr] = useState<string | null>(null);
+  const [cluster, setCluster] = useState('');
+  const [withMV, setWithMV] = useState(false);
+  const [confirmKind, setConfirmKind] = useState<'apply' | 'rollback' | null>(null);
+  const [busyKind, setBusyKind] = useState<'apply' | 'rollback' | null>(null);
+  const [action, setAction] = useState<{ kind: 'apply' | 'rollback'; res: RollupActionResult & { withMV?: boolean } } | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const busy = busyKind !== null;
+  const rows = status?.objects ?? [];
+  const dt = useDataTable<EntityLayerObjectStatus>({ storageKey: 'ch-rollout-layer-status', columns: ENTITY_LAYER_COLS, rows });
+  const loadStatus = async () => {
+    setStatusBusy(true); setStatusErr(null);
+    try { setStatus(await api.rolloutLayerStatus()); }
+    catch (e: unknown) { setStatusErr(e instanceof Error ? e.message : String(e)); }
+    finally { setStatusBusy(false); }
+  };
+  useEffect(() => { void loadStatus(); }, []);
+  const runPreflight = async () => {
+    setPreBusy(true); setPreErr(null);
+    try {
+      const r = await api.rolloutLayerPreflight();
+      setPre(r);
+      setWithMV(r.mvGate);
+      const suggested = r.suggestedCluster && r.clusters.includes(r.suggestedCluster)
+        ? r.suggestedCluster : r.clusters.length === 1 ? r.clusters[0] : '';
+      setCluster(suggested);
+    } catch (e: unknown) { setPreErr(e instanceof Error ? e.message : String(e)); setPre(null); }
+    finally { setPreBusy(false); }
+  };
+  const runAction = async (kind: 'apply' | 'rollback') => {
+    setConfirmKind(null); setBusyKind(kind); setActionErr(null); setAction(null);
+    try {
+      const res = kind === 'apply' ? await api.rolloutLayerApply(cluster, withMV) : await api.rolloutLayerRollback(cluster);
+      setAction({ kind, res });
+    } catch (e: unknown) { setActionErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusyKind(null); void loadStatus(); void runPreflight(); }
+  };
+  const canApply = !!pre?.supported && !!cluster && !busy;
+  const allOk = rows.length > 0 && rows.every(o => o.state === 'ok');
+  const pct = (v: number) => `%${(v * 100).toFixed(0)}`;
+  return (
+    <Section title="Rollouts katmanı şeması (0012)">
+      <p style={{ fontSize: 12, color: 'var(--text2)', margin: '0 0 10px', lineHeight: 1.55 }}>
+        spans'a <code className="mono">k8s_deployment / k8s_statefulset / k8s_daemonset / k8s_replicaset / container_image / container_image_tag</code> terfi
+        kolonları + set index, <code className="mono">workload_rollouts / rollout_reconcile_runs</code> state tabloları ve
+        <code className="mono"> workload_revision_activity_1m</code> MV'si. Ön koşul: 0011 uygulanmış olmalı. MV yalnız kapsama kapısı
+        (her cluster'da <code className="mono">k8s.replicaset.name</code> ≥ %95) açıkken kurulur — kapalıysa önce o cluster'ın collector'ı.
+      </p>
+      {statusBusy && !status && <Spinner />}
+      {statusErr && <Empty icon="⚠" title="Durum okunamadı">{statusErr}</Empty>}
+      {status && (
+        <>
+          <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>
+            küme <span className="mono">{status.cluster || '(tek düğüm)'}</span> ·{' '}
+            {allOk ? <span className="badge b-ok">TAM</span> : <span className="badge b-warn">EKSİK</span>} ·
+            workload_revision_activity_1m son 15 dk: <span className="mono">{fmtNum(status.activityRows)}</span> satır
+          </div>
+          <div className="table-wrap is-fit" style={{ marginBottom: 10 }}>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} />
+              <DataTableHead dt={dt} />
+              <tbody>
+                {dt.sortedRows.map(o => (
+                  <tr key={`${o.kind}:${o.name}`}>
+                    <td className="mono">{o.name}</td>
+                    <td style={{ fontSize: 11, color: 'var(--text3)' }}>{o.kind}{o.table ? ` · ${o.table}` : ''}</td>
+                    <td>
+                      {o.state === 'ok' ? <span className="badge b-ok">VAR</span>
+                        : o.state === 'partial' ? <span className="badge b-warn" title="bazı host'larda yok — dağıtık DDL yarım kalmış">KISMİ</span>
+                        : o.state === 'missing' ? <span className="badge b-gray">YOK</span>
+                        : <span className="badge b-warn" title={o.err}>OKUNAMADI</span>}
+                    </td>
+                    <td className="num mono">{o.haveHosts}/{o.hosts}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+        <Button variant="secondary" size="sm" onClick={runPreflight} loading={preBusy}>Ön kontrol</Button>
+        <Button variant="ghost" size="sm" onClick={() => void loadStatus()} disabled={statusBusy}>Durumu yenile</Button>
+        {preErr && <span style={{ color: 'var(--err)', fontSize: 12 }}>{preErr}</span>}
+      </div>
+      {pre && (
+        <div style={{
+          padding: '12px 14px', borderRadius: 6, marginBottom: 12,
+          border: `1px solid ${pre.supported ? 'var(--ok)' : 'var(--warn)'}`,
+          background: pre.supported ? 'color-mix(in srgb, var(--ok) 8%, transparent)' : 'color-mix(in srgb, var(--warn) 10%, transparent)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span className={`badge ${pre.supported ? 'b-ok' : 'b-warn'}`}>{pre.supported ? 'UYGULANABİLİR' : 'UYGULANAMAZ'}</span>
+            <span className={`badge ${pre.mvGate ? 'b-ok' : 'b-warn'}`} title="her cluster'da k8s.replicaset.name kapsaması ≥ %95">{pre.mvGate ? 'MV KAPISI AÇIK' : 'MV KAPISI KAPALI'}</span>
+            <span style={{ fontSize: 12.5, color: 'var(--text2)', lineHeight: 1.5 }}>{pre.detail}</span>
+          </div>
+          <div className="table-wrap" style={{ marginBottom: 8 }}>
+            <table style={{ width: '100%' }}>
+              <thead><tr><th>Kontrol</th><th>Sonuç</th></tr></thead>
+              <tbody>
+                <PreRow label="spans_local" ok={pre.spansLocal} />
+                <PreRow label="Tanımlı küme" ok={pre.clusters.length > 0} note={pre.clusters.join(', ')} />
+                <PreRow label="0011 kolonları (cluster / k8s_namespace)" ok={pre.layer0011} />
+                <PreRow label="uniq replicaset / imaj adı (son 1 saat) ≤ 100k" ok={pre.uniqRs1h <= 100_000 && pre.uniqImage1h <= 100_000} note={`${fmtNum(pre.uniqRs1h)} / ${fmtNum(pre.uniqImage1h)}`} />
+              </tbody>
+            </table>
+          </div>
+          {/* Kapsama CLUSTER BAŞINA — bir cluster'ın collector'ı eksik basıyorsa burada görünür */}
+          <div className="table-wrap" style={{ marginBottom: 8 }}>
+            <table style={{ width: '100%' }}>
+              <thead><tr><th>span cluster değeri</th><th style={{ textAlign: 'right' }}>span (15 dk)</th><th style={{ textAlign: 'right' }}>örneklem</th><th style={{ textAlign: 'right' }}>replicaset</th><th style={{ textAlign: 'right' }}>image</th><th style={{ textAlign: 'right' }}>namespace</th></tr></thead>
+              <tbody>
+                {(pre.coverage ?? []).length === 0 && <tr><td colSpan={6} style={{ color: 'var(--text3)' }}>son 15 dk'da span yok{pre.layer0011 ? '' : ' (cluster kolonu yok — 0011 önce)'}</td></tr>}
+                {(pre.coverage ?? []).map(c => (
+                  <tr key={c.cluster}>
+                    {/* '' = cluster'sız (k8s dışı) trafik: görünür, kapıya girmez. sampled=0 = ölçülemedi → kapı kapalı. */}
+                    <td className="mono">{c.cluster || '(boş — kapıya girmez)'}</td>
+                    <td className="num mono">{fmtNum(c.total)}</td>
+                    <td className="num mono" style={{ color: c.sampled === 0 ? 'var(--err)' : undefined }}>{c.sampled === 0 ? 'ölçülemedi' : fmtNum(c.sampled)}</td>
+                    <td className="num mono" style={{ color: c.replicaset >= 0.95 ? 'var(--ok)' : 'var(--err)' }}>{c.sampled === 0 ? '—' : pct(c.replicaset)}</td>
+                    <td className="num mono" style={{ color: c.image >= 0.95 ? 'var(--ok)' : 'var(--warn)' }}>{c.sampled === 0 ? '—' : pct(c.image)}</td>
+                    <td className="num mono" style={{ color: c.namespace >= 0.95 ? 'var(--ok)' : 'var(--err)' }}>{c.sampled === 0 ? '—' : pct(c.namespace)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {pre.probeErrors && pre.probeErrors.length > 0 && (
+            <div style={{ fontSize: 11.5, color: 'var(--warn)' }}>Probe hataları: {pre.probeErrors.join(' · ')}</div>
+          )}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text3)' }}>
+          Küme
+          <select value={cluster} onChange={e => setCluster(e.target.value)} disabled={!pre || busy}>
+            <option value="">—</option>
+            {(pre?.clusters ?? []).map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </label>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }} title="MV (ADIM 6) — yalnız kapsama kapısı açıkken; sunucu da doğrular">
+          <input type="checkbox" checked={withMV} disabled={!pre?.mvGate || busy} onChange={e => setWithMV(e.target.checked)} /> MV dahil
+        </label>
+        {confirmKind === null ? (
+          <>
+            <Button variant="primary" size="sm" disabled={!canApply} onClick={() => setConfirmKind('apply')}>Uygula (0012)</Button>
+            <Button variant="ghost-danger" size="sm" disabled={!cluster || busy} onClick={() => setConfirmKind('rollback')}>MV'yi geri al</Button>
+          </>
+        ) : (
+          <>
+            <span style={{ fontSize: 12 }}>
+              {confirmKind === 'apply'
+                ? <>0012 <span className="mono">{cluster}</span> kümesine uygulanacak ({withMV ? 'MV dahil' : 'MV HARİÇ — kolon+index+tablo'}; IF NOT EXISTS; ilk hatada durur). Emin misin?</>
+                : <>workload_revision_activity_1m MV'si düşürülecek — yazım kesilir, kolon/tablo/veri kalır. Emin misin?</>}
+            </span>
+            <Button variant={confirmKind === 'apply' ? 'primary' : 'danger'} size="sm" loading={busy} onClick={() => void runAction(confirmKind)}>Evet</Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirmKind(null)}>Vazgeç</Button>
+          </>
+        )}
+        {actionErr && <span style={{ color: 'var(--err)', fontSize: 12 }}>{actionErr}</span>}
+      </div>
+      {action && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, marginBottom: 6 }}>
+            {action.kind === 'apply' ? 'Uygula' : 'Geri al'}: {action.res.ok ? <span className="badge b-ok">TAMAM</span> : <span className="badge b-err">HATA</span>}
+            {action.kind === 'apply' && action.res.withMV === false && withMV && <span className="field-hint"> · MV atlandı (sunucu kapıyı kapalı buldu)</span>}
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11.5 }}>
+            {action.res.statements.map((st, i) => (
+              <li key={i} className="mono" style={{ color: st.ok ? 'var(--text2)' : 'var(--err)' }}>{st.head}{st.err ? ` — ${st.err}` : ''}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </Section>
   );
 }

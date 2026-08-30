@@ -49,6 +49,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/pipeline"
 	"github.com/cilcenk/coremetry/internal/profileconv"
 	"github.com/cilcenk/coremetry/internal/rag"
+	"github.com/cilcenk/coremetry/internal/rollout"
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/tempo"
 	"github.com/cilcenk/coremetry/internal/thanos"
@@ -178,6 +179,8 @@ type Server struct {
 	// nil / yapılandırılmamışken tüm RAG yolları sessizce kapalı.
 	rag *rag.Service
 	bus *sse.Broker // in-process SSE pub/sub for live UI updates
+	// rolloutCfg — v0.10.200: rollouts bayrağı + vidalar (SetRollout ile bağlanır).
+	rolloutCfg *rollout.SettingsService
 	// tempo is the external Tempo backend (v0.5.208). When
 	// configured, getTrace falls back to Tempo on a CH miss so
 	// operators running Coremetry at 5% sampling + Tempo at
@@ -888,6 +891,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.registerExternalRoutes(mux)        // v0.8.446 — /external third-party API inventory from topology_edges_5m (Wave 3 / A1), external.go
 	s.registerHostRoutes(mux)            // v0.8.449 — /hosts host/pod inventory from metric_points (Wave 3 / A4), hosts.go
 	s.registerLdapGroupSyncRoutes(mux)   // v0.8.526 — LDAP/AD group-membership sync (summary / sync-now / preview), ldap_groupsync.go
+	s.registerRolloutRoutes(mux)         // v0.10.200 — rollouts olay tablosu + agregat + ayar + tail, rollouts.go
 	mux.HandleFunc("GET /api/spans/heatmap", s.spanHeatmap)
 	mux.HandleFunc("GET /api/spans/bubbleup", s.spanBubbleUp)
 	mux.HandleFunc("GET /api/profiles", s.listProfiles)
@@ -10883,6 +10887,7 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 		"spans_dropped":           s.ing.Spans.Dropped(),
 		"logs_dropped":            s.ing.Logs.Dropped(),
 		"metrics_dropped":         s.ing.Metrics.Dropped(),
+		"sse_dropped":             s.sseDropped(), // v0.10.200 — dolu abone kanalına düşen olaylar
 		"spans_write_failed":      s.ing.Spans.WriteFailed(),
 		"logs_write_failed":       s.ing.Logs.WriteFailed(),
 		"metrics_write_failed":    s.ing.Metrics.WriteFailed(),

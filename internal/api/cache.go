@@ -532,6 +532,14 @@ func (s *Server) reloadConfigOnSignal(ctx context.Context, svc string) {
 				log.Printf("[entity] reload on signal: %v", err)
 			}
 		}
+	case "rollouts":
+		// v0.10.200 — rollouts bayrağı/vidaları (rollouts.go PUT): api pod'ları
+		// 404 kapısını, worker reconciler'ı 30 s poll'süz görsün.
+		if s.rolloutCfg != nil {
+			if err := s.rolloutCfg.LoadPersisted(ctx, s.store); err != nil {
+				log.Printf("[rollout] reload on signal: %v", err)
+			}
+		}
 	case "rag":
 		if s.rag != nil {
 			if err := s.rag.LoadPersisted(ctx, s.store); err != nil {

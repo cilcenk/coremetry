@@ -1270,6 +1270,10 @@ func main() {
 	srv.SetTempo(tempoSvc)
 	srv.SetThanos(thanosSvc)
 	srv.SetEntity(entitySettings, entitySyncer)
+	srv.SetRollout(rolloutSettings) // v0.10.200 — rollouts ayarı (her rol; PUT + bayrak kapısı)
+	if mode.api {
+		srv.StartRolloutTail(ctx) // v0.10.200 — pod-yerel SSE tail (audit §3 T); yalnız api
+	}
 	srv.SetVMetrics(vmSvc)
 	srv.SetDevOps(devopsSvc)
 	srv.SetMCPClient(mcpCliSvc)

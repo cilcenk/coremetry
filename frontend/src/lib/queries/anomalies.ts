@@ -101,6 +101,18 @@ export function useCreateAnomalySilence() {
   });
 }
 
+// v0.10.181 — karar mutasyonu; events listesi kararı taşıdığı için anomali
+// sorguları tazelenir (önbellek sunucuda da düşer).
+export function usePutAnomalyVerdict() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string } & Parameters<typeof api.putAnomalyVerdict>[1]) => api.putAnomalyVerdict(v.id, v),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: keys.anomalies.all });
+    },
+  });
+}
+
 export function useDeleteAnomalySilence() {
   const qc = useQueryClient();
   return useMutation({

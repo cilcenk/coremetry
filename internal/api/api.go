@@ -1060,6 +1060,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET    /api/anomalies/silences", s.listAnomalySilences)
 	mux.HandleFunc("POST   /api/anomalies/silences", auth.RequireAnyRole(editorRoles, s.createAnomalySilence))
 	mux.HandleFunc("DELETE /api/anomalies/silences/{id}", auth.RequireAnyRole(editorRoles, s.deleteAnomalySilence))
+	s.registerAnomalyVerdictRoutes(mux) // v0.10.181 — «anomali / değil» kararı, anomaly_verdicts.go
 	mux.HandleFunc("POST   /api/anomalies/silences/bulk-delete", auth.RequireAnyRole(editorRoles, s.bulkDeleteAnomalySilences))
 	// Audit log — admin-only read.
 	mux.HandleFunc("GET /api/admin/audit", s.listAuditLog)
@@ -11236,6 +11237,7 @@ func (s *Server) getAnomalyEvents(w http.ResponseWriter, r *http.Request) {
 		// the existing key already hashes since+limit; this join is
 		// read-only, no new audit.
 		rows = s.store.EnrichAnomaliesWithRootCause(ctx, rows)
+		rows = s.store.EnrichAnomaliesWithVerdicts(ctx, rows) // v0.10.181
 		return map[string]any{
 			"items":        rows,
 			"activeTotal":  activeN,

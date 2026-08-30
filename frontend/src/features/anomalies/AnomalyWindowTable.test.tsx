@@ -15,7 +15,7 @@ const ev = (over: Partial<AnomalyEvent>): AnomalyEvent => ({
 });
 // createdAt/untilAt unix NS (anomaly_silence.go) — inceleme blocker: saniye sanılıp ×1000 ile Invalid Date basılıyordu.
 const sil = (fp: string): AnomalySilence => ({ id: 's', fingerprint: fp, kind: 'trace_op', pattern: '', service: '', createdBy: 'cenk', createdAt: 1_700_000_000 * 1e9, untilAt: 1_700_600_000 * 1e9, reason: '', active: true });
-const html = (p: Parameters<typeof AnomalyWindowTable>[0]) => renderToStaticMarkup(<MemoryRouter><AnomalyWindowTable {...p} /></MemoryRouter>);
+const html = (p: Omit<Parameters<typeof AnomalyWindowTable>[0], 'onVerdict'> & { onVerdict?: Parameters<typeof AnomalyWindowTable>[0]['onVerdict'] }) => renderToStaticMarkup(<MemoryRouter><AnomalyWindowTable onVerdict={() => {}} {...p} /></MemoryRouter>);
 const noop = () => {};
 
 describe('AnomalyWindowTable (v0.10.162)', () => {
@@ -42,5 +42,22 @@ describe('AnomalyWindowTable (v0.10.162)', () => {
     expect(h).not.toContain('Değil → sessize al');
     expect(h).toContain('KESİLDİ');
     expect(html({ events: [], silences: [], canEdit: true, onOpen: noop, onMute: noop, truncated: false })).toBe('');
+  });
+});
+
+// v0.10.181 — karar sütunu ve düğmeleri
+describe('AnomalyWindowTable karar (v0.10.181)', () => {
+  it('kararsız satırda «Anomali» + «Değil → sessize al»; anomali kararında yalnız Değil; değil kararında yalnız Anomali + rozet', () => {
+    const h = html({ events: [ev({}), ev({ id: 'v1', verdict: 'anomaly', verdictBy: 'cenk', verdictAt: 1_700_000_100 * S }), ev({ id: 'v2', verdict: 'not_anomaly', verdictBy: 'cenk' })], silences: [], canEdit: true, onOpen: noop, onMute: noop, truncated: false });
+    expect(h.match(/>Anomali</g)?.length).toBe(2);
+    expect(h.match(/Değil → sessize al/g)?.length).toBe(2);
+    expect(h).toContain('anomali ✓');
+    expect(h).toContain('değil ✗');
+    expect(h).toContain('cenk');
+  });
+  it('viewer düğme görmez, kararı görür', () => {
+    const h = html({ events: [ev({ verdict: 'anomaly' })], silences: [], canEdit: false, onOpen: noop, onMute: noop, truncated: false });
+    expect(h).toContain('anomali ✓');
+    expect(h).not.toContain('>Anomali<');
   });
 });

@@ -61,3 +61,14 @@ describe('anomalyRegions id', () => {
     expect(anomalyRegions([ev], new Set(), 1_699_999_000e9, 1_700_001_000e9)[0].id).toBe('ev-1');
   });
 });
+
+// v0.10.181 — «değil» kararı bandı soluk çizer (susturma gibi), etiket «değil»
+describe('anomalyRegions verdict', () => {
+  it("not_anomaly → --text3 + «değil»; anomaly → normal", () => {
+    const base = { id: 'e', kind: 'trace_op', pattern: 'x', service: 's', startedAt: 1_700_000_000e9, lastSeen: 1_700_000_600e9, peakRatio: 3, currentRatio: 1, currentCount: 1, sample: '', status: 'active' } as unknown as Parameters<typeof anomalyRegions>[0][number];
+    const no = anomalyRegions([{ ...base, verdict: 'not_anomaly' }], new Set(), 1_699_999_000e9, 1_700_001_000e9)[0];
+    expect(no).toMatchObject({ color: 'var(--text3)', label: 'değil' });
+    const yes = anomalyRegions([{ ...base, verdict: 'anomaly' }], new Set(), 1_699_999_000e9, 1_700_001_000e9)[0];
+    expect(yes.label).toBe('trace_op ×3.0');
+  });
+});

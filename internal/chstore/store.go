@@ -1268,6 +1268,28 @@ func (s *Store) migrate(ctx context.Context) error {
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY id`,
 
+		// v0.10.181 — anomaly_verdicts: operatörün OLAYA kararı («anomali» /
+		// «değil»; etüt «anomali işaretleri» dilim 2, geri bildirim akışı).
+		// Düşük hacimli state (/clickhouse-schema §1): RMT(version), ORDER BY =
+		// event_id (tek dedup anahtarı — olay başına son karar), PARTITION YOK
+		// (Kural P1), okuma FINAL. fingerprint = kanonik sha1 (silenceFingerprint)
+		// → desen düzeyi istatistik («kaç kez değil dendi») ileride. Susturmadan
+		// AYRI: susturma akışı/terfiyi kapatır, karar yalnız kayıt + görünüm.
+		`CREATE TABLE IF NOT EXISTS anomaly_verdicts (
+			event_id     String,
+			fingerprint  String,
+			kind         LowCardinality(String),
+			pattern      String,
+			service      LowCardinality(String),
+			verdict      LowCardinality(String),      -- 'anomaly' | 'not_anomaly'
+			note         String        DEFAULT '',
+			created_by   String,                        -- user email
+			created_at   DateTime64(9),
+			version      UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY event_id
+		TTL toDate(created_at) + INTERVAL 180 DAY`,
+
 		// audit_log: who did what, when. Append-only event stream.
 		// Used by admin compliance flow + the /admin/audit page.
 		// Partitioned monthly so the TTL (1 year) drops whole

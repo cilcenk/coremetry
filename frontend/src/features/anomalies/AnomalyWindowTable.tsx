@@ -3,8 +3,9 @@
 // sayfasındaki RED grafiklerinin altında, PENCEREDEKİ anomaliler: Tür ·
 // Desen · Başlangıç · Son görülme · Tepe · Durum · Geri bildirim · eylemler.
 // Çakışan anomaliler iki satır — lane/hit-test kodu gerekmez, tablo ayırt
-// eder. «Değil → sessize al» = MEVCUT susturma (POST /api/anomalies/silences);
-// «Evet» kararı için depo YOK (dilim 2) — çizilmez. → mevcut
+// eder. v0.10.181 (dilim 2): «Anomali» / «Değil» KARARI anomaly_verdicts'e
+// (PUT /api/anomalies/{id}/verdict); «Değil» ayrıca mevcut susturmayı zincirler
+// (onMute → çağıran hem kararı hem susturmayı yazar). → mevcut
 // AnomalyDetailDrawer (?anomaly=). Yalnız pencerede anomali varsa çizilir.
 import { Badge, LinkButton } from '@/components/ui';
 import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/DataTable';
@@ -23,16 +24,18 @@ const COLS: DataTableColumn<Row>[] = [
   { id: 'last', label: 'Son görülme', width: 150, sortValue: r => r.e.lastSeen },
   { id: 'peak', label: 'Tepe ×', width: 80, numeric: true, sortValue: r => r.e.peakRatio },
   { id: 'status', label: 'Durum', width: 90, sortValue: r => r.e.status },
-  { id: 'fb', label: 'Geri bildirim', width: 200, sortValue: r => (r.silence ? 1 : 0) },
-  { id: 'act', label: '', width: 200 },
+  { id: 'fb', label: 'Geri bildirim', width: 210, sortValue: r => (r.e.verdict === 'anomaly' ? 2 : r.e.verdict === 'not_anomaly' || r.silence ? 1 : 0) },
+  { id: 'act', label: '', width: 260 },
 ];
 
-export function AnomalyWindowTable({ events, silences, canEdit, onOpen, onMute, truncated }: {
+export function AnomalyWindowTable({ events, silences, canEdit, onOpen, onMute, onVerdict, truncated }: {
   events: AnomalyEvent[];
   silences: AnomalySilence[] | undefined;
   canEdit: boolean;
   onOpen: (id: string) => void;
   onMute: (e: AnomalyEvent, durationSec: number) => void;
+  /** v0.10.181 — «Anomali» kararı (not_anomaly kararını onMute zinciri yazar) */
+  onVerdict: (e: AnomalyEvent, verdict: 'anomaly' | 'not_anomaly') => void;
   /** /api/anomalies/events limit=200'e dayandı — liste tam değil */
   truncated: boolean;
 }) {
@@ -59,16 +62,22 @@ export function AnomalyWindowTable({ events, silences, canEdit, onOpen, onMute, 
                 <td className="mono">{fmtDateTime(new Date(e.lastSeen / 1e6))}</td>
                 <td className="num mono">×{e.peakRatio.toFixed(1)}</td>
                 <td>{e.status === 'active' ? <Badge tone="danger">active</Badge> : <Badge tone="neutral">cleared</Badge>}</td>
-                <td>
-                  {silence
-                    ? <Badge tone="neutral" title={`${silence.createdBy} · ${fmtDateTime(new Date(silence.createdAt / 1e6))}${silence.reason ? ` · ${silence.reason}` : ''}`}>sessiz{silence.untilAt > 0 ? ` · ${fmtDateTime(new Date(silence.untilAt / 1e6))}'e dek` : ''}</Badge>
-                    : <span className="field-hint">—</span>}
+                <td style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {e.verdict === 'anomaly' && <Badge tone="success" title={`${e.verdictBy ?? ''}${e.verdictAt ? ` · ${fmtDateTime(new Date(e.verdictAt / 1e6))}` : ''}`}>anomali ✓</Badge>}
+                  {e.verdict === 'not_anomaly' && <Badge tone="neutral" title={`${e.verdictBy ?? ''}${e.verdictAt ? ` · ${fmtDateTime(new Date(e.verdictAt / 1e6))}` : ''}`}>değil ✗</Badge>}
+                  {silence && <Badge tone="neutral" style={e.verdict ? { marginLeft: 6 } : undefined} title={`${silence.createdBy} · ${fmtDateTime(new Date(silence.createdAt / 1e6))}${silence.reason ? ` · ${silence.reason}` : ''}`}>sessiz{silence.untilAt > 0 ? ` · ${fmtDateTime(new Date(silence.untilAt / 1e6))}'e dek` : ''}</Badge>}
+                  {!e.verdict && !silence && <span className="field-hint">—</span>}
                 </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   <LinkButton onClick={() => onOpen(e.id)} title="Anomali çekmecesini aç">→ detay</LinkButton>
-                  {canEdit && !silence && (
+                  {canEdit && e.verdict !== 'anomaly' && (
                     <span style={{ marginLeft: 8 }}>
-                      <SnoozeButton label="Değil → sessize al" title="Bu bir anomali değil: parmak izini sustur (mevcut susturma; karar deposu yok)" onMute={sec => onMute(e, sec)} />
+                      <LinkButton onClick={() => onVerdict(e, 'anomaly')} title="Gerçek anomali: kararı kaydet (dedektör hassasiyeti için sinyal)">Anomali</LinkButton>
+                    </span>
+                  )}
+                  {canEdit && !silence && e.verdict !== 'not_anomaly' && (
+                    <span style={{ marginLeft: 8 }}>
+                      <SnoozeButton label="Değil → sessize al" title="Bu bir anomali değil: kararı kaydet + parmak izini sustur" onMute={sec => onMute(e, sec)} />
                     </span>
                   )}
                 </td>
@@ -78,7 +87,7 @@ export function AnomalyWindowTable({ events, silences, canEdit, onOpen, onMute, 
         </table>
       </div>
       <div className="pod-cap">
-        <code className="mono">GET /api/anomalies/events</code> (son 24 saat, en yeni 200{truncated ? ' — KESİLDİ, liste tam değil' : ''}) · servis süzgeci istemcide · bant = [başlangıç, son görülme] (endedAt yok) · güven puanı yok (tepe = peakRatio) · «Değil» = mevcut susturma (kanonik parmak izi; akış + terfi kapısı okur), «Evet» kararı için depo yok. <ResetLayoutButton dt={dt} />
+        <code className="mono">GET /api/anomalies/events</code> (son 24 saat, en yeni 200{truncated ? ' — KESİLDİ, liste tam değil' : ''}) · servis süzgeci istemcide · bant = [başlangıç, son görülme] (endedAt yok) · güven puanı yok (tepe = peakRatio) · «Anomali»/«Değil» = karar (anomaly_verdicts, olay başına son karar), «Değil» ayrıca susturur (kanonik parmak izi; akış + terfi kapısı okur). <ResetLayoutButton dt={dt} />
       </div>
     </>
   );

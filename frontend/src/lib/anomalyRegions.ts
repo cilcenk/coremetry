@@ -60,7 +60,10 @@ export function isSilenced(e: AnomalyEvent, silenced: Set<string>): boolean {
 export function anomalyRegions(events: AnomalyEvent[], silenced: Set<string>, fromNs: number, toNs: number): ChartTimeRegion[] {
   const minWidthNs = Math.max(1e9, (toNs - fromNs) * 0.004);
   return events.map(e => {
-    const muted = isSilenced(e, silenced);
+    // v0.10.181 — «değil» kararı da soluk: karar susturma değildir ama bant
+    // dikkat çekmemeli (label «değil»); susturma öncelikli («sessiz»).
+    const notAnomaly = e.verdict === 'not_anomaly';
+    const muted = isSilenced(e, silenced) || notAnomaly;
     const endNs = Math.max(e.lastSeen, e.startedAt + minWidthNs);
     return {
       id: e.id, // v0.10.180 — banda tık → ?anomaly=<id>
@@ -68,7 +71,7 @@ export function anomalyRegions(events: AnomalyEvent[], silenced: Set<string>, fr
       toSec: endNs / 1e9,
       color: muted ? 'var(--text3)' : ANOMALY_KIND_COLOR[e.kind] ?? 'var(--warn)',
       // ▮ öneki YOK: drawTimeRegions kendisi ekler (overlays.ts fitLabel('▮ ' + label)).
-      label: muted ? 'sessiz' : `${ANOMALY_KIND_TR[e.kind] ?? e.kind} ×${e.peakRatio.toFixed(1)}`,
+      label: isSilenced(e, silenced) ? 'sessiz' : notAnomaly ? 'değil' : `${ANOMALY_KIND_TR[e.kind] ?? e.kind} ×${e.peakRatio.toFixed(1)}`,
     };
   });
 }

@@ -27,6 +27,10 @@ describe('exception detayı Pods · nodes (v0.10.173)', () => {
     expect(src).toContain('exc-pods-sub');
     const css = read('../../styles/globals.css');
     expect(css).toMatch(/\.exc-pods-t \{ table-layout: fixed;/);
-    expect(css).toMatch(/\.exc-pods-cell \{[^}]*text-overflow: ellipsis/);
+    expect(css).toMatch(/\.exc-pods-t th, \.exc-pods-t td \{[^}]*text-overflow: ellipsis/);
+    // yüzdeler toplam 100 → taşma yok (v0.10.174)
+    const pct = [...css.matchAll(/\.exc-pods-c-[a-z]+ \{ width: (\d+)%; \}/g)].map(m => Number(m[1]));
+    expect(pct.length).toBe(6);
+    expect(pct.reduce((a, b) => a + b, 0)).toBe(100);
   });
 });

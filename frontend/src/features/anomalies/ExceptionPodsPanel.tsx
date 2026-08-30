@@ -62,7 +62,7 @@ export function ExceptionPodsPanel({ fingerprint, service, groupOccurrences }: {
           <>
             <table className="exc-pods-t">
               <colgroup>
-                <col className="exc-pods-c-pod" /><col className="exc-pods-c-node" /><col className="exc-pods-c-n" /><col className="exc-pods-c-n" /><col className="exc-pods-c-t" /><col className="exc-pods-c-a" />
+                <col className="exc-pods-c-pod" /><col className="exc-pods-c-node" /><col className="exc-pods-c-n" /><col className="exc-pods-c-s" /><col className="exc-pods-c-t" /><col className="exc-pods-c-a" />
               </colgroup>
               <thead>
                 <tr><th>pod · cluster › namespace</th><th>node</th><th className="num">occurrences</th><th className="num">share</th><th>last seen</th><th></th></tr>

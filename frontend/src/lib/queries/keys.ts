@@ -155,6 +155,7 @@ export const keys = {
              ['rollouts', 'list', p] as const,
     stats: (p: { from: number; to: number; cluster?: string; namespace?: string; topN?: number }) => ['rollouts', 'stats', p] as const,
     runs:  () => ['rollouts', 'runs'] as const,
+    detail: (p: { clusterId: string; namespace: string; workload: string; revision: string; startedAt: number }) => ['rollouts', 'detail', p] as const,
   },
   // v0.10.131 — K8s entity katmanı (entities.ts). Her anahtar TÜM girdileri
   // taşır (cluster/tip/ns/arama/at/pencere) — sunucu anahtarının aynası.

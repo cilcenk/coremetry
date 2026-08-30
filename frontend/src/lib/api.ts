@@ -2751,6 +2751,8 @@ export const api = {
   // admin ucu (koşu hatası ham CH dizesi taşıyabilir); sunucu camelCase/ms yazar
   rolloutRuns: (signal?: AbortSignal) =>
     get<import('./types').RolloutRunsResponse>('/api/rollouts/runs', signal),
+  rolloutDetail: (p: { clusterId: string; namespace: string; workload: string; revision: string; startedAt: number }, signal?: AbortSignal) =>
+    get<import('./types').RolloutDetail>(`/api/rollout/detail?cluster=${encodeURIComponent(p.clusterId)}&namespace=${encodeURIComponent(p.namespace)}&workload=${encodeURIComponent(p.workload)}&revision=${encodeURIComponent(p.revision)}&startedAt=${p.startedAt}`, signal),
   rolloutSettings: () => get<import('./types').RolloutSettingsResponse>('/api/settings/rollouts'),
   putRolloutSettings: (cfg: import('./types').RolloutSettings) =>
     request<import('./types').RolloutSettingsResponse>('/api/settings/rollouts', {

@@ -24,6 +24,13 @@ func rolloutKey(id chstore.RolloutID) string {
 	return "rollouts:one:" + fnvStr(id.ClusterID, id.Namespace, id.Workload, id.Revision, strconv.FormatInt(id.StartedAt.UnixMilli(), 10))
 }
 
+// rolloutDetailKey — pencereler now'a çapalı (önce/sonra RED): 30 s zaman
+// kovası anahtarda, yoksa ilk cevap sonsuza dek servis edilirdi.
+func rolloutDetailKey(id chstore.RolloutID, now time.Time) string {
+	return "rollouts:detail:" + fnvStr(id.ClusterID, id.Namespace, id.Workload, id.Revision, strconv.FormatInt(id.StartedAt.UnixMilli(), 10)) +
+		":t=" + strconv.FormatInt(now.Truncate(30*time.Second).Unix(), 10)
+}
+
 func rolloutStatsKey(cluster, ns string, topN int, from, to time.Time) string {
 	return fmt.Sprintf("rollouts:stats:%s:top=%d:w=%s", fnvStr(cluster, ns), topN, cacheBucket(from, to))
 }

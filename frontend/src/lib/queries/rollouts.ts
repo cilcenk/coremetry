@@ -6,7 +6,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
 import { keys } from './keys';
-import type { RolloutListResponse, RolloutStats, RolloutRunsResponse } from '../types';
+import type { RolloutListResponse, RolloutStats, RolloutRunsResponse, RolloutDetail } from '../types';
 
 export interface RolloutListParams {
   from: number; to: number; // ns
@@ -48,3 +48,12 @@ export function useRolloutRuns(enabled = true) {
     enabled,
   });
 }
+
+export function useRolloutDetail(p: { clusterId: string; namespace: string; workload: string; revision: string; startedAt: number }) {
+  return useQuery<RolloutDetail>({
+    queryKey: keys.rollouts.detail(p),
+    queryFn: ({ signal }) => api.rolloutDetail(p, signal),
+    staleTime: 30_000, // sunucu cache'iyle aynı (rollout_detail.go)
+  });
+}
+

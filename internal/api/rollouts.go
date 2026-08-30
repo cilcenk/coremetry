@@ -35,6 +35,7 @@ import (
 func (s *Server) registerRolloutRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/rollouts", s.listRollouts)
 	mux.HandleFunc("GET /api/rollout", s.getRollout)
+	mux.HandleFunc("GET /api/rollout/detail", s.getRolloutDetail) // v0.10.203 — çekmece (rollout_detail.go)
 	mux.HandleFunc("GET /api/rollouts/stats", s.getRolloutStats)
 	// runs: koşu hataları ham CH dizeleri taşıyabilir → admin (viewer liste/stats görür)
 	mux.Handle("GET /api/rollouts/runs",

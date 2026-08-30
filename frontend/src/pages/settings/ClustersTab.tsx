@@ -176,9 +176,9 @@ export function ClustersTab() {
       <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 16 }}>
         Each entry points at an OpenShift cluster's Thanos Querier route.
         The <strong>/clusters</strong> page pulls per-pod CPU + memory from
-        every enabled entry; the cluster <strong>name</strong> must match the
+        every enabled entry. Service pages pivot into a cluster when its <strong>name</strong> matches the
         <code style={{ background: 'var(--bg0)', padding: '1px 5px', borderRadius: 3, margin: '0 4px' }}>k8s.cluster.name</code>
-        value the cluster's telemetry reports so service pages can pivot into it.
+        value the telemetry reports — <em>or</em> when the span values are mapped to it (Detect label / assign values below, v0.10.139-141).
         Typical auth: a ServiceAccount token bound to the
         <code style={{ background: 'var(--bg0)', padding: '1px 5px', borderRadius: 3, margin: '0 4px' }}>cluster-monitoring-view</code>
         ClusterRole. Read-only — Coremetry never writes to Thanos.
@@ -192,7 +192,9 @@ export function ClustersTab() {
           </div>
         )}
         {rows.map((r, i) => {
-          const nameKnown = r.name.trim() === '' || observed.size === 0 || observed.has(r.name.trim());
+          // v0.10.187 (F12) — ad telemetride yoksa bile EŞLENMİŞ span değerlerinden biri görülüyorsa «not in telemetry» yanlış olurdu (139-141 otomatik eşleme).
+          const mapped = r.spanClusterValues.split(',').map(v => v.trim()).filter(Boolean);
+          const nameKnown = r.name.trim() === '' || observed.size === 0 || observed.has(r.name.trim()) || mapped.some(v => observed.has(v));
           return (
             <div key={i} style={{
               marginBottom: 12, padding: 14, borderRadius: 8,

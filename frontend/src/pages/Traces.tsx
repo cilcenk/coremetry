@@ -140,6 +140,8 @@ const COL_LABEL: Record<string, string> = {
 // sürüklememiş operatörün başlangıç noktası.
 const COL_W: Record<string, number> = {
   time: 150, service: 130, operation: 210, duration: 104, spans: 58, status: 74,
+  // v0.10.187 (görsel inceleme F11) — K8s kolonları ATTR_W'de kırpılıyordu (pod adı 40+ karakter)
+  'k8s.pod.name': 280, 'k8s.namespace.name': 160, 'k8s.node.name': 220, cluster: 130,
 };
 const ATTR_W = 130;
 const EXTRA_COLS_LS_KEY = 'traces-extra-cols';

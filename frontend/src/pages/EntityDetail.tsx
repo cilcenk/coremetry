@@ -250,6 +250,10 @@ function NodePanel({ entity, clusterName, from, to, svc }: { entity: EntityRecor
         {clamped && <span className="field-hint">trend: son {THANOS_MAX_WINDOW_LABEL}</span>}
       </Row>
       <ImpactStrip id={entity.id} from={from} to={to} svc={svc} />
+      {/* v0.10.187 (F4) — iki seri de yoksa üst üste iki boş blok yerine tek satır */}
+      {!cpuQ.isPending && !memQ.isPending && cpuSeries.length === 0 && memSeries.length === 0 ? (
+        <Empty icon="—" title="Bu node için CPU/bellek serisi yok." compact>{cpuQ.isError || memQ.isError ? 'Thanos sorgusu hata verdi.' : `node-exporter instance'ı ${nodeSel} ile eşleşmedi (kube_node_info internal_ip / node adı).`}</Empty>
+      ) : (
       <div className="ov-grid ov-charts-3 ov-mb">
         <div>
           <div className="field-hint">CPU (cores)</div>
@@ -264,6 +268,7 @@ function NodePanel({ entity, clusterName, from, to, svc }: { entity: EntityRecor
             : <MultiLineChart series={memSeries} height={180} unit="bytes" xRange={xRange} syncKey={`entity-node:${entity.id}`} />}
         </div>
       </div>
+      )}
     </Stack>
   );
 }
@@ -279,12 +284,17 @@ function NamespacePanel({ entity, clusterName, from, to, svc }: { entity: Entity
   return (
     <Stack gap={3}>
       <Row gap={3} wrap>
-        <Stat label="pods (k8s)" value={row?.pods != null ? String(row.pods) : nsQ.isPending ? '…' : '—'} />
-        <Stat label="CPU" value={row ? fmtCores(row.cpuCores) : '—'} />
-        <Stat label="Mem" value={row ? fmtBytes(row.memBytes) : '—'} />
-        <Stat label="restarts" value={row?.restarts != null ? String(row.restarts) : '—'} tone={row?.restarts ? 'warn' : undefined} />
-        <Stat label="failing pods" value={row?.failing != null ? String(row.failing) : '—'} tone={row?.failing ? 'err' : undefined} />
-        {!row && !nsQ.isPending && <span className="field-hint">Thanos'ta bu namespace için seri yok{nsQ.isError ? ' (sorgu hatası)' : ''}.</span>}
+        {/* v0.10.187 (F3) — satır yokken beş «—» kutusu yerine tek cümle */}
+        {(row || nsQ.isPending) && (
+          <>
+            <Stat label="pods (k8s)" value={row?.pods != null ? String(row.pods) : '…'} />
+            <Stat label="CPU" value={row ? fmtCores(row.cpuCores) : '…'} />
+            <Stat label="Mem" value={row ? fmtBytes(row.memBytes) : '…'} />
+            <Stat label="restarts" value={row?.restarts != null ? String(row.restarts) : '…'} tone={row?.restarts ? 'warn' : undefined} />
+            <Stat label="failing pods" value={row?.failing != null ? String(row.failing) : '…'} tone={row?.failing ? 'err' : undefined} />
+          </>
+        )}
+        {!row && !nsQ.isPending && <span className="field-hint">Thanos'ta bu namespace için seri yok{nsQ.isError ? ' (sorgu hatası)' : ''} — kapasite/kullanım kutuları ve trend bu yüzden boş.</span>}
         {clamped && <span className="field-hint">trend: son {THANOS_MAX_WINDOW_LABEL}</span>}
       </Row>
       <ImpactStrip id={entity.id} from={from} to={to} svc={svc} />

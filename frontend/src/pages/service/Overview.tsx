@@ -1,4 +1,4 @@
-import { useId, useMemo } from 'react';
+import { useId, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { Service, TimeRange, SpanMetricSeries, OperationSummary, AnomalyEvent } from '@/lib/types';
@@ -10,6 +10,7 @@ import { encodeFilters } from '@/lib/urlState';
 import { useServiceDeploys, useAnomalyEvents, useAnomalySilences, useCreateAnomalySilence } from '@/lib/queries';
 import { windowAnomalies, anomalyRegions, silencedSet, silenceKey } from '@/lib/anomalyRegions';
 import { readBandsParam, writeBandsParam } from '@/lib/bandsParam';
+import type { ChartTimeRegion } from '@/lib/chart/overlays';
 import { LinkButton } from '@/components/ui';
 import { AnomalyWindowTable } from '@/features/anomalies/AnomalyWindowTable';
 // v0.10.162 — çekmece TEMBEL: CopilotExplain/RootCauseRibbon/LogsHistogram'ı en sıcak sayfanın chunk'ına sokmasın (yalnız satır tıkında yüklenir).
@@ -423,6 +424,8 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     void createSilence.mutateAsync({ fingerprint: silenceKey(e), kind: e.kind, pattern: e.pattern, service: e.service, durationSec, reason: 'operator: değil (servis sayfası)' });
   };
 
+  // v0.10.180 — banda tık → ?anomaly=<id> çekmecesi (deploy ▼ id taşımaz, no-op).
+  const onRegionClick = useCallback((rg: ChartTimeRegion) => { if (rg.id) openAnomaly(rg.id); }, [openAnomaly]);
   // Throughput series (OK vs Errors) derived from the MV-backed rate +
   // error_rate series — no extra query, no raw-spans scan (invariant #3).
   // Errors = rate × err%, OK = the remainder; the two add up to the total rate.
@@ -848,7 +851,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 // yalnız üstteki karo okuyor.
                 queryText={`avg(${metricName || '?'}) by (http.route), service.name="${service}", step=${rtStep}s`
                   + (rtAvgQ.isError ? `\n\nHATA: ${String(rtAvgQ.error)}` : '')}
-                regions={chartRegions}
+                regions={chartRegions} onRegionClick={onRegionClick}
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
               />
             </Suspense>
@@ -894,7 +897,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                     : `metrik (${metricTputQ.data?.matchedBy ?? 'job'})`,
                   role: 'data' as const,
                 }))}
-                regions={chartRegions}
+                regions={chartRegions} onRegionClick={onRegionClick}
                 onZoom={onZoom} onZoomReset={onZoomReset}
                 syncKey={chartSync}
                 queryText={`metric=${metricTputQ.data?.metric ?? '?'} · instrument=${metricTputQ.data?.instrument ?? '?'} · eşleşme=${metricTputQ.data?.matchedBy ?? '?'} · mdp=${redMdp}`}
@@ -952,7 +955,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                   { name: 'OK', role: 'success', series: throughput[0]?.series ?? [] },
                   { name: 'Errors', role: 'error', series: throughput[1]?.series ?? [] },
                 ]}
-                regions={chartRegions}
+                regions={chartRegions} onRegionClick={onRegionClick}
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
               />
             </Suspense>

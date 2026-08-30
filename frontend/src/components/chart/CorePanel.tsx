@@ -51,7 +51,7 @@ import {
 } from '@/lib/chart/legendVisibility';
 import { resolveVar } from '@/lib/chart/resolveVar';
 import {
-  drawThresholds, drawTimeRegions, drawExemplars, exemplarAt,
+  drawThresholds, drawTimeRegions, drawExemplars, exemplarAt, regionAt, fmtRegionSpan,
   type ChartThreshold, type ChartTimeRegion, type ChartExemplar,
 } from '@/lib/chart/overlays';
 import {
@@ -195,6 +195,10 @@ export interface CorePanelProps {
   // panel tık-eylemi (onExpandClick) ancak isabet yoksa çalışır.
   exemplars?: (ChartExemplar[] | undefined)[];
   onExemplarClick?: (traceId: string) => void;
+  // v0.10.180 — bant şeridine tık (etüt «anomali işaretleri» dilim 2). Öncelik
+  // exemplar ◆'dan sonra, bucket/expand'dan önce; hover'da tooltip bölgeyi
+  // anlatır (etiket · başlangıç → son · süre · «tıkla → çekmece» ipucu).
+  onRegionClick?: (region: ChartTimeRegion) => void;
   // v0.9.789 — "spike → exemplar": çizim alanına DÜZ TIK, tıklanan
   // bucket'ın zaman penceresini NANOSANİYE olarak çağırana verir
   // (çağıran tipik olarak o pencerenin temsilci trace'ini açar).
@@ -268,7 +272,7 @@ function fullNameOf(frame: { meta?: { custom?: Record<string, unknown> } } | und
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
-  defaultHidden, xRange, headerExtra, note, onExpandClick, exemplars, onExemplarClick,
+  defaultHidden, xRange, headerExtra, note, onExpandClick, exemplars, onExemplarClick, onRegionClick,
   onBucketClick, hiddenNames, hideLegend, onCursorTime, dashed, viz = 'line',
   focusedLabel, menuExtra,
 }: CorePanelProps) {
@@ -298,6 +302,10 @@ export function CorePanel({
   exemplarsRef.current = exemplars;
   const exemplarClickRef = useRef(onExemplarClick);
   exemplarClickRef.current = onExemplarClick;
+  const regionClickRef = useRef(onRegionClick);
+  regionClickRef.current = onRegionClick;
+  const regionsRef = useRef(regions);
+  regionsRef.current = regions;
   // v0.9.789 — bucket-tık callback'i de REF'te (onZoomRef deseni).
   // Çağıranlar her render'da taze bir ok fonksiyonu veriyor; kimliği bir
   // bağımlılık dizisine sokmak uPlot'u her poll tick'inde destroy/recreate
@@ -871,8 +879,33 @@ export function CorePanel({
       const idx = u.cursor.idx;
       if (idx == null || u.cursor.left == null || u.cursor.left < 0) {
         tt.style.display = 'none';
+        u.over.style.cursor = '';
         return;
       }
+      // v0.10.180 — imleç bir bant ŞERİDİNDEYSE tooltip bölgeyi anlatır
+      // (seri satırları yerine); tıklanabilirse el imleci.
+      const hitRegion = regionAt(u, regionsRef.current, 1000, u.cursor.left ?? 0, u.cursor.top ?? 0);
+      if (hitRegion) {
+        const clickable = !!regionClickRef.current && !!hitRegion.id;
+        u.over.style.cursor = clickable ? 'pointer' : '';
+        tt.innerHTML = `<div class="ov-tt-t">▮ ${escapeHTML(hitRegion.label ?? 'bölge')}</div>` +
+          `<div class="ov-tt-r"><span class="ov-lbl">başlangıç</span><b>${escapeHTML(fmtTooltipTime(hitRegion.fromSec, null))}</b></div>` +
+          `<div class="ov-tt-r"><span class="ov-lbl">son</span><b>${escapeHTML(fmtTooltipTime(hitRegion.toSec, null))}</b></div>` +
+          `<div class="ov-tt-r"><span class="ov-lbl">süre</span><b>${escapeHTML(fmtRegionSpan(hitRegion.toSec - hitRegion.fromSec))}</b></div>` +
+          (clickable ? '<div class="ov-tt-hint">tıkla → çekmece</div>' : '');
+        tt.style.display = 'block';
+        const host = wrapRef.current;
+        if (host) {
+          const hr = host.getBoundingClientRect();
+          const pl = placeTooltip(u.cursor.left ?? 0, u.cursor.top ?? 0, tt.offsetWidth, tt.offsetHeight,
+            u.over.clientWidth, u.over.clientHeight, u.over.offsetLeft, u.over.offsetTop,
+            Math.max(host.clientWidth, window.innerWidth - hr.left - 8), Math.max(host.clientHeight, window.innerHeight - hr.top - 8));
+          tt.style.left = `${pl.x}px`;
+          tt.style.top = `${pl.y}px`;
+        }
+        return;
+      }
+      u.over.style.cursor = '';
       const xs = u.data[0] as number[];
       const tMs = xs[idx];
       if (tMs == null) { tt.style.display = 'none'; return; }
@@ -1192,7 +1225,7 @@ export function CorePanel({
           }
           if (g.action === 'swallow') return;
           // ── mevcut jest zinciri (◆ > bucket > panel eylemi) ─────────────
-          if (!onExpandClick && !onExemplarClick && !onBucketClick) return;
+          if (!onExpandClick && !onExemplarClick && !onBucketClick && !onRegionClick) return;
           if (fullscreen) return;
           // Drag-zoom basışı tık değildir (5px eşiği).
           if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return;
@@ -1200,6 +1233,16 @@ export function CorePanel({
           // (navigasyon) devreye girmez. Bekleme yok — anında.
           // stacked'te ◆ çizilmiyor (draw hook'u bastırıyor) → isabet
           // testi de kapalı: görünmeyen bir işarete tıklatmak olmaz.
+          // v0.10.180 — bant şeridi tıkı (◆'dan sonra, bucket/expand'dan önce)
+          if (u && regionClickRef.current && regionsRef.current?.length) {
+            const r0 = u.over.getBoundingClientRect();
+            const rg = regionAt(u, regionsRef.current, 1000, e.clientX - r0.left, e.clientY - r0.top);
+            if (rg?.id) {
+              if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
+              regionClickRef.current(rg);
+              return;
+            }
+          }
           if (u && !stacked && exemplarClickRef.current && exemplarsRef.current?.some(x => x?.length)) {
             const r = u.over.getBoundingClientRect();
             const hit = exemplarAt(u, exemplarsRef.current, visRef.current,

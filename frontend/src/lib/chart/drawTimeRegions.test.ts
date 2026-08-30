@@ -6,7 +6,7 @@
 // birleşik aralıkla tek kat, sn bölgeleri xUnit=1000 ile ms eksenine oturur.
 import { describe, it, expect } from 'vitest';
 import type uPlot from 'uplot';
-import { drawTimeRegions, isChronic } from './overlays';
+import { drawTimeRegions, isChronic, regionAt } from './overlays';
 
 // Renkler LİTERAL: resolveVar yalnız `var(--x)` için DOM'a gider; node ortamında getComputedStyle yok.
 const C = '#d29922';
@@ -84,5 +84,24 @@ describe('drawTimeRegions (v0.10.168)', () => {
     const s = fakeU(1_700_000_000, 1_700_003_600);
     drawTimeRegions(s.u, [{ fromSec: 1_700_000_100, toSec: 1_700_000_200, label: 'x', color: C }]);
     expect(s.calls.filter(c => c.fn === 'fillText').length).toBe(1);
+  });
+});
+
+// v0.10.180 — regionAt: CSS px (u.over uzayı) → şerit satırındaki bölge.
+describe('regionAt (v0.10.180)', () => {
+  const xMin = 1_700_000_000_000, xMax = 1_700_003_600_000;
+  const u = { scales: { x: { min: xMin, max: xMax } }, valToPos: (v: number) => ((v - xMin) / (xMax - xMin)) * 1000 } as unknown as uPlot;
+  const rg = [
+    { id: 'a', fromSec: 1_700_000_600, toSec: 1_700_001_200, label: 'a', color: C },   // px 166..333, lane 0
+    { id: 'b', fromSec: 1_700_000_900, toSec: 1_700_001_500, label: 'b', color: C },   // px 250..416, lane 1
+    { id: 'old', fromSec: 1_600_000_000, toSec: 1_600_000_100, label: 'old', color: C }, // pencere dışı
+  ];
+  it('şerit satırına göre bölge; alt satırda ikinci; seri alanında null; pencere dışı asla', () => {
+    expect(regionAt(u, rg, 1000, 200, 4)?.id).toBe('a');
+    expect(regionAt(u, rg, 1000, 300, 4)?.id).toBe('a');
+    expect(regionAt(u, rg, 1000, 300, 16)?.id).toBe('b');
+    expect(regionAt(u, rg, 1000, 300, 60)).toBeNull();
+    expect(regionAt(u, rg, 1000, 5, 4)).toBeNull();
+    expect(regionAt(u, undefined, 1000, 200, 4)).toBeNull();
   });
 });

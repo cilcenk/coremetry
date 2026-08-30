@@ -63,6 +63,7 @@ export function anomalyRegions(events: AnomalyEvent[], silenced: Set<string>, fr
     const muted = isSilenced(e, silenced);
     const endNs = Math.max(e.lastSeen, e.startedAt + minWidthNs);
     return {
+      id: e.id, // v0.10.180 — banda tık → ?anomaly=<id>
       fromSec: e.startedAt / 1e9,
       toSec: endNs / 1e9,
       color: muted ? 'var(--text3)' : ANOMALY_KIND_COLOR[e.kind] ?? 'var(--warn)',

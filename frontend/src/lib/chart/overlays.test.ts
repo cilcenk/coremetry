@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { clampRegion, fitLabel, thresholdVisible, regionsToScale, assignLanes, mergeIntervals } from './overlays';
+import { clampRegion, fitLabel, thresholdVisible, regionsToScale, assignLanes, mergeIntervals, regionLaneHit, fmtRegionSpan, LANE_H } from './overlays';
 
 // overlays.test.ts (Grafana-parite M3) — paylaşımlı threshold/bölge çizim
 // çekirdeğinin SAF yardımcılarını sabitler. Çizim fonksiyonlarının kendisi
@@ -120,5 +120,28 @@ describe('mergeIntervals — dolgu birleşimi', () => {
     expect(mergeIntervals(inp)).toEqual([{ fromSec: 0, toSec: 70, color: 'a' }, { fromSec: 100, toSec: 110, color: 'c' }]);
     expect(inp[0]).toEqual({ fromSec: 40, toSec: 60, color: 'b' });
     expect(mergeIntervals([])).toEqual([]);
+  });
+});
+
+// v0.10.180 — bant isabeti yalnız şerit satırında; çakışan şeritte son çizilen kazanır.
+describe('regionLaneHit — şerit satırı isabeti', () => {
+  const items = [{ x1: 10, x2: 200, lane: 0 }, { x1: 50, x2: 120, lane: 1 }, { x1: 150, x2: 300, lane: 0 }];
+  it("lane 0 satırında x'e göre; lane 1 satırı ikinci bölge", () => {
+    expect(regionLaneHit(items, 20, 5)).toBe(0);
+    expect(regionLaneHit(items, 60, LANE_H + 3)).toBe(1);
+    expect(regionLaneHit(items, 60, 5)).toBe(0);
+    expect(regionLaneHit(items, 250, 5)).toBe(2);
+  });
+  it('çakışan x aralığında son çizilen üstte; şerit satırı dışında -1; NaN geometri asla isabet etmez', () => {
+    expect(regionLaneHit(items, 160, 5)).toBe(2);
+    expect(regionLaneHit(items, 20, 40)).toBe(-1);
+    expect(regionLaneHit([{ x1: NaN, x2: NaN, lane: 0 }], 20, 5)).toBe(-1);
+  });
+  it('fmtRegionSpan basamakları', () => {
+    expect(fmtRegionSpan(45)).toBe('45 s');
+    expect(fmtRegionSpan(720)).toBe('12 dk');
+    expect(fmtRegionSpan(12600)).toBe('3.5 sa');
+    expect(fmtRegionSpan(180000)).toBe('2.1 g');
+    expect(fmtRegionSpan(0)).toBe('—');
   });
 });

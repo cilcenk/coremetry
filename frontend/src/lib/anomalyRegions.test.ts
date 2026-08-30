@@ -27,7 +27,8 @@ describe('windowAnomalies', () => {
 describe('anomalyRegions', () => {
   it('bant [startedAt, lastSeen], tür rengi, «▮ tür ×tepe» etiketi', () => {
     const r = anomalyRegions([ev({})], new Set(), 900 * S, 2000 * S);
-    expect(r).toEqual([{ fromSec: 1000, toSec: 1600, color: ANOMALY_KIND_COLOR.trace_op, label: 'trace_op ×4.2' }]); // ▮ önekini drawTimeRegions ekler
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ fromSec: 1000, toSec: 1600, color: ANOMALY_KIND_COLOR.trace_op, label: 'trace_op ×4.2' }); // ▮ önekini drawTimeRegions ekler; id v0.10.180 (ayrı test)
   });
   it('anlık anomali en az pencerenin %0.4ü (min 1 s) genişliğinde — sıfır genişlik elenmesin', () => {
     const r = anomalyRegions([ev({ lastSeen: 1000 * S })], new Set(), 0, 10_000 * S);
@@ -50,5 +51,13 @@ describe('anomalyRegions', () => {
     expect(isSilenced(e, new Set([silenceKey(e)]))).toBe(true);
     expect(isSilenced(e, new Set(['sha']))).toBe(true);
     expect(isSilenced(e, new Set(['other']))).toBe(false);
+  });
+});
+
+// v0.10.180 — bölge id'si olayın id'si (banda tık → çekmece)
+describe('anomalyRegions id', () => {
+  it("her bölge olayın id'sini taşır", () => {
+    const ev = { id: 'ev-1', kind: 'trace_op', pattern: 'x', service: 's', startedAt: 1_700_000_000e9, lastSeen: 1_700_000_600e9, peakRatio: 3, state: 'active' } as unknown as Parameters<typeof anomalyRegions>[0][number];
+    expect(anomalyRegions([ev], new Set(), 1_699_999_000e9, 1_700_001_000e9)[0].id).toBe('ev-1');
   });
 });

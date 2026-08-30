@@ -46,11 +46,18 @@ export function PodServicesTable({ data, pending, error, pod, spanCluster, pageR
   if (pending) return <Spinner />;
   if (error) return <Empty icon="!" title="Servisler yüklenemedi">{String(error)}</Empty>;
   if (rows.length === 0) {
-    return <Empty icon="∅" title="Bu pencerede bu pod'dan geçen servis yok">entity_seen_5m'de satır yok — k8s.pod.name'siz span'ler ya da boş pencere.</Empty>;
+    // v0.10.190 — sebep listesi dürüst: MV kurulu değilse (dış Distributed
+    // prod'da 0011 operatör migration'ı) de satır yoktur; alttaki trace
+    // listesi span gösteriyorsa sorun span değil MV'dir.
+    return <Empty icon="∅" title="Bu pencerede bu pod'dan geçen servis yok">entity_seen_5m'de satır yok — boş pencere, k8s.pod.name'siz span'ler, ya da tablo var ama MV beslemiyor (dış Distributed'da 0011 ADIM 6). Alttaki trace listesi bu pod'dan span gösteriyorsa sorun MV'dedir.</Empty>;
   }
   const filters = JSON.stringify([{ k: 'k8s.pod.name', op: '=', v: [pod] }]);
   return (
     <>
+      {/* v0.10.190 — namespace'siz span satırları pod adıyla eşlendi; varsayım ilan edilir */}
+      {(data?.nsMissingRows ?? 0) > 0 && (
+        <div className="pod-cap">{data!.nsMissingRows} satır namespace'siz span'lerden (bu cluster'ın collector'ı k8s.namespace.name basmıyor) — pod adı cluster içinde tek varsayıldı.</div>
+      )}
       <div className="table-wrap">
         <table style={{ tableLayout: 'fixed', width: '100%' }}>
           <DataTableColgroup dt={dt} />

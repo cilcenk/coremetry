@@ -13,13 +13,16 @@ export function SpanK8sSection({ span, clusters, range }: { span: SpanRow; clust
   const ctx = spanK8sContext(span, clusters, range);
   const note = spanK8sNote(ctx);
   if (ctx.reason !== 'ok') {
-    // v0.10.150 — 'no-namespace': pod linki yok ama cluster/node linkleri
-    // VAR; onları da çiz, notu koru (eskiden hepsi düşüyordu).
+    // v0.10.150 — 'no-namespace': cluster/node linkleri VAR; v0.10.190 — pod
+    // linki ham /pod yolu (namespace'i sayfa Thanos'tan çözmeye çalışır).
     return (
       <Row gap={2} wrap>
-        <Badge tone="neutral">{ctx.reason === 'no-k8s' ? 'bağlam yok' : 'link yok'}</Badge>
+        <Badge tone="neutral">{ctx.reason === 'no-k8s' ? 'bağlam yok' : ctx.reason === 'no-namespace' ? 'namespace\'siz' : 'link yok'}</Badge>
         {ctx.clusterHref && <Link to={ctx.clusterHref} className="sec" title={ctx.clusterId}>{ctx.clusterName}</Link>}
-        {ctx.pod && <span className="mono">{ctx.pod}</span>}
+        {/* v0.10.190 — namespace'siz span: ham /pod linki (sayfa namespace'i Thanos'tan çözer) */}
+        {ctx.pod && (ctx.podHref
+          ? <Link to={ctx.podHref} className="sec mono" title={`Pod sayfası · ${ctx.clusterName ?? ctx.clusterValue ?? ''} / ${ctx.pod} · namespace Thanos'tan çözülmeye çalışılır (topk 500 dışındaysa çözülemez)`}>{ctx.pod}</Link>
+          : <span className="mono">{ctx.pod}</span>)}
         {ctx.nodeHref && <><span className="field-hint">on</span><Link to={ctx.nodeHref} className="sec" title="Node detayı">{ctx.node}</Link></>}
         <span className="field-hint">{note}</span>
       </Row>

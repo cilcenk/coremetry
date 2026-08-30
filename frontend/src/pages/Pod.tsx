@@ -436,13 +436,20 @@ function PodDetail() {
         </div>
 
         {/* Taşıdığı servisler — entity_seen_5m (bayrak açıkken) */}
-        {entityOn && entityId && (
+        {entityOn && (entityId ? (
           <div className="pod-sec">
             <PanelTitle sub="entity_seen_5m · seçili pencere">Taşıdığı servisler</PanelTitle>
             <PodServicesTable data={svcQ.data} pending={svcQ.isPending} error={svcQ.error} pod={pod}
               spanCluster={traceCluster} pageRange={range} />
           </div>
-        )}
+        ) : (
+          /* v0.10.190 (inceleme #7) — bölüm GİZLENMEZ: namespace çözülemedi
+             (URL'de yok + Thanos topk 500 listesinde değil / Thanos yok) → açık ilan */
+          <div className="pod-sec">
+            <PanelTitle sub="entity_seen_5m · seçili pencere">Taşıdığı servisler</PanelTitle>
+            <Empty icon="—" title="Namespace çözülemedi — servis listesi kurulamadı">{cid ? 'Pod adı Thanos pod listesinde (topk 500) bulunamadı ya da Thanos yanıt vermedi; URL\'de ?namespace= yok. Alttaki trace listesi yalnız pod adıyla süzer.' : 'Cluster çözülemedi.'}</Empty>
+          </div>
+        ))}
 
         {/* Trace listesi — B aşısı: varsayılan «Hatalı» */}
         <div className="pod-sec">

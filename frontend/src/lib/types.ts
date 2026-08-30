@@ -6108,6 +6108,8 @@ export interface RolloutRunsResponse { runs: RolloutRun[] }
 export interface RolloutSettings { enabled: boolean; interval?: string; bucket?: string; threshold?: number; hysteresis?: number; exitHysteresis?: number; overlapMax?: string; lookback?: string; weakSignal?: boolean; stalledMin?: string; updatedAt?: number }
 /** GET/PUT /api/settings/rollouts cevabı: settings + resolved (uygulanan) + defaults. */
 export interface RolloutSettingsResponse { settings: RolloutSettings; resolved: Record<string, unknown>; defaults: RolloutSettings }
+/** GET /api/rollout/detail (v0.10.203) — çekmece. since/generatedAt NANOSANİYE (rollout.startedAt ms'tir). */
+export interface RolloutDetail { rollout: WorkloadRollout; services: ServiceReportSection[]; since: number; generatedAt: number; note?: string }
 
 // K8sCoverageRow / K8sCoverage (v0.10.36) — K8s bağlam kapsama kartı,
 // entity katmanı Faz 0. Bir servisin hangi k8s resource alanını YAYDIĞI.

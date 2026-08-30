@@ -478,10 +478,14 @@ Kapsam dışı (bu audit'e girmedi): cross-cluster servis haritası; STS/DS içi
 | 2 reconciler | v0.10.199 | `internal/rollout` gözlenmiş-giriş modeli (§14.1) + lider-kilitli tik + ayar blobu `system_settings["rollouts"]` |
 | 3 API + SSE | v0.10.200 | `/api/rollouts*`, ayar uçları, pod-yerel CH tail (`PublishLocal`) |
 | 4 Rollouts FE | v0.10.201 | `/rollouts` (Deployment Report emekli, sorgu koruyan redirect) |
+| 4b çekmece | v0.10.203 | `/api/rollout/detail` (servisler MV'den, health verdict + önce/sonra RED ≤ 6 sa, deploy'dan beri sinyaller), `?rollout=` çekmecesi |
 | 5 KSM + stalled | — | §7 PromQL kabul kapısı operatörde; başlamadı |
 
 Araya giren operatör bildirimleri (v0.10.194 CoSRE genel cevap, 195/196 K8s
 kapsama örneklemi + başlıklar) fazları 194-198'den 197-201'e kaydırdı.
+v0.10.202: scanRollout UInt64 düzeltmesi (canlı smoke buldu — tablo boşken
+tüm gate'ler yeşildi). PROD v0.10.202'ye operatörce çekildi (2026-08-30);
+0012 sihirbazı + Enable prod'da operatörde.
 
 ### 14.1 Faz 2 durum makinesi — inceleme sonrası model (v0.10.199)
 

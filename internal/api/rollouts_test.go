@@ -28,7 +28,7 @@ func TestRolloutRoutesRegisteredOnceInApiGo(t *testing.T) {
 	if strings.Count(src, "s.registerRolloutRoutes(mux)") != 1 {
 		t.Fatal("registerRolloutRoutes(mux) api.go'da tam bir kez çağrılmalı")
 	}
-	for _, route := range []string{`"GET /api/rollouts"`, `"GET /api/rollout"`, `"GET /api/rollouts/stats"`, `"GET /api/rollouts/runs"`, `"GET /api/settings/rollouts"`, `"PUT /api/settings/rollouts"`} {
+	for _, route := range []string{`"GET /api/rollouts"`, `"GET /api/rollout"`, `"GET /api/rollout/detail"`, `"GET /api/rollouts/stats"`, `"GET /api/rollouts/runs"`, `"GET /api/settings/rollouts"`, `"PUT /api/settings/rollouts"`} {
 		if strings.Contains(src, route) {
 			t.Fatalf("rota api.go'ya sızmış (kendi dosyasında kalmalı): %s", route)
 		}
@@ -42,7 +42,7 @@ func TestRolloutRoutesResolveOnMux(t *testing.T) {
 	mux := http.NewServeMux()
 	(&Server{}).registerRolloutRoutes(mux)
 	for _, p := range []struct{ m, path string }{
-		{"GET", "/api/rollouts"}, {"GET", "/api/rollout"}, {"GET", "/api/rollouts/stats"},
+		{"GET", "/api/rollouts"}, {"GET", "/api/rollout"}, {"GET", "/api/rollout/detail"}, {"GET", "/api/rollouts/stats"},
 		{"GET", "/api/rollouts/runs"}, {"GET", "/api/settings/rollouts"}, {"PUT", "/api/settings/rollouts"},
 	} {
 		if _, pat := mux.Handler(httptest.NewRequest(p.m, p.path, nil)); pat == "" {

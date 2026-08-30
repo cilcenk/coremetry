@@ -29,9 +29,10 @@ import { fmtNum, fmtDateTime, fmtDurShort } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/AuthProvider';
 import { keys, useRollouts, useRolloutStats, useRolloutRuns, useEntityClusters } from '@/lib/queries';
+import { RolloutDrawer } from '@/components/RolloutDrawer';
 import { tracesPivotHref } from '@/lib/pivotHref';
 import { entityHref } from '@/lib/entityHref';
-import { rolloutKey, statusTone, statusLabel, rolloutDurationSec, shortRevision, imageDiff } from '@/lib/rolloutRow';
+import { rolloutKey, statusTone, statusLabel, rolloutDurationSec, shortRevision, imageDiff, encodeRolloutParam, decodeRolloutParam } from '@/lib/rolloutRow';
 import type { WorkloadRollout } from '@/lib/types';
 
 const STATUSES = ['', 'in_progress', 'completed', 'rolled_back', 'superseded', 'stalled'] as const;
@@ -95,6 +96,7 @@ export default function RolloutsPage() {
   const err = (tab === 'live' ? listQ.error : statsQ.error) as Error | null;
   const disabled = tab === 'live' ? listQ.data?.disabled === true : statsQ.data?.disabled === true;
   const lastRun = runsQ.data?.runs?.[0];
+  const drawerId = decodeRolloutParam(sp.get('rollout'));
   const enable = async () => {
     setEnabling(true);
     setEnableErr('');
@@ -167,7 +169,8 @@ export default function RolloutsPage() {
                       });
                       const wlHref = entityHref({ type: 'workload', id: `wl:${r.clusterId}/${r.namespace}/${r.kind || 'Deployment'}/${r.workload}`, name: r.workload, namespace: r.namespace, clusterId: r.clusterId }, { range });
                       return (
-                        <tr key={rolloutKey(r)} style={rows.length > 100 ? ROW_CV : undefined}>
+                        <tr key={rolloutKey(r)} style={rows.length > 100 ? { ...ROW_CV, cursor: 'pointer' } : { cursor: 'pointer' }}
+                          onClick={e => { if ((e.target as HTMLElement).closest('a, button')) return; setParam('rollout', encodeRolloutParam(r)); }}>
                           <td><Badge tone={statusTone(r.status)} title={r.completedAt ? `tamamlandı ${fmtDateTime(new Date(r.completedAt))}` : undefined}>{statusLabel(r.status)}</Badge></td>
                           <td title={`${cname} / ${r.namespace} / ${r.workload}`}>
                             <Link to={wlHref} className="sec">{r.workload}</Link>
@@ -198,6 +201,7 @@ export default function RolloutsPage() {
             <StatsPanel st={statsQ.data} clusterName={clusterName} />
           )
         )}
+        {drawerId && <RolloutDrawer id={drawerId} onClose={() => setParam('rollout', '')} />}
       </PageShell>
     </>
   );

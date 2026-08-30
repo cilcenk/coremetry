@@ -66,3 +66,28 @@ export function imageDiff(r: Pick<WorkloadRollout, 'imageTag' | 'prevImageTag'>)
   if (prev && prev !== cur) return `${prev} → ${cur || '?'}`;
   return cur || prev;
 }
+
+// ── Çekmece URL codec'i (v0.10.203) — rolloutHref.test.ts pinler ──────────
+export interface RolloutIdParam { clusterId: string; namespace: string; workload: string; revision: string; startedAt: number }
+
+// Ayraç '|': encodeURIComponent onu %7C'ye kaçırır ('~' KAÇMAZ — unreserved;
+// '~' ayraçlı ilk sürüm workload'daki '~' ile bölünüyordu, rolloutHref.test).
+export function encodeRolloutParam(r: RolloutIdParam): string {
+  return [r.clusterId, r.namespace, r.workload, r.revision, String(r.startedAt)].map(encodeURIComponent).join('|');
+}
+
+/** Bozuk/eksik token → null (çekmece açılmaz; sayfa kırılmaz). */
+export function decodeRolloutParam(s: string | null): RolloutIdParam | null {
+  if (!s) return null;
+  const parts = s.split('|');
+  if (parts.length !== 5) return null;
+  try {
+    const [clusterId, namespace, workload, revision, ts] = parts.map(decodeURIComponent);
+    const startedAt = Number(ts);
+    if (!clusterId || !workload || !revision || !Number.isFinite(startedAt) || startedAt <= 0) return null;
+    return { clusterId, namespace, workload, revision, startedAt };
+  } catch {
+    return null;
+  }
+}
+

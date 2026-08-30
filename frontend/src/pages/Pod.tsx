@@ -60,7 +60,7 @@ const CorePanelMultiLazy = lazy(() =>
 // PodEntityPanel zinciri birleşti, yerel `Stat` kopyası silindi) → KPI şeridi
 // (pencere toplamları RED serilerinden, ayrı uç yok) → RED üçlüsü → Taşıdığı
 // servisler tablosu → Trace listesi (varsayılan «Hatalı», ?spans=) →
-// Konteynerler → Altyapı → Kardeşler | Etiketler + Yaşam döngüsü → Ek (JMX,
+// Konteynerler → Kardeşler | Etiketler + Yaşam döngüsü → Ek (JMX, [Altyapı v0.10.177'de KPI altına taşındı]
 // PromQL: kapalı disclosure, açılınca fetch). Aynı anatomi node/namespace
 // sayfasıyla (EntityDetail) — operatöre yeni şey öğretmiyor. Zor durumlar:
 // sonlanmış pod (gone: KSM/konteyner yok, ömür kapalı, RED penceresi geçmiş),
@@ -339,6 +339,32 @@ function PodDetail() {
 
         <PodKpiStrip totals={totals} redState={redState} scopeLabel={scopeLabel} row={row} rowPending={podsPending} clamped={clamped} />
 
+        {/* Infra — tek-pod CPU/Mem trend (Thanos). v0.10.177 (operatör, prod):
+            EN ÜSTE, KPI şeridinin hemen altına — pod'un kendi sinyali; RED
+            grafikleri span'lerden türer ve span'siz pod'da boştur (görüntü:
+            üç «çizilecek nokta yok» kartı, CPU/Mem ekran dışındaydı). */}
+        <div className="pod-sec">
+          <PanelTitle sub={cluster ? `Thanos PodTrend · konteynerlerin toplamı${clamped ? ` · pencere tavanı son ${THANOS_MAX_WINDOW_LABEL}` : ''}` : undefined}>
+            CPU / Bellek · Thanos{cluster ? <> · <span className="mono">{cluster}</span></> : ''}
+          </PanelTitle>
+          {cluster ? (
+            <>
+              {/* Satır (topk 500) yokken de SOR (inceleme #2): TrendPanel adla
+                  sorgular, satırsız modu destekler ve boş pencereyi kendisi
+                  söyler — «seri yok» demek için önce Thanos'a bakılır. */}
+              {!row && !podsPending && (
+                <div className="pod-cap">{live === 'gone' ? 'Sonlanmış pod — Thanos\'ta güncel seri beklenmez; ömür penceresi için Clusters sayfasında tarihsel pencere seçin.' : 'Pod topk 500 listesinde değil — request/limit çizgileri yok; seri varsa yine çizilir.'}</div>
+              )}
+              {/* Madde 4 sweep — trend drag-zoom sayfa range'ine yazar,
+                  çift-tık geri-yığını pop eder (audit §2.4 kararı güncellendi). */}
+              <ThanosTrendPanel cluster={cluster} namespace={namespace} pod={pod} row={row} fromNs={cFrom} toNs={cTo}
+                onZoom={handleZoom} onZoomReset={handleZoomReset} />
+            </>
+          ) : (
+            <div className="pod-cap">{podsPending ? 'cluster çözülüyor…' : 'cluster çözülemedi — Thanos kaynaklarında bu pod bulunamadı.'}</div>
+          )}
+        </div>
+
         {/* RED — servisin kümülatif metrikleri, bu pod'a scope'lu */}
         <div className="pod-sec">
           <PanelTitle sub={redEnabled ? <>{scopeLabel} · paylaşılan crosshair{podWindowEvents.length > 0 && <> · anomali bantları (servis düzeyi): {bandsOn ? 'açık' : 'kapalı'} · <LinkButton onClick={toggleBands} aria-pressed={bandsOn} title="Anomali bantlarını grafiklerde göster/gizle (?bands=1)" className="bands-toggle">{bandsOn ? 'kapat' : 'aç'}</LinkButton></>}</> : undefined}
@@ -431,29 +457,6 @@ function PodDetail() {
             <div className="pod-cap">Sonlanmış pod: KSM anlık durum yok{detail.containers && detail.containers.length > 0 ? ` · kayıtlı konteynerler: ${detail.containers.map(c => c.name).join(', ')}` : ''}. Ömür ve son görülme yukarıda.</div>
           </div>
         )}
-
-        {/* Infra — tek-pod CPU/Mem trend. cluster çözülene dek gizli. */}
-        <div className="pod-sec">
-          <PanelTitle sub={cluster ? `Thanos PodTrend · konteynerlerin toplamı${clamped ? ` · pencere tavanı son ${THANOS_MAX_WINDOW_LABEL}` : ''}` : undefined}>
-            Altyapı{cluster ? <> · <span className="mono">{cluster}</span></> : ''}
-          </PanelTitle>
-          {cluster ? (
-            <>
-              {/* Satır (topk 500) yokken de SOR (inceleme #2): TrendPanel adla
-                  sorgular, satırsız modu destekler ve boş pencereyi kendisi
-                  söyler — «seri yok» demek için önce Thanos'a bakılır. */}
-              {!row && !podsPending && (
-                <div className="pod-cap">{live === 'gone' ? 'Sonlanmış pod — Thanos\'ta güncel seri beklenmez; ömür penceresi için Clusters sayfasında tarihsel pencere seçin.' : 'Pod topk 500 listesinde değil — request/limit çizgileri yok; seri varsa yine çizilir.'}</div>
-              )}
-              {/* Madde 4 sweep — trend drag-zoom sayfa range'ine yazar,
-                  çift-tık geri-yığını pop eder (audit §2.4 kararı güncellendi). */}
-              <ThanosTrendPanel cluster={cluster} namespace={namespace} pod={pod} row={row} fromNs={cFrom} toNs={cTo}
-                onZoom={handleZoom} onZoomReset={handleZoomReset} />
-            </>
-          ) : (
-            <div className="pod-cap">{podsPending ? 'cluster çözülüyor…' : 'cluster çözülemedi — Thanos kaynaklarında bu pod bulunamadı.'}</div>
-          )}
-        </div>
 
         {/* Kardeşler | Etiketler + Yaşam döngüsü */}
         {entityOn && detail && (

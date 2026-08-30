@@ -475,10 +475,95 @@ Kapsam dışı (bu audit'e girmedi): cross-cluster servis haritası; STS/DS içi
 | 1a boot şeması | **v0.10.193** | 6 terfi kolonu (`typ` alanı, varsayılan LC), `workload_rollouts` + `rollout_reconcile_runs` (`host` ayırıcı), üç küme kaydı, purge sınıflandırması |
 | 1a-2 0012 + sihirbaz | **v0.10.197** | `migrations/0012_rollout_layer.sql` (+rollback), `RolloutLayer*` (cluster başına kapsama ön kontrolü), `/api/admin/rollout-layer/*`, AdminClickhouse paneli |
 | 1b MV | v0.10.198 | boot `mvs` kapısı `hasRolloutCols && hasK8sPodCol`; prod'da 0012 ADIM 6 sihirbazdan |
-| 2 reconciler | v0.10.199 | `internal/rollout` saf `Reconcile` + lider-kilitli tik; pencere-başı süreklilik kuralı |
-| 3 API + SSE | v0.10.200 | `/api/rollouts*`, ayar blobu, pod-yerel CH tail (`PublishLocal`) |
+| 2 reconciler | v0.10.199 | `internal/rollout` gözlenmiş-giriş modeli (§14.1) + lider-kilitli tik + ayar blobu `system_settings["rollouts"]` |
+| 3 API + SSE | v0.10.200 | `/api/rollouts*`, ayar uçları, pod-yerel CH tail (`PublishLocal`) |
 | 4 Rollouts FE | v0.10.201 | `/rollouts` (Deployment Report emekli, sorgu koruyan redirect) |
 | 5 KSM + stalled | — | §7 PromQL kabul kapısı operatörde; başlamadı |
 
 Araya giren operatör bildirimleri (v0.10.194 CoSRE genel cevap, 195/196 K8s
 kapsama örneklemi + başlıklar) fazları 194-198'den 197-201'e kaydırdı.
+
+### 14.1 Faz 2 durum makinesi — inceleme sonrası model (v0.10.199)
+
+Üç tur çok-mercekli inceleme (4 mercek + reddediciler, 2026-08-30) ilk üç
+taslakta çalıştırılarak kanıtlanmış blocker'lar buldu: kayan pencere
+kenarında sahte `rolled_back`; tek revizyona uydurma `completed`; koşu
+başlangıcına dayanan "daha yeni mi" kararı (canary dalması); pencere kenarı
+bir çukurun içine denk gelince köprülenen dalmanın giriş sayılması; satırı
+olmayan yerleşik revizyonun ≥30 dk sessizliğinin (gece, ingest kesintisi)
+sahte `completed` üretmesi; CH DateTime64 0'ın Go'ya 1970 dönmesi. Dördüncü
+yazımın modeli (reconcile.go başlığı) §2.4'ün yerine geçer:
+
+- **Satır = gözlenmiş GİRİŞ olayı.** Giriş için revizyonun öncesinde
+  ≥ ExitHysteresis kova boyunca aktif OLMADIĞI pencere içinde gözlenmeli;
+  pencere kenarına dayanan yokluk kanıt değildir. Pencere kenarında zaten
+  aktif koşu satır açmaz. started_at mutlak kova — iki yazıcıda aynı.
+- **Bilinen revizyonun dönüşü olay değildir:** 6 günlük (MV TTL − 1) ilk-görülme ufku
+  (`RolloutFirstSeen`, MV'den ucuz GROUP BY) ya da tablo satırı revizyonu
+  girişten ≥ EH kova önce gösteriyorsa ve yokluğunda başka revizyon aktif
+  olmadıysa → satır varsa taşınır, yoksa hiçbir şey yazılmaz. Yokluğunda
+  başkası aktif olduysa yeni giriş olayı (prev = o revizyon, "geri dönüş"
+  notu). Hiç görülmemiş revizyon giriştir.
+- **Giriş histerezisi 2 kova, ÇIKIŞ histerezisi 6 kova (30 dk, ayarlanır).**
+  Kurulmuş koşuyu < 6 kovalık çukur kesmez.
+- **prev_revision** girişten önceki EN YAKIN öteki-aktif kovadaki en yoğun
+  revizyon; eşik-altı öncü kovalar (tavansız) koşunun başına dahil (kısmi
+  ilk kova, uzun canary ısınması; yokluk öncünün öncesinden sayılır), öncü
+  > H ve prev yoksa rampa. Koşu başı geriye/ileri kayarsa satır
+  taşınır (started_at değişmez).
+- **Durumlar (satırın kendi revizyonu R, önceki P):** `completed` R aktif,
+  ötekiler ≥ EH kovadır yok; `rolled_back` R çekildi ve çekilişten sonra ilk
+  aktif görülen öteki P (olay çekilen revizyonun satırında); `superseded`
+  ilk aktif görülen öteki P değil (ya da aynı revizyonun daha yeni satırı
+  var); `in_progress` aksi hâlde (kimse aktif değilse yalnız not). Çekiliş
+  sonrası karar tek kovaya değil ileriye yürüyerek verilir. Terminal ve
+  completed satırlar donuk. Bayat açık satırın bitişi pencere başı − 1 kova
+  (uydurma damga yok).
+- Karar kovası EPOCH hizalı; kova {1,5,10,15,30} dk; bağlı kelepçeler
+  H·B ≥ 10 dk, EH·B ≥ 30 dk, EH ≥ H, lookback ≥ 4·EH·B (≤ 48 sa; sığmazsa EH
+  düşer), overlap ≤ lookback/2.
+- Reconciler: gerçek pencere başı Reconcile'a geçirilir; koşu satırı ayrık
+  ctx (kapanışta kesilen tik `skipped`), tik süresi 5×aralık (≥ 2 dk),
+  lider lease 3 dk (LeaderTTL(1 dk)), yazım öncesi liderlik yeniden doğrulanır, etkinlik
+  tavanında kesilen iş yükü adıyla ilan edilir, önceki satırlar keyset
+  sayfalı (300k tavanı HATA); tail kursörü keyset (`RolloutCursor`),
+  DateTime64 bind'leri `toDateTime64(?,3,'UTC')`, 0 ↔ 1970 eşlemesi.
+- **Varlık ≠ etkinlik (4. tur):** giriş/tamamlanma EŞİK üstü etkinlikle,
+  "çekildi"/"yokluk" HERHANGİ bir span'in olmamasıyla karar verilir — eşik
+  altına inen ama span üreten revizyon (canary çukuru) çekilmiş sayılmaz.
+  **Devralma testi:** yoklukta "başkası aktifti" için ötekinin eşik üstü ve
+  yokluk öncesi tabanın en az yarısı kadar trafik taşıması gerekir (düz %8
+  canary, yerleşik revizyonun dalmasını rollout yapamaz). **Küme veri
+  başlangıcı** (`Input.DataStart`, MV ufkundan): veri pencere içinde
+  başlıyorsa (ilk etkinleştirme, yeni küme) başlangıçtan < EH kova sonra
+  başlayan koşular satır açmaz. Etkinlik okuması kesikse (`Truncated`)
+  etkinliği görünmeyen iş yükleri o tikte dokunulmaz. Önceki revizyonun
+  çekilişi pencere dışında kaldıysa overlap üretilmez, üst-sınır notu düşer.
+  `RolloutFirstSeen` ufuk tavanı (500k) aşılırsa HATA; ufuk MV TTL − 1 g.
+  Beşinci tur: kalıcı satırla birebir aynı çıktı yazılmaz (tik başına
+  gereksiz upsert/tail yok); bayat-satır kapatıcısı hâlâ span üreten
+  (eşik altı) revizyonu çekilmiş saymaz; ortak sessizlik (aday da ≥ EH
+  sustu, yokluktan önce birlikte aktifti) devralma değildir; aynı
+  revizyonun taze kopyası bayat tablo kopyasını ezer; geçici notlar
+  (zayıf sinyal / durağan durum / trafik yok) her tikte yeniden
+  değerlendirilir.
+  Altıncı tur: devralma testinde de ortak-sessizlik kapısı (ingest
+  kesintisi + bir kova farklı dönüş olay değil); devralma tabanı tek kova
+  değil, son aktif kovada biten EH kovalık dilimin en yüksek span'i
+  (rampa-aşağı sonrası taban çökmesin; dilim gözlenmediyse dönüş kovası);
+  ortak sessizlikten yalnız önceki revizyon dönerse karar ertelenir ve
+  ≥ EH kova tek başına aktif kalınca rollback yazılır (bir lookback
+  ertelenmez); bayat-satır kapatıcısı geçici notları temizler.
+  Yedinci tur: ortak-sessizlik kapısı süreye dayalı (kardeş ≥ EH kova tek
+  başına aktif kalana dek tutar; gözlenmemiş son-aktif kova "birlikte"
+  sayılır); ertelenen aday aktif kalmazsa erteleme düşer ve kova yeniden
+  değerlendirilir; gözlenmemiş taban için dönen koşunun kendi seviyesi;
+  kesik okumada bayat-satır kapatıcısı da atlanır.
+- Bilinen sınırlar: reconciler kesintisinde pencere kenarına 30 dk'dan
+  yakın bir deploy kaçırılır (kenar yokluğu kanıt sayılmaz); canary
+  dalması yerleşik düz kalırken canary'nin kendi dönüşü satır açabilir;
+  farklı lookback/saatle koşan iki yazıcıda completed_at/traffic_confirmed_at
+  ±1 kova oynayabilir (started_at oynamaz); devralma testi hacme bağlıdır —
+  yokluk öncesi tabanın yarısından az trafik taşıyan halef geri dönüş
+  satırını açmaz; açık satırın span_count'u kova başına bir kez güncellenir —
+  kayıt yerine sessizlik bilinçli tercih.

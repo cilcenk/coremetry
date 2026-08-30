@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/cilcenk/coremetry/internal/settingsdur"
 	"log"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -61,34 +61,7 @@ func DefaultSettings() Settings {
 	return Settings{Enabled: false, SyncInterval: "60s", PodGap: "10m", StaleAfter: "24h", ParallelClusters: 4}
 }
 
-// parseDur — Go süresi + "d" (gün). Bozuk/boş → def.
-func parseDur(s string, def time.Duration) time.Duration {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return def
-	}
-	if strings.HasSuffix(s, "d") {
-		if n, err := strconv.ParseFloat(strings.TrimSuffix(s, "d"), 64); err == nil && n > 0 {
-			return time.Duration(n * float64(24*time.Hour))
-		}
-		return def
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil || d <= 0 {
-		return def
-	}
-	return d
-}
-
-func clampDur(d, lo, hi time.Duration) time.Duration {
-	if d < lo {
-		return lo
-	}
-	if d > hi {
-		return hi
-	}
-	return d
-}
+// Süre dizeleri: internal/settingsdur (tek yazım, v0.10.199).
 
 // Resolved — kelepçeler: syncInterval 15s..1h, podGap 1m..24h, staleAfter
 // 1h..30d, parallelClusters 1..16.
@@ -96,9 +69,9 @@ func (s Settings) Resolved() Resolved {
 	d := DefaultSettings()
 	r := Resolved{
 		Enabled:          s.Enabled,
-		SyncInterval:     clampDur(parseDur(s.SyncInterval, parseDur(d.SyncInterval, time.Minute)), 15*time.Second, time.Hour),
-		PodGap:           clampDur(parseDur(s.PodGap, parseDur(d.PodGap, 10*time.Minute)), time.Minute, 24*time.Hour),
-		StaleAfter:       clampDur(parseDur(s.StaleAfter, parseDur(d.StaleAfter, 24*time.Hour)), time.Hour, 30*24*time.Hour),
+		SyncInterval:     settingsdur.Clamp(settingsdur.Parse(s.SyncInterval, settingsdur.Parse(d.SyncInterval, time.Minute)), 15*time.Second, time.Hour),
+		PodGap:           settingsdur.Clamp(settingsdur.Parse(s.PodGap, settingsdur.Parse(d.PodGap, 10*time.Minute)), time.Minute, 24*time.Hour),
+		StaleAfter:       settingsdur.Clamp(settingsdur.Parse(s.StaleAfter, settingsdur.Parse(d.StaleAfter, 24*time.Hour)), time.Hour, 30*24*time.Hour),
 		ParallelClusters: s.ParallelClusters,
 		BackfillUntil:    backfillUntil(s.BackfillUntil),
 		BackfillValue:    strings.TrimSpace(s.BackfillValue),

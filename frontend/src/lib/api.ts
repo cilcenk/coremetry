@@ -53,6 +53,7 @@ import { readSSE } from './sse';
 // GoDuration — every `since` below is forwarded to Go's time.ParseDuration,
 // which has no day unit; see the type's comment in utils.ts.
 import type { GoDuration } from './utils';
+import { decodeBundle, type CompactSeries } from './seriesCompact';
 
 // Empty base = same origin (works in production where Go serves both UI and API).
 // In dev, Next.js rewrites /api/* to http://localhost:8088 (see next.config.mjs).
@@ -2336,7 +2337,9 @@ export const api = {
     // dalın kardeş handler'dan ayrışması bilinen bir bug sınıfı (v0.9.566),
     // o yüzden notu orada koyup burada atlamak, aynı yüzdeliğin Explore'da
     // SEBEBİYLE, dashboard panelinde SESSİZCE boş görünmesi olurdu.
-    request<Record<string, { series?: SpanMetricSeries[] | null; totalSeries?: number; tail?: TailPoint[]; rowsCapped?: boolean; note?: string; error?: string }>>(
+    // v0.10.186 — sütunsal nokta kodlaması burada açılır (lib/seriesCompact.ts);
+    // tüketiciler {time,value} görmeye devam eder; gövde enc:'col' opt-in.
+    request<Record<string, { series?: SpanMetricSeries[] | null; totalSeries?: number; tail?: TailPoint[]; rowsCapped?: boolean; note?: string; error?: string; enc?: string; cols?: CompactSeries[] }>>(
       // v0.9.1151 — deneme modu POST'ta da geçerli. İşaret SORGU
       // DİZESİNDE taşınıyor, gövdede değil: aynı merkezî yardımcı hem GET
       // hem POST uçlarını damgalıyor ve sunucu tarafında tek bir
@@ -2345,6 +2348,7 @@ export const api = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          enc: 'col', // v0.10.186 — sütunsal seri opt-in (lib/seriesCompact.ts çözer)
           from: body.from,
           to: body.to,
           // server takes filters as raw JSON; if a request
@@ -2355,7 +2359,7 @@ export const api = {
             filters: r.filters ? JSON.parse(r.filters) : undefined,
           })),
         }),
-      }),
+      }).then(decodeBundle),
 
   // spanMetricBatch — N aggregations over the SAME span
   // selection in one CH pass. Used by Service detail charts

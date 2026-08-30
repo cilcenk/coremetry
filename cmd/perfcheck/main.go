@@ -322,7 +322,16 @@ func (r *runner) dashboardBody(id string, from, to int64) ([]byte, error) {
 	if len(reqs) == 0 {
 		return nil, fmt.Errorf("dashboard %s: bundle'a girecek spanmetric panel yok", id)
 	}
-	return json.Marshal(map[string]any{"from": from, "to": to, "requests": reqs})
+	return bundleBody(from, to, reqs)
+}
+
+// bundleBody — SAF: gövdenin son şekli. v0.10.188 — FE (lib/api.ts
+// dashboardData) v0.10.186'dan beri `enc:"col"` gönderir; probe bunu
+// taşımayınca sunucu satır kodlamasında kaldı ve P5 «değişmedi» diye
+// ölçtü (1,33 MB). Ölçülen gövde = tarayıcının aldığı gövde; pin:
+// body_test.go.
+func bundleBody(from, to int64, reqs any) ([]byte, error) {
+	return json.Marshal(map[string]any{"enc": "col", "from": from, "to": to, "requests": reqs})
 }
 
 // measure — bir nokta: ısınma (atılır) + K soğuk + (opsiyonel) K sıcak.

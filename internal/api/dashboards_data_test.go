@@ -111,7 +111,12 @@ func TestDashPanelKey_NormalisesNonSemanticDifferences(t *testing.T) {
 		t.Errorf("from/to inside the same 30s bucket must share the entry")
 	}
 	// Anahtar şekli: okunur önek + tür + hash (stats/invalidation önekleri için).
-	if k := dashPanelKey("", a, from, to); !regexp.MustCompile(`^dash-panel:v2:spanMetric:[0-9a-f]{1,16}$`).MatchString(k) {
+	// v3: v0.10.186 sütunsal kodlama enc'i anahtara aldı (dashboards_data.go
+	// dashPanelKey). Pin v0.10.188'de güncellendi — 186/187 bu test kırmızıyken
+	// gemiye çıktı: release betiğinin go-test kapısı `set -o pipefail` altında
+	// `go test | grep | grep -q . && fail` yazımıyla TERS çalışıyordu (go test
+	// exit 1 → pipeline 1 → && dalı atlanır). Kapı düzeltildi; ders memory'de.
+	if k := dashPanelKey("", a, from, to); !regexp.MustCompile(`^dash-panel:v3:spanMetric:[0-9a-f]{1,16}$`).MatchString(k) {
 		t.Errorf("unexpected key shape %q", k)
 	}
 }

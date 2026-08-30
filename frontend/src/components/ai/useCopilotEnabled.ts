@@ -16,6 +16,9 @@ export interface CopilotConfig {
   enabled: boolean;
   /** Yalnız Copilot aktifken gelir; kapalı kurulumda alan hiç yok. */
   model?: string;
+  /** v0.10.183 — >1 profil varsa sohbet seçicisi için (sırsız: id/label/model) */
+  profiles?: { id: string; label?: string; model?: string }[];
+  defaultProfile?: string;
 }
 
 const OFF: CopilotConfig = { enabled: false };

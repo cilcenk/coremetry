@@ -1851,7 +1851,7 @@ export const api = {
   // copilot.ActiveModel) ve uç kimlik ister, yani anonim /public/*
   // yüzeyleri bu alanı hiç göremez. baseUrl/apiKey burada YOK ve
   // olmayacak — o yüzey admin'e özel getAISettings.
-  copilotConfig:         () => get<{ enabled: boolean; model?: string }>(`/api/copilot/config`),
+  copilotConfig:         () => get<{ enabled: boolean; model?: string; profiles?: { id: string; label?: string; model?: string }[]; defaultProfile?: string }>(`/api/copilot/config`),
   // v0.6.53 — agentic chatbot stream. POST + SSE (EventSource is
   // GET-only, so we read the fetch body stream and parse SSE frames
   // by hand). onEvent fires per `event:`/`data:` frame; the promise
@@ -1970,9 +1970,10 @@ export const api = {
     // gösterirdi). Pre-fix: dün gece 03:00-04:00'a zoom yapıp soru
     // sorunca sohbet aynı UZUNLUKTA ama BUGÜNKÜ pencereyi cevaplıyordu.
     contextToMs?: number,
+    contextProfile?: string, // v0.10.183 — istek başına model profili (çoklu model dilim C)
   ): Promise<void> => {
     const context =
-      contextService || contextOperation || contextExplain || contextSubject || contextRangeS || contextTrace || contextEnv || contextToMs
+      contextService || contextOperation || contextExplain || contextSubject || contextRangeS || contextTrace || contextEnv || contextToMs || contextProfile
         ? {
             ...(contextService ? { service: contextService } : {}),
             ...(contextOperation ? { operation: contextOperation } : {}),
@@ -1982,6 +1983,7 @@ export const api = {
             ...(contextTrace ? { trace: contextTrace } : {}),
             ...(contextEnv ? { env: contextEnv } : {}),
             ...(contextToMs && contextToMs > 0 ? { toMs: contextToMs } : {}),
+            ...(contextProfile ? { profile: contextProfile } : {}),
           }
         : undefined;
     const r = await fetch(API_BASE + '/api/copilot/chat', {

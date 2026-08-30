@@ -77,6 +77,8 @@ export interface ChatThreadOpts {
   // aiSubjectSubtitle) ki "Geçmiş" listesinde hangi trace/span/problem
   // olduğu takip sorusunun lafından değil, açıklamanın öznesinden okunsun.
   title?: string;
+  /** v0.10.183 — istek başına model profili; boş = sunucu varsayılanı / yüzey eşlemesi */
+  profile?: string;
 }
 
 export function useChatThread(opts: ChatThreadOpts = {}) {
@@ -205,7 +207,7 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
         }
       }, ac.signal, o.service || undefined, o.operation || undefined, o.explain || undefined,
         o.subject || undefined, o.rangeS || undefined, o.trace || undefined, o.env || undefined,
-        o.toMs || undefined);
+        o.toMs || undefined, o.profile || undefined); // v0.10.183 — model profili
     } catch (err) {
       // v0.10.23 — İPTAL ARIZA DEĞİL. Durdurulan bir fetch AbortError
       // fırlatıyor; ayırmazsak operatörün kasıtlı eylemi kırmızı bir

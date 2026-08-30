@@ -101,6 +101,9 @@ type chatRequest struct {
 		// uat gösterirken cevabın sessizce başka env'i kapsaması (CoSRE
 		// denetim bulgusu) biter. Açık env sorusu her zaman ezer.
 		Env string `json:"env,omitempty"`
+		// v0.10.183 — istek başına model profili (çoklu model dilim C); bilinmeyen
+		// kimlik sessizce varsayılana düşer (copilot.WithProfile aynı kuralı uygular).
+		Profile string `json:"profile,omitempty"`
 		// Trace (v0.9.537) — operatörün EKRANDA baktığı trace'in ID'si
 		// (/trace?id=). "bu trace neden yavaş" gibi ID'siz sorular
 		// bununla çözülür; mesajda açık 32-hex varsa o kazanır.
@@ -209,6 +212,11 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	ctx := copilot.WithMeta(dctx, copilot.CallMeta{
 		Surface: "chat", UserID: uid, UserEmail: email, ExchangeID: exchangeID,
 	})
+	if p := strings.TrimSpace(req.Context.Profile); p != "" {
+		// v0.10.183 — seçilen profil bütün alışverişe (guided/intent/loop) uygulanır;
+		// yüzey eşlemesini ezer (operatörün açık seçimi). Bilinmeyen id → varsayılan.
+		ctx = copilot.WithProfile(ctx, p)
+	}
 	// v0.9.528 Faz 2 — model kiminle konuştuğunu bilsin: ad (hitap için)
 	// ve rol (viewer'a yapamayacağı eylemi ÖNERMEMESİ için). Ad çözümü
 	// /api/auth/me'nin 30s cache'ini kullanır, yani sohbet başına yeni

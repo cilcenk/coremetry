@@ -1,5 +1,5 @@
-import { Suspense, lazy, useMemo, useState } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { Suspense, lazy, useMemo, useState, useCallback } from 'react';
+import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { panelMaxDataPoints } from '@/lib/chartStep';
@@ -10,6 +10,7 @@ import { clampThanosWindow, THANOS_MAX_WINDOW_LABEL } from '@/lib/thanosWindow';
 import { Topbar } from '@/components/Topbar';
 import { Card, DisclosureButton, Badge, LinkButton } from '@/components/ui';
 import { readBandsParam, writeBandsParam } from '@/lib/bandsParam';
+import type { ChartTimeRegion } from '@/lib/chart/overlays';
 import { PanelTitle } from '@/components/ui/PanelTitle';
 import { Spinner, Empty } from '@/components/Spinner';
 import { MultiLineChart } from '@/components/MultiLineChart';
@@ -223,6 +224,11 @@ function PodDetail() {
   const bandsOn = readBandsParam(sp);
   const toggleBands = () => setSp(prev => writeBandsParam(prev, !bandsOn, window.location.search), { replace: true });
   const podWindowEvents = useMemo(() => (service ? windowAnomalies(anomaliesQ.data?.items, service, from, to) : []), [service, anomaliesQ.data, from, to]);
+  // v0.10.180 — banda tık: anomali çekmecesi servis sayfasında (?anomaly=), pod'da çekmece yok.
+  const navigate = useNavigate();
+  const onRegionClick = useCallback((rg: ChartTimeRegion) => {
+    if (rg.id && service) navigate(serviceHref(service, { range, params: { anomaly: rg.id } }));
+  }, [navigate, service, range]);
   const podAnomalyRegions = useMemo(() => {
     if (!bandsOn || podWindowEvents.length === 0) return undefined;
     return anomalyRegions(podWindowEvents, silencedSet(silencesQ.data), from, to);
@@ -379,7 +385,7 @@ function PodDetail() {
                   storageKey="pod-response-time" height={200}
                   unit="ms" viz="line" xRange={xRange}
                   syncKey={podChartSync}
-                  regions={podAnomalyRegions}
+                  regions={podAnomalyRegions} onRegionClick={onRegionClick}
                   loading={latStatus === 'loading'}
                   error={latStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
                   defaultHidden={[...defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])]}
@@ -397,7 +403,7 @@ function PodDetail() {
                   storageKey="pod-throughput" height={200}
                   unit="reqps" viz="stacked" xRange={xRange}
                   syncKey={podChartSync}
-                  regions={podAnomalyRegions}
+                  regions={podAnomalyRegions} onRegionClick={onRegionClick}
                   loading={redStatus === 'loading'}
                   error={redStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
                   items={throughputBands}
@@ -409,7 +415,7 @@ function PodDetail() {
                   storageKey="pod-failure-rate" height={200}
                   unit="percent" viz="area" xRange={xRange}
                   syncKey={podChartSync}
-                  regions={podAnomalyRegions}
+                  regions={podAnomalyRegions} onRegionClick={onRegionClick}
                   loading={redStatus === 'loading'}
                   error={redStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
                   items={[{ name: 'errors', role: 'error', series: s?.error_rate ?? [] }]}

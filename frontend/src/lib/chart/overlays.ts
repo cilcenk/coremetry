@@ -41,6 +41,8 @@ export interface ChartTimeRegion {
   toSec: number;
   color?: string; // CSS token; default var(--err) (problem kırmızısı)
   label?: string; // ör. 'P1' / 'CRITICAL' / 'OPEN'
+  /** v0.10.180 — tüketici anahtarı (anomali id); tıklamada geri döner. Deploy ▼'de yok. */
+  id?: string;
 }
 
 // ResolvedThreshold — drawThresholds girdisi: renk canvas-hazır (preset çözdü).
@@ -192,7 +194,7 @@ export function mergeIntervals(regions: { fromSec: number; toSec: number; color?
   return out;
 }
 
-const LANE_H = 12; // şerit satırı yüksekliği (css px): 3px şerit + 10px mono etiket
+export const LANE_H = 12; // şerit satırı yüksekliği (css px): 3px şerit + 10px mono etiket
 
 // v0.10.169 (operatör: "neden bantlar var" → "1 kalsın"): pencerenin en az
 // bu kadarını kaplayan bölge KRONİKTİR (günlerdir aktif anomali) — dolgusu
@@ -202,6 +204,56 @@ export const CHRONIC_COVERAGE = 0.9;
 export function isChronic(from: number, to: number, xMin: number, xMax: number): boolean {
   const span = xMax - xMin;
   return span > 0 && (to - from) / span >= CHRONIC_COVERAGE;
+}
+
+// ── v0.10.180 — bant isabeti (etüt «anomali işaretleri» dilim 2: hit-test + tooltip) ──
+//
+// İsabet yalnız ŞERİT SATIRINDA (lane × LANE_H, çizim alanının üstü): seri
+// hover'ı çalınmaz, kronik/kısa ayrımı yok — çizilen her bölgenin şeridi var.
+// Koordinatlar CSS px, u.over'a göre (u.cursor.left/top ile aynı uzay).
+
+export interface RegionLaneItem { x1: number; x2: number; lane: number }
+
+/** SAF: (px,py) hangi bölgenin şerit satırına düşüyor; -1 = hiçbiri. Çakışmada SON çizilen üstte → son eş. */
+export function regionLaneHit(items: RegionLaneItem[], px: number, py: number, laneH = LANE_H): number {
+  let hit = -1;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const top = it.lane * laneH;
+    if (py >= top && py < top + laneH && px >= it.x1 && px <= it.x2) hit = i;
+  }
+  return hit;
+}
+
+/** Canlı x ölçeğinde bölgelerin şerit geometrisi (CSS px); pencere dışı bölge atlanır (index korunur: x1=x2=NaN). */
+export function regionLaneItems(u: uPlot, regions: ChartTimeRegion[], xUnit = 1): RegionLaneItem[] {
+  const xMin = u.scales.x.min ?? 0;
+  const xMax = u.scales.x.max ?? 0;
+  const scaled = regionsToScale(regions, xUnit);
+  const lanes = assignLanes(scaled);
+  return scaled.map((rg, i) => {
+    const cl = clampRegion(rg.fromSec, rg.toSec, xMin, xMax);
+    if (!cl) return { x1: NaN, x2: NaN, lane: lanes[i] };
+    const x1 = u.valToPos(cl.from, 'x', false);
+    const x2 = Math.max(x1 + 1, u.valToPos(cl.to, 'x', false));
+    return { x1, x2, lane: lanes[i] };
+  });
+}
+
+/** İmleç (CSS px, u.over) bir bölgenin şeridinde mi → bölge; değilse null. */
+export function regionAt(u: uPlot, regions: ChartTimeRegion[] | undefined, xUnit: number, cssX: number, cssY: number): ChartTimeRegion | null {
+  if (!regions?.length) return null;
+  const i = regionLaneHit(regionLaneItems(u, regions, xUnit), cssX, cssY);
+  return i >= 0 ? regions[i] : null;
+}
+
+/** Bölge süresi, kısa Türkçe: 45 s · 12 dk · 3.5 sa · 2.1 g */
+export function fmtRegionSpan(sec: number): string {
+  if (!(sec > 0)) return '—';
+  if (sec < 90) return `${Math.round(sec)} s`;
+  if (sec < 5400) return `${Math.round(sec / 60)} dk`;
+  if (sec < 172800) return `${(sec / 3600).toFixed(1)} sa`;
+  return `${(sec / 86400).toFixed(1)} g`;
 }
 
 export function drawTimeRegions(u: uPlot, regions: ChartTimeRegion[], xUnit = 1): void {

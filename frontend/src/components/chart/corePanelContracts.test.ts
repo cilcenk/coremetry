@@ -504,7 +504,8 @@ describe('CorePanel tooltip pin (v0.9.792)', () => {
     // Eski koşullu bağlama geri gelmemeli.
     expect(src).not.toMatch(/onClick=\{\(onExpandClick \|\| onExemplarClick/);
     // Zincirin kendi kapısı gövdeye taşındı (pin'den SONRA).
-    expect(src).toMatch(/if \(!onExpandClick && !onExemplarClick && !onBucketClick\) return;/);
+    // v0.10.180 — bant tıkı (onRegionClick) zincire katıldı.
+    expect(src).toMatch(/if \(!onExpandClick && !onExemplarClick && !onBucketClick && !onRegionClick\) return;/);
     expect(src).toMatch(/if \(fullscreen\) return;/);
   });
 

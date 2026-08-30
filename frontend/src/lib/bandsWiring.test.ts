@@ -16,11 +16,15 @@ describe('anomali bantları ?bands= kablolaması (v0.10.170/171)', () => {
     expect(src).toMatch(/\[\.\.\.\(deployRegions \?\? \[\]\), \.\.\.a\]/);
     expect(src).toMatch(/writeBandsParam\(prev, !bandsOn, window\.location\.search\)/);
     expect(src).toMatch(/<LinkButton[^>]*aria-pressed=\{bandsOn\}/);
+    // v0.10.180 — üç panelde banda tık → openAnomaly
+    expect((src.match(/regions=\{chartRegions\} onRegionClick=\{onRegionClick\}/g) ?? []).length).toBe(3);
+    expect(src).toMatch(/if \(rg\.id\) openAnomaly\(rg\.id\)/);
   });
   it('/pod', () => {
     const src = read('../pages/Pod.tsx');
     expect(src).toMatch(/if \(!bandsOn \|\| podWindowEvents\.length === 0\) return undefined;/);
     expect(src).toMatch(/writeBandsParam\(prev, !bandsOn, window\.location\.search\)/);
     expect(src).toMatch(/<LinkButton[^>]*aria-pressed=\{bandsOn\}/);
+    expect((src.match(/regions=\{podAnomalyRegions\} onRegionClick=\{onRegionClick\}/g) ?? []).length).toBe(3);
   });
 });

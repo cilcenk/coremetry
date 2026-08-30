@@ -5280,18 +5280,6 @@ export interface RecentDeployEntry {
   // operatör/pipeline kaydı (events kind='deploy').
   source?: string;
 }
-export interface FleetRollout extends Rollout { service: string }
-export interface DeploysHistoryResponse {
-  deploys: RecentDeployEntry[];
-  rollouts: FleetRollout[];
-  scannedServices: number;
-  candidateCapped: boolean;
-  deploysTruncated?: boolean;
-  rolloutWindowClamped?: boolean;
-  rolloutScanErrors?: number;
-  impactComputed?: number;
-}
-
 export interface RolloutsResult {
   service: string;
   rollouts: Rollout[];

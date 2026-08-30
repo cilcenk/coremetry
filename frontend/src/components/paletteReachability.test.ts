@@ -47,6 +47,7 @@ const INTENTIONALLY_UNLISTED: Record<string, string> = {
   '/endpoint': 'detay — /endpoints satırından açılır',
   '/entity': 'detay — /pod entity paneli zincirinden (node/namespace/workload) açılır (v0.10.135)',
   '/deployment-report': 'emekli rota, yönlendirme (→ /rollouts, v0.10.201)',
+  '/deploys': 'emekli rota, yönlendirme (→ /rollouts, v0.10.209)',
   '/errors': 'emekli rota, yönlendirme',
   '/exceptions': 'detay — /problems Exceptions sekmesinden açılır',
   '/incident': 'detay — /incidents listesinden açılır',
@@ -84,8 +85,8 @@ describe('rota erişilebilirliği (v0.9.952)', () => {
     expect(stale, 'Bu rotalar artık App.tsx’te yok; gerekçe satırlarını da silin.').toEqual([]);
   });
 
-  it('Ö17’nin üç rotası artık palette’te', () => {
-    for (const r of ['/deploys', '/clusters', '/watchers']) {
+  it('Ö17’nin kalan iki rotası palette’te (/deploys v0.10.209’da emekli)', () => {
+    for (const r of ['/clusters', '/watchers']) {
       expect(paletteTargets.has(r), `${r} ⌘K kataloğunda yok`).toBe(true);
     }
   });

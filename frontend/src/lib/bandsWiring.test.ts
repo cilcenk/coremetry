@@ -25,6 +25,6 @@ describe('anomali bantları ?bands= kablolaması (v0.10.170/171)', () => {
     expect(src).toMatch(/if \(!bandsOn \|\| podWindowEvents\.length === 0\) return undefined;/);
     expect(src).toMatch(/writeBandsParam\(prev, !bandsOn, window\.location\.search\)/);
     expect(src).toMatch(/<LinkButton[^>]*aria-pressed=\{bandsOn\}/);
-    expect((src.match(/regions=\{podAnomalyRegions\} onRegionClick=\{onRegionClick\}/g) ?? []).length).toBe(3);
+    expect((src.match(/regions=\{podAnomalyRegions\} onRegionClick=\{onRegionClick\} regionClickHint="tıkla → servis sayfası"/g) ?? []).length).toBe(3);
   });
 });

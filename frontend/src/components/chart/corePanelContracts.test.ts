@@ -1029,5 +1029,8 @@ describe('CorePanel bölge çizimi ms ölçeğinde (v0.10.164)', () => {
   it('drawTimeRegions 1000 xUnit ile çağrılır', () => {
     const src = readFileSync(resolve(__dirname, 'CorePanel.tsx'), 'utf8').replace(/^\s*\/\/.*$/gm, '');
     expect(src).toMatch(/drawTimeRegions\(u, regions, 1000\)/);
+    // v0.10.182 (#6) — isabet testi de aynı xUnit'i geçer (hover + tık); sürüklenirse
+    // bantlar çizilir ama tıklanamaz/hover'lanamaz — sessiz.
+    expect((src.match(/regionAt\(u, regionsRef\.current, 1000,/g) ?? []).length).toBe(2);
   });
 });

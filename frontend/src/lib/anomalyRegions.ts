@@ -69,6 +69,7 @@ export function anomalyRegions(events: AnomalyEvent[], silenced: Set<string>, fr
       id: e.id, // v0.10.180 — banda tık → ?anomaly=<id>
       fromSec: e.startedAt / 1e9,
       toSec: endNs / 1e9,
+      endSec: e.lastSeen / 1e9, // v0.10.182 — tooltip «son/süre» GERÇEK bitişten (toSec şişirilmiş olabilir)
       color: muted ? 'var(--text3)' : ANOMALY_KIND_COLOR[e.kind] ?? 'var(--warn)',
       // ▮ öneki YOK: drawTimeRegions kendisi ekler (overlays.ts fitLabel('▮ ' + label)).
       label: isSilenced(e, silenced) ? 'sessiz' : notAnomaly ? 'değil' : `${ANOMALY_KIND_TR[e.kind] ?? e.kind} ×${e.peakRatio.toFixed(1)}`,

@@ -199,6 +199,8 @@ export interface CorePanelProps {
   // exemplar ◆'dan sonra, bucket/expand'dan önce; hover'da tooltip bölgeyi
   // anlatır (etiket · başlangıç → son · süre · «tıkla → çekmece» ipucu).
   onRegionClick?: (region: ChartTimeRegion) => void;
+  /** v0.10.182 — tıklanabilir bant ipucu (varsayılan «tıkla → çekmece»; /pod «tıkla → servis sayfası») */
+  regionClickHint?: string;
   // v0.9.789 — "spike → exemplar": çizim alanına DÜZ TIK, tıklanan
   // bucket'ın zaman penceresini NANOSANİYE olarak çağırana verir
   // (çağıran tipik olarak o pencerenin temsilci trace'ini açar).
@@ -272,7 +274,7 @@ function fullNameOf(frame: { meta?: { custom?: Record<string, unknown> } } | und
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
-  defaultHidden, xRange, headerExtra, note, onExpandClick, exemplars, onExemplarClick, onRegionClick,
+  defaultHidden, xRange, headerExtra, note, onExpandClick, exemplars, onExemplarClick, onRegionClick, regionClickHint,
   onBucketClick, hiddenNames, hideLegend, onCursorTime, dashed, viz = 'line',
   focusedLabel, menuExtra,
 }: CorePanelProps) {
@@ -304,6 +306,8 @@ export function CorePanel({
   exemplarClickRef.current = onExemplarClick;
   const regionClickRef = useRef(onRegionClick);
   regionClickRef.current = onRegionClick;
+  const regionClickHintRef = useRef(regionClickHint);
+  regionClickHintRef.current = regionClickHint;
   const regionsRef = useRef(regions);
   regionsRef.current = regions;
   // v0.9.789 — bucket-tık callback'i de REF'te (onZoomRef deseni).
@@ -872,6 +876,8 @@ export function CorePanel({
       }
       const tt = ttRef.current;
       if (!tt) return;
+      // v0.10.182 (#7) — imleç şekli pin'den bağımsız her seferinde sıfırlanır.
+      u.over.style.cursor = '';
       // v0.9.792 — PİNLİYKEN tooltip donuk: içerik de konum da dokunulmaz.
       // Guard cursorTime kanalının SONRASINDA (TSP:600 sırası): crosshair ve
       // senkron paneller yaşamaya devam eder, yalnız kutu donar.
@@ -879,33 +885,25 @@ export function CorePanel({
       const idx = u.cursor.idx;
       if (idx == null || u.cursor.left == null || u.cursor.left < 0) {
         tt.style.display = 'none';
-        u.over.style.cursor = '';
         return;
       }
-      // v0.10.180 — imleç bir bant ŞERİDİNDEYSE tooltip bölgeyi anlatır
-      // (seri satırları yerine); tıklanabilirse el imleci.
-      const hitRegion = regionAt(u, regionsRef.current, 1000, u.cursor.left ?? 0, u.cursor.top ?? 0);
+      // v0.10.180/182 — imleç bir bant ŞERİDİNDEYSE tooltip'in BAŞINA bölge
+      // başlığı eklenir (seri satırları KALIR — tepe değeri kaybolmasın, #4).
+      // Yalnız GERÇEK hover: senkron kardeşte cursor.top kaynağın y-değeridir,
+      // pointer değil (#3) — uPlot cursor.event yalnız kaynakta dolu.
+      const realHover = (u.cursor as { event?: unknown }).event != null;
+      const hitRegion = realHover ? regionAt(u, regionsRef.current, 1000, u.cursor.left ?? 0, u.cursor.top ?? 0) : null;
+      let regionHTML = '';
       if (hitRegion) {
         const clickable = !!regionClickRef.current && !!hitRegion.id;
-        u.over.style.cursor = clickable ? 'pointer' : '';
-        tt.innerHTML = `<div class="ov-tt-t">▮ ${escapeHTML(hitRegion.label ?? 'bölge')}</div>` +
-          `<div class="ov-tt-r"><span class="ov-lbl">başlangıç</span><b>${escapeHTML(fmtTooltipTime(hitRegion.fromSec, null))}</b></div>` +
-          `<div class="ov-tt-r"><span class="ov-lbl">son</span><b>${escapeHTML(fmtTooltipTime(hitRegion.toSec, null))}</b></div>` +
-          `<div class="ov-tt-r"><span class="ov-lbl">süre</span><b>${escapeHTML(fmtRegionSpan(hitRegion.toSec - hitRegion.fromSec))}</b></div>` +
-          (clickable ? '<div class="ov-tt-hint">tıkla → çekmece</div>' : '');
-        tt.style.display = 'block';
-        const host = wrapRef.current;
-        if (host) {
-          const hr = host.getBoundingClientRect();
-          const pl = placeTooltip(u.cursor.left ?? 0, u.cursor.top ?? 0, tt.offsetWidth, tt.offsetHeight,
-            u.over.clientWidth, u.over.clientHeight, u.over.offsetLeft, u.over.offsetTop,
-            Math.max(host.clientWidth, window.innerWidth - hr.left - 8), Math.max(host.clientHeight, window.innerHeight - hr.top - 8));
-          tt.style.left = `${pl.x}px`;
-          tt.style.top = `${pl.y}px`;
-        }
-        return;
+        u.over.style.cursor = clickable ? 'pointer' : 'default';
+        const span = hitRegion.endSec != null ? hitRegion.endSec - hitRegion.fromSec : null;
+        regionHTML = `<div class="ov-tt-t">▮ ${escapeHTML(hitRegion.label ?? 'bölge')}</div>` +
+          `<div class="ov-tt-r"><span class="ov-lbl">${span != null ? 'başlangıç' : 'an'}</span><b>${escapeHTML(fmtTooltipTime(hitRegion.fromSec, span ?? null))}</b></div>` +
+          (span != null ? `<div class="ov-tt-r"><span class="ov-lbl">son</span><b>${escapeHTML(fmtTooltipTime(hitRegion.endSec as number, span))}</b></div>` +
+            `<div class="ov-tt-r"><span class="ov-lbl">süre</span><b>${escapeHTML(fmtRegionSpan(span))}</b></div>` : '') +
+          (clickable ? `<div class="ov-tt-hint">${escapeHTML(regionClickHintRef.current || 'tıkla → çekmece')}</div>` : '');
       }
-      u.over.style.cursor = '';
       const xs = u.data[0] as number[];
       const tMs = xs[idx];
       if (tMs == null) { tt.style.display = 'none'; return; }
@@ -943,8 +941,8 @@ export function CorePanel({
             : undefined,
         };
       })));
-      if (rows.length === 0) { tt.style.display = 'none'; return; }
-      tt.innerHTML = `<div class="ov-tt-t">${fmtTooltipTime(tMs / 1000, stepSec)}</div>` + rows.map(r =>
+      if (rows.length === 0 && !regionHTML) { tt.style.display = 'none'; return; }
+      tt.innerHTML = regionHTML + (rows.length ? `<div class="ov-tt-t">${fmtTooltipTime(tMs / 1000, stepSec)}</div>` : '') + rows.map(r =>
         `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${escapeHTML(r.color)}"></i>${escapeHTML(r.label)}</span><b>${escapeHTML(r.text)}</b></div>`,
       ).join('') + PIN_TIP_HTML;
       tt.style.display = 'block';
@@ -1233,16 +1231,6 @@ export function CorePanel({
           // (navigasyon) devreye girmez. Bekleme yok — anında.
           // stacked'te ◆ çizilmiyor (draw hook'u bastırıyor) → isabet
           // testi de kapalı: görünmeyen bir işarete tıklatmak olmaz.
-          // v0.10.180 — bant şeridi tıkı (◆'dan sonra, bucket/expand'dan önce)
-          if (u && regionClickRef.current && regionsRef.current?.length) {
-            const r0 = u.over.getBoundingClientRect();
-            const rg = regionAt(u, regionsRef.current, 1000, e.clientX - r0.left, e.clientY - r0.top);
-            if (rg?.id) {
-              if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
-              regionClickRef.current(rg);
-              return;
-            }
-          }
           if (u && !stacked && exemplarClickRef.current && exemplarsRef.current?.some(x => x?.length)) {
             const r = u.over.getBoundingClientRect();
             const hit = exemplarAt(u, exemplarsRef.current, visRef.current,
@@ -1258,6 +1246,20 @@ export function CorePanel({
           // jestidir ve ilk tıkı bir exemplar çekmecesi açmamalı — bu
           // yüzden onExpandClick'le AYNI 250ms bekleme kullanılır:
           // ikinci tık/dblclick zamanlayıcıyı iptal eder.
+          // v0.10.180/182 — bant şeridi tıkı: ◆'dan SONRA (#1), bucket/expand'dan
+          // önce; 250 ms zamanlayıcıda (çift-tık zoom-geri ilk tıkı sayfayı
+          // götürmesin, #5); id'siz bölge (deploy ▼) tıkı YUTULUR — hover ile
+          // aynı nesne (#13).
+          if (u && regionsRef.current?.length) {
+            const r0 = u.over.getBoundingClientRect();
+            const rg = regionAt(u, regionsRef.current, 1000, e.clientX - r0.left, e.clientY - r0.top);
+            if (rg) {
+              if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
+              const cb = regionClickRef.current;
+              if (rg.id && cb) clickTimerRef.current = window.setTimeout(() => cb(rg), 250);
+              return;
+            }
+          }
           if (bucketClickRef.current) {
             if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
             const w = u ? bucketWindowAt(u, e.clientX, e.clientY) : null;

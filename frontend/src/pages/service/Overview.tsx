@@ -1,4 +1,4 @@
-import { useId, useMemo, useCallback } from 'react';
+import { useId, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { Service, TimeRange, SpanMetricSeries, OperationSummary, AnomalyEvent } from '@/lib/types';
@@ -431,7 +431,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   };
 
   // v0.10.180 — banda tık → ?anomaly=<id> çekmecesi (deploy ▼ id taşımaz, no-op).
-  const onRegionClick = useCallback((rg: ChartTimeRegion) => { if (rg.id) openAnomaly(rg.id); }, [openAnomaly]);
+  const onRegionClick = (rg: ChartTimeRegion) => { if (rg.id) openAnomaly(rg.id); }; // CorePanel ref ile okur; memo gereksiz (inceleme #11)
   // Throughput series (OK vs Errors) derived from the MV-backed rate +
   // error_rate series — no extra query, no raw-spans scan (invariant #3).
   // Errors = rate × err%, OK = the remainder; the two add up to the total rate.

@@ -385,7 +385,7 @@ function PodDetail() {
                   storageKey="pod-response-time" height={200}
                   unit="ms" viz="line" xRange={xRange}
                   syncKey={podChartSync}
-                  regions={podAnomalyRegions} onRegionClick={onRegionClick}
+                  regions={podAnomalyRegions} onRegionClick={onRegionClick} regionClickHint="tıkla → servis sayfası"
                   loading={latStatus === 'loading'}
                   error={latStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
                   defaultHidden={[...defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])]}
@@ -403,7 +403,7 @@ function PodDetail() {
                   storageKey="pod-throughput" height={200}
                   unit="reqps" viz="stacked" xRange={xRange}
                   syncKey={podChartSync}
-                  regions={podAnomalyRegions} onRegionClick={onRegionClick}
+                  regions={podAnomalyRegions} onRegionClick={onRegionClick} regionClickHint="tıkla → servis sayfası"
                   loading={redStatus === 'loading'}
                   error={redStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
                   items={throughputBands}
@@ -415,7 +415,7 @@ function PodDetail() {
                   storageKey="pod-failure-rate" height={200}
                   unit="percent" viz="area" xRange={xRange}
                   syncKey={podChartSync}
-                  regions={podAnomalyRegions} onRegionClick={onRegionClick}
+                  regions={podAnomalyRegions} onRegionClick={onRegionClick} regionClickHint="tıkla → servis sayfası"
                   loading={redStatus === 'loading'}
                   error={redStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
                   items={[{ name: 'errors', role: 'error', series: s?.error_rate ?? [] }]}

@@ -297,11 +297,13 @@ var tablesWithoutTraceID = map[string]bool{
 	"service_version_5m": true,
 	// v0.9.1317 — service lifecycle MV: (service_name) + min/max time
 	// states. No trace_id projected.
-	"service_seen":         true,
-	"entity_seen_1m":       true,
-	"entity_seen_5m":       true,
-	"topology_edges_5m":    true,
-	"topology_op_edges_5m": true,
+	"service_seen":   true,
+	"entity_seen_1m": true,
+	"entity_seen_5m": true,
+	// v0.10.193 — rollouts etkinlik MV'si: trace_id projekte etmez.
+	"workload_revision_activity_1m": true,
+	"topology_edges_5m":             true,
+	"topology_op_edges_5m":          true,
 	// v0.5.435 — MVs/aggregates that join highVolumeTables in
 	// this release. Same projection rule applies: none of them
 	// project trace_id in their SELECT, so the env-override
@@ -430,6 +432,10 @@ var defaultShardPolicy = map[string]string{
 	"service_seen":   "cityHash64(service_name)",
 	"entity_seen_1m": "cityHash64(service_name)",
 	"entity_seen_5m": "cityHash64(service_name)",
+	// v0.10.193 — rollouts: filtre öznesi (cluster, namespace, workload); MV'de
+	// anahtar dekoratif (insert trigger shard-yerel yazar), okuma yönlendirmesi
+	// için dominant filtreye dürüst; üçü ORDER BY öneki içinde (O5).
+	"workload_revision_activity_1m": "cityHash64(cluster, k8s_namespace, workload)",
 	// v0.5.435 — remaining sharded MVs/aggregates. For MVs the
 	// shard key is largely decorative (auto-triggered writes land
 	// local, reads always fan-out via Distributed) but is honest
@@ -990,6 +996,8 @@ var highVolumeTables = map[string]bool{
 	// v0.10.127 — K8s entity katmanı: entity_seen MV'leri gün-bir kayıtlı.
 	"entity_seen_1m": true,
 	"entity_seen_5m": true,
+	// v0.10.193 — rollouts etkinlik MV'si (rollout_schema.go), gün-bir üç kayıt.
+	"workload_revision_activity_1m": true,
 	// v0.5.435 — remaining sharded MVs/aggregates the post-v0.5.426
 	// /scale-audit revealed. Same gap shape: bare-name Replicated
 	// per shard, no Distributed wrapper → cluster reads silently

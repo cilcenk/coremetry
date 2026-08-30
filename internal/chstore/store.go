@@ -1289,6 +1289,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY event_id
 		TTL toDate(created_at) + INTERVAL 180 DAY`,
+		// v0.10.193 — ROLLOUTS Faz 1a: olay tablosu + reconciler koşu kaydı
+		// (rollout_schema.go). Düşük hacimli state: shard EDİLMEZ (üç kayda
+		// GİRMEZ → stateTableDDL birleşik grup); prod'da 0012 ADIM 5.
+		workloadRolloutsDDL,
+		rolloutReconcileRunsDDL,
 
 		// audit_log: who did what, when. Append-only event stream.
 		// Used by admin compliance flow + the /admin/audit page.

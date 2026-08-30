@@ -29,6 +29,10 @@ var telemetryPurgeTables = []string{
 	// gidiyor.
 	"entities", "entity_relations", "entity_sync_runs",
 	"entity_seen_1m", "entity_seen_5m",
+	// v0.10.193 — rollouts: span/KSM türevi olay tablosu + koşu kaydı
+	// (started_at dondurulmuş tarihçe purge'la gider — audit §5(g),
+	// operatör onayı 2026-08-30; preserve istenirse gerekçe satırıyla taşınır).
+	"workload_rollouts", "rollout_reconcile_runs", "workload_revision_activity_1m",
 	// raw signals (exemplars = OTLP metric exemplars, v0.8.328;
 	// span_links + span_links_reverse = OTel span links, v0.8.329 — pure
 	// telemetry, regenerates from new ingest. The reverse table is listed

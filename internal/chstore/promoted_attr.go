@@ -68,6 +68,18 @@ type promotedAttr struct {
 	// prod'da host.name == k8s.pod.name, %98 ölçüldü; k8s.pod.name
 	// taşımayan üretici için köprü). Boş = yedek yok.
 	fallback string
+	// typ — v0.10.193 (inceleme, ev kuralı C3 "ölçmediysen LC yapma"): kolon
+	// tipi; boş = LowCardinality(String). Yüksek kardinaliteli bir anahtar
+	// düz `String` isterse burada söylenir — "ölç, sonra karar ver" artık
+	// ifade edilebilir (0012 başlığındaki uniq() kapısı bunu seçer).
+	typ string
+}
+
+func (a promotedAttr) colType() string {
+	if a.typ != "" {
+		return a.typ
+	}
+	return "LowCardinality(String)"
 }
 
 var promotedAttrs = []promotedAttr{
@@ -81,6 +93,25 @@ var promotedAttrs = []promotedAttr{
 	{col: "k8s_namespace", keys: []string{"k8s.namespace.name", "kubernetes.namespace.name"}, res: true},
 	{col: "k8s_pod", keys: []string{"k8s.pod.name"}, res: true, fallback: "host_name"},
 	{col: "k8s_node", keys: []string{"k8s.node.name"}, res: true},
+	// v0.10.193 — ROLLOUTS Faz 1a (docs/audits/rollouts-audit.md §1.2):
+	// iş yükü kimliği + revizyon + imaj. ÜÇ ayrı iş yükü kolonu (tek coalesce
+	// değil): MV workload_kind'ı multiIf ile üretir ve her kolon KENDİ doluluk
+	// probe'unu alır; var olan kolona anahtar eklemek DROP+ADD onarımı
+	// tetiklerdi. container_image/_tag: rollout image diff; tag ayrı kolon —
+	// MV'de effectiveVersionExpr (indexOf zinciri) INSERT başına koşmasın.
+	// LowCardinality gerekçesi (C3 — "ölçmediysen LC yapma"): bunlar serbest
+	// metin değil KİMLİK — replicaset distinct'i = workload × deploy sayısı
+	// (retention boyunca), imaj adı ≈ workload sayısı, tag ≈ release sayısı;
+	// hepsi yapı gereği sınırlı. Lokal ölçüm fixture'dır (100/197/3 uniq);
+	// prod kapısı 0012 başlığındaki uniq() < 100k sorgusu — aşarsa `typ:
+	// "String"` (yukarıdaki alan) ile dosya + burası birlikte değişir.
+	// Prod (dış Distributed): repairPromotedAttrCols ALTER'ı atlar → 0012.
+	{col: "k8s_deployment", keys: []string{"k8s.deployment.name"}, res: true},
+	{col: "k8s_statefulset", keys: []string{"k8s.statefulset.name"}, res: true},
+	{col: "k8s_daemonset", keys: []string{"k8s.daemonset.name"}, res: true},
+	{col: "k8s_replicaset", keys: []string{"k8s.replicaset.name"}, res: true},
+	{col: "container_image", keys: []string{"container.image.name", "k8s.container.image.name"}, res: true},
+	{col: "container_image_tag", keys: []string{"container.image.tag", "k8s.container.image.tag"}, res: true},
 }
 
 // promotedAttrArrays — kapsamın okuduğu (anahtar, değer) dizi kolonları.
@@ -193,8 +224,8 @@ func promotedAttrDDL(a promotedAttr, have string, colExists, idxExists bool) []s
 	}
 	if !colExists || needsRepair {
 		out = append(out, fmt.Sprintf(
-			"ALTER TABLE spans ADD COLUMN IF NOT EXISTS %s LowCardinality(String) MATERIALIZED %s",
-			a.col, promotedAttrExprFor(a)))
+			"ALTER TABLE spans ADD COLUMN IF NOT EXISTS %s %s MATERIALIZED %s",
+			a.col, a.colType(), promotedAttrExprFor(a)))
 	}
 	// Onarım indeksi düşürdüyse idxExists'e bakmadan geri konur.
 	if !idxExists || needsRepair {
@@ -358,15 +389,10 @@ func (s *Store) repairPromotedAttrCols(ctx context.Context) map[string]bool {
 		// milyarlarca satırlık bir mutasyon olurdu. Gerek de yok —
 		// tipik pencere 6 saat, yani indeks eklendikten 6 saat sonra
 		// o pencere tamamen indeksli. Eski veri doğal olarak dolar.
-		if err := s.execDDL(ctx, fmt.Sprintf(
-			"ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_%s %s TYPE set(0) GRANULARITY 4",
-			a.col, a.col)); err != nil {
-			// Distributed engine'de ADD_INDEX kod 48 döner (cluster_name
-			// boşsa adaptDDL _local'e çeviremiyor) — store.go'daki
-			// skip-index döngüsüyle aynı gerekçe: saf sorgu-zamanı
-			// optimizasyonu, eksikliği yavaşlatır ama bozmaz.
-			log.Printf("[chstore] %s skip index'i eklenemedi (yumuşak): %v", a.col, err)
-		}
+		// v0.10.193 (inceleme #10) — ADD INDEX ARTIK BURADA GÖNDERİLMEZ:
+		// promotedAttrDDL gerektiğinde (kolon yeni / onarım) zaten üretiyor;
+		// buradaki koşulsuz ikinci gönderim yükseltme boot'unda kolon başına
+		// bir fazladan DDL'di (ertelenmiş küme kipinde her boot).
 	}
 	return ensured
 }

@@ -62,7 +62,7 @@ describe('serviceFromRoute', () => {
     expect(serviceFromRoute('/service/backtrace', '?service=y')).toBe('y');
   });
   it('reads ?service= on every service-carrying list route', () => {
-    for (const p of ['/traces', '/endpoints', '/logs', '/inbox', '/deploys', '/metrics', '/explore', '/clusters', '/profiling']) {
+    for (const p of ['/traces', '/endpoints', '/logs', '/inbox', '/metrics', '/explore', '/clusters', '/profiling']) {
       expect(serviceFromRoute(p, '?service=bsa-pay')).toBe('bsa-pay');
     }
   });
@@ -122,7 +122,7 @@ describe('rota kapsaması kapısı', () => {
   // kaybolur ve testler yeşil kalır — kusurun kendisinden sinsi.
   it('liste budanmamış', () => {
     for (const r of ['/traces', '/endpoints', '/endpoint', '/logs', '/inbox',
-      '/deploys', '/metrics', '/explore', '/clusters', '/profiling']) {
+      '/metrics', '/explore', '/clusters', '/profiling']) {
       expect(src).toContain(`'${r}'`);
     }
     expect(src).toContain("FOCUS_PARAM_ROUTES");

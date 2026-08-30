@@ -6335,6 +6335,8 @@ export interface EntityServicesResponse {
   pods: EntityRecord[];
   services: EntityServiceRow[];
   rows?: EntitySeenAgg[];
+  /** v0.10.190 — namespace'siz MV satırı sayısı (collector k8s.namespace.name basmıyor; pod adıyla eşlendi). */
+  nsMissingRows?: number;
 }
 /** chstore.EntityLatency (v0.10.139) — node/namespace giriş-span latency özeti. */
 export interface EntityLatency { entrySpans: number; errors: number; p50Ms: number; p95Ms: number; p99Ms: number }
@@ -6346,6 +6348,8 @@ export interface ServicePodRow extends EntitySeenAgg {
   entity?: EntityRecord;
   /** v0.10.136 — Thanos KSM anlık durum; statusKnown=false → hücre '—'. */
   phase?: string;
+  /** v0.10.190 — namespace span'de yoktu, Thanos pod listesinden tamamlandı. */
+  namespaceFromThanos?: boolean;
   restarts?: number;
   restartsUnknown?: boolean;
   lastTermReason?: string;

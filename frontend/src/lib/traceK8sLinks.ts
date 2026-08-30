@@ -5,6 +5,8 @@
 // başlangıcı (ms), range korunur, pod linki servis bağlamını taşır. Cluster
 // çözülemezse link YOK (düz metin + gerekçe). Saf; vitest'li.
 import { entityHref } from './entityHref';
+import { podDetailPath } from '@/pages/service/podDetailPath';
+import { windowRangeParam } from './urlState';
 import type { EntityClusterInfo, TimeRange, TraceRow } from './types';
 
 // Sıra ÖNEMLİ: `cluster` önce — link için tek zorunlu anahtar; 8 kolon tavanı
@@ -41,7 +43,14 @@ export function traceK8sHref(col: TraceK8sCol, t: Pick<TraceRow, 'extras' | 'sta
     case 'k8s.node.name':
       return { href: entityHref({ type: 'node', id: `node:${c.id}/${value}`, name: value, clusterId: c.id }, opts) };
     case 'k8s.pod.name':
-      if (!ns) return { note: 'k8s.namespace.name kolonu yok — pod adı tek başına cluster içinde belirsiz, link yok' };
+      // v0.10.190 — namespace'siz (collector basmıyor): ham /pod linki, sayfa
+      // namespace'i Thanos'tan çözmeye çalışır; neden notta kalır (spanK8s ile aynı).
+      if (!ns) {
+        return {
+          href: podDetailPath({ pod: value, cluster: c.name, at: atMs, range: range ? (typeof range === 'string' ? range : windowRangeParam(range)) : undefined }),
+          note: 'k8s.namespace.name kolonu yok (collector basmıyor) — pod sayfası namespace\'i Thanos\'tan çözmeye çalışır',
+        };
+      }
       // Servis bağlamı BİLİNÇLİ yok: pod/namespace değerleri trace-geneli
       // any() örnekleri, serviceName ise kök span'in servisi — ikisi aynı
       // pod'a ait olmayabilir (inceleme). /pod entity yoluyla kendi kapsamını kurar.

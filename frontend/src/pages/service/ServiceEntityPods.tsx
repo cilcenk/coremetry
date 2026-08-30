@@ -123,7 +123,8 @@ export function ServiceEntityPods({ service, range, cluster, onRows }: { service
               {dt.sortedRows.map(r => {
                 const cid = r.clusterId ?? '';
                 const clusterName = cid ? nameOf(cid) : r.cluster;
-                const podRec = cid ? { type: 'pod' as const, id: r.entityId ?? `pod:${cid}/${r.namespace}/${r.pod}`, name: r.pod, namespace: r.namespace, clusterId: cid } : null;
+                // v0.10.190 — entity id sunucudan (namespace bilinmiyorsa YOK → bozuk `pod:cid//pod` üretme)
+                const podRec = cid && r.entityId ? { type: 'pod' as const, id: r.entityId, name: r.pod, namespace: r.namespace, clusterId: cid } : null;
                 const live = r.entity ? entityLiveness(r.entity) : null;
                 const wl = r.entity?.parentId ? WL_RE.exec(r.entity.parentId) : null;
                 const filters = encodeURIComponent(JSON.stringify([{ k: 'k8s.pod.name', op: '=', v: [r.pod] }]));
@@ -148,7 +149,10 @@ export function ServiceEntityPods({ service, range, cluster, onRows }: { service
                         </span>
                       ) : <span className="field-hint" title="Thanos'ta bu pod için seri yok (ölü ya da KSM dışı)">—</span>}
                     </td>
-                    <td className="mono">{r.namespace}</td>
+                    {/* v0.10.190 — namespace span'de yoksa Thanos'tan tamamlanır; işaretle */}
+                    <td className="mono" title={r.namespaceFromThanos ? 'namespace span\'de yok (collector k8s.namespace.name basmıyor) — Thanos pod listesinden' : undefined}>
+                      {r.namespace || '—'}{r.namespaceFromThanos && <span className="field-hint"> · Thanos</span>}
+                    </td>
                     <td className="mono" title={cid || 'unmapped'}>{clusterName}</td>
                     <td className="mono">
                       {r.node && cid

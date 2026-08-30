@@ -4,17 +4,20 @@
 //   'ok'               pod linki (+ node/namespace/cluster), at = span başlangıcı
 //   'no-k8s'           k8s.pod.name yok → link YOK, "bu span'de Kubernetes bağlamı yok"
 //   'no-cluster'       pod var ama cluster değeri yok → link YOK (hangi cluster? bilinmiyor)
+//   'no-namespace'     v0.10.190: pod linki HAM /pod yolu (namespace'i sayfa Thanos'tan çözer)
 //   'unmapped-cluster' cluster değeri hiçbir Remote Cluster'a eşlenmemiş → link YOK, değer ilan
 // Aynı pod adı iki cluster'da iki ayrı kayıt: cluster id linke girer. Saf; vitest'li.
 import { resolveResource } from './otel/semconv';
 import { entityHref } from './entityHref';
+import { podDetailPath } from '@/pages/service/podDetailPath';
+import { windowRangeParam } from './urlState';
 import type { EntityClusterInfo, SpanRow, TimeRange } from './types';
 
 // v0.10.148 — 'no-namespace': pod adı var, cluster eşlenmiş ama
-// k8s.namespace.name yok (Tempo-fallback / yalnız pod adı çıkaran
-// k8sattributes). Pod adı tek başına cluster içinde belirsiz → pod linki YOK
-// (traces kolonu traceK8sLinks ile aynı kural); node/cluster linkleri kalır.
-// Eskiden `pod:<cid>//<pod>` diye bozuk bir link üretiliyordu.
+// k8s.namespace.name yok (o cluster'ın collector'ı basmıyor / Tempo-fallback).
+// Entity linki (`pod:<cid>/<ns>/<pod>`) üretilmez — eskiden `pod:<cid>//<pod>`
+// diye bozuk bir link çıkıyordu. v0.10.190: pod linki HAM /pod yolu (sayfa
+// namespace'i Thanos pod listesinden çözmeye çalışır); traceK8sLinks aynı kural.
 export type SpanK8sReason = 'ok' | 'no-k8s' | 'no-cluster' | 'unmapped-cluster' | 'no-namespace';
 
 export interface SpanK8sContext {
@@ -56,7 +59,21 @@ export function spanK8sContext(span: SpanLike, clusters: EntityClusterInfo[], ra
     nodeHref: r.k8s.node ? entityHref({ type: 'node', id: `node:${c.id}/${r.k8s.node}`, name: r.k8s.node, clusterId: c.id }, opts) : undefined,
     clusterHref: entityHref({ type: 'cluster', id: `cluster:${c.id}`, name: c.name, clusterId: c.id }, { range }),
   };
-  if (!ns) return { ...linked, reason: 'no-namespace' };
+  // v0.10.190 (operatör: "neden link yok diyor") — namespace'siz span
+  // (o cluster'ın collector'ı k8s.namespace.name basmıyor) artık ÇIKMAZ
+  // değil: /pod sayfası namespace'i Thanos pod listesinden kendisi çözer
+  // (v0.10.135'ten beri ?namespace= zorunlu değil). Entity linki (pod:cid/ns/pod)
+  // üretilmez — id namespace ister; ham sayfa yolu verilir, neden ilan edilir.
+  if (!ns) {
+    return {
+      ...linked,
+      reason: 'no-namespace',
+      // İnceleme (190): range NESNE gelir (SpanDetail pageRange) — 'ok' dalıyla
+      // aynı kodlama (windowRangeParam); pencere düşerse /pod son 1 saate düşerdi.
+      podHref: podDetailPath({ pod: r.k8s.pod, cluster: c.name, service: span.serviceName || undefined,
+        range: range ? (typeof range === 'string' ? range : windowRangeParam(range)) : undefined, at: atMs }),
+    };
+  }
   return {
     ...linked,
     reason: 'ok',
@@ -87,7 +104,7 @@ export function spanK8sNote(ctx: SpanK8sContext): string | null {
     case 'no-k8s': return 'Bu span\'de Kubernetes bağlamı yok (k8s.pod.name taşımıyor).';
     case 'no-cluster': return `Pod ${ctx.pod} — span cluster değeri taşımıyor; hangi cluster bilinmiyor, link yok.`;
     case 'unmapped-cluster': return `Pod ${ctx.pod} — cluster değeri "${ctx.clusterValue}" bir Remote Cluster kaydına eşlenmemiş; link yok.`;
-    case 'no-namespace': return `Pod ${ctx.pod} — span k8s.namespace.name taşımıyor; pod adı tek başına cluster içinde belirsiz, pod linki yok.`;
+    case 'no-namespace': return `Span k8s.namespace.name taşımıyor (bu cluster'ın collector'ı basmıyor) — pod linki namespace'i Thanos'tan çözen pod sayfasına gider.`;
     default: return null;
   }
 }

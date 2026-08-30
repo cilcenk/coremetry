@@ -67,8 +67,8 @@ describe('spanK8sContext', () => {
 
 // v0.10.148 — operator-reported (prod, Tempo fallback trace): pod çipleri
 // "?/bsa-…" çıkıyordu. (1) '?' yok: etiket bilinen parçalardan, eksik olan
-// tooltip'te açıkça; (2) namespace'siz pod eşlenmiş cluster'da bile pod linki
-// ALMAZ (eskiden `pod:<cid>//<pod>` bozuk link) — traces kolonuyla aynı kural.
+// tooltip'te açıkça; (2) namespace'siz pod ENTITY linki almaz (eskiden
+// `pod:<cid>//<pod>` bozuk link); v0.10.190'dan beri ham /pod linki alır.
 import { podChipLabel, podChipWhere } from './spanK8s';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
@@ -93,15 +93,26 @@ describe('podChipLabel / podChipWhere (v0.10.148)', () => {
     expect(podChipWhere({ clusterName: 'prod-eu', namespace: 'pay', pod: 'api-1', reason: 'ok' })).toBe('cluster: prod-eu · namespace: pay · pod: api-1');
   });
 
-  it('mapped cluster but no namespace → no-namespace: no pod link, cluster/node links stay', () => {
+  it('mapped cluster but no namespace → no-namespace: pod link is the RAW /pod page (namespace resolved there via Thanos, v0.10.190), no entity id, cluster/node links stay', () => {
     const ctx = spanK8sContext(span({ 'k8s.pod.name': 'api-1', 'k8s.cluster.name': 'prod-eu-west', 'k8s.node.name': 'w1' }), clusters);
     expect(ctx.reason).toBe('no-namespace');
-    expect(ctx.podHref).toBeUndefined();
+    expect(ctx.podHref).toBeDefined();
+    expect(ctx.podHref!.startsWith('/pod?')).toBe(true);
+    const pp = params(ctx.podHref!);
+    expect(pp.get('pod')).toBe('api-1');
+    expect(pp.get('cluster')).toBe('prod-eu'); // Remote Cluster ADI (sayfa Thanos'a bununla gider)
+    expect(pp.get('namespace')).toBeNull();     // namespace bilinmiyor → param YAZILMAZ, sayfa çözer
+    expect(pp.get('at')).toBeTruthy();
+    expect(ctx.podHref).not.toContain('id=');   // entity id üretilmez (pod:cid//pod bozuk olurdu)
+    // İnceleme (190): range NESNE gelince pencere linke YAZILIR ('ok' dalıyla aynı)
+    const withRange = spanK8sContext(span({ 'k8s.pod.name': 'api-1', 'k8s.cluster.name': 'prod-eu-west' }), clusters, { preset: 'custom', fromMs: 1_700_000_000_000, toMs: 1_700_003_600_000 });
+    expect(params(withRange.podHref!).get('range')).toBeTruthy();
     expect(ctx.namespaceHref).toBeUndefined();
     expect(ctx.clusterHref).toContain('cluster=prod-eu');
     expect(ctx.nodeHref).toBeDefined();
     expect(ctx.nodeHref).toContain('w1');
     expect(spanK8sNote(ctx)).toMatch(/k8s\.namespace\.name/);
+    expect(spanK8sNote(ctx)).toMatch(/Thanos/);
   });
 
 });
@@ -129,9 +140,9 @@ describe('k8sAttrHref (v0.10.150)', () => {
     expect(k8sAttrHref('http.method', ok)).toBeUndefined();
     expect(k8sAttrHref('k8s.pod.name', null)).toBeUndefined();
   });
-  it('no-namespace ctx: pod/namespace undefined, cluster/node still resolve', () => {
+  it('no-namespace ctx: pod → raw /pod link (v0.10.190), namespace undefined, cluster/node still resolve', () => {
     const ctx = spanK8sContext(span({ 'k8s.pod.name': 'api-1', 'k8s.node.name': 'w1', 'k8s.cluster.name': 'prod-eu-west' }), clusters);
-    expect(k8sAttrHref('k8s.pod.name', ctx)).toBeUndefined();
+    expect(k8sAttrHref('k8s.pod.name', ctx)).toMatch(/^\/pod\?/);
     expect(k8sAttrHref('k8s.namespace.name', ctx)).toBeUndefined();
     expect(k8sAttrHref('k8s.node.name', ctx)).toBeDefined();
     expect(k8sAttrHref('cluster', ctx)).toBeDefined();

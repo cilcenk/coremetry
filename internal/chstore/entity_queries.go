@@ -382,21 +382,6 @@ func (s *Store) EntitySeenForService(ctx context.Context, service string, cluste
 		SETTINGS max_execution_time = 10`, args...)
 }
 
-// EntitySeenForPod — pod → servisler + sağlık (zaman sınırlı tarama).
-func (s *Store) EntitySeenForPod(ctx context.Context, clusterValues []string, namespace, pod string, from, to time.Time) ([]EntitySeenAgg, error) {
-	if len(clusterValues) == 0 {
-		return []EntitySeenAgg{}, nil
-	}
-	return s.scanSeenAgg(ctx, `SELECT `+entitySeenAggCols+`
-		FROM entity_seen_5m
-		WHERE time_bucket >= toStartOfFiveMinute(?) AND time_bucket <= ?
-		  AND cluster IN (?) AND k8s_namespace = ? AND k8s_pod = ?
-		GROUP BY cluster, k8s_namespace, k8s_pod, service_name
-		ORDER BY spans DESC
-		LIMIT 200
-		SETTINGS max_execution_time = 10`, from, to, clusterValues, namespace, pod)
-}
-
 // EntitySeenForPods — node/namespace pivotu: verilen pod adları (≤ 500).
 func (s *Store) EntitySeenForPods(ctx context.Context, clusterValues []string, namespace string, pods []string, from, to time.Time) ([]EntitySeenAgg, error) {
 	if len(pods) == 0 || len(clusterValues) == 0 {
@@ -408,7 +393,15 @@ func (s *Store) EntitySeenForPods(ctx context.Context, clusterValues []string, n
 	where := "time_bucket >= toStartOfFiveMinute(?) AND time_bucket <= ? AND cluster IN (?) AND k8s_pod IN (?)"
 	args := []any{from, to, clusterValues, pods}
 	if namespace != "" {
-		where += " AND k8s_namespace = ?"
+		// v0.10.190 (operatör-bildirimi, prod: "pod'dan geçen servis yok diyor
+		// ama var"): bir cluster'ın collector'ı k8s.namespace.name BASMIYOR →
+		// MV satırları k8s_namespace = '' ile duruyor; pod sayfası namespace'i
+		// Thanos'tan bilip `= ?` ile arıyordu → sıfır satır, oysa altındaki
+		// trace listesi (yalnız pod adı) aynı span'leri gösteriyordu.
+		// Namespace'siz satır da eşleşir: pod adı cluster içinde tek
+		// varsayılır, çağıran boş satır sayısını İLAN eder (nsMissingRows).
+		// (Tekil EntitySeenForPod çağıransızdı, v0.10.190'da silindi.)
+		where += " AND k8s_namespace IN (?, '')"
 		args = append(args, namespace)
 	}
 	return s.scanSeenAgg(ctx, `SELECT `+entitySeenAggCols+`

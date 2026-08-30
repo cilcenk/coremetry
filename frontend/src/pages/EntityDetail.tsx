@@ -135,16 +135,20 @@ function Body({ data, svc, svcError, at, pageRange, from, to }: { data: EntityDe
       {rows.length > 0 && (
         <>
           <h3>Pods × services ({rows.length})</h3>
+          {/* v0.10.190 — namespace'siz span satırları pod adıyla eşlendi; ilan */}
+          {(svc?.nsMissingRows ?? 0) > 0 && <div className="field-hint">{svc!.nsMissingRows} satır namespace'siz span'lerden (bu cluster'ın collector'ı k8s.namespace.name basmıyor) — pod adı cluster içinde tek varsayıldı.</div>}
           <table>
             <thead><tr><th>pod</th><th>namespace</th><th>service</th><th>spans</th><th>errors</th><th>avg ms</th><th>last seen</th></tr></thead>
             <tbody>
               {rows.slice(0, 200).map(r => (
                 <tr key={`${r.namespace}/${r.pod}/${r.service}`}>
                   <td>
-                    <Link to={entityHref({ type: 'pod', id: `pod:${entity.clusterId}/${r.namespace}/${r.pod}`, name: r.pod, namespace: r.namespace, clusterId: entity.clusterId }, hrefOpts)} className="sec"
-                      title={`${cluster?.name ?? entity.clusterId} / ${r.namespace} / ${r.pod}`}>{r.pod}</Link>
+                    {r.namespace ? (
+                      <Link to={entityHref({ type: 'pod', id: `pod:${entity.clusterId}/${r.namespace}/${r.pod}`, name: r.pod, namespace: r.namespace, clusterId: entity.clusterId }, hrefOpts)} className="sec"
+                        title={`${cluster?.name ?? entity.clusterId} / ${r.namespace} / ${r.pod}`}>{r.pod}</Link>
+                    ) : <span className="mono" title="namespace span'de yok — entity linki yok">{r.pod}</span>}
                   </td>
-                  <td>{r.namespace}</td>
+                  <td>{r.namespace || '—'}</td>
                   <td><Link to={serviceHref(r.service, { range: pageRange })} className="sec">{r.service}</Link></td>
                   <td className="mono">{r.spans}</td>
                   <td className="mono">{r.errors}</td>

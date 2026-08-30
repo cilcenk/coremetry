@@ -294,8 +294,11 @@ func (s *Server) getEntityServices(w http.ResponseWriter, r *http.Request) {
 				svc[a.Service] = row
 				podSet[a.Service] = map[string]bool{}
 			}
-			if !podSet[a.Service][a.Namespace+"/"+a.Pod] {
-				podSet[a.Service][a.Namespace+"/"+a.Pod] = true
+			// v0.10.190 (inceleme #3) — yalnız pod ADI: namespace'siz ('') ve
+			// namespace'li satır aynı pod'dur (cluster bu çağrıda sabit); ikiye
+			// sayılmasın.
+			if !podSet[a.Service][a.Pod] {
+				podSet[a.Service][a.Pod] = true
 				row.Pods++
 			}
 			row.AvgMs = (row.AvgMs*float64(row.Spans) + a.AvgMs*float64(a.Spans)) / float64(max64(row.Spans+a.Spans, 1))
@@ -307,7 +310,19 @@ func (s *Server) getEntityServices(w http.ResponseWriter, r *http.Request) {
 			services = append(services, *v)
 		}
 		sort.Slice(services, func(i, j int) bool { return services[i].Spans > services[j].Spans })
-		return map[string]any{"entity": id, "cluster": c.EffectiveID(), "pods": pods, "services": services, "rows": aggs}, nil
+		// v0.10.190 — namespace'siz MV satırları (collector k8s.namespace.name
+		// basmıyor) pod adıyla eşlendi; sayısı ilan edilir, sessiz varsayım yok.
+		nsMissing := 0
+		for _, a := range aggs {
+			if a.Namespace == "" {
+				nsMissing++
+			}
+		}
+		resp := map[string]any{"entity": id, "cluster": c.EffectiveID(), "pods": pods, "services": services, "rows": aggs}
+		if nsMissing > 0 {
+			resp["nsMissingRows"] = nsMissing
+		}
+		return resp, nil
 	})
 }
 
@@ -389,41 +404,22 @@ func (s *Server) getServicePods(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		type podRow struct {
-			chstore.EntitySeenAgg
-			ClusterID string                `json:"clusterId,omitempty"`
-			EntityID  string                `json:"entityId,omitempty"`
-			Entity    *chstore.EntityRecord `json:"entity,omitempty"`
-			// v0.10.136 — adım 2: durum (Thanos KSM anlık) + giriş-span latency (ham spans).
-			Phase           string  `json:"phase,omitempty"`
-			Restarts        int     `json:"restarts"`
-			RestartsUnknown bool    `json:"restartsUnknown,omitempty"`
-			LastTermReason  string  `json:"lastTermReason,omitempty"`
-			CPUCores        float64 `json:"cpuCores,omitempty"`
-			MemBytes        float64 `json:"memBytes,omitempty"`
-			StatusKnown     bool    `json:"statusKnown,omitempty"`
-			EntrySpans      int64   `json:"entrySpans,omitempty"`
-			P50Ms           float64 `json:"p50Ms,omitempty"`
-			P95Ms           float64 `json:"p95Ms,omitempty"`
-			P99Ms           float64 `json:"p99Ms,omitempty"`
-		}
-		out := make([]podRow, 0, len(aggs))
+		out := make([]servicePodRow, 0, len(aggs))
 		clusters := map[string]bool{}
 		unmapped := map[string]bool{}
 		for _, a := range aggs {
-			row := podRow{EntitySeenAgg: a}
+			row := servicePodRow{EntitySeenAgg: a}
 			if c, ok := byValue[a.Cluster]; ok {
 				row.ClusterID = c.EffectiveID()
-				row.EntityID = entity.PodID(c.EffectiveID(), a.Namespace, a.Pod)
 				clusters[c.EffectiveID()] = true
-				if cur, _, err := s.store.EntityLifetimes(ctx, row.EntityID, to); err == nil && cur != nil {
-					row.Entity = cur
-				}
 			} else {
 				unmapped[a.Cluster] = true
 			}
 			out = append(out, row)
 		}
+		// v0.10.190 — entity id + kayıt ÇÖZÜMÜ Thanos durumundan SONRA
+		// (aşağıda): namespace'siz satırlarda id `pod:<cid>//<pod>` bozuk
+		// doğuyor, kayıt bulunamıyor, WORKLOAD boş kalıyordu.
 		// v0.10.136 — adım 2 zenginleştirme. (a) Latency: ham spans, giriş-span,
 		// pod başına p50/p95/p99 (entity_seen_5m yalnız ortalama taşır); hata
 		// best-effort — 0011 kolonu olmayan CH'de yüzdelikler boş kalır, tablo
@@ -433,25 +429,7 @@ func (s *Server) getServicePods(w http.ResponseWriter, r *http.Request) {
 		// v0.10.139 (inceleme) — çoklu değerli kayıtta aynı pod iki ham cluster
 		// değeriyle iki satır veriyordu (yinelenen pod, şişen workload sayısı):
 		// (clusterId, namespace, pod) üzerinden birleştir.
-		{
-			type key struct{ cid, ns, pod string }
-			idx := map[key]int{}
-			merged := make([]podRow, 0, len(out))
-			for _, row := range out {
-				if row.ClusterID == "" {
-					merged = append(merged, row)
-					continue
-				}
-				k := key{row.ClusterID, row.Namespace, row.Pod}
-				if j, ok := idx[k]; ok {
-					merged[j].EntitySeenAgg = mergeSeenAgg(merged[j].EntitySeenAgg, row.EntitySeenAgg)
-					continue
-				}
-				idx[k] = len(merged)
-				merged = append(merged, row)
-			}
-			out = merged
-		}
+		out = mergeServicePodRows(out)
 		statusNotes := []string{}
 		var notesMu sync.Mutex
 		note := func(n string) { notesMu.Lock(); statusNotes = append(statusNotes, n); notesMu.Unlock() }
@@ -509,20 +487,61 @@ func (s *Server) getServicePods(w http.ResponseWriter, r *http.Request) {
 					note(c.Name + ": durum alınamadı")
 					return
 				}
-				byPod := make(map[string]thanos.PodRow, len(prows))
-				for _, p := range prows {
-					byPod[p.Namespace+"/"+p.Pod] = p
-				}
+				idx := indexThanosPods(prows)
+				filled, ambiguous := 0, 0
 				for _, i := range idxs {
-					if p, ok := byPod[out[i].Namespace+"/"+out[i].Pod]; ok {
+					// v0.10.190 (operatör-bildirimi, prod: Pods tablosunda NAMESPACE
+					// boş, STATUS/CPU «—»): span'i namespace taşımayan cluster'da
+					// anahtar "/pod" oluyor ve Thanos satırı hiç eşleşmiyordu.
+					// Saf eşleyici: matchThanosPod (tablo-testli).
+					p, res := matchThanosPod(idx, out[i].Namespace, out[i].Pod)
+					switch res {
+					case thanosMatchFilled:
+						out[i].Namespace, out[i].NamespaceFromThanos = p.Namespace, true
+						filled++
+					case thanosMatchAmbiguous:
+						ambiguous++
+					}
+					if res == thanosMatchExact || res == thanosMatchFilled {
 						out[i].Phase, out[i].Restarts, out[i].RestartsUnknown, out[i].LastTermReason = p.Phase, p.Restarts, p.RestartsUnknown, p.LastTermReason
 						out[i].CPUCores, out[i].MemBytes, out[i].StatusKnown = p.CPUCores, p.MemBytes, true
 					}
+				}
+				if filled > 0 {
+					note(c.Name + ": " + strconv.Itoa(filled) + " pod'un namespace'i span'de yok (collector k8s.namespace.name basmıyor) — Thanos'tan tamamlandı")
+				}
+				if ambiguous > 0 {
+					note(c.Name + ": " + strconv.Itoa(ambiguous) + " pod adı birden çok namespace'te — namespace'siz span satırı eşlenmedi")
 				}
 			}(c, idxs, re)
 		}
 		wg.Wait()
 		scancel()
+		// v0.10.190 (inceleme #2) — Thanos'tan tamamlanan namespace, span'den
+		// namespace'li gelen satırla ÇAKIŞABİLİR (collector düzeltildikten sonra
+		// pencerede hem '' hem 'ns' kovası; karışık collector'lar): ikinci
+		// birleştirme — aynı pod tek satır, durum alanları taşınır.
+		out = mergeServicePodRows(out)
+		// v0.10.190 — entity kimliği/kaydı: namespace artık (Thanos'tan) dolu
+		// olabilir; boş kalanlar için kimlik üretilmez (bozuk `pod:cid//pod`
+		// yerine link yok). Kayıt okuması ardışık — satır sayısı ≤ 500.
+		nsUnknown := 0
+		for i := range out {
+			if out[i].ClusterID == "" {
+				continue
+			}
+			if out[i].Namespace == "" {
+				nsUnknown++
+				continue
+			}
+			out[i].EntityID = entity.PodID(out[i].ClusterID, out[i].Namespace, out[i].Pod)
+			if cur, _, err := s.store.EntityLifetimes(ctx, out[i].EntityID, to); err == nil && cur != nil {
+				out[i].Entity = cur
+			}
+		}
+		if nsUnknown > 0 {
+			note(strconv.Itoa(nsUnknown) + " pod'un namespace'i bilinmiyor (span'de yok, Thanos'ta bulunamadı) — entity/workload linki yok")
+		}
 		type chainItem struct {
 			ID        string `json:"id"`
 			Type      string `json:"type"`

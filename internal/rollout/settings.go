@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -138,6 +139,26 @@ func (s Settings) Resolved() Resolved {
 // Config — saf çekirdeğin girdisi (reconcile.go).
 func (r Resolved) Config() Config {
 	return Config{Bucket: r.Bucket, Threshold: r.Threshold, Hysteresis: r.Hysteresis, ExitHysteresis: r.ExitHysteresis, OverlapMax: r.OverlapMax, WeakSignal: r.WeakSignal}
+}
+
+// ValidateSettings — PUT kapısı: anlaşılmaz girdi 400 olsun (kelepçe yine
+// okumada — Resolved; operatör girdiğini geri görür, uygulananı resolved'da).
+func ValidateSettings(s Settings) error {
+	for name, v := range map[string]string{"interval": s.Interval, "bucket": s.Bucket, "overlapMax": s.OverlapMax, "lookback": s.Lookback, "stalledMin": s.StalledMin} {
+		if strings.TrimSpace(v) == "" {
+			continue
+		}
+		if settingsdur.Parse(v, 0) == 0 {
+			return fmt.Errorf("%s anlaşılamadı: %q (örn. \"30s\", \"5m\", \"6h\", \"2d\")", name, v)
+		}
+	}
+	if s.Threshold < 0 {
+		return fmt.Errorf("threshold negatif olamaz: %d", s.Threshold)
+	}
+	if s.Hysteresis < 0 || s.ExitHysteresis < 0 {
+		return fmt.Errorf("histerezis negatif olamaz")
+	}
+	return nil
 }
 
 type settingsStore interface {

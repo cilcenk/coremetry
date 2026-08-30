@@ -34,6 +34,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -75,6 +76,12 @@ type Event struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
+// KindRollout — v0.10.200 rollouts: workload_rollouts değişti (tik başına
+// TEK olay, {"n": satır} — Plan A: FE yalnız invalidation olarak kullanır,
+// gövdeyi okumaz). FE eşleniği frontend/src/lib/queries/eventStream.ts
+// (v0.10.201'de 'rollout' eklenir ve event_kinds pin testi onunla gelir).
+const KindRollout = "rollout"
+
 // Broker is the in-process pub/sub bus. Producers (evaluator,
 // anomaly detector) call Publish; consumers (HTTP handler) call
 // Subscribe to get a channel that receives every future event
@@ -86,8 +93,9 @@ type Event struct {
 // stalling — the client's React Query polling will pick up the
 // state on its next refetch.
 type Broker struct {
-	mu   sync.RWMutex
-	subs map[chan<- Event]struct{}
+	dropped atomic.Uint64 // v0.10.200 — düşürülen olay sayacı
+	mu      sync.RWMutex
+	subs    map[chan<- Event]struct{}
 
 	// v0.6.3 — Redis pub/sub bridge. nil = single-pod behaviour
 	// (no cross-pod fan-out, zero overhead). Set via SetBridge
@@ -188,8 +196,34 @@ func (b *Broker) localFanout(ev Event) {
 		default:
 			// Subscriber buffer full — drop. The eventual
 			// React Query refetch (10-30s) covers the gap.
+			// v0.10.200 — düşen olay artık ÖLÇÜLÜR (/api/health sseDropped):
+			// eskiden sessizdi, "olay hiç gelmedi" teşhis edilemiyordu.
+			b.dropped.Add(1)
 		}
 	}
+}
+
+// Dropped — abone tamponu doluyken düşürülen olay sayısı (süreç ömrü).
+func (b *Broker) Dropped() uint64 { return b.dropped.Load() }
+
+// Subscribers — açık abone sayısı (rollout tail'i kimse dinlemiyorken sorgu
+// atmasın; /api/health görünürlüğü).
+func (b *Broker) Subscribers() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.subs)
+}
+
+// PublishLocal — YALNIZ bu pod'un abonelerine (köprüye basmaz). Her pod'un
+// kendi ürettiği olaylar için (rollout tail'i): Publish köprüden geçseydi
+// N pod × N tail = N× teslim olurdu (audit §3, Seçenek T).
+func (b *Broker) PublishLocal(kind string, payload any) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[sse] marshal payload: %v", err)
+		return
+	}
+	b.localFanout(Event{Kind: kind, Payload: raw})
 }
 
 // Subscribe registers a channel for events. Returns a function
@@ -257,7 +291,7 @@ func Handler(b *Broker) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache, no-transform")
-		w.Header().Set("X-Accel-Buffering", "no")  // disable NGINX buffering
+		w.Header().Set("X-Accel-Buffering", "no") // disable NGINX buffering
 		w.Header().Set("Connection", "keep-alive")
 
 		flusher, ok := w.(http.Flusher)

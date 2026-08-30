@@ -72,6 +72,20 @@ func TestWeakSignalFalsePersists(t *testing.T) {
 	}
 }
 
+func TestValidateSettings(t *testing.T) {
+	if err := ValidateSettings(Settings{}); err != nil {
+		t.Fatalf("boş ayar geçerli: %v", err)
+	}
+	if err := ValidateSettings(Settings{Interval: "30s", Bucket: "5m", Lookback: "2d", StalledMin: "10m"}); err != nil {
+		t.Fatalf("geçerli süreler: %v", err)
+	}
+	for _, bad := range []Settings{{Interval: "banana"}, {Bucket: "5 dakika"}, {OverlapMax: "-3m"}, {Lookback: "0s"}, {Threshold: -1}, {Hysteresis: -5}} {
+		if ValidateSettings(bad) == nil {
+			t.Fatalf("anlaşılmaz girdi 400 olmalı: %+v", bad)
+		}
+	}
+}
+
 func TestApplyLoadedKeepsNewer(t *testing.T) {
 	cur := Settings{Enabled: true, UpdatedAt: 20}
 	if got := applyLoaded(cur, Settings{Enabled: false, UpdatedAt: 10}); got.Enabled != true {

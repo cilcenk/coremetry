@@ -33,6 +33,7 @@ describe('anomalyRegions', () => {
   it('anlık anomali en az pencerenin %0.4ü (min 1 s) genişliğinde — sıfır genişlik elenmesin', () => {
     const r = anomalyRegions([ev({ lastSeen: 1000 * S })], new Set(), 0, 10_000 * S);
     expect(r[0].toSec - r[0].fromSec).toBeCloseTo(40, 6);
+    expect(r[0].endSec).toBe(1000); // v0.10.182 — gerçek bitiş şişmez
     const r2 = anomalyRegions([ev({ lastSeen: 1000 * S })], new Set(), 0, 100 * S);
     expect(r2[0].toSec - r2[0].fromSec).toBeCloseTo(1, 6);
   });

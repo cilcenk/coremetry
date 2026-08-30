@@ -3109,6 +3109,8 @@ td > .cell-actions.end { justify-content: flex-end; }
   padding: 8px 10px; font-size: 11.5px; z-index: var(--z-tooltip); min-width: 130px;
 }
 .ov-tt .ov-tt-t { color: var(--text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; margin-bottom: 5px; }
+/* v0.10.182 — bant tooltip ipucu («tıkla → çekmece»), PIN_TIP_HTML ile aynı ton */
+.ov-tt .ov-tt-hint { color: var(--text3); font-size: 10px; margin-top: 4px; }
 .ov-tt .ov-tt-r { display: flex; align-items: center; gap: 7px; justify-content: space-between; }
 .ov-tt .ov-tt-r .ov-lbl { display: flex; align-items: center; gap: 6px; color: var(--text2); }
 .ov-tt .ov-tt-r b { font-variant-numeric: tabular-nums; }

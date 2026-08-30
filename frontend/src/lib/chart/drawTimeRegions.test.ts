@@ -49,9 +49,9 @@ describe('drawTimeRegions (v0.10.168)', () => {
     const fills = calls.filter(c => c.fn === 'fillRect' && c.args[3] === 300);
     expect(fills.length).toBe(0);
     const strips = calls.filter(c => c.fn === 'fillRect' && c.args[3] === 3);
-    expect(strips.map(s => s.args[1])).toEqual([20, 32, 44]);
+    expect(strips.map(s => s.args[1])).toEqual([20, 34, 48]);
     const texts = calls.filter(c => c.fn === 'fillText');
-    expect(texts.map(c => c.args[2])).toEqual([33, 45, 57]);
+    expect(texts.map(c => c.args[2])).toEqual([33, 47, 61]);
     expect(texts[0].args[0]).toBe('▮ a0 · pencere boyu');
   });
   it('iki çakışan kısa bölge → dolgu TEK kat; kronik + kısa karışımında yalnız kısa dolgulu', () => {

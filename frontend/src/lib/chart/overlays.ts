@@ -43,6 +43,9 @@ export interface ChartTimeRegion {
   label?: string; // ör. 'P1' / 'CRITICAL' / 'OPEN'
   /** v0.10.180 — tüketici anahtarı (anomali id); tıklamada geri döner. Deploy ▼'de yok. */
   id?: string;
+  /** v0.10.182 — GERÇEK bitiş (sn). toSec çizim için şişirilebilir (min genişlik);
+   *  tooltip «son/süre» bundan okur. Yoksa anlık olay (deploy ▼): son/süre yazılmaz. */
+  endSec?: number;
 }
 
 // ResolvedThreshold — drawThresholds girdisi: renk canvas-hazır (preset çözdü).
@@ -194,7 +197,7 @@ export function mergeIntervals(regions: { fromSec: number; toSec: number; color?
   return out;
 }
 
-export const LANE_H = 12; // şerit satırı yüksekliği (css px): 3px şerit + 10px mono etiket
+export const LANE_H = 14; // şerit satırı (css px): 3px şerit + 10px etiket, taban çizgisi LANE_H-1 — isabet satırıyla AYNI sabit (v0.10.182 #10)
 
 // v0.10.169 (operatör: "neden bantlar var" → "1 kalsın"): pencerenin en az
 // bu kadarını kaplayan bölge KRONİKTİR (günlerdir aktif anomali) — dolgusu
@@ -306,7 +309,7 @@ export function drawTimeRegions(u: uPlot, regions: ChartTimeRegion[], xUnit = 1)
       const text = fitLabel('▮ ' + rg.label + (chronic[ri] ? ' · pencere boyu' : ''), w - 8 * dpr, s => ctx.measureText(s).width);
       if (text) {
         ctx.fillStyle = colour;
-        ctx.fillText(text, x1 + 4 * dpr, laneTop + (REGION_STRIP_H + 10) * dpr);
+        ctx.fillText(text, x1 + 4 * dpr, laneTop + (LANE_H - 1) * dpr);
       }
     }
   }

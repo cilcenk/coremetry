@@ -682,7 +682,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// /admin/clickhouse'tan, ön kontrollü. Boot'ta ASLA koşmaz —
 	// tek tetikleyici admin (gerekçe: admin_rollup.go başlığı).
 	s.registerRollupAdminRoutes(mux)
-	s.registerEntityLayerAdminRoutes(mux) // v0.10.134 — 0011 entity katmanı şeması sihirbazı, admin_entity_layer.go
+	s.registerEntityLayerAdminRoutes(mux)  // v0.10.134 — 0011 entity katmanı şeması sihirbazı, admin_entity_layer.go
 	s.registerRolloutLayerAdminRoutes(mux) // v0.10.197 — 0012 rollouts katmanı şeması sihirbazı, admin_rollout_layer.go
 	s.registerStateUnifyRoutes(mux)
 	s.registerStateRepartRoutes(mux)
@@ -772,9 +772,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Pod-churn rollouts — instance-set turnover events (replaces
 	// version-bump markers when service.version is constant). v0.8.x.
 	mux.HandleFunc("GET /api/services/{name}/rollouts", s.getServiceRollouts)
-	// v0.9.435 (operatör istegi) — filo Deploys/Rollouts geçmişi
-	// (deploys_page.go): imaj değişimleri + pod-churn tek çizelgede.
-	mux.HandleFunc("GET /api/deploys/history", s.getDeploysHistory)
 	mux.HandleFunc("GET /api/services/{name}/metadata", s.getServiceMetadata)
 	mux.HandleFunc("PUT /api/services/{name}/metadata", auth.RequireAnyRole(editorRoles, s.putServiceMetadata))
 	mux.HandleFunc("GET /api/services-metadata", s.listServiceMetadata)
@@ -8590,6 +8587,7 @@ func (s *Server) putProblemEscalation(w http.ResponseWriter, r *http.Request) {
 //     Helm values'ında duran bir tanımlayıcı; baseURL bir ADRES,
 //     apiKey bir SIR. Yanıt tipi bu üçünü taşıyamayacak şekilde DAR
 //     yazıldı (getAISettings admin yüzeyi ayrı ve öyle kalıyor).
+//
 // copilotProfileOption — v0.10.183: sohbet seçicisi için SIRSIZ görünüm
 // (kimlik + etiket + model adı); baseUrl/apiKey/provider ASLA (şekil testi).
 type copilotProfileOption struct {

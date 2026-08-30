@@ -94,19 +94,11 @@ const PAGES: Result[] = [
   { kind: 'page', label: 'SLOs',        hint: 'Service level objectives', to: '/slos' },
   { kind: 'page', label: 'Monitors',    hint: 'Synthetic probes', to: '/monitors' },
   { kind: 'page', label: 'Events',      hint: 'Deploy / config markers', to: '/events' },
-  // v0.9.952 (UX denetimi F1 / Ö17) — üç CANLI rota katalogda YOKTU.
-  //
-  // /deploys en ağırı: UI'dan TAMAMEN ulaşılmazdı — sidebar'da yok,
-  // ⌘K'da yok, grafiklerdeki ▼ deploy işaretleri sayfaya link vermiyor.
-  // Deploy geçmişine tek yol adres çubuğuydu. /clusters ve /watchers ise
-  // sidebar'da GÖRÜNÜR ama palette'te aranamıyordu; klavyeyle gezinen
-  // operatör için "yok" demekle aynı şey.
-  //
-  // Katalogun kendi yorumu "sidebar'dan gizli sayfalar ⌘K'da BİLEREK
-  // kalır — keşif yüzeyi burasıdır" diyordu; üçü de o kuralın kapsamına
-  // giriyordu ama listeye hiç girmemişti. Kural doğruydu, uygulaması
-  // eksikti.
-  { kind: 'page', label: 'Deploys',     navKey: 'nav.deploys', hint: 'Deploy history + change events', to: '/deploys' },
+  // v0.9.952 (UX denetimi F1 / Ö17) — üç CANLI rota katalogda YOKTU:
+  // /deploys, /clusters, /watchers. Son ikisi sidebar'da GÖRÜNÜR ama
+  // palette'te aranamıyordu; klavyeyle gezinen operatör için "yok"
+  // demekle aynı şey. (Üçüncüsü /deploys idi — v0.10.209'da sayfa
+  // emekli edildi, rota /rollouts'a yönlendirir; ⌘K girdisi de gitti.)
   { kind: 'page', label: 'Clusters',    navKey: 'nav.clusters', hint: 'Kubernetes / OpenShift inventory', to: '/clusters' },
   { kind: 'page', label: 'Watchers',    hint: 'Log pattern watchers', to: '/watchers' },
   // System (v0.8.9 — /admin/* → /system/:tab)

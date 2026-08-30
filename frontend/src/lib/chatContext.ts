@@ -42,7 +42,7 @@ export type ChatContextStarter = { chip: string; question: string };
 // chatContext.test.ts'teki kapı unutmayı en azından TEST hatasına
 // çeviriyor.
 const SERVICE_PARAM_ROUTES = new Set([
-  '/traces', '/endpoints', '/logs', '/inbox', '/deploys',
+  '/traces', '/endpoints', '/logs', '/inbox',
   '/metrics', '/explore', '/clusters', '/profiling',
   // v0.10.45 — /endpoint (TEKİL detay) listede YOKTU. Sayfa `?service=`
   // hem yazıyor hem okuyor (endpointParam.ts), yani operatör bir

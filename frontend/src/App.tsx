@@ -39,7 +39,6 @@ const Databases         = lazy(() => import('./pages/Databases'));
 // replaces is gone from /databases (it lives on for /messaging, which
 // shares the table). Old ?row= deep links redirect here.
 const DatabaseDetail    = lazy(() => import('./pages/DatabaseDetail'));
-const Deploys           = lazy(() => import('./pages/Deploys')); // v0.9.435
 const External          = lazy(() => import('./pages/External'));
 const Hosts             = lazy(() => import('./pages/Hosts'));
 const Clusters          = lazy(() => import('./pages/Clusters'));
@@ -163,7 +162,8 @@ export default function App() {
             <Route path="/runbook-exec"  element={<RunbookExecution />} />
             <Route path="/databases"      element={<Databases />} />
             <Route path="/database"       element={<DatabaseDetail />} />
-            <Route path="/deploys"        element={<Deploys />} />
+            {/* v0.10.209 — /deploys emekli (Ö17 karar 11): filo geçmişi /rollouts */}
+            <Route path="/deploys"        element={<Navigate to="/rollouts" replace />} />
             <Route path="/databases/slow-queries" element={<SlowQueries />} />
             <Route path="/databases/statement" element={<StatementDetail />} />
             <Route path="/external"       element={<External />} />

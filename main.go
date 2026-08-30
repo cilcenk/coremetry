@@ -45,6 +45,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/otlp"
 	"github.com/cilcenk/coremetry/internal/pipeline"
 	"github.com/cilcenk/coremetry/internal/rag"
+	"github.com/cilcenk/coremetry/internal/rollout"
 	"github.com/cilcenk/coremetry/internal/selfobs"
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/templater"
@@ -1014,6 +1015,12 @@ func main() {
 		log.Printf("[entity] load persisted config: %v", err)
 	}
 	go entitySettings.StartConfigRefresh(ctx, store, 30*time.Second)
+	// v0.10.199 — rollouts ayar blobu (system_settings["rollouts"]), her rolde.
+	rolloutSettings := rollout.NewSettingsService()
+	if err := rolloutSettings.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[rollout] load persisted config: %v", err)
+	}
+	go rolloutSettings.StartConfigRefresh(ctx, store, 30*time.Second)
 	var entitySyncer *entity.Syncer
 	if mode.worker {
 		entitySyncer = entity.NewSyncer(entity.NewThanosSource(thanosSvc), entity.StoreFromCH(store), entitySettings.Resolved)
@@ -1045,6 +1052,18 @@ func main() {
 				}
 			}
 		}()
+		// v0.10.199 — ROLLOUTS Faz 2: span tabanlı reconciler, yalnız lider,
+		// KENDİ kilidi (entity bayrağından bağımsız). İlk tik edinimde
+		// (SetOnAcquire), sonrası ayardaki aralıkta; inFlight CAS örtüşmeyi keser.
+		rolloutRec := rollout.New(store, rolloutClusterSource{thanosSvc}, rolloutSettings.Resolved)
+		// Lease = LeaderTTL(1 dk) = 3 dk (entity emsali): failover sınırı tik aralığından bağımsız;
+		// tutucu lease'i yenilediği için uzun tik (5×aralık) lease'i düşürmez,
+		// yazım öncesi liderlik yine yeniden doğrulanır (reconciler.go).
+		rolloutLeader := cache.NewLeaderHolder(lockImpl, "rollout-reconciler", cache.LeaderTTL(time.Minute))
+		rolloutRec.SetLeaderCheck(rolloutLeader.IsLeader)
+		rolloutLeader.SetOnAcquire(func() { rolloutRec.Tick(ctx) })
+		rolloutLeader.Start(ctx)
+		go rolloutRec.Run(ctx)
 	}
 	// v0.9.1150 — dış VictoriaMetrics OKUMA backend'i (tempo/thanos
 	// simetriği): blob'u boot'ta yükle + 30s multi-pod senkron poll'u.
@@ -1992,4 +2011,19 @@ func (a tokenSourceAdapter) ActiveHashes(ctx context.Context) (map[string]auth.T
 		out[h] = auth.TokenInfo{ID: t.ID, Name: t.Name, Role: t.Role}
 	}
 	return out, nil
+}
+
+// rolloutClusterSource — Remote Cluster registry → rollout.ClusterRef
+// (entity.ThanosSource.Clusters aynası; paket döngüsü olmasın diye burada).
+type rolloutClusterSource struct{ svc *thanos.Service }
+
+func (r rolloutClusterSource) Clusters() []rollout.ClusterRef {
+	var out []rollout.ClusterRef
+	for _, c := range r.svc.CurrentSettings().Clusters {
+		if !c.Enabled {
+			continue
+		}
+		out = append(out, rollout.ClusterRef{ID: c.EffectiveID(), Name: c.Name, SpanClusterValue: c.SpanClusterKey(), SpanClusterValues: c.SpanClusterKeys()})
+	}
+	return out
 }

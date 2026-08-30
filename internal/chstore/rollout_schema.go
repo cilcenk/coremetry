@@ -56,7 +56,7 @@ var workloadRolloutsDDL = fmt.Sprintf(`CREATE TABLE IF NOT EXISTS workload_rollo
 	workload_kind        LowCardinality(String),      -- Deployment | StatefulSet | DaemonSet
 	revision             String,                      -- ReplicaSet adı (pod-template-hash)
 	started_at           DateTime64(3),               -- DONUK: aktif kümeye giren ilk 5 dk kovanın başı
-	status               LowCardinality(String),      -- in_progress | completed | rolled_back | stalled
+	status               LowCardinality(String),      -- in_progress | completed | rolled_back | superseded | stalled (rollout.Status*)
 	prev_revision        String        DEFAULT '',
 	image                String        DEFAULT '',    -- container.image.name
 	image_tag            String        DEFAULT '',    -- container.image.tag

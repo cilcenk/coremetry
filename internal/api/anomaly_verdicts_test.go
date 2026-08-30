@@ -1,32 +1,25 @@
 package api
 
-// anomaly_verdicts_test.go — v0.10.181: kimlik listesi saf ayrıştırıcı; rota
-// kaydı api.go dışında (tek satır çağrı).
+// anomaly_verdicts_test.go — v0.10.181/184: parmak izi kanonik ya da boş; rune
+// kesimi; rota kaydı api.go dışında (tek satır çağrı); GET ucu YOK.
 
 import (
 	"os"
-	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
-func TestSplitIDs(t *testing.T) {
-	if got := splitIDs(" a, b ,,a,c "); !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
-		t.Fatalf("splitIDs: %v", got)
+func TestVerdictFingerprintAndTrunc(t *testing.T) {
+	if verdictFingerprint("trace_op", "", "svc") != "" || verdictFingerprint("trace_op", "p", "") != "" {
+		t.Fatal("eksik desen/servis → ham id yerine BOŞ olmalı")
 	}
-	if got := splitIDs(""); len(got) != 0 {
-		t.Fatalf("boş: %v", got)
+	if fp := verdictFingerprint("trace_op", "p", "svc"); len(fp) != 16 {
+		t.Fatalf("kanonik parmak izi 16 hex olmalı: %q", fp)
 	}
-	many := strings.Repeat("x,", 300)
-	if got := splitIDs(strings.Join(strings.Split(strings.TrimSuffix(many, ","), ","), ",")); len(got) != 1 {
-		t.Fatalf("kopyalar elenmedi: %d", len(got))
-	}
-	parts := make([]string, 0, 260)
-	for i := 0; i < 260; i++ {
-		parts = append(parts, "id"+strings.Repeat("0", 1)+string(rune('a'+i%26))+strings.Repeat("z", i%7)+string(rune('0'+i%10)))
-	}
-	if got := splitIDs(strings.Join(parts, ",")); len(got) > 200 {
-		t.Fatalf("tavan 200 aşıldı: %d", len(got))
+	s := strings.Repeat("ğ", 600)
+	if out := truncRunes(s, 500); !utf8.ValidString(out) || utf8.RuneCountInString(out) != 500 {
+		t.Fatalf("rune kesimi bozuk: %d geçerli=%v", utf8.RuneCountInString(out), utf8.ValidString(out))
 	}
 }
 
@@ -38,11 +31,14 @@ func TestAnomalyVerdictRoutesOutsideAPIGo(t *testing.T) {
 	if !strings.Contains(string(apiGo), "s.registerAnomalyVerdictRoutes(mux)") {
 		t.Fatal("registerAnomalyVerdictRoutes api.go'dan çağrılmıyor — rotalar 200 + boş ekran olur")
 	}
-	// (rootcause/verdict RCA rotası api.go'da meşru — yalnız anomali kararı uçları aranır)
-	if strings.Contains(string(apiGo), "/api/anomalies/verdicts") || strings.Contains(string(apiGo), "/api/anomalies/{id}/verdict") {
+	if strings.Contains(string(apiGo), "/api/anomalies/{id}/verdict") {
 		t.Fatal("verdict rotası api.go'ya yazılmış (api.go büyümeyecek kuralı)")
 	}
 	if !strings.Contains(string(apiGo), "EnrichAnomaliesWithVerdicts") {
 		t.Fatal("events ucu kararı eklemiyor")
+	}
+	own, _ := os.ReadFile("anomaly_verdicts.go")
+	if strings.Contains(string(own), "GET /api/anomalies/verdicts") {
+		t.Fatal("çağıransız GET ucu geri gelmiş (v0.10.184 #2)")
 	}
 }

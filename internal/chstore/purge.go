@@ -80,6 +80,7 @@ var configPreserveTables = []string{
 	// config / settings
 	"system_settings", "alert_rules", "saved_views", "users", "service_metadata",
 	"dashboards", "audit_log", "notification_channels", "anomaly_silences",
+	"anomaly_verdicts", // v0.10.184 — operatör kararı, yeniden üretilmez (purge_coverage kapısı)
 	"maintenance_windows", "monitors", "runbooks", "slos", "service_contracts",
 	"status_page_components", "status_page_config", "status_page_published",
 	"status_page_subscribers", "log_templates",

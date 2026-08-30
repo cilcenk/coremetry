@@ -3255,6 +3255,17 @@ func (s *Store) migrate(ctx context.Context) error {
 	// prod'da kolon + MV 0011 migration'ıyla operatörde.
 	_, k8sPodColExists := s.spansColumnExpr(ctx, "k8s_pod")
 	hasK8sPodCol := k8sPodColExists || ensuredPromoted["k8s_pod"]
+	// v0.10.198 — ROLLOUTS Faz 1b: workload_revision_activity_1m MV altı terfi
+	// kolonunun hepsini VE 0011'in cluster + k8s_namespace kolonlarını OKUR
+	// (rollout_schema.go); biri bile yoksa CREATE kod 47 ile düşer ya da MV
+	// her span INSERT'ini düşürürdü → yalnız hepsi varsa listeye girer.
+	// Dış Distributed prod'da kolon + MV 0012 sihirbazıyla operatörde.
+	hasRolloutCols := true
+	for _, col := range []string{"k8s_deployment", "k8s_statefulset", "k8s_daemonset", "k8s_replicaset", "container_image", "container_image_tag", "k8s_namespace", "cluster"} {
+		if _, ok := s.spansColumnExpr(ctx, col); !ok && !ensuredPromoted[col] {
+			hasRolloutCols = false
+		}
+	}
 
 	// Defensive recovery (mirrors the op_group guard, v0.8.186): when
 	// db_stmt_hash is genuinely absent, DROP db_statement_summary_5m if it
@@ -4117,6 +4128,12 @@ func (s *Store) migrate(ctx context.Context) error {
 			entitySeenMVDDL("entity_seen_5m", "5 MINUTE", entitySeen5mTTLDays))
 	} else {
 		log.Println("[chstore] k8s_pod terfi kolonu yok — entity_seen MV'leri ATLANDI (dış Distributed'da 0011 migration'ı)")
+	}
+	// v0.10.198 — ROLLOUTS Faz 1b: workload_revision_activity_1m (rollout_schema.go).
+	if hasRolloutCols && hasK8sPodCol {
+		mvs = append(mvs, workloadRevisionActivityMVDDL())
+	} else {
+		log.Println("[chstore] rollout terfi kolonları eksik — workload_revision_activity_1m MV ATLANDI (dış Distributed'da 0012 sihirbazı)")
 	}
 
 	for _, q := range mvs {

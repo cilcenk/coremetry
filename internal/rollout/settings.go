@@ -138,7 +138,7 @@ func (s Settings) Resolved() Resolved {
 
 // Config — saf çekirdeğin girdisi (reconcile.go).
 func (r Resolved) Config() Config {
-	return Config{Bucket: r.Bucket, Threshold: r.Threshold, Hysteresis: r.Hysteresis, ExitHysteresis: r.ExitHysteresis, OverlapMax: r.OverlapMax, WeakSignal: r.WeakSignal}
+	return Config{Bucket: r.Bucket, Threshold: r.Threshold, Hysteresis: r.Hysteresis, ExitHysteresis: r.ExitHysteresis, OverlapMax: r.OverlapMax, WeakSignal: r.WeakSignal, StalledMin: r.StalledMin}
 }
 
 // ValidateSettings — PUT kapısı: anlaşılmaz girdi 400 olsun (kelepçe yine

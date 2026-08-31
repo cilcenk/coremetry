@@ -347,9 +347,25 @@ func TestReconcile_SlidingWindowRealDeployStaysStable(t *testing.T) {
 // Yeni iş yükünün ilk deploy'u (pencere ortasında beliren yeni revizyon) kaydedilir.
 func TestReconcile_FirstDeployOfNewWorkload(t *testing.T) {
 	cfg := DefaultConfig()
-	out := recon(cfg, b(21), nil, span("api-v1", 4, 20, 100))
+	acts := span("api-v1", 4, 20, 100)
+	// v0.10.213 (operatör bildirimi): KANITSIZ ilk gözlem satır üretmez —
+	// prod bootstrap günü seyrek/batch servisler sahte "tamamlandı" almıştı.
+	if out := recon(cfg, b(21), nil, acts); len(out) != 0 {
+		t.Fatalf("kanıtsız ilk gözlem olay değil: %+v", out)
+	}
+	kk := Key{ClusterID: "c1", Namespace: "pay", Workload: "api"}
+	withKSM := func(created time.Time) []Rollout {
+		return Reconcile(cfg, Input{Now: b(21), WindowStart: b(-10), Acts: acts,
+			KSM: map[Key]map[string]KSMRev{kk: {"api-v1": {Spec: 2, Ready: 2, CreatedAt: created}}}})
+	}
+	// Taze KSM kanıtı (RS girişle yaşıt) → gerçek ilk deploy satır alır
+	out := withKSM(b(4))
 	if len(out) != 1 || !out[0].StartedAt.Equal(b(4)) || out[0].Status != StatusCompleted || out[0].PrevRevision != "" {
-		t.Fatalf("ilk deploy tek satır (b4, completed, prev yok): %+v", out)
+		t.Fatalf("taze KSM ile ilk deploy tek satır (b4, completed): %+v", out)
+	}
+	// KSM eski (RS haftalar önce yaratılmış; prod 2026-08-31 vakası) → veto
+	if out := withKSM(b(4).Add(-24 * time.Hour)); len(out) != 0 {
+		t.Fatalf("eski RS'li giriş vetolanmalı: %+v", out)
 	}
 	// aynı revizyon 7 g ufkunda biliniyorsa (gece sonrası scale-up) → satır yok
 	if out := reconSeen(cfg, b(21), nil, span("api-v1", 4, 20, 100), map[string]time.Time{"api-v1": b(-200)}); len(out) != 0 {
@@ -553,10 +569,17 @@ func TestReconcile_BootstrapDataStartSuppressesEntries(t *testing.T) {
 	if out := Reconcile(cfg, in); len(out) != 0 {
 		t.Fatalf("küme verisi koşuyla başlıyor → yokluk gözlenmedi → satır yok: %+v", out)
 	}
-	// küme verisi ≥ EH kova önce başladıysa yeni iş yükünün ilk deploy'u kaydedilir
+	// Küme verisi ≥ EH kova önce başlasa BİLE, kanıtsız ilk gözlem giriş
+	// DEĞİLDİR (v0.10.213, operatör bildirimi): kardeş revizyon izi yok,
+	// önceki revizyon yok, KSM yok → satır yok.
 	in.DataStart = map[string]time.Time{"c1": b(-10)}
+	if out := Reconcile(cfg, in); len(out) != 0 {
+		t.Fatalf("kanıtsız ilk gözlem giriş üretmemeli: %+v", out)
+	}
+	// Taze KSM kanıtı gelince aynı girdi gerçek ilk deploy'u kaydeder.
+	in.KSM = map[Key]map[string]KSMRev{{"c1", "pay", "api"}: {"api-v1": {Spec: 1, Ready: 1, CreatedAt: b(4)}}}
 	if out := Reconcile(cfg, in); len(out) != 1 {
-		t.Fatalf("yerleşik kümede yeni iş yükü → giriş: %+v", out)
+		t.Fatalf("taze KSM'li yerleşik kümede yeni iş yükü → giriş: %+v", out)
 	}
 }
 
@@ -979,5 +1002,49 @@ func TestReconcile_PendingExitNote(t *testing.T) {
 	fb := find(recon(cfg, b(8), nil, span("new-cccc", 2, 12, 60)), "new-cccc")
 	if fb != nil && strings.Contains(fb.Note, notePendingExit) {
 		t.Fatalf("ilk revizyonda eski-revizyon notu olmamalı: %+v", fb)
+	}
+}
+
+// v0.10.213 — Operator-reported (2026-08-31, prod): 0012 sihirbazı yeni
+// uygulanmış bir kümede SEYREK/BATCH iş yükleri (gece 23:50 import, 03:00
+// compliance koşusu, az kullanılan POS-blockage) hiç deploy olmadığı hâlde
+// "tamamlandı" rollout satırı aldı — OpenShift'te ReplicaSet haftalar
+// öncesindendi. Sebep: MV tarihinde İLK kez span üreten iş yükü, kayan
+// pencerede "≥EH kova yokluk → giriş" geometrisine birebir benziyor.
+// Sözleşme: kanıt yoksa olay yok. Burada üç profil de satır ÜRETMEMELİ.
+func TestReconcile_SparseWorkloadBootstrapProducesNoEvent(t *testing.T) {
+	cfg := DefaultConfig()
+	key := Key{ClusterID: "c1", Namespace: "pay", Workload: "api"}
+	dataStart := map[string]time.Time{"c1": b(-200)} // küme uzun süredir izleniyor
+
+	// (1) Gecelik batch: tek kısa patlama, öncesinde hiç iz yok.
+	burst := span("api-v1", 30, 31, 900)
+	in := Input{Now: b(33), WindowStart: b(-10), Acts: burst, DataStart: dataStart,
+		FirstSeen: map[Key]map[string]time.Time{key: {"api-v1": b(30)}}}
+	if out := Reconcile(cfg, in); len(out) != 0 {
+		t.Fatalf("(1) ilk gözlenen batch patlaması rollout değil: %+v", out)
+	}
+
+	// (2) Aynı revizyon ertesi gece yine koşar: bilinen revizyonun dönüşü.
+	in2 := Input{Now: b(33), WindowStart: b(-10), Acts: append(span("api-v1", 0, 1, 900), burst...),
+		DataStart: dataStart, FirstSeen: map[Key]map[string]time.Time{key: {"api-v1": b(0)}}}
+	if out := Reconcile(cfg, in2); len(out) != 0 {
+		t.Fatalf("(2) tekrarlayan batch koşusu rollout değil: %+v", out)
+	}
+
+	// (3) KSM var ama RS haftalar öncesinden (OpenShift ekranındaki gerçek):
+	// tazelik vetosu satırı keser.
+	in3 := in
+	in3.KSM = map[Key]map[string]KSMRev{key: {"api-v1": {Spec: 5, Ready: 5, CreatedAt: b(30).Add(-50 * 24 * time.Hour)}}}
+	if out := Reconcile(cfg, in3); len(out) != 0 {
+		t.Fatalf("(3) haftalar önce yaratılmış RS deploy değil: %+v", out)
+	}
+
+	// KONTROL: aynı iş yükünde GERÇEK bir geçiş (eski revizyon iz bırakmış)
+	// hâlâ kaydedilir — kapı olayı değil, kanıtsızlığı eler.
+	real := append(span("api-old", 0, 20, 900), span("api-v1", 21, 31, 900)...)
+	inReal := Input{Now: b(33), WindowStart: b(-10), Acts: real, DataStart: dataStart}
+	if out := Reconcile(cfg, inReal); find(out, "api-v1") == nil {
+		t.Fatalf("gerçek geçiş kaydedilmeli: %+v", out)
 	}
 }

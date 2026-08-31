@@ -479,13 +479,60 @@ Kapsam dışı (bu audit'e girmedi): cross-cluster servis haritası; STS/DS içi
 | 3 API + SSE | v0.10.200 | `/api/rollouts*`, ayar uçları, pod-yerel CH tail (`PublishLocal`) |
 | 4 Rollouts FE | v0.10.201 | `/rollouts` (Deployment Report emekli, sorgu koruyan redirect) |
 | 4b çekmece | v0.10.203 | `/api/rollout/detail` (servisler MV'den, health verdict + önce/sonra RED ≤ 6 sa, deploy'dan beri sinyaller), `?rollout=` çekmecesi |
-| 5 KSM + stalled | — | §7 PromQL kabul kapısı operatörde; başlamadı |
+| 4b çekmece (kayıt) | v0.10.204 | 203'ün iki FE kayıt dosyası tag dışında kalmıştı — sağlama düzeltmesi |
+| operatör bulguları | v0.10.205 / 206 | kolon `minWidth` tabanları (fit 48px'e eziyordu); `notePendingExit` — "sürüyor" satırı çıkış histerezisi beklediğini SÖYLER |
+| STS/DS kapsamı | v0.10.211 | MV revizyonu `if(k8s_replicaset != '', k8s_replicaset, container_image_tag)`; WHERE `workload != '' AND revision != ''`; FE Traces pivotu türe göre süzer (`rolloutTracesFilters`) |
+| 5 KSM dilim 1 | **v0.10.212** | `internal/rollout/ksm.go` — `KSMQueries` (§7 adlarıyla birebir) + saf `JoinKSM`/`applyKSM`; `pods_ready_at`, `ksm_not_ready_since` (dayanıklı sayaç), `stalled` YALNIZ KSM'den; kabul kapısı: owner VE (spec\|ready) yoksa nil → spans tek kaynak |
+| giriş kanıt kapısı | **v0.10.213** | operatör prod bulgusu: bootstrap'ta seyrek/batch iş yükü sahte "tamamlandı" aldı → giriş artık KSM tazelik vetosu (RS created ≥6 sa eski = deploy değil) ya da önceki/kardeş revizyon izi ister |
+| 5 stalled kalanı | — | STS/DS readiness ikizleri + erken-tamamlama (KSM teyidiyle 30 dk → ~10 dk) açık |
 
 Araya giren operatör bildirimleri (v0.10.194 CoSRE genel cevap, 195/196 K8s
 kapsama örneklemi + başlıklar) fazları 194-198'den 197-201'e kaydırdı.
 v0.10.202: scanRollout UInt64 düzeltmesi (canlı smoke buldu — tablo boşken
-tüm gate'ler yeşildi). PROD v0.10.202'ye operatörce çekildi (2026-08-30);
-0012 sihirbazı + Enable prod'da operatörde.
+tüm gate'ler yeşildi). PROD v0.10.202'ye operatörce çekildi (2026-08-30),
+sonra v0.10.212'ye (2026-08-31); 0012 sihirbazı + Enable prod'da yapıldı.
+
+**§7 kabul kapısı hakkında (v0.10.212 sonrası dürüst durum):** PromQL
+doğrulama listesi operatörce koşulmadı; onun yerine kapı KODA gömüldü —
+`JoinKSM` owner VE (spec|ready) serisi yoksa `nil` döner (spans tek kaynak,
+`stalled` üretilmez) ve owner > 5000 seri hata verir. Yani Faz 5 "ölçülmeden
+başlamaz" kuralı, ölçümü ÇALIŞMA ZAMANINA taşıyarak korunuyor; §7'nin probe
+bloğu hâlâ yazılmadı ve prod'da hangi RS metriklerinin açık olduğu
+BELGELENMİŞ DEĞİL (koşu satırındaki `ksmMs` yalnız sorgunun koştuğunu söyler,
+serilerin döndüğünü değil).
+
+### 14.2 Modele sonradan giren kurallar (v0.10.206-213)
+
+Aşağıdakiler §14.1'in modelini DEĞİŞTİRİR; oradaki anlatı tek başına
+okunursa bugünkü davranışı yanlış tarif eder.
+
+1. **`notePendingExit` (v0.10.206).** Açık satır, çıkış histerezisi dolarken
+   beklediğini not olarak söyler. Geçici not — karar düşünce silinir; ilk
+   revizyonda (önceki yok) yazılmaz. Operatör algısı düzeltmesi: "rollout
+   bitti ama sürüyor yazıyor".
+2. **Revizyon = RS adı DEĞİL, `RS ?? imaj tag'i` (v0.10.211).** StatefulSet/
+   DaemonSet pod'unda ReplicaSet yoktur; MV revizyonu imaj tag'ine düşer
+   ("deploy = yeni imaj", operatör kararı). Sınırlar: sabit tag'li (latest)
+   STS rollout'u GÖRÜNMEZ; aynı tag'e rollback tek revizyon sayılır; kapsama
+   kapısı hâlâ replicaset-bazlı (STS-ağırlıklı küme kapıyı açamayabilir).
+3. **KSM ikinci kanıt (v0.10.212).** `stalled` yalnız KSM'den
+   (`ready < spec` ≥ `StalledMin`); span sessizliği ASLA status yazmaz.
+   `isOpen` artık `stalled`'ı da açık sayar. `noteStalled` karar
+   SONRASI eklenir — completed'a giden satırda stalled notu kalmaz.
+   Cluster başına hep-ya-da-hiç: sorgu hatası o cluster'ın KSM'ini düşürür
+   ve koşuyu `partial` yapar; ailenin YOKLUĞU hata değildir.
+4. **Giriş kanıt ister (v0.10.213) — §14.1'in "gözlenmiş giriş"
+   tanımına EK koşul.** Gözlenmiş yokluk + eşik geometrisi TEK BAŞINA
+   yetmez, çünkü bir iş yükünün MV tarihindeki İLK gözlemi de aynı şekle
+   sahiptir (prod bootstrap vakası: haftalar önce yaratılmış RS'ler
+   "tamamlandı" satırı aldı). Ek koşul:
+   - KSM'de RS `created` varsa ve girişten ≥ 6 sa eskiyse → **satır yok**;
+   - KSM yoksa/`created` yoksa → önceki revizyon (`prevAt`) YA DA kardeş
+     revizyon izi (pencere kovası, FirstSeen ufku, tablo satırı) şart.
+   Bilinçli kayıp: KSM'siz kümede gerçekten yeni bir servisin İLK deploy'u
+   kaydedilmez. Genel kural: **bir olay iddiası, olayın kendisinden bağımsız
+   bir kanıt ister**; yeni açılan bir veri kaynağı her zaman sahte-olay
+   dalgası riskidir.
 
 ### 14.1 Faz 2 durum makinesi — inceleme sonrası model (v0.10.199)
 

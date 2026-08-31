@@ -53,7 +53,7 @@ func TestRolloutLayerStatementsOrderAndCluster(t *testing.T) {
 	}
 	// MV state tabloyla aynı şekli okur: store.go şablonuyla aynı kolon kümesi
 	mvStmt := stmts[mv]
-	for _, want := range []string{"FROM spans_local", "k8s_replicaset                                                  AS revision", "anyLastSimpleState(container_image_tag)", "service_name,", "WHERE k8s_replicaset != '' AND workload != ''"} {
+	for _, want := range []string{"FROM spans_local", "if(k8s_replicaset != '', k8s_replicaset, container_image_tag)   AS revision", "anyLastSimpleState(container_image_tag)", "service_name,", "WHERE workload != '' AND revision != ''"} {
 		if !strings.Contains(mvStmt, want) {
 			t.Fatalf("0012 MV'de eksik: %s", want)
 		}

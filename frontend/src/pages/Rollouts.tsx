@@ -32,7 +32,7 @@ import { keys, useRollouts, useRolloutStats, useRolloutRuns, useEntityClusters }
 import { RolloutDrawer } from '@/components/RolloutDrawer';
 import { tracesPivotHref } from '@/lib/pivotHref';
 import { entityHref } from '@/lib/entityHref';
-import { rolloutKey, statusTone, statusLabel, rolloutDurationSec, shortRevision, imageDiff, encodeRolloutParam, decodeRolloutParam } from '@/lib/rolloutRow';
+import { rolloutKey, statusTone, statusLabel, rolloutDurationSec, shortRevision, imageDiff, encodeRolloutParam, decodeRolloutParam, rolloutTracesFilters } from '@/lib/rolloutRow';
 import type { WorkloadRollout } from '@/lib/types';
 
 const STATUSES = ['', 'in_progress', 'completed', 'rolled_back', 'superseded', 'stalled'] as const;
@@ -171,7 +171,7 @@ export default function RolloutsPage() {
                       const cname = clusterName(r.clusterId);
                       const tracesHref = tracesPivotHref({
                         window: range, cluster: cname, rootOnly: false,
-                        filters: JSON.stringify([{ k: 'resource.k8s.replicaset.name', op: '=', v: [r.revision] }, { k: 'resource.k8s.namespace.name', op: '=', v: [r.namespace] }]),
+                        filters: JSON.stringify(rolloutTracesFilters(r)),
                       });
                       const wlHref = entityHref({ type: 'workload', id: `wl:${r.clusterId}/${r.namespace}/${r.kind || 'Deployment'}/${r.workload}`, name: r.workload, namespace: r.namespace, clusterId: r.clusterId }, { range });
                       return (

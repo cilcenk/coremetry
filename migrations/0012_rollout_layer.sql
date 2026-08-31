@@ -173,7 +173,9 @@ AS SELECT
   anyLastSimpleState(multiIf(k8s_deployment != '', 'Deployment',
           k8s_statefulset != '', 'StatefulSet',
           k8s_daemonset != '', 'DaemonSet', ''))                   AS workload_kind,
-  k8s_replicaset                                                  AS revision,
+  -- v0.10.211: STS/DS'de ReplicaSet yok; revizyon vekili imaj tag'i
+  -- (deploy = yeni imaj). Sabit tag'li STS rollout'u görünmez.
+  if(k8s_replicaset != '', k8s_replicaset, container_image_tag)   AS revision,
   service_name,
   anyLastSimpleState(container_image)                             AS image,
   anyLastSimpleState(container_image_tag)                         AS image_tag,
@@ -181,7 +183,7 @@ AS SELECT
   minState(time)                                                  AS first_seen_state,
   maxState(time)                                                  AS last_seen_state
 FROM spans_local
-WHERE k8s_replicaset != '' AND workload != ''
+WHERE workload != '' AND revision != ''
 GROUP BY bucket, cluster, k8s_namespace, workload, revision, service_name;
 
 CREATE TABLE IF NOT EXISTS workload_revision_activity_1m ON CLUSTER uptrace_all AS workload_revision_activity_1m_local

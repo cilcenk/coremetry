@@ -104,6 +104,10 @@ TTL toDate(started_at) + INTERVAL %d DAY`, rolloutReconcileRunsTTLDays)
 // bu pencerede aktif revizyonları" ORDER BY önekinden okunur; service_name
 // gün-bir (MV tek atış; verdict → servis eşlemesi buradan); bucket en sonda.
 // image/tag/kind anyLast: aynı kovada aynı revizyon tek imaj/tür taşır —
+// ⚠ v0.10.211 SELECT değişikliği MEVCUT MV'yi kendiliğinden güncellemez:
+// küme kipinde admin rollback+apply (0012 sihirbazı), tek node'da DROP VIEW
+// sonrası boot yeniden kurar. Kapsama kapısı bilinçli replicaset-bazlı
+// kaldı: STS/DS-ağırlıklı bir cluster kapıyı açamayabilir (bilinen sınır).
 // kind GROUP BY'da DEĞİL (inceleme #7: sıralama anahtarı dışındaki düz kolon
 // merge'de rastgele değere çökerdi).
 func workloadRevisionActivityMVDDL() string {
@@ -123,7 +127,10 @@ func workloadRevisionActivityMVDDL() string {
 		   anyLastSimpleState(multiIf(k8s_deployment != '', 'Deployment',
 		           k8s_statefulset != '', 'StatefulSet',
 		           k8s_daemonset != '', 'DaemonSet', ''))                   AS workload_kind,
-		   k8s_replicaset                                                  AS revision,
+		   -- v0.10.211: STS/DS pod'unda ReplicaSet yok; revizyon vekili imaj
+		   -- tag'i (operatör kararı: deploy = yeni imaj). Sabit tag'li (latest)
+		   -- STS rollout'u görünmez; aynı tag'e rollback tek revizyon sayılır.
+		   if(k8s_replicaset != '', k8s_replicaset, container_image_tag)   AS revision,
 		   service_name,
 		   anyLastSimpleState(container_image)                             AS image,
 		   anyLastSimpleState(container_image_tag)                         AS image_tag,
@@ -131,7 +138,7 @@ func workloadRevisionActivityMVDDL() string {
 		   minState(time)                                                  AS first_seen_state,
 		   maxState(time)                                                  AS last_seen_state
 		 FROM spans
-		 WHERE k8s_replicaset != '' AND workload != ''
+		 WHERE workload != '' AND revision != ''
 		 GROUP BY bucket, cluster, k8s_namespace, workload, revision, service_name`,
 		workloadRevisionActivityDays)
 }

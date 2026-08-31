@@ -357,6 +357,13 @@ const (
 	noteStalled = "K8s: hazır replika istenenin altında (KSM)"
 )
 
+// ksmFreshGrace — v0.10.213: RS 'created' girişten bu kadar eskiyse giriş
+// bir ROLLOUT değil, izleme başlangıcıdır (operatör bildirimi: prod
+// bootstrap gününde RS'i haftalar önce yaratılmış servisler "tamamlandı"
+// satırı aldı). 6 sa: yavaş ısınan gerçek rollout'a (image pull, crashloop)
+// bol pay; haftalık batch/bootstrap sahteliğini keser.
+const ksmFreshGrace = 6 * time.Hour
+
 // isOpen — v0.10.212: stalled da AÇIK bir durumdur (Faz 5) — span tarafı
 // çekilme/devralma kararlarını stalled satır üstünde de işletir.
 func isOpen(r Rollout) bool {
@@ -729,6 +736,21 @@ func reconcileKey(cfg Config, lastFull, ws time.Time, k Key, byBucket map[time.T
 			if !ok && lead > cfg.Hysteresis {
 				continue // rampa: giriş değil
 			}
+			// v0.10.213 — giriş bir OLAY İDDİASIDIR; kanıt ister:
+			//   (a) KSM tazelik vetosu: RS 'created' ≥ ksmFreshGrace eskiyse
+			//       deploy değil, izleme başlangıcı → satır yok.
+			//   (b) KSM yoksa / RS bilinmiyorsa: önceki revizyon (p) YA DA
+			//       pencere/ufuk/tabloda KARDEŞ revizyon izi şart. Hiçbiri
+			//       yoksa "ilk gözlem" satır üretmez — gerçekten yeni servisin
+			//       ilk deploy'u taze KSM kanıtıyla satır alır; kanıtsızlık
+			//       sahte "tamamlandı"dan iyidir (2026-08-31 prod olayı).
+			if kr, kok := ksm[rev]; kok && !kr.CreatedAt.IsZero() {
+				if kr.CreatedAt.Before(entryStart.Add(-ksmFreshGrace)) {
+					continue
+				}
+			} else if !ok && !hasSiblingHistory(byBucket, prevRows, firstSeenEver, rev, entryStart) {
+				continue
+			}
 			row = Rollout{ClusterID: k.ClusterID, Namespace: k.Namespace, Workload: k.Workload, Revision: rev, StartedAt: entryStart, DetectedBy: "spans", Status: StatusInProgress, PrevRevision: p}
 			if ok {
 				if prb := byBucket[pb][p]; prb != nil {
@@ -902,6 +924,34 @@ func reconcileKey(cfg Config, lastFull, ws time.Time, k Key, byBucket map[time.T
 		}
 	}
 	return out
+}
+
+// hasSiblingHistory — v0.10.213: iş yükünün BAŞKA bir revizyonu iz bırakmış
+// mı — pencere içinde (entryStart öncesi kovada span), FirstSeen ufkunda ya
+// da tabloda (önceki rollout satırı). İz = bu iş yükü zaten izleniyordu,
+// yeni revizyon gerçek bir geçiş; izsizlik = bootstrap/ilk gözlem.
+func hasSiblingHistory(byBucket map[time.Time]map[string]*revBucket, prevRows map[string][]Rollout, firstSeenEver map[string]time.Time, rev string, entryStart time.Time) bool {
+	for b, m := range byBucket {
+		if !b.Before(entryStart) {
+			continue
+		}
+		for r2, rb := range m {
+			if r2 != rev && rb != nil && rb.spans > 0 {
+				return true
+			}
+		}
+	}
+	for r2, fs := range firstSeenEver {
+		if r2 != rev && !fs.IsZero() && fs.Before(entryStart) {
+			return true
+		}
+	}
+	for r2 := range prevRows {
+		if r2 != rev {
+			return true
+		}
+	}
+	return false
 }
 
 func maxTime(a, b time.Time) time.Time {

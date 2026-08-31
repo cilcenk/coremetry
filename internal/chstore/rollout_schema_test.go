@@ -40,13 +40,13 @@ func TestWorkloadRevisionActivityMVReadsPromotedColumnsOnly(t *testing.T) {
 		"ORDER BY (cluster, k8s_namespace, workload, revision, service_name, bucket)",
 		"SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1",
 		"INTERVAL 7 DAY",
-		"k8s_replicaset                                                  AS revision",
+		"if(k8s_replicaset != '', k8s_replicaset, container_image_tag)   AS revision",
 		"anyLastSimpleState(container_image)",
 		"anyLastSimpleState(container_image_tag)",
 		"countState()",
 		"minState(time)",
 		"maxState(time)",
-		"WHERE k8s_replicaset != '' AND workload != ''",
+		"WHERE workload != '' AND revision != ''",
 		"FROM spans",
 	} {
 		if !strings.Contains(ddl, want) {

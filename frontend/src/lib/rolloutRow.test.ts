@@ -1,6 +1,6 @@
 // rolloutRow.test.ts — v0.10.201 sözleşmesi (rolloutRow.ts başlığı).
 import { describe, it, expect } from 'vitest';
-import { rolloutKey, upsertRollouts, statusTone, rolloutDurationSec, shortRevision, imageDiff } from './rolloutRow';
+import { rolloutKey, upsertRollouts, statusTone, rolloutDurationSec, shortRevision, imageDiff, rolloutTracesFilters } from './rolloutRow';
 import type { WorkloadRollout } from './types';
 
 const base: WorkloadRollout = {
@@ -39,5 +39,27 @@ describe('rolloutRow', () => {
     expect(imageDiff(base)).toBe('release.1 → release.2');
     expect(imageDiff({ imageTag: 'r1', prevImageTag: 'r1' })).toBe('r1');
     expect(imageDiff({ imageTag: '', prevImageTag: '' })).toBe('—');
+  });
+});
+
+// v0.10.211 — STS/DS revizyonu imaj tag'idir: replicaset filtresi yerine
+// workload + imaj tag'i. Deployment eski sözleşmede kalır.
+describe('rolloutTracesFilters', () => {
+  it('Deployment → replicaset + namespace', () => {
+    const f = rolloutTracesFilters({ kind: 'Deployment', namespace: 'demo', workload: 'api', revision: 'api-7fb7dffckb' });
+    expect(f).toEqual([
+      { k: 'resource.k8s.replicaset.name', op: '=', v: ['api-7fb7dffckb'] },
+      { k: 'resource.k8s.namespace.name', op: '=', v: ['demo'] },
+    ]);
+  });
+  it('StatefulSet/DaemonSet → workload + imaj tag + namespace', () => {
+    const f = rolloutTracesFilters({ kind: 'StatefulSet', namespace: 'db', workload: 'pg', revision: 'release.20260807.1' });
+    expect(f[0]).toEqual({ k: 'resource.k8s.statefulset.name', op: '=', v: ['pg'] });
+    expect(f[1]).toEqual({ k: 'resource.container.image.tag', op: '=', v: ['release.20260807.1'] });
+    const d = rolloutTracesFilters({ kind: 'DaemonSet', namespace: 'sys', workload: 'agent', revision: 't2' });
+    expect(d[0].k).toBe('resource.k8s.daemonset.name');
+  });
+  it("bilinmeyen/boş tür Deployment gibi davranır (eski satırlar)", () => {
+    expect(rolloutTracesFilters({ kind: '', namespace: 'n', workload: 'w', revision: 'w-abc' })[0].k).toBe('resource.k8s.replicaset.name');
   });
 });

@@ -52,6 +52,18 @@ export function rolloutDurationSec(r: Pick<WorkloadRollout, 'startedAt' | 'compl
   return Math.max(0, Math.round((end - r.startedAt) / 1000));
 }
 
+/** v0.10.211 — Traces pivot filtreleri TÜRE göre: Deployment'ta revizyon bir
+ * ReplicaSet adıdır; STS/DS'de revizyon imaj TAG'idir (MV vekili), replicaset
+ * filtresi hiçbir span'e denk gelmezdi — workload adı + imaj tag'iyle süz. */
+export function rolloutTracesFilters(r: Pick<WorkloadRollout, 'kind' | 'namespace' | 'workload' | 'revision'>): { k: string; op: string; v: string[] }[] {
+  const ns = { k: 'resource.k8s.namespace.name', op: '=', v: [r.namespace] };
+  if (r.kind === 'StatefulSet' || r.kind === 'DaemonSet') {
+    const kindKey = r.kind === 'StatefulSet' ? 'resource.k8s.statefulset.name' : 'resource.k8s.daemonset.name';
+    return [{ k: kindKey, op: '=', v: [r.workload] }, { k: 'resource.container.image.tag', op: '=', v: [r.revision] }, ns];
+  }
+  return [{ k: 'resource.k8s.replicaset.name', op: '=', v: [r.revision] }, ns];
+}
+
 /** `<workload>-<hash>` → `<hash>`; önek yoksa olduğu gibi. */
 export function shortRevision(revision: string, workload: string): string {
   if (workload && revision.startsWith(workload + '-')) return revision.slice(workload.length + 1);

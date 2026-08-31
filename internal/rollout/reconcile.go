@@ -357,12 +357,18 @@ const (
 	noteStalled = "K8s: hazır replika istenenin altında (KSM)"
 )
 
-// ksmFreshGrace — v0.10.213: RS 'created' girişten bu kadar eskiyse giriş
-// bir ROLLOUT değil, izleme başlangıcıdır (operatör bildirimi: prod
-// bootstrap gününde RS'i haftalar önce yaratılmış servisler "tamamlandı"
-// satırı aldı). 6 sa: yavaş ısınan gerçek rollout'a (image pull, crashloop)
-// bol pay; haftalık batch/bootstrap sahteliğini keser.
-const ksmFreshGrace = 6 * time.Hour
+// ksmFreshGrace — SPAN KANITI YOKKEN kullanılan tek kanıt: RS'in taze
+// yaratılmış olması. Pencere "trafik RS yaratılmasından ne kadar geç
+// gelebilir" sorusunu yanıtlar — deploy hızını değil İŞ TAKVİMİNİ ölçer:
+// sabah 07:00 deploy edilen gecelik import'un ilk trafiği 23:50'de gelir.
+// v0.10.213'teki 6 sa bu sınıfı kesiyordu (inceleme bulgusu); 24 sa gerçek
+// gecikmeli deploy'ları kurtarır ve bootstrap sahteliğini (RS yaşı gün/hafta
+// mertebesinde) kesmeye devam eder.
+//
+// KALAN SINIR (bilinçli): cadence'i hem 6 g FirstSeen ufkundan hem bu
+// pencereden uzun olan iş yükleri (aylık mutabakat) kanıtsız kalır ve satır
+// almaz — span'lerden "ilk gözlem" ile "deploy" ayırt EDİLEMEZ.
+const ksmFreshGrace = 24 * time.Hour
 
 // isOpen — v0.10.212: stalled da AÇIK bir durumdur (Faz 5) — span tarafı
 // çekilme/devralma kararlarını stalled satır üstünde de işletir.
@@ -736,20 +742,27 @@ func reconcileKey(cfg Config, lastFull, ws time.Time, k Key, byBucket map[time.T
 			if !ok && lead > cfg.Hysteresis {
 				continue // rampa: giriş değil
 			}
-			// v0.10.213 — giriş bir OLAY İDDİASIDIR; kanıt ister:
-			//   (a) KSM tazelik vetosu: RS 'created' ≥ ksmFreshGrace eskiyse
-			//       deploy değil, izleme başlangıcı → satır yok.
-			//   (b) KSM yoksa / RS bilinmiyorsa: önceki revizyon (p) YA DA
-			//       pencere/ufuk/tabloda KARDEŞ revizyon izi şart. Hiçbiri
-			//       yoksa "ilk gözlem" satır üretmez — gerçekten yeni servisin
-			//       ilk deploy'u taze KSM kanıtıyla satır alır; kanıtsızlık
-			//       sahte "tamamlandı"dan iyidir (2026-08-31 prod olayı).
-			if kr, kok := ksm[rev]; kok && !kr.CreatedAt.IsZero() {
-				if kr.CreatedAt.Before(entryStart.Add(-ksmFreshGrace)) {
+			// v0.10.213 (+215 düzeltmesi) — giriş bir OLAY İDDİASIDIR; kanıt
+			// ister. Kanıtlar SIRALI DEĞİL ÖNCELİKLİDİR:
+			//   1) SPAN TARAFINDA GÖZLENMİŞ GEÇİŞ — önceki revizyon girişte
+			//      aktif (prevAt) ya da kardeş revizyon izi (pencere kovası /
+			//      FirstSeen ufku / entryStart'tan ÖNCE başlamış tablo satırı).
+			//      Bu en güçlü kanıttır ve KSM damgasıyla EZİLEMEZ.
+			//   2) Span kanıtı yoksa tek kanıt RS'in TAZE yaratılmış olmasıdır
+			//      (ksmFreshGrace); o da yoksa satır ÜRETİLMEZ — "ilk gözlem"
+			//      sahte "tamamlandı" üretemez (2026-08-31 prod olayı).
+			//
+			// v0.10.213'te (2) bir VETO idi ve (1)'i eziyordu: Kubernetes
+			// `rollout undo` MEVCUT RS'i yeniden ölçekler (created haftalar
+			// önce) ve blue/green'de RS trafikten saatler önce doğar — yani
+			// en kanıtlı geçişler yutuluyordu; üstelik eski satır "devraldı"
+			// notuyla kapanıp yeni revizyona hiç satır yazılmıyordu (yarım
+			// kayıt). Çok-mercekli inceleme bunu çalıştırarak kanıtladı.
+			if !ok && !hasSiblingHistory(byBucket, prevRows, firstSeenEver, rev, entryStart) {
+				kr, kok := ksm[rev]
+				if !kok || kr.CreatedAt.IsZero() || kr.CreatedAt.Before(entryStart.Add(-ksmFreshGrace)) {
 					continue
 				}
-			} else if !ok && !hasSiblingHistory(byBucket, prevRows, firstSeenEver, rev, entryStart) {
-				continue
 			}
 			row = Rollout{ClusterID: k.ClusterID, Namespace: k.Namespace, Workload: k.Workload, Revision: rev, StartedAt: entryStart, DetectedBy: "spans", Status: StatusInProgress, PrevRevision: p}
 			if ok {
@@ -946,9 +959,18 @@ func hasSiblingHistory(byBucket map[time.Time]map[string]*revBucket, prevRows ma
 			return true
 		}
 	}
-	for r2 := range prevRows {
-		if r2 != rev {
-			return true
+	// v0.10.215 — tablo ayağı ZAMAN SINIRLI olmalı: entryStart'tan SONRA
+	// yazılmış bir kardeş satır "iz" sayılırsa, bir tik önce kanıtsız diye
+	// reddedilen giriş bir sonraki tikte GERİYE DÖNÜK meşrulaşır (sahte satır
+	// kendini besler — inceleme bulgusu, kopyada koşturularak kanıtlandı).
+	for r2, rows := range prevRows {
+		if r2 == rev {
+			continue
+		}
+		for _, pr := range rows {
+			if pr.StartedAt.Before(entryStart) {
+				return true
+			}
 		}
 	}
 	return false

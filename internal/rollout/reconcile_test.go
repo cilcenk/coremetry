@@ -363,9 +363,15 @@ func TestReconcile_FirstDeployOfNewWorkload(t *testing.T) {
 	if len(out) != 1 || !out[0].StartedAt.Equal(b(4)) || out[0].Status != StatusCompleted || out[0].PrevRevision != "" {
 		t.Fatalf("taze KSM ile ilk deploy tek satır (b4, completed): %+v", out)
 	}
-	// KSM eski (RS haftalar önce yaratılmış; prod 2026-08-31 vakası) → veto
-	if out := withKSM(b(4).Add(-24 * time.Hour)); len(out) != 0 {
-		t.Fatalf("eski RS'li giriş vetolanmalı: %+v", out)
+	// KSM eski (RS haftalar önce yaratılmış; prod 2026-08-31 vakası: Jul 11
+	// tarihli RS) → span kanıtı da yok → satır YOK.
+	if out := withKSM(b(4).Add(-30 * 24 * time.Hour)); len(out) != 0 {
+		t.Fatalf("eski RS'li kanıtsız giriş satır üretmemeli: %+v", out)
+	}
+	// v0.10.215 sınırı: pencere 24 sa — gecikmeli trafik (sabah deploy, gece
+	// koşan batch) hâlâ GERÇEK deploy sayılır, kesilmez.
+	if out := withKSM(b(4).Add(-16 * time.Hour)); len(out) != 1 {
+		t.Fatalf("16 sa gecikmeli gerçek deploy kaydedilmeli: %+v", out)
 	}
 	// aynı revizyon 7 g ufkunda biliniyorsa (gece sonrası scale-up) → satır yok
 	if out := reconSeen(cfg, b(21), nil, span("api-v1", 4, 20, 100), map[string]time.Time{"api-v1": b(-200)}); len(out) != 0 {
@@ -1046,5 +1052,72 @@ func TestReconcile_SparseWorkloadBootstrapProducesNoEvent(t *testing.T) {
 	inReal := Input{Now: b(33), WindowStart: b(-10), Acts: real, DataStart: dataStart}
 	if out := Reconcile(cfg, inReal); find(out, "api-v1") == nil {
 		t.Fatalf("gerçek geçiş kaydedilmeli: %+v", out)
+	}
+}
+
+// v0.10.215 — v0.10.213 giriş kapısının çok-mercekli incelemesi ÜÇ gerçek
+// gerileme buldu (hepsi çalıştırılarak kanıtlandı). Bu test ikisini pinler;
+// üçüncüsü (gecikmeli trafik) FirstDeployOfNewWorkload'daki 16 sa iddiası.
+//
+// (A) Veto ÖNCELİKLİYDİ: KSM'de created varsa prevAt/kardeş kanıtı hiç
+//
+//	bakılmıyordu. Kubernetes `rollout undo` MEVCUT RS'i yeniden ölçekler
+//	(created haftalar önce) → en kanıtlı geçiş yutuluyordu; üstelik eski
+//	satır "devraldı/geri alındı" notuyla kapanıp yeni revizyona satır
+//	yazılmıyordu (yarım kayıt: tabloda olmayan revizyona atıf).
+func TestReconcile_SpanEvidenceBeatsStaleKSMStamp(t *testing.T) {
+	cfg := DefaultConfig()
+	key := Key{ClusterID: "c1", Namespace: "pay", Workload: "api"}
+	// api-b çalışıyor, sonra api-a'ya DÖNÜLÜYOR (rollout undo → RS yeniden
+	// kullanıldı, created 50 gün önce).
+	acts := append(span("api-b", -10, 20, 900), span("api-a", 21, 40, 900)...)
+	in := Input{Now: b(45), WindowStart: b(-10), Acts: acts,
+		DataStart: map[string]time.Time{"c1": b(-200)},
+		KSM: map[Key]map[string]KSMRev{key: {
+			"api-a": {Spec: 3, Ready: 3, CreatedAt: b(0).Add(-50 * 24 * time.Hour)},
+		}}}
+	r := find(Reconcile(cfg, in), "api-a")
+	if r == nil {
+		t.Fatal("bayat RS damgası GÖZLENMİŞ devralmayı ezmemeli — dönüş satırı yazılmalı")
+	}
+	if r.PrevRevision != "api-b" {
+		t.Fatalf("dönüş satırı önceki revizyonu taşımalı: %+v", r)
+	}
+	// Kanıt yokken damga hâlâ ısırır: aynı bayat RS, kardeşsiz/prev'siz profil.
+	lone := Input{Now: b(45), WindowStart: b(-10), Acts: span("api-a", 21, 40, 900),
+		DataStart: map[string]time.Time{"c1": b(-200)},
+		FirstSeen: map[Key]map[string]time.Time{key: {"api-a": b(21)}},
+		KSM: map[Key]map[string]KSMRev{key: {
+			"api-a": {Spec: 3, Ready: 3, CreatedAt: b(0).Add(-50 * 24 * time.Hour)},
+		}}}
+	if out := Reconcile(cfg, lone); len(out) != 0 {
+		t.Fatalf("kanıtsız + bayat RS: satır olmamalı: %+v", out)
+	}
+}
+
+// (B) hasSiblingHistory'nin TABLO ayağı zamansızdı: bir tik önce kanıtsız
+//
+//	diye reddedilen giriş, aynı pencerede yazılan GERÇEK deploy satırı
+//	sayesinde bir sonraki tikte GERİYE DÖNÜK meşrulaşıyordu (sahte satır
+//	kendini besler; bootstrap gözlem anını started_at diye iddia eder).
+func TestReconcile_TableEvidenceIsTimeBounded(t *testing.T) {
+	cfg := DefaultConfig()
+	key := Key{ClusterID: "c1", Namespace: "pay", Workload: "api"}
+	acts := append(span("rs-old", 10, 14, 900), span("rs-new", 30, 45, 900)...)
+	in := Input{Now: b(46), WindowStart: b(-10), Acts: acts,
+		DataStart: map[string]time.Time{"c1": b(-200)},
+		FirstSeen: map[Key]map[string]time.Time{key: {"rs-old": b(10), "rs-new": b(30)}}}
+	tick1 := Reconcile(cfg, in)
+	if find(tick1, "rs-new") == nil {
+		t.Fatalf("tik1: gerçek deploy kaydedilmeli: %+v", tick1)
+	}
+	if find(tick1, "rs-old") != nil {
+		t.Fatalf("tik1: bootstrap ilk gözlemi satır almamalı: %+v", tick1)
+	}
+	in2 := in
+	in2.Now = b(47)
+	in2.Prev = tick1
+	if r := find(Reconcile(cfg, in2), "rs-old"); r != nil {
+		t.Fatalf("tik2: reddedilen giriş geriye dönük meşrulaşmamalı: %+v", r)
 	}
 }

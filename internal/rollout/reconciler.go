@@ -154,6 +154,7 @@ type Reconciler struct {
 	// lastStatus — ok→partial/failed geçişinde tek log (her tikte değil).
 	lastStatus atomic.Pointer[string]
 	now        func() time.Time // testte sabitlenir
+	ksm        KSMSource        // Faz 5 (v0.10.212): nil = KSM ayağı kapalı
 }
 
 func New(store Store, clusters ClusterSource, resolved func() Resolved) *Reconciler {
@@ -162,6 +163,9 @@ func New(store Store, clusters ClusterSource, resolved func() Resolved) *Reconci
 }
 
 func (r *Reconciler) SetLeaderCheck(f func() bool) { r.leader = f }
+
+// SetKSMSource — Faz 5 (v0.10.212): Thanos KSM adaptörü (nil = ayak kapalı).
+func (r *Reconciler) SetKSMSource(s KSMSource) { r.ksm = s }
 
 // LastRun — son tikin KOPYASI (canlı işaretçi dışarı sızmaz).
 func (r *Reconciler) LastRun() (Run, bool) {
@@ -351,7 +355,29 @@ func (r *Reconciler) tick(parent, ctx context.Context, cfg Resolved) {
 		run.Error = appendNote(run.Error, "etkinlik tavanı: "+cut+" ve sonrası bu tikte atlandı")
 	}
 	firstSeen, dataStart := MapFirstSeen(seen, refs)
-	changed := Reconcile(cfg.Config(), Input{Now: now, WindowStart: windowStart, Prev: prev, Acts: acts, FirstSeen: firstSeen, DataStart: dataStart, Truncated: cut != ""})
+	// Faz 5 (v0.10.212): KSM ikinci kanıt — cluster başına hep-ya-da-hiç
+	// (audit §16.3): sorgu hatası o cluster'ın KSM'ini bu tikte düşürür ve
+	// koşu partial olur; aile yokluğu (nil) hata DEĞİL (spans tek kaynak).
+	var ksm map[Key]map[string]KSMRev
+	if r.ksm != nil {
+		t1 := r.now()
+		for _, ref := range refs {
+			m, err := r.ksm.FetchKSM(ctx, ref)
+			if err != nil {
+				run.Status = RunPartial
+				run.Error = appendNote(run.Error, "ksm "+ref.Name+": "+err.Error())
+				continue
+			}
+			for k, v := range m {
+				if ksm == nil {
+					ksm = map[Key]map[string]KSMRev{}
+				}
+				ksm[k] = v
+			}
+		}
+		run.KSMMs = int(r.now().Sub(t1) / time.Millisecond)
+	}
+	changed := Reconcile(cfg.Config(), Input{Now: now, WindowStart: windowStart, Prev: prev, Acts: acts, FirstSeen: firstSeen, DataStart: dataStart, Truncated: cut != "", KSM: ksm})
 	if len(changed) == 0 {
 		return
 	}

@@ -125,6 +125,7 @@ type Config struct {
 	ExitHysteresis int           // ÇIKIŞ: "çekildi" için ardışık inaktif kova (6 = 30 dk)
 	OverlapMax     time.Duration // bu süreden uzun çakışma → çok-revizyonlu notu (30 dk)
 	WeakSignal     bool          // zayıf sinyal notu (varsayılan açık)
+	StalledMin     time.Duration // KSM: ready < istenen bu süreden uzun → stalled (0 = kapalı)
 }
 
 func DefaultConfig() Config {
@@ -160,6 +161,10 @@ type Input struct {
 	// Truncated — etkinlik okuması tavana takıldı: etkinliği görünmeyen iş
 	// yükleri için "yokluk" kanıt DEĞİLDİR (bayat satır notu atlanır).
 	Truncated bool
+	// KSM — Faz 5 (v0.10.212): Thanos/kube-state-metrics RS anlık görüntüsü
+	// (Key → revizyon(RS adı) → KSMRev). nil/eksik anahtar = aile yok →
+	// spans tek kaynak, stalled üretilmez (audit §7 kabulü).
+	KSM map[Key]map[string]KSMRev
 }
 
 // AlignBucket — EPOCH hizalı kova başı: CH `toStartOfInterval` ile aynı ızgara.
@@ -266,7 +271,7 @@ func Reconcile(cfg Config, in Input) []Rollout {
 		ws = AlignBucket(in.WindowStart, cfg.Bucket)
 	}
 	for _, k := range keys {
-		out = append(out, reconcileKey(cfg, lastFull, ws, k, byKey[k], prevBy[k], in.FirstSeen[k], in.DataStart[k.ClusterID], in.Truncated)...)
+		out = append(out, reconcileKey(cfg, lastFull, ws, k, byKey[k], prevBy[k], in.FirstSeen[k], in.DataStart[k.ClusterID], in.Truncated, in.KSM[k])...)
 	}
 	// Kalıcı satırla birebir aynı olan çıktı yazılmaz (aynı revizyonun ikinci
 	// koşusu çağrı-içi kopyaya karşı diff alıp bayt-aynı satırı yeniden
@@ -347,11 +352,18 @@ const (
 	// sessizlik ister; bekleyiş satırda okunmuyordu ve "bitti ama sürüyor
 	// yazıyor" algısı üretiyordu. Geçici not — karar düşünce silinir.
 	notePendingExit = "eski revizyonun sessizliği gözleniyor — tamamlandı kararı çıkış histerezisini bekliyor"
+	// v0.10.212 — Faz 5: yalnız KSM kanıtıyla (ready < istenen ≥ StalledMin).
+	// Span sessizliği stalled ÜRETMEZ (audit madde 7: üç kez yaşandı).
+	noteStalled = "K8s: hazır replika istenenin altında (KSM)"
 )
 
-func isOpen(r Rollout) bool { return r.CompletedAt.IsZero() && r.Status == StatusInProgress }
+// isOpen — v0.10.212: stalled da AÇIK bir durumdur (Faz 5) — span tarafı
+// çekilme/devralma kararlarını stalled satır üstünde de işletir.
+func isOpen(r Rollout) bool {
+	return r.CompletedAt.IsZero() && (r.Status == StatusInProgress || r.Status == StatusStalled)
+}
 
-func reconcileKey(cfg Config, lastFull, ws time.Time, k Key, byBucket map[time.Time]map[string]*revBucket, prevRows map[string][]Rollout, firstSeenEver map[string]time.Time, dataStart time.Time, truncated bool) []Rollout {
+func reconcileKey(cfg Config, lastFull, ws time.Time, k Key, byBucket map[time.Time]map[string]*revBucket, prevRows map[string][]Rollout, firstSeenEver map[string]time.Time, dataStart time.Time, truncated bool, ksm map[string]KSMRev) []Rollout {
 	B := cfg.Bucket
 	exitSpan := time.Duration(cfg.ExitHysteresis) * B
 	buckets := make([]time.Time, 0, len(byBucket))
@@ -762,6 +774,10 @@ func reconcileKey(cfg Config, lastFull, ws time.Time, k Key, byBucket map[time.T
 			row.Note = stripNote(row.Note, noteWeakSignal)
 			row.Note = stripNote(row.Note, noteSteadyState)
 			row.Note = stripNote(row.Note, notePendingExit)
+			row.Note = stripNote(row.Note, noteStalled)
+			if kr, ok := ksm[rev]; ok {
+				applyKSM(cfg, lastFull.Add(B), &row, kr)
+			}
 			withdrawn := !isLast || lastFull.Sub(rn.endAlive) >= exitSpan
 			if withdrawn {
 				decideWithdrawn(&row, rn.endAlive, rn.endAlive.Add(B), lastFull)
@@ -808,6 +824,9 @@ func reconcileKey(cfg Config, lastFull, ws time.Time, k Key, byBucket map[time.T
 				}
 			}
 		}
+		if row.Status == StatusStalled {
+			row.Note = appendNote(row.Note, noteStalled)
+		}
 		if existing == nil || !rolloutEqual(*existing, row) {
 			emit(row)
 		}
@@ -846,7 +865,7 @@ func reconcileKey(cfg Config, lastFull, ws time.Time, k Key, byBucket map[time.T
 			inCall[rev] = append(inCall[rev], last)
 			continue // hâlâ span üretiyor (eşik altı / tek kova): çekilmedi
 		}
-		row.Note = stripNote(stripNote(stripNote(stripNote(row.Note, noteNoTraffic), noteWeakSignal), noteSteadyState), notePendingExit)
+		row.Note = stripNote(stripNote(stripNote(stripNote(stripNote(row.Note, noteNoTraffic), noteWeakSignal), noteSteadyState), notePendingExit), noteStalled)
 		decideWithdrawn(&row, endedAt, endedAt.Add(B), lastFull)
 		if !rolloutEqual(last, row) {
 			emit(row)

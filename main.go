@@ -1056,6 +1056,9 @@ func main() {
 		// KENDİ kilidi (entity bayrağından bağımsız). İlk tik edinimde
 		// (SetOnAcquire), sonrası ayardaki aralıkta; inFlight CAS örtüşmeyi keser.
 		rolloutRec := rollout.New(store, rolloutClusterSource{thanosSvc}, rolloutSettings.Resolved)
+		// Faz 5 (v0.10.212): KSM ikinci kanıt (RS spec/ready/created). Seri
+		// yokluğu sessiz (spans tek kaynak); sorgu hatası cluster-başına partial.
+		rolloutRec.SetKSMSource(rolloutKSMSource{thanosSvc})
 		// Lease = LeaderTTL(1 dk) = 3 dk (entity emsali): failover sınırı tik aralığından bağımsız;
 		// tutucu lease'i yenilediği için uzun tik (5×aralık) lease'i düşürmez,
 		// yazım öncesi liderlik yine yeniden doğrulanır (reconciler.go).
@@ -2030,4 +2033,29 @@ func (r rolloutClusterSource) Clusters() []rollout.ClusterRef {
 		out = append(out, rollout.ClusterRef{ID: c.EffectiveID(), Name: c.Name, SpanClusterValue: c.SpanClusterKey(), SpanClusterValues: c.SpanClusterKeys()})
 	}
 	return out
+}
+
+// rolloutKSMSource — Faz 5 (v0.10.212): rollout.KSMQueries → thanos.
+// InstantSamples; örnekler rollout.JoinKSM saf birleştiricisine (owner +
+// spec/ready kabul kapısı ve seri tavanı orada — audit §7).
+type rolloutKSMSource struct{ svc *thanos.Service }
+
+func (r rolloutKSMSource) FetchKSM(ctx context.Context, ref rollout.ClusterRef) (map[rollout.Key]map[string]rollout.KSMRev, error) {
+	cfg, ok := r.svc.ClusterByID(ref.ID)
+	if !ok {
+		return nil, fmt.Errorf("cluster %s registry'de yok/kapalı", ref.ID)
+	}
+	sets := map[string][]rollout.KSMSample{}
+	for name, q := range rollout.KSMQueries() {
+		raw, err := r.svc.InstantSamples(ctx, cfg, q)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		conv := make([]rollout.KSMSample, len(raw))
+		for i, s := range raw {
+			conv[i] = rollout.KSMSample{Labels: s.Labels, Value: s.Value}
+		}
+		sets[name] = conv
+	}
+	return rollout.JoinKSM(ref.ID, sets)
 }

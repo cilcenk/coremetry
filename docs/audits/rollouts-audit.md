@@ -483,7 +483,8 @@ Kapsam dışı (bu audit'e girmedi): cross-cluster servis haritası; STS/DS içi
 | operatör bulguları | v0.10.205 / 206 | kolon `minWidth` tabanları (fit 48px'e eziyordu); `notePendingExit` — "sürüyor" satırı çıkış histerezisi beklediğini SÖYLER |
 | STS/DS kapsamı | v0.10.211 | MV revizyonu `if(k8s_replicaset != '', k8s_replicaset, container_image_tag)`; WHERE `workload != '' AND revision != ''`; FE Traces pivotu türe göre süzer (`rolloutTracesFilters`) |
 | 5 KSM dilim 1 | **v0.10.212** | `internal/rollout/ksm.go` — `KSMQueries` (§7 adlarıyla birebir) + saf `JoinKSM`/`applyKSM`; `pods_ready_at`, `ksm_not_ready_since` (dayanıklı sayaç), `stalled` YALNIZ KSM'den; kabul kapısı: owner VE (spec\|ready) yoksa nil → spans tek kaynak |
-| giriş kanıt kapısı | **v0.10.213** | operatör prod bulgusu: bootstrap'ta seyrek/batch iş yükü sahte "tamamlandı" aldı → giriş artık KSM tazelik vetosu (RS created ≥6 sa eski = deploy değil) ya da önceki/kardeş revizyon izi ister |
+| giriş kanıt kapısı | **v0.10.213** | operatör prod bulgusu: bootstrap'ta seyrek/batch iş yükü sahte "tamamlandı" aldı → giriş artık kanıt ister |
+| kapı düzeltmesi | **v0.10.215** | 213'ün çok-mercekli incelemesi (9 doğrulanmış bulgu) üç gerileme buldu: KSM vetosu span kanıtını EZİYORDU (rollout undo / blue-green yutuluyordu), tablo ayağı ZAMANSIZDI (sahte satır bir tik sonra geriye dönük yazılıyordu), 6 sa penceresi RS yaşını ölçtüğü için gecikmeli batch deploy'ları kesiyordu → kanıt önceliği (span > KSM), zaman sınırlı tablo ayağı, pencere 24 sa |
 | 5 stalled kalanı | — | STS/DS readiness ikizleri + erken-tamamlama (KSM teyidiyle 30 dk → ~10 dk) açık |
 
 Araya giren operatör bildirimleri (v0.10.194 CoSRE genel cevap, 195/196 K8s
@@ -521,18 +522,39 @@ okunursa bugünkü davranışı yanlış tarif eder.
    SONRASI eklenir — completed'a giden satırda stalled notu kalmaz.
    Cluster başına hep-ya-da-hiç: sorgu hatası o cluster'ın KSM'ini düşürür
    ve koşuyu `partial` yapar; ailenin YOKLUĞU hata değildir.
-4. **Giriş kanıt ister (v0.10.213) — §14.1'in "gözlenmiş giriş"
-   tanımına EK koşul.** Gözlenmiş yokluk + eşik geometrisi TEK BAŞINA
-   yetmez, çünkü bir iş yükünün MV tarihindeki İLK gözlemi de aynı şekle
-   sahiptir (prod bootstrap vakası: haftalar önce yaratılmış RS'ler
-   "tamamlandı" satırı aldı). Ek koşul:
-   - KSM'de RS `created` varsa ve girişten ≥ 6 sa eskiyse → **satır yok**;
-   - KSM yoksa/`created` yoksa → önceki revizyon (`prevAt`) YA DA kardeş
-     revizyon izi (pencere kovası, FirstSeen ufku, tablo satırı) şart.
-   Bilinçli kayıp: KSM'siz kümede gerçekten yeni bir servisin İLK deploy'u
-   kaydedilmez. Genel kural: **bir olay iddiası, olayın kendisinden bağımsız
-   bir kanıt ister**; yeni açılan bir veri kaynağı her zaman sahte-olay
-   dalgası riskidir.
+4. **Giriş kanıt ister (v0.10.213, yapısı v0.10.215'te düzeltildi) —
+   §14.1'in "gözlenmiş giriş" tanımına EK koşul.** Gözlenmiş yokluk + eşik
+   geometrisi TEK BAŞINA yetmez, çünkü bir iş yükünün MV tarihindeki İLK
+   gözlemi de aynı şekle sahiptir (prod vakası: haftalar önce yaratılmış
+   RS'ler "tamamlandı" satırı aldı). Kanıtlar **sıralı değil ÖNCELİKLİ**:
+   - **(1) Span tarafında gözlenmiş geçiş** — önceki revizyon girişte aktif
+     (`prevAt`) ya da kardeş revizyon izi: pencere kovası, FirstSeen ufku,
+     **entryStart'tan ÖNCE başlamış** tablo satırı. En güçlü kanıt; KSM
+     damgasıyla EZİLEMEZ.
+   - **(2) Span kanıtı yoksa** tek kanıt RS'in taze yaratılmış olmasıdır
+     (`ksmFreshGrace`, 24 sa); o da yoksa satır üretilmez.
+
+   **v0.10.213'ün üç hatası (inceleme, hepsi çalıştırılarak kanıtlandı):**
+   (a) KSM tazelik kontrolü VETO olarak yazılmıştı ve (1)'i eziyordu —
+   Kubernetes `rollout undo` MEVCUT RS'i yeniden ölçekler (`created`
+   haftalar önce) ve blue/green'de RS trafikten saatler önce doğar, yani en
+   kanıtlı geçişler yutuluyordu; üstelik eski satır "devraldı" notuyla
+   kapanıp yeni revizyona satır yazılmıyordu (**yarım kayıt**: tabloda
+   olmayan revizyona atıf). (b) Tablo ayağı zamansızdı: reddedilen giriş bir
+   tik sonra, aynı pencerede yazılan gerçek deploy satırı sayesinde geriye
+   dönük meşrulaşıyordu. (c) 6 sa penceresi trafiği değil RS YAŞINI ölçtüğü
+   için sabah deploy edilip gece koşan batch'lerin gerçek deploy'ları kalıcı
+   olarak kayboluyordu.
+
+   **Kalan sınır (bilinçli):** cadence'i hem 6 g FirstSeen ufkundan hem 24 sa
+   penceresinden uzun olan iş yükleri (aylık mutabakat) kanıtsız kalır ve
+   satır almaz — span'lerden "ilk gözlem" ile "deploy" ayırt EDİLEMEZ.
+
+   Genel kural: **bir olay iddiası, olayın kendisinden bağımsız bir kanıt
+   ister** — ve kanıtlar arasında öncelik varsa zayıf olan güçlüyü VETO
+   EDEMEZ. Yeni açılan bir veri kaynağı her zaman sahte-olay dalgası
+   riskidir; onu kesmek için konan kapı da kendi yanlış-negatif sınıfını
+   doğurur, ikisi ayrı ayrı ölçülmeli.
 
 ### 14.1 Faz 2 durum makinesi — inceleme sonrası model (v0.10.199)
 

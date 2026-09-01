@@ -194,6 +194,11 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// v0.10.40 — SAF telemetri: tek FROM'u ham `spans`, örneklemeli.
 		// Kapsama kartıyla aynı sınıf, aynı havuz.
 		"pod_inventory.go": true,
+		// v0.10.223 — SAF telemetri: tek FROM'u metric_points (`ext:` önekli
+		// Influx dış serileri; state tablosu DEĞİL). Kaynak ayar blobu
+		// (system_settings) influx.go'da AYRI tutuldu ki bu kapı dosya
+		// bazında kalsın; ana bağlantı orada.
+		"influx_status.go": true,
 		// TAŞINMAZ ÜÇÜNCÜ SINIF: sysstats.go + cluster.go system.* okuyor.
 		// Bunlar NODE-LOKAL tablolar; RoundRobin'e verilirse disk/utilizasyon
 		// panelleri her çağrıda BAŞKA node'u raporlar (SQL konsolunun in-order

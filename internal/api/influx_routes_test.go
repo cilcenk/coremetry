@@ -27,6 +27,7 @@ func TestInfluxRoutes_NilService503(t *testing.T) {
 		{"GET", "/api/settings/influx", s.getInfluxSettings},
 		{"PUT", "/api/settings/influx", s.putInfluxSettings},
 		{"POST", "/api/settings/influx/test", s.testInfluxSource},
+		{"GET", "/api/influx/status", s.getInfluxStatus},
 	} {
 		rec := httptest.NewRecorder()
 		c.h(rec, httptest.NewRequest(c.method, c.path, strings.NewReader(`{}`)))

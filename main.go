@@ -1008,6 +1008,16 @@ func main() {
 		log.Printf("[thanos] label checks load: %v", err)
 	}
 	go thanosSvc.StartLabelCheckRefresh(ctx, store, 30*time.Second)
+	// v0.10.222 — InfluxDB 2.x dış metrik kaynakları (audit:
+	// docs/audit/influx-integration.md). Ayar blobu HER rolde (api pod
+	// Settings'i servis eder, worker poll'lar); poller (v0.10.223) yalnız
+	// worker lideri (cache.LeaderHolder "influx-poller").
+	influxSvc := influx.New()
+	if err := influxSvc.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[influx] load persisted config: %v", err)
+	}
+	go influxSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	var influxWorker *influx.Worker
 	// v0.10.129 — K8s entity katmanı: bayrak + vidalar her modda (uçlar
 	// okur), Thanos senkronizasyonu yalnız worker rolünde ve liderde
 	// (cache.LeaderHolder "entity-sync"). Bayrak kapalıyken Tick no-op.
@@ -1031,6 +1041,14 @@ func main() {
 		entityLeader.SetOnAcquire(func() { entitySyncer.Tick(ctx) })
 		entityLeader.Start(ctx)
 		go entitySyncer.Run(ctx, entityLeader.IsLeader)
+		// v0.10.223 — Influx poll işçisi (audit §5): yalnız worker lideri.
+		// LeaderTTL(30 s) = 90 s kira / 30 s yenileme; liderlik alınır alınmaz
+		// ilk tik (v0.9.730 dersi), sonra 5 s granülde kaynak aralığı.
+		influxWorker = influx.NewWorker(influxSvc, store)
+		influxLeader := cache.NewLeaderHolder(lockImpl, "influx-poller", cache.LeaderTTL(30*time.Second))
+		influxLeader.SetOnAcquire(func() { influxWorker.Tick(ctx) })
+		influxLeader.Start(ctx)
+		go influxWorker.Run(ctx, influxLeader.IsLeader)
 		// v0.10.140 — Thanos etiketi periyodik doğrulama (auto eşleme
 		// brief'i): 10 dk'da bir, yalnız lider; sonuç bellekte, Settings
 		// rozetinde ilan edilir. Entity bayrağından BAĞIMSIZ.
@@ -1078,15 +1096,6 @@ func main() {
 		log.Printf("[vmetrics] load persisted config: %v", err)
 	}
 	go vmSvc.StartConfigRefresh(ctx, store, 30*time.Second)
-	// v0.10.222 — InfluxDB 2.x dış metrik kaynakları (audit:
-	// docs/audit/influx-integration.md). Ayar blobu HER rolde (api pod
-	// Settings'i servis eder, worker poll'lar); poller D2'de, yalnız
-	// worker lideri (cache.LeaderHolder "influx-poller").
-	influxSvc := influx.New()
-	if err := influxSvc.LoadPersisted(ctx, store); err != nil {
-		log.Printf("[influx] load persisted config: %v", err)
-	}
-	go influxSvc.StartConfigRefresh(ctx, store, 30*time.Second)
 	// v0.9.1213 — JVM GC alarmlarının VM dönüşü: evaluator GC çiftini
 	// YALNIZ vmetrics yapılandırılmışken, VM'den okuyarak değerlendirir
 	// (SetLogs geç-bağlama emsali; runtime_vm.go başlığı).
@@ -1288,7 +1297,8 @@ func main() {
 		srv.StartRolloutTail(ctx) // v0.10.200 — pod-yerel SSE tail (audit §3 T); yalnız api
 	}
 	srv.SetVMetrics(vmSvc)
-	srv.SetInflux(influxSvc) // v0.10.222
+	srv.SetInflux(influxSvc)       // v0.10.222
+	srv.SetInfluxWorker(influxWorker) // v0.10.223 — nil = bu pod poll'lamıyor
 	srv.SetDevOps(devopsSvc)
 	srv.SetMCPClient(mcpCliSvc)
 	// Cross-pod L1 cache invalidation (v0.5.337). Subscribes

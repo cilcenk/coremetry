@@ -22,7 +22,7 @@ import type {
   AISettings, AISettingsInput, AIModelProfileInput, AIProfilesPayload, AIProfileTestResult, AISurfaceMap,
   AnomalyVerdict, AnomalyVerdictKind,
   TempoSnapshot, TempoSettingsInput,
-  VMSnapshot, VMSettingsInput, VMTestResult, InfluxSnapshot, InfluxSettingsInput, InfluxSourceInput, InfluxTestResult,
+  VMSnapshot, VMSettingsInput, VMTestResult, InfluxSnapshot, InfluxSettingsInput, InfluxSourceInput, InfluxTestResult, InfluxStatusPayload,
   DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult, DevOpsResolveDryRun,
   EntityClustersResponse, EntityListResponse, EntityDetailResponse, EntityServicesResponse, EntityMetricsResponse, EntityContainersResponse, EntityLatencyResponse,
   ServicePodsResponse, EntitySettings, EntitySettingsResponse, EntitySyncResponse,
@@ -1570,6 +1570,8 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
     }),
+  /** Kaynak başına metric_points izi (son 1 saat) + bu pod'daki işçi durumu; her rol. */
+  getInfluxStatus: () => get<InfluxStatusPayload>(`/api/influx/status`),
 
   // Azure DevOps Server / TFS connection (v0.9.829, admin).
   // Tempo contract: GET is masked (hasPat), PUT's empty `pat`

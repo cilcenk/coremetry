@@ -280,3 +280,57 @@ func TestExternalSubject(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// v0.10.229 (D4) — kanıt kancası: açılışta HEMEN, sürerken 5 dk'da bir,
+// çözülünce kayıt silinir (yeniden açılış yine hemen). Pencere
+// [startedAt−2m, now].
+func TestExternalScan_EvidenceHookCadence(t *testing.T) {
+	cfg := chstore.DefaultAnomalySensitivity()
+	t0 := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	var events []ExternalEvent
+	target := extTarget
+	target.OnEvidence = func(_ context.Context, ev ExternalEvent) { events = append(events, ev) }
+	f := &fakeExtStore{cfg: cfg}
+	sc := NewExternalScanner(f, nil)
+	now := t0
+	sc.now = func() time.Time { return now }
+	spike := append(baselineVals(30), repeat(60, cfg.DwellBuckets)...)
+	f.series = []chstore.SpanMetricSeries{extSeries(spike, now, "OP1", "E1")}
+	if _, err := sc.Scan(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Problem.Status != "open" || events[0].Values[0] != "OP1" || events[0].Current != 60 {
+		t.Fatalf("open → one evidence event: %+v", events)
+	}
+	if !events[0].From.Equal(t0.Add(-externalEnrichLead)) || !events[0].To.Equal(t0) {
+		t.Fatalf("window [startedAt-2m, now]: %v..%v", events[0].From, events[0].To)
+	}
+	// 1 dk sonra hâlâ yüksek (refresh) → kanca yok (5 dk dolmadı)
+	now = t0.Add(time.Minute)
+	f.series = []chstore.SpanMetricSeries{extSeries(append(spike, 60), now, "OP1", "E1")}
+	sc.Scan(context.Background(), target)
+	if len(events) != 1 {
+		t.Fatalf("within 5 min no re-enrich, got %d", len(events))
+	}
+	now = t0.Add(6 * time.Minute)
+	f.series = []chstore.SpanMetricSeries{extSeries(append(spike, repeat(60, 6)...), now, "OP1", "E1")}
+	sc.Scan(context.Background(), target)
+	if len(events) != 2 || events[1].Problem.ID != events[0].Problem.ID {
+		t.Fatalf("after 5 min re-enrich the SAME problem, got %d", len(events))
+	}
+	// İyileşme → resolve, kayıt silinir; yeni spike hemen kanca
+	now = t0.Add(20 * time.Minute)
+	rec := append(append(spike, repeat(60, 6)...), repeat(5, 14)...)
+	f.series = []chstore.SpanMetricSeries{extSeries(rec, now, "OP1", "E1")}
+	sc.Scan(context.Background(), target)
+	if len(f.open) != 0 {
+		t.Fatalf("resolved: %+v", f.open)
+	}
+	now = t0.Add(60 * time.Minute)
+	again := append(append(rec, baselineVals(37)...), repeat(60, cfg.DwellBuckets)...)
+	f.series = []chstore.SpanMetricSeries{extSeries(again, now, "OP1", "E1")}
+	sc.Scan(context.Background(), target)
+	if len(events) != 3 || events[2].Problem.ID == events[0].Problem.ID {
+		t.Fatalf("re-open enriches immediately with a NEW problem, got %d", len(events))
+	}
+}

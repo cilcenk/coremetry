@@ -53,6 +53,54 @@ type DeepEvidence struct {
 	SlowOps     []OperationSummary         `json:"slowOps,omitempty"`
 	Business    map[string][]BusinessSlice `json:"business,omitempty"`
 	CodeMeaning map[string]string          `json:"codeMeaning,omitempty"`
+	// v0.10.229 — dış kaynak kanıtı (Influx D4); dört alan da yalnız
+	// kind=external anchor'larda dolu.
+	External      *ExternalMetricEvidence `json:"external,omitempty"`
+	TraceIDs      []string                `json:"traceIds,omitempty"`
+	AffectedPods  []PodHit                `json:"affectedPods,omitempty"`
+	LogSignatures []LogSignature          `json:"logSignatures,omitempty"`
+}
+
+// v0.10.229 (Influx D4, audit §4) — dış metrik kaynağı kanıtı. Problem
+// satırında kanıt kolonu YOK (invariant #4 tam-satır replace); kanıt bu
+// JSON blob'unda yaşar, anchor_kind="problem". RootCauseSynthesizer
+// kind=external anchor'ları ATLAR (tam-satır yazıp bunları silerdi).
+type ExternalMetricEvidence struct {
+	Source       string            `json:"source"`
+	Query        string            `json:"query"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	Current      float64           `json:"current"`
+	Median       float64           `json:"median"`
+	MAD          float64           `json:"mad"`
+	Z            float64           `json:"z"`
+	WindowFromNs int64             `json:"windowFromNs"`
+	WindowToNs   int64             `json:"windowToNs"`
+	// Rows / InvalidIDs — SORGU 2 satır sayısı ve geçersiz trace id sayısı
+	// ("12/50 id geçersiz" dürüstlüğü, audit R12).
+	Rows       int      `json:"rows"`
+	InvalidIDs int      `json:"invalidIds,omitempty"`
+	Notes      []string `json:"notes,omitempty"`
+	// SpanSummary — trace başına CH özeti (en yeni önce, ≤50).
+	SpanSummary []TraceSpanSummary `json:"spanSummary,omitempty"`
+	UpdatedNs   int64              `json:"updatedNs"`
+}
+
+// PodHit — INSTANCEID (k8s.pod.name) sayımı; Problem.Pod tek string olduğu
+// için liste kanıta yazılır.
+type PodHit struct {
+	Pod        string `json:"pod"`
+	Count      int    `json:"count"`
+	LastSeenNs int64  `json:"lastSeenNs"`
+}
+
+// LogSignature — logstore.NormalizeSignature grubu; Sample VERBATIM.
+type LogSignature struct {
+	Hash       string `json:"hash"`
+	Template   string `json:"template"`
+	Count      int    `json:"count"`
+	Severity   string `json:"severity"`
+	Sample     string `json:"sample"`
+	TraceCount int    `json:"traceCount"`
 }
 
 type RootCauseHypothesis struct {

@@ -148,6 +148,7 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		"oracle.go":           true, // metric_points
 		"profile.go":          true, // profiles (yazma yarısı ingest havuzunda)
 		"spanmetric.go":       true, // service_summary_5m / operation_summary_5m / spans
+		"spans_by_trace.go":   true, // spans — trace_id IN (...) özetleri (Influx D4, v0.10.229)
 		"dbstmt_detail.go":    true, // db_statement_summary_5m / spans
 		"db_capacity.go":      true, // metric_points
 		"endpoints_detail.go": true, // spans

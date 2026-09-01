@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/stackparse"
 )
@@ -411,5 +412,54 @@ func TestErrorCodeHuntIsReachable(t *testing.T) {
 	src := readDevopsSource(t, "code.go")
 	if !strings.Contains(src, "huntErrorCodeWindows(ctx, errTokens") {
 		t.Error("hata-kodu avı FetchCode'dan çağrılmıyor — ölü yol")
+	}
+}
+
+// ── v0.10.226 — GÜNCELLİK: çoklu depo isabetinde en son commit'lenen depo ──
+//
+// Operatör (2026-09-01): "birden fazla repo çıkabilir, en güncel olanını baz
+// alabilir." v0.10.74 güncelliği branş sırasıyla VEKİL ediyordu (arama
+// sonucu tarih taşımaz); şimdi depo başına son commit tarihi (Git API)
+// gerçek sinyal. Sıra: TFVC elenir → EN YENİ depo (tarih biliniyorsa) →
+// konvansiyon deposu → paket yolu → branş sırası → deterministik kuyruk.
+// Tarih bilinmeyen depolar eski kurallara düşer (aramayı kırmaz).
+
+func TestPickSearchHitRecency_NewestRepoWins(t *testing.T) {
+	frame := stackparse.Frame{Class: "com.example.card.CardDetailBusiness", Method: "handle"}
+	hits := []CodeSearchHit{
+		{Project: "BSA", Repository: "card-legacy", Path: "/src/com/example/card/CardDetailBusiness.java", Branch: "release"},
+		{Project: "BSA", Repository: "card-v2", Path: "/other/CardDetailBusiness.java", Branch: "master"},
+		{Project: "BSA", Repository: "card-v2", Path: "/other/CardDetailBusiness.java", Branch: "release"},
+	}
+	rec := map[string]time.Time{
+		RecencyKey("BSA", "card-legacy"): time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		RecencyKey("BSA", "card-v2"):     time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC),
+	}
+	// Konvansiyon deposu VE paket yolu eski depoyu işaret ediyor; güncellik
+	// yine de yeni depoyu seçer, depo içinde branş sırası (release) kazanır.
+	h, ok := PickSearchHitRecency(hits, "card-legacy", frame, []string{"release", "master"}, rec)
+	if !ok || h.Repository != "card-v2" || h.Branch != "release" {
+		t.Fatalf("newest repo must win (then branch order): %+v ok=%v", h, ok)
+	}
+	// Tarih bilinmiyorsa eski kurallar: konvansiyon deposu kazanır.
+	h, ok = PickSearchHitRecency(hits, "card-legacy", frame, []string{"release", "master"}, nil)
+	if !ok || h.Repository != "card-legacy" {
+		t.Fatalf("without recency the convention repo wins: %+v", h)
+	}
+	// Yalnız BİR deponun tarihi biliniyorsa o depo bilinmeyenlerin önüne geçer.
+	h, ok = PickSearchHitRecency(hits, "", frame, nil, map[string]time.Time{RecencyKey("BSA", "card-v2"): time.Now()})
+	if !ok || h.Repository != "card-v2" {
+		t.Fatalf("known-date repo outranks unknown: %+v", h)
+	}
+	// PickSearchHit (eski imza) = tarihsiz yol, davranışı değişmedi.
+	h2, _ := PickSearchHit(hits, "card-legacy", frame, []string{"release", "master"})
+	if h2.Repository != "card-legacy" {
+		t.Fatalf("PickSearchHit wrapper drifted: %+v", h2)
+	}
+}
+
+func TestRecencyKey(t *testing.T) {
+	if RecencyKey("BSA", "Card-V2") != RecencyKey("bsa", "card-v2") {
+		t.Fatalf("recency key must be case-insensitive (Azure DevOps names are)")
 	}
 }

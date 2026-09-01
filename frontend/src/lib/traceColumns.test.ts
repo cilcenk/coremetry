@@ -5,12 +5,13 @@ import { traceColumnOrder, FIXED_COLS, DEFAULT_TRACE_COLUMNS } from './traceColu
 
 // traceColumns.test.ts — v0.9.841. Pins the /traces column order.
 //
-//   v0.10.217 (Dynatrace düzeni, mockup onayı 2026-09-01):
-//   Name(operation) · Service · <attributes> · Duration · Status · Spans ·
-//   Start time(time)
-//   (v0.9.841 → v0.10.216: Time · Service · Operation · <attributes> ·
-//   Duration · Spans · Status — attr kolonlarının kimlik alanlarından
-//   hemen sonra durması o karardan KALIYOR.)
+//   v0.10.220 (operatör: "Start time en solda"):
+//   Start time(time) · Name(operation) · Service · <attributes> ·
+//   Duration · Status · Spans
+//   (v0.10.217 Dynatrace düzeni Start time'ı en sağa koymuştu; v0.9.841 →
+//   v0.10.216: Time · Service · Operation · <attributes> · Duration ·
+//   Spans · Status — attr kolonlarının kimlik alanlarından hemen sonra
+//   durması o karardan KALIYOR.)
 //
 // Worth a test because the header and the body cells both derive from
 // this array. If it ever emitted a column twice, or dropped one, the
@@ -23,26 +24,26 @@ describe('traceColumnOrder', () => {
     [
       'no extras — the six fixed columns in canonical order',
       [],
-      ['operation', 'service', 'duration', 'status', 'spans', 'time'],
+      ['time', 'operation', 'service', 'duration', 'status', 'spans'],
     ],
     [
       'the operator default set lands between Service and Duration',
       ['openshift.cluster.name', 'channel_code', 'function_code', 'http.status_code'],
       [
-        'operation', 'service',
+        'time', 'operation', 'service',
         'openshift.cluster.name', 'channel_code', 'function_code', 'http.status_code',
-        'duration', 'status', 'spans', 'time',
+        'duration', 'status', 'spans',
       ],
     ],
     [
       'one extra',
       ['pod'],
-      ['operation', 'service', 'pod', 'duration', 'status', 'spans', 'time'],
+      ['time', 'operation', 'service', 'pod', 'duration', 'status', 'spans'],
     ],
     [
       'extras keep the order they were added in',
       ['z', 'a', 'm'],
-      ['operation', 'service', 'z', 'a', 'm', 'duration', 'status', 'spans', 'time'],
+      ['time', 'operation', 'service', 'z', 'a', 'm', 'duration', 'status', 'spans'],
     ],
   ];
   for (const [name, extras, want] of cases) {
@@ -52,10 +53,9 @@ describe('traceColumnOrder', () => {
   }
 
   it('never leaks a fixed column into the attribute slot', () => {
-    // The filter must exclude BOTH leading columns (operation, service).
-    // Getting that wrong duplicates one of them — the regression this
-    // whole helper exists to make visible. (v0.10.217: `time` artık
-    // öncü değil, sondaki sabit grupla birlikte gelir.)
+    // The filter must exclude ALL THREE leading columns (time, operation,
+    // service). Getting that wrong duplicates one of them — the regression
+    // this whole helper exists to make visible.
     const ids = traceColumnOrder([]);
     expect(new Set(ids).size).toBe(ids.length);
     for (const c of FIXED_COLS) {

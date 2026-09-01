@@ -874,6 +874,7 @@ function TracesPageInner() {
   // v0.10.217 — Dynatrace düzeni: Name · Service · <attr kolonları> ·
   // Duration · Status · Spans · Start time (mockup onayı 2026-09-01;
   // attr'ların kimlik alanlarından hemen sonra durması korundu).
+  // v0.10.220 — operatör: Start time EN SOLDA; kalan sıra aynen.
   const colIds = useMemo(() => traceColumnOrder(extraCols), [extraCols]);
   const columns: DataTableColumn<TraceRow>[] = useMemo(() =>
     colIds.map(id => {

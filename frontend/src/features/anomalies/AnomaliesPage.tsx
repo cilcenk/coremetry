@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { TriageCrumb } from '@/components/TriageCrumb';
@@ -22,7 +22,7 @@ import type {
 } from '@/lib/types';
 import { SearchField } from '@/components/ui/SearchField';
 import { ProblemDetail } from './ProblemDetail';
-import { withProblemParam, withExcParam } from './problemLink';
+import { withProblemParam, withExcParam, excDetailHref } from './problemLink';
 import { emptySamplesNote, type SampleScanEnvelope } from './exceptionSamples';
 import { PageControls } from '@/components/ui/PageControls';
 // v0.9.837 — the "Alert rules" section moved to /inbox ("Problems").
@@ -82,6 +82,7 @@ export default function ProblemsPage() {
   // shareable. Filter changes always reset page back to 0 so a
   // teammate's link can't land them on "page 4 of 2".
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation(); // v0.10.221 — exception satır linkleri
   const tab     = searchParams.get('tab') || 'open';
   const service = searchParams.get('service') || '';
   // Owner (ug-team) / SRE (sy-team) team filter — URL-backed so a
@@ -539,6 +540,10 @@ export default function ProblemsPage() {
               <tbody>
                 {filtered.map(g => {
                   const open = expanded.has(g.fingerprint);
+                  // v0.10.221 — düz hücreler gerçek <Link> (orta tık yeni
+                  // sekme); caret/servis/eylem hücreleri kendi tıklarını
+                  // taşır, satır onClick'i kalan boşluk için kalıyor.
+                  const excHref = excDetailHref(location.pathname, searchParams, g.fingerprint);
                   return (
                     <Fragment key={g.fingerprint}>
                       <tr onClick={() => openExcDetail(g)}
@@ -562,8 +567,9 @@ export default function ProblemsPage() {
                             ? <ChevronDown size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />
                             : <ChevronRight size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />}
                         </td>
-                        <td><StateBadge s={g.state} /></td>
-                        <td>
+                        <td className="row-cell"><Link to={excHref} replace className="row-link" onClick={e => e.stopPropagation()}><StateBadge s={g.state} /></Link></td>
+                        <td className="row-cell">
+                          <Link to={excHref} replace className="row-link" onClick={e => e.stopPropagation()}>
                           <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 11.5, color: 'var(--err)' }}>
                             {g.type}
                             {/* First observed within the last hour —
@@ -611,6 +617,7 @@ export default function ProblemsPage() {
                               }}>{stripMarkdown(g.aiSummary)}</span>
                             </div>
                           )}
+                          </Link>
                         </td>
                         <td>
                           {/* v0.9.966 — grubun KENDİ ömrü (firstSeen→
@@ -624,11 +631,11 @@ export default function ProblemsPage() {
                             {g.service}
                           </Link>
                         </td>
-                        <td className="mono" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--err)' }}>
-                          {fmtNum(Number(g.occurrences))}
+                        <td className="mono row-cell" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--err)' }}>
+                          <Link to={excHref} replace className="row-link" onClick={e => e.stopPropagation()}>{fmtNum(Number(g.occurrences))}</Link>
                         </td>
-                        <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(g.firstSeen)}</td>
-                        <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(g.lastSeen)}</td>
+                        <td className="mono row-cell" style={{ fontSize: 11, color: 'var(--text3)' }}><Link to={excHref} replace className="row-link" onClick={e => e.stopPropagation()}>{tsLong(g.firstSeen)}</Link></td>
+                        <td className="mono row-cell" style={{ fontSize: 11, color: 'var(--text3)' }}><Link to={excHref} replace className="row-link" onClick={e => e.stopPropagation()}>{tsLong(g.lastSeen)}</Link></td>
                         <td onClick={e => e.stopPropagation()}>
                           {isAdmin ? (
                             <select value={g.assignee} onChange={e => setAssignee(g, e.target.value)}

@@ -210,6 +210,10 @@ type Server struct {
 	// influx — InfluxDB 2.x dış metrik kaynakları (v0.10.222, D1: yalnız
 	// kaynak yönetimi + test; poller D2). nil-safe: handler'lar 503.
 	influx *influx.Service
+	// influxWorker — bu pod'daki poll işçisi (v0.10.223; yalnız worker/all
+	// rolünde set edilir). Durum ucu bellek durumunu buradan okur; nil = bu
+	// pod poll'lamıyor.
+	influxWorker *influx.Worker
 
 	// devops — Azure DevOps Server / TFS bağlantısı (v0.9.829).
 	// ŞİMDİLİK YALNIZ BAĞLANTI: ayar + kimlik + erişilebilirlik
@@ -382,6 +386,11 @@ func (s *Server) SetVMetrics(v *vmetrics.Service) {
 // SetInflux — InfluxDB kaynak servisi (v0.10.222; influx_routes.go).
 func (s *Server) SetInflux(i *influx.Service) {
 	s.influx = i
+}
+
+// SetInfluxWorker — bu pod'daki Influx poll işçisi (v0.10.223); nil-safe.
+func (s *Server) SetInfluxWorker(w *influx.Worker) {
+	s.influxWorker = w
 }
 
 // SetDevOps wires the Azure DevOps / TFS connection client

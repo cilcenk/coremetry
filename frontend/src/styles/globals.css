@@ -1301,6 +1301,9 @@ tbody td.row-cell { padding: 0; }
 .influx-q textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--fs-xs); }
 .influx-probe { margin-top: var(--sp-5); font-size: var(--fs-sm); }
 .influx-probe table { font-size: var(--fs-xs); }
+.influx-status { margin-bottom: var(--sp-5); font-size: var(--fs-sm); color: var(--text2); }
+.influx-status .is-quiet { color: var(--text3); }
+.is-err { color: var(--err); }
 /* Karışık hücre (metin + çipler) içinde yalnız METİN link olur (v0.10.221, Problems kural adı). */
 .row-link--inline { display: inline; padding: 0; white-space: normal; }
 /* Breadcrumb (v0.10.219, ilk tüketici /trace): "Traces › <kök işlem>". Halka

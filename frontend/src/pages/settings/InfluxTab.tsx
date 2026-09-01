@@ -7,17 +7,18 @@
 // sunucu çözüp rozetler (tokenResolved). Sorgular kaynak başına liste;
 // "TFAIL şablonu" düğmesi spec'in iki sorgusunu + attrMap'i doldurur.
 // Poller D2'de: bu sekme bugün yalnız yapılandırma + deneme.
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button, Field, TextareaField } from '@/components/ui';
 import { api } from '@/lib/api';
+import { fmtDateTime } from '@/lib/utils';
 import { useSettingsLoad, SettingsLoadError, FlashBox } from './shared';
 import {
   parseAttrMap, attrMapToText, parseList, listToText,
   thresholdsToForm, thresholdsToWire, TFAIL_TEMPLATE, type ThresholdsForm,
 } from './influxForm';
 import type {
-  InfluxQueryConfig, InfluxSourceInput, InfluxSourceSnapshot, InfluxTestResult,
+  InfluxQueryConfig, InfluxSourceInput, InfluxSourceSnapshot, InfluxStatusPayload, InfluxTestResult,
 } from '@/lib/types';
 
 interface EditQuery {
@@ -91,6 +92,15 @@ export function InfluxTab() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [probe, setProbe] = useState<Record<number, InfluxTestResult | { pending: true }>>({});
+  // v0.10.223 (D2) — "veri geliyor mu": metric_points izi + işçi durumu.
+  // Sekme açılışında bir kez + elle yenile; poll YOK (ayar sekmesi).
+  const [status, setStatus] = useState<InfluxStatusPayload | null>(null);
+  const [statusErr, setStatusErr] = useState<string | null>(null);
+  const loadStatus = () => {
+    setStatusErr(null);
+    api.getInfluxStatus().then(setStatus).catch(e => setStatusErr(e instanceof Error ? e.message : 'durum alınamadı'));
+  };
+  useEffect(() => { loadStatus(); }, []);
   const { loaded, error: loadErr, retry } = useSettingsLoad(
     () => api.getInfluxSettings(),
     s => setRows((s.sources ?? []).map(fromSnapshot)),
@@ -150,8 +160,22 @@ export function InfluxTab() {
         )}
         {rows.map((r, i) => {
           const pr = probe[i];
+          const st = r.id ? status?.sources.find(x => x.id === r.id) : undefined;
           return (
             <div key={i} className={`influx-src${r.enabled ? '' : ' is-off'}`}>
+              {st && (
+                <div className="influx-status">
+                  {st.lastPointAt
+                    ? <>Son veri <b>{fmtDateTime(st.lastPointAt)}</b> · 1 saatte {st.points1h} nokta / {st.series1h} seri</>
+                    : <span className="is-quiet">Son 1 saatte metric_points'e veri gelmedi.</span>}
+                  {st.worker && (
+                    <> · işçi: {st.worker.lastError
+                      ? <span className="is-err">{st.worker.lastError}</span>
+                      : <>son poll {st.worker.lastPollAt ? fmtDateTime(st.worker.lastPollAt) : '—'} · {st.worker.lastRows} satır → {st.worker.lastPoints} nokta{st.worker.lastDrops ? ` (${st.worker.lastDrops} düştü)` : ''}</>}
+                    </>
+                  )}
+                </div>
+              )}
               <div className="influx-src__head">
                 <Field label="Kaynak adı (service_name olur)" value={r.name}
                   onChange={e => patch(i, { name: e.target.value })}
@@ -287,6 +311,11 @@ export function InfluxTab() {
             onClick={() => setRows(rs => [...rs, { ...EMPTY_SOURCE, queries: [queryFromWire(TFAIL_TEMPLATE)] }])}>
             + Kaynak ekle
           </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={loadStatus}
+            title={status?.workerOnThisPod ? 'Bu pod poll işçisini de çalıştırıyor' : 'Poll işçisi başka bir pod\'da (worker rolü)'}>
+            Durumu yenile
+          </Button>
+          {statusErr && <span className="is-err">{statusErr}</span>}
           <Button type="submit" variant="primary" size="sm" loading={busy}>
             Kaydet
           </Button>

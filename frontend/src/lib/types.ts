@@ -1388,6 +1388,32 @@ export interface InfluxTestResult {
   tokenResolved: boolean;
   queries: InfluxQueryProbe[];
 }
+/** influx.SourceStatus — bu pod'daki poll işçisinin bellek durumu (v0.10.223). */
+export interface InfluxSourceStatus {
+  sourceId: string;
+  name: string;
+  lastPollAt?: number;  // unix ms
+  nextDueAt?: number;   // unix ms
+  lastRows: number;
+  lastPoints: number;
+  lastDrops: number;
+  lastError?: string;
+}
+/** api.influxStatusSource — ayar + metric_points izi (son 1 saat) + (varsa) işçi. */
+export interface InfluxStatusSource {
+  id: string;
+  name: string;
+  enabled: boolean;
+  lastPointAt?: number; // unix ms; yok = son 1 saatte veri yok
+  points1h: number;
+  series1h: number;
+  worker?: InfluxSourceStatus;
+}
+export interface InfluxStatusPayload {
+  sources: InfluxStatusSource[];
+  workerOnThisPod: boolean;
+  generatedAt: number;
+}
 
 // Azure DevOps Server / TFS connection (v0.9.829). Tempo secret
 // contract: the PAT never round-trips (hasPat is the stored

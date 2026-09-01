@@ -14,6 +14,9 @@ package api
 //	                                 audit settings.influx.update
 //	POST /api/settings/influx/test  admin — formdaki TEK kaynağı KAYDETMEDEN
 //	                                 dener; 200 + ok:false başarısızlıkta
+//	GET  /api/influx/status         her rol — kaynak başına metric_points izi
+//	                                 (son 1 saat, CH'den) + bu pod'daki işçinin
+//	                                 bellek durumu (yalnız worker/all rolünde)
 //
 // Üçü de admin (vmetrics gerekçesi): kaydedilen tokenRef operatörün Influx
 // org'unu okur; GET'te bile kaynak URL'leri ve sorgular var.
@@ -27,8 +30,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/auth"
+	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/influx"
 )
 
@@ -36,6 +43,8 @@ func (s *Server) registerInfluxRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/settings/influx", auth.RequireRole(auth.RoleAdmin, s.getInfluxSettings))
 	mux.HandleFunc("PUT /api/settings/influx", auth.RequireRole(auth.RoleAdmin, s.putInfluxSettings))
 	mux.HandleFunc("POST /api/settings/influx/test", auth.RequireRole(auth.RoleAdmin, s.testInfluxSource))
+	// v0.10.223 (D2) — durum salt-okunur; viewer da "veri geliyor mu"yu görsün.
+	mux.HandleFunc("GET /api/influx/status", s.getInfluxStatus)
 }
 
 func (s *Server) getInfluxSettings(w http.ResponseWriter, r *http.Request) {
@@ -102,4 +111,77 @@ func (s *Server) testInfluxSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, s.influx.Test(r.Context(), cfg.Sources[0]))
+}
+
+// influxStatusSource — durum satırı: ayar + CH izi + (varsa) işçi belleği.
+type influxStatusSource struct {
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	Enabled     bool                 `json:"enabled"`
+	LastPointAt int64                `json:"lastPointAt,omitempty"`
+	Points1h    uint64               `json:"points1h"`
+	Series1h    uint64               `json:"series1h"`
+	Worker      *influx.SourceStatus `json:"worker,omitempty"`
+}
+
+type influxStatusPayload struct {
+	Sources         []influxStatusSource `json:"sources"`
+	WorkerOnThisPod bool                 `json:"workerOnThisPod"`
+	GeneratedAt     int64                `json:"generatedAt"`
+}
+
+// influxStatusKey — SAF: TÜM girdiler (kaynak adları, sıralı) anahtarda.
+// Ad listesi ≤20 ve kısa; hash yerine düz katılım okunur ve kararlı.
+func influxStatusKey(names []string) string {
+	sorted := append([]string(nil), names...)
+	sort.Strings(sorted)
+	return "influx:status:" + strings.Join(sorted, ",")
+}
+
+func (s *Server) getInfluxStatus(w http.ResponseWriter, r *http.Request) {
+	if s.influx == nil {
+		http.Error(w, "influx not available", http.StatusServiceUnavailable)
+		return
+	}
+	snap := s.influx.Snapshot()
+	names := make([]string, 0, len(snap.Sources))
+	for _, src := range snap.Sources {
+		names = append(names, src.Name)
+	}
+	// İşçi belleği CACHE DIŞI: pod-yerel ve anlık; CH izi 15 s serveCached.
+	s.serveCached(w, r, influxStatusKey(names), 15*time.Second, func(ctx context.Context) (any, error) {
+		var rows []chstore.InfluxIngestRow
+		if s.store != nil && len(names) > 0 {
+			got, err := s.store.InfluxIngestStatus(ctx, names)
+			if err != nil {
+				return nil, err
+			}
+			rows = got
+		}
+		byName := map[string]chstore.InfluxIngestRow{}
+		for _, row := range rows {
+			byName[row.Source] = row
+		}
+		var wst map[string]influx.SourceStatus
+		if s.influxWorker != nil {
+			wst = map[string]influx.SourceStatus{}
+			for _, st := range s.influxWorker.Status() {
+				wst[st.SourceID] = st
+			}
+		}
+		out := influxStatusPayload{Sources: make([]influxStatusSource, 0, len(snap.Sources)),
+			WorkerOnThisPod: s.influxWorker != nil, GeneratedAt: time.Now().UnixMilli()}
+		for _, src := range snap.Sources {
+			row := influxStatusSource{ID: src.ID, Name: src.Name, Enabled: src.Enabled}
+			if ir, ok := byName[src.Name]; ok {
+				row.LastPointAt, row.Points1h, row.Series1h = ir.LastPointAt, ir.Points1h, ir.Series1h
+			}
+			if st, ok := wst[src.ID]; ok {
+				stc := st
+				row.Worker = &stc
+			}
+			out.Sources = append(out.Sources, row)
+		}
+		return out, nil
+	})
 }

@@ -16,6 +16,15 @@ içindeki dal/switch noktası.
 
 ## 0. Özet — spec'ten sapan altı karar (onay gerekir)
 
+> **Revizyon v0.10.224 (operatör geri bildirimi, 2026-09-01):** K3 → seri
+> Grafana'nın gerçek sorgusuyla hizalandı (`aggregateWindow(every: 1m, fn:
+> sum)`, nokta zamanı = kova bitişi `_time`, kısmi kova atlanır, watermark
+> ile bir kez yazılır; `_time`'sız düz `sum()` poll-anı gauge'u olarak
+> kalır). K5 → "yalnız referans" KALDIRILDI: düz token blob'da saklanır,
+> GET maskeler (hasToken), boş girdi korur; `env:`/`file:` referansı
+> seçenek (doluysa kazanır).
+
+
 | # | Spec | Audit önerisi | Neden |
 |---|---|---|---|
 | **K1** | Yeni `external_metrics` tablosu (migration, 30g TTL) | **Yeni tablo YOK.** Seri → `metric_points`, TRACEID satırları → `exemplars` | `/clickhouse-schema` §1 karar ağacı: *"ham metrik → DUR, mevcut tabloya"*. Dış Distributed prod'da yeni tablo = `_local`+Distributed çifti + 0013 sihirbazı + iki-boot sözleşmesi; `metric_points` prod'da zaten var. Bedava kazanımlar: `metric_catalog` MV'ye otomatik kayıt → Explore/dashboard/alert-rule'da görünür, retention `retention.metrics`'ten. |

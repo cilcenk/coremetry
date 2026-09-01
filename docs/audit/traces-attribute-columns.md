@@ -1,292 +1,235 @@
-# Audit: Traces sayfası dinamik span-attribute kolonları performans sorunu
+# Audit — /traces attribute kolonları yavaşlığı (2. tur)
 
-**Tarih:** 2026-07-23 · **Durum:** FAZ 1 — audit, kod değişikliği yok · **Semptom (operatör):**
-CHANNEL_CODE / FUNCTION_CODE gibi attribute kolonları açıkken sayfa çok yavaş; davranış
-"sayfadaki 50 trace için değil, seçili aralıktaki TÜM span'ler için attribute çekiliyormuş"
-gibi. Kolonlar kapalıyken normal.
-
----
-
-## 1. Kök neden — özet
-
-İki ayrı mekanizma var ve **ikisi de yalnız kolon AÇIKKEN devreye giriyor**. Hangisinin
-çalıştığı, listenin MV fast-path'te mi ham yolda mı olduğuna bağlı:
-
-| Yol | Ne zaman | Kolon açıkken ne oluyor | Maliyet |
-|---|---|---|---|
-| **A. MV fast-path** (`trace_summary_5m`) | Filtre yok + pencere ≥5dk + `env` boş + search boş | İkinci sorgu `fillTraceExtras` çalışır — **zaman sınırı YOK, LIMIT YOK** ([repo.go:2243](../../internal/chstore/repo.go#L2243)) | Partition pruning imkânsız → TÜM retention'ın granülleri bloom'dan süzülür; geçen her granülde 4 şişman array kolonu decompress |
-| **B. Ham yol** (spans `GROUP BY trace_id`) | `?env=` doluysa (**prod'da global env picker yüzünden neredeyse HER ZAMAN**), search/filters varsa, count=exact ise | Attribute projeksiyonu liste sorgusunun İÇİNE inline edilir ([repo.go:2089-2104](../../internal/chstore/repo.go#L2089)) | Penceredeki **her span satırı** için `attr_keys+attr_values+res_keys+res_values` decompress — **LIMIT'ten ÖNCE** |
-
-Operatörün algısı doğru ve hatta iyimser: B yolunda pencerenin tüm span'leri, A yolunda
-**pencere bile değil, tüm retention** taranıyor.
-
-Prod'da baskın acı **B**: global `?env=` seçili olduğu için liste hep ham yolda; kolon
-açmak, pencere-genelinde fat-array taramasına dönüşüyor.
+**Tarih:** 2026-09-02 · **Durum:** ONAY BEKLİYOR — kod değişikliği yok
+**Semptom (operatör):** "CHANNEL_CODE / FUNCTION_CODE gibi span attribute
+kolonları eklendiğinde sayfa çok yavaşlıyor; 50 trace yerine tüm zaman
+aralığı taranıyor gibi davranıyor." Ekran: prod, `range=6h`,
+`sort=operation&order=asc`, `cols=openshift.cluster.name,channel_code,function_code,http.status_code`.
+**Önceki tur:** [2026-07-23 audit](traces-attribute-columns-2026-07-23.md) →
+FAZ 2 (liste dar, attribute'lar ayrı istekle, v0.9.19x), FAZ 2C terfi
+kolonları (v0.9.198), v0.9.621-623 (kolon doldurma + filtre bağlama +
+`set(0)` skip index). Bu tur o düzeltmelerin ÜSTÜNDE kalan maliyeti ölçüyor.
+**Ortam notu:** ölçümler lokal minikube CH'de (6 saatte 120 K span, 7 part,
+27 mark — bir FİXTURE; prod 1 B span/gün). Granül geometrisi prod'a
+taşınmaz, kolon-maliyeti oranları taşınır. Prod doğrulama SQL'i §7'de.
 
 ---
 
-## 2. Frontend akışı
+## 0. Özet
 
-- Kolon seçimi `extraCols: string[]` state'i; URL `?cols=` ile senkron
-  ([Traces.tsx:208-209, 294](../../frontend/src/pages/Traces.tsx#L208)); localStorage'da
-  **kolon seçimi tutulmuyor** (yalnız genişlik/sort, `storageKey:'traces-list'`).
-- **Toggle = tam liste refetch.** `extraCols` liste-fetch effect'inin dep dizisinde
-  ([Traces.tsx:355](../../frontend/src/pages/Traces.tsx#L355)); ayrı enrichment isteği yok.
-  Kolon ekle/çıkar → aynı `GET /api/traces` sorgusu yalnız `extraAttrs=` parametresi
-  farkıyla baştan atılır.
-- İstekte **trace_id listesi gitmiyor** — yalnız zaman aralığı + filtreler + sayfalama;
-  `extraAttrs=CHANNEL_CODE,FUNCTION_CODE` tek virgüllü parametre
-  ([Traces.tsx:346](../../frontend/src/pages/Traces.tsx#L346), api.ts:2282). Sunucu 8 kolonla
-  sınırlar (isSafeAttrKey allow-list, [api.go:3291-3302](../../internal/api/api.go#L3291)).
-- Sayfa 50 satır (`limit:50, offset:page*50`); total varsayılan kapalı (`count:skip`).
-- Yan etki: her toggle, `extraAttrs`'lı ve `extraAttrs`'sız iki AYRI server-cache girdisi üretir.
+| Bulgu | Kanıt |
+|---|---|
+| **Liste sorgusu kolon eklenince DEĞİŞMİYOR.** Kolon = ayrı istek (`GET /api/traces?traceIds=…&extraAttrs=…`), yalnız projeksiyon, filtre değil. | `Traces.tsx:482-483` ("list fetch is ALWAYS narrow"), liste effect dep dizisinde `extraCols` YOK (`:502`); `TestBuildGetTracesListSQL_NoInlineExtras` |
+| **Yavaşlığın kaynağı 2. aşama (extras) sorgusu**: `FROM spans WHERE time BETWEEN [50 satırın min başlangıcı, max bitişi] AND trace_id IN (50) GROUP BY trace_id LIMIT 50`. `sort=operation` gibi zaman-dışı sıralamada 50 satır pencerenin TAMAMINA yayılır → zaman sınırı 6 saatin tamamı olur; bloom index (`idx_trace`, GRANULARITY 4) hangi granüllerin okunacağını seçer. | `traceExtrasSQL` (`repo.go:2683`), FE sınırları satırlardan türetiyor (`Traces.tsx:515-520`), EXPLAIN §1 |
+| **Asıl fatura satır değil KOLON:** aynı satır kümesinde dizi yolu 84 MiB / 212 ms, terfi kolonu yolu 5.25 MiB / 66 ms — **16× bayt, 3.2× süre**. | query_log medyanı (3 koşu) §1 |
+| **CHANNEL_CODE / FUNCTION_CODE ZATEN terfi kolonunda** (iki yazım da, dolu: 115 638 / 119 450) ve `set(0)` index'li. `deployment.environment.name` → `deploy_env` (dolu). | `system.columns`, `promoted_attr.go:86-87`, `WellKnownTraceCol` |
+| **İki varsayılan kolon ŞİŞMAN yolda:** `openshift.cluster.name` — `cluster` MATERIALIZED kolonu VAR ve dolu ama projeksiyon yalnız `key == "cluster"` yazımını kolona yönlendiriyor (`repo.go:2650`); `function_id` — terfi kolonu yok, `attr_values[indexOf(...)]`. Operatörün varsayılan dört kolonunun İKİSİ her sayfada dizi dekompresyonu ödüyor. | `traceExtrasProjection` (`repo.go:2642-2670`), `DEFAULT_TRACE_COLUMNS` |
+| Pencereyi daraltmak (per-trace / 5-dk kova) lokalde ölçülemedi (granüller dakika genişliğinde) ve prod'da ikincil: PK `(service_name, time)` olduğundan zaman aralığı granül budamaz, yalnız part budar; bloom zaten granül seçiyor. | EXPLAIN §1 (PrimaryKey `Keys: time`, generic exclusion) |
 
-## 3. Backend — iki yol, yan yana SQL
+**Öneri (§6):** (1) projeksiyonu kolona bağla: `openshift.cluster.name` /
+`k8s.cluster.name` → `cluster`; (2) `function_id` için terfi kolonu (String,
+LC DEĞİL — kardinalite ölçülmedi; index YOK, projeksiyon için gerekmez);
+(3) 7 günlük opt-in benchmark testi; (4) pencere daraltma = ölçüm sonrası
+karar (prod query_log ile).
 
-Rota `GET /api/traces` [api.go:594](../../internal/api/api.go#L594) → `s.getTraces`
-[api.go:3230](../../internal/api/api.go#L3230) → `Store.GetTraces`
-[repo.go:1866](../../internal/chstore/repo.go#L1866); WHERE üretici `buildGetTracesWhere`
-[repo.go:1708](../../internal/chstore/repo.go#L1708); MV yolu `getTracesFromMV`
-[repo.go:2390](../../internal/chstore/repo.go#L2390); extras doldurucu `fillTraceExtras`
-[repo.go:2219](../../internal/chstore/repo.go#L2219).
+---
 
-### 3a. Ham yol — kolon KAPALI (repo.go:2114-2139, interpolasyon çözülmüş)
+## 1. Sorgunun tam SQL'i + EXPLAIN
 
-```sql
-SELECT trace_id,
-       coalesce(nullIf(anyIf(name, (parent_id = '' OR parent_id = '0000000000000000')), ''), any(name)) AS root_name,
-       coalesce(nullIf(anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000')), ''), any(service_name)) AS root_svc,
-       min(time) AS trace_start,
-       (max(toUnixTimestamp64Nano(time) + duration) - toUnixTimestamp64Nano(min(time))) / 1e6 AS dur_ms,
-       count() AS span_count,
-       max(if(status_code = 'error', 1, 0)) AS has_error
-FROM spans
-WHERE time >= ? AND time <= ?          -- SEÇİLİ PENCERENİN TAMAMI (sayfa aralığı değil)
-GROUP BY trace_id
-ORDER BY trace_start DESC
-LIMIT 51 OFFSET ?                       -- LIMIT, GROUP BY + ORDER BY'dan SONRA
-SETTINGS max_execution_time = 30
-```
+### 1a. Liste (aşama 1) — kolon durumundan BAĞIMSIZ
 
-Dar kolonlar (çoğu LowCardinality) — hızlı taban durum.
+MV yolu (`getTracesFromMV`, `repo.go:2957`): stage-1 `trace_service_index_5m`
+→ id listesi, stage-2 `trace_summary_5m` (`repo.go:3247-3262`, `LIMIT ?
+OFFSET ?`, `max_execution_time = 12`). Ham yol (`buildGetTracesListSQL`,
+`repo.go:2526`): `FROM spans … GROUP BY trace_id … LIMIT ? OFFSET ?
+SETTINGS max_execution_time = 25`. **İkisinde de attribute projeksiyonu
+YOK** — FAZ 2 testi pinli.
 
-### 3b. Ham yol — kolon AÇIK (aynı sorgu + inline projeksiyon, repo.go:2089-2104)
-
-```sql
-  ..., max(if(status_code='error',1,0)) AS has_error,
-  anyIf(coalesce(nullIf(attr_values[indexOf(attr_keys, 'CHANNEL_CODE')], ''),
-                 nullIf(res_values[indexOf(res_keys, 'CHANNEL_CODE')], '')),
-        has(attr_keys,'CHANNEL_CODE') OR has(res_keys,'CHANNEL_CODE')) AS extra_0,
-  ...extra_1 (FUNCTION_CODE)...
-FROM spans WHERE time >= ? AND time <= ?  GROUP BY trace_id ...
-```
-
-- Attribute erişimi **Map değil paralel array**: `attr_values[indexOf(attr_keys, k)]` —
-  dokunulan her granülde `attr_keys + attr_values + res_keys + res_values` **dört kolonun
-  tamamı** okunup ZSTD(3) açılır (`attr_values` tek başına tablonun ~%25'i, store.go:1852).
-- Bu projeksiyon **LIMIT'ten önce, penceredeki her span için** hesaplanır.
-- Root-span sınırı yok: WHERE'de kind/parent_id filtresi yok; root yalnız `anyIf` ile seçilir.
-- Well-known key'ler (http.method→`http_method` vb., WellKnownTraceCol repo.go:1592) tek
-  dar kolon okur — sorun yalnız custom key'lerde (CHANNEL_CODE/FUNCTION_CODE bu sınıfta).
-
-### 3c. MV yolu — kolon AÇIK: fillTraceExtras (repo.go:2243, İHLAL)
+### 1b. Extras (aşama 2) — kolon açıkken gelen tek ek sorgu
 
 ```sql
 SELECT trace_id,
-       anyIf(coalesce(nullIf(attr_values[indexOf(attr_keys, ?)], ''),
-                      nullIf(res_values[indexOf(res_keys, ?)], '')),
-             has(attr_keys, ?) OR has(res_keys, ?)) AS extra_0
+       anyIf(attr_channel_code, attr_channel_code != '')      AS extra_0,   -- terfi
+       anyIf(attr_function_code, attr_function_code != '')    AS extra_1,   -- terfi
+       anyIf(coalesce(nullIf(attr_values[indexOf(attr_keys, 'function_id')], ''),
+                      nullIf(res_values[indexOf(res_keys, 'function_id')], '')),
+             has(attr_keys,'function_id') OR has(res_keys,'function_id')) AS extra_2, -- DİZİ
+       anyIf(coalesce(nullIf(attr_values[indexOf(attr_keys, 'openshift.cluster.name')], ''),
+                      nullIf(res_values[indexOf(res_keys, 'openshift.cluster.name')], '')),
+             …)                                                AS extra_3   -- DİZİ (kolon varken!)
 FROM spans
-WHERE trace_id IN (?, ?, ..., ?)        -- ~51 id; ZAMAN SINIRI YOK, LIMIT YOK
+WHERE time >= ? AND time <= ?            -- 50 satırın [min başlangıç − 1 ms, max bitiş + 5 dk]
+  AND trace_id IN (?, … ×50)
 GROUP BY trace_id
+LIMIT 50
 SETTINGS max_execution_time = 15
 ```
+Sunucu: `serveTracesExtras` (`traces_extras.go`) — id ≤ 200, attr ≤ 8,
+pencere ≤ 35 gün (`clampExtrasFrom`), `serveCached` 20 s, anahtar = FNV(sıralı
+id'ler + attr'lar) + from/to.
 
-CLAUDE.md sabit kuralı ("spans sorgusu: time-bounded WHERE + LIMIT") ihlal.
-`PARTITION BY toDate(time)` budanamaz → tüm retention taranır; `idx_trace
-bloom_filter(0.01)` granül başına ~%1 yanlış-pozitifi 51 id ile bileştirir (~%40'a kadar
-granül geçirir) ve geçen her granülde 4 şişman kolon açılır. Distributed'da ayrıca
-**tüm shard'lara fan-out** (spans shard anahtarı `service_name`, trace_id değil).
+**EXPLAIN indexes=1** (`spans_local`, 6 saat, 50 dağınık kök trace, lokal):
+```
+MinMax      Keys: time          Parts: 7/75   Granules: 20/2352
+Partition   Keys: toDate(time)  Parts: 7/7    Granules: 20/20
+PrimaryKey  Keys: time          Parts: 7/7    Granules: 20/20   Search Algorithm: generic exclusion search
+Skip  idx_trace bloom_filter GRANULARITY 4    Parts: 5/7    Granules: 18/20
+```
+Okuma: **PrimaryKey `Keys:` listesinde `service_name` YOK** (sorgu servis
+bilmiyor) → birincil anahtar öneki kullanılmıyor, zaman ikinci anahtar
+olarak yalnız "generic exclusion" ile bakılıyor; MinMax part'ları buduyor
+(75→7), granülleri **bloom seçiyor** (20→18 — lokalde her granül dakikalar
+genişliğinde, 50 id neredeyse her granülde var). Prod'da 6 saat ≈ 30 K
+granül; bloom 50 id için ≈ 100-200 index bloğu (×4 granül ×8192 satır) seçer
+→ **~1-6 M satır** okunur, bu satırların ŞİŞMAN dizileri dekomprese edilir.
 
-## 4. Şema gerçekleri
+### 1c. Ölçüm — query_log medyanı (3 koşu, aynı 50 id, aynı pencere)
 
-- `spans`: `PARTITION BY toDate(time)`, `ORDER BY (service_name, time)` (store.go:586-590).
-  trace_id PK'de yok; erişim `idx_trace trace_id TYPE bloom_filter(0.01) GRANULARITY 4`
-  skip index'iyle (yalnız eşitlik; prefix v0.9.82'de bu yüzden kaldırıldı).
-- `attr_keys Array(LowCardinality(String))` + `attr_values Array(String) CODEC(ZSTD(3))`
-  (+ res_* ikizi). Tek attribute erişimi = 4 array kolonunun tamamı.
-- **Materialized-promote emsali 3 dalga:** `cluster` (v0.8.132), `db_stmt_hash` (v0.8.375),
-  `ex_match/ex_type/ex_msg/ex_stack` (v0.8.566) — FAZ 2C önerisinin kanıtlanmış şablonu.
-- Skip index'ler: idx_trace(bloom), idx_name/kind/db_system/status(set), idx_http_status(minmax).
-  ALTER'la eklenenler yalnız yeni part'lara işler (MATERIALIZE INDEX bilinçli yok).
-- Distributed: `spans` = Distributed wrapper, shard anahtarı `cityHash64(service_name)` →
-  trace_id sorguları shard-budamasız fan-out; trace-level MV'ler (`trace_summary_5m`
-  `ORDER BY (time_bucket, trace_id)`, shard `cityHash64(trace_id)`) tam bu açığı kapatmak
-  için var.
+| Sorgu | read_rows | read_bytes | p50 |
+|---|---|---|---|
+| Liste stage-1 (`trace_service_index_5m`, 51 satır) | 140 792 | 1.61 MiB | 38 ms |
+| Extras — **terfi kolonları** (channel_code + function_code) | 119 518 | **5.25 MiB** | **66 ms** |
+| Extras — **dizi yolu** (function_id + openshift.cluster.name) | 119 518 | **84.10 MiB** | **212 ms** |
 
-## 5. Ölçüm (lokal CH, gerçek koşum)
-
-Ortam: docker CH 24.8, 36.030 span; pencere 2026-06-27 09:00-18:00 (10.718 span / 10.603
-trace). Key: `http.url` (9.924 kez var; WellKnownTraceCol'da YOK → gerçek array yolu).
-3'er koşum, `system.query_log` `type='QueryFinish'`, `log_comment` ile ayıklandı:
-
-| Senaryo | read_rows | read_bytes | avg dur | avg memory |
-|---|---|---|---|---|
-| Dar liste (3a) | 11.590 | 831.615 (812 KiB) | 26,0 ms | 8,72 MiB |
-| Attr erişimli (3b) | 11.590 | **5.795.760 (5,53 MiB)** | 52,3 ms | 9,76 MiB |
-| **Oran** | 1,00× | **6,97×** | ~2× | 1,12× |
-
-read_rows aynı (pruning aynı) — maliyet satır sayısından değil, **her satırda fat-array
-decompress**'inden. 36k-span lokalde 6,97× byte; milyar-span prod penceresinde bu oran
-sayfayı kilitleyen fark. (Süre lokalde gürültülü; asıl kanıt read_bytes.)
-
-**Prod ölçüm talimatı:** (1) Yoğun pencere: `SELECT toStartOfHour(time) h, count() FROM spans
-WHERE time > now()-INTERVAL 24 HOUR GROUP BY h ORDER BY count() DESC LIMIT 5 SETTINGS
-max_execution_time=30`. (2) Gerçek key (zaman sınırlı): `SELECT arrayJoin(attr_keys) k,
-count() FROM spans WHERE time > now()-INTERVAL 1 HOUR GROUP BY k ORDER BY count() DESC
-LIMIT 10` — seçilen key WellKnownTraceCol'da OLMAMALI. (3) §3a/§3b SQL'lerini pencereyle
-güncelleyip 3'er kez koş (`SETTINGS log_comment='olcum_narrow|olcum_attr'`).
-(4) `SYSTEM FLUSH LOGS`; sonra: `SELECT log_comment, count(), round(avg(read_rows)),
-round(avg(read_bytes)), formatReadableSize(avg(read_bytes)), round(avg(query_duration_ms),1)
-FROM system.query_log WHERE type='QueryFinish' AND event_time > now()-INTERVAL 15 MINUTE
-AND log_comment LIKE 'olcum_%' GROUP BY log_comment`. Distributed'da initiator node'da koş;
-`clusterAllReplicas(<cluster>, system.query_log)` ile shard-bazlı kırılım alınabilir.
-
-## 6. Önerilen çözüm (FAZ 2 — onay sonrası)
-
-**A. İki fazlı sorgu, tek handler** (operatör spec'i birebir uygulanabilir, kod destekliyor):
-1. Faz-1: dar liste sorgusu (3a) → 50 satır + trace_id'ler + satırların **gerçek
-   min/max timestamp'i**.
-2. Faz-2: extras SADECE o trace_id'ler için; WHERE'e **faz-1 min/max'ı** (±güvenlik payı,
-   trace süresi için max'a +5dk) → partition + bloom pruning birlikte çalışır. Ham yoldan
-   inline projeksiyon KALDIRILIR; `fillTraceExtras` zaman-sınırı + LIMIT kazanır ve TEK
-   sorguda tüm key'ler (zaten öyle). İki yol da (MV + ham) aynı faz-2'yi kullanır → tek kod yolu.
-   - `span_id IN` hedeflemesi: attribute'ların yalnız root'ta olduğu garanti değil (anyIf
-     tüm span'lara bakıyor) — Faz-2'de `GROUP BY trace_id` korunur; id+zaman sınırlı sorguda
-     bu zaten ucuz. (Root-only'ye daraltma, davranış değişikliği olur — reddedildi, §7.)
-
-**B. Frontend:** toggle'da tam refetch yok — eldeki 50 satır + bilinen trace_id'ler +
-timestamp aralığıyla yalnız faz-2'yi tetikleyen hafif istek (aynı endpoint, opsiyonel
-`trace_ids` parametresi faz-1'i atlatır) → dönen extras satırlara merge. `DEFAULT_TRACE_COLUMNS`
-+ localStorage persist (aşağıda AÇIK SORU).
-
-**C. Materialized kolon (opsiyonel, ayrı adım):** CHANNEL_CODE/FUNCTION_CODE için
-`LowCardinality(String) MATERIALIZED attr_values[indexOf(attr_keys,'…')]` migration'ı
-hazırlanır ama UYGULANMAZ; kod tarafında materialize-map (cluster kolonunun
-`hasClusterCol` probe + fallback şablonu, repo.go:326) — sorgu üretici materialize ise
-native kolon, değilse array erişimi (tek kod yolu). Distributed-column-safety kuralı
-geçerli (probe + koşullu ifade; prod `spans_local`'a chstore ALTER işlemeyebilir).
-
-### Reddedilen alternatifler
-- **Kolon başına ayrı sorgu:** N kolon = N tarama; tek faz-2 sorgusu zaten tüm key'leri alıyor.
-- **Yalnız materialize (A'sız):** her yeni attribute için migration ister; import edilen
-  keyfi key'lerde (ColumnManager serbest seçim) ölçeklenmez. Materialize, sık kullanılan
-  2-3 key için optimizasyon katmanı olarak kalmalı.
-- **trace_summary MV'sine attribute eklemek:** MV `ORDER BY (time_bucket, trace_id)`
-  agregasyon durumları taşıyor; keyfi key seti MV şemasına gömülemez (kardinalite + şema churn).
-- **GLOBAL IN / shard-hedefleme:** spans shard anahtarı service_name — trace_id ile
-  shard budaması yapısal olarak yok; v0.5.440'ta bilinçli terk edilmiş.
-
-## 7. Değişecek dosyalar + tahmini etki
-
-| Dosya | Değişiklik | Tahmin |
-|---|---|---|
-| `internal/chstore/repo.go` | Ham yoldan inline extras'ı çıkar; `fillTraceExtras`'a zaman-sınırı+LIMIT + iki yolun ortaklaşması | ~80 satır |
-| `internal/api/traces_extras.go` (yeni) | `registerXxxRoutes` desenine uygun ayrı dosya; `extra_attributes`+`trace_ids` parametreleri (api.go BÜYÜMEZ) | ~60 satır |
-| `internal/chstore/gettraces_where_test.go` (+yeni test) | Üretilen SQL assert'leri: faz-2 zaman-sınırı, inline projeksiyon yokluğu | ~60 satır |
-| `frontend/src/pages/Traces.tsx` | toggle→enrichment (dep'ten extraCols çıkar), merge, DEFAULT_TRACE_COLUMNS + localStorage | ~50 satır |
-| `frontend/src/lib/api.ts` | enrichment çağrısı / trace_ids parametresi | ~10 satır |
-| (C, ayrı) `internal/chstore/store.go` | Hazır ama uygulanmayan migration + materialize-map | ~40 satır |
-
-Etki: ham yolda kolon-açık maliyeti dar sorguya iner (ölçülen 6,97× byte farkı yok olur;
-extras yalnız ~51 trace'in dar zaman diliminde). MV yolunda retention-genelinde tarama →
-sayfa-dilimi taramasına iner. Toggle UX'i anında (liste yeniden çekilmez).
-
-## 8. Risk / geriye dönük uyumluluk
-
-- `extraAttrs` API sözleşmesi korunur (opsiyonel kalır); `trace_ids` yeni opsiyonel parametre.
-- CSV export aynı üreticiden geçiyor — extras'lı export faz-2'yi büyük id listesiyle
-  çağırır; export'ta id listesi sayfayla sınırlı değil → export yolu için pencere-sınırlı
-  faz-2 varyantı korunmalı (aynı fonksiyon, farklı bound kaynağı).
-- Cache: extras ayrı istekte → liste cache'i kolon setinden bağımsızlaşır (HIT oranı artar);
-  extras isteğinin kendi kısa TTL'li cache key'i (trace_id set digest'i — FNV, v0.5.187 kuralı).
-- Faz-2 zaman payı: trace'in son span'i pencereden taşabilir → max'a +5dk pay (trace süre
-  cap'iyle uyumlu); test edilecek.
-- Davranış değişikliği yok: extras semantiği (anyIf, attr→res fallback) birebir korunur.
-
-## 9. AÇIK SORU (operatöre — FAZ 2B için)
-
-`DEFAULT_TRACE_COLUMNS` ne olsun? Mevcut sabit kolonlar: Trace/Root, Service, Start,
-Duration, Spans, Status. Öneri seçenekleri:
-1. Default = yalnız mevcut sabit set (attribute kolonu default'ta YOK — en hızlı taban).
-2. Default'a CHANNEL_CODE + FUNCTION_CODE eklensin (senin iş akışın için; faz-2 maliyeti
-   artık sayfa-sınırlı olduğundan makul).
-Karar senin — hangi kolonlar default olsun?
-
-> **KARAR (operatör, 2026-07-23):** Seçenek 1 — default yalnız mevcut sabit set;
-> attribute kolonu default'ta YOK (`DEFAULT_TRACE_COLUMNS = []`, Traces.tsx).
-> Kullanıcı seçimi `traces-extra-cols` localStorage anahtarında persist;
-> öncelik URL `?cols=` > localStorage > default.
+`/perf-triage` yorumlama tablosu: *"read_rows aynı, read_bytes 16× → maliyet
+satır değil kolon."* 2026-07 olayının (CHANNEL_CODE 6.97×) aynı sınıfı,
+bu kez `function_id` ve `openshift.cluster.name` üzerinde.
 
 ---
 
-## 10. FAZ 2C — hazır migration (UYGULANMADI)
+## 2. Kolon eklenince plan nasıl değişiyor
 
-FAZ 2 kod tarafını hazırladı: `traceAttrMaterialized` map'i
-(internal/chstore/repo.go, `traceExtrasProjection`'ın 1. katmanı) **boş**
-gemide. Aşağıdaki migration'ı uygulayıp map'e girdiyi ekleyen kod değişikliği
-yapılana dek sorgu üretici array yolunu kullanmaya devam eder — davranış
-değişmez, risk sıfır.
+- **Attribute FİLTRE değil, PROJEKSİYON.** Liste isteği aynen; FE yalnız
+  eksik anahtarlar için extras isteği atar (`missingExtraKeys`, `Traces.tsx:513`).
+  Kolon eklemek = 1 ek istek (yalnız yeni anahtar), sayfa/sıralama/aralık
+  değişimi = liste + extras (beklenen).
+- Extras'ın WHERE'i satırlardan türeyen pencere + `trace_id IN`. Zaman-sıralı
+  ilk sayfada pencere dakikalar; **zaman-dışı sıralamada (operation, duration…)
+  ve derin sayfalarda pencere tüm aralık.** Operatörün "tüm aralık taranıyor
+  gibi" algısı bu: pencere gerçekten tüm aralık, ama tarama bloom'un seçtiği
+  granüllerle sınırlı — pahalı olan o granüllerin dizi kolonları.
+- Kolon başına maliyet eşit değil: terfi/well-known kolon (`attr_channel_code`,
+  `attr_function_code`, `deploy_env`, `cluster`, `http_status`…) LC/küçük;
+  dizi anahtarı (`function_id`, `openshift.cluster.name`, herhangi özel attr)
+  `attr_keys/attr_values/res_keys/res_values` dört dizinin tamamını okur.
 
-### Migration SQL (CHANNEL_CODE / FUNCTION_CODE)
+---
+
+## 3. Seçenek A — terfi kolonu + skip index
+
+| Anahtar | Bugün | Gerekli |
+|---|---|---|
+| `CHANNEL_CODE`/`channel_code` | `attr_channel_code` MATERIALIZED (iki yazım), `set(0) GRANULARITY 4` index, dolu | — |
+| `FUNCTION_CODE`/`function_code` | `attr_function_code` aynı | — |
+| `deployment.environment.name` | `deploy_env` (ingest'te dolu, `WellKnownTraceCol`) | — |
+| `openshift.cluster.name` / `k8s.cluster.name` | `cluster` MATERIALIZED (altı yazımı coalesce eder), dolu | **projeksiyon eşlemesi yok** → 1 satır kod |
+| `function_id` | yok — dizi yolu | **yeni terfi kolonu** |
+
+**`function_id` kolonu:** `attr_function_id String MATERIALIZED
+coalesce(nullIf(attr_values[indexOf(attr_keys,'function_id')],''), nullIf(…'FUNCTION_ID'…), '')`.
+- Tip: **`String`, LC DEĞİL** — kardinalite ölçülmedi (id'ler on binlerce
+  olabilir; C3 "ölçmediysen LC yapma"; `function_code` emsali LC ama o kod).
+- Index: **projeksiyon için gerekmez** (filtre trace_id ile). Operatör
+  `function_id` FİLTRESİ de istiyorsa `bloom_filter(0.01)` — ayrı karar.
+- **Migration maliyeti (dağıtık prod):** `ALTER TABLE spans_local ON
+  CLUSTER … ADD COLUMN IF NOT EXISTS` + Distributed sarmalayıcıya aynı ADD;
+  0012 sözleşmesi: boot koşmaz, `migrations/0013_function_id.sql` sihirbaz/elle,
+  `store.go` `alters` dilimi app-managed kurulumlar için koşullu.
+- **Backfill gerçeği (v0.9.621 dersi):** MATERIALIZED kolon eski part'larda
+  saklanmaz, okuma anında DİZİDEN hesaplanır → eski veri için bayt kazancı
+  SIFIR, yalnız yeni part'lar ucuz. Tam kazanç için `ALTER … MATERIALIZE
+  COLUMN attr_function_id` (part yeniden yazımı; prod'da retention × 1 B
+  satır — saatler, IO). Alternatif: backfill'siz yaşa, kazanç retention
+  boyunca kendiliğinden dolar (7 günde tam).
+- Distributed güvenlik: probe + koşullu projeksiyon (`promotedCols()` zaten
+  probe-tabanlı, `store.go:3249`) — kolon yoksa dizi yoluna düşer, KIRILMAZ.
+
+---
+
+## 4. Seçenek B — iki aşamalı sorgu
+
+**Bugün ZATEN iki aşamalı** (FAZ 2): liste `LIMIT 50` PK/MV yoluyla id'leri
+verir, extras yalnız o id'ler için projeksiyon yapar. Operatörün tarif
+ettiği B, mevcut tasarımdır; kalan soru pencere geometrisi:
+
+| Varyant | Lokal ölçüm (aynı 50 id) | Prod'da beklenen |
+|---|---|---|
+| Global pencere (bugün) | 120 003 satır · 84 MiB · 145 ms | bloom seçimi ~100-200 blok |
+| 5-dk kova gruplu OR yüklemleri | 120 003 · 84 MiB · 172 ms | part budaması iyileşir; granül seçimi aynı (bloom) |
+| Trace başına ±1 s pencere (50 OR) | 119 943 · 84 MiB · 258 ms | aynı; yüklem maliyeti artar |
+
+Lokalde granüller dakika genişliğinde olduğu için fark görünmez; prod'da
+da kazanç sınırlı çünkü **PK öneki `service_name`** — zaman aralığı granül
+seviyesinde budamaz (generic exclusion), bloom zaten granülü seçmiş. Pencere
+daraltma yalnız **part** sayısını düşürür (saatlik/günlük part'larda 6
+saatlik pencere zaten az part). **Karar: ölçmeden dilim AÇMA** — prod
+query_log'da `SelectedParts`/`SelectedMarks` (§7) pencere varyantını haklı
+çıkarırsa B2 (5-dk kova gruplu, FE satır zamanlarını gönderir) ayrı dilim.
+
+---
+
+## 5. Frontend tetikleme
+
+- Kolon ekle/çıkar: liste refetch **YOK** (`Traces.tsx:482-502` dep dizisi);
+  yalnız `extraCols`+`data` effect'i (`:508-540`) eksik anahtarlar için
+  extras ister — gereksiz refetch yok. ✅
+- Pencere: FE satırların min/max'ından türetiyor (`:515-520`) → zaman-dışı
+  sıralamada tüm aralık (§2). Sunucu `to+5 dk` slack (`traceExtrasWindow`).
+- Extras yanıtı `mergeTraceExtras` ile satıra basılır; boş değer `""` →
+  tekrar istenmez. ✅
+- Cache: sunucu 20 s `serveCached`, anahtar id+attr+pencere → sayfa
+  değişiminde MISS (doğru — farklı id'ler).
+- `DEFAULT_TRACE_COLUMNS = [openshift.cluster.name, channel_code,
+  function_code, function_id]` (2026-08-24 kararı) → **taze oturumda dördü
+  de açık, ikisi şişman yolda** — yavaşlık "kolon ekleyince" değil, "varsayılan
+  açılışta" da var; operatör kolon ekleyince FARK ediyor.
+
+---
+
+## 6. Öneri ve dosya planı
+
+**Tek en etkili değişiklik:** projeksiyonu şişman yoldan çıkarmak (16× bayt).
+Pencere işi ikincil ve ölçüm ister.
+
+| Dilim | Ne | Dosyalar | Test |
+|---|---|---|---|
+| **D1 (bugfix)** `openshift.cluster.name`/`k8s.cluster.name` → `cluster` kolonu | `traceExtrasProjection`'a `clusterAliases` eşlemesi (mevcut `key == "cluster"` dalının yanına) | `internal/chstore/repo.go` | `traces_extras_test.go`: üç yazım da `anyIf(cluster, …)` üretir, dizi ifadesi YOK |
+| **D2** `function_id` terfi kolonu | `promoted_attr.go` tablosuna `{col: attr_function_id, keys: [function_id, FUNCTION_ID]}` (String); `store.go` alters (app-managed, koşullu); `migrations/0013_function_id.sql` (+rollback; ON CLUSTER + Distributed ADD; MATERIALIZE COLUMN opsiyonel adım, ayrı komut) | `internal/chstore/promoted_attr.go`, `store.go`, `migrations/0013_*.sql`, `migrations/embed.go` (sihirbaz kapsamı) | `promoted_attr_test.go` (iki yazım), `ddl_slice_placement_test`, dağıtık checklist (§9 /clickhouse-schema) |
+| **D3** varsayılan kolonlar | `DEFAULT_TRACE_COLUMNS` zaten `channel_code, function_code` içeriyor; gizleme ColumnManager + `traces-extra-cols` localStorage ✅ — **değişiklik gerekmiyor**; yalnız sıra: `channel_code, function_code` başa (attr sırası) | `lib/traceColumns.ts` | `traceColumns.test.ts` |
+| **D4** benchmark regresyon testi | Opt-in canlı test (`COREMETRY_BENCH_CH_DSN` yoksa `t.Skip`): 7 günlük aralıkta liste (kolonsuz) vs liste+extras (varsayılan 4 kolon) query_log medyanı (≥3 koşu) + read_bytes; eşik: extras read_bytes ≤ 3× liste, süre ≤ 500 ms; sonuç `t.Logf` + `testdata/bench-traces-extras.md`'ye satır | `internal/chstore/traces_extras_bench_test.go` | kendisi |
+| **D5 (ölçüm sonrası)** pencere daraltma B2 | FE satır zamanları → sunucu 5-dk kova OR yüklemleri; anahtar kovaları içerir | `traces_extras.go`, `repo.go`, `Traces.tsx`, `api.ts` | `traceExtrasSQL` kova testi; prod ölçümü kabul eşiği |
+
+Sıra: D1 (10 dk, hemen bugfix sınıfı) → D4 (ölçüm altyapısı, prod'da
+koşulabilir) → D2 (migration operatörde) → D5 ölçüme bağlı.
+
+---
+
+## 7. Prod doğrulama sözleşmesi
+
+Operatör prod CH'de (query_log açıksa) koşar — extras sorgusunu bulmak için
+`log_comment` yok (bilinen boşluk), metin imzası: `anyIf(` + `trace_id IN`:
 
 ```sql
-ALTER TABLE spans ADD COLUMN IF NOT EXISTS attr_channel_code
-  LowCardinality(String)
-  MATERIALIZED attr_values[indexOf(attr_keys, 'CHANNEL_CODE')];
-
-ALTER TABLE spans ADD COLUMN IF NOT EXISTS attr_function_code
-  LowCardinality(String)
-  MATERIALIZED attr_values[indexOf(attr_keys, 'FUNCTION_CODE')];
+SELECT round(quantile(0.5)(query_duration_ms)) p50_ms, max(query_duration_ms) max_ms,
+       max(read_rows) read_rows, formatReadableSize(max(read_bytes)) read_bytes,
+       max(ProfileEvents['SelectedMarks']) marks, max(ProfileEvents['SelectedParts']) parts, count() runs
+FROM clusterAllReplicas('<küme>', system.query_log)
+WHERE event_time > now() - INTERVAL 1 DAY AND type = 'QueryFinish' AND query_kind = 'Select'
+  AND query LIKE '%trace_id IN (%' AND query LIKE '%anyIf(%' AND query LIKE '%GROUP BY trace_id%'
+FORMAT Vertical;
 ```
+Kabul eşiği (D1+D2 sonrası, aynı sorguda): `read_bytes` en az **5×** düşer;
+p50 < 500 ms. Düşmezse §4 pencere varyantı (D5) ölçülür — `SelectedMarks`
+yüksek + `read_bytes` düşükse pencere, tersi kolon.
 
-Uygulandığında kod tarafındaki tek değişiklik:
+---
 
-```go
-var traceAttrMaterialized = map[string]string{
-    "CHANNEL_CODE":  "attr_channel_code",
-    "FUNCTION_CODE": "attr_function_code",
-}
-```
+## 8. Riskler
 
-(+ boot-probe, aşağıda). Projeksiyon üretici o andan itibaren
-`anyIf(attr_channel_code, attr_channel_code != '')` üretir — 4 şişman array
-kolonu decompress'i yerine tek dar LowCardinality kolon.
-
-### Distributed-column-safety (ZORUNLU — prod'u iki kez kıran sınıf)
-
-Feedback `distributed-column-safety`: yeni spans kolonu okuyan HER sorgu yolu
-**gün-1 distributed-güvenli** olmalı. `cluster` kolonu emsali
-(repo.go:306-342, `hasClusterCol` + `clusterExpr`):
-
-1. **Boot probe:** `hasXCol` probe'u (örn. `SELECT attr_channel_code FROM
-   spans LIMIT 0` try/catch ya da `system.columns` sorgusu) — kolon okunabilir
-   DEĞİLSE map'e girdi EKLENMEZ, üretici array yoluna düşer. Map'in doldurulması
-   sabit literal değil, probe sonucuna bağlı olmalı.
-2. **Prod gerçeği:** canlı hedef external Distributed CH (`cluster_name`
-   çoğu zaman UNSET) — chstore'un ALTER'ı `spans_local`'a **işlemeyebilir**;
-   Distributed wrapper kolonu görse bile per-shard tablo görmeyince sorgu
-   code 47 ile düşer. Bu yüzden probe şart, `IF NOT EXISTS` yetmez.
-3. **Koşullu ifade:** eski part'lar materialized kolonda '' okur (cluster
-   emsalindeki gözlem) — `anyIf(col, col != '')` boşları zaten atlar; retention
-   penceresi kolonu tanımayan part kalmayana dek eski trace'lerde değer eksik
-   görünebilir. Tam eşdeğerlik istenirse cluster emsalindeki
-   `coalesce(nullIf(col,''), <array-fallback>)` şekli kullanılabilir (o zaman
-   array kolonları da okunur — kazanım yeni part'larda kalır).
-4. **MV yok:** bu kolonlar hiçbir MV'ye girmiyor → `dropCombinedMV` /
-   MODIFY QUERY riski yok; ALTER tek başına yeterli.
-5. **UYGULANDI — v0.9.198:** ALTER'lar migrate'e eklendi (ex_* emsal bloğu,
-   external-Distributed-unset atlama + boot probe + koşullu map kaydı).
-   Lokal doğrulama: kolonlar MATERIALIZED oluştu, yeni part'larda native yol
-   ~%26 daha az read_bytes (668 vs 902 KiB, 10dk penceresi); eski part'lar
-   okuma anında hesaplar, retention akışıyla tam kazanım.
+| # | Risk | Önlem |
+|---|---|---|
+| R1 | `function_id` kardinalitesi → LC sözlük şişmesi | String tipi; LC'ye geçiş `uniq(function_id) < 10k` ölçülünce |
+| R2 | MATERIALIZED kolon eski part'larda kazanç sağlamaz | Dokümante; MATERIALIZE COLUMN ayrı, operatör kararı |
+| R3 | Dağıtık prod'da kolon yalnız `_local`'a eklenir, Distributed'a değil | 0012 kalıbı: iki ADD; probe kolonu Distributed'da görmezse dizi yoluna düşer (kırılmaz, hızlanmaz — v0.9.621 "kolon var ≠ dolu/kullanılıyor") |
+| R4 | `openshift.cluster.name` → `cluster` eşlemesi yanlış değer (cluster coalesce sırası: `k8s.cluster.name` önce) | İki anahtar aynı kolona coalesce edilmiş; farklıysa `k8s.cluster.name` kazanır — dokümante |
+| R5 | Benchmark testi CI'da CH ister | opt-in env; CI'da skip |

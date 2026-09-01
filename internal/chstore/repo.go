@@ -2538,7 +2538,8 @@ func buildGetTracesListSQL(whereSQL, havingSQL, sortCol, order string) string {
 		       (max(toUnixTimestamp64Nano(time) + duration) -
 		        toUnixTimestamp64Nano(min(time))) / 1e6 AS dur_ms,
 		       count()                                 AS span_count,
-		       max(if(status_code = 'error', 1, 0))    AS has_error
+		       max(if(status_code = 'error', 1, 0))    AS has_error,
+		       countIf(status_code = 'error')          AS err_spans
 		FROM spans ` + whereSQL + `
 		GROUP BY trace_id` + havingSQL + `
 		ORDER BY ` + sortCol + ` ` + order + `
@@ -3252,6 +3253,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		        toUnixTimestamp64Nano(minMerge(trace_start_state))) / 1e6  AS dur_ms,
 		       countMerge(span_count_state)                                AS span_count,
 		       toUInt8(countMerge(error_count_state) > 0)                  AS has_error,
+		       countMerge(error_count_state)                               AS err_spans,
 		       min(time_bucket)                                            AS first_bucket
 		FROM trace_summary_5m
 		WHERE ` + traceIDClause + `time_bucket >= ? AND time_bucket < ?

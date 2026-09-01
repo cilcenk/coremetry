@@ -121,7 +121,7 @@ func scanTraceListRows(rows driver.Rows) ([]TraceRow, error) {
 		var t TraceRow
 		var hasErr uint8
 		var ts time.Time
-		if err := rows.Scan(&t.TraceID, &t.RootName, &t.ServiceName, &ts, &t.DurationMs, &t.SpanCount, &hasErr); err != nil {
+		if err := rows.Scan(&t.TraceID, &t.RootName, &t.ServiceName, &ts, &t.DurationMs, &t.SpanCount, &hasErr, &t.ErrorSpans); err != nil {
 			return nil, err
 		}
 		t.StartTime = ts.UnixNano()

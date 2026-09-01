@@ -273,6 +273,12 @@ type TraceRow struct {
 	DurationMs  float64 `json:"durationMs"`
 	SpanCount   uint64  `json:"spanCount"`
 	HasError    bool    `json:"hasError"`
+	// ErrorSpans — v0.10.218 (Dynatrace liste düzeni D3): trace'teki hatalı
+	// span SAYISI. HasError'ın kaynağı zaten bu sayının > 0 olması; iki yol
+	// da (ham spans countIf / MV countMerge(error_count_state)) sayıyı
+	// üretiyor, artık satıra biniyor. 0 → tel'de yok (omitempty); UI Status
+	// hücresinde "ERROR · N span" ipucu olarak çizer.
+	ErrorSpans uint64 `json:"errorSpans,omitempty"`
 	// Per-trace lookup of attribute values requested by the caller
 	// via TraceFilter.ExtraAttrs. Keys mirror the requested list;
 	// missing/empty values surface as "" so the UI can render a

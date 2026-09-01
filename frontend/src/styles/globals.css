@@ -1334,6 +1334,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .b-ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
 .b-err { background: color-mix(in srgb, var(--err) 15%, transparent); color: var(--err); }
+/* Rozetin yanındaki sessiz sayı ipucu ("ERROR · 3 span", v0.10.218). */
+.cell-hint { margin-left: var(--sp-3); color: var(--text3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .b-warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
 .b-info { background: color-mix(in srgb, var(--info) 15%, transparent); color: var(--info); }
 .b-mut { background: var(--accent-soft); color: var(--text2); }

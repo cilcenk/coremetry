@@ -2262,6 +2262,10 @@ export interface TraceRow {
   durationMs: number;
   spanCount: number;
   hasError: boolean;
+  // v0.10.218 — hatalı span sayısı (omitempty: 0 iken yok). Status
+  // hücresi "ERROR · N span" ipucu; eski (önbellekli) yanıtlarda alan
+  // yoksa yalnız rozet çizilir.
+  errorSpans?: number;
   // User-requested attribute values (one per `extraAttrs` query
   // param key). Missing/empty values surface as ""; the UI renders
   // them as "—" so empty rows still align visually.

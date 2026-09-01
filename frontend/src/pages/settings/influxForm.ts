@@ -8,9 +8,17 @@
 //   • eşikler: '' = unset → tel'e YAZILMAZ (0/omitempty = global varsayılan).
 //     vmForm dersi: kutuya varsayılanı basmak sessiz ayar donması demek.
 //
-// TFAIL şablonu spec'ten (docs/audit/influx-integration.md §0 K3/K4):
-// SORGU 1 gauge (son 2 dk), SORGU 2 enrichment; groupBy v1'de yalnız
-// OPERATIONCODE+ERRORCODE, attrMap altı tag'in tümünü adlandırır.
+// TFAIL şablonu — v0.10.224: operatörün GERÇEK Grafana sorgusuyla hizalı
+// ("BAŞARISIZ FONKSİYON VE OPERASYONLAR", 2026-09-01). Bucket spec'teki
+// GGFailTraceBckt (TRACEID taşıyan); Grafana paneli GoldenGateBucket'tan
+// okuyor — farklıysa kutudan değiştir. Gürültü filtreleri (OPERATIONCODE != "0", FUNCTIONCODE
+// != "N/A", "------" dışlaması), `aggregateWindow(every: 1m, fn: sum,
+// createEmpty: false)` → dakikalık toplam; Coremetry'deki dakika Grafana'daki
+// dakikayla aynı sayı. Grafana'nın `_value > 4` ekran tabanı BİLEREK YOK:
+// dedektör baseline için düşük değerleri de görmeli, gürültü tabanı
+// eşiklerdeki MinAbsDelta'nın işi. groupBy v1'de OPERATIONCODE+ERRORCODE
+// (spec); Grafana KANALKOD+FUNCTIONCODE+OPERATIONCODE gruplar — kutudan
+// değiştirilebilir (kardinalite notu sekmede).
 import type { InfluxQueryConfig, InfluxThresholds } from '@/lib/types';
 
 export function parseAttrMap(text: string): Record<string, string> | undefined {
@@ -74,8 +82,11 @@ export const TFAIL_TEMPLATE: InfluxQueryConfig = {
   flux: `from(bucket: "GGFailTraceBckt")
   |> range(start: -2m)
   |> filter(fn: (r) => r._measurement == "TFAIL" and r._field == "ADET")
+  |> filter(fn: (r) => r.OPERATIONCODE != "0" and r.FUNCTIONCODE != "N/A")
+  |> filter(fn: (r) => r.OPERATIONCODE !~ /------/)
   |> group(columns: ["OPERATIONCODE", "ERRORCODE"])
-  |> sum()`,
+  |> aggregateWindow(every: 1m, fn: sum, createEmpty: false)
+  |> yield(name: "sum")`,
   enrichFlux: `from(bucket: "GGFailTraceBckt")
   |> range(start: {{from}}, stop: {{to}})
   |> filter(fn: (r) => r._measurement == "TFAIL" and r._field == "ADET")

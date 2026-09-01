@@ -3,8 +3,9 @@
 //
 // ClustersTab'ın liste deseni (kaynak kartları + tek Kaydet) ve
 // MetricsBackendTab'ın Test düğmesi (formdaki değerleri KAYDETMEDEN dener).
-// Token kutusu YOK: tokenRef bir referans (`env:NAME` | `file:/path`),
-// sunucu çözüp rozetler (tokenResolved). Sorgular kaynak başına liste;
+// Token (v0.10.224, operatör): düz token saklanır, GET maskeler (hasToken),
+// boş kutu saklıyı korur — VM/Thanos deseni; tokenRef (`env:` | `file:`)
+// seçenek, doluysa kazanır. Sorgular kaynak başına liste;
 // "TFAIL şablonu" düğmesi spec'in iki sorgusunu + attrMap'i doldurur.
 // Poller D2'de: bu sekme bugün yalnız yapılandırma + deneme.
 import { useEffect, useState, type FormEvent } from 'react';
@@ -35,6 +36,8 @@ interface EditSource {
   name: string;
   url: string;
   org: string;
+  token: string;      // yalnız YENİ değer; '' = saklıyı koru
+  hasToken: boolean;
   tokenRef: string;
   tokenResolved: boolean;
   tokenError?: string;
@@ -62,7 +65,8 @@ function queryToWire(q: EditQuery): InfluxQueryConfig {
 
 function fromSnapshot(s: InfluxSourceSnapshot): EditSource {
   return {
-    id: s.id ?? '', name: s.name, url: s.url, org: s.org, tokenRef: s.tokenRef ?? '',
+    id: s.id ?? '', name: s.name, url: s.url, org: s.org,
+    token: '', hasToken: s.hasToken, tokenRef: s.tokenRef ?? '',
     tokenResolved: s.tokenResolved, tokenError: s.tokenError,
     intervalSec: s.intervalSec ? String(s.intervalSec) : '',
     insecureSkipVerify: !!s.insecureSkipVerify, enabled: s.enabled,
@@ -75,6 +79,7 @@ function toWire(s: EditSource): InfluxSourceInput {
   return {
     id: s.id || undefined,
     name: s.name.trim(), url: s.url.trim(), org: s.org.trim(),
+    token: s.token || undefined, // boş → sunucu saklıyı korur
     tokenRef: s.tokenRef.trim() || undefined,
     intervalSec: Number.isFinite(iv) && iv > 0 ? iv : undefined,
     insecureSkipVerify: s.insecureSkipVerify, enabled: s.enabled,
@@ -83,7 +88,7 @@ function toWire(s: EditSource): InfluxSourceInput {
 }
 
 const EMPTY_SOURCE: EditSource = {
-  id: '', name: '', url: '', org: '', tokenRef: '', tokenResolved: false,
+  id: '', name: '', url: '', org: '', token: '', hasToken: false, tokenRef: '', tokenResolved: false,
   intervalSec: '', insecureSkipVerify: false, enabled: true, queries: [],
 };
 
@@ -171,7 +176,7 @@ export function InfluxTab() {
                   {st.worker && (
                     <> · işçi: {st.worker.lastError
                       ? <span className="is-err">{st.worker.lastError}</span>
-                      : <>son poll {st.worker.lastPollAt ? fmtDateTime(st.worker.lastPollAt) : '—'} · {st.worker.lastRows} satır → {st.worker.lastPoints} nokta{st.worker.lastDrops ? ` (${st.worker.lastDrops} düştü)` : ''}</>}
+                      : <>son poll {st.worker.lastPollAt ? fmtDateTime(st.worker.lastPollAt) : '—'} · {st.worker.lastRows} satır → {st.worker.lastPoints} nokta{st.worker.lastDrops ? ` (${st.worker.lastDrops} düştü)` : ''}{st.worker.lastSkippedOld ? ` · ${st.worker.lastSkippedOld} kova zaten yazılı` : ''}{st.worker.lastSkippedPartial ? ` · ${st.worker.lastSkippedPartial} kısmi kova bekliyor` : ''}</>}
                     </>
                   )}
                 </div>
@@ -202,14 +207,18 @@ export function InfluxTab() {
                   placeholder="30" inputMode="numeric" hint="10–3600; boş = 30" className="is-narrow" />
               </div>
               <div className="influx-row">
-                <Field label="Token referansı" value={r.tokenRef}
+                <Field label={<>Token{r.hasToken && <span className="is-ok"> · saklı</span>}</>} type="password" value={r.token}
+                  onChange={e => patch(i, { token: e.target.value })}
+                  placeholder={r.hasToken ? '(saklı değeri korumak için boş bırakın)' : 'InfluxDB API token’ı yapıştırın…'}
+                  autoComplete="off"
+                  hint="Saklanır, geri gösterilmez. Rotasyon: yenisini yapıştır, Kaydet." />
+                <Field label="…ya da token referansı" value={r.tokenRef}
                   onChange={e => patch(i, { tokenRef: e.target.value })}
                   placeholder="env:COREMETRY_INFLUX_TOKEN_GG  ·  file:/var/run/secrets/influx/token"
-                  required={r.enabled}
                   error={r.tokenError}
                   hint={r.tokenResolved
-                    ? 'Çözüldü ✓ — pod bu referansı okuyabiliyor.'
-                    : 'Düz token kabul edilmez. env: Helm extraEnv + existingSecret; file: mount edilmiş Secret.'} />
+                    ? 'Çözüldü ✓'
+                    : 'Doluysa saklı token yerine bu kullanılır. env: Helm extraEnv + existingSecret; file: mount edilmiş Secret.'} />
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, alignSelf: 'flex-end', paddingBottom: 10 }}>
                   <input type="checkbox" checked={r.insecureSkipVerify}
                     onChange={e => patch(i, { insecureSkipVerify: e.target.checked })} />

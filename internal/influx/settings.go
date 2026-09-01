@@ -6,10 +6,13 @@
 // system_settings["influx_sources"] altında tipli Settings blobu, dar
 // settingsStore arayüzü, boot'ta LoadPersisted + 30 s StartConfigRefresh
 // (çok-pod senkron), SavePersisted + canlı Configure takası, Settings UI
-// için Snapshot. Tek yapısal fark (audit K5): TOKEN BLOB'A YAZILMAZ.
-// SourceConfig yalnız bir REFERANS taşır (`env:NAME` | `file:/path`) ve
-// referans kullanım anında çözülür (secret.go) — tempo/thanos/ES/VM'in
-// düz-metin token sözleşmesinden bilinçli sapma; repo'daki ilk örnek.
+// için Snapshot. Token: v0.10.224 operatör kararı ("düz token saklanabilir,
+// maskeli yaparsın") — tempo/thanos/VM sözleşmesi: blob'da saklanır, GET
+// asla geri vermez (HasToken), boş girdi saklıyı korur. Alternatif olarak
+// REFERANS (`env:NAME` | `file:/path`, secret.go) — varsa o kazanır ve
+// kullanım anında çözülür. Audit K5'in "yalnız referans" hâli v0.10.222-223
+// arasında yaşadı; operatör formda token yapıştırınca reddedilmesini
+// istemedi.
 //
 // D1 (bu dosya + client/csv/template/secret): kaynak yönetimi + test.
 // D2 poller → metric_points, D3 dış anomali, D4 enrichment ayrı dilimler.
@@ -78,7 +81,11 @@ type SourceConfig struct {
 	Name               string        `json:"name"`
 	URL                string        `json:"url"`
 	Org                string        `json:"org"`
-	TokenRef           string        `json:"tokenRef,omitempty"`
+	// Token — saklı düz token (GET'te ASLA; Snapshot HasToken). Boş PUT
+	// saklıyı korur (Normalize prev'den taşır).
+	Token    string `json:"token,omitempty"`
+	// TokenRef — `env:NAME` | `file:/path`; doluysa Token'a tercih edilir.
+	TokenRef string `json:"tokenRef,omitempty"`
 	IntervalSec        int           `json:"intervalSec,omitempty"`
 	InsecureSkipVerify bool          `json:"insecureSkipVerify,omitempty"`
 	Enabled            bool          `json:"enabled"`
@@ -91,11 +98,13 @@ type Settings struct {
 	Sources []SourceConfig `json:"sources"`
 }
 
-// SourceSnapshot — GET görünümü. tokenRef bir REFERANS (secret değil),
-// aynen görünür; TokenResolved/TokenError Settings rozetidir: operatör
-// "env yok / dosya yok"u sessiz 401 yerine kaydetmeden görür (audit R9).
+// SourceSnapshot — GET görünümü. Token MASKELİ (gömülü SourceConfig'in
+// Token'ı boşaltılır, HasToken söyler); tokenRef bir REFERANS (secret
+// değil), aynen görünür. TokenResolved/TokenError Settings rozeti:
+// operatör "env yok / dosya yok"u sessiz 401 yerine kaydetmeden görür.
 type SourceSnapshot struct {
 	SourceConfig
+	HasToken      bool   `json:"hasToken"`
 	TokenResolved bool   `json:"tokenResolved"`
 	TokenError    string `json:"tokenError,omitempty"`
 }
@@ -258,20 +267,31 @@ func (s *Service) Snapshot() Snapshot {
 	defer s.mu.RUnlock()
 	out := Snapshot{Sources: make([]SourceSnapshot, 0, len(s.cfg.Sources))}
 	for _, src := range s.cfg.Sources {
-		ss := SourceSnapshot{SourceConfig: src}
+		ss := SourceSnapshot{SourceConfig: src, HasToken: src.Token != ""}
+		ss.Token = "" // maskele — GET asla geri vermez
 		if src.Queries == nil {
 			ss.Queries = []QueryConfig{}
 		}
-		if src.TokenRef != "" {
-			if _, err := resolveTokenRef(src.TokenRef, s.getenv, s.readFile); err != nil {
-				ss.TokenError = err.Error()
-			} else {
-				ss.TokenResolved = true
-			}
+		if _, err := s.tokenFor(src); err != nil {
+			ss.TokenError = err.Error()
+		} else {
+			ss.TokenResolved = true
 		}
 		out.Sources = append(out.Sources, ss)
 	}
 	return out
+}
+
+// tokenFor — kaynağın ETKİN token'ı: referans varsa çözülür (rotasyon
+// anında etkili), yoksa saklı düz token. İkisi de yoksa hata.
+func (s *Service) tokenFor(src SourceConfig) (string, error) {
+	if src.TokenRef != "" {
+		return resolveTokenRef(src.TokenRef, s.getenv, s.readFile)
+	}
+	if src.Token != "" {
+		return src.Token, nil
+	}
+	return "", fmt.Errorf("kaynak %q: token yok (düz token yapıştırın ya da tokenRef verin)", src.Name)
 }
 
 // NewSourceID — "i-" + 8 hex (thanos "c-" ailesi). Sunucu sahipli.
@@ -313,6 +333,7 @@ func Normalize(in Settings, prev Settings, newID func() string) (Settings, error
 			Name:               strings.TrimSpace(src.Name),
 			URL:                strings.TrimSpace(src.URL),
 			Org:                strings.TrimSpace(src.Org),
+			Token:              strings.TrimSpace(src.Token),
 			TokenRef:           strings.TrimSpace(src.TokenRef),
 			IntervalSec:        src.IntervalSec,
 			InsecureSkipVerify: src.InsecureSkipVerify,
@@ -334,12 +355,18 @@ func Normalize(in Settings, prev Settings, newID func() string) (Settings, error
 
 		// ID: sunucu sahipli. Tanınan id korunur; tanınmayan/boş id ada göre
 		// saklı kayda bağlanır; hiçbiri yoksa yeni.
-		if _, ok := byID[s.ID]; !ok {
+		prevRec, hasPrev := byID[s.ID]
+		if !hasPrev {
 			if p, ok := byName[key]; ok && p.ID != "" {
-				s.ID = p.ID
+				s.ID, prevRec, hasPrev = p.ID, p, true
 			} else {
 				s.ID = newID()
 			}
+		}
+		// Boş token girdisi SAKLIYI KORUR (VM mergeVMSettings kuralı): form
+		// token'ı geri alamaz (GET maskeler), her kayıt boş yollar.
+		if s.Token == "" && hasPrev {
+			s.Token = prevRec.Token
 		}
 
 		if s.IntervalSec == 0 {
@@ -360,8 +387,8 @@ func Normalize(in Settings, prev Settings, newID func() string) (Settings, error
 			if s.Org == "" {
 				return Settings{}, fmt.Errorf("%s: org zorunlu", label)
 			}
-			if s.TokenRef == "" {
-				return Settings{}, fmt.Errorf("%s: tokenRef zorunlu (InfluxDB 2.x token ister)", label)
+			if s.TokenRef == "" && s.Token == "" {
+				return Settings{}, fmt.Errorf("%s: token zorunlu — düz token yapıştırın ya da tokenRef (env:/file:) verin", label)
 			}
 			if len(src.Queries) == 0 {
 				return Settings{}, fmt.Errorf("%s: etkin kaynakta en az bir sorgu olmalı", label)

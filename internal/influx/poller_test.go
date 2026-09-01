@@ -75,8 +75,13 @@ func TestBuildMetricsRequest_Shape(t *testing.T) {
 		t.Fatalf("gauge with 2 points expected: %+v", ms[0])
 	}
 	dp := g.DataPoints[0]
-	if dp.GetAsDouble() != 42 || dp.TimeUnixNano != uint64(now.UnixNano()) {
+	// v0.10.224: `_time` taşıyan kayıt kova bitişine yazılır; taşımayan
+	// (ikinci kayıt) poll anına.
+	if dp.GetAsDouble() != 42 || dp.TimeUnixNano != uint64(time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC).UnixNano()) {
 		t.Fatalf("dp0 value/time: %+v", dp)
+	}
+	if g.DataPoints[1].TimeUnixNano != uint64(now.UnixNano()) {
+		t.Fatalf("dp1 (no _time) must use the poll moment: %+v", g.DataPoints[1])
 	}
 	// attrMap ile ADLANDIRILMIŞ, groupBy SIRASIYLA.
 	if len(dp.Attributes) != 2 || dp.Attributes[0].Key != "operation" || dp.Attributes[0].Value.GetStringValue() != "OP1" ||
@@ -272,5 +277,104 @@ func TestWorkerTick_EmptyResultInsertsNothing(t *testing.T) {
 	}
 	if st := w.Status(); len(st) != 1 || st[0].LastError != "" || st[0].LastRows != 0 {
 		t.Fatalf("empty is not an error: %+v", st)
+	}
+}
+
+// ── v0.10.224 — Grafana hizası: aggregateWindow kovaları ────────────────
+//
+// Operatörün gerçek sorgusu (Grafana "BAŞARISIZ FONKSİYON VE OPERASYONLAR",
+// 2026-09-01): `aggregateWindow(every: 1m, fn: sum, createEmpty: false)`.
+// Kayıtlar `_time` = kova BİTİŞİ taşır. Sözleşme:
+//   • `_time` varsa nokta zamanı ODUR (poll anı değil) — Coremetry'deki
+//     dakika, Grafana'daki dakikayla aynı sayıyı gösterir.
+//   • `_time` > now → tamamlanmamış kova, ATLANIR (sayılır).
+//   • Watermark: (kaynak, sorgu) başına en son yazılan kova; ≤ watermark
+//     kovalar bir sonraki poll'da YENİDEN yazılmaz (30 s poll, 2 dk range:
+//     aynı kova 2-4 poll'da görünür).
+//   • `_time` yoksa (spec'in düz `sum()` sorgusu) eski davranış: poll anı.
+
+func TestSplitBuckets(t *testing.T) {
+	now := time.Date(2026, 9, 1, 21, 32, 30, 0, time.UTC)
+	wm := time.Date(2026, 9, 1, 21, 31, 0, 0, time.UTC)
+	in := recs(
+		map[string]string{"_time": "2026-09-01T21:31:00Z", "_value": "7", "OPERATIONCODE": "A", "ERRORCODE": "E"},  // == watermark → eski
+		map[string]string{"_time": "2026-09-01T21:32:00Z", "_value": "16", "OPERATIONCODE": "A", "ERRORCODE": "E"}, // yeni tam kova
+		map[string]string{"_time": "2026-09-01T21:33:00Z", "_value": "3", "OPERATIONCODE": "A", "ERRORCODE": "E"},  // bitişi gelecekte → kısmi
+		map[string]string{"_value": "9", "OPERATIONCODE": "B", "ERRORCODE": "E"},                                  // _time yok → poll anı, watermark'a bakılmaz
+		map[string]string{"_time": "garbage", "_value": "1", "OPERATIONCODE": "C", "ERRORCODE": "E"},               // bozuk _time → poll anı
+	)
+	kept, newWM, st := SplitBuckets(in, wm, now)
+	if len(kept) != 3 {
+		t.Fatalf("kept: want 3 (new bucket + 2 timeless), got %d: %+v", len(kept), kept)
+	}
+	if st.Old != 1 || st.Partial != 1 {
+		t.Fatalf("skip stats: %+v", st)
+	}
+	if !newWM.Equal(time.Date(2026, 9, 1, 21, 32, 0, 0, time.UTC)) {
+		t.Fatalf("watermark advances to the newest complete bucket, got %v", newWM)
+	}
+	// Watermark ilerledikten sonra aynı poll tekrar gelirse yeni kova YOK.
+	kept2, wm2, st2 := SplitBuckets(in, newWM, now)
+	if len(kept2) != 2 || st2.Old != 2 || !wm2.Equal(newWM) {
+		t.Fatalf("second poll must skip the already-emitted bucket: kept=%d st=%+v wm=%v", len(kept2), st2, wm2)
+	}
+}
+
+func TestBuildMetricsRequest_UsesBucketTime(t *testing.T) {
+	src := tfailSource()
+	qc := src.Queries[0]
+	now := time.Date(2026, 9, 1, 21, 32, 30, 0, time.UTC)
+	req, drops := BuildMetricsRequest(src, qc, recs(
+		map[string]string{"_time": "2026-09-01T21:32:00Z", "_value": "16", "OPERATIONCODE": "A", "ERRORCODE": "E"},
+		map[string]string{"_value": "9", "OPERATIONCODE": "B", "ERRORCODE": "E"},
+	), now)
+	if drops.Total() != 0 {
+		t.Fatalf("drops: %+v", drops)
+	}
+	dps := req.ResourceMetrics[0].ScopeMetrics[0].Metrics[0].GetGauge().DataPoints
+	if dps[0].TimeUnixNano != uint64(time.Date(2026, 9, 1, 21, 32, 0, 0, time.UTC).UnixNano()) {
+		t.Fatalf("bucket _time must be the point time: %d", dps[0].TimeUnixNano)
+	}
+	if dps[1].TimeUnixNano != uint64(now.UnixNano()) {
+		t.Fatalf("timeless record falls back to the poll moment: %d", dps[1].TimeUnixNano)
+	}
+}
+
+func TestWorkerTick_WatermarkAcrossPolls(t *testing.T) {
+	svc := New()
+	svc.Configure(Settings{Sources: []SourceConfig{tfailSource()}})
+	sink := &fakeSink{}
+	now := time.Date(2026, 9, 1, 21, 32, 30, 0, time.UTC)
+	q := &fakeQueryAPI{recs: map[string][]Record{"GGFailTraceBckt": recs(
+		map[string]string{"_time": "2026-09-01T21:31:00Z", "_value": "7", "OPERATIONCODE": "A", "ERRORCODE": "E"},
+		map[string]string{"_time": "2026-09-01T21:32:00Z", "_value": "16", "OPERATIONCODE": "A", "ERRORCODE": "E"},
+		map[string]string{"_time": "2026-09-01T21:33:00Z", "_value": "2", "OPERATIONCODE": "A", "ERRORCODE": "E"}, // kısmi
+	)}}
+	w := NewWorker(svc, sink)
+	w.now = func() time.Time { return now }
+	w.queryAPIFor = func(SourceConfig) (QueryAPI, error) { return q, nil }
+	w.Tick(context.Background())
+	if len(sink.pts) != 2 {
+		t.Fatalf("first poll: two complete buckets, got %d", len(sink.pts))
+	}
+	// 30 s sonra (21:33:00): iki eski kova ATLANIR, 21:33 kovası artık TAM →
+	// yalnız o yazılır (toplam 3). Yeniden yazım yok.
+	now = now.Add(30 * time.Second)
+	w.Tick(context.Background())
+	if len(sink.pts) != 3 {
+		t.Fatalf("only the newly completed bucket is written, got %d", len(sink.pts))
+	}
+	st := w.Status()[0]
+	if st.LastSkippedOld != 2 || st.LastSkippedPartial != 0 {
+		t.Fatalf("status must report skips: %+v", st)
+	}
+	// 30 s daha (21:33:30): üç kova da eski → hiçbir şey yazılmaz.
+	now = now.Add(30 * time.Second)
+	w.Tick(context.Background())
+	if len(sink.pts) != 3 {
+		t.Fatalf("re-polled buckets must not be re-written, got %d", len(sink.pts))
+	}
+	if st := w.Status()[0]; st.LastSkippedOld != 3 {
+		t.Fatalf("all three skipped as old: %+v", st)
 	}
 }

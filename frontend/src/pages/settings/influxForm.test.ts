@@ -66,6 +66,15 @@ describe('TFAIL şablonu (spec)', () => {
     expect(TFAIL_TEMPLATE.attrMap?.TRACEID).toBe('trace_id');
     expect(TFAIL_TEMPLATE.attrMap?.INSTANCEID).toBe('k8s.pod.name');
   });
+  it('SORGU 1 Grafana ile hizalı: GoldenGateBucket + 1 dk aggregateWindow + gürültü filtreleri, _value tabanı YOK', () => {
+    expect(TFAIL_TEMPLATE.flux).toContain('from(bucket: "GGFailTraceBckt")');
+    expect(TFAIL_TEMPLATE.flux).toContain('aggregateWindow(every: 1m, fn: sum, createEmpty: false)');
+    expect(TFAIL_TEMPLATE.flux).toContain('r.OPERATIONCODE != "0"');
+    expect(TFAIL_TEMPLATE.flux).toContain('r.FUNCTIONCODE != "N/A"');
+    expect(TFAIL_TEMPLATE.flux).not.toContain('_value > 4');
+    expect(TFAIL_TEMPLATE.enrichFlux).toContain('from(bucket: "GGFailTraceBckt")');
+  });
+
   it('SORGU 2 dört yer tutucuyu taşır, SORGU 1 hiçbirini taşımaz', () => {
     for (const ph of ['{{from}}', '{{to}}', '{{op}}', '{{err}}']) {
       expect(TFAIL_TEMPLATE.enrichFlux).toContain(ph);

@@ -1359,6 +1359,9 @@ export interface InfluxSourceInput {
   name: string;
   url: string;
   org: string;
+  /** Düz token (v0.10.224): yalnız YENİ değer; boş = saklıyı koru. GET asla döndürmez. */
+  token?: string;
+  /** `env:NAME` | `file:/path` — doluysa token'a tercih edilir. */
   tokenRef?: string;
   intervalSec?: number;
   insecureSkipVerify?: boolean;
@@ -1367,6 +1370,7 @@ export interface InfluxSourceInput {
 }
 /** influx.SourceSnapshot — GET görünümü (SourceConfig gömülü + rozet). */
 export interface InfluxSourceSnapshot extends InfluxSourceInput {
+  hasToken: boolean;
   tokenResolved: boolean;
   tokenError?: string;
 }
@@ -1397,6 +1401,8 @@ export interface InfluxSourceStatus {
   lastRows: number;
   lastPoints: number;
   lastDrops: number;
+  lastSkippedOld: number;     // v0.10.224 — zaten yazılmış kova
+  lastSkippedPartial: number; // v0.10.224 — tamamlanmamış kova
   lastError?: string;
 }
 /** api.influxStatusSource — ayar + metric_points izi (son 1 saat) + (varsa) işçi. */

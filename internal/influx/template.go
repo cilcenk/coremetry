@@ -4,7 +4,7 @@ package influx
 //
 // {{from}} / {{to}} / {{op}} / {{err}} gibi yer tutucular operatörün
 // yazdığı Flux'ın STRING LITERAL'ının içine giriyor. Kaçış yerine DAR
-// KAPI: değer ^[A-Za-z0-9_.:\-]{1,64}$ değilse doldurulmaz ve hata döner
+// KAPI: değer ^[A-Za-z0-9_.:\-]{1,128}$ değilse doldurulmaz ve hata döner
 // — `"`, `\`, yeni satır, boşluk hiçbir yoldan Influx'a ulaşamaz.
 // Kapıdan geçmeyen OPERATIONCODE/ERRORCODE değeri enrichment'ta atlanır
 // ve sayaca yazılır (D4). Bilinmeyen yer tutucu da HATA: sessizce boş
@@ -18,7 +18,9 @@ import (
 
 var (
 	placeholderRe = regexp.MustCompile(`\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
-	valueRe       = regexp.MustCompile(`^[A-Za-z0-9_.:\-]{1,64}$`)
+	// 128: operatörün OPERATIONCODE değerleri 40-60 karakter
+	// (CASHMANAGEMENT_NYT_INSTRUCTION_INQUIRY, Grafana 2026-09-01).
+	valueRe       = regexp.MustCompile(`^[A-Za-z0-9_.:\-]{1,128}$`)
 )
 
 // ValidValue — şablona girebilecek tek değer biçimi (RFC3339 zaman

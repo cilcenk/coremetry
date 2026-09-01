@@ -48,6 +48,7 @@ const (
 	DryRunStepProject    = "project"
 	DryRunStepBranch     = chainStepBranch
 	DryRunStepTree       = chainStepTree
+	DryRunStepSearch     = "search" // v0.10.226 — yalnız bilgilendirme adımı
 )
 
 // PinRead — servis kataloğu okumasının SONUCU.
@@ -227,6 +228,15 @@ func (s *Service) ResolveDryRun(ctx context.Context, service string, pin PinRead
 	}
 	if ch.class != "" && ch.at == DryRunStepBranch {
 		out.add(DryRunStepBranch, "Branş", false, ch.reason)
+		if cfg.CodeSearch {
+			// v0.10.226 — canlı çekimde bu çıkmaz duvar değil: stacktrace'ten
+			// organizasyon araması koşar, en güncel depo seçilir. Dry-run
+			// stack taşımadığı için burada DENENEMEZ; sessiz kalmak "canlıda
+			// da bulamaz" diye okunurdu.
+			out.addDerived(DryRunStepSearch, "Organizasyon araması",
+				"depo çıkmazında canlı çekim stacktrace'ten organizasyonu arar ve en son commit'lenen depoyu seçer (dry-run stack taşımaz, denenmedi)")
+			out.OK = false
+		}
 		return out
 	}
 	out.Branch = ch.branch

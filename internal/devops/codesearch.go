@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/stackparse"
 )
@@ -53,6 +54,17 @@ import (
 //     değil, operatörün yazdığı bir karar.
 //  5. Kalanlar deterministik sırayla (proje, depo, yol) — aynı hata iki
 //     kez farklı kanıt üretmesin.
+//
+// ── v0.10.226 — GERÇEK GÜNCELLİK: en son commit'lenen depo ───────────────
+//
+// Operatör (2026-09-01): "birden fazla repo çıkabilir, en güncel olanını
+// baz alabilir." Branş sırası bir VEKİLDİ; şimdi çağıran, isabetlerdeki
+// depoların son commit tarihini (Git API, code.go stampRecency) hit'e
+// damgalar (CodeSearchHit.LastCommit). Tarihi bilinen depolar arasında EN
+// YENİ depo her şeyin (konvansiyon dahil) üstüne çıkar; tarih bilinmeyen
+// depolar eski kurallara düşer — arama bir tarih isteği yüzünden KIRILMAZ.
+// Sıra artık: TFVC elenir → en yeni depo → konvansiyon → paket yolu →
+// branş sırası → deterministik kuyruk.
 
 // CodeSearchHit — arama sonucunun kullandığımız yarısı.
 type CodeSearchHit struct {
@@ -62,6 +74,31 @@ type CodeSearchHit struct {
 	// Branch — sonucun geldiği dal; boşsa çağıran deponun varsayılanına
 	// düşer.
 	Branch string `json:"-"`
+	// LastCommit — deponun son commit tarihi (v0.10.226); sıfır = bilinmiyor.
+	// Arama cevabı taşımaz; çağıran stampRecency ile doldurur.
+	LastCommit time.Time `json:"-"`
+}
+
+// RecencyKey — (proje, depo) → harf-duyarsız anahtar (Azure DevOps adları
+// harf-duyarsız çözülür).
+func RecencyKey(project, repo string) string {
+	return strings.ToLower(strings.TrimSpace(project)) + "/" + strings.ToLower(strings.TrimSpace(repo))
+}
+
+// PickSearchHitRecency — PickSearchHit + tarih haritası (test/çağıran
+// kolaylığı): haritadaki tarihleri isabetlere damgalar, sonra seçer.
+func PickSearchHitRecency(hits []CodeSearchHit, preferRepo string, frame stackparse.Frame, branchOrder []string, recency map[string]time.Time) (CodeSearchHit, bool) {
+	if len(recency) > 0 {
+		stamped := make([]CodeSearchHit, len(hits))
+		copy(stamped, hits)
+		for i := range stamped {
+			if t, ok := recency[RecencyKey(stamped[i].Project, stamped[i].Repository)]; ok {
+				stamped[i].LastCommit = t
+			}
+		}
+		hits = stamped
+	}
+	return PickSearchHit(hits, preferRepo, frame, branchOrder)
 }
 
 // isTFVCPath — TFVC (server path) sonucu mu.
@@ -94,8 +131,40 @@ func PickSearchHit(hits []CodeSearchHit, preferRepo string, frame stackparse.Fra
 	}
 
 	pkg := frame.PackagePath() // "com/x/y" ya da ""
+	// v0.10.226 — tarihi bilinen depoları yeniden eskiye sırala; sıra
+	// basamağı 1000'lik bonus (konvansiyon 100 + paket 10 + branş ≤ N'in
+	// hepsinden büyük). Tarihsiz depo 0 alır → eski kurallar.
+	recencyRank := map[string]int{}
+	{
+		type rk struct {
+			key string
+			at  time.Time
+		}
+		var known []rk
+		seen := map[string]bool{}
+		for _, h := range usable {
+			k := RecencyKey(h.Project, h.Repository)
+			if h.LastCommit.IsZero() || seen[k] {
+				continue
+			}
+			seen[k] = true
+			known = append(known, rk{k, h.LastCommit})
+		}
+		sort.SliceStable(known, func(i, j int) bool {
+			if !known[i].at.Equal(known[j].at) {
+				return known[i].at.After(known[j].at)
+			}
+			return known[i].key < known[j].key
+		})
+		for i, k := range known {
+			recencyRank[k.key] = len(known) - i // en yeni = en büyük
+		}
+	}
 	score := func(h CodeSearchHit) int {
 		s := 0
+		if r := recencyRank[RecencyKey(h.Project, h.Repository)]; r > 0 {
+			s += 1000 * r
+		}
 		if preferRepo != "" && strings.EqualFold(h.Repository, preferRepo) {
 			s += 100
 		}

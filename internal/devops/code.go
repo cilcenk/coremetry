@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -296,6 +297,46 @@ type codeCache struct {
 	// bakılmamış bir bölge var).
 	scoped map[string]treeEntry
 	repos  map[string]repoListEntry
+	// recency — (proje/depo) → son commit tarihi (v0.10.226); başarısız
+	// istek de kısa süre negatif-cache'lenir ki her arama N istek üretmesin.
+	recency map[string]recencyEntry
+}
+
+type recencyEntry struct {
+	last time.Time // sıfır = bilinmiyor (istek başarısız)
+	at   time.Time
+}
+
+const (
+	recencyTTL         = 10 * time.Minute
+	recencyNegativeTTL = 2 * time.Minute
+	recencyLookupLimit = 5 // arama başına en çok bu kadar depo tarihi
+)
+
+func (c *codeCache) getRecency(key string) (recencyEntry, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.recency[key]
+	if !ok {
+		return recencyEntry{}, false
+	}
+	ttl := recencyTTL
+	if e.last.IsZero() {
+		ttl = recencyNegativeTTL
+	}
+	if time.Since(e.at) > ttl {
+		return recencyEntry{}, false
+	}
+	return e, true
+}
+
+func (c *codeCache) putRecency(key string, last time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.recency == nil {
+		c.recency = map[string]recencyEntry{}
+	}
+	c.recency[key] = recencyEntry{last: last, at: time.Now()}
 }
 
 // getRepos / putRepos — depo adı listesi cache'i (v0.9.1236).
@@ -503,10 +544,7 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 			return CodeContext{Repo: repo, Reason: dead + searchOffRemedyTR}
 		}
 		p, r, snote, sok := searchResolveProjectRepo(ctx, targets, repo,
-			s.ResolveConfig().withDefaults().BranchOrder,
-			func(c context.Context, q string) ([]CodeSearchHit, error) {
-				return SearchCode(c, cli, cfg, q)
-			})
+			s.ResolveConfig().withDefaults().BranchOrder, s.searchWithRecency(cli, cfg))
 		if !sok {
 			class = CodeProjectDeadEnd
 			return CodeContext{Repo: repo, Reason: dead + ", " + snote}
@@ -519,6 +557,31 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	cfg.Project = project
 
 	ch := s.resolveChain(ctx, parent, cli, cfg, repo)
+	// v0.10.226 (operatör-raporlu: "class/metodun git reposunu bulamıyor")
+	// — DEPO çıkmazı da artık duvar değil. Konvansiyon deposu sunucuda yoksa
+	// (404 / boş ağaç / branş yok) ve arama açıksa, stacktrace'ten
+	// organizasyon aranır, EN GÜNCEL depo seçilir (stampRecency), zincir o
+	// depoyla BİR KEZ yeniden denenir. Deadline/iptal'de denenmez: süre
+	// bitmişken üç istek daha atmak aynı hatayı pahalılaştırır.
+	if ch.class != "" && ch.class != CodeDeadline && ch.class != CodeCancelled &&
+		cfg.CodeSearch && searchNote == "" {
+		p, r, snote, sok := searchResolveProjectRepo(ctx, targets, repo,
+			s.ResolveConfig().withDefaults().BranchOrder, s.searchWithRecency(cli, cfg))
+		if sok && r != "" && (!strings.EqualFold(r, ch.repo) || !strings.EqualFold(p, cfg.Project)) {
+			fallback := "depo çıkmazı organizasyon aramasıyla aşıldı (" + firstLine(ch.reason) + ") → " + snote
+			cfg.Project = p
+			repo, out.Repo = r, r
+			ch2 := s.resolveChain(ctx, parent, cli, cfg, repo)
+			if ch2.class == "" {
+				ch, searchNote = ch2, fallback
+			} else {
+				ch2.reason = withNote(fallback, ch2.reason)
+				ch = ch2
+			}
+		} else if !sok {
+			ch.reason = withNote(ch.reason, snote)
+		}
+	}
 	repo, out.Repo, out.Branch = ch.repo, ch.repo, ch.branch
 	if ch.class != "" {
 		class = ch.class
@@ -560,9 +623,7 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	// çünkü ayrı bir uzantı ve doğrulanmamış bir uç gerektiriyor.
 	if cfg.CodeSearch && len(hunt.missedFrames) > 0 {
 		sw, snotes := huntSearchWindows(ctx, hunt.missedFrames, repo, s.ResolveConfig().withDefaults().BranchOrder, codeWindowRadius,
-			func(c context.Context, q string) ([]CodeSearchHit, error) {
-				return SearchCode(c, cli, cfg, q)
-			},
+			s.searchWithRecency(cli, cfg),
 			func(c context.Context, prj, rp, br, pth string) (string, error) {
 				if br == "" {
 					br = branch
@@ -587,9 +648,7 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 		if len(errTokens) > 0 {
 			ew, enotes := huntErrorCodeWindows(ctx, errTokens,
 				s.ResolveConfig().withDefaults().BranchOrder, codeWindowRadius,
-				func(c context.Context, q string) ([]CodeSearchHit, error) {
-					return SearchCode(c, cli, cfg, q)
-				},
+				s.searchWithRecency(cli, cfg),
 				func(c context.Context, prj, rp, br, pth string) (string, error) {
 					if br == "" {
 						br = branch
@@ -761,6 +820,107 @@ const (
 // Sayaçlara dokunmaz: RecordCodeOutcome hâlâ YALNIZ FetchCode'un
 // defer'ında. Dry-run bu fonksiyonu çağırır, FetchCode'u değil —
 // isabet oranı yapay denemelerle şişmez/sönmez.
+// lastCommitDate — deponun son commit tarihi (v0.10.226, güncellik
+// sıralaması). `…/commits?searchCriteria.$top=1` ucu; committer.date,
+// yoksa author.date. Sürüm adayları resolveBranch ile aynı.
+func (s *Service) lastCommitDate(ctx context.Context, cli *http.Client, cfg Settings, project, repo string) (time.Time, error) {
+	pcfg := cfg
+	if strings.TrimSpace(project) != "" {
+		pcfg.Project = project
+	}
+	var firstErr error
+	for _, ver := range s.apiVersionCandidates(pcfg) {
+		u := repoURL(pcfg, repo) + "/commits?searchCriteria.$top=1&api-version=" + ver
+		body, err := doGet(ctx, cli, u, pcfg)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		var out struct {
+			Value []struct {
+				Committer struct {
+					Date string `json:"date"`
+				} `json:"committer"`
+				Author struct {
+					Date string `json:"date"`
+				} `json:"author"`
+			} `json:"value"`
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
+			return time.Time{}, fmt.Errorf("commit listesi çözümlenemedi: %w", err)
+		}
+		if len(out.Value) == 0 {
+			return time.Time{}, fmt.Errorf("depo %q: commit yok", repo)
+		}
+		raw := out.Value[0].Committer.Date
+		if raw == "" {
+			raw = out.Value[0].Author.Date
+		}
+		t, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("commit tarihi çözümlenemedi: %w", err)
+		}
+		return t, nil
+	}
+	if firstErr == nil {
+		firstErr = fmt.Errorf("depo %q: commit listesi okunamadı", repo)
+	}
+	return time.Time{}, firstErr
+}
+
+// stampRecency — isabetlerdeki farklı depolar için (≤ recencyLookupLimit)
+// son commit tarihini bulup CodeSearchHit.LastCommit'e damgalar. Hata
+// sessizce "bilinmiyor" (sıfır) bırakır — arama tarih yüzünden kırılmaz;
+// yalnız sıralama eski vekile düşer (ve log yazar).
+func (s *Service) stampRecency(ctx context.Context, cli *http.Client, cfg Settings, hits []CodeSearchHit) {
+	looked := 0
+	dates := map[string]time.Time{}
+	for _, h := range hits {
+		if strings.TrimSpace(h.Repository) == "" || isTFVCPath(h.Path) {
+			continue
+		}
+		key := RecencyKey(h.Project, h.Repository)
+		if _, seen := dates[key]; seen {
+			continue
+		}
+		if e, ok := s.code.getRecency(key); ok {
+			dates[key] = e.last
+			continue
+		}
+		if looked >= recencyLookupLimit || ctx.Err() != nil {
+			continue
+		}
+		looked++
+		t, err := s.lastCommitDate(ctx, cli, cfg, h.Project, h.Repository)
+		if err != nil {
+			log.Printf("[devops] %s: son commit tarihi okunamadı (güncellik sıralaması vekile düşer): %v", key, sanitize(err.Error(), cfg))
+			t = time.Time{}
+		}
+		s.code.putRecency(key, t)
+		dates[key] = t
+	}
+	for i := range hits {
+		if t, ok := dates[RecencyKey(hits[i].Project, hits[i].Repository)]; ok {
+			hits[i].LastCommit = t
+		}
+	}
+}
+
+// searchWithRecency — SearchCode + güncellik damgası; FetchCode'un üç arama
+// noktasının ortak kapanışı (tek sözleşme, tek yer).
+func (s *Service) searchWithRecency(cli *http.Client, cfg Settings) func(context.Context, string) ([]CodeSearchHit, error) {
+	return func(c context.Context, q string) ([]CodeSearchHit, error) {
+		hits, err := SearchCode(c, cli, cfg, q)
+		if err != nil {
+			return nil, err
+		}
+		s.stampRecency(c, cli, cfg, hits)
+		return hits, nil
+	}
+}
+
 func (s *Service) resolveChain(ctx, parent context.Context, cli *http.Client, cfg Settings, repo string) chainResult {
 	res := chainResult{repo: repo}
 	ver, branch, err := s.resolveBranch(ctx, cli, cfg, repo)

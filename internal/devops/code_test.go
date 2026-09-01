@@ -365,6 +365,9 @@ type fakeTFS struct {
 	// searchHits — kod arama ucunun (codesearchresults) döndüreceği
 	// isabetler (v0.10.85 proje-çıkmazı yedeği testleri).
 	searchHits []CodeSearchHit
+	// commits — depo → son commit tarihi (RFC3339); v0.10.226 güncellik
+	// sıralaması `…/commits?searchCriteria.$top=1` ucunu buradan okur.
+	commits map[string]string
 	// seen — görülen istek YOLLARI (v0.9.1240). Proje adının gerçekten
 	// URL'e girdiğini ölçmek için: hint'i okuyup isteğe koymayan bir
 	// uygulama, yalnız Reason'a bakan bir testten geçerdi.
@@ -475,6 +478,17 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 			return
 		}
 		switch {
+		case strings.HasSuffix(p, "/commits"):
+			// v0.10.226 — depo güncelliği: value[0].committer.date.
+			f.mu.Lock()
+			f.hits["commits"]++
+			f.mu.Unlock()
+			d, ok := f.commits[repoSegment(p)]
+			if !ok {
+				_, _ = w.Write([]byte(`{"count":0,"value":[]}`))
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"count":1,"value":[{"commitId":"abc","committer":{"date":%q},"author":{"date":%q}}]}`, d, d)
 		case strings.HasSuffix(p, "/_apis/search/codesearchresults"):
 			// v0.10.85 — organizasyon araması ucu. Tel şekli gerçek API'nin
 			// (searchCodeResponse'un okuduğu yarı): results[].path +
@@ -2049,4 +2063,68 @@ func TestFetchCodeProjectDeadEndSearchFallback(t *testing.T) {
 			t.Errorf("çıkmaz cümlesi arama sonucunu söylemiyor: %q", cc.Reason)
 		}
 	})
+}
+
+// ── v0.10.226 — depo ÇIKMAZINDA organizasyon araması ────────────────────
+//
+// Operatör (2026-09-01): "class/metodun git reposunu bulamıyor; o
+// durumlarda tüm organizasyonu arayıp bulabilir… birden fazla çıkabilir,
+// en güncelini baz alır." v0.10.85 aramayı yalnız PROJE çıkmazında
+// koşturuyordu; konvansiyon deposu sunucuda YOKSA (404 / boş ağaç) zincir
+// aramadan önce dönüyordu. Şimdi: zincir düşerse (deadline hariç) arama
+// koşar, en güncel depo seçilir, zincir o depoyla BİR KEZ yeniden denenir.
+func TestFetchCodeSearchRecoversUnknownRepo(t *testing.T) {
+	f := newFakeTFS(t)
+	f.repos = []string{"card-legacy", "card-v2"} // konvansiyon deposu "core-service" YOK
+	const path = "/src/main/java/com/example/card/CardDetailBusiness.java"
+	f.tree = []string{path}
+	f.files[path] = javaFile("com.example.card", "CardDetailBusiness", 300, 246)
+	f.searchHits = []CodeSearchHit{
+		{Project: "Payments", Repository: "card-legacy", Path: path, Branch: "release"},
+		{Project: "Payments", Repository: "card-v2", Path: path, Branch: "release"},
+	}
+	f.commits = map[string]string{
+		"card-legacy": "2024-01-01T00:00:00Z",
+		"card-v2":     "2026-08-30T10:00:00Z",
+	}
+	st := f.settings()
+	st.CodeSearch = true
+	svc := New()
+	svc.Configure(st)
+	stack := "" +
+		"jakarta.ejb.EJBException: host response error\n" +
+		"\tat deployment.APPWEB.war//com.example.card.CardDetailBusiness.handleHostResponseError(CardDetailBusiness.java:246)\n"
+	cc := svc.FetchCode(context.Background(), "core-service", ProjectHint{}, stackparse.ParseJava(stack), nil, nil)
+	if cc.Empty() {
+		t.Fatalf("search fallback must recover the repo; reason=%q", cc.Reason)
+	}
+	if cc.Repo != "card-v2" {
+		t.Fatalf("most recently committed repo must win: Repo=%q reason=%q", cc.Repo, cc.Reason)
+	}
+	if !strings.Contains(cc.Reason, "organizasyon araması") {
+		t.Fatalf("reason must say the repo came from the org search: %q", cc.Reason)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.hits["search"] < 1 || f.hits["commits"] < 2 {
+		t.Fatalf("expected ≥1 search + 2 commit-date lookups, got search=%d commits=%d", f.hits["search"], f.hits["commits"])
+	}
+}
+
+func TestFetchCodeUnknownRepoSearchOffStaysDeadEnd(t *testing.T) {
+	// Arama kapalıyken davranış değişmez: çıkmaz + kapalı-arama çaresi.
+	f := newFakeTFS(t)
+	f.repos = []string{"card-v2"}
+	svc := New()
+	svc.Configure(f.settings()) // CodeSearch false
+	stack := "\tat com.example.card.CardDetailBusiness.handle(CardDetailBusiness.java:1)\n"
+	cc := svc.FetchCode(context.Background(), "core-service", ProjectHint{}, stackparse.ParseJava(stack), nil, nil)
+	if !cc.Empty() {
+		t.Fatalf("no search → no recovery; got %+v", cc)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.hits["search"] != 0 {
+		t.Fatalf("search must not run when disabled")
+	}
 }

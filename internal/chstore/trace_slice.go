@@ -288,7 +288,7 @@ func (s *Store) runTraceStage2(
 			var hasErr uint8
 			var ts, firstBucket time.Time
 			if serr := rows.Scan(&t.TraceID, &t.RootName, &t.ServiceName, &ts,
-				&t.DurationMs, &t.SpanCount, &hasErr, &firstBucket); serr != nil {
+				&t.DurationMs, &t.SpanCount, &hasErr, &t.ErrorSpans, &firstBucket); serr != nil {
 				rows.Close()
 				return nil, false, serr
 			}

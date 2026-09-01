@@ -1481,7 +1481,11 @@ function renderTraceCell(id: string, t: TraceRow, visibleMax: number, k8s?: { cl
     case 'operation': return <span title={t.rootName}>{t.rootName || '—'}</span>;
     case 'duration':  return <DurationBar ms={t.durationMs} err={t.hasError} max={visibleMax} />;
     case 'spans':     return <>{t.spanCount}</>;
-    case 'status':    return t.hasError ? <span className="badge b-err">ERROR</span> : <span className="badge b-ok">OK</span>;
+    // v0.10.218 (D3) — hata rozetinin yanında hatalı span SAYISI (Dynatrace
+    // düzeni); alan yoksa (0 ya da eski önbellek yanıtı) yalnız rozet.
+    case 'status':    return t.hasError
+      ? <><span className="badge b-err">ERROR</span>{t.errorSpans ? <span className="cell-hint">{t.errorSpans} span</span> : null}</>
+      : <span className="badge b-ok">OK</span>;
     default: {
       // Attribute-column values render at the SAME size as every other cell
       // (v0.9.243 — operator-reported: channel_code / function_code looked

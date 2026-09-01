@@ -1049,10 +1049,32 @@ func main() {
 		// sorgu başına tarama (internal/anomaly/external.go); Problem
 		// kind=external, kanıt zinciri D4'te.
 		extScanner := anomaly.NewExternalScanner(store, notifier)
+		// v0.10.229 (D4) — kanıt: açılışta hemen + 5 dk'da bir SORGU 2 →
+		// exemplars + span özeti + log imzaları + pod'lar → DeepEvidence.
+		influxEnricher := influx.NewEnricher(influxSvc, store, logsStore)
 		influxWorker.SetHook(func(ctx context.Context, src influx.SourceConfig, qc influx.QueryConfig) {
 			rep, err := extScanner.Scan(ctx, anomaly.ExternalTarget{
 				SourceID: src.ID, SourceName: src.Name, Query: qc.Name,
 				GroupBy: qc.MetricGroupBy(), Thresholds: anomaly.ExternalThresholds(qc.Thresholds),
+				OnEvidence: func(ctx context.Context, ev anomaly.ExternalEvent) {
+					erep, eerr := influxEnricher.Enrich(ctx, influx.EnrichRequest{
+						ProblemID: ev.Problem.ID, Subject: ev.Problem.Service, Source: src, Query: qc,
+						Values: ev.Values, Current: ev.Current, Median: ev.Median, MAD: ev.MAD, Z: ev.Z,
+						From: ev.From, To: ev.To,
+					})
+					if eerr != nil {
+						log.Printf("[influx] evidence %s: %v", ev.Problem.Service, eerr)
+						return
+					}
+					log.Printf("[influx] evidence %s: rows %d · ids %d (invalid %d) · traces %d · pods %d · log signatures %d%s",
+						ev.Problem.Service, erep.Rows, erep.ValidIDs, erep.InvalidIDs, erep.Traces, erep.Pods, erep.LogSignatures,
+						func() string {
+							if len(erep.Notes) == 0 {
+								return ""
+							}
+							return " · " + strings.Join(erep.Notes, "; ")
+						}())
+				},
 			})
 			if err != nil {
 				log.Printf("[influx] anomaly %s/%s: %v", src.Name, qc.Name, err)

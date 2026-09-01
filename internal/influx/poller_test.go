@@ -132,15 +132,17 @@ func TestBuildMetricsRequest_Cap(t *testing.T) {
 // ── Worker ────────────────────────────────────────────────────────────────
 
 type fakeQueryAPI struct {
-	recs map[string][]Record // flux → rows
-	err  error
-	mu   sync.Mutex
-	n    int
+	recs     map[string][]Record // flux → rows
+	err      error
+	mu       sync.Mutex
+	n        int
+	lastFlux string // v0.10.229 — enrich şablon iddiası
 }
 
 func (f *fakeQueryAPI) Query(_ context.Context, flux string) ([]Record, error) {
 	f.mu.Lock()
 	f.n++
+	f.lastFlux = flux
 	f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err

@@ -231,6 +231,9 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 			if done >= s.batch {
 				break
 			}
+			if synthesizerSkipsProblem(p) {
+				continue
+			}
 			bundle := buildEvidenceBundle(p, in)
 			synthIn := synthInputForProblem(p, bundle)
 			appendNodeCauses(&synthIn, in, p.Service)
@@ -512,4 +515,13 @@ func appendNodeCauses(dst *correlator.SynthesisInput, in evidenceInputs, anchor 
 	}
 	dst.Neighbours = append(dst.Neighbours,
 		correlator.RankNodeCauses(in.runsOn, anchor, firing)...)
+}
+
+// synthesizerSkipsProblem (v0.10.229, Influx D4 audit E2) — dış kaynak
+// (kind=external) anchor'ları sentezlenmez: özne servis değil (topoloji
+// yok, aday yok) ve UpsertHypothesis TAM-SATIR yazar — buradan geçen bir
+// external anchor, influx.Enricher'ın yazdığı DeepEvidence'ı SİLERDİ.
+// SAF; rootcause_worker_external_test.go pinler.
+func synthesizerSkipsProblem(p chstore.Problem) bool {
+	return p.Kind == chstore.ProblemKindExternal
 }

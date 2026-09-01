@@ -54,7 +54,30 @@ type ExternalTarget struct {
 	Query      string   // metrik = ExternalMetricPrefix + Query
 	GroupBy    []string // metric attr adları (attrMap uygulanmış)
 	Thresholds ExternalThresholds
+	// OnEvidence (v0.10.229, D4) — kanıt toplama kancası: açılışta hemen,
+	// sürerken externalEnrichEvery'de bir, tik başına ≤externalEnrichPerTick.
+	// main.go'da influx.Enricher'a bağlanır; nil = kanıt yok (yalnız Problem).
+	OnEvidence func(ctx context.Context, ev ExternalEvent)
 }
+
+// ExternalEvent — Problem + karar sayıları + pencere [startedAt−2m, now].
+type ExternalEvent struct {
+	Target  ExternalTarget
+	Problem chstore.Problem
+	Values  []string // grup değerleri, Target.GroupBy sırasıyla
+	Current float64
+	Median  float64
+	MAD     float64
+	Z       float64
+	From    time.Time
+	To      time.Time
+}
+
+const (
+	externalEnrichEvery   = 5 * time.Minute
+	externalEnrichPerTick = 20
+	externalEnrichLead    = 2 * time.Minute
+)
 
 // ExternalThresholds — influx.Thresholds ile alan-alan aynı (dönüşüm
 // main.go'da tip çevirisiyle). Sıfır = varsayılan.
@@ -82,10 +105,12 @@ type ExternalScanner struct {
 	store    externalStore
 	notifier *notify.Notifier
 	now      func() time.Time
+	// lastEnriched — ruleID → son kanıt toplama; tek goroutine (worker tiki).
+	lastEnriched map[string]time.Time
 }
 
 func NewExternalScanner(store externalStore, n *notify.Notifier) *ExternalScanner {
-	return &ExternalScanner{store: store, notifier: n, now: time.Now}
+	return &ExternalScanner{store: store, notifier: n, now: time.Now, lastEnriched: map[string]time.Time{}}
 }
 
 // Scan — hedefin bütün serilerini okur, her biri için karar verir ve
@@ -119,6 +144,7 @@ func (s *ExternalScanner) Scan(ctx context.Context, t ExternalTarget) (ExternalS
 		return rep, err
 	}
 	cfg := externalSensitivity(s.store.AnomalySensitivity(), metric, t.Thresholds)
+	enriched := 0
 	for _, sr := range series {
 		rep.Series++
 		buckets := padMinuteSlots(sr.Points, start, end)
@@ -131,13 +157,33 @@ func (s *ExternalScanner) Scan(ctx context.Context, t ExternalTarget) (ExternalS
 		// kazanır, medyan 0 olur ve her değer anomali görünür
 		// (TestExternalScan_OpensProblemOnSpike'ın Threshold iddiası).
 		oc := evaluateAnomaly(metric, buckets, nil, ones(len(buckets)), minSamples, hasOpen, cfg)
-		s.apply(ctx, &rep, t, metric, subject, ruleID, sr.GroupKey, oc, open, hasOpen, now)
+		live := s.apply(ctx, &rep, t, metric, subject, ruleID, sr.GroupKey, oc, open, hasOpen, now)
+		if live != nil && t.OnEvidence != nil && enriched < externalEnrichPerTick && s.enrichDue(ruleID, live.StartedAt, now) {
+			enriched++
+			s.lastEnriched[ruleID] = now
+			t.OnEvidence(ctx, ExternalEvent{
+				Target: t, Problem: *live, Values: sr.GroupKey,
+				Current: oc.Current, Median: oc.Median, MAD: oc.MAD, Z: oc.Z,
+				From: time.Unix(0, live.StartedAt).UTC().Add(-externalEnrichLead), To: now,
+			})
+		}
 	}
 	return rep, nil
 }
 
+// enrichDue — açılışta hemen (kayıt yok), sonra externalEnrichEvery'de bir.
+func (s *ExternalScanner) enrichDue(ruleID string, startedAt int64, now time.Time) bool {
+	last, ok := s.lastEnriched[ruleID]
+	if !ok {
+		return true
+	}
+	return now.Sub(last) >= externalEnrichEvery
+}
+
+// apply — kararı uygular; dönüş = hâlâ AÇIK problem (kanıt kancası için),
+// çözüldü/yok ise nil.
 func (s *ExternalScanner) apply(ctx context.Context, rep *ExternalScanReport, t ExternalTarget,
-	metric, subject, ruleID string, values []string, oc anomalyOutcome, open *chstore.Problem, hasOpen bool, now time.Time) {
+	metric, subject, ruleID string, values []string, oc anomalyOutcome, open *chstore.Problem, hasOpen bool, now time.Time) *chstore.Problem {
 	switch oc.Action {
 	case "open":
 		desc := externalDescription(metric, subject, t.GroupBy, values, oc)
@@ -147,10 +193,10 @@ func (s *ExternalScanner) apply(ctx context.Context, rep *ExternalScanReport, t 
 			open.Description = desc
 			if err := s.store.UpsertProblem(ctx, *open); err != nil {
 				log.Printf("[anomaly/external] refresh %s: %v", ruleID, err)
-				return
+				return nil
 			}
 			rep.Refreshed++
-			return
+			return open
 		}
 		p := chstore.Problem{
 			ID:          newID(),
@@ -169,7 +215,7 @@ func (s *ExternalScanner) apply(ctx context.Context, rep *ExternalScanReport, t 
 		}
 		if err := s.store.UpsertProblem(ctx, p); err != nil {
 			log.Printf("[anomaly/external] open %s: %v", ruleID, err)
-			return
+			return nil
 		}
 		rep.Opened++
 		log.Printf("[anomaly/external] OPENED %s · %s = %.0f (med=%.1f mad=%.2f z=%.1f)",
@@ -177,30 +223,34 @@ func (s *ExternalScanner) apply(ctx context.Context, rep *ExternalScanReport, t 
 		if s.notifier != nil {
 			go s.notifier.SendProblemAlert(context.Background(), p)
 		}
+		return &p
 	case "resolve":
 		if !hasOpen {
-			return
+			return nil
 		}
 		chstore.MarkResolved(open, now.UnixNano())
 		if err := s.store.UpsertProblem(ctx, *open); err != nil {
 			log.Printf("[anomaly/external] resolve %s: %v", ruleID, err)
-			return
+			return open
 		}
 		rep.Resolved++
+		delete(s.lastEnriched, ruleID)
 		log.Printf("[anomaly/external] RESOLVED %s · %s (recovered, z=%.1f)", subject, metric, oc.Z)
+		return nil
 	default: // none | skip
 		if !hasOpen {
 			rep.Skipped++
-			return
+			return nil
 		}
 		// Touch: kaynak canlı, karar "sürüyor" — updated_at yenilenmezse
 		// evaluator'ın bayat süpürmesi 3×interval sonra "source silent"
 		// diye kapatır (feedback-slow-detectors-vs-problem-lifecycle).
 		if err := s.store.UpsertProblem(ctx, *open); err != nil {
 			log.Printf("[anomaly/external] touch %s: %v", ruleID, err)
-			return
+			return open
 		}
 		rep.Touched++
+		return open
 	}
 }
 

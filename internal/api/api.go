@@ -54,6 +54,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/tempo"
 	"github.com/cilcenk/coremetry/internal/thanos"
 	"github.com/cilcenk/coremetry/internal/vmetrics"
+	"github.com/cilcenk/coremetry/internal/influx"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
@@ -205,6 +206,10 @@ type Server struct {
 	// şey ve sabit-adlı iç okuyucular CH'de KALIR (metricsource.go
 	// başlığındaki kapsam listesi). nil-safe.
 	vmetrics *vmetrics.Service
+
+	// influx — InfluxDB 2.x dış metrik kaynakları (v0.10.222, D1: yalnız
+	// kaynak yönetimi + test; poller D2). nil-safe: handler'lar 503.
+	influx *influx.Service
 
 	// devops — Azure DevOps Server / TFS bağlantısı (v0.9.829).
 	// ŞİMDİLİK YALNIZ BAĞLANTI: ayar + kimlik + erişilebilirlik
@@ -372,6 +377,11 @@ func (s *Server) SetThanos(t *thanos.Service) {
 // surfaces (metricsource.go).
 func (s *Server) SetVMetrics(v *vmetrics.Service) {
 	s.vmetrics = v
+}
+
+// SetInflux — InfluxDB kaynak servisi (v0.10.222; influx_routes.go).
+func (s *Server) SetInflux(i *influx.Service) {
+	s.influx = i
 }
 
 // SetDevOps wires the Azure DevOps / TFS connection client
@@ -1209,6 +1219,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// GET/PUT/test /api/settings/victoria-metrics → vmetrics_routes.go
 	// (v0.9.1150).
 	s.registerVMetricsRoutes(mux)
+	s.registerInfluxRoutes(mux)         // v0.10.222 — InfluxDB kaynakları GET/PUT/test, influx_routes.go
 	s.registerThanosIdentityRoutes(mux) // v0.10.128 — Remote Cluster etiket rozeti, thanos_identity.go
 	s.registerEntityRoutes(mux)         // v0.10.129 — entity katmanı bayrak + sync yönetimi, entity_routes.go
 	s.registerEntityQueryRoutes(mux)    // v0.10.130 — entity pivot uçları, entities.go

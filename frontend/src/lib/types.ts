@@ -1332,6 +1332,63 @@ export interface VMTestResult {
   error?: string;
 }
 
+// ── InfluxDB 2.x dış metrik kaynakları (v0.10.222, internal/influx) ──
+// Go aynası: influx.Thresholds / QueryConfig / SourceConfig /
+// SourceSnapshot / Snapshot / Settings / QueryProbe / TestResult.
+// tokenRef bir REFERANS (`env:NAME` | `file:/path`), secret değil — GET
+// aynen döndürür; tokenResolved/tokenError Settings rozeti.
+/** influx.Thresholds — 0/yok = global anomaly_sensitivity varsayılanı. */
+export interface InfluxThresholds {
+  criticalZ?: number;
+  dwell?: number;
+  minAbsDelta?: number;
+  minMAD?: number;
+}
+/** influx.QueryConfig — name metrik kuyruğu (`ext:<name>`); flux SORGU 1, enrichFlux SORGU 2. */
+export interface InfluxQueryConfig {
+  name: string;
+  flux: string;
+  enrichFlux?: string;
+  attrMap?: Record<string, string>;
+  groupBy?: string[];
+  thresholds?: InfluxThresholds;
+}
+/** influx.SourceConfig — PUT gövdesi elemanı; id sunucu sahipli. */
+export interface InfluxSourceInput {
+  id?: string;
+  name: string;
+  url: string;
+  org: string;
+  tokenRef?: string;
+  intervalSec?: number;
+  insecureSkipVerify?: boolean;
+  enabled: boolean;
+  queries: InfluxQueryConfig[];
+}
+/** influx.SourceSnapshot — GET görünümü (SourceConfig gömülü + rozet). */
+export interface InfluxSourceSnapshot extends InfluxSourceInput {
+  tokenResolved: boolean;
+  tokenError?: string;
+}
+export interface InfluxSnapshot { sources: InfluxSourceSnapshot[] }
+export interface InfluxSettingsInput { sources: InfluxSourceInput[] }
+/** influx.QueryProbe — test-connection'da sorgu başına sonuç. */
+export interface InfluxQueryProbe {
+  name: string;
+  rows: number;
+  columns: string[];
+  sample?: Record<string, string>[];
+  latencyMs: number;
+  error?: string;
+}
+/** influx.TestResult — 200 + ok:false başarısızlıkta (test ucu sözleşmesi). */
+export interface InfluxTestResult {
+  ok: boolean;
+  error?: string;
+  tokenResolved: boolean;
+  queries: InfluxQueryProbe[];
+}
+
 // Azure DevOps Server / TFS connection (v0.9.829). Tempo secret
 // contract: the PAT never round-trips (hasPat is the stored
 // indicator), and an empty `pat` on submit preserves the stored one.

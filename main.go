@@ -53,6 +53,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/thanos"
 	"github.com/cilcenk/coremetry/internal/topology"
 	"github.com/cilcenk/coremetry/internal/vmetrics"
+	"github.com/cilcenk/coremetry/internal/influx"
 )
 
 //go:embed all:frontend/dist
@@ -1077,6 +1078,15 @@ func main() {
 		log.Printf("[vmetrics] load persisted config: %v", err)
 	}
 	go vmSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	// v0.10.222 — InfluxDB 2.x dış metrik kaynakları (audit:
+	// docs/audit/influx-integration.md). Ayar blobu HER rolde (api pod
+	// Settings'i servis eder, worker poll'lar); poller D2'de, yalnız
+	// worker lideri (cache.LeaderHolder "influx-poller").
+	influxSvc := influx.New()
+	if err := influxSvc.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[influx] load persisted config: %v", err)
+	}
+	go influxSvc.StartConfigRefresh(ctx, store, 30*time.Second)
 	// v0.9.1213 — JVM GC alarmlarının VM dönüşü: evaluator GC çiftini
 	// YALNIZ vmetrics yapılandırılmışken, VM'den okuyarak değerlendirir
 	// (SetLogs geç-bağlama emsali; runtime_vm.go başlığı).
@@ -1278,6 +1288,7 @@ func main() {
 		srv.StartRolloutTail(ctx) // v0.10.200 — pod-yerel SSE tail (audit §3 T); yalnız api
 	}
 	srv.SetVMetrics(vmSvc)
+	srv.SetInflux(influxSvc) // v0.10.222
 	srv.SetDevOps(devopsSvc)
 	srv.SetMCPClient(mcpCliSvc)
 	// Cross-pod L1 cache invalidation (v0.5.337). Subscribes

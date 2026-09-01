@@ -22,7 +22,7 @@ import type {
   AISettings, AISettingsInput, AIModelProfileInput, AIProfilesPayload, AIProfileTestResult, AISurfaceMap,
   AnomalyVerdict, AnomalyVerdictKind,
   TempoSnapshot, TempoSettingsInput,
-  VMSnapshot, VMSettingsInput, VMTestResult,
+  VMSnapshot, VMSettingsInput, VMTestResult, InfluxSnapshot, InfluxSettingsInput, InfluxSourceInput, InfluxTestResult,
   DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult, DevOpsResolveDryRun,
   EntityClustersResponse, EntityListResponse, EntityDetailResponse, EntityServicesResponse, EntityMetricsResponse, EntityContainersResponse, EntityLatencyResponse,
   ServicePodsResponse, EntitySettings, EntitySettingsResponse, EntitySyncResponse,
@@ -1553,6 +1553,20 @@ export const api = {
     }),
   testVMSettings: (s: VMSettingsInput) =>
     request<VMTestResult>(`/api/settings/victoria-metrics/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }),
+
+  // InfluxDB 2.x dış metrik kaynakları (v0.10.222, admin) — influx_routes.go.
+  getInfluxSettings: () => get<InfluxSnapshot>(`/api/settings/influx`),
+  putInfluxSettings: (s: InfluxSettingsInput) =>
+    request<InfluxSnapshot>(`/api/settings/influx`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }),
+  /** Formdaki TEK kaynağı kaydetmeden dener (SORGU 1'e |> limit(n:20)). */
+  testInfluxSource: (s: InfluxSourceInput) =>
+    request<InfluxTestResult>(`/api/settings/influx/test`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
     }),

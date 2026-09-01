@@ -11,12 +11,17 @@
  * The six built-in columns, in their canonical order.
  *
  * v0.10.217 (operatör, Dynatrace "Distributed traces" düzeni — mockup
- * onayı 2026-09-01): Name (= operation) ilk ve baskın kolon, Start time
- * (= time) EN SONDA. Kolon id'leri DEĞİŞMEDİ (`operation`/`time`) — kalıcı
+ * onayı 2026-09-01): Name (= operation) baskın kolon, Start time (= time)
+ * en sonda. Kolon id'leri DEĞİŞMEDİ (`operation`/`time`) — kalıcı
  * genişlikler, `?cols=` ve sunucu sort anahtarları id'ye bağlı; yalnız
  * etiket ve sıra değişti (Traces.tsx COL_LABEL: Name / Start time).
+ *
+ * v0.10.220 (operatör, aynı gün): "Start time en sağda ama en solda
+ * olmasını tercih ederim" → zaman damgası yine EN BAŞTA, Name onun
+ * hemen ardından. Dynatrace'ten alınan geri kalan her şey (Name baskın,
+ * Duration → Status → Spans kuyruğu) aynen.
  */
-export const FIXED_COLS = ['operation', 'service', 'duration', 'status', 'spans', 'time'] as const;
+export const FIXED_COLS = ['time', 'operation', 'service', 'duration', 'status', 'spans'] as const;
 
 /**
  * DEFAULT_TRACE_COLUMNS — the attribute columns a fresh session gets.
@@ -67,8 +72,9 @@ export const DEFAULT_TRACE_COLUMNS: string[] = [
 /**
  * traceColumnOrder — the rendered column ids, in order.
  *
- * Name · Service · <attribute columns> · Duration · Status · Spans ·
- * Start time (v0.10.217, Dynatrace düzeni). Tarihçe: v0.9.841'de
+ * Start time · Name · Service · <attribute columns> · Duration · Status ·
+ * Spans (v0.10.220 — operatör: zaman damgası en solda; v0.10.217 onu
+ * Dynatrace gibi en sağa koymuştu). Tarihçe: v0.9.841'de
  * Time · Service · Operation · attrs · Duration · Spans · Status idi
  * (operatör isteği 2026-08-09 — attr kolonları Time'ın hemen arkasından
  * alınıp satırı KİMLİKLEYEN iki alanın, Service ve Operation'ın, sağına
@@ -86,8 +92,8 @@ export const DEFAULT_TRACE_COLUMNS: string[] = [
  */
 export function traceColumnOrder(extraCols: string[]): string[] {
   return [
-    'operation', 'service',
+    'time', 'operation', 'service',
     ...extraCols,
-    ...FIXED_COLS.filter(c => c !== 'service' && c !== 'operation'),
+    ...FIXED_COLS.filter(c => c !== 'time' && c !== 'service' && c !== 'operation'),
   ];
 }

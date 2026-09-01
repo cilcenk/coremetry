@@ -44,7 +44,7 @@ func TestFillTemplate_Rejects(t *testing.T) {
 		{"backslash", `x == "{{op}}"`, map[string]string{"op": `a\b`}, "op"},
 		{"newline", `x == "{{op}}"`, map[string]string{"op": "a\nb"}, "op"},
 		{"empty value", `x == "{{op}}"`, map[string]string{"op": ""}, "op"},
-		{"too long", `x == "{{op}}"`, map[string]string{"op": strings.Repeat("a", 65)}, "op"},
+		{"too long", `x == "{{op}}"`, map[string]string{"op": strings.Repeat("a", 129)}, "op"},
 		{"space", `x == "{{op}}"`, map[string]string{"op": "a b"}, "op"},
 	}
 	for _, c := range cases {
@@ -58,7 +58,7 @@ func TestFillTemplate_Rejects(t *testing.T) {
 }
 
 func TestValidValue(t *testing.T) {
-	for _, ok := range []string{"OP1", "a.b", "x:y", "a-b_c", "2026-09-01T10:00:00Z", "10.5"} {
+	for _, ok := range []string{"OP1", "a.b", "x:y", "a-b_c", "2026-09-01T10:00:00Z", "10.5", "CASHMANAGEMENT_NYT_INSTRUCTION_INQUIRY"} {
 		if !ValidValue(ok) {
 			t.Errorf("%q should be valid", ok)
 		}

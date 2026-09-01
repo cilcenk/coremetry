@@ -8,9 +8,17 @@
 //   • eşikler: '' = unset → tel'e YAZILMAZ (0/omitempty = global varsayılan).
 //     vmForm dersi: kutuya varsayılanı basmak sessiz ayar donması demek.
 //
-// REDACTED şablonu spec'ten (docs/audit/influx-integration.md §0 K3/K4):
-// SORGU 1 gauge (son 2 dk), SORGU 2 enrichment; groupBy v1'de yalnız
-// REDACTED+REDACTED, attrMap altı tag'in tümünü adlandırır.
+// REDACTED şablonu — v0.10.224: operatörün GERÇEK Grafana sorgusuyla hizalı
+// ("BAŞARISIZ FONKSİYON VE OPERASYONLAR", 2026-09-01). Bucket spec'teki
+REDACTED
+// okuyor — farklıysa kutudan değiştir. Gürültü filtreleri (REDACTED != "0", REDACTED
+// != "N/A", "------" dışlaması), `aggregateWindow(every: 1m, fn: sum,
+// createEmpty: false)` → dakikalık toplam; Coremetry'deki dakika Grafana'daki
+// dakikayla aynı sayı. Grafana'nın `_value > 4` ekran tabanı BİLEREK YOK:
+// dedektör baseline için düşük değerleri de görmeli, gürültü tabanı
+// eşiklerdeki MinAbsDelta'nın işi. groupBy v1'de REDACTED+REDACTED
+// (spec); Grafana REDACTED+REDACTED+REDACTED gruplar — kutudan
+// değiştirilebilir (kardinalite notu sekmede).
 import type { InfluxQueryConfig, InfluxThresholds } from '@/lib/types';
 
 export function parseAttrMap(text: string): Record<string, string> | undefined {
@@ -74,8 +82,11 @@ export const REDACTEDTEMPLATE: InfluxQueryConfig = {
   REDACTED")
   |> range(start: -2m)
   |> filter(fn: (r) => r._measurement == "REDACTED" and r._field == "REDACTED")
+  |> filter(fn: (r) => r.REDACTED != "0" and r.REDACTED != "N/A")
+  |> filter(fn: (r) => r.REDACTED !~ /------/)
   |> group(columns: ["REDACTED", "REDACTED"])
-  |> sum()`,
+  |> aggregateWindow(every: 1m, fn: sum, createEmpty: false)
+  |> yield(name: "sum")`,
   REDACTED")
   |> range(start: {{from}}, stop: {{to}})
   |> filter(fn: (r) => r._measurement == "REDACTED" and r._field == "REDACTED")

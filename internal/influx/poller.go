@@ -11,10 +11,16 @@ package influx
 // kaynaktan; CH'deki her satır OTLP kapısından geçmiş olur, metric_catalog
 // MV kaynağı kendiliğinden kaydeder (K1 bedava kazanımlar).
 //
-// Semantik (K3): değer = poll anındaki "son 2 dk hata sayısı" GAUGE'u;
-// zaman = POLL ANI (`sum()` _time'ı düşürür). Boş sonuç → satır YOK (sıfır
-// pad D3 dedektöründe, audit R3). Düşen satırlar (kötü değer / eksik tag /
-// tavan) sayılır, sessiz düşüş yok (otlp-converter §3 sınıf B/C).
+// Semantik (K3, v0.10.224 ile GRAFANA HİZASI): operatörün gerçek sorgusu
+// `aggregateWindow(every: 1m, fn: sum)` — kayıt `_time` = kova BİTİŞİ
+// taşır ve nokta zamanı ODUR; Coremetry'deki dakika Grafana'daki dakikayla
+// aynı sayıyı gösterir. Tamamlanmamış kova (`_time` > now) atlanır; aynı
+// kova (kaynak, sorgu) başına watermark ile bir kez yazılır (30 s poll ×
+// 2 dk range aynı kovayı 2-4 kez getirir). `_time` yoksa (spec'in düz
+// `sum()` sorgusu) değer poll anına yazılır — eski gauge davranışı.
+// Boş sonuç → satır YOK (sıfır pad D3 dedektöründe, audit R3). Düşen
+// satırlar (kötü değer / eksik tag / tavan) sayılır, sessiz düşüş yok
+// (otlp-converter §3 sınıf B/C).
 
 import (
 	"context"
@@ -62,6 +68,54 @@ type DropStats struct {
 
 func (d DropStats) Total() int { return d.BadValue + d.MissingTag + d.OverCap }
 
+// SkipStats — SplitBuckets'ın atladıkları (say, sessizce düşürme).
+type SkipStats struct {
+	Old     int // ≤ watermark: zaten yazılmış kova
+	Partial int // _time > now: tamamlanmamış kova
+}
+
+// recordTime — `_time` varsa ve çözülüyorsa (RFC3339/RFC3339Nano) kova
+// bitişi; yoksa sıfır zaman (çağıran poll anına düşer).
+func recordTime(r Record) time.Time {
+	raw := r.Values["_time"]
+	if raw == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return t
+	}
+	return time.Time{}
+}
+
+// SplitBuckets — SAF: kayıtları watermark'a göre ayıklar. `_time` taşıyan
+// kayıtlardan yalnız (watermark, now] aralığındakiler kalır; `_time`'sız
+// kayıtlar (düz sum()) watermark'a bakılmaksızın geçer. Yeni watermark =
+// kalan kayıtların en büyük `_time`'ı (yoksa eski değer).
+func SplitBuckets(recs []Record, watermark, now time.Time) (kept []Record, newWatermark time.Time, st SkipStats) {
+	newWatermark = watermark
+	kept = make([]Record, 0, len(recs))
+	for _, r := range recs {
+		t := recordTime(r)
+		if t.IsZero() {
+			kept = append(kept, r)
+			continue
+		}
+		if t.After(now) {
+			st.Partial++
+			continue
+		}
+		if !t.After(watermark) {
+			st.Old++
+			continue
+		}
+		kept = append(kept, r)
+		if t.After(newWatermark) {
+			newWatermark = t
+		}
+	}
+	return kept, newWatermark, st
+}
+
 func strKV(k, v string) *commonpb.KeyValue {
 	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: v}}}
 }
@@ -70,10 +124,11 @@ func strKV(k, v string) *commonpb.KeyValue {
 // Resource: service.name=<kaynak adı> (metric_points.service_name, ORDER
 // BY öneki), coremetry.source=influx, influx.source.id. Data point attrs:
 // groupBy tag'leri, attrMap ile adlandırılmış, groupBy SIRASIYLA
-// (fingerprint kararlılığı). Zaman: now (poll anı).
+// (fingerprint kararlılığı). Zaman: kaydın `_time`'ı (aggregateWindow kova
+// bitişi, Grafana hizası) — yoksa now (poll anı).
 func BuildMetricsRequest(src SourceConfig, qc QueryConfig, recs []Record, now time.Time) (*metricscollpb.ExportMetricsServiceRequest, DropStats) {
 	var drops DropStats
-	ts := uint64(now.UnixNano())
+	pollTs := uint64(now.UnixNano())
 	points := make([]*metricspb.NumberDataPoint, 0, len(recs))
 	for _, r := range recs {
 		if len(points) >= MaxRowsPerQuery {
@@ -84,6 +139,10 @@ func BuildMetricsRequest(src SourceConfig, qc QueryConfig, recs []Record, now ti
 		if err != nil {
 			drops.BadValue++
 			continue
+		}
+		ts := pollTs
+		if bt := recordTime(r); !bt.IsZero() {
+			ts = uint64(bt.UnixNano())
 		}
 		attrs := make([]*commonpb.KeyValue, 0, len(qc.GroupBy))
 		ok := true
@@ -121,7 +180,7 @@ func BuildMetricsRequest(src SourceConfig, qc QueryConfig, recs []Record, now ti
 				Scope: &commonpb.InstrumentationScope{Name: "coremetry/influx"},
 				Metrics: []*metricspb.Metric{{
 					Name:        MetricPrefix + qc.Name,
-					Description: fmt.Sprintf("InfluxDB kaynağı %s — poll sorgusu %s (gauge, poll anı)", src.Name, qc.Name),
+					Description: fmt.Sprintf("InfluxDB kaynağı %s — poll sorgusu %s (gauge; zaman = kova bitişi, yoksa poll anı)", src.Name, qc.Name),
 					Data:        &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: points}},
 				}},
 			}},
@@ -139,7 +198,10 @@ type SourceStatus struct {
 	LastRows   int    `json:"lastRows"`
 	LastPoints int    `json:"lastPoints"`
 	LastDrops  int    `json:"lastDrops"`
-	LastError  string `json:"lastError,omitempty"`
+	// v0.10.224 — watermark ayıklaması: zaten yazılmış / tamamlanmamış kova.
+	LastSkippedOld     int    `json:"lastSkippedOld"`
+	LastSkippedPartial int    `json:"lastSkippedPartial"`
+	LastError          string `json:"lastError,omitempty"`
 }
 
 // Worker — leader-gated poll döngüsü.
@@ -154,6 +216,8 @@ type Worker struct {
 	mu      sync.Mutex
 	nextDue map[string]time.Time
 	status  map[string]SourceStatus
+	// watermark — (kaynak id + "/" + sorgu adı) → en son yazılan kova bitişi.
+	watermark map[string]time.Time
 
 	mPolls, mPoints, mDropped, mErrors metric.Int64Counter
 }
@@ -166,6 +230,7 @@ func NewWorker(svc *Service, sink MetricSink) *Worker {
 		queryAPIFor: svc.QueryAPIFor,
 		nextDue:     map[string]time.Time{},
 		status:      map[string]SourceStatus{},
+		watermark:   map[string]time.Time{},
 	}
 	m := selfobs.Meter()
 	var err error
@@ -269,7 +334,17 @@ func (w *Worker) pollSource(ctx context.Context, src SourceConfig, now time.Time
 		if len(recs) == 0 {
 			continue // boş küme: satır yok, sıfır yazılmaz (D3 pad'ler)
 		}
-		req, drops := BuildMetricsRequest(src, qc, recs, now)
+		wmKey := src.ID + "/" + qc.Name
+		w.mu.Lock()
+		wm := w.watermark[wmKey]
+		w.mu.Unlock()
+		kept, newWM, skips := SplitBuckets(recs, wm, now)
+		st.LastSkippedOld += skips.Old
+		st.LastSkippedPartial += skips.Partial
+		if len(kept) == 0 {
+			continue // hepsi ya yazılmış ya kısmi kova
+		}
+		req, drops := BuildMetricsRequest(src, qc, kept, now)
 		if n := drops.Total(); n > 0 {
 			st.LastDrops += n
 			w.count(w.mDropped, ctx, int64(n), attrs)
@@ -288,6 +363,13 @@ func (w *Worker) pollSource(ctx context.Context, src SourceConfig, now time.Time
 		}
 		st.LastPoints += len(pts)
 		w.count(w.mPoints, ctx, int64(len(pts)), attrs)
+		// Watermark yalnız YAZIM başarılıysa ilerler; yazım düşerse kova bir
+		// sonraki poll'da yeniden denenir (kayıp değil, gecikme).
+		w.mu.Lock()
+		if newWM.After(w.watermark[wmKey]) {
+			w.watermark[wmKey] = newWM
+		}
+		w.mu.Unlock()
 	}
 	return st
 }

@@ -102,10 +102,10 @@ func influxErrMessage(b []byte) string {
 	return s
 }
 
-// QueryAPIFor — kaynağın istemcisi; tokenRef BURADA çözülür (her
-// çağrıda: rotasyon anında etkili, saklanan değer yok).
+// QueryAPIFor — kaynağın istemcisi; token BURADA seçilir/çözülür (her
+// çağrıda: referans varsa rotasyon anında etkili).
 func (s *Service) QueryAPIFor(src SourceConfig) (QueryAPI, error) {
-	tok, err := resolveTokenRef(src.TokenRef, s.getenv, s.readFile)
+	tok, err := s.tokenFor(src)
 	if err != nil {
 		return nil, err
 	}

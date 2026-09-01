@@ -66,6 +66,15 @@ describe('REDACTED şablonu (spec)', () => {
     expect(REDACTEDTEMPLATE.attrMap?.TRACEID).toBe('trace_id');
     expect(REDACTEDTEMPLATE.attrMap?.REDACTED).toBe('k8s.pod.name');
   });
+  REDACTED{
+    REDACTED")');
+    expect(REDACTEDTEMPLATE.flux).toContain('aggregateWindow(every: 1m, fn: sum, createEmpty: false)');
+    expect(REDACTEDTEMPLATE.flux).toContain('r.REDACTED != "0"');
+    expect(REDACTEDTEMPLATE.flux).toContain('r.REDACTED != "N/A"');
+    expect(REDACTEDTEMPLATE.flux).not.toContain('_value > 4');
+    REDACTED")');
+  });
+
   it('SORGU 2 dört yer tutucuyu taşır, SORGU 1 hiçbirini taşımaz', () => {
     for (const ph of ['{{from}}', '{{to}}', '{{op}}', '{{err}}']) {
       expect(REDACTEDTEMPLATE.enrichFlux).toContain(ph);

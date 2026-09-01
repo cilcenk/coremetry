@@ -100,6 +100,57 @@ func TestNormalize_Rejects(t *testing.T) {
 	}
 }
 
+func TestNormalize_TokenStoredAndPreserved(t *testing.T) {
+	// v0.10.224 (operatör): düz token SAKLANIR; boş girdi saklıyı korur;
+	// referans varsa o kazanır; ikisi de yoksa etkin kaynak reddedilir.
+	newID := func() string { return "i-aaaaaaaa" }
+	first := validSource()
+	first.TokenRef, first.Token = "", "plain-secret"
+	got, err := Normalize(Settings{Sources: []SourceConfig{first}}, Settings{}, newID)
+	if err != nil || got.Sources[0].Token != "plain-secret" {
+		t.Fatalf("plain token must be stored: %+v / %v", got, err)
+	}
+	// İkinci PUT token'sız (form maskeli değeri geri alamaz) → saklı korunur.
+	again := validSource()
+	again.TokenRef, again.Token = "", ""
+	got2, err := Normalize(Settings{Sources: []SourceConfig{again}}, got, newID)
+	if err != nil || got2.Sources[0].Token != "plain-secret" {
+		t.Fatalf("empty token must preserve the stored one: %q / %v", got2.Sources[0].Token, err)
+	}
+	// Yeni token eskisini değiştirir.
+	again.Token = "rotated"
+	got3, _ := Normalize(Settings{Sources: []SourceConfig{again}}, got, newID)
+	if got3.Sources[0].Token != "rotated" {
+		t.Fatalf("new token replaces: %q", got3.Sources[0].Token)
+	}
+	// Ne token ne referans → etkin kaynak reddedilir.
+	none := validSource()
+	none.TokenRef, none.Token = "", ""
+	if _, err := Normalize(Settings{Sources: []SourceConfig{none}}, Settings{}, newID); err == nil || !strings.Contains(err.Error(), "token") {
+		t.Fatalf("enabled source without any token must be rejected, got %v", err)
+	}
+}
+
+func TestSnapshot_MasksStoredToken(t *testing.T) {
+	svc := New()
+	a := validSource()
+	a.ID, a.TokenRef, a.Token = "i-aaaaaaaa", "", "plain-secret"
+	svc.Configure(Settings{Sources: []SourceConfig{a}})
+	snap := svc.Snapshot()
+	if snap.Sources[0].Token != "" || !snap.Sources[0].HasToken || !snap.Sources[0].TokenResolved {
+		t.Fatalf("stored token must be masked but reported: %+v", snap.Sources[0])
+	}
+	tok, err := svc.tokenFor(a)
+	if err != nil || tok != "plain-secret" {
+		t.Fatalf("tokenFor falls back to the stored token: %q / %v", tok, err)
+	}
+	b := a
+	b.TokenRef = "env:NOPE"
+	if _, err := svc.tokenFor(b); err == nil {
+		t.Fatalf("a set tokenRef wins over the stored token, even when unresolvable")
+	}
+}
+
 func TestNormalize_DisabledSourceIsLenient(t *testing.T) {
 	// Kapalı kaynak URL/org/sorgu taşımak zorunda değil — operatör
 	// yarım bırakıp sonra dönebilmeli (VM "disable keeps url" duruşu).

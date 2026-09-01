@@ -1304,6 +1304,7 @@ tbody td.row-cell { padding: 0; }
 .influx-status { margin-bottom: var(--sp-5); font-size: var(--fs-sm); color: var(--text2); }
 .influx-status .is-quiet { color: var(--text3); }
 .is-err { color: var(--err); }
+.is-ok { color: var(--ok); }
 /* Karışık hücre (metin + çipler) içinde yalnız METİN link olur (v0.10.221, Problems kural adı). */
 .row-link--inline { display: inline; padding: 0; white-space: normal; }
 /* Breadcrumb (v0.10.219, ilk tüketici /trace): "Traces › <kök işlem>". Halka

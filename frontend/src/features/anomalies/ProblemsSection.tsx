@@ -17,7 +17,7 @@
 // the barrel re-exports AnomaliesPage, which would drag the whole
 // Exceptions page into the /inbox chunk.
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import EvaluatorStatus from './EvaluatorStatus';
@@ -40,7 +40,7 @@ import { useDataTable, DataTableColgroup, DataTableHead, ResetLayoutButton } fro
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { Problem } from '@/lib/types';
 import { AlertProblemDetail } from './ProblemDetail';
-import { withProblemParam } from './problemLink';
+import { withProblemParam, problemDetailHref } from './problemLink';
 import { findProblemInCaches } from './problemResolve';
 import { RenderedMarkdown, stripMarkdown } from '@/components/Markdown';
 import { PageShell } from '@/components/ui/PageShell';
@@ -95,6 +95,8 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   const { user } = useAuth();
   const currentUserEmail = user?.email ?? '';
   const [searchParams, setSearchParams] = useSearchParams();
+  // v0.10.221 — hücre linkleri bu sayfada kalır (Inbox da bu bölümü çizer).
+  const location = useLocation();
   // v0.9.1054 (Faz 0.6) — URL = source of truth, sayfanın TEK ihlali
   // burasıydı: status/sev/prio localStorage+state'te, owner/sre/cluster
   // düz state'te yaşıyordu. "Şu P1'lere bak" linki karşı tarafta başka
@@ -583,6 +585,10 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
             <tbody>
               {sorted.map((p, i) => {
                 const isAnomaly = p.ruleId?.startsWith('anomaly:');
+                // v0.10.221 — düz hücreler gerçek <Link> (orta tık / ⌘-tık
+                // yeni sekme); satırın onClick'i etkileşimli hücreler için
+                // kalıyor, Link kendi tıkını yutuyor (çift gezinme yok).
+                const href = problemDetailHref(location.pathname, searchParams, p.id);
                 return (
                   // v0.9.1133 — key FRAGMENT'te: satır artık iki `<tr>`
                   // döndürebiliyor (satır + açık insight kartı). Keyless bir
@@ -622,8 +628,8 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                             });
                           }} />
                       </td>
-                      <td><PriorityBadge p={p.priority} reason={p.priorityReason} /></td>
-                      <td><SeverityBadge s={p.severity} /></td>
+                      <td className="row-cell"><Link to={href} replace className="row-link" onClick={e => e.stopPropagation()}><PriorityBadge p={p.priority} reason={p.priorityReason} /></Link></td>
+                      <td className="row-cell"><Link to={href} replace className="row-link" onClick={e => e.stopPropagation()}><SeverityBadge s={p.severity} /></Link></td>
                       <td>
                         {/* v0.9.966 — problemin ömrü: onset−1h → (çözüm |
                             şimdi)+10m. Aynı sınırlar ProblemDetail'in
@@ -638,16 +644,18 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                           style={{ fontWeight: 600 }} />
                         <ClusterChips clusters={p.clusters} />
                       </td>
-                      <td className="mono">{p.metric}</td>
-                      <td className="mono" style={{ textAlign: 'right' }}>
-                        <b style={{ color: 'var(--err)' }}>{fmtFixed(p.value, 2)}</b>
-                        <span style={{ color: 'var(--text3)' }}> / {fmtFixed(p.threshold, 2)}</span>
+                      <td className="mono row-cell"><Link to={href} replace className="row-link" onClick={e => e.stopPropagation()}>{p.metric}</Link></td>
+                      <td className="mono row-cell" style={{ textAlign: 'right' }}>
+                        <Link to={href} replace className="row-link" onClick={e => e.stopPropagation()}>
+                          <b style={{ color: 'var(--err)' }}>{fmtFixed(p.value, 2)}</b>
+                          <span style={{ color: 'var(--text3)' }}> / {fmtFixed(p.threshold, 2)}</span>
+                        </Link>
                       </td>
                       <td style={{ fontSize: 12 }}>
                         {isAnomaly && (
                           <span className="badge b-info" style={{ marginRight: 6 }}>ANOMALY</span>
                         )}
-                        {p.ruleName}
+                        <Link to={href} replace className="row-link row-link--inline" onClick={e => e.stopPropagation()}>{p.ruleName}</Link>
                         {p.runbookUrl && (
                           <a href={p.runbookUrl} target="_blank" rel="noopener"
                             onClick={e => e.stopPropagation()}
@@ -740,11 +748,13 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                             } />
                         </div>
                       </td>
-                      <td className="mono">{tsLong(p.startedAt)}</td>
-                      <td>
-                        {p.status === 'open' && <span className="badge b-err">OPEN</span>}
-                        {p.status === 'acknowledged' && <span className="badge b-warn">ACK</span>}
-                        {p.status === 'resolved' && <span className="badge b-ok">RESOLVED</span>}
+                      <td className="mono row-cell"><Link to={href} replace className="row-link" onClick={e => e.stopPropagation()}>{tsLong(p.startedAt)}</Link></td>
+                      <td className="row-cell">
+                        <Link to={href} replace className="row-link" onClick={e => e.stopPropagation()}>
+                          {p.status === 'open' && <span className="badge b-err">OPEN</span>}
+                          {p.status === 'acknowledged' && <span className="badge b-warn">ACK</span>}
+                          {p.status === 'resolved' && <span className="badge b-ok">RESOLVED</span>}
+                        </Link>
                       </td>
                       <td onClick={e => e.stopPropagation()} style={{ fontSize: 12 }}>
                         <AssigneeCell problem={p}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { withProblemParam, withExcParam } from './problemLink';
+import { withProblemParam, withExcParam, problemDetailHref, excDetailHref } from './problemLink';
 
 // v0.8.256 — operator-reported: "spesifik bir problemi link olarak
 // paylaşamıyorum, URL hep /problems". The drawer seeded FROM
@@ -71,5 +71,36 @@ describe('withExcParam', () => {
     const prev = new URLSearchParams('exc=keep');
     withExcParam(prev, null);
     expect(prev.get('exc')).toBe('keep');
+  });
+});
+
+// v0.10.221 — satır hücrelerinin gerçek href'i (orta tık / ⌘-tık yeni sekme).
+// Aynı param sözleşmesi, sayfa yolu korunur (Inbox'ta çizilen bölüm /inbox'ta
+// kalır), diğer paramlar (range/filtre) korunur, id yenisiyle DEĞİŞİR.
+describe('problemDetailHref / excDetailHref', () => {
+  it('pathname + ?problem=, diğer paramlar korunur', () => {
+    const prev = new URLSearchParams('range=30m&service=checkout');
+    expect(problemDetailHref('/problems', prev, 'p1')).toBe('/problems?range=30m&service=checkout&problem=p1');
+  });
+  it('Inbox\'ta çizilince /inbox yolunda kalır', () => {
+    expect(problemDetailHref('/inbox', new URLSearchParams(''), 'p1')).toBe('/inbox?problem=p1');
+  });
+  it('açık bir problem varken id yenisiyle değişir, çoğalmaz', () => {
+    const h = problemDetailHref('/problems', new URLSearchParams('problem=old'), 'new');
+    expect(new URLSearchParams(h.slice(h.indexOf('?') + 1)).getAll('problem')).toEqual(['new']);
+  });
+  it('exception: pathname + ?exc=, mevcut ?exception= (inline seed) ile çakışmaz', () => {
+    const prev = new URLSearchParams('exception=abc&range=1h');
+    const h = excDetailHref('/problems', prev, 'fp9');
+    const q = new URLSearchParams(h.slice(h.indexOf('?') + 1));
+    expect(h.startsWith('/problems?')).toBe(true);
+    expect(q.get('exc')).toBe('fp9');
+    expect(q.get('exception')).toBe('abc');
+    expect(q.get('range')).toBe('1h');
+  });
+  it('girdi paramlarını değiştirmez', () => {
+    const prev = new URLSearchParams('range=30m');
+    problemDetailHref('/problems', prev, 'p1'); excDetailHref('/problems', prev, 'f1');
+    expect(prev.toString()).toBe('range=30m');
   });
 });

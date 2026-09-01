@@ -28,3 +28,18 @@ export function withExcParam(prev: URLSearchParams, fingerprint: string | null):
   else p.delete('exc');
   return p;
 }
+
+// v0.10.221 (operatör-bildirimli: "Exceptions/Problems sayfasında da orta
+// tıkla yeni sayfada açılabilsin") — satır hücrelerinin GERÇEK href'i.
+// `tr onClick → setSearchParams(replace)` DOM'a <a> basmadığı için orta
+// tık / ⌘-tık ölüydü (Traces'teki v0.10.216 sınıfı). Hücre <Link>'leri bu
+// href'i taşır; aynı ?problem= / ?exc= sözleşmesi, aynı diğer-param
+// koruması. pathname parametre: ProblemsSection Inbox'ta da çiziliyor,
+// link o sayfada kalmalı.
+export function problemDetailHref(pathname: string, prev: URLSearchParams, id: string): string {
+  return pathname + '?' + withProblemParam(prev, id).toString();
+}
+
+export function excDetailHref(pathname: string, prev: URLSearchParams, fingerprint: string): string {
+  return pathname + '?' + withExcParam(prev, fingerprint).toString();
+}

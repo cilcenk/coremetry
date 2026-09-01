@@ -447,3 +447,24 @@ func Normalize(in Settings, prev Settings, newID func() string) (Settings, error
 	}
 	return out, nil
 }
+
+// metricAttrKey — bir Influx tag'ının metric_points attr adı: attrMap'te
+// boş-olmayan eşleme varsa o, yoksa tag'ın kendisi. BuildMetricsRequest ile
+// MetricGroupBy AYNI kuralı buradan okur (sözleşme tek yerde, v0.10.228).
+func (qc QueryConfig) metricAttrKey(tag string) string {
+	if mapped, has := qc.AttrMap[tag]; has && mapped != "" {
+		return mapped
+	}
+	return tag
+}
+
+// MetricGroupBy (v0.10.228) — metric_points'e GERÇEKTEN yazılan attr adları,
+// GroupBy sırasıyla. Dış anomali tarayıcısı seri GroupBy'ını bununla kurar;
+// ham tag adıyla kurulsaydı seri boş döner, hiçbir şey açılmazdı — sessizce.
+func (qc QueryConfig) MetricGroupBy() []string {
+	out := make([]string, 0, len(qc.GroupBy))
+	for _, tag := range qc.GroupBy {
+		out = append(out, qc.metricAttrKey(tag))
+	}
+	return out
+}

@@ -1,0 +1,282 @@
+package anomaly
+
+// external_test.go — v0.10.228 (Influx D3) dış seri anomalisi sözleşmesi:
+//   - spike → kind=external Problem; özne `ext:<kaynak>/<grup>`, gerekçe
+//     etiketli; sorgu filtresi metrik/kaynak/groupBy/60 s adımı taşır
+//   - sakin seri + açık problem → touch (bayat süpürmeye karşı)
+//   - geri dönüş → resolve
+//   - genç kaynak: sabit pencere sıfırla DOLDURULMAZ, tarama atlanır
+//   - kayan pencere simülasyonu: tek spike = tek açılış + tek kapanış,
+//     spike baseline'a kayarken yeniden AÇILMAZ (v0.10.199 dersi)
+//   - padMinuteSlots: eksik dakika 0, aralık dışı yok sayılır
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/cilcenk/coremetry/internal/chstore"
+)
+
+type fakeExtStore struct {
+	series  []chstore.SpanMetricSeries
+	open    []chstore.Problem
+	upserts []chstore.Problem
+	queries []chstore.MetricQueryFilter
+	cfg     chstore.AnomalySensitivityConfig
+}
+
+func (f *fakeExtStore) QueryMetric(_ context.Context, q chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error) {
+	f.queries = append(f.queries, q)
+	return f.series, nil
+}
+func (f *fakeExtStore) OpenProblemsSnapshot(context.Context) (*chstore.OpenProblems, error) {
+	return chstore.NewOpenProblems(f.open), nil
+}
+func (f *fakeExtStore) UpsertProblem(_ context.Context, p chstore.Problem) error {
+	f.upserts = append(f.upserts, p)
+	// Açık listeyi CH gibi güncelle: resolved → düşer, open → yer değiştirir.
+	kept := f.open[:0]
+	for _, o := range f.open {
+		if o.ID != p.ID {
+			kept = append(kept, o)
+		}
+	}
+	f.open = kept
+	if p.Status == "open" || p.Status == "acknowledged" {
+		f.open = append(f.open, p)
+	}
+	return nil
+}
+func (f *fakeExtStore) AnomalySensitivity() chstore.AnomalySensitivityConfig { return f.cfg }
+
+// extSeries — end'de biten, dakikada bir noktalı seri.
+func extSeries(vals []float64, end time.Time, key ...string) chstore.SpanMetricSeries {
+	pts := make([]chstore.SpanMetricPoint, 0, len(vals))
+	for i, v := range vals {
+		t := end.Add(-time.Duration(len(vals)-1-i) * time.Minute)
+		pts = append(pts, chstore.SpanMetricPoint{Time: t.UnixNano(), Value: v})
+	}
+	return chstore.SpanMetricSeries{GroupKey: key, Points: pts}
+}
+
+// baselineVals — 4/5/6 dönüşümlü sakin taban (medyan 5, MAD 1).
+func baselineVals(n int) []float64 {
+	out := make([]float64, n)
+	for i := range out {
+		out[i] = float64(4 + i%3)
+	}
+	return out
+}
+
+func repeat(v float64, n int) []float64 {
+	out := make([]float64, n)
+	for i := range out {
+		out[i] = v
+	}
+	return out
+}
+
+var extTarget = ExternalTarget{SourceID: "i-1", SourceName: "ggfail", Query: "tfail_adet", GroupBy: []string{"OPERATIONCODE", "ERRORCODE"}}
+
+func newExtScanner(f *fakeExtStore, now time.Time) *ExternalScanner {
+	s := NewExternalScanner(f, nil)
+	s.now = func() time.Time { return now }
+	return s
+}
+
+func TestExternalScan_OpensProblemOnSpike(t *testing.T) {
+	cfg := chstore.DefaultAnomalySensitivity()
+	now := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	vals := append(baselineVals(30), repeat(60, cfg.DwellBuckets)...)
+	f := &fakeExtStore{cfg: cfg, series: []chstore.SpanMetricSeries{extSeries(vals, now, "OP1", "E1")}}
+	rep, err := newExtScanner(f, now).Scan(context.Background(), extTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Series != 1 || rep.Opened != 1 || len(f.upserts) != 1 {
+		t.Fatalf("one series, one open: %+v upserts=%d", rep, len(f.upserts))
+	}
+	p := f.upserts[0]
+	if p.Kind != chstore.ProblemKindExternal || p.Status != "open" || p.ID == "" {
+		t.Fatalf("kind=external open problem, got %+v", p)
+	}
+	if p.Service != "ext:ggfail/OP1/E1" || p.Metric != "ext:tfail_adet" || p.RuleID != "anomaly:ext:ggfail/OP1/E1:ext:tfail_adet" {
+		t.Fatalf("subject/metric/rule: %q %q %q", p.Service, p.Metric, p.RuleID)
+	}
+	if !strings.Contains(p.Description, "OPERATIONCODE=OP1") || !strings.Contains(p.Description, "ERRORCODE=E1") {
+		t.Fatalf("reason string carries labels: %q", p.Description)
+	}
+	if p.Severity == "" || p.Comparator == "" || p.Value != 60 {
+		t.Fatalf("severity/comparator/value: %+v", p)
+	}
+	// Baseline medyanı 5 (4/5/6 taban) — 0 çıkarsa mevsimsel boş dizi
+	// seçilmiş demektir (chooseBaseline'a 0 geçme sınıfı).
+	if p.Threshold != 5 {
+		t.Fatalf("baseline median must come from the live series (5), got %v", p.Threshold)
+	}
+	q := f.queries[0]
+	if q.Name != "ext:tfail_adet" || q.Service != "ggfail" || q.StepSeconds != 60 || len(q.GroupBy) != 2 || q.GroupBy[0] != "OPERATIONCODE" {
+		t.Fatalf("metric query filter: %+v", q)
+	}
+}
+
+func TestExternalScan_TouchesOpenProblemWhileQuiet(t *testing.T) {
+	cfg := chstore.DefaultAnomalySensitivity()
+	now := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	open := chstore.Problem{ID: "p-open", RuleID: "anomaly:ext:ggfail/OP1/E1:ext:tfail_adet", Service: "ext:ggfail/OP1/E1",
+		Kind: chstore.ProblemKindExternal, Metric: "ext:tfail_adet", Status: "open", Severity: "critical", Value: 60}
+	// Hâlâ yüksek ama dwell penceresinin tamamı kritik z üstünde DEĞİL:
+	// karar "none" — problem açık kalır ve dokunulur.
+	vals := append(baselineVals(30), 60, 5, 5)
+	f := &fakeExtStore{cfg: cfg, open: []chstore.Problem{open},
+		series: []chstore.SpanMetricSeries{extSeries(vals, now, "OP1", "E1")}}
+	rep, err := newExtScanner(f, now).Scan(context.Background(), extTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Touched+rep.Resolved != 1 || rep.Opened != 0 || len(f.upserts) != 1 {
+		t.Fatalf("open problem must be touched or resolved, never re-opened: %+v", rep)
+	}
+	if f.upserts[0].ID != "p-open" {
+		t.Fatalf("touch re-upserts the SAME row (updated_at), got id %q", f.upserts[0].ID)
+	}
+}
+
+func TestExternalScan_ResolvesOnRecovery(t *testing.T) {
+	cfg := chstore.DefaultAnomalySensitivity()
+	now := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	open := chstore.Problem{ID: "p-open", RuleID: "anomaly:ext:ggfail/OP1/E1:ext:tfail_adet", Service: "ext:ggfail/OP1/E1",
+		Kind: chstore.ProblemKindExternal, Metric: "ext:tfail_adet", Status: "open", Severity: "critical", Value: 60}
+	vals := append(baselineVals(30), repeat(5, cfg.DwellBuckets+2)...)
+	f := &fakeExtStore{cfg: cfg, open: []chstore.Problem{open},
+		series: []chstore.SpanMetricSeries{extSeries(vals, now, "OP1", "E1")}}
+	rep, err := newExtScanner(f, now).Scan(context.Background(), extTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Resolved != 1 || len(f.upserts) != 1 || f.upserts[0].Status != "resolved" || f.upserts[0].ResolvedAt == nil {
+		t.Fatalf("recovery resolves the open problem: %+v upserts=%+v", rep, f.upserts)
+	}
+	if len(f.open) != 0 {
+		t.Fatalf("resolved row leaves the open set")
+	}
+}
+
+func TestExternalScan_YoungSourceIsNotPaddedIntoAnAnomaly(t *testing.T) {
+	cfg := chstore.DefaultAnomalySensitivity()
+	now := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	// Yalnız 5 dakikalık gözlem; sabit 240'lık pencere olsaydı 235 sıfır
+	// + medyan 0 → 40 "anomali" diye açılırdı.
+	f := &fakeExtStore{cfg: cfg, series: []chstore.SpanMetricSeries{extSeries([]float64{40, 41, 40, 42, 40}, now, "OP1", "E1")}}
+	rep, err := newExtScanner(f, now).Scan(context.Background(), extTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Opened != 0 || rep.Skipped != 1 || len(f.upserts) != 0 {
+		t.Fatalf("young source is skipped, never opened: %+v", rep)
+	}
+}
+
+func TestExternalScan_ThresholdOverrides(t *testing.T) {
+	base := chstore.DefaultAnomalySensitivity()
+	cfg := externalSensitivity(base, "ext:x", ExternalThresholds{CriticalZ: 9, Dwell: 5, MinAbsDelta: 20, MinMAD: 3})
+	if cfg.CriticalZ != 9 || cfg.DwellBuckets != 5 {
+		t.Fatalf("criticalZ/dwell override: %+v", cfg)
+	}
+	ms := cfg.For("ext:x")
+	if ms.MinAbsDelta != 20 || ms.MinMAD != 3 {
+		t.Fatalf("per-metric override: %+v", ms)
+	}
+	def := externalSensitivity(base, "ext:y", ExternalThresholds{})
+	if d := def.For("ext:y"); d.MinAbsDelta != externalDefaultMinAbsDelta || d.MinMAD != externalDefaultMinMAD {
+		t.Fatalf("defaults when thresholds empty: %+v", d)
+	}
+	if def.CriticalZ != base.CriticalZ || def.DwellBuckets != base.DwellBuckets {
+		t.Fatalf("empty thresholds keep the global blob: %+v", def)
+	}
+	if _, shared := base.Metrics["ext:x"]; shared {
+		t.Fatal("base Metrics map must not be mutated (shared atomic snapshot)")
+	}
+}
+
+// Kayan pencere simülasyonu (memory feedback-sliding-window-fabricates-events):
+// bir spike → tam bir açılış + tam bir kapanış; spike baseline'ın içinden
+// geçerken tekrar açılmaz.
+func TestExternalScan_SlidingWindowOpensOnceResolvesOnce(t *testing.T) {
+	cfg := chstore.DefaultAnomalySensitivity()
+	t0 := time.Date(2026, 9, 2, 8, 0, 0, 0, time.UTC)
+	master := append(baselineVals(60), repeat(60, cfg.DwellBuckets)...)
+	master = append(master, baselineVals(90)...)
+	f := &fakeExtStore{cfg: cfg}
+	opened, resolved := 0, 0
+	for end := 40; end <= len(master); end++ {
+		now := t0.Add(time.Duration(end) * time.Minute)
+		f.series = []chstore.SpanMetricSeries{extSeries(master[:end], now, "OP1", "E1")}
+		rep, err := newExtScanner(f, now).Scan(context.Background(), extTarget)
+		if err != nil {
+			t.Fatal(err)
+		}
+		opened += rep.Opened
+		resolved += rep.Resolved
+	}
+	if opened != 1 || resolved != 1 {
+		t.Fatalf("one spike → opened=%d resolved=%d (want 1/1)", opened, resolved)
+	}
+	if len(f.open) != 0 {
+		t.Fatalf("nothing stays open after recovery: %+v", f.open)
+	}
+}
+
+func TestPadMinuteSlots(t *testing.T) {
+	end := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	start := end.Add(-4 * time.Minute)
+	pts := []chstore.SpanMetricPoint{
+		{Time: end.Add(-9 * time.Minute).UnixNano(), Value: 99}, // aralık dışı
+		{Time: end.Add(-3 * time.Minute).UnixNano(), Value: 7},
+		{Time: end.Add(-1 * time.Minute).UnixNano(), Value: 9},
+		{Time: end.Add(-1 * time.Minute).UnixNano(), Value: 4}, // aynı dakika: büyüğü kalır
+		{Time: end.UnixNano(), Value: 11},
+	}
+	got := padMinuteSlots(pts, start, end)
+	want := []float64{0, 7, 0, 9, 11}
+	if len(got) != len(want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("slot %d: got %v want %v", i, got, want)
+		}
+	}
+	if padMinuteSlots(nil, end, start) != nil {
+		t.Fatal("end before start → nil")
+	}
+}
+
+func TestObservedSpan_ClampsToSlots(t *testing.T) {
+	end := time.Date(2026, 9, 2, 10, 0, 30, 0, time.UTC)
+	s := []chstore.SpanMetricSeries{
+		{Points: []chstore.SpanMetricPoint{{Time: end.Add(-500 * time.Minute).UnixNano(), Value: 1}}},
+		{Points: []chstore.SpanMetricPoint{{Time: end.UnixNano(), Value: 1}}},
+	}
+	start, got, ok := observedSpan(s)
+	if !ok || !got.Equal(end.Truncate(time.Minute)) {
+		t.Fatalf("end = latest observed minute: %v ok=%v", got, ok)
+	}
+	if n := int(got.Sub(start)/time.Minute) + 1; n != externalSlots {
+		t.Fatalf("span clamped to %d slots, got %d", externalSlots, n)
+	}
+	if _, _, ok := observedSpan(nil); ok {
+		t.Fatal("no points → ok=false")
+	}
+}
+
+func TestExternalSubject(t *testing.T) {
+	if got := ExternalSubject("ggfail", []string{"OP1", "E1"}); got != "ext:ggfail/OP1/E1" {
+		t.Fatalf("got %q", got)
+	}
+	if got := ExternalSubject("ggfail", nil); got != "ext:ggfail" {
+		t.Fatalf("got %q", got)
+	}
+}

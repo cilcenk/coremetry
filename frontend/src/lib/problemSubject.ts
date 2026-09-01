@@ -12,7 +12,8 @@
 // dizgisini sınıflandırmak ve nasıl basılacağını söylemek.
 
 /** Backend'in `problems.kind` evreni (chstore ProblemKind* sabitleri). */
-export type SubjectKind = 'service' | 'db';
+export type SubjectKind = 'service' | 'db' | 'external';
+export type ExternalSubject = { source: string; values: string[] };
 
 /** `db:<system>@<instance>` çözümü. chstore.ParseDBSubjectID'nin ikizi. */
 export type DbSubject = { system: string; instance: string };
@@ -22,6 +23,15 @@ export type DbSubject = { system: string; instance: string };
 // sabit + problemSubject.test.ts'te biçim pini: iki taraf ayrışırsa test
 // kırılır, ürün sessizce yanlış sınıflandırmaz.
 const DB_PREFIX = 'db:';
+// v0.10.228 (Influx D3) — dış metrik kaynağı öznesi: `ext:<kaynak>/<v1>/<v2>`.
+const EXT_PREFIX = 'ext:';
+
+export function parseExternalSubject(subject: string): ExternalSubject | null {
+  if (!subject.startsWith(EXT_PREFIX)) return null;
+  const parts = subject.slice(EXT_PREFIX.length).split('/');
+  if (parts[0] === '') return null;
+  return { source: parts[0], values: parts.slice(1) };
+}
 
 /**
  * parseDbSubject — `db:<system>@<instance>` çözer, değilse null.
@@ -60,6 +70,7 @@ export function parseDbSubject(subject: string): DbSubject | null {
  * zorluyor.
  */
 export function subjectKind(service: string, kind?: string): SubjectKind {
+  if (kind === 'external' || parseExternalSubject(service)) return 'external';
   if (kind === 'db' || parseDbSubject(service)) return 'db';
   return 'service';
 }
@@ -73,6 +84,8 @@ export function subjectKind(service: string, kind?: string): SubjectKind {
  * (düğüm ham `queue:kafka:api.usage` adıyla görünüyordu).
  */
 export function subjectLabel(service: string): string {
+  const ext = parseExternalSubject(service);
+  if (ext) return [ext.source, ...ext.values].join(' · ');
   const db = parseDbSubject(service);
   if (db) return `${db.system} · ${db.instance}`;
   return service;
@@ -104,6 +117,11 @@ export function subjectIsLinkable(service: string, kind?: string): boolean {
  * gibi okunur.
  */
 export function subjectTitle(service: string): string | undefined {
+  const ext = parseExternalSubject(service);
+  if (ext) {
+    return `Dış metrik kaynağı (${ext.source}) serisi — bir servis değil, ` +
+      `bu yüzden servis sayfası linki yok`;
+  }
   const db = parseDbSubject(service);
   if (db) {
     return `${db.system} veritabanı örneği (${db.instance}) — bir servis değil, ` +

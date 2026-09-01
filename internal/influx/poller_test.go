@@ -378,3 +378,51 @@ func TestWorkerTick_WatermarkAcrossPolls(t *testing.T) {
 		t.Fatalf("all three skipped as old: %+v", st)
 	}
 }
+
+// v0.10.228 (D3) — Başarılı poll'dan sonra sorgu başına hook: dış anomali
+// tarayıcısı BURADAN tetiklenir. Poll hata verdiyse hook KOŞMAZ — Influx
+// erişilemezken CH'deki seriye bakmak sıfır-padli "iyileşti" uydurur;
+// sessiz kaynağı bayat süpürme (evaluator sweepStaleProblems) kapatır.
+func TestWorkerTick_HookRunsPerQueryAfterSuccessfulPoll(t *testing.T) {
+	svc := New()
+	src := tfailSource()
+	svc.Configure(Settings{Sources: []SourceConfig{src}})
+	q := &fakeQueryAPI{recs: map[string][]Record{"GGFailTraceBckt": recs(
+		map[string]string{"_value": "42", "OPERATIONCODE": "OP1", "ERRORCODE": "E1"},
+	)}}
+	now := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	w := NewWorker(svc, &fakeSink{})
+	w.now = func() time.Time { return now }
+	w.queryAPIFor = func(SourceConfig) (QueryAPI, error) { return q, nil }
+	var calls []string
+	w.SetHook(func(_ context.Context, s SourceConfig, qc QueryConfig) {
+		calls = append(calls, s.ID+"/"+qc.Name)
+	})
+	w.Tick(context.Background())
+	if len(calls) != len(src.Queries) || calls[0] != src.ID+"/"+src.Queries[0].Name {
+		t.Fatalf("hook once per query after a successful poll; got %v", calls)
+	}
+	q.err = errors.New("influx 503")
+	now = now.Add(time.Duration(src.IntervalSec+1) * time.Second)
+	w.Tick(context.Background())
+	if len(calls) != len(src.Queries) {
+		t.Fatalf("failed poll must NOT run the hook; got %v", calls)
+	}
+}
+
+// v0.10.228 — MetricGroupBy: metric_points'te GERÇEKTEN yazılan attr
+// adları (attrMap uygulanmış). Tarayıcı GroupBy'ı bununla kurar; ham tag
+// adıyla kurarsa seri boş döner ve hiçbir şey açılmaz — sessizce.
+func TestQueryConfigMetricGroupBy_AppliesAttrMap(t *testing.T) {
+	qc := QueryConfig{
+		GroupBy: []string{"OPERATIONCODE", "ERRORCODE"},
+		AttrMap: map[string]string{"OPERATIONCODE": "operation_code", "ERRORCODE": ""},
+	}
+	got := qc.MetricGroupBy()
+	if len(got) != 2 || got[0] != "operation_code" || got[1] != "ERRORCODE" {
+		t.Fatalf("attrMap applied, empty mapping keeps tag name; got %v", got)
+	}
+	if n := len((QueryConfig{}).MetricGroupBy()); n != 0 {
+		t.Fatalf("no groupBy → empty, got %d", n)
+	}
+}

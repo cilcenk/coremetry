@@ -53,6 +53,9 @@ export function SubjectLink({ service, subjectKind: kind, href, style, className
         {subjectKind(service, kind) === 'db' && (
           <span className="badge b-gray" style={{ fontSize: 9, marginRight: 4 }}>DB</span>
         )}
+        {subjectKind(service, kind) === 'external' && (
+          <span className="badge b-gray" style={{ fontSize: 9, marginRight: 4 }}>EXT</span>
+        )}
         {label}
       </span>
     );

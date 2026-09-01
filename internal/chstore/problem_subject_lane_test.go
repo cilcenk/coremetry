@@ -90,7 +90,7 @@ func TestSubjectLaneDoesNotHideTheColumnDefault(t *testing.T) {
 // İki anahtar ÖNCEDEN tohumlanmalı.
 func TestCountProblemsBySubjectSeedsBothBuckets(t *testing.T) {
 	src := readLaneSrc(t, "problem_subject_lane.go")
-	want := "out := map[string]uint64{ProblemKindService: 0, ProblemKindDB: 0}"
+	want := "out := map[string]uint64{ProblemKindService: 0, ProblemKindDB: 0, ProblemKindExternal: 0}"
 	if !strings.Contains(src, want) {
 		t.Errorf("CountProblemsBySubject haritayı iki anahtarla tohumlamıyor (%q yok) — "+
 			"0 satırlı grup HİÇ satır üretmez, eksik anahtar 'yok' ile 'ölçülemedi'yi "+
@@ -160,7 +160,7 @@ func TestProblemServicesConjunct(t *testing.T) {
 		{"bayraksız + kolon yok: yine bugünkü", 3, false, false,
 			"service IN (?,?,?)"},
 		{"bayraklı: db öznelerine kaçış kapısı", 3, true, true,
-			"(service IN (?,?,?) OR kind = 'db')"},
+			"(service IN (?,?,?) OR kind = 'db' OR kind = 'external')"},
 		{"bayraklı ama kolon YOK: istisna YAZILMAZ (iki-boot)", 3, true, false,
 			"service IN (?,?,?)"},
 		{"boş küme, bayraksız: hiçbir şey", 0, false, true,
@@ -170,7 +170,7 @@ func TestProblemServicesConjunct(t *testing.T) {
 		// Takımın HİÇ servisi yokken SADECE veritabanı sahipliği olması
 		// mümkün bir hâl. `1 = 0` yazmak o satırları da öldürürdü.
 		{"boş küme, bayraklı: YALNIZ db özneleri", 0, true, true,
-			"kind = 'db'"},
+			"(kind = 'db' OR kind = 'external')"},
 		{"boş küme, bayraklı, kolon yok: hiçbir şey", 0, true, false,
 			"1 = 0"},
 	}

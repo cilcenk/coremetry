@@ -557,6 +557,14 @@ func (s *Server) reloadConfigOnSignal(ctx context.Context, svc string) {
 				log.Printf("[cache] config-reload victoria-metrics: %v", err)
 			}
 		}
+	// v0.10.222 — InfluxDB kaynak listesi. Case uçla AYNI sürümde (thanos
+	// v0.9.237 dersi); D2'de worker lideri yeni kaynağı 30 s poll'süz görsün.
+	case "influx":
+		if s.influx != nil {
+			if err := s.influx.LoadPersisted(ctx, s.store); err != nil {
+				log.Printf("[cache] config-reload influx: %v", err)
+			}
+		}
 	// v0.9.829 — Azure DevOps / TFS bağlantısı. Case'i uçla AYNI
 	// sürümde ekliyoruz: v0.9.237'de thanos'un publish'i dinleyicisiz
 	// kaldığı için peer pod'lar 30s poll'u beklemişti.

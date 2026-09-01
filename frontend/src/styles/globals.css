@@ -1288,6 +1288,19 @@ tbody td.row-cell { padding: 0; }
 .row-link:hover { text-decoration: none; }
 .row-link--name:hover { color: var(--accent2); text-decoration: underline; text-underline-offset: 3px; }
 .row-link:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Settings → Influx kaynakları (v0.10.222): kaynak kartı + sorgu bloğu. */
+.influx-src { margin-bottom: var(--sp-6); padding: var(--sp-7); border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); }
+.influx-src.is-off { opacity: .65; }
+.influx-src__head { display: flex; gap: var(--sp-5); align-items: flex-end; margin-bottom: var(--sp-5); }
+.influx-src__head > .field { flex: 1; margin-bottom: 0; }
+.influx-row { display: flex; gap: var(--sp-5); flex-wrap: wrap; }
+.influx-row > .field { flex: 1 1 200px; }
+/* `className` Field atomunda <input>'a iner; dar kolon seçimi :has() ile sarmalayıcıya taşınır. */
+.influx-row > .field:has(> input.is-narrow) { flex: 0 1 150px; }
+.influx-q { margin-top: var(--sp-5); padding: var(--sp-5) var(--sp-6); border: 1px dashed var(--border); border-radius: var(--radius-sm); background: var(--bg1); }
+.influx-q textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--fs-xs); }
+.influx-probe { margin-top: var(--sp-5); font-size: var(--fs-sm); }
+.influx-probe table { font-size: var(--fs-xs); }
 /* Karışık hücre (metin + çipler) içinde yalnız METİN link olur (v0.10.221, Problems kural adı). */
 .row-link--inline { display: inline; padding: 0; white-space: normal; }
 /* Breadcrumb (v0.10.219, ilk tüketici /trace): "Traces › <kök işlem>". Halka

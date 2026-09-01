@@ -27,6 +27,7 @@ import { MetricsBackendTab } from './settings/MetricsBackendTab';
 import { DevOpsTab } from './settings/DevOpsTab';
 import { McpServersTab } from './settings/McpServersTab';
 import { ClustersTab } from './settings/ClustersTab';
+import { InfluxTab } from './settings/InfluxTab';
 import { EntitiesTab } from './settings/EntitiesTab';
 import { ElasticTab } from './settings/ElasticTab';
 import { KibanaTab } from './settings/KibanaTab';
@@ -66,6 +67,7 @@ const TAB_COMPS: Record<string, ComponentType> = {
   'tempo': TempoTab,
   'metrics-backend': MetricsBackendTab,
   'clusters': ClustersTab,
+  'influx': InfluxTab,
   'entities': EntitiesTab,
   'elastic': ElasticTab,
   'kibana': KibanaTab,

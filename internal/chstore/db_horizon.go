@@ -55,6 +55,12 @@ const dbMVHorizonDays = 90
 //
 // 0 dönerse ufuk BİLİNMİYOR demektir ve çağıran hiçbir şey ilan etmez —
 // yanlış bir sayı basmaktansa susmak doğru.
+// MetricsHorizonDays (v0.10.231, Influx D6) — metric_points'in ETKİN ufku
+// (gün); receiverHorizonDays'in dışa açık adı. 0 = bilinmiyor. Dış seri
+// mevsimsel baseline'ı bu kapıyla açılır: ufuk gün-çeşitliliği eşiğinin
+// altındaysa mevsimsel okuma HİÇ yapılmaz (audit R7).
+func (s *Store) MetricsHorizonDays(ctx context.Context) int { return s.receiverHorizonDays(ctx) }
+
 func (s *Store) receiverHorizonDays(ctx context.Context) int {
 	if ov, err := s.GetRetention(ctx); err == nil && ov.Metrics != "" {
 		if d, err := parseRetentionDays(ov.Metrics); err == nil && d > 0 {

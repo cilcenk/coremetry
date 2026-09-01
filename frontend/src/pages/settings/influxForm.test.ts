@@ -83,3 +83,19 @@ describe('TFAIL şablonu (spec)', () => {
     expect(TFAIL_TEMPLATE.enrichFlux).toContain('limit(n: 50)');
   });
 });
+
+// v0.10.231 (D6) — KANALKOD seri-boyutu anahtarı
+import { toggleGroupByTag, hasGroupByTag } from './influxForm';
+describe('groupBy tag anahtarı', () => {
+  it('ekler (sona), çıkarır, sırayı korur, çift eklemez', () => {
+    expect(toggleGroupByTag('OPERATIONCODE, ERRORCODE', 'KANALKOD', true)).toBe('OPERATIONCODE, ERRORCODE, KANALKOD');
+    expect(toggleGroupByTag('OPERATIONCODE, KANALKOD, ERRORCODE', 'KANALKOD', true)).toBe('OPERATIONCODE, ERRORCODE, KANALKOD');
+    expect(toggleGroupByTag('OPERATIONCODE, KANALKOD, ERRORCODE', 'KANALKOD', false)).toBe('OPERATIONCODE, ERRORCODE');
+    expect(toggleGroupByTag('', 'KANALKOD', true)).toBe('KANALKOD');
+    expect(toggleGroupByTag('kanalkod', 'KANALKOD', false)).toBe('kanalkod');
+  });
+  it('hasGroupByTag', () => {
+    expect(hasGroupByTag('OPERATIONCODE, KANALKOD', 'KANALKOD')).toBe(true);
+    expect(hasGroupByTag('OPERATIONCODE', 'KANALKOD')).toBe(false);
+  });
+});

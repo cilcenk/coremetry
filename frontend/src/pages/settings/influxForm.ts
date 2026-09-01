@@ -105,3 +105,15 @@ export const TFAIL_TEMPLATE: InfluxQueryConfig = {
     ERRORCODE: 'error.code',
   },
 };
+
+/** v0.10.231 (D6) — groupBy metnine bir tag ekler/çıkarır (KANALKOD anahtarı).
+ *  Sıra korunur; ekleme sona; büyük/küçük harf duyarlı (Influx tag'leri öyle). */
+export function toggleGroupByTag(text: string, tag: string, on: boolean): string {
+  const list = parseList(text).filter(t => t !== tag);
+  if (on) list.push(tag);
+  return listToText(list);
+}
+
+export function hasGroupByTag(text: string, tag: string): boolean {
+  return parseList(text).includes(tag);
+}

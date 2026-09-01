@@ -25,6 +25,19 @@ type fakeExtStore struct {
 	upserts []chstore.Problem
 	queries []chstore.MetricQueryFilter
 	cfg     chstore.AnomalySensitivityConfig
+	// v0.10.231 (D6) — mevsimsel
+	promo        chstore.AnomalyPromotionConfig
+	horizon      int
+	seasonal     map[string][]float64
+	seasonalDays map[string]map[int64]struct{}
+	seasonalReqs []chstore.ExternalSeasonalReq
+}
+
+func (f *fakeExtStore) GetAnomalyPromotion(context.Context) chstore.AnomalyPromotionConfig { return f.promo }
+func (f *fakeExtStore) MetricsHorizonDays(context.Context) int                              { return f.horizon }
+func (f *fakeExtStore) ExternalSeasonal(_ context.Context, req chstore.ExternalSeasonalReq) (map[string][]float64, map[string]map[int64]struct{}, error) {
+	f.seasonalReqs = append(f.seasonalReqs, req)
+	return f.seasonal, f.seasonalDays, nil
 }
 
 func (f *fakeExtStore) QueryMetric(_ context.Context, q chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error) {
@@ -332,5 +345,59 @@ func TestExternalScan_EvidenceHookCadence(t *testing.T) {
 	sc.Scan(context.Background(), target)
 	if len(events) != 3 || events[2].Problem.ID == events[0].Problem.ID {
 		t.Fatalf("re-open enriches immediately with a NEW problem, got %d", len(events))
+	}
+}
+
+// v0.10.231 (D6) — mevsimsel baseline: aynı-dilim geçmişi "bu saatte 60
+// normal" diyorsa ardışık 4 saatin 5'i anomali AÇMAZ; retention ufku
+// gün-çeşitliliği eşiğinin altındaysa mevsimsel okuma HİÇ yapılmaz;
+// gün-çeşitliliği (≥3 gün) sağlanmayan anahtar mevsimselden düşer.
+func TestExternalScan_SeasonalBaselinePreventsFalseOpen(t *testing.T) {
+	cfg := chstore.DefaultAnomalySensitivity()
+	now := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	vals := append(baselineVals(30), repeat(60, cfg.DwellBuckets)...)
+	key := "OP1" + chstore.ExternalSeasonalKeySep + "E1"
+	season := repeat(60, 20)
+	days := map[string]map[int64]struct{}{key: {1: {}, 2: {}, 3: {}}}
+	f := &fakeExtStore{cfg: cfg, horizon: 14, seasonal: map[string][]float64{key: season}, seasonalDays: days,
+		series: []chstore.SpanMetricSeries{extSeries(vals, now, "OP1", "E1")}}
+	rep, err := newExtScanner(f, now).Scan(context.Background(), extTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Opened != 0 || rep.Seasonal != 1 || len(f.upserts) != 0 {
+		t.Fatalf("seasonal baseline (60 at this hour) must not open: %+v", rep)
+	}
+	req := f.seasonalReqs[0]
+	if req.Metric != "ext:tfail_adet" || req.Service != "ggfail" || req.Class != "weekday" || req.TargetSod != 36000 || req.RadiusSec != 900 || len(req.GroupBy) != 2 {
+		t.Fatalf("seasonal request: %+v", req)
+	}
+	if !req.Cutoff.Equal(now.Add(-14 * 24 * time.Hour)) || !req.Upper.Before(now) {
+		t.Fatalf("window: %v..%v", req.Cutoff, req.Upper)
+	}
+
+	// Ufuk kısa → mevsimsel okunmaz, ardışık baseline → açılır.
+	g := &fakeExtStore{cfg: cfg, horizon: 2, seasonal: map[string][]float64{key: season}, seasonalDays: days,
+		series: []chstore.SpanMetricSeries{extSeries(vals, now, "OP1", "E1")}}
+	rep, _ = newExtScanner(g, now).Scan(context.Background(), extTarget)
+	if len(g.seasonalReqs) != 0 || rep.Opened != 1 || rep.Seasonal != 0 {
+		t.Fatalf("horizon below the day-diversity floor must skip the seasonal read: reqs=%d rep=%+v", len(g.seasonalReqs), rep)
+	}
+
+	// Ufuk 5 gün → gün sayısı ufka iner (14 değil).
+	h := &fakeExtStore{cfg: cfg, horizon: 5, seasonal: map[string][]float64{}, seasonalDays: map[string]map[int64]struct{}{},
+		series: []chstore.SpanMetricSeries{extSeries(vals, now, "OP1", "E1")}}
+	newExtScanner(h, now).Scan(context.Background(), extTarget)
+	if len(h.seasonalReqs) != 1 || !h.seasonalReqs[0].Cutoff.Equal(now.Add(-5*24*time.Hour)) {
+		t.Fatalf("days clamp to horizon: %+v", h.seasonalReqs)
+	}
+
+	// Gün-çeşitliliği yok (tek gün) → mevsimsel düşer → ardışık → açılır.
+	k := &fakeExtStore{cfg: cfg, horizon: 14, seasonal: map[string][]float64{key: season},
+		seasonalDays: map[string]map[int64]struct{}{key: {1: {}}},
+		series: []chstore.SpanMetricSeries{extSeries(vals, now, "OP1", "E1")}}
+	rep, _ = newExtScanner(k, now).Scan(context.Background(), extTarget)
+	if rep.Opened != 1 || rep.Seasonal != 0 {
+		t.Fatalf("single-day seasonal history must be pruned: %+v", rep)
 	}
 }

@@ -16,8 +16,7 @@ import { fmtDateTime } from '@/lib/utils';
 import { useSettingsLoad, SettingsLoadError, FlashBox } from './shared';
 import {
   parseAttrMap, attrMapToText, parseList, listToText,
-  thresholdsToForm, thresholdsToWire, TFAIL_TEMPLATE, type ThresholdsForm,
-} from './influxForm';
+  thresholdsToForm, thresholdsToWire, TFAIL_TEMPLATE, type ThresholdsForm, toggleGroupByTag, hasGroupByTag } from './influxForm';
 import type {
   InfluxQueryConfig, InfluxSourceInput, InfluxSourceSnapshot, InfluxStatusPayload, InfluxTestResult,
 } from '@/lib/types';
@@ -235,7 +234,16 @@ export function InfluxTab() {
                     <Field label="Seri boyutları (groupBy tag'leri)" value={q.groupBy}
                       onChange={e => patchQ(i, k, { groupBy: e.target.value })}
                       placeholder="OPERATIONCODE, ERRORCODE"
-                      hint="v1: yalnız OPERATIONCODE + ERRORCODE (KANALKOD/FUNCTIONCODE yüksek kardinalite)" />
+                      hint="Varsayılan OPERATIONCODE + ERRORCODE; KANALKOD anahtarla eklenir (seri sayısı kanal × op × err olur, FUNCTIONCODE seriye girmez — exemplar'da kalır)" />
+                    {/* v0.10.231 (D6) — KANALKOD seri boyutu anahtarı: metin
+                        alanına elle yazmak yerine tek tık; attrMap'teki
+                        KANALKOD→CHANNEL_CODE eşlemesi metrik attr adını verir. */}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, alignSelf: 'flex-end', marginBottom: 10, whiteSpace: 'nowrap' }}
+                      title="KANALKOD'u seri boyutuna ekler/çıkarır; baseline ve anomali kanal başına ayrılır">
+                      <input type="checkbox" checked={hasGroupByTag(q.groupBy, 'KANALKOD')}
+                        onChange={e => patchQ(i, k, { groupBy: toggleGroupByTag(q.groupBy, 'KANALKOD', e.target.checked) })} />
+                      <span style={{ fontSize: 12 }}>KANALKOD</span>
+                    </label>
                     <Button type="button" variant="ghost" size="sm" style={{ alignSelf: 'flex-end', marginBottom: 10 }}
                       onClick={() => patch(i, { queries: r.queries.filter((_, l) => l !== k) })}>
                       Sorguyu kaldır

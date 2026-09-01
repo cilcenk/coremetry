@@ -88,9 +88,10 @@ type ExternalThresholds struct {
 	MinMAD      float64
 }
 
-// ExternalScanReport — bir Scan'in sayımı (log + test).
+// ExternalScanReport — bir Scan'in sayımı (log + test). Seasonal = mevsimsel
+// baseline'la karar verilen seri sayısı (0 = kapı kapalı ya da geçmiş yok).
 type ExternalScanReport struct {
-	Series, Opened, Refreshed, Resolved, Touched, Skipped int
+	Series, Opened, Refreshed, Resolved, Touched, Skipped, Seasonal int
 }
 
 type externalStore interface {
@@ -98,6 +99,11 @@ type externalStore interface {
 	OpenProblemsSnapshot(ctx context.Context) (*chstore.OpenProblems, error)
 	UpsertProblem(ctx context.Context, p chstore.Problem) error
 	AnomalySensitivity() chstore.AnomalySensitivityConfig
+	// v0.10.231 (D6) — mevsimsel baseline: promosyon blobu (gün/örnek/yarıçap),
+	// metric_points ufku (retention kapısı) ve aynı-dilim okuması.
+	GetAnomalyPromotion(ctx context.Context) chstore.AnomalyPromotionConfig
+	MetricsHorizonDays(ctx context.Context) int
+	ExternalSeasonal(ctx context.Context, req chstore.ExternalSeasonalReq) (map[string][]float64, map[string]map[int64]struct{}, error)
 }
 
 // ExternalScanner — kaynak+sorgu başına seri tarayıcısı.
@@ -144,6 +150,7 @@ func (s *ExternalScanner) Scan(ctx context.Context, t ExternalTarget) (ExternalS
 		return rep, err
 	}
 	cfg := externalSensitivity(s.store.AnomalySensitivity(), metric, t.Thresholds)
+	seasonal, seasonalMin := s.seasonalFor(ctx, t, metric, now)
 	enriched := 0
 	for _, sr := range series {
 		rep.Series++
@@ -152,11 +159,15 @@ func (s *ExternalScanner) Scan(ctx context.Context, t ExternalTarget) (ExternalS
 		ruleID := "anomaly:" + subject + ":" + metric
 		open := openSnap.ByKey(ruleID, subject)
 		hasOpen := open != nil && open.ID != ""
-		// seasonalMinSamples = minSamples, 0 DEĞİL: chooseBaseline
-		// `len(seasonal) >= min` ile seçer; 0 geçilirse BOŞ mevsimsel dizi
-		// kazanır, medyan 0 olur ve her değer anomali görünür
-		// (TestExternalScan_OpensProblemOnSpike'ın Threshold iddiası).
-		oc := evaluateAnomaly(metric, buckets, nil, ones(len(buckets)), minSamples, hasOpen, cfg)
+		// seasonalMin ≥ 1, ASLA 0: chooseBaseline `len(seasonal) >= min` ile
+		// seçer; 0 geçilirse BOŞ mevsimsel dizi kazanır, medyan 0 olur ve her
+		// değer anomali görünür (TestExternalScan_OpensProblemOnSpike'ın
+		// Threshold iddiası). Mevsimsel yoksa/azsa ardışık 4 saat kazanır.
+		season := seasonal[strings.Join(sr.GroupKey, chstore.ExternalSeasonalKeySep)]
+		if len(season) >= seasonalMin {
+			rep.Seasonal++
+		}
+		oc := evaluateAnomaly(metric, buckets, season, ones(len(buckets)), seasonalMin, hasOpen, cfg)
 		live := s.apply(ctx, &rep, t, metric, subject, ruleID, sr.GroupKey, oc, open, hasOpen, now)
 		if live != nil && t.OnEvidence != nil && enriched < externalEnrichPerTick && s.enrichDue(ruleID, live.StartedAt, now) {
 			enriched++
@@ -169,6 +180,45 @@ func (s *ExternalScanner) Scan(ctx context.Context, t ExternalTarget) (ExternalS
 		}
 	}
 	return rep, nil
+}
+
+// seasonalFor (v0.10.231, D6) — hedefin bütün serileri için aynı-dilim
+// geçmişi: gün-sınıfı (hafta içi / cumartesi / pazar) + dakika-of-day ±
+// yarıçap, promosyon blobundaki gün/örnek/yarıçap ayarlarıyla
+// (seasonalParams — servis dedektörüyle AYNI kural). Kapı: metric_points
+// ufku (retention.metrics) gün-çeşitliliği eşiğinin (seasonalMinDays)
+// altındaysa okuma HİÇ yapılmaz — ardışık 4 saat baseline kalır (audit
+// R7: Faz 2 kapısı = prod ayarı). Ufuk gün sayısından kısaysa gün sayısı
+// ufka iner: eldeki geçmişle mevsimsel, sıfır yerine. Okuma hatası
+// fail-open (ardışık baseline), loglanır. Dönüş: anahtar → değerler,
+// ve karar eşiği (minSamples ≥ 1).
+func (s *ExternalScanner) seasonalFor(ctx context.Context, t ExternalTarget, metric string, now time.Time) (map[string][]float64, int) {
+	days, minS, neighbor := seasonalParams(s.store.GetAnomalyPromotion(ctx))
+	if minS < 1 {
+		minS = 1
+	}
+	if horizon := s.store.MetricsHorizonDays(ctx); horizon > 0 && horizon < days {
+		days = horizon
+	}
+	if !seasonalBaseline || days < seasonalMinDays {
+		return nil, minS
+	}
+	at := now.UTC().Truncate(externalStep)
+	radius := neighbor * bucketSeconds // ±(N × 5 dk): servis dedektörüyle aynı duvar-saati genişliği
+	out, daysSeen, err := s.store.ExternalSeasonal(ctx, chstore.ExternalSeasonalReq{
+		Metric: metric, Service: t.SourceName, GroupBy: t.GroupBy,
+		Cutoff:    at.Add(-time.Duration(days) * 24 * time.Hour),
+		Upper:     at.Add(-time.Duration(radius+int(externalStep/time.Second)) * time.Second),
+		Class:     dayClass(at),
+		TargetSod: at.Hour()*3600 + at.Minute()*60,
+		RadiusSec: radius,
+	})
+	if err != nil {
+		log.Printf("[anomaly/external] seasonal %s/%s: %v (ardışık baseline)", t.SourceName, t.Query, err)
+		return nil, minS
+	}
+	pruneSeasonalByDayDiversity(out, daysSeen, seasonalMinDays)
+	return out, minS
 }
 
 // enrichDue — açılışta hemen (kayıt yok), sonra externalEnrichEvery'de bir.

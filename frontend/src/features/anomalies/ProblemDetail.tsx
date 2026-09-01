@@ -20,6 +20,7 @@ import { statusColor } from '@/lib/statusColor';
 import { fmtDurationNs, fmtStartedTs } from './problemTime';
 import { emptySamplesNote } from './exceptionSamples';
 import { ExceptionPodsPanel } from './ExceptionPodsPanel';
+import { ExternalEvidencePanel } from './ExternalEvidencePanel';
 import type { ExceptionGroup, ExceptionGroupState, Problem } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 import { PageShell } from '@/components/ui/PageShell';
@@ -709,6 +710,7 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
   // hata yok); `service=x` → 535. Yani bu link sessizce boş dönüyordu ve
   // operatör "log yok" okuyordu. ClickHouse VARSAYILAN arka uç.
   const logsLink = logsHref({ window: probWindow, service: problem.service });
+  const isExternal = subjectKind(problem.service, problem.kind) === 'external';
 
   return (
     <PageShell>
@@ -747,7 +749,12 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
               {isAnomaly && <span className="badge b-info" style={{ marginRight: 6 }}>ANOMALY</span>}
               <b>{problem.ruleName}</b>
             </div>
-            <RootCausePanel problemId={problem.id} service={problem.service} window={probWindow} />
+            {/* v0.10.230 (Influx D5) — dış kaynak öznesinde topoloji/servis
+                tabanlı analiz yok; kanıt zinciri (metrik şeridi, trace'ler,
+                pod'lar, log imzaları) D4'ün yazdığı hipotezden çizilir. */}
+            {isExternal
+              ? <ExternalEvidencePanel problem={problem} window={probWindow} />
+              : <RootCausePanel problemId={problem.id} service={problem.service} window={probWindow} />}
             {/* Background problemExplainer's persisted first-look blurb —
                 full prose here (the feed card only tooltips it). */}
             {problem.aiSummary && (
@@ -787,7 +794,9 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
             )}
           </Sect>
 
-          <ProblemOffenders problem={problem} />
+          {/* Top offenders operation_summary_5m'i SERVİS adıyla sorar; dış
+              öznede boş tablo "suçlu yok" diye okunurdu. */}
+          {!isExternal && <ProblemOffenders problem={problem} />}
 
           <Sect title="Problem timeline">
             <ul className="pb-tl">
@@ -881,8 +890,9 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
                 satır. */}
             {subjectKind(problem.service, problem.kind) !== 'service' ? (
               <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                Bu alarmın öznesi bir veritabanı örneği, bir servis değil —
-                log/trace/servis-haritası pivotları bir servis adı gerektiriyor.
+                {isExternal
+                  ? 'Bu alarmın öznesi bir dış metrik kaynağı serisi, bir servis değil — ilgili trace/pod/log kanıtı yukarıdaki kanıt zincirinde.'
+                  : 'Bu alarmın öznesi bir veritabanı örneği, bir servis değil — log/trace/servis-haritası pivotları bir servis adı gerektiriyor.'}
               </div>
             ) : (<>
             <SignalLink to={logsLink} label="≡ Logs" sub="service, problem window" />

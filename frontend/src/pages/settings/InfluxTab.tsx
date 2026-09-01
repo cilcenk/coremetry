@@ -16,8 +16,7 @@ import { fmtDateTime } from '@/lib/utils';
 import { useSettingsLoad, SettingsLoadError, FlashBox } from './shared';
 import {
   parseAttrMap, attrMapToText, parseList, listToText,
-  thresholdsToForm, thresholdsToWire, REDACTEDTEMPLATE, type ThresholdsForm,
-} from './influxForm';
+  thresholdsToForm, thresholdsToWire, REDACTEDTEMPLATE, type ThresholdsForm, toggleGroupByTag, hasGroupByTag } from './influxForm';
 import type {
   InfluxQueryConfig, InfluxSourceInput, InfluxSourceSnapshot, InfluxStatusPayload, InfluxTestResult,
 } from '@/lib/types';
@@ -235,7 +234,16 @@ export function InfluxTab() {
                     <Field label="Seri boyutları (groupBy tag'leri)" value={q.groupBy}
                       onChange={e => patchQ(i, k, { groupBy: e.target.value })}
                       placeholder="REDACTED, REDACTED"
-                      hint="v1: yalnız REDACTED + REDACTED (REDACTED/REDACTED yüksek kardinalite)" />
+                      hint="Varsayılan REDACTED + REDACTED; REDACTED anahtarla eklenir (seri sayısı kanal × op × err olur, REDACTED seriye girmez — exemplar'da kalır)" />
+                    {/* v0.10.231 (D6) — REDACTED seri boyutu anahtarı: metin
+                        alanına elle yazmak yerine tek tık; attrMap'teki
+                        REDACTED→CHANNEL_CODE eşlemesi metrik attr adını verir. */}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, alignSelf: 'flex-end', marginBottom: 10, whiteSpace: 'nowrap' }}
+                      title="REDACTED'u seri boyutuna ekler/çıkarır; baseline ve anomali kanal başına ayrılır">
+                      <input type="checkbox" checked={hasGroupByTag(q.groupBy, 'REDACTED')}
+                        onChange={e => patchQ(i, k, { groupBy: toggleGroupByTag(q.groupBy, 'REDACTED', e.target.checked) })} />
+                      <span style={{ fontSize: 12 }}>REDACTED</span>
+                    </label>
                     <Button type="button" variant="ghost" size="sm" style={{ alignSelf: 'flex-end', marginBottom: 10 }}
                       onClick={() => patch(i, { queries: r.queries.filter((_, l) => l !== k) })}>
                       Sorguyu kaldır

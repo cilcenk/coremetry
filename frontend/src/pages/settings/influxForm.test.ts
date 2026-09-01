@@ -83,3 +83,19 @@ describe('REDACTED şablonu (spec)', () => {
     expect(REDACTEDTEMPLATE.enrichFlux).toContain('limit(n: 50)');
   });
 });
+
+// v0.10.231 (D6) — REDACTED seri-boyutu anahtarı
+import { toggleGroupByTag, hasGroupByTag } from './influxForm';
+describe('groupBy tag anahtarı', () => {
+  it('ekler (sona), çıkarır, sırayı korur, çift eklemez', () => {
+    expect(toggleGroupByTag('REDACTED, REDACTED', 'REDACTED', true)).toBe('REDACTED, REDACTED, REDACTED');
+    expect(toggleGroupByTag('REDACTED, REDACTED, REDACTED', 'REDACTED', true)).toBe('REDACTED, REDACTED, REDACTED');
+    expect(toggleGroupByTag('REDACTED, REDACTED, REDACTED', 'REDACTED', false)).toBe('REDACTED, REDACTED');
+    expect(toggleGroupByTag('', 'REDACTED', true)).toBe('REDACTED');
+    expect(toggleGroupByTag('kanalkod', 'REDACTED', false)).toBe('kanalkod');
+  });
+  it('hasGroupByTag', () => {
+    expect(hasGroupByTag('REDACTED, REDACTED', 'REDACTED')).toBe(true);
+    expect(hasGroupByTag('REDACTED', 'REDACTED')).toBe(false);
+  });
+});

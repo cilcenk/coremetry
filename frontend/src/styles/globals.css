@@ -1283,8 +1283,18 @@ tbody td { padding: 9px 12px; max-width: 320px; white-space: nowrap; overflow: h
    yüksekliği 36 px korunur). `--name` varyantı satırı KİMLİKLEYEN hücre:
    hover'da link rengi + alt çizgi; diğer hücreler renk/çizgi almaz ki satır
    tek bir yüzey gibi okunsun. İlk tüketici: Traces.tsx. */
-tbody td.row-cell { padding: 0; }
+/* v0.10.225 (operatör-bildirimli: "Traces listesi çerçeve içinde, iç
+   scroll"): `[data-density=…] tbody td` kuralları bu kuralla AYNI
+   özgüllükte (0,1,2) ve dosyada SONRA geliyor — yoğunluk ayarı açıkken
+   hücre dolgusu sıfırlanmıyor, link kendi dolgusunu üstüne biniyor,
+   satır 36 px'i aşıyor ve VirtualTable (yükseklik = n × 36) kendi
+   kaydırma çubuğunu çıkarıyordu. İkinci seçici (0,2,2) her yoğunlukta
+   kazanır. */
+tbody td.row-cell, [data-density] tbody td.row-cell { padding: 0; }
 .row-link { display: block; padding: 9px 12px; color: inherit; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Sanallaştırılmış tabloda (Traces) satır yüksekliği virtualizer sözleşmesi:
+   TAM 36 px, yoğunluk/yazı boyutundan bağımsız (Traces.tsx rowHeight={36}). */
+.vt-scroll tbody td.row-cell > .row-link { box-sizing: border-box; height: 36px; line-height: 18px; padding: 9px 12px; }
 .row-link:hover { text-decoration: none; }
 .row-link--name:hover { color: var(--accent2); text-decoration: underline; text-underline-offset: 3px; }
 .row-link:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -2579,6 +2589,7 @@ button.accent.copied {
 [data-density="spacious"] table { font-size: 14px; }
 [data-density="spacious"] thead th { padding: 10px 14px; }
 [data-density="spacious"] tbody td { padding: 10px 14px; }
+[data-density="spacious"] .row-link { padding: 10px 14px; } /* v0.10.225 — td dolgusunun ikizi */
 [data-density="spacious"] .controls { gap: 12px; }
 [data-density="spacious"] .controls input,
 [data-density="spacious"] .controls select,
@@ -2591,6 +2602,7 @@ button.accent.copied {
 [data-density="compact"] table { font-size: 11px; }
 [data-density="compact"] thead th { padding: 3px 7px; }
 [data-density="compact"] tbody td { padding: 3px 7px; }
+[data-density="compact"] .row-link { padding: 3px 7px; } /* v0.10.225 */
 [data-density="compact"] .controls { gap: 6px; }
 [data-density="compact"] .controls input,
 [data-density="compact"] .controls select,
@@ -2605,6 +2617,7 @@ button.accent.copied {
 [data-density="dense"] table { font-size: 10px; }
 [data-density="dense"] thead th { padding: 2px 5px; }
 [data-density="dense"] tbody td { padding: 2px 5px; }
+[data-density="dense"] .row-link { padding: 2px 5px; } /* v0.10.225 */
 [data-density="dense"] .controls { gap: 4px; }
 [data-density="dense"] .controls input,
 [data-density="dense"] .controls select,

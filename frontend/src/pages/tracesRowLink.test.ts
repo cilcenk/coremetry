@@ -68,6 +68,32 @@ describe('/traces satırı gerçek bir link', () => {
     expect(existsSync(resolve(SRC, 'components/traces/MiniWaterfall.tsx'))).toBe(false);
   });
 
+  // v0.10.225 (operatör-bildirimli: "Traces listesi çerçeve içinde, iç scroll
+  // çıkıyor"). Kök neden: `[data-density=…] tbody td` (0,1,2) `tbody
+  // td.row-cell { padding: 0 }` ile aynı özgüllükte ve SONRA geliyordu →
+  // yoğunluk açıkken çift dolgu → satır > 36 px → VirtualTable (yükseklik
+  // n × 36) iç kaydırma çubuğu. Üç kapı: (a) row-cell sıfır dolgusu her
+  // yoğunlukta kazanır; (b) her yoğunluğun td dolgusunun .row-link ikizi var
+  // ve AYNI değer; (c) sanal tabloda .row-link 36 px'e çakılı ve Traces.tsx'in
+  // rowHeight'ı da 36 — ikisi birlikte değişmeli.
+  it('yoğunluk ayarı row-cell sıfır dolgusunu ezemez; her yoğunluğun row-link ikizi var', () => {
+    const c = css();
+    expect(c).toContain('tbody td.row-cell, [data-density] tbody td.row-cell { padding: 0; }');
+    const tdRules = [...c.matchAll(/\[data-density="([a-z]+)"\] tbody td \{ padding: ([^;]+); \}/g)];
+    expect(tdRules.length, 'yoğunluk td kuralları kayboldu — kapı BAYAT').toBeGreaterThanOrEqual(3);
+    for (const [, density, pad] of tdRules) {
+      const twin = new RegExp(`\\[data-density="${density}"\\] \\.row-link \\{ padding: ${pad.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}; \\}`);
+      expect(c, `${density}: .row-link dolgusu td ile aynı değil`).toMatch(twin);
+    }
+  });
+
+  it('sanal tabloda row-link 36 px\'e çakılı ve Traces.tsx rowHeight={36}', () => {
+    const c = css();
+    expect(c).toMatch(/\.vt-scroll tbody td\.row-cell > \.row-link \{[^}]*height: 36px;[^}]*line-height: 18px;/);
+    expect(traces()).toContain('rowHeight={36}');
+    expect(traces()).toContain('height={44 + displayRows.length * 36}');
+  });
+
   it('row-link primitifi globals.css\'te tanımlı (hücre dolgusu + odak halkası)', () => {
     const c = css();
     expect(c).toContain('tbody td.row-cell { padding: 0; }');

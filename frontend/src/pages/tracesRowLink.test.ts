@@ -27,9 +27,19 @@ describe('/traces satırı gerçek bir link', () => {
     const i = src.indexOf('renderRow={(t) =>');
     expect(i, 'renderRow kayboldu — kapı BAYAT, yeniden bul').toBeGreaterThan(-1);
     const body = src.slice(i, i + 1600);
-    expect(body).toContain("<Link to={href} className={id === 'operation' ? 'row-link row-link--name' : 'row-link'}>");
+    expect(body).toContain("<Link to={href} state={{ from: loc.pathname + loc.search }} className={id === 'operation' ? 'row-link row-link--name' : 'row-link'}>");
     expect(body).not.toContain('onClick={() => openTrace');
     expect(body).not.toContain('onClick={(e) => { e.stopPropagation(); setExpanded');
+  });
+
+  it('/trace breadcrumb\'ı listeye state ile döner (v0.10.219)', () => {
+    // Satır Link'i liste URL'sini `state.from` olarak taşır; Trace.tsx onu
+    // traceBackHref ile okur. Biri kaybolursa breadcrumb çıplak /traces'e
+    // düşer — sessiz filtre kaybı.
+    const trace = readFileSync(resolve(SRC, 'pages/Trace.tsx'), 'utf8');
+    expect(trace).toContain('<Link to={traceBackHref(location.state)}>Traces</Link>');
+    // Kullanım biçimi aranıyor, sözcük değil (yorum tarihçe olarak anıyor).
+    expect(trace).not.toContain('onClick={() => navigate(-1)}');
   });
 
   it('href traceHref üzerinden (id + sayfa aralığı) — elle /trace?id= yok', () => {

@@ -81,13 +81,22 @@ func problemSubjectConjunct(subjectKind string, hasKindCol bool) (string, any, b
 // özneleri". `1 = 0` yazmak burada db satırlarını da öldürürdü — takımın
 // hiç servisi yokken SADECE veritabanı sahipliği olması tam olarak
 // mümkün bir hâl.
+// subjectEscapeSQL — env şeridinden kaçan özne türleri: db (v0.9.1342) ve
+// external (v0.10.228). İkisi de servis değildir; `service IN (...)` onları
+// hiçbir env'e vermez, kaçış olmadan her env görünümünde kaybolurlardı.
+// Literal GÜVENLİ: paket sabitleri, kullanıcı girdisi değil.
+// İki eşitlik, IN-listesi DEĞİL: TestSubjectLaneDoesNotHideTheColumnDefault
+// bu dosyada IN-liste yazımını yasaklar (DEFAULT 'service' garantisini
+// gizleyebilecek sınıf) — ve kapı yorum metnini de okur. Çağıran parantezler.
+const subjectEscapeSQL = "kind = '" + ProblemKindDB + "' OR kind = '" + ProblemKindExternal + "'"
+
 func problemServicesConjunct(n int, allowDB, hasKindCol bool) string {
 	dbEscape := allowDB && hasKindCol
 	if n == 0 {
 		// Resolved to nothing — say so in SQL rather than returning an
 		// unfiltered page.
 		if dbEscape {
-			return "kind = '" + ProblemKindDB + "'"
+			return "(" + subjectEscapeSQL + ")"
 		}
 		return "1 = 0"
 	}
@@ -96,7 +105,7 @@ func problemServicesConjunct(n int, allowDB, hasKindCol bool) string {
 		// Literal GÜVENLİ: ProblemKindDB bir paket sabiti, kullanıcı
 		// girdisi değil. Parametre bağlamak, çağıranın Services
 		// argümanlarıyla sıra bağımlılığı yaratırdı.
-		return "(" + in + " OR kind = '" + ProblemKindDB + "')"
+		return "(" + in + " OR " + subjectEscapeSQL + ")"
 	}
 	return in
 }
@@ -113,7 +122,7 @@ func problemServicesConjunct(n int, allowDB, hasKindCol bool) string {
 // Env kaçış kapıları (global satır + v0.9.1358'den beri db öznesi)
 // envScopeConjunct'tan gelir — üç yüzey de aynı dizeyi üretir.
 func (s *Store) CountProblemsBySubject(ctx context.Context, exclude []string, envServices []string) (map[string]uint64, error) {
-	out := map[string]uint64{ProblemKindService: 0, ProblemKindDB: 0}
+	out := map[string]uint64{ProblemKindService: 0, ProblemKindDB: 0, ProblemKindExternal: 0}
 
 	// v0.9.1358 — WHERE gövdesi rozetle ORTAK (problemCountWhere). Bu sayı
 	// GROUP BY kind ile db kovasını dolduruyor: env kaçış kapısı burada

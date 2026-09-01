@@ -92,6 +92,10 @@ const (
 	// ProblemKindDB — özne bir veritabanı örneği; `service` kolonu
 	// DBSubjectID biçiminde (`db:<system>@<instance>`).
 	ProblemKindDB = "db"
+	// ProblemKindExternal (v0.10.228, Influx D3) — dış metrik kaynağı özneleri
+	// `ext:<kaynak>/<grup değerleri>`: servis değil, env şeridine girmez,
+	// servis sayfası linki yok (db emsali).
+	ProblemKindExternal = "external"
 )
 
 // ProblemSubjectKind — bir satırın özne türü, boş değeri normalize eder.
@@ -1380,6 +1384,22 @@ func (s *Store) ListStaleOpenProblems(ctx context.Context, staleCutoff time.Time
 // OpenProblemKey — OpenProblemsSnapshot map anahtarı. Dışa açık:
 // evaluator aynı anahtarla lookup yapar (tablo-testli).
 func OpenProblemKey(ruleID, service string) string { return ruleID + "|" + service }
+
+// NewOpenProblems (v0.10.228) — dilimden snapshot; openProblemsSnapshotUncached
+// ile AYNI indirgeme (reduceLatestProblem: (rule, service) başına en yeni).
+// Dış anomali tarayıcısının testi ve store'suz çağıranlar için. Girdi
+// KOPYALANIR — çağıranın dilimi snapshot'la işaretçi paylaşmaz (v0.10.156
+// dersi: paylaşılan işaretçi sessiz mutasyon).
+func NewOpenProblems(ps []Problem) *OpenProblems {
+	out := &OpenProblems{byKey: map[string]*Problem{}, byID: map[string]*Problem{}}
+	for i := range ps {
+		p := ps[i]
+		reduceLatestProblem(out.byKey, &p)
+		out.byID[p.ID] = &p
+		out.all = append(out.all, &p)
+	}
+	return out
+}
 
 // reduceLatestProblem — aynı (rule,service) anahtarına düşen satırlardan
 // started_at'i en yeni olan kazanır (FindOpenProblem'ın ORDER BY

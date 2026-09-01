@@ -148,6 +148,11 @@ var metricDirections = map[string]string{
 
 // directionFor — metriğin yönü; bilinmeyen metrik simetrik davranır.
 func directionFor(metric string) string {
+	// v0.10.228 — dış (Influx) seriler hata SAYISIDIR: yalnız yükseliş
+	// problemdir; düşüş iyileşmedir (audit K6). Yön D6'da yapılandırılabilir.
+	if strings.HasPrefix(metric, ExternalMetricPrefix) {
+		return "up"
+	}
 	if d, ok := metricDirections[metric]; ok {
 		return d
 	}
@@ -185,6 +190,9 @@ func policyFor(metric string, cfg chstore.AnomalySensitivityConfig) metricPolicy
 //	request_rate: max(0.1 rps, medyanın %5'i) — sıfır-trafik servis
 //	  aniden trafik alınca açılır (direction both).
 func flatMADFloor(metric string, median float64) float64 {
+	if strings.HasPrefix(metric, ExternalMetricPrefix) {
+		return math.Max(1, 0.05*math.Abs(median)) // sayım serisi: en az 1 birim
+	}
 	switch metric {
 	case "error_rate":
 		return 0.5
@@ -1376,6 +1384,9 @@ func meanStdev(xs []float64) (mean, stdev float64) {
 }
 
 func displayMetric(m string) string {
+	if strings.HasPrefix(m, ExternalMetricPrefix) {
+		return strings.TrimPrefix(m, ExternalMetricPrefix) + " (external)"
+	}
 	switch m {
 	case "p99_ms":
 		return "P99 latency"
@@ -1387,6 +1398,9 @@ func displayMetric(m string) string {
 	return m
 }
 func unitOf(m string) string {
+	if strings.HasPrefix(m, ExternalMetricPrefix) {
+		return "" // sayım; "_ms" son-eki dış ad olabilir, birim TAHMİN edilmez
+	}
 	if strings.HasSuffix(m, "_ms") {
 		return "ms"
 	}

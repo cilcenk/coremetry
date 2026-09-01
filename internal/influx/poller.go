@@ -152,11 +152,7 @@ func BuildMetricsRequest(src SourceConfig, qc QueryConfig, recs []Record, now ti
 				ok = false
 				break
 			}
-			key := tag
-			if mapped, has := qc.AttrMap[tag]; has && mapped != "" {
-				key = mapped
-			}
-			attrs = append(attrs, strKV(key, val))
+			attrs = append(attrs, strKV(qc.metricAttrKey(tag), val))
 		}
 		if !ok {
 			drops.MissingTag++
@@ -213,6 +209,12 @@ type Worker struct {
 	now         func() time.Time
 	queryAPIFor func(SourceConfig) (QueryAPI, error)
 
+	// hook (v0.10.228, D3) — başarılı bir poll'dan sonra sorgu başına çağrı;
+	// dış anomali tarayıcısı buradan koşar. Poll hata verdiyse ÇAĞRILMAZ:
+	// Influx erişilemezken CH'deki seriyi okumak sıfır-padli "iyileşti"
+	// uydururdu; sessiz kaynağı evaluator'ın bayat süpürmesi kapatır.
+	hook func(ctx context.Context, src SourceConfig, qc QueryConfig)
+
 	mu      sync.Mutex
 	nextDue map[string]time.Time
 	status  map[string]SourceStatus
@@ -223,6 +225,11 @@ type Worker struct {
 }
 
 // NewWorker — sink tipik olarak *chstore.Store.
+// SetHook — poll-sonrası çağrı (bkz. Worker.hook). Start'tan ÖNCE kurulur.
+func (w *Worker) SetHook(h func(ctx context.Context, src SourceConfig, qc QueryConfig)) {
+	w.hook = h
+}
+
 func NewWorker(svc *Service, sink MetricSink) *Worker {
 	w := &Worker{
 		svc: svc, sink: sink,
@@ -287,6 +294,11 @@ func (w *Worker) Tick(ctx context.Context) {
 		}
 		st := w.pollSource(ctx, src, now)
 		st.NextDueAt = now.Add(interval).UnixMilli()
+		if st.LastError == "" && w.hook != nil {
+			for _, qc := range src.Queries {
+				w.hook(ctx, src, qc)
+			}
+		}
 		w.mu.Lock()
 		w.nextDue[src.ID] = now.Add(interval)
 		w.status[src.ID] = st

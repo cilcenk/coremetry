@@ -1045,6 +1045,22 @@ func main() {
 		// LeaderTTL(30 s) = 90 s kira / 30 s yenileme; liderlik alınır alınmaz
 		// ilk tik (v0.9.730 dersi), sonra 5 s granülde kaynak aralığı.
 		influxWorker = influx.NewWorker(influxSvc, store)
+		// v0.10.228 (D3) — dış seri anomalisi: her BAŞARILI poll'dan sonra
+		// sorgu başına tarama (internal/anomaly/external.go); Problem
+		// kind=external, kanıt zinciri D4'te.
+		extScanner := anomaly.NewExternalScanner(store, notifier)
+		influxWorker.SetHook(func(ctx context.Context, src influx.SourceConfig, qc influx.QueryConfig) {
+			rep, err := extScanner.Scan(ctx, anomaly.ExternalTarget{
+				SourceID: src.ID, SourceName: src.Name, Query: qc.Name,
+				GroupBy: qc.MetricGroupBy(), Thresholds: anomaly.ExternalThresholds(qc.Thresholds),
+			})
+			if err != nil {
+				log.Printf("[influx] anomaly %s/%s: %v", src.Name, qc.Name, err)
+			} else if rep.Opened+rep.Resolved > 0 {
+				log.Printf("[influx] anomaly %s/%s: %d series · opened %d · resolved %d",
+					src.Name, qc.Name, rep.Series, rep.Opened, rep.Resolved)
+			}
+		})
 		influxLeader := cache.NewLeaderHolder(lockImpl, "influx-poller", cache.LeaderTTL(30*time.Second))
 		influxLeader.SetOnAcquire(func() { influxWorker.Tick(ctx) })
 		influxLeader.Start(ctx)

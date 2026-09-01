@@ -6,7 +6,8 @@
 //     hover/click/drag-brush). Both derive from the live, filtered rows.
 //   • RED-from-traces panel (rate/errors/p99) over the same filtered set.
 //   • The trace table renders through VirtualTable (windowed) with a Duration
-//     BAR, service-coloured badges, error tints, row-expand mini-waterfall,
+//     BAR, service-coloured badges, error tints, every cell a real <Link> to
+//     the trace (v0.10.216 — middle-click opens a tab, no preview frame),
 //     j/k/Enter/"/" keyboard nav.
 //   • Quick-filter chips (Errors / Slow>1s / per-top-service), the advanced
 //     FilterBuilder ("+ Add filter" → attribute/op/value, with a grouped
@@ -64,7 +65,6 @@ import { traceHref } from '@/lib/traceHref';
 
 import { VolumeChart } from '@/components/traces/VolumeChart';
 import { LatencyScatter } from '@/components/traces/LatencyScatter';
-import { MiniWaterfall } from '@/components/traces/MiniWaterfall';
 import { ShapesView } from '@/components/traces/ShapesView';
 import { SvcBadge, DurationBar, fmtDur } from '@/components/traces/shared';
 import { PageControls } from '@/components/ui/PageControls';
@@ -330,7 +330,6 @@ function TracesPageInner() {
     setChartTall(v => { setRaw(STORAGE_KEYS.tracesChartTall, v ? '0' : '1'); return !v; });
   };
   const [viz, setViz] = useState<'volume' | 'latency'>(() => searchParams.get('viz') === 'latency' ? 'latency' : 'volume');
-  const [expanded, setExpanded] = useState<string | null>(null);
 
 
   const [data, setData] = useState<TracesResponse | null | undefined>(undefined);
@@ -694,7 +693,7 @@ function TracesPageInner() {
   const reset = () => {
     const empty = { service: '', search: '', traceId: '', minMs: '', maxMs: '', hasError: false, rootOnly: false, requireServices: [] as string[] };
     setDraft(empty); setFilter(empty); setPage(0);
-    setAdvFilters([]); setAdvGroup(null); setExpanded(null);
+    setAdvFilters([]); setAdvGroup(null);
   };
   // v0.9.878 (tutarlılık denetimi BT6) — aggregate tablosu paylaşılan
   // primitife, `serverSort` kipinde. Sıralama bir görüntüleme tercihi DEĞİL:
@@ -824,9 +823,6 @@ function TracesPageInner() {
     for (const p of pPts) if (p.value > p50Max) p50Max = p.value;
     return { total, err, errRate: total > 0 ? (err / total) * 100 : 0, p50Max };
   }, [volSeries]);
-
-  // Reset transient state on a new query / page.
-  useEffect(() => { setExpanded(null); }, [page, filter, advFilters, advGroupParam, range, view]);
 
   const openTrace = (t: TraceRow) => navigate(traceHref(t.traceId, { pageRange: range }));
 
@@ -1293,43 +1289,43 @@ function TracesPageInner() {
 
                 YATAY kaydırma tabloda KALIYOR: sayfaya taşımak, geniş
                 tabloda #content'i yana kaydırır. */}
+            {/* v0.10.216 (operatör-bildirimli: "trace'e orta tuşla basınca
+                yeni sekmede açılsın; frame içinde olmasın, sayfaya entegre
+                olsun") — SATIR = LİNK. Her hücre aynı /trace href'ini taşıyan
+                bir <Link className="row-link">; orta tık / ⌘-tık / sağ tık
+                "yeni sekmede aç" tarayıcının kendi davranışı, JS'te navigate
+                yok (eski `td onClick → navigate` DOM'a <a> basmadığı için
+                orta tık ölüydü). ▸ ön-izleme kolonu ve satır-altı
+                MiniWaterfall kutusu — v0.9.645'in "iç çerçeve yok" ilkesinin
+                yarım kalan yarısı — silindi; sol tık tam-sayfa /trace'e gider.
+                Klavye yolu aynen: j/k + Enter → useDataTable onOpen
+                (openTrace). K8s entity hücreleri KENDİ linklerini taşır —
+                <a> içinde <a> geçersiz HTML, o hücreler satır linkine
+                sarılmaz (ownLink). */}
             <VirtualTable<TraceRow>
               dt={dt}
               height={44 + displayRows.length * 36}
               rowHeight={36}
-              leading={[30]}
               getRowKey={(t) => t.traceId}
-              leadingHead={<th style={{ width: 30 }} />}
               renderRow={(t) => {
-                const isOpen = expanded === t.traceId;
+                const href = traceHref(t.traceId, { pageRange: range });
                 return (
                   <Fragment>
-                    <td onClick={(e) => { e.stopPropagation(); setExpanded(isOpen ? null : t.traceId); }}
-                      style={{ textAlign: 'center', cursor: 'pointer', color: 'var(--text3)', userSelect: 'none' }}
-                      title={isOpen ? 'Collapse preview' : 'Preview spans'}>
-                      {isOpen ? '▾' : '▸'}
-                    </td>
-                    {colIds.map(id => (
-                      <td key={id} onMouseEnter={() => prefetchTrace(t.traceId)}
-                        onClick={() => openTrace(t)}
-                        style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer', background: t.hasError ? 'color-mix(in srgb, var(--err) 8%, transparent)' : undefined }}>
-                        {renderTraceCell(id, t, visibleMax, k8sOn ? { clusters: entityClusters, range } : undefined)}
-                      </td>
-                    ))}
+                    {colIds.map(id => {
+                      const ownLink = k8sOn && isTraceK8sCol(id);
+                      const cell = renderTraceCell(id, t, visibleMax, k8sOn ? { clusters: entityClusters, range } : undefined);
+                      return (
+                        <td key={id} onMouseEnter={() => prefetchTrace(t.traceId)}
+                          className={ownLink ? undefined : 'row-cell'}
+                          style={{ background: t.hasError ? 'color-mix(in srgb, var(--err) 8%, transparent)' : undefined }}>
+                          {ownLink ? cell : <Link to={href} className={id === 'operation' ? 'row-link row-link--name' : 'row-link'}>{cell}</Link>}
+                        </td>
+                      );
+                    })}
                   </Fragment>
                 );
               }}
             />
-            {/* Row-expand mini-waterfall (rendered below the table so the
-                virtualiser's uniform-height assumption isn't violated). */}
-            {expanded && displayRows.some(t => t.traceId === expanded) && (
-              <div style={{ border: '1px solid var(--border)', borderTop: 'none', borderRadius: '0 0 6px 6px' }}>
-                <MiniWaterfall
-                  traceId={expanded}
-                  fallbackService={displayRows.find(t => t.traceId === expanded)?.serviceName ?? ''}
-                  onOpen={() => { const t = displayRows.find(x => x.traceId === expanded); if (t) openTrace(t); }} />
-              </div>
-            )}
             {/* v0.9.638 — total Pager'a GEÇMİYOR. Pager lastPage/atEnd'i
                 total'dan türetiyor; tavanlı bir sayı verirsek operatörü
                 listenin ULAŞAMAYACAĞI sayfalara yollar (aşama-1 kimlik
@@ -1470,10 +1466,11 @@ function renderTraceCell(id: string, t: TraceRow, visibleMax: number, k8s?: { cl
     const v = t.extras?.[id] ?? '';
     if (!v) return <span className="mono" style={{ color: 'var(--text3)' }}>—</span>;
     const { href, note } = traceK8sHref(id, t, k8s.clusters, k8s.range);
-    // stopPropagation: hücre satır-tıkına (openTrace) sarılı; Link'in navigate'i
-    // bubbling'de trace navigate'iyle ezilirdi (Clusters.tsx / Hosts.tsx emsali).
+    // v0.10.216 — satır artık hücre başına <Link>'lerden oluşuyor ve bu hücre
+    // satır linkine SARILMAZ (renderRow: ownLink), yani stopPropagation'a
+    // gerek yok: tıklama doğrudan entity sayfasına gider.
     return href
-      ? <Link to={href} className="mono sec" title={`${v} · entity sayfası (trace anı)`} onClick={e => e.stopPropagation()}>{v}</Link>
+      ? <Link to={href} className="mono sec" title={`${v} · entity sayfası (trace anı)`}>{v}</Link>
       : <span className="mono" style={{ color: 'var(--text2)' }} title={note ?? v}>{v}</span>;
   }
   switch (id) {

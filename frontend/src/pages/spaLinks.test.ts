@@ -63,10 +63,9 @@ const ALLOWED: { file: string; why: string }[] = [
     why: 'Aynı desen — satır başlığı hem <a> semantiği (⌘-tık yeni sekme) '
       + 'hem programatik gezinme istiyor.',
   },
-  {
-    file: 'components/traces/MiniWaterfall.tsx',
-    why: 'Aynı desen; trace linki ⌘-tık desteği için gerçek <a> kalmalı.',
-  },
+  // components/traces/MiniWaterfall.tsx muafiyeti v0.10.216'da düştü:
+  // bileşen silindi (satır ön-izleme çerçevesi kalktı; /traces satırı
+  // artık hücre başına <Link> — tracesRowLink.test.ts).
 ];
 
 describe('MT10 — SPA rotalarına çıplak <a href> yok', () => {

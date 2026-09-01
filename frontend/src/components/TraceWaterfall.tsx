@@ -99,6 +99,8 @@ function categoryOf(s: SpanRow): SpanCategory | null {
 // hash SÖKÜLDÜ: aynı trace sayfasında MiniWaterfall (seriesColor 10'lu
 // palet) ile tam waterfall AYNI servise iki farklı renk veriyordu.
 // Ad korunur (çağıranlar dokunulmadı), gövde kanonik svcColor'a delege.
+// (MiniWaterfall v0.10.216'da silindi — satır ön-izleme çerçevesi kalktı;
+// delege yerinde kalıyor, kanonik renk hâlâ svcColor.)
 import { svcColor } from './traces/shared';
 export const svcColorToken = svcColor;
 

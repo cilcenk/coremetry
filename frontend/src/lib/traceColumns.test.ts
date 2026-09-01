@@ -3,10 +3,14 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { traceColumnOrder, FIXED_COLS, DEFAULT_TRACE_COLUMNS } from './traceColumns';
 
-// traceColumns.test.ts — v0.9.841. Pins the /traces column order the
-// operator asked for on 2026-08-09:
+// traceColumns.test.ts — v0.9.841. Pins the /traces column order.
 //
-//   Time · Service · Operation · <attributes> · Duration · Spans · Status
+//   v0.10.217 (Dynatrace düzeni, mockup onayı 2026-09-01):
+//   Name(operation) · Service · <attributes> · Duration · Status · Spans ·
+//   Start time(time)
+//   (v0.9.841 → v0.10.216: Time · Service · Operation · <attributes> ·
+//   Duration · Spans · Status — attr kolonlarının kimlik alanlarından
+//   hemen sonra durması o karardan KALIYOR.)
 //
 // Worth a test because the header and the body cells both derive from
 // this array. If it ever emitted a column twice, or dropped one, the
@@ -19,26 +23,26 @@ describe('traceColumnOrder', () => {
     [
       'no extras — the six fixed columns in canonical order',
       [],
-      ['time', 'service', 'operation', 'duration', 'spans', 'status'],
+      ['operation', 'service', 'duration', 'status', 'spans', 'time'],
     ],
     [
-      'the operator default set lands between Operation and Duration',
+      'the operator default set lands between Service and Duration',
       ['openshift.cluster.name', 'channel_code', 'function_code', 'http.status_code'],
       [
-        'time', 'service', 'operation',
+        'operation', 'service',
         'openshift.cluster.name', 'channel_code', 'function_code', 'http.status_code',
-        'duration', 'spans', 'status',
+        'duration', 'status', 'spans', 'time',
       ],
     ],
     [
       'one extra',
       ['pod'],
-      ['time', 'service', 'operation', 'pod', 'duration', 'spans', 'status'],
+      ['operation', 'service', 'pod', 'duration', 'status', 'spans', 'time'],
     ],
     [
       'extras keep the order they were added in',
       ['z', 'a', 'm'],
-      ['time', 'service', 'operation', 'z', 'a', 'm', 'duration', 'spans', 'status'],
+      ['operation', 'service', 'z', 'a', 'm', 'duration', 'status', 'spans', 'time'],
     ],
   ];
   for (const [name, extras, want] of cases) {
@@ -48,9 +52,10 @@ describe('traceColumnOrder', () => {
   }
 
   it('never leaks a fixed column into the attribute slot', () => {
-    // The filter must exclude ALL THREE leading columns, not just time.
-    // Getting that wrong duplicates service/operation — the regression
-    // this whole helper exists to make visible.
+    // The filter must exclude BOTH leading columns (operation, service).
+    // Getting that wrong duplicates one of them — the regression this
+    // whole helper exists to make visible. (v0.10.217: `time` artık
+    // öncü değil, sondaki sabit grupla birlikte gelir.)
     const ids = traceColumnOrder([]);
     expect(new Set(ids).size).toBe(ids.length);
     for (const c of FIXED_COLS) {
@@ -103,7 +108,10 @@ describe('DEFAULT_TRACE_COLUMNS', () => {
     expect(m, 'COL_W bulunamadı — Traces.tsx yeniden düzenlenmiş olabilir').toBeTruthy();
     const fixed = [...m![1].matchAll(/(\w+)\s*:\s*(\d+)/g)]
       .reduce((s, x) => s + Number(x[2]), 0);
-    const ATTR_W = 130, LEADING = 30;
+    // v0.10.216 — ▸ ön-izleme kolonu (30px öncü hücre) silindi; öncü
+    // pay artık SIFIR. Traces.tsx'te leading prop'u geri gelirse bu
+    // sabit de geri gelmeli (tracesRowLink.test.ts onu ayrıca yasaklıyor).
+    const ATTR_W = 130, LEADING = 0;
     const total = fixed + LEADING + DEFAULT_TRACE_COLUMNS.length * ATTR_W;
 
     // 1440px dizüstü: ~220 kenar çubuğu + ~40 dolgu → ~1180 kalıyor.

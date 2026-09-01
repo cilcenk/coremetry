@@ -105,15 +105,17 @@ const GROUP_OPTIONS: { value: GroupBy; label: string }[] = [
 // and adopts only the resize half of the primitive. We give the data columns
 // no `sortValue` (client-sorting a 50-row server page would scramble server
 // order); the header click routes to the server sort below.
+// v0.10.217 (Dynatrace düzeni) — id'ler sabit, ETİKET değişti:
+// operation → "Name" (ilk, baskın kolon), time → "Start time" (en sonda).
 const COL_LABEL: Record<string, string> = {
-  time: 'Time', service: 'Service', operation: 'Operation',
+  time: 'Start time', service: 'Service', operation: 'Name',
   duration: 'Duration', spans: 'Spans', status: 'Status',
 };
 // Default widths are tuned so the fixed columns PLUS the attribute columns
 // fit a 1440px laptop without horizontal scroll (v0.9.243 — operator-reported:
 // "columns don't fit, I always have to scroll right"). Budget at 1440px:
-// ~220 sidebar + ~40 page padding leaves ~1180, minus 30 leading row-marker
-// = ~1150 for columns.
+// ~220 sidebar + ~40 page padding leaves ~1180 for columns (the 30px
+// leading row-marker went with the preview column in v0.10.216).
 //
 // v0.9.1360 — BÜTÇE YENİDEN DAĞITILDI. Operatör `function_id`'yi de
 // varsayılan istedi (DEFAULT_TRACE_COLUMNS artık BEŞ öznitelik) ve "kolonlar
@@ -864,11 +866,11 @@ function TracesPageInner() {
   // (renderTraceCell) colIds üzerinden çiziliyor, yani ikisi ayrışamaz.
   // Genişlik/sıralama durumu id'ye bağlı olduğu için kalıcı ayarlar
   // (localStorage) bu değişiklikten etkilenmiyor.
-  // v0.9.841 — sıra artık saf yardımcıda: Time · Service · Operation ·
-  // <attr kolonları> · Duration · Spans · Status (operatör isteği
-  // 2026-08-09). Attr kolonları eskiden Time'ın hemen ARKASINDAYDI ve
-  // satırı KİMLİKLEYEN iki alanı (Service, Operation) dört attr'ın
-  // sağına itiyordu.
+  // v0.9.841 — sıra artık saf yardımcıda (operatör isteği 2026-08-09:
+  // attr kolonları, satırı KİMLİKLEYEN Service/Operation'ın sağına).
+  // v0.10.217 — Dynatrace düzeni: Name · Service · <attr kolonları> ·
+  // Duration · Status · Spans · Start time (mockup onayı 2026-09-01;
+  // attr'ların kimlik alanlarından hemen sonra durması korundu).
   const colIds = useMemo(() => traceColumnOrder(extraCols), [extraCols]);
   const columns: DataTableColumn<TraceRow>[] = useMemo(() =>
     colIds.map(id => {

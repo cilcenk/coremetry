@@ -367,6 +367,25 @@ tokenRef sözleşmesini tempo/thanos/VM'ye yayma (ayrı spec).
 
 **Efor:** D1 ~1 gün · D2 ½ · D3 1 · D4 1 · D5 ½ → ~4 iş günü, 5 sürüm.
 
+### Gerçekleşen sürümler (2026-09-01 → 02) — plandan sapmalar
+
+Plandaki numaralar (216-220) /traces dilimlerine gitti; dilimler bir
+sonraki boş numaradan devam etti.
+
+| Dilim | Sürüm | Sapma / not |
+|---|---|---|
+| D1 | v0.10.222 | Plan aynen. tokenRef `env:`/`file:` + düz token reddi |
+| D1' | v0.10.224 | **Operatör:** düz token SAKLANIR, GET maskeler (`hasToken`); "yalnız referans" sözleşmesi kaldırıldı. Seri Grafana `aggregateWindow(1m, sum)` ile aynı: kova bitişi `_time`, kısmi kova atlanır, (kaynak, sorgu) watermark |
+| D2 | v0.10.223 | Plan aynen (`influx_status.go` SAF telemetri dosyası, conn_strategy allowlist) |
+| D3 | v0.10.228 | Pencere sabit 4 saat DEĞİL: kaynağın gözlenmiş ilk/son kovası (≤240 dk) — sabit pencere genç kaynağı sıfırla doldurup medyanı 0 yapıyordu. Tarayıcı yalnız BAŞARILI poll sonrası koşar (Influx düşükken sıfır-padli sahte iyileşme yok); "none" kararında touch. `evaluateAnomaly`'ye seasonalMinSamples 0 geçilemez (boş mevsimsel kazanır). Lane kaçışı iki eşitlik (IN-liste kapısı) |
+| D4 | v0.10.229 | Plan aynen + `{{op}}`/`{{err}}` = adında operation/error geçen ilk tag; her tag kendi adıyla da değişken. Sayı imzası regex'i sondaki sınırsız ("1500ms" → "<x>ms") |
+| D5 | v0.10.230 | Plan aynen; hipotez `/rootcause` zarfından. ⚠ Lokalde Influx yok — panel canlı dış problemle GÖRÜLMEDİ |
+| D6 | v0.10.231 | Mevsimsel kapı: ufuk < 3 gün → okuma yok; ufuk < gün sayısı → gün sayısı ufka iner (eldeki geçmişle mevsimsel). KANALKOD checkbox. tokenRef yayma AYRI spec (açılmadı) |
+
+**Operatörde kalan:** prod'da kaynak + SORGU 1/2 tanımı (Influx sekmesi),
+`retention.metrics ≥ 14` (mevsimsel tam güç), ilk canlı problemde D5
+panelinin görsel kontrolü.
+
 ---
 
 ## 11. Onay soruları

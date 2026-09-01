@@ -19,7 +19,7 @@
 
 import { useEffect, useMemo, useRef, useState, Suspense, Fragment } from 'react';
 import { attrKeyWindowParams } from '@/lib/attrKeyWindow';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { IconSearch } from '@/components/icons';
@@ -195,6 +195,9 @@ function HeaderStat({ label, value, tone, title }: { label: string; value: strin
 
 function TracesPageInner() {
   const navigate = useNavigate();
+  // v0.10.219 — satır Link'i listenin O ANKİ URL'sini state olarak taşır;
+  // /trace breadcrumb'ı onunla geri döner (lib/traceBackHref.ts).
+  const loc = useLocation();
   const [searchParams] = useSearchParams();
 
   // v0.9.430 — zoom-yığını hook'u; sayfalama her zoom/geri adımında
@@ -1320,7 +1323,7 @@ function TracesPageInner() {
                         <td key={id} onMouseEnter={() => prefetchTrace(t.traceId)}
                           className={ownLink ? undefined : 'row-cell'}
                           style={{ background: t.hasError ? 'color-mix(in srgb, var(--err) 8%, transparent)' : undefined }}>
-                          {ownLink ? cell : <Link to={href} className={id === 'operation' ? 'row-link row-link--name' : 'row-link'}>{cell}</Link>}
+                          {ownLink ? cell : <Link to={href} state={{ from: loc.pathname + loc.search }} className={id === 'operation' ? 'row-link row-link--name' : 'row-link'}>{cell}</Link>}
                         </td>
                       );
                     })}

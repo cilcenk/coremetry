@@ -1,6 +1,6 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEscLayer } from '@/lib/escLayer';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { DrillButton } from '@/components/DrillButton';
@@ -23,6 +23,8 @@ import { raceGuard } from '@/lib/raceGuard';
 import { useOutsideClose } from '@/lib/useOutsideClose';
 import { useCorrelatedLogs, spanHasError, traceLogWindow } from '@/lib/otel';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
+import { traceBackHref } from '@/lib/traceBackHref';
+import { SvcBadge } from '@/components/traces/shared';
 import type { LogRow, SpanRow, TimeRange, PivotAnchor } from '@/lib/types';
 import { TraceWaterfall, TraceServiceBreakdown } from '@/components/TraceWaterfall';
 import { SpanDetail } from '@/components/SpanDetail';
@@ -38,7 +40,10 @@ import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
 
 function TraceDetailInner() {
-  const navigate = useNavigate();
+  // v0.10.219 — breadcrumb'ın "Traces" halkası: /traces satırının Link
+  // state'i ile taşıdığı liste URL'si (filtre + sayfa + range); yeni
+  // sekmede / paylaşılan linkte state yok → çıplak /traces (traceBackHref).
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const id = searchParams.get('id') ?? '';
 
@@ -354,21 +359,37 @@ function TraceDetailInner() {
   // spanHasError is the honest "is this a failure" — error status OR a recorded
   // exception event (matches the waterfall tint + the trace-level badge).
   const hasErr = spans?.some(s => spanHasError(s)) ?? false;
+  // v0.10.219 (D4 özet şeridi) — servis sayısı + hatalı span sayısı; ikisi de
+  // yüklü span listesinden türer, ek istek yok.
+  const svcCount = spans ? new Set(spans.map(s => s.serviceName)).size : 0;
+  const errSpans = spans ? spans.filter(s => spanHasError(s)).length : 0;
 
 
   return (
     <>
       <Topbar title="Trace Detail" range={range} onRangeChange={setRange} />
       <PageShell>
-        <div style={{ marginBottom: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <Button variant="secondary" size="sm" onClick={() => navigate(-1)}>← Back</Button>
+        {/* v0.10.219 (mockup onayı 2026-09-01, D4) — "← Back" (navigate(-1))
+            yerine breadcrumb: Traces › <kök işlem>. Liste halkası, satırın
+            Link state'iyle gelen liste URL'sini korur; tarayıcı geçmişi
+            olmayan yeni sekmede de çalışır. Altında özet şeridi: servis
+            rozeti, durum (+hatalı span sayısı), span · servis sayısı, süre,
+            başlangıç, id — Dynatrace trace başlığı düzeni. */}
+        <nav className="crumbs" aria-label="Breadcrumb">
+          <Link to={traceBackHref(location.state)}>Traces</Link>
+          <span className="crumbs__sep" aria-hidden="true">›</span>
+          <span className="crumbs__cur" title={root ? displaySpanName(root) : id}>{root ? displaySpanName(root) : 'Trace'}</span>
+        </nav>
+        <div className="trace-summary">
+          {root && <SvcBadge name={root.serviceName} />}
           <code style={{ fontSize: 11, color: 'var(--text2)', background: 'var(--bg2)', padding: '2px 6px', borderRadius: 4 }}>
             {id}<CopyButton value={id} title="Copy trace ID" />
           </code>
           {spans && spans.length > 0 && (
             <>
               <span className={`badge ${hasErr ? 'b-err' : 'b-ok'}`}>{hasErr ? 'ERROR' : 'OK'}</span>
-              <span style={{ color: 'var(--text2)', fontSize: 12 }}>{spans.length} spans · {fmtNs(totalNs)}</span>
+              {errSpans > 0 && <span className="cell-hint">{errSpans} error span{errSpans === 1 ? '' : 's'}</span>}
+              <span style={{ color: 'var(--text2)', fontSize: 12 }}>{spans.length} spans · {svcCount} service{svcCount === 1 ? '' : 's'} · {fmtNs(totalNs)}</span>
               {root && <span style={{ color: 'var(--text3)', fontSize: 12 }}>{tsLong(root.startTime)}</span>}
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
                 {/* Critical path summary — when computed, the

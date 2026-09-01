@@ -914,6 +914,56 @@ export interface DeepEvidence {
   slowOps?: unknown[];
   business?: Record<string, unknown[]>;
   codeMeaning?: Record<string, string>;
+  // v0.10.230 (Influx D5) — dış kaynak kanıtı (Go chstore.DeepEvidence
+  // +4 alan, v0.10.229); yalnız kind=external anchor'larda dolu.
+  external?: ExternalMetricEvidence;
+  traceIds?: string[];
+  affectedPods?: PodHit[];
+  logSignatures?: LogSignature[];
+}
+
+// ExternalMetricEvidence — Go chstore.ExternalMetricEvidence aynası.
+export interface ExternalMetricEvidence {
+  source: string;
+  query: string;
+  labels?: Record<string, string>;
+  current: number;
+  median: number;
+  mad: number;
+  z: number;
+  windowFromNs: number;
+  windowToNs: number;
+  rows: number;
+  invalidIds?: number;
+  notes?: string[];
+  spanSummary?: TraceSpanSummary[];
+  updatedNs: number;
+}
+
+// TraceSpanSummary — Go chstore.TraceSpanSummary aynası.
+export interface TraceSpanSummary {
+  traceId: string;
+  startNs: number;
+  durationNs: number;
+  spans: number;
+  errorSpans: number;
+  rootService?: string;
+  rootOp?: string;
+  errorService?: string;
+  errorOp?: string;
+  slowestService?: string;
+  slowestOp?: string;
+}
+
+export interface PodHit { pod: string; count: number; lastSeenNs: number }
+
+export interface LogSignature {
+  hash: string;
+  template: string;
+  count: number;
+  severity: string;
+  sample: string;
+  traceCount: number;
 }
 
 // ShiftSummary — GET /api/shift cevabı (v0.9.1072, Faz 3.2). Üç blok

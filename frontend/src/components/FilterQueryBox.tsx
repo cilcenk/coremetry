@@ -53,6 +53,12 @@ export interface FilterQueryBoxProps {
   /** Test/kompozisyon: anahtar keşfini atla, bu listeyi kullan. */
   keyOptions?: string[];
   placeholder?: string;
+  /** v0.10.270 — metrik modu (Explore metrik kaynağı): anahtarlar metrikte
+   *  görülmüş etiketler (api.metricAttrKeys), değerler etiket uzayı
+   *  (api.metricLabels; sayım yok → pay çubuğu çizilmez). FilterBuilder'ın
+   *  metricName/metricService sözleşmesiyle aynı. */
+  metricName?: string;
+  metricService?: string;
 }
 
 function fmtCount(n: number): string {
@@ -67,7 +73,17 @@ function loadRecent(key?: string): FilterExpr[] {
   try { return parseRecent(localStorage.getItem(key)); } catch { return []; }
 }
 
-export function FilterQueryBox({ value, onChange, suggestedValues, quick = [], recentKey, keyOptions, placeholder }: FilterQueryBoxProps) {
+export function FilterQueryBox({ value, onChange, suggestedValues, quick = [], recentKey, keyOptions, placeholder, metricName, metricService }: FilterQueryBoxProps) {
+  const metricMode = !!metricName?.trim();
+  const [metricKeys, setMetricKeys] = useState<string[]>([]);
+  useEffect(() => {
+    if (!metricMode) { setMetricKeys([]); return; }
+    let cancelled = false;
+    api.metricAttrKeys(metricName!.trim(), metricService ?? '')
+      .then(keys => { if (!cancelled) setMetricKeys(keys ?? []); })
+      .catch(() => { if (!cancelled) setMetricKeys([]); });
+    return () => { cancelled = true; };
+  }, [metricMode, metricName, metricService]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [hi, setHi] = useState(0);
   const [liveValues, setLiveValues] = useState<ValueRow[]>([]);
@@ -79,8 +95,8 @@ export function FilterQueryBox({ value, onChange, suggestedValues, quick = [], r
   const [range] = useUrlRange();
   const rangeNs = useMemo(() => timeRangeToNs(range), [range]);
   const attrWindow = useMemo(() => attrKeyWindowParams(range), [range]);
-  const { keys: spanKeys, observed } = useAttributeKeys(value, attrWindow, !keyOptions);
-  const allKeys = keyOptions ?? spanKeys;
+  const { keys: spanKeys, observed } = useAttributeKeys(value, attrWindow, !keyOptions && !metricMode);
+  const allKeys = keyOptions ?? (metricMode ? metricKeys : spanKeys);
   const hints = useMemo(() => {
     const m: Record<string, number> = {};
     for (const o of observed) m[o.key] = o.count;
@@ -97,13 +113,20 @@ export function FilterQueryBox({ value, onChange, suggestedValues, quick = [], r
     let cancelled = false;
     setLiveLoading(true);
     const handle = setTimeout(() => {
-      api.attributeValues(draftKey, '1h', 200, typed || undefined, rangeNs)
-        .then(rows => { if (!cancelled) setLiveValues((rows ?? []).map(r => ({ value: r.value, count: r.count }))); })
+      const fetch: Promise<ValueRow[]> = metricMode
+        ? api.metricLabels(metricName!.trim(), draftKey).then(vals => {
+            const t = typed.toLowerCase();
+            return (vals ?? []).filter(v => !t || v.toLowerCase().includes(t)).map(v => ({ value: v, count: 0 }));
+          })
+        : api.attributeValues(draftKey, '1h', 200, typed || undefined, rangeNs)
+            .then(rows => (rows ?? []).map(r => ({ value: r.value, count: r.count })));
+      fetch
+        .then(rows => { if (!cancelled) setLiveValues(rows); })
         .catch(() => { if (!cancelled) setLiveValues([]); })
         .finally(() => { if (!cancelled) setLiveLoading(false); });
     }, 200);
     return () => { cancelled = true; clearTimeout(handle); };
-  }, [draftKey, typed, rangeNs]);
+  }, [draftKey, typed, rangeNs, metricMode, metricName]);
 
   const valueOptions = useMemo<ValueRow[]>(() => {
     if (!draft || draft.step !== 'value') return [];

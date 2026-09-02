@@ -1,6 +1,6 @@
 import { Combobox } from '@/components/Combobox';
 import { ServicePicker } from '@/components/ServicePicker';
-import { FilterBuilder } from '@/components/FilterBuilder';
+import { FilterQueryBox } from '@/components/FilterQueryBox';
 import { FilterGroupBuilder } from '@/components/FilterGroupBuilder';
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui';
@@ -145,7 +145,9 @@ export function QueryRow({ q, canRemove, canDuplicate, onChange, onDuplicate, on
           </div>
         )}
         {q.source !== 'span' || !grouped ? (
-          <FilterBuilder value={q.filters} onChange={f => onChange({ ...q, filters: f })}
+          /* v0.10.270 — tek satır sorgu kutusu; metrik kaynağında etiket uzayı. */
+          <FilterQueryBox value={q.filters} onChange={f => onChange({ ...q, filters: f })}
+            recentKey={q.source === 'metric' ? 'explore-metric-recent-filters' : 'explore-recent-filters'}
             metricName={q.source === 'metric' ? q.metric : undefined}
             metricService={q.source === 'metric' ? q.scope : undefined} />
         ) : (

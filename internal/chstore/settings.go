@@ -16,7 +16,16 @@ import (
 // allowed?, default retention overrides…) can reuse it.
 
 // GetSetting returns the JSON-encoded value for key, or nil if missing.
+//
+// v0.10.259 — ctx'te SettingsSnapshot varsa (settings_refresh.go, periyodik
+// tazeleme) cevap oradan gelir: 14 yenileyici × 30 s tekil FINAL okuma
+// yerine tik başına tek sorgu. Anlık görüntüde olmayan anahtar = yok
+// (nil, nil) — tablo tek sorguyla bütün okunduğu için doğru.
 func (s *Store) GetSetting(ctx context.Context, key string) ([]byte, error) {
+	if snap := settingsSnapshotFrom(ctx); snap != nil {
+		v, _ := snap.get(key)
+		return v, nil
+	}
 	row := s.conn.QueryRow(ctx, `
 		SELECT value FROM system_settings FINAL WHERE key = ? LIMIT 1`, key)
 	var v string

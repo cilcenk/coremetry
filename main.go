@@ -503,6 +503,11 @@ func main() {
 	// pods only; api/worker pods don't see incoming spans. Coremetry now
 	// stores 100% of the spans it RECEIVES — sampling, when wanted, is done
 	// at the collector (the sample-to-Coremetry / 100%-to-Tempo split).
+	// v0.10.259 (perf §7 madde 3) — TEK ayar yenileyici: 13 servisin 30 s'lik
+	// LoadPersisted döngüsü tek tikte, tek FINAL okumayla (SettingsSnapshot
+	// ctx'te; Store.GetSetting oradan cevaplar). Ölçüldü: 224 okuma/5 dk,
+	// ~1 s/sorgu lokal. appschema 5 dk'lık kendi döngüsünde kalır.
+	cfgRefresh := chstore.NewSettingsRefresher(store, 30*time.Second)
 	pipelineEng := pipeline.New()
 	if mode.ingest {
 		// Loads its rule set from system_settings at boot; admin PUTs through
@@ -511,7 +516,7 @@ func main() {
 		if err := pipelineEng.LoadPersisted(ctx, store); err != nil {
 			log.Printf("[pipeline] load persisted: %v", err)
 		}
-		go pipelineEng.StartConfigRefresh(ctx, store, 30*time.Second)
+		cfgRefresh.Add("pipeline", func(ctx context.Context) error { return pipelineEng.LoadPersisted(ctx, store) })
 		pipelineEng.LogStats()
 		ing.SetPipeline(pipelineEng)
 
@@ -872,7 +877,7 @@ func main() {
 			}
 		}()
 	}
-	go logsMgr.StartConfigRefresh(ctx, store, 30*time.Second)
+	cfgRefresh.Add("logstore-es", func(ctx context.Context) error { return logsMgr.LoadPersisted(ctx, store) })
 	log.Printf("[logs] read backend: %s", logsStore.Backend())
 
 	// Wire the log backend into the evaluator so saved-search
@@ -927,7 +932,7 @@ func main() {
 	if err := copilotSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[copilot] load persisted config: %v", err)
 	}
-	go copilotSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	cfgRefresh.Add("copilot", func(ctx context.Context) error { return copilotSvc.LoadPersisted(ctx, store) })
 	// v0.9.136 (scale-audit 2026-07-20) — RAG hydration + refresh were
 	// mis-nested INSIDE the copilot-error branch, so on the normal path
 	// (copilot loads fine) operator RAG config saved via the UI never
@@ -936,7 +941,7 @@ func main() {
 	if err := ragSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[rag] load persisted: %v", err)
 	}
-	go ragSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	cfgRefresh.Add("rag", func(ctx context.Context) error { return ragSvc.LoadPersisted(ctx, store) })
 	if copilotSvc.Active() {
 		p, m, b, _, _, _ := copilotSvc.Snapshot()
 		if b != "" {
@@ -961,7 +966,7 @@ func main() {
 	if err := ldapSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[ldap] load persisted config: %v", err)
 	}
-	go ldapSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	cfgRefresh.Add("ldap", func(ctx context.Context) error { return ldapSvc.LoadPersisted(ctx, store) })
 	if ldapSvc.Enabled() {
 		c := ldapSvc.Snapshot()
 		log.Printf("[ldap] enterprise auth enabled (host=%s:%d tls=%v startTLS=%v baseDN=%s)",
@@ -993,7 +998,7 @@ func main() {
 	if err := tempoSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[tempo] load persisted config: %v", err)
 	}
-	go tempoSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	cfgRefresh.Add("tempo", func(ctx context.Context) error { return tempoSvc.LoadPersisted(ctx, store) })
 	// v0.8.576 — çoklu-cluster Thanos Querier istemcisi (tempo
 	// simetriği): settings blob'unu boot'ta yükle + 30s multi-pod
 	// senkron poll'u. Cluster listesi boşsa /clusters rotaları 404.
@@ -1001,7 +1006,7 @@ func main() {
 	if err := thanosSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[thanos] load persisted config: %v", err)
 	}
-	go thanosSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	cfgRefresh.Add("thanos", func(ctx context.Context) error { return thanosSvc.LoadPersisted(ctx, store) })
 	// v0.10.140 — etiket doğrulama sonuçları blob'dan (lider worker yazar,
 	// her rol okur; api pod'ları Settings rozetini böyle görür).
 	if err := thanosSvc.LoadLabelChecks(ctx, store); err != nil {
@@ -1016,7 +1021,7 @@ func main() {
 	if err := influxSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[influx] load persisted config: %v", err)
 	}
-	go influxSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	cfgRefresh.Add("influx", func(ctx context.Context) error { return influxSvc.LoadPersisted(ctx, store) })
 	var influxWorker *influx.Worker
 	// v0.10.129 — K8s entity katmanı: bayrak + vidalar her modda (uçlar
 	// okur), Thanos senkronizasyonu yalnız worker rolünde ve liderde
@@ -1025,13 +1030,13 @@ func main() {
 	if err := entitySettings.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[entity] load persisted config: %v", err)
 	}
-	go entitySettings.StartConfigRefresh(ctx, store, 30*time.Second)
+	cfgRefresh.Add("entity", func(ctx context.Context) error { return entitySettings.LoadPersisted(ctx, store) })
 	// v0.10.199 — rollouts ayar blobu (system_settings["rollouts"]), her rolde.
 	rolloutSettings := rollout.NewSettingsService()
 	if err := rolloutSettings.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[rollout] load persisted config: %v", err)
 	}
-	go rolloutSettings.StartConfigRefresh(ctx, store, 30*time.Second)
+	cfgRefresh.Add("rollout", func(ctx context.Context) error { return rolloutSettings.LoadPersisted(ctx, store) })
 	var entitySyncer *entity.Syncer
 	if mode.worker {
 		entitySyncer = entity.NewSyncer(entity.NewThanosSource(thanosSvc), entity.StoreFromCH(store), entitySettings.Resolved)
@@ -1133,7 +1138,7 @@ func main() {
 	if err := vmSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[vmetrics] load persisted config: %v", err)
 	}
-	go vmSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	cfgRefresh.Add("vmetrics", func(ctx context.Context) error { return vmSvc.LoadPersisted(ctx, store) })
 	// v0.9.1213 — JVM GC alarmlarının VM dönüşü: evaluator GC çiftini
 	// YALNIZ vmetrics yapılandırılmışken, VM'den okuyarak değerlendirir
 	// (SetLogs geç-bağlama emsali; runtime_vm.go başlığı).
@@ -1152,7 +1157,7 @@ func main() {
 	if err := devopsSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[devops] load persisted config: %v", err)
 	}
-	go devopsSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	cfgRefresh.Add("devops", func(ctx context.Context) error { return devopsSvc.LoadPersisted(ctx, store) })
 	// v0.10.115 — uygulama DB şema kataloğu (salt-okunur anlık görüntü;
 	// SQLCODE'lu Explain'lerde kolon tanımı kanıtı). devops deseni; blob
 	// MB olabildiğinden yenileme 5 dk.
@@ -1166,7 +1171,8 @@ func main() {
 	if err := mcpCliSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[mcpclient] load persisted config: %v", err)
 	}
-	go mcpCliSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	cfgRefresh.Add("mcpclient", func(ctx context.Context) error { return mcpCliSvc.LoadPersisted(ctx, store) })
+	go cfgRefresh.Start(chstore.WithQueryTag(ctx, "worker:settings-refresh")) // v0.10.259 — kayıtlar tamam, tek döngü
 	if tempoSvc.Configured() {
 		t := tempoSvc.Snapshot()
 		log.Printf("[tempo] external backend enabled (baseUrl=%s authType=%s orgId=%s)",

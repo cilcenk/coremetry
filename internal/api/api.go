@@ -40,6 +40,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/devops"
 	"github.com/cilcenk/coremetry/internal/entity"
+	"github.com/cilcenk/coremetry/internal/influx"
 	"github.com/cilcenk/coremetry/internal/ldap"
 	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/mcp"
@@ -54,7 +55,6 @@ import (
 	"github.com/cilcenk/coremetry/internal/tempo"
 	"github.com/cilcenk/coremetry/internal/thanos"
 	"github.com/cilcenk/coremetry/internal/vmetrics"
-	"github.com/cilcenk/coremetry/internal/influx"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
@@ -3617,10 +3617,14 @@ func (s *Server) getServiceSparklines(w http.ResponseWriter, r *http.Request) {
 	sortedSvcs := append([]string(nil), wantSvcs...)
 	sort.Strings(sortedSvcs)
 	// v0.10.262 (CDV-1) — anahtar v2: gövde artık slot grid'i (≤120 dilim).
-	key := fmt.Sprintf("services-spark:v2:window=%s:svcs=%s",
-		cacheBucket(from, to), strings.Join(sortedSvcs, ","))
+	// v0.10.269 — slot genişliği CH'ye iner (GROUP BY slot, tek tDigest
+	// merge); sparklineSlots artık geçiş (aynı grid, aynı origin) — ≤120
+	// slot garantisi ve grid hizası orada kalır. Anahtar v3: slot girer.
+	width := sparklineSlotWidth(from, to, sparklineMaxSlots)
+	key := fmt.Sprintf("services-spark:v3:window=%s:slot=%d:svcs=%s",
+		cacheBucket(from, to), int(width/time.Second), strings.Join(sortedSvcs, ","))
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		rows, err := s.store.GetServiceSummary5mFor(ctx, wantSvcs, from, to)
+		rows, err := s.store.GetServiceSummarySlots(ctx, wantSvcs, from, to, width)
 		if err != nil {
 			return nil, err
 		}

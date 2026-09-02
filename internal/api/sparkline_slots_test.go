@@ -4,6 +4,8 @@ package api
 // (5 dk); slot içi toplam/ağırlıklı ortalama/max p99; servisler aynı grid.
 
 import (
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,5 +60,55 @@ func TestSparklineSlotsAggregate(t *testing.T) {
 	o2 := sparklineSlots(short, from, from.Add(time.Hour), 120)
 	if len(o2["a"]) != 12 || o2["a"][1].T-o2["a"][0].T != int64(5*time.Minute) {
 		t.Errorf("1s penceresi ham 5 dk kalmalı: %d slot", len(o2["a"]))
+	}
+}
+
+// v0.10.269 — satırlar CH'den zaten slot grid'inde geldiğinde reducer
+// geçiştir: sayı korunur, değerler bire bir, grid origin aynı.
+func TestSparklineSlotsPassThroughOnSlottedRows(t *testing.T) {
+	to := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	from := to.Add(-7 * 24 * time.Hour)
+	width := sparklineSlotWidth(from, to, 120) // 85 dk
+	var rows []chstore.ServiceSummaryRow
+	n := int(to.Sub(from) / width)
+	for i := 0; i < n; i++ {
+		ts := from.Add(time.Duration(i) * width).UnixNano()
+		rows = append(rows, chstore.ServiceSummaryRow{Service: "a", BucketStart: ts, SpanCount: uint64(i + 1), ErrorCount: 1, AvgMs: 42, P99Ms: 7})
+	}
+	out := sparklineSlots(rows, from, to, 120)
+	if len(out["a"]) != n {
+		t.Fatalf("geçiş: %d slot bekleniyordu, %d", n, len(out["a"]))
+	}
+	for i, p := range out["a"] {
+		if p.Spans != uint64(i+1) || p.AvgMs != 42 || p.P99Ms != 7 || p.T != rows[i].BucketStart {
+			t.Fatalf("slot %d değişti: %+v", i, p)
+		}
+	}
+}
+
+// v0.10.269 — BAĞLANMA pini (feedback-tested-but-unreachable): slot okuması
+// var olsa da handler onu çağırmıyorsa eski 5-dk sorgu koşar (ilk imajda
+// tam bu oldu: query_log arrayElement×3 gösterdi, result_rows 27.000).
+func TestSparklinesHandlerUsesSlotReader(t *testing.T) {
+	b, err := os.ReadFile("api.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	i := strings.Index(src, "func (s *Server) getServiceSparklines(")
+	if i < 0 {
+		t.Fatal("getServiceSparklines yok")
+	}
+	body := src[i:]
+	if j := strings.Index(body[1:], "\nfunc "); j > 0 {
+		body = body[:j+1]
+	}
+	for _, want := range []string{"sparklineSlotWidth(from, to, sparklineMaxSlots)", "s.store.GetServiceSummarySlots(ctx, wantSvcs, from, to, width)", "services-spark:v3"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("sparklines handler slot okumasına bağlı değil: %q yok", want)
+		}
+	}
+	if strings.Contains(body, "GetServiceSummary5mFor(") {
+		t.Error("handler hâlâ 5-dk okuyucuyu çağırıyor")
 	}
 }

@@ -37,6 +37,18 @@ func TestNarrowRollupEligible(t *testing.T) {
 	if !ok || len(q.conjuncts) != 2 {
 		t.Fatalf("entry-RED şekli uygun olmalı: ok=%v %+v", ok, q)
 	}
+	// v0.10.268 — /traces genel bakış şeridi: service.name (DSL'den) + kind IN
+	// + count/errors/p50(duration_ms). Şerit bu yola GÜVENİYOR; düşerse 7 g
+	// ham spans taraması (lokal ölçüm 11.2M satır / 4-6 s).
+	strip := base
+	strip.Aggs = []SpanMetricAggSpec{
+		{Name: "count", Aggregation: "count"},
+		{Name: "errors", Aggregation: "errors"},
+		{Name: "p50", Aggregation: "p50", Field: "duration_ms"},
+	}
+	if _, ok := narrowRollupEligible(strip); !ok {
+		t.Fatal("traces şeridi (service + kind IN + count/errors/p50 duration_ms) dar rollup'a uygun olmalı")
+	}
 	if q.conjuncts[1].col != "span_kind" {
 		t.Errorf("kind → span_kind eşlemeli, got %q", q.conjuncts[1].col)
 	}

@@ -108,3 +108,12 @@ Each entry references the incident-shaped fix. Avoid re-living them.
   root service) it is the whole window in disguise — bound by TIME
   (PK-ordered slice), never by set membership. Regression pin:
   `trace_service_slice_test.go`.
+- **ClickHouse integer promotion bites the scanner** (v0.10.269):
+  `toUInt64(x) - ?` with a UInt64 bind is promoted by ClickHouse to
+  Int64 (unsigned minus unsigned is signed), and `intDiv(Int64,
+  UInt64)` stays Int64 — scanning it into a Go `uint64` fails at
+  runtime with "converting Int64 to *uint64 is unsupported" while
+  every unit test stays green (no CH in tests). Scan arithmetic
+  results into `int64` and clamp, or cast explicitly in SQL
+  (`toUInt64(intDiv(...))`). Same class as the tz-less DateTime64
+  bind: the type is decided by the server, not by the Go side.

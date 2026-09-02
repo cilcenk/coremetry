@@ -42,9 +42,11 @@ package vmetrics
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -53,6 +55,7 @@ import (
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/promapi"
+	"github.com/cilcenk/coremetry/internal/secretref"
 )
 
 // Settings is the persisted VictoriaMetrics read-backend config. One
@@ -69,6 +72,10 @@ type Settings struct {
 	// Token holds the bearer token. Never echoed in Snapshot() — the UI
 	// sees HasToken so the operator can tell one is configured.
 	Token string `json:"token,omitempty"`
+	// TokenRef — v0.10.273: `env:NAME` | `file:/path` (internal/secretref);
+	// doluysa saklı Token'a TERCİH edilir. Çözüm Configure'da (boot / PUT /
+	// yenileme), istekte IO yok; Test probe'u gönderilen ref'i anında çözer.
+	TokenRef string `json:"tokenRef,omitempty"`
 	// InsecureSkipVerify disables TLS chain verification. Named to match
 	// the four sibling settings blobs (tempo / thanos / devops /
 	// logstore) so the frontend form and the audit details read the same
@@ -98,6 +105,10 @@ type Snapshot struct {
 	AuthType           string `json:"authType,omitempty"`
 	HasToken           bool   `json:"hasToken"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"`
+	// v0.10.273 — referans görünür (secret değil); çözüm durumu rozet.
+	TokenRef      string `json:"tokenRef,omitempty"`
+	TokenResolved bool   `json:"tokenResolved"`
+	TokenError    string `json:"tokenError,omitempty"`
 	// Both v0.9.1164 knobs round-trip in full: neither is secret-adjacent,
 	// and the form has to be able to show the operator the floor they set
 	// (an input that cannot read its own stored value re-submits a blank on
@@ -112,9 +123,15 @@ type Snapshot struct {
 type Service struct {
 	mu  sync.RWMutex
 	cfg Settings
+	// v0.10.273 — tokenRef çözümü (Configure'da); testler getenv/readFile
+	// enjekte eder (influx/tempo/thanos deseni).
+	resolvedToken string
+	resolveErr    string
+	getenv        func(string) string
+	readFile      func(string) ([]byte, error)
 }
 
-func New() *Service { return &Service{} }
+func New() *Service { return &Service{getenv: os.Getenv, readFile: os.ReadFile} }
 
 // settingsStore is the narrow chstore interface this package persists
 // through — keeps vmetrics off the concrete *chstore.Store for config
@@ -179,6 +196,10 @@ func (s *Service) SavePersisted(ctx context.Context, store settingsStore, cfg Se
 	if s == nil || store == nil {
 		return nil
 	}
+	// v0.10.273 — düz token blob'a referans kılığında GİRMEZ.
+	if cfg.TokenRef != "" && !secretref.Valid(cfg.TokenRef) {
+		return errors.New(secretref.InvalidMessage)
+	}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
 		return err
@@ -198,6 +219,59 @@ func (s *Service) Configure(cfg Settings) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cfg = cfg
+	// v0.10.273 — referans burada çözülür (boot / PUT / yenileme).
+	s.resolvedToken, s.resolveErr = "", ""
+	if cfg.TokenRef != "" {
+		if v, err := secretref.ResolveWith(cfg.TokenRef, s.env(), s.files()); err != nil {
+			s.resolveErr = err.Error()
+		} else {
+			s.resolvedToken = v
+		}
+	}
+}
+
+func (s *Service) env() func(string) string {
+	if s.getenv == nil {
+		return os.Getenv
+	}
+	return s.getenv
+}
+
+func (s *Service) files() func(string) ([]byte, error) {
+	if s.readFile == nil {
+		return os.ReadFile
+	}
+	return s.readFile
+}
+
+// effectiveToken — v0.10.273: ref doluysa çözülmüş değer (çözülemediyse
+// BOŞ — saklı token'a sessizce düşülmez), yoksa saklı düz token. SAF.
+func effectiveToken(cfg Settings, resolved string) string {
+	if cfg.TokenRef != "" {
+		return resolved
+	}
+	return cfg.Token
+}
+
+// tokenFor — istek yolundaki token. cfg canlı yapılandırmaysa Configure'da
+// çözülmüş değer (IO yok); gönderilmiş bir form ise (Test probe'u, henüz
+// kaydedilmemiş ref) referans o an çözülür — probe bir IO'dur zaten.
+func (s *Service) tokenFor(cfg Settings) string {
+	if cfg.TokenRef == "" {
+		return cfg.Token
+	}
+	s.mu.RLock()
+	live := s.cfg.TokenRef == cfg.TokenRef
+	resolved := s.resolvedToken
+	s.mu.RUnlock()
+	if live {
+		return resolved
+	}
+	v, err := secretref.ResolveWith(cfg.TokenRef, s.env(), s.files())
+	if err != nil {
+		return ""
+	}
+	return v
 }
 
 // Snapshot returns the public config view (no token).
@@ -213,6 +287,9 @@ func (s *Service) Snapshot() Snapshot {
 		AuthType:                   s.cfg.AuthType,
 		HasToken:                   s.cfg.Token != "",
 		InsecureSkipVerify:         s.cfg.InsecureSkipVerify,
+		TokenRef:                   s.cfg.TokenRef,
+		TokenResolved:              s.cfg.TokenRef != "" && s.resolvedToken != "",
+		TokenError:                 s.resolveErr,
 		RateWindowFloorS:           s.cfg.RateWindowFloorS,
 		AllowUnfilteredPercentiles: s.cfg.AllowUnfilteredPercentiles,
 	}
@@ -310,7 +387,7 @@ func (s *Service) request(path string, params url.Values, cfg Settings) promapi.
 		Path:     path,
 		Params:   params,
 		AuthType: cfg.AuthType,
-		Token:    cfg.Token,
+		Token:    s.tokenFor(cfg), // v0.10.273 — ref > saklı token
 		SkipTLS:  cfg.InsecureSkipVerify,
 	}
 }

@@ -45,6 +45,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"sort"
@@ -88,6 +89,15 @@ type Settings struct {
 	// nobody chose. The floor never reaches increase() or the heatmap; see
 	// promRollupWindow.
 	RateWindowFloorS int `json:"rateWindowFloorS,omitempty"`
+	// WriteURL / WriteEnabled — v0.10.292 (VM tek metrik deposu, Dilim 1a):
+	// OTLP metrik ingest'inin HAM gövdesi VM'e de yazılır
+	// (POST <WriteURL>/opentelemetry/v1/metrics, protobuf+gzip). WriteURL boş
+	// → BaseURL (vmsingle'da okuma ve yazma aynı host; vmagent/vminsert
+	// ayrıysa ayrı URL). WriteEnabled kapalı = bugünkü davranış; çift yazım
+	// (Aşama 1) yalnız bayrakla açılır. Okuma tarafındaki Enabled'dan
+	// BAĞIMSIZ: yazımı açıp okumayı CH'de bırakmak kıyas dönemidir.
+	WriteURL     string `json:"writeUrl,omitempty"`
+	WriteEnabled bool   `json:"writeEnabled,omitempty"`
 	// AllowUnfilteredPercentiles lifts the bucket-scan guard
 	// (v0.9.1164). The DEFAULT — false, the zero value — is the PROTECTED
 	// state, which is the direction that matters: a fresh install, a
@@ -115,6 +125,9 @@ type Snapshot struct {
 	// every unrelated save — the aiTuning failure class).
 	RateWindowFloorS           int  `json:"rateWindowFloorS,omitempty"`
 	AllowUnfilteredPercentiles bool `json:"allowUnfilteredPercentiles,omitempty"`
+	// v0.10.292 — çift yazım alanları (secret değil, tam tur).
+	WriteURL     string `json:"writeUrl,omitempty"`
+	WriteEnabled bool   `json:"writeEnabled"`
 }
 
 // Service is the per-process VM client. Config is swapped under an
@@ -129,6 +142,9 @@ type Service struct {
 	resolveErr    string
 	getenv        func(string) string
 	readFile      func(string) ([]byte, error)
+	// writeHTTP — v0.10.292 — WriteOTLP'nin istemcisi; Configure'da ayara
+	// göre (TLS) kurulur, istek başına transport açılmaz.
+	writeHTTP *http.Client
 }
 
 func New() *Service { return &Service{getenv: os.Getenv, readFile: os.ReadFile} }
@@ -219,6 +235,7 @@ func (s *Service) Configure(cfg Settings) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cfg = cfg
+	s.writeHTTP = newWriteClient(cfg) // v0.10.292
 	// v0.10.273 — referans burada çözülür (boot / PUT / yenileme).
 	s.resolvedToken, s.resolveErr = "", ""
 	if cfg.TokenRef != "" {
@@ -292,6 +309,8 @@ func (s *Service) Snapshot() Snapshot {
 		TokenError:                 s.resolveErr,
 		RateWindowFloorS:           s.cfg.RateWindowFloorS,
 		AllowUnfilteredPercentiles: s.cfg.AllowUnfilteredPercentiles,
+		WriteURL:                   s.cfg.WriteURL,
+		WriteEnabled:               s.cfg.WriteEnabled,
 	}
 }
 
@@ -641,6 +660,15 @@ func (s *Service) Test(ctx context.Context, cfg Settings) error {
 	req := s.request("/api/v1/query", url.Values{"query": {"up"}}, cfg)
 	if _, err := promapi.QuerySeries(ctx, req); err != nil {
 		return err
+	}
+	// v0.10.292 — yazım açıksa yazma yolu da yoklanır: BOŞ bir
+	// ExportMetricsServiceRequest (0 bayt protobuf) — veri yazmaz, uç +
+	// kimlik + TLS'i ispatlar. Okuma geçip yazma düşerse operatör "Test
+	// yeşil ama VM boş" tuzağına düşmez.
+	if cfg.WriteEnabled {
+		if err := writeOTLPWith(ctx, newWriteClient(cfg), cfg, s.tokenFor(cfg), nil, false); err != nil {
+			return fmt.Errorf("write probe: %w", err)
+		}
 	}
 	return nil
 }

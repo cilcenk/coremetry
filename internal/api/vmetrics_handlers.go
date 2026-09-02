@@ -39,6 +39,10 @@ type vmSettingsInput struct {
 	// token's contract and the reason they are not folded into it.
 	RateWindowFloorS           int  `json:"rateWindowFloorS"`
 	AllowUnfilteredPercentiles bool `json:"allowUnfilteredPercentiles"`
+	// v0.10.292 — çift yazım (VM tek metrik deposu Dilim 1a). Düz değerler:
+	// boş writeUrl = BaseURL'e yaz; false = yazım kapalı (bugünkü davranış).
+	WriteURL     string `json:"writeUrl"`
+	WriteEnabled bool   `json:"writeEnabled"`
 }
 
 // mergeVMSettings validates the input and folds it over the CURRENT full
@@ -79,7 +83,16 @@ func mergeVMSettings(in vmSettingsInput, cur vmetrics.Settings) (vmetrics.Settin
 			"rateWindowFloorS must be 0 (use the built-in default) or between %d and %d seconds",
 			vmetrics.MinRateWindowFloorSec, vmetrics.MaxRateWindowFloorSec)
 	}
+	in.WriteURL = strings.TrimSpace(in.WriteURL)
+	if in.WriteURL != "" && !strings.HasPrefix(in.WriteURL, "http://") && !strings.HasPrefix(in.WriteURL, "https://") {
+		return vmetrics.Settings{}, "writeUrl must start with http:// or https://"
+	}
+	if in.WriteEnabled && in.WriteURL == "" && in.BaseURL == "" {
+		return vmetrics.Settings{}, "writeEnabled requires writeUrl or baseUrl"
+	}
 	cfg := vmetrics.Settings{
+		WriteURL:                   in.WriteURL,
+		WriteEnabled:               in.WriteEnabled,
 		Enabled:                    in.Enabled,
 		BaseURL:                    in.BaseURL,
 		AuthType:                   in.AuthType,
@@ -153,6 +166,10 @@ func (s *Server) putVMSettings(w http.ResponseWriter, r *http.Request) {
 		// that can answer who lifted it and when.
 		"rateWindowFloorS":           snap.RateWindowFloorS,
 		"allowUnfilteredPercentiles": snap.AllowUnfilteredPercentiles,
+		// v0.10.292 — çift yazımı kim/ne zaman açtı: audit'in cevaplaması
+		// gereken soru (VM'e giden trafiğin kaynağı).
+		"writeUrl":     snap.WriteURL,
+		"writeEnabled": snap.WriteEnabled,
 	})
 	// Action name follows the external-backend siblings
 	// (settings.tempo.update / settings.thanos.update /

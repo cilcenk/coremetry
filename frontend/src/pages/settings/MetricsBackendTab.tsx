@@ -35,6 +35,10 @@ export function MetricsBackendTab() {
   // Çeviri vmForm.ts'te ve tablo-testli; gerekçesi orada.
   const [rateWindowFloor, setRateWindowFloor] = useState('');
   const [allowUnfilteredPercentiles, setAllowUnfilteredPercentiles] = useState(false);
+  // v0.10.292 — çift yazım (VM tek metrik deposu Dilim 1a): OTLP metrik
+  // gövdesi VM'e de yazılır; boş URL = baseUrl.
+  const [writeUrl, setWriteUrl] = useState('');
+  const [writeEnabled, setWriteEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [test, setTest] = useState<VMTestResult | null>(null);
@@ -52,6 +56,8 @@ export function MetricsBackendTab() {
       setInsecureSkipVerify(!!s.insecureSkipVerify);
       setRateWindowFloor(vmFloorToForm(s.rateWindowFloorS));
       setAllowUnfilteredPercentiles(!!s.allowUnfilteredPercentiles);
+      setWriteUrl(s.writeUrl ?? '');
+      setWriteEnabled(!!s.writeEnabled);
     },
   );
 
@@ -64,6 +70,8 @@ export function MetricsBackendTab() {
     // değerler ("varsayılan taban", "koruma açık"), token'ın tersine.
     rateWindowFloorS: vmFloorToWire(rateWindowFloor),
     allowUnfilteredPercentiles,
+    writeUrl: writeUrl.trim() || undefined,
+    writeEnabled,
   });
 
   const save = async (e: FormEvent) => {
@@ -218,6 +226,27 @@ export function MetricsBackendTab() {
                 : 'Doluysa saklı token yerine bu kullanılır. env: Helm extraEnv + existingSecret (pod restart); file: mount edilmiş Secret. Test de bu referansı çözer.'} />
           </div>
         )}
+
+        {/* v0.10.292 — çift yazım (Aşama 1): OTLP metrik gövdesi VM'e de yazılır.
+            Okuma backend'inden BAĞIMSIZ: yazımı açıp okumayı ClickHouse'ta
+            bırakmak kıyas dönemidir (/api/metrics/compare, Dilim 1c). */}
+        <div style={{ marginBottom: 12 }}>
+          <Field label="Yazma URL'i (vminsert / vmagent; boşsa temel URL)" value={writeUrl}
+            onChange={e => setWriteUrl(e.target.value)}
+            placeholder="http://vminsert:8480/insert/0"
+            autoComplete="off"
+            hint="POST <url>/opentelemetry/v1/metrics — protobuf + gzip. Test, yazım açıkken bu ucu da yoklar." />
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <input type="checkbox" checked={writeEnabled}
+            onChange={e => setWriteEnabled(e.target.checked)} />
+          <span style={{ fontSize: 13 }}>
+            OTLP metriklerini VictoriaMetrics'e de yaz (çift yazım)
+            <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>
+              (ClickHouse yazımı sürer; kaynak seçimi yukarıdaki anahtarla)
+            </span>
+          </span>
+        </label>
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <input type="checkbox" checked={insecureSkipVerify}

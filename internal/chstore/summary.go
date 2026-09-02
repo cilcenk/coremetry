@@ -587,6 +587,81 @@ func (s *Store) GetServiceSummary5mFor(ctx context.Context, services []string, f
 // cost of scanning raw span rows. Buckets that haven't materialised yet
 // (under 5 minutes old) will be missing — callers should overlay raw
 // spans for the most recent window if they need second-fresh numbers.
+// serviceSummarySlotsSQL — v0.10.269 (kuyruk 1, /perf-triage): sparkline
+// okuması KOVA yerine SLOT bazında toplar. Ölçüm (lokal 2 shard, 101 servis,
+// query_log): 5-dk satır başına üç quantilesTDigestMerge + arrayElement ile
+// 24 s 8.6 s / 26.7k grup (CPU 0.7 s — süre shard→başlatıcı tDigest durum
+// aktarımında), 7 g 25 s tavanında 500. Slot GROUP BY (tek merge, ≤120
+// grup/servis): 24 s 2.4 s, 7 g 6.4 s. Slot indeksi intDiv ile epoch'a değil
+// pencere başına (origin) hizalanır ki api/sparkline_slots.go grid'iyle
+// bire bir örtüşsün (toStartOfInterval'ın origin parametresi 24.x+ ister,
+// prod CH sürümü bilinmiyor). optimize_distributed_group_by_sharding_key
+// BİLİNÇLİ YOK: ölçümde result_rows 26.722 → 26.802 (slot 9.042 → 9.095)
+// büyüdü = bazı servis grupları iki shard'da da var, itilen GROUP BY
+// kopya kısmi satır döndürür (yanlış sayı). SAF; summary_slots_test.go.
+func serviceSummarySlotsSQL(svcFilter bool) string {
+	f := ""
+	if svcFilter {
+		f = " AND service_name IN ?"
+	}
+	return `
+		SELECT
+		  service_name,
+		  intDiv(toUInt64(toUnixTimestamp(time_bucket)) - ?, ?) AS slot_k,
+		  countMerge(span_count_state)                      AS spans,
+		  countIfMerge(error_count_state)                   AS errors,
+		  sumMerge(duration_sum_state) / nullIf(countMerge(span_count_state), 0) / 1e6 AS avg_ms,
+		  quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state) AS qs
+		FROM service_summary_5m
+		WHERE time_bucket >= ? AND time_bucket < ?` + f + `
+		GROUP BY service_name, slot_k
+		ORDER BY service_name, slot_k
+		SETTINGS max_execution_time = 25`
+}
+
+// GetServiceSummarySlots — v0.10.269: servis başına slot (genişlik `slot`,
+// 5 dk'nın katı) satırları; BucketStart = slot başlangıcı (origin + k·slot).
+// Kuantiller slot içinde tDigest birleşimiyle (kova p99'larının maksimumu
+// değil). services boşsa tüm servisler.
+func (s *Store) GetServiceSummarySlots(ctx context.Context, services []string, from, to time.Time, slot time.Duration) ([]ServiceSummaryRow, error) {
+	from = alignBucketStart(from)
+	if slot < mvBucketWidth {
+		slot = mvBucketWidth
+	}
+	originSec := uint64(from.Unix())
+	widthSec := uint64(slot / time.Second)
+	args := []any{originSec, widthSec, from, to}
+	if len(services) > 0 {
+		args = append(args, services)
+	}
+	rows, err := s.telemetryReadConn().Query(ctx, serviceSummarySlotsSQL(len(services) > 0), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ServiceSummaryRow{}
+	for rows.Next() {
+		var r ServiceSummaryRow
+		// CH: UInt64 − UInt64 → Int64 (işaretli terfi); intDiv(Int64, UInt64)
+		// Int64 döner. uint64'e tarama sürücüde tip hatasıyla düşer (ilk 269
+		// deploy'unda 500). WHERE time_bucket >= from olduğundan k ≥ 0.
+		var k int64
+		var qs []float64
+		if err := rows.Scan(&r.Service, &k, &r.SpanCount, &r.ErrorCount, &r.AvgMs, &qs); err != nil {
+			return nil, err
+		}
+		if k < 0 {
+			k = 0
+		}
+		r.BucketStart = from.UnixNano() + k*slot.Nanoseconds()
+		if len(qs) == 3 {
+			r.P50Ms, r.P95Ms, r.P99Ms = qs[0]/1e6, qs[1]/1e6, qs[2]/1e6
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) GetServiceSummary5m(ctx context.Context, service string, from, to time.Time) ([]ServiceSummaryRow, error) {
 	// v0.9.555 — MV kovaları başlangıçlarıyla etiketli; [from,to]
 	// aralığını kapsamak için from kova başına inmeli, yoksa

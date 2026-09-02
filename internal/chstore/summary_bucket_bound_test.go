@@ -77,6 +77,11 @@ func servicesBucketReads(t *testing.T) []struct {
 			funcBody(t, "summary.go", "func (s *Store) GetServicesAggFiltered2(")},
 		{"GetServiceSummary5mFor (çok-servis sparkline)",
 			funcBody(t, "summary.go", "func (s *Store) GetServiceSummary5mFor(")},
+		// v0.10.269 — SQL saf kurucuda (serviceSummarySlotsSQL), hizalama
+		// yöntemde: iki gövde birlikte sözleşmeyi taşır.
+		{"GetServiceSummarySlots (v0.10.269 sparkline slot)",
+			funcBody(t, "summary.go", "func (s *Store) GetServiceSummarySlots(") +
+				funcBody(t, "summary.go", "func serviceSummarySlotsSQL(")},
 		{"GetServiceSummary5m (tek-servis grafik)",
 			funcBody(t, "summary.go", "func (s *Store) GetServiceSummary5m(")},
 	}

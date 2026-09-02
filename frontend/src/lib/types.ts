@@ -6708,3 +6708,30 @@ export interface ServicePodsResponse {
 // ── UI tercihleri (v0.10.248, DataTable/ContextBar audit §11) ────────────────
 /** GET /api/preferences/{key} — model null = kayıt yok/silinmiş. updatedAt unix ns. */
 export interface PreferenceResponse<M = unknown> { key: string; model: M | null; updatedAt?: number }
+
+// /api/metrics/compare (v0.10.294, VM Dilim 1c) — aynı sorgu iki kaynakta
+// (ch ↔ vm), nokta-nokta kıyas. Sınıf: identical | tolerated (rel ≤ 1e-9)
+// | mismatch; onlyA/onlyB kafes hizası (değer değil zaman farkı).
+export interface MetricCompareSeries {
+  groupKey: string[];
+  class: 'identical' | 'tolerated' | 'mismatch';
+  points: number;
+  onlyA: number;
+  onlyB: number;
+  mismatches: number;
+  maxAbs: number;
+  maxRel: number;
+  firstMismatchTime?: number;
+}
+export interface MetricCompareReport {
+  a: string;
+  b: string;
+  class: 'identical' | 'tolerated' | 'mismatch';
+  tolerance: number;
+  seriesA: number;
+  seriesB: number;
+  matched: number;
+  series: MetricCompareSeries[];
+  noteA?: string;
+  noteB?: string;
+}

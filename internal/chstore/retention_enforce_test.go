@@ -80,3 +80,29 @@ func TestHumanBytes(t *testing.T) {
 		}
 	}
 }
+
+// v0.10.263 (perf §7 madde 7, S2/S5) — MV depolarında partition düşürme hedefleri:
+// trace MV'leri spans+1 gün (spans kapalıysa yok), spanmetrics_1s 1 / _10s 2 gün;
+// DROP PARTITION SQL'i inner adı + ON CLUSTER eki ile.
+func TestMVRetentionTargets(t *testing.T) {
+	got := mvRetentionTargets(30)
+	want := map[string]int{"spanmetrics_1s": 1, "spanmetrics_10s": 2, "trace_summary_5m": 31, "trace_service_index_5m": 31}
+	if len(got) != len(want) {
+		t.Fatalf("hedef sayısı %d, istenen %d: %+v", len(got), len(want), got)
+	}
+	for _, g := range got {
+		if want[g.mv] != g.days {
+			t.Errorf("%s: %d gün, istenen %d", g.mv, g.days, want[g.mv])
+		}
+	}
+	off := mvRetentionTargets(0)
+	if len(off) != 2 {
+		t.Errorf("spans retention kapalıyken yalnız spanmetrics: %+v", off)
+	}
+	if got := mvDropPartitionSQL("`.inner_id.abc`", "20260901", " ON CLUSTER `c`"); got != "ALTER TABLE `.inner_id.abc` ON CLUSTER `c` DROP PARTITION 20260901" {
+		t.Errorf("sql: %s", got)
+	}
+	if stripBackticks("`.inner_id.abc`") != ".inner_id.abc" {
+		t.Error("backtick temizliği")
+	}
+}

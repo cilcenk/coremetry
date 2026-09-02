@@ -58,7 +58,11 @@ import { Combobox } from '@/components/Combobox';
 import { mergeTraceExtras, missingExtraKeys } from '@/lib/traceExtrasMerge';
 // v0.9.841 — kolon SIRASI ve varsayılan attr seti tek yerde, saf ve
 // testli (traceColumns.ts). İkisi de karar; mekanik değil.
-import { DEFAULT_TRACE_COLUMNS, traceColumnOrder } from '@/lib/traceColumns';
+import { DEFAULT_TRACE_COLUMNS, FIXED_COLS, traceColumnOrder } from '@/lib/traceColumns';
+import { useContextParams, type ContextPatch } from '@/hooks/useContextParams';
+import { useTablePrefs } from '@/lib/queries/prefs';
+import { parseColsParam } from '@/lib/columnModel';
+import type { ContextDim } from '@/lib/contextParams';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, FilterGroup, SpanMetricSeries } from '@/lib/types';
 import { traceHref } from '@/lib/traceHref';
@@ -110,7 +114,13 @@ const GROUP_OPTIONS: { value: GroupBy; label: string }[] = [
 const COL_LABEL: Record<string, string> = {
   time: 'Start time', service: 'Service', operation: 'Name',
   duration: 'Duration', spans: 'Spans', status: 'Status',
+  // v0.10.251 — kimlik küçük harf (prod yazımı: channel_code), ETİKET
+  // operatörün yazımı (audit soru 5, önerilen varsayılan).
+  channel_code: 'CHANNEL_CODE', function_code: 'FUNCTION_CODE',
 };
+// v0.10.251 — ContextBar'ın bu sayfada uyguladığı boyutlar; namespace/compare
+// uygulanmıyor (backend FilterExpr yok — audit soru 8 açık) → çubukta devre dışı.
+const TRACES_CONTEXT_DIMS: ContextDim[] = ['range', 'env', 'cluster', 'service'];
 // Default widths are tuned so the fixed columns PLUS the attribute columns
 // fit a 1440px laptop without horizontal scroll (v0.9.243 — operator-reported:
 // "columns don't fit, I always have to scroll right"). Budget at 1440px:
@@ -204,6 +214,19 @@ function TracesPageInner() {
   // sıfırlanır (onChange; setPage sonradan tanımlı — closure çağrı
   // anında değerlendirilir, TDZ yok).
   const { range, setRange, handleZoom, handleZoomReset, zoomDepth } = usePageZoomRange('30m', () => setPage(0));
+  // v0.10.251 — ContextBar (Topbar yuvası). Aralık sahibi usePageZoomRange
+  // KALIR (sayfa sıfırlama + zoom); çubuğun set()'i aralığı oraya, kalanı
+  // URL'ye (cluster/service) yönlendirir. İki yazıcı aynı useUrlRange
+  // kanalından geçer → hemfikir. service: URL → state içe aktarımı sig ile.
+  const ctx = useContextParams({ defaultPreset: '30m', applies: TRACES_CONTEXT_DIMS });
+  const ctxForBar = useMemo(() => ({
+    ...ctx,
+    set: (patch: ContextPatch) => {
+      if (patch.range !== undefined) setRange(patch.range);
+      const { range: _r, ...rest } = patch;
+      if (Object.keys(rest).length) ctx.set(rest);
+    },
+  }), [ctx, setRange]);
   // Global env filter (v0.8.383) — written by the Topbar EnvPicker,
   // consumed here as a first-class server param on the list/aggregate
   // fetches (+ volume strip + CSV). /traces is the Phase-1 consumer;
@@ -278,6 +301,14 @@ function TracesPageInner() {
     rootOnly: parseRootOnlyParam(searchParams.get('rootOnly')).rootOnly,
     requireServices: (searchParams.get('services') ?? '').split(',').map(s => s.trim()).filter(Boolean),
   }));
+  // v0.10.251 — ContextBar servis seçimi URL'ye yazar; sayfa durumu sig
+  // değişince içe aktarır (tek yönlü okuma bug sınıfı 256/265/267).
+  useEffect(() => {
+    const svc = ctx.params.service;
+    setFilter(f => (f.service === svc ? f : { ...f, service: svc }));
+    setPage(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.sig]);
   const [draft, setDraft] = useState(filter);
   // v0.9.1372 — sessiz root geri dönüşü KURULUMU. `?rootOnly=auto` ile gelen
   // pivotlar (endpoint / database) root seçili açılır; liste boş dönerse
@@ -322,6 +353,33 @@ function TracesPageInner() {
   // fresh /traces visit restores it without a URL.
   useEffect(() => {
     try { localStorage.setItem(EXTRA_COLS_LS_KEY, JSON.stringify(extraCols)); } catch { /* private mode */ }
+  }, [extraCols]);
+  // v0.10.251 — sunucu tercihi (/api/preferences/traces-list, audit §11).
+  // Öncelik: URL ?cols= > sunucu > localStorage > varsayılan. URL'de cols
+  // yokken sunucu modeli BİR KEZ benimsenir (prefs çözülünce); değişimler
+  // debounce'lu PUT ile sunucuya (genişlikler hariç). `cols=` kendi-kendine-
+  // yazım yarışı: prefs bekliyorken ve URL'de cols yokken URL effect'i
+  // cols yazmaz — aksi hâlde URL > sunucu önceliği sunucu tercihini sonsuza
+  // dek erişilmez kılardı.
+  const prefs = useTablePrefs('traces-list');
+  const urlHadCols = useRef(!!parseColsParam(searchParams.get('cols')));
+  const prefsAdopted = useRef(false);
+  const colsOwned = prefs.model !== undefined || urlHadCols.current;
+  useEffect(() => {
+    if (prefs.model === undefined || prefsAdopted.current) return;
+    prefsAdopted.current = true;
+    if (urlHadCols.current || !prefs.model) return;
+    const fixed = new Set<string>(FIXED_COLS);
+    const extras = prefs.model.order.filter(id => !fixed.has(id) && !prefs.model!.hidden.includes(id)).slice(0, 8);
+    if (extras.length) setExtraCols(extras);
+  }, [prefs.model]);
+  useEffect(() => {
+    if (!prefsAdopted.current) return;
+    const fixed = new Set<string>(FIXED_COLS);
+    const serverExtras = prefs.model ? prefs.model.order.filter(id => !fixed.has(id)) : null;
+    if (serverExtras && serverExtras.join(',') === extraCols.join(',')) return;
+    prefs.save({ v: 1, order: traceColumnOrder(extraCols), hidden: [], sig: 'traces-list' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [extraCols]);
 
 
@@ -414,13 +472,13 @@ function TracesPageInner() {
       // single source of truth and the backend's prefer-filterGroup rule is moot.
       ['filters',  advGroupParam ? '' : encodeFilters(advFilters)],
       ['filterGroup', advGroupParam],
-      ['cols',     extraCols.join(',')],
+      ['cols',     colsOwned ? extraCols.join(',') : (new URLSearchParams(window.location.search).get('cols') ?? '')],
     ]);
     const target = qs ? `?${qs}` : '';
     if (typeof window !== 'undefined' && target !== window.location.search) {
       navigate(`/traces${target}`, { preventScrollReset: true, replace: true });
     }
-  }, [range, env, view, viz, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, debouncedHaving, filter, advFilters, advGroupParam, extraCols, navigate]);
+  }, [range, env, view, viz, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, debouncedHaving, filter, advFilters, advGroupParam, extraCols, colsOwned, navigate]);
 
   // ── List fetch ───────────────────────────────────────────────────────────
   // v0.9.636 — pencere TEK yerde hizalanıyor: liste, hacim şeridi ve
@@ -902,6 +960,9 @@ function TracesPageInner() {
     rows: displayRows,
     initialSort: { id: sort, dir: order },
     onOpen: (t) => openTrace(t),
+    // v0.10.251 — sunucu demeti: j son satırda sonraki sayfa, k ilk satırda
+    // önceki (onPageBoundary v0.9.1018 — bu sayfa hiç bağlamamıştı).
+    server: { page, pageSize: 50, hasMore, onPage: setPage },
     // v0.9.1003 (etkileşim denetimi C3) — `searchRef` BİLEREK verilmiyor.
     // useDataTable, onOpen + searchRef birlikte geldiğinde İKİNCİ bir `/`
     // bindingi kaydediyor (DataTable.tsx:213) ve kısayol yığınının tepesi
@@ -934,7 +995,7 @@ function TracesPageInner() {
     <>
       {/* v0.9.430 — Topbar seçimi out-of-band: hook yığını kendisi
           geçersizleştirir, elle temizlik gerekmez. */}
-      <Topbar title="Traces" range={range} onRangeChange={setRange} envApplies />
+      <Topbar title="Traces" context={{ ctx: ctxForBar, envApplies: true }} />
       <PageShell>
         {/* v0.9.304 (operatör) — Trace ID araması sayfanın SAĞ ÜSTÜNE,
             zaman aralığı seçicisinin hemen altına taşındı. Filtre satırının

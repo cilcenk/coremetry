@@ -37,7 +37,7 @@ import type {
   OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
   ExceptionTriageConfig, ProblemPriorityConfig, FailureSLOConfig, MetricExclusions, AnomalyTrackedConfig,
   InsightKind, InsightResponse, InsightSignal, InsightLink, InsightChartSpec,
-  AnomalySensitivityConfig, TailPoint } from './types';
+  AnomalySensitivityConfig, TailPoint , MetricCompareReport } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // withMetricSource — v0.9.1151 deneme modu. Sayfa URL'sindeki
 // ?metricsrc=vm|ch işaretini metrik uçlarının sorgu dizesine basar. TEK
@@ -649,6 +649,10 @@ export const api = {
   // services: comma-separated allow-list — server caps to 200 to keep
   // the payload small even on 10k+ service installs.
   // v0.10.286 — maxSlots: istemci piksel bütçesi (lib/sparkline sparkMaxSlotsForWidth).
+  // v0.10.294 — /api/metrics/compare (admin): /api/metrics/query parametreleri,
+  // ch ↔ vm nokta-nokta kıyas raporu (Aşama 2 doğrulama aracı).
+  metricsCompare: (params: Record<string, string | number | boolean | undefined>) =>
+    get<MetricCompareReport>(`/api/metrics/compare?${qs(params)}`),
   serviceSparklines: (r: RangeParams, services?: string[], maxSlots?: number) =>
     get<Record<string, SparklineBucket[]> | null>(
       `/api/services/sparklines?${qs({ ...r, services: services?.join(','), maxSlots })}`),

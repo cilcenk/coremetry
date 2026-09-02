@@ -87,3 +87,24 @@ Each entry references the incident-shaped fix. Avoid re-living them.
   landing) until the collector is restarted. Fix: explicit
   `maxUnavailable: 0` on the Deployment so endpoints never hit zero
   (v0.8.193). Pre-fix installs: restart the collector once.
+- **Service filter + long window: stage 2 merged the whole window**
+  (v0.10.265, operator-reported on prod 7d + service + hasError, time
+  sort: every "Next" 40+ s and a "shortened to …" badge). The MV list
+  path had two service shapes and both were linear in the window:
+  post-agg filters (hasError/rootOnly/min/max) ran stage 2 with
+  `trace_id GLOBAL IN (index GROUP BY trace_id)` — the set prunes
+  nothing when the service touches most traces (gateway: 409k of 7d
+  traces locally), so trace_summary_5m was merged end to end (1.7-2.0M
+  rows, 12 s cap, two halvings); the plain shape ran `GROUP BY
+  trace_id ORDER BY maxMerge(last_seen)` over the whole service index
+  (800k rows, 10-15 s) and ignored `order=asc`. Fix: a recency slice
+  on `trace_service_index_5m` in primary-key order (service_name,
+  time_bucket, trace_id) with `optimize_read_in_order` and no GROUP
+  BY — the same contract as the no-service `traceRecencySlice` —
+  feeding the already-bounded stage 2 (`trace_id IN (ids)` + floor at
+  the cut for desc; asc keeps the window floor because its ids sit at
+  the window start). Lesson: a `trace_id IN (subquery)` bound is only a
+  bound if the subquery is small; when the entity is a hub (gateway,
+  root service) it is the whole window in disguise — bound by TIME
+  (PK-ordered slice), never by set membership. Regression pin:
+  `trace_service_slice_test.go`.

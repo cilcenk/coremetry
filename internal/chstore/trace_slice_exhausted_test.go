@@ -217,7 +217,9 @@ func TestStage2AlwaysHasATraceIDBound(t *testing.T) {
 		holders         string
 		wantResolve     bool // must build a bound before running
 	}{
-		{"service path carries its own subquery bound", true, "", false},
+		// v0.10.265 — servis yolu artık alt-sorgu DEĞİL, dilimden gelen id
+		// listesi taşır (holders); serviceSubquery sütunu tarihsel.
+		{"service path — v0.10.265 slice sets the ids", false, "?,?,?", false},
 		{"normal no-service page — Stage 1 set the ids", false, "?,?,?", false},
 		{
 			// THE case: a sort key, early return or refactor that leaves

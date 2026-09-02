@@ -133,9 +133,103 @@ func (s *Store) traceRecencySlice(
 		budget = traceSliceMaxRows
 	}
 	sql := s.traceSliceScanSQL(f.Order, errorsOnly)
+	return s.scanIDSlice(ctx, sql, []any{f.From, f.To}, f.From, want, budget)
+}
 
+// traceServiceSliceScanSQL — v0.10.265 (operatör-raporlu, prod 7g + servis +
+// hasError "Next çok bekliyorum"): servisli listenin 1. aşaması. Eskiden iki
+// şekil vardı ve ikisi de pencereyle LİNEER'di: (a) post-agg filtreli
+// (hasError/rootOnly/min/max) → stage 2 `trace_id GLOBAL IN (index GROUP BY
+// trace_id)` ile TÜM pencerenin trace_summary_5m'ini birleştiriyordu
+// (lokal 7g: 1.7-2.0M satır, 12 s tavan, iki yarılama → 40+ s ve "shortened"
+// rozeti); (b) düz → `GROUP BY trace_id ORDER BY maxMerge(last_seen)` tüm
+// servis indeksini toplayıp sıralıyordu (lokal 7g: 800k satır, 10-15 s) ve
+// f.Order'ı yok sayıyordu (asc = "en yeni 200 içinde en eski").
+//
+// Şimdi: trace_service_index_5m ORDER BY (service_name, time_bucket,
+// trace_id) — servis + zaman aralığı + `ORDER BY time_bucket` birincil
+// anahtar sırasıdır; optimize_read_in_order ile akış LIMIT'te durur, GROUP
+// BY yok. traceRecencySlice'ın (servissiz yol) servisli ikizi; aynı kesim /
+// tükenme sözleşmesi (scanIDSlice). Yön f.Order'dan gelir: asc = pencerenin
+// EN ESKİ id'leri. max_execution_time 10 (traceSliceScanSQL ile aynı gerekçe).
+func (s *Store) traceServiceSliceScanSQL(order string) string {
+	dir := "DESC"
+	if order == "asc" {
+		dir = "ASC"
+	}
+	return `
+		SELECT trace_id, time_bucket
+		FROM trace_service_index_5m
+		WHERE service_name = ? AND time_bucket >= ? AND time_bucket < ?
+		ORDER BY time_bucket ` + dir + `
+		LIMIT ?
+		SETTINGS max_execution_time = 10,
+		         optimize_read_in_order = 1,
+		         ` + s.shardSkipSetting()
+}
+
+// traceServiceSlice — servisin penceredeki en yeni (asc: en eski) `want`
+// farklı trace id'si + kesim kovası; sözleşme traceRecencySlice ile aynı.
+func (s *Store) traceServiceSlice(
+	ctx context.Context, f TraceFilter, want int,
+) (ids []any, cut time.Time, exhausted bool, err error) {
+	if want <= 0 || f.Service == "" {
+		return nil, time.Time{}, false, nil
+	}
+	budget := want * traceSliceOverprovision
+	if budget > traceSliceMaxRows {
+		budget = traceSliceMaxRows
+	}
+	sql := s.traceServiceSliceScanSQL(f.Order)
+	return s.scanIDSlice(ctx, sql, []any{f.Service, f.From, f.To}, f.From, want, budget)
+}
+
+// serviceSlicePlan — v0.10.265: servisli 1. aşamanın bütçesi + yönü. SAF.
+//
+//	· sıralama süre/spans/durum/servis/operasyon (traceSortRecencySliced) →
+//	  en yeni traceRecencySliceN id, DESC (servissiz yolla aynı "newest-N
+//	  içinde sırala" sözleşmesi; UI RankedWithin ipucunu gösterir)
+//	· post-agg filtre (hasError/rootOnly/min/max; indeks MV'de süzülemez,
+//	  stage 2 HAVING'i süzer) → yine traceRecencySliceN üst-küme, yön f.Order
+//	· düz zaman → sayfa bütçesi (traceStage1Budget), yön f.Order; sayfa id
+//	  tavanının ötesindeyse tavan (eski davranış: boş sayfa)
+func serviceSlicePlan(f TraceFilter, pageLimit, stage1Limit int) (want int, order string, sliced bool) {
+	order = f.Order
+	ranked := traceSortRecencySliced(f.Sort)
+	sliced = ranked || tracePostAggFiltered(f)
+	if ranked {
+		order = "desc"
+	}
+	if sliced {
+		return traceRecencySliceN, order, true
+	}
+	if b, ok := traceStage1Budget(f.Offset, pageLimit, stage1Limit); ok {
+		return b, order, false
+	}
+	return traceStage2MaxIDs, order, false
+}
+
+// serviceStage2Floor — v0.10.265: stage 2 tabanı. DESC'te kesim (dilimin en
+// eski kovası; runTraceStage2 lookback + kırpma tespiti uygular). ASC'te
+// id'ler pencerenin BAŞINDA durur — kesim (en yeni okunan kova) taban olsaydı
+// id'lerin kendi satırları düşerdi → sıfır (taban f.From kalır). Tükenmişse
+// dilim = pencere, daraltma yok. SAF.
+func serviceStage2Floor(order string, cut time.Time, exhausted bool) time.Time {
+	if order == "asc" || exhausted {
+		return time.Time{}
+	}
+	return cut
+}
+
+// scanIDSlice — dilim okuma döngüsü (v0.10.265'te traceRecencySlice'tan
+// çıkarıldı; iki dilim de aynı sözleşmeyi paylaşır). lead = LIMIT'ten önceki
+// bind argümanları; from = tükenmede kesimin çöktüğü taban.
+func (s *Store) scanIDSlice(
+	ctx context.Context, sql string, lead []any, from time.Time, want, budget int,
+) (ids []any, cut time.Time, exhausted bool, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
-		rows, qerr := s.conn.Query(ctx, sql, f.From, f.To, budget)
+		args := append(append([]any{}, lead...), budget)
+		rows, qerr := s.conn.Query(ctx, sql, args...)
 		if qerr != nil {
 			return nil, time.Time{}, false, fmt.Errorf("trace slice: %w", qerr)
 		}
@@ -196,7 +290,7 @@ func (s *Store) traceRecencySlice(
 			// Genuinely no more rows: the slice does cover the window,
 			// so the ranking really is global and Stage 2 may not
 			// narrow below what the caller asked for.
-			cut = f.From
+			cut = from
 		}
 		if exhausted || gotEnough {
 			return ids, cut, exhausted, nil

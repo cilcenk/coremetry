@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/cilcenk/coremetry/internal/chstore"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -118,7 +119,9 @@ func (s *Server) execSQL(w http.ResponseWriter, r *http.Request) {
 	// OvercommitTracker would kill a BYSTANDER query instead. Reads the
 	// boot-resolved effective ceiling so the playground is held to the
 	// same proportion as every other read path.
-	ctx := clickhouse.Context(r.Context(), clickhouse.WithSettings(clickhouse.Settings{
+	// v0.10.254 — ayarlar tek kapıdan (chstore.WithQuerySettings) + etiket:
+	// query_log'da log_comment = 'admin:playground'.
+	ctx := chstore.WithQuerySettings(chstore.WithQueryTag(r.Context(), "admin:playground"), clickhouse.Settings{
 		"readonly":           2,
 		"max_execution_time": 60,
 		"max_result_rows":    10_000,
@@ -127,7 +130,7 @@ func (s *Server) execSQL(w http.ResponseWriter, r *http.Request) {
 		// async insert (it can't past readonly=2, but defence
 		// in depth), make sure it won't be silently coalesced.
 		"async_insert": 0,
-	}))
+	})
 
 	start := time.Now()
 	rows, err := s.store.Conn().Query(ctx, body.Query)

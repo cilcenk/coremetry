@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"github.com/cilcenk/coremetry/internal/chstore"
 	"log"
 	"net/http"
 	"sort"
@@ -215,7 +216,12 @@ const staleFactor = 3
 // entries only advanced on a full miss at ≥3×TTL (a "30s-fresh"
 // surface frozen for 90s).
 func (s *Server) serveCached(w http.ResponseWriter, r *http.Request, key string, ttl time.Duration, fn func(ctx context.Context) (any, error)) {
-	body, tier, err := s.cachedJSON(r.Context(), key, ttl, r.URL.Query().Get("refresh") == "1", fn)
+	// v0.10.254 (perf §7 madde 8) — her CH sorgusuna log_comment =
+	// route:<pattern>. fn sarmalanır ki SWR arka-plan tazelemesi (kendi
+	// Background ctx'i) de etiketi taşısın.
+	tag := chstore.RouteQueryTag(r.Pattern, r.URL.Path)
+	tagged := func(ctx context.Context) (any, error) { return fn(chstore.WithQueryTag(ctx, tag)) }
+	body, tier, err := s.cachedJSON(r.Context(), key, ttl, r.URL.Query().Get("refresh") == "1", tagged)
 	if err != nil {
 		writeErr(w, err)
 		return

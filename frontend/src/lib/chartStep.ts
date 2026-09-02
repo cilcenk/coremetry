@@ -114,3 +114,18 @@ export function heatmapBucketCount(cols = 1): number {
   const px = quantizeWidth(content / Math.max(1, cols));
   return Math.max(40, Math.min(240, Math.round(px / 12)));
 }
+
+// ── v0.10.287 (chart audit D2 / Dilim 1.6): Thanos trend uçlarının bütçesi ──
+// /api/clusters/deploy-trend + namespaces/pods-trend ?maxDataPoints= —
+// sunucu (internal/thanos TrendMaxDataPointsRungs) bu basamaklara snap eder;
+// iki liste Go testiyle çivili (TestThanosMDPRungsMatchFrontend). 480 =
+// merdivenin bugünkü tavanı (bütçesiz istemci aynı seriyi görür).
+export const THANOS_MDP_RUNGS = [120, 240, 480];
+
+// thanosMaxDataPoints — panelMaxDataPoints(cols) basamağa YUKARI yuvarlanır
+// (istemci en az istediği kadar nokta alır); tavan 480.
+export function thanosMaxDataPoints(cols: number): number {
+  const want = panelMaxDataPoints(cols);
+  for (const r of THANOS_MDP_RUNGS) if (want <= r) return r;
+  return THANOS_MDP_RUNGS[THANOS_MDP_RUNGS.length - 1];
+}

@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { thanosMaxDataPoints } from '@/lib/chartStep';
 import { THANOS_MAX_WINDOW_NS } from '@/lib/thanosWindow';
 import { useQuery } from '@tanstack/react-query';
 import { MultiLineChart, type DeployMarker } from '@/components/MultiLineChart';
@@ -61,9 +62,10 @@ export function ThanosTrendPanel({ cluster, namespace, pod, row, fromNs, toNs, o
     staleTime: 60_000,
     enabled: single,
   });
+  const podsMdp = thanosMaxDataPoints(1); // v0.10.287 — sunucu nokta bütçesi
   const multiQ = useQuery({
-    queryKey: ['cluster-ns-pods-trend', cluster, namespace, fromNs, toNs],
-    queryFn: () => api.clusterNamespacePodsTrend(cluster, namespace, fromNs, toNs),
+    queryKey: ['cluster-ns-pods-trend', cluster, namespace, fromNs, toNs, podsMdp],
+    queryFn: () => api.clusterNamespacePodsTrend(cluster, namespace, fromNs, toNs, podsMdp),
     staleTime: 60_000,
     enabled: !single,
   });

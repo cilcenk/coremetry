@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { thanosMaxDataPoints } from '@/lib/chartStep';
 import { clampSuffix } from '@/lib/thanosWindow';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -52,14 +53,16 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
   const [cpuByPod, setCpuByPod] = useState(true);
   const [memByPod, setMemByPod] = useState(true);
   const trendOK = chartCluster !== '' && effNs !== '' && effDeploy !== '';
+  // v0.10.287 — sunucu nokta bütçesi (iki sütunlu grid); anahtara girer.
+  const trendMdp = thanosMaxDataPoints(2);
   const cpuTrendQ = useQuery({
-    queryKey: ['deploy-trend', chartCluster, effNs, effDeploy, 'cpu', cpuByPod, cFrom, cTo],
-    queryFn: () => api.clusterDeployTrend(chartCluster, effNs, effDeploy, 'cpu', cpuByPod, cFrom, cTo),
+    queryKey: ['deploy-trend', chartCluster, effNs, effDeploy, 'cpu', cpuByPod, cFrom, cTo, trendMdp],
+    queryFn: () => api.clusterDeployTrend(chartCluster, effNs, effDeploy, 'cpu', cpuByPod, cFrom, cTo, trendMdp),
     staleTime: 60_000, retry: 1, enabled: trendOK,
   });
   const memTrendQ = useQuery({
-    queryKey: ['deploy-trend', chartCluster, effNs, effDeploy, 'mem', memByPod, cFrom, cTo],
-    queryFn: () => api.clusterDeployTrend(chartCluster, effNs, effDeploy, 'mem', memByPod, cFrom, cTo),
+    queryKey: ['deploy-trend', chartCluster, effNs, effDeploy, 'mem', memByPod, cFrom, cTo, trendMdp],
+    queryFn: () => api.clusterDeployTrend(chartCluster, effNs, effDeploy, 'mem', memByPod, cFrom, cTo, trendMdp),
     staleTime: 60_000, retry: 1, enabled: trendOK,
   });
 

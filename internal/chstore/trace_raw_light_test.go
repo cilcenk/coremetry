@@ -108,3 +108,42 @@ func TestNarrowOnExhaustion(t *testing.T) {
 		t.Fatal("timeout is resource exhaustion too")
 	}
 }
+
+// v0.10.238 — rootOnly kök kontrolü 1. aşamanın adayları üstünde (sınırlı),
+// tüm pencerede değil: aday penceresi ve sayfa kesimi sözleşmesi.
+func TestRawLightStage1Window(t *testing.T) {
+	if l, o := rawLightStage1Window(100, 51, false); l != 51 || o != 100 {
+		t.Fatalf("no post-filter → page itself: %d/%d", l, o)
+	}
+	if l, o := rawLightStage1Window(0, 51, true); l != 204 || o != 0 {
+		t.Fatalf("post-filter: 4×(limit+1) ≥ 200 from offset 0: %d/%d", l, o)
+	}
+	if l, _ := rawLightStage1Window(0, 11, true); l != 200 {
+		t.Fatalf("floor 200: %d", l)
+	}
+	if l, _ := rawLightStage1Window(5000, 51, true); l != 5204 {
+		t.Fatalf("deep page: offset + 4×(limit+1): %d", l)
+	}
+	if l, _ := rawLightStage1Window(9000, 51, true); l != traceStage2MaxIDs {
+		t.Fatalf("cap at traceStage2MaxIDs: %d", l)
+	}
+}
+
+func TestApplyRootFilterPage(t *testing.T) {
+	ids := []string{"a", "b", "c", "d", "e", "f"}
+	hasRoot := map[string]bool{"a": true, "c": true, "d": true, "f": true}
+	got := applyRootFilterPage(ids, hasRoot, 0, 3)
+	if len(got) != 3 || got[0] != "a" || got[1] != "c" || got[2] != "d" {
+		t.Fatalf("order kept, rootless dropped, limit+1 taken: %v", got)
+	}
+	got = applyRootFilterPage(ids, hasRoot, 2, 3)
+	if len(got) != 2 || got[0] != "d" || got[1] != "f" {
+		t.Fatalf("offset applies AFTER filtering: %v", got)
+	}
+	if got := applyRootFilterPage(ids, hasRoot, 9, 3); got != nil {
+		t.Fatalf("offset past the end → empty: %v", got)
+	}
+	if got := applyRootFilterPage(ids, map[string]bool{}, 0, 3); got != nil {
+		t.Fatalf("nothing has a root → empty: %v", got)
+	}
+}

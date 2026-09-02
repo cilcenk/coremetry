@@ -2296,6 +2296,18 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	//     co-occur — what the backtrace 'Traces' drill-in needs.
 	havingParts := []string{}
 	havingArgs := []any{}
+	// v0.10.238 — rootOnly'nin servisli dalı trace_summary_5m'i TÜM pencere ×
+	// TÜM servisler için GROUP BY trace_id + string argMax durumuyla tarayıp
+	// GLOBAL IN geçici tablosu kurar: ölçüldü (lokal, 1 gün, aynı yüklem)
+	// 50.5 MiB / 2150 ms vs kök yüklemi olmadan 0.8 MiB / 269 ms (62×).
+	// Prod 12 saat = milyonlarca trace → 241. Hafif 1. aşama bu HAVING'i
+	// TAŞIMAZ; kök kontrolü adayların (≤ traceStage2MaxIDs id) üstünde
+	// sınırlı bir MV sorgusuyla SONRADAN yapılır (filterRootTraces) — anlam
+	// aynı (kök herhangi bir serviste olabilir, v0.10.107), maliyet id
+	// sayısıyla sınırlı.
+	rootPostFilter := f.RootOnly && (f.Service != "" || len(f.RequireServices) > 0)
+	lightHavingParts := []string{}
+	lightHavingArgs := []any{}
 	if f.RootOnly {
 		// "Root traces only" — strict: a real root span must
 		// be present AND complete. A complete root has:
@@ -2325,6 +2337,8 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		} else {
 			havingParts = append(havingParts,
 				"countIf((parent_id = '' OR parent_id = '0000000000000000') AND name != '' AND service_name != '') > 0")
+			lightHavingParts = append(lightHavingParts,
+				"countIf((parent_id = '' OR parent_id = '0000000000000000') AND name != '' AND service_name != '') > 0")
 		}
 	}
 	for _, svc := range f.RequireServices {
@@ -2333,6 +2347,8 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		}
 		havingParts = append(havingParts, "countIf(service_name = ?) > 0")
 		havingArgs = append(havingArgs, svc)
+		lightHavingParts = append(lightHavingParts, "countIf(service_name = ?) > 0")
+		lightHavingArgs = append(lightHavingArgs, svc)
 	}
 	// v0.5.369 — search at trace-level via HAVING so a trace
 	// matches as long as ANY of its spans hits the substring,
@@ -2355,10 +2371,16 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		// single-needle OR-chain; single-word queries behave identically.
 		havingParts = append(havingParts, "countIf("+pred+") > 0")
 		havingArgs = append(havingArgs, pargs...)
+		lightHavingParts = append(lightHavingParts, "countIf("+pred+") > 0")
+		lightHavingArgs = append(lightHavingArgs, pargs...)
 	}
 	havingSQL := ""
 	if len(havingParts) > 0 {
 		havingSQL = " HAVING " + strings.Join(havingParts, " AND ")
+	}
+	lightHavingSQL := ""
+	if len(lightHavingParts) > 0 {
+		lightHavingSQL = " HAVING " + strings.Join(lightHavingParts, " AND ")
 	}
 
 	// Total-count cost is bounded by the user's choice. Default for
@@ -2494,14 +2516,15 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		// cevaptır, daha yavaşı değil; o yüzden sessiz değil.
 		from := f.From
 		var ids []string
+		s1Limit, s1Offset := rawLightStage1Window(f.Offset, pageLimit, rootPostFilter)
 		for attempt := 0; ; {
 			lf := f
 			lf.From = from
 			lwc := buildGetTracesWhere(lf, s.clusterExpr())
-			stage1SQL, _ := traceRawStage1LightSQL(lwc.sql(), havingSQL, f.Sort, order)
+			stage1SQL, _ := traceRawStage1LightSQL(lwc.sql(), lightHavingSQL, f.Sort, order)
 			s1args := append([]any{}, lwc.args...)
-			s1args = append(s1args, havingArgs...)
-			s1args = append(s1args, pageLimit, f.Offset)
+			s1args = append(s1args, lightHavingArgs...)
+			s1args = append(s1args, s1Limit, s1Offset)
 			got, err := s.queryTraceIDs(ctx, stage1SQL, s1args)
 			if err == nil {
 				ids = got
@@ -2518,6 +2541,13 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 			}
 			log.Printf("[traces] raw stage1 exhausted resources (%v) — halving the window to %s and retrying (attempt %d/%d)",
 				err, from.Format(time.RFC3339), attempt, traceStage2NarrowMaxRetry)
+		}
+		if rootPostFilter && len(ids) > 0 {
+			hasRoot, err := s.filterRootTraces(ctx, ids, f.From, f.To)
+			if err != nil {
+				return nil, 0, false, err
+			}
+			ids = applyRootFilterPage(ids, hasRoot, f.Offset, pageLimit)
 		}
 		if len(ids) > 0 {
 			lf := f
@@ -2625,6 +2655,86 @@ func buildGetTracesListSQL(whereSQL, havingSQL, sortCol, order string) string {
 		  optimize_aggregation_in_order = 1,
 		  distributed_product_mode = 'global',
 		  ` + tracesSpillSettings
+}
+
+// rawLightStage1Window — 1. aşamanın LIMIT/OFFSET'i. Kök son-filtresi
+// yoksa sayfanın kendisi (limit+1, offset). Varsa aday kümesi: sayfayı
+// sonradan süzeceğimiz için 0'dan başlayıp offset + 4×(limit+1) id (en az
+// 200, en çok traceStage2MaxIDs) alınır; kısmi trace'ler seyrek olduğundan
+// sayfa dolar, dolmazsa hasMore dürüstçe kalır. SAF; testli.
+func rawLightStage1Window(offset, pageLimit int, rootPostFilter bool) (limit, off int) {
+	if !rootPostFilter {
+		return pageLimit, offset
+	}
+	k := offset + 4*pageLimit
+	if k < 200 {
+		k = 200
+	}
+	if k > traceStage2MaxIDs {
+		k = traceStage2MaxIDs
+	}
+	return k, 0
+}
+
+// applyRootFilterPage — aday id'lerden kökü olanları (1. aşama sırasıyla)
+// süzer ve offset'ten itibaren limit+1 tanesini döner (fazlası hasMore). SAF.
+func applyRootFilterPage(ids []string, hasRoot map[string]bool, offset, pageLimit int) []string {
+	kept := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if hasRoot[id] {
+			kept = append(kept, id)
+		}
+	}
+	if offset >= len(kept) {
+		return nil
+	}
+	kept = kept[offset:]
+	if len(kept) > pageLimit {
+		kept = kept[:pageLimit]
+	}
+	return kept
+}
+
+// filterRootTraces — aday id'ler için kök-varlığı (MV yolunun aynı katı
+// kuralı: argMaxIfMerge(root_service_state) != ''), id listesiyle SINIRLI:
+// maliyet pencereden değil id sayısından gelir (≤ traceStage2MaxIDs).
+func (s *Store) filterRootTraces(ctx context.Context, ids []string, from, to time.Time) (map[string]bool, error) {
+	out := make(map[string]bool, len(ids))
+	for start := 0; start < len(ids); start += traceStage2MaxIDs {
+		end := start + traceStage2MaxIDs
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunk := ids[start:end]
+		args := []any{from.Unix(), to.Unix()}
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		rows, err := s.telemetryReadConn().Query(ctx, `
+			SELECT trace_id FROM trace_summary_5m
+			WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
+			  AND time_bucket < toDateTime(?, 'UTC')
+			  AND trace_id IN (`+chPlaceholders(len(chunk))+`)
+			GROUP BY trace_id
+			HAVING argMaxIfMerge(root_service_state) != ''
+			SETTINGS max_execution_time = 10`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[id] = true
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // queryTraceIDs — tek kolonlu (trace_id) sorguyu dilime okur.

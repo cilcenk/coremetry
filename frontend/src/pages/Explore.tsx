@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
-import { FilterBuilder } from '@/components/FilterBuilder';
+import { FilterQueryBox } from '@/components/FilterQueryBox';
 import { HeatmapCellExemplars, type HeatmapCellRef } from '@/components/HeatmapCellExemplars';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { useAuth } from '@/components/AuthProvider';
@@ -918,7 +918,10 @@ function ExploreInner({ onSelfWrite }: {
               </div>
               <div style={{ flex: 1, minWidth: 240 }}>
                 {mode === 'builder' && (
-                  <FilterBuilder value={filters} onChange={setFilters}
+                  /* v0.10.270 — Traces'ın tek satır sorgu kutusu (264) Explore'a;
+                     FilterBuilder yalnız gruplu (AND/OR) yaprakları için kalır. */
+                  <FilterQueryBox value={filters} onChange={setFilters}
+                    recentKey="explore-recent-filters"
                     suggestedValues={{
                       'service.name': services,
                       'resource.service.name': services,

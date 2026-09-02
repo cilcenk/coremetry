@@ -12,7 +12,11 @@ import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 
 vi.mock('@/lib/api', () => ({
-  api: { attributeValues: vi.fn(async () => [{ value: 'TRN_TRANSFER_EFT', count: 48200 }, { value: 'TRN_CARD', count: 6000 }]) },
+  api: {
+    attributeValues: vi.fn(async () => [{ value: 'TRN_TRANSFER_EFT', count: 48200 }, { value: 'TRN_CARD', count: 6000 }]),
+    metricAttrKeys: vi.fn(async () => ['pod', 'namespace']),
+    metricLabels: vi.fn(async () => ['api-a', 'api-b']),
+  },
 }));
 vi.mock('@/lib/useAttributeKeys', () => ({
   useAttributeKeys: () => ({ keys: ['http.route', 'http.method', 'channel_code'], observed: [{ key: 'channel_code', count: 900 }, { key: 'http.route', count: 800 }] }),
@@ -97,5 +101,23 @@ describe('FilterQueryBox', () => {
     act(() => { setInput(input, 'exists'); });
     act(() => { key(input, 'Enter'); });
     expect(onChange).toHaveBeenCalledWith([{ k: 'http.route', op: 'EXISTS', v: [] }]);
+  });
+
+  it('metrik modu (v0.10.270): anahtarlar metricAttrKeys, değerler metricLabels, sayım çubuğu yok', async () => {
+    const onChange = vi.fn();
+    const el = render(<FilterQueryBox value={[]} onChange={onChange} metricName="http_requests_total" metricService="api" />);
+    await act(async () => { await Promise.resolve(); });
+    const input = el.querySelector('input.fq-input') as HTMLInputElement;
+    act(() => { setInput(input, 'po'); });
+    const names = Array.from(el.querySelectorAll('.fq-opt .name')).map(n => n.textContent);
+    expect(names).toEqual(['pod']);
+    act(() => { key(input, 'Tab'); });
+    act(() => { key(input, 'Enter'); }); // op = varsayılan '='
+    await act(async () => { await new Promise(r => setTimeout(r, 250)); });
+    const vals = Array.from(el.querySelectorAll('.fq-opt .name')).map(n => n.textContent);
+    expect(vals).toEqual(['api-a', 'api-b']);
+    expect(el.querySelector('.fq-opt .cnt')).toBeNull();
+    act(() => { key(input, 'Enter'); });
+    expect(onChange).toHaveBeenCalledWith([{ k: 'pod', op: '=', v: ['api-a'] }]);
   });
 });

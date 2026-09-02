@@ -105,3 +105,23 @@ func containsAll(s string, subs ...string) bool {
 	}
 	return true
 }
+
+// v0.10.261 (CDV-5) — auto-step çözümü rollup planlarından ÖNCE gelmeli;
+// aksi hâlde StepSeconds=0 her planı "ham"a düşürür (kaynak sırası pini).
+func TestAutoStepResolvedBeforeRollupPlans(t *testing.T) {
+	src, err := os.ReadFile("metricquery.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	fn := body[strings.Index(body, "func (s *Store) QueryMetric("):]
+	step := strings.Index(fn, "f.StepSeconds = metricAutoStepPx(")
+	route := strings.Index(fn, "s.tryMetricRollupRoute(ctx, f)")
+	plan := strings.Index(fn, "metricRollupPlan(f, instrument, temporality")
+	if step < 0 || route < 0 || plan < 0 {
+		t.Fatalf("çapalar bulunamadı: step=%d route=%d plan=%d", step, route, plan)
+	}
+	if step > route || step > plan {
+		t.Fatalf("auto-step (%d) rollup planlarından (%d, %d) SONRA çözülüyor — planlar StepSeconds=0 görür", step, route, plan)
+	}
+}

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { msSyncKey } from '@/lib/chart/syncNamespace';
 import { messagingTracesHref, statementTracesHref } from '@/lib/pivotHref';
 import { Link } from 'react-router-dom';
 import { Spinner } from '@/components/Spinner';
@@ -107,7 +108,7 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
   // Sync grubu destination BAŞINA: iki farklı satırın panelleri aynı
   // gruba düşerse imleç komşu destination'ın grafiğinde gezinir.
   // '-ms' soneki motor ad alanı (v0.9.789).
-  const drawerSync = `msg-drawer:${system}|${cluster}|${name}-ms`;
+  const drawerSync = msSyncKey(`msg-drawer:${system}|${cluster}|${name}`); // v0.10.289
 
   // ERKEN DÖNÜŞLERDEN ÖNCE (rules-of-hooks): topOps türetmesi ve iki
   // hook, v0.9.873'ten beri erken dönüşlerin ARKASINDAydı — data

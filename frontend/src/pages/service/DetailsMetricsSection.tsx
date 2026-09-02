@@ -1,4 +1,5 @@
 import { lazy, Suspense, useMemo } from 'react';
+import { msSyncKey } from '@/lib/chart/syncNamespace';
 import { useNavigate } from 'react-router-dom';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -183,7 +184,7 @@ export function DetailsMetricsSection({ service, rangeNs, onZoom, onZoomReset }:
                 // crosshair HİÇ senkronlanmıyordu. v0.9.844'ten sonra da
                 // ŞART: sökülen eski MLC gövdesiydi, saniye-eksenli
                 // kardeşler (Pod sayfası karışık motor) yaşıyor.
-                syncKey={`service:${service}-ms`}
+                syncKey={msSyncKey(`service:${service}`)}
               />
             </Suspense>
           </LazyMount>

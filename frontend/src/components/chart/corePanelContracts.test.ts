@@ -701,7 +701,7 @@ describe('MultiLineChart — sökülmüş gövde geri sızmasın (v0.9.789/844)'
   });
 
   it("'-ms' sync ad alanı korunur (saniye-eksenli motorlarla karışmasın)", () => {
-    expect(mlc).toMatch(/syncKey=\{syncKey \? `\$\{syncKey\}-ms` : undefined\}/);
+    expect(mlc).toMatch(/syncKey=\{msSyncKey\(syncKey\)\}/);
   });
 });
 
@@ -895,11 +895,11 @@ describe('crosshair sync ad alanı (v0.9.945)', () => {
 
   it('MLC `-ms` ekini KORUR — ölçek yalıtımı kestirmeyle kaldırılamaz', () => {
     expect(mlc, 'MLC syncKey ekini kaybetti — saniye eksenli kardeşlerle aynı gruba düşerse crosshair 1000× kayar')
-      .toMatch(/syncKey \? `\$\{syncKey\}-ms` : undefined/);
+      .toMatch(/syncKey=\{msSyncKey\(syncKey\)\}/);
   });
 
   it('Pod CorePanel’i DOĞRUDAN çağırdığı için eki KENDİ yazar', () => {
-    expect(pod).toMatch(/podChartSync = `podjmx:\$\{pod\}-ms`/);
+    expect(pod).toMatch(/podChartSync = msSyncKey\(`podjmx:\$\{pod\}`\)/);
   });
 
   it('Pod’un RED kartları artık saniye eksenli motoru KULLANMAZ', () => {

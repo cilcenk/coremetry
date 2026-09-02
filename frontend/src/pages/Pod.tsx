@@ -1,4 +1,5 @@
 import { Suspense, lazy, useMemo, useState, useCallback } from 'react';
+import { msSyncKey } from '@/lib/chart/syncNamespace';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -103,7 +104,7 @@ function PodDetail() {
   // KENDİ ekliyor; CorePanel'i DOĞRUDAN çağıran (RED üçlüsü) ekin
   // kendisini yazmak zorunda — DetailsMetricsSection'ın v0.9.789'da
   // kurduğu desen.
-  const podChartSync = `podjmx:${pod}-ms`;
+  const podChartSync = msSyncKey(`podjmx:${pod}`); // v0.10.289 — tek yerden
 
   // Sunucu pencere tavanı — Infra/JMX Thanos sorgularıyla aynı dürüstlük
   // (Clusters/ServiceInfraTab emsali). RED spans tarafında tavan YOK

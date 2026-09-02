@@ -368,6 +368,15 @@ func TestRequestBodyTuning_AllProviders(t *testing.T) {
 					if mt != tn.wantTok {
 						t.Errorf("body[%d] max_tokens = %v, want %v", i, mt, tn.wantTok)
 					}
+					// v0.10.253 (prompt audit D1): Anthropic gövdesine temperature
+					// HİÇ binmez (Opus 4.7+/5, Sonnet 5, Fable'da 400); openai-compat
+					// ve github yolları tuning'i taşımaya devam eder.
+					if p.provider == "anthropic" {
+						if tv, has := b["temperature"]; has {
+							t.Errorf("body[%d] anthropic temperature taşıyor (%v) — D1: gönderilmez", i, tv)
+						}
+						continue
+					}
 					tv, ok := b["temperature"].(float64)
 					if !ok {
 						t.Fatalf("body[%d] has no numeric temperature: %v", i, b)

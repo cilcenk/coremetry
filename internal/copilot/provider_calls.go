@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strings"
 
 	"github.com/cilcenk/coremetry/internal/ai/provider"
 )
@@ -175,17 +176,36 @@ func (s *Service) explainOpenAIAtLevel(ctx context.Context, cfg provider.Config,
 // dilim davranış taşıyor, değiştirmiyor. Bir yüzey WithJSONMode ile
 // gelirse anthropic'te bugün olduğu gibi kısıtsız çağrı yapılır.
 func (s *Service) explainAnthropic(ctx context.Context, systemPrompt, userPrompt string) (string, uint32, uint32, error) {
-	cfg, req, _, _, _ := s.callSnapshot(ctx)
+	cfg, req, prov, base, model := s.callSnapshot(ctx)
 	req.System, req.User = systemPrompt, userPrompt
 	req.JSONLevel = provider.JSONPlain
-	// v0.9.1261 — determinizm kuralı sağlayıcıdan bağımsız: niyet
-	// yapısal çıktıysa sıcaklık 0 (openai yolundaki kararın aynısı).
-	if jsonLevelRequested(ctx) > jsonNone {
-		zero := 0.0
-		req.Temperature = &zero
+	// v0.10.253 (prompt audit D2) — şema istenen ve o uç için reddedilmemişse
+	// structured outputs (output_config.format). Sunucu 400 (unsupported)
+	// derse basamak o uç için işaretlenir ve düz çağrıyla yeniden denenir
+	// (openai merdiveninin aynı öğrenmesi). JSONObject seviyesi bu API'de
+	// yok → düz. Sıcaklık bu yolda gönderilmez (D1); determinizm effort'la.
+	if spec, ok := jsonSchemaFrom(ctx); ok && jsonLevelRequested(ctx) >= jsonSchema && !s.jsonSchemaBlocked(prov, base, model) {
+		req.JSONLevel = provider.JSONSchema
+		req.JSONSchemaName, req.JSONSchema = spec.Name, spec.Schema
 	}
 	resp, err := provider.DoAnthropic(ctx, cfg, req)
+	if err != nil && req.JSONLevel == provider.JSONSchema && anthropicRejectsSchema(err) {
+		s.markJSONSchemaUnsupported(prov, base, model)
+		req.JSONLevel, req.JSONSchema, req.JSONSchemaName = provider.JSONPlain, nil, ""
+		resp, err = provider.DoAnthropic(ctx, cfg, req)
+	}
 	return resp.Text, clampTokens(resp.InputTokens), clampTokens(resp.OutputTokens), err
+}
+
+// anthropicRejectsSchema — 400 + gövdede output_config/json_schema: model ya da
+// hesap structured outputs'u desteklemiyor; düz çağrıya düş. SAF.
+func anthropicRejectsSchema(err error) bool {
+	var he *provider.HTTPError
+	if !errors.As(err, &he) || he.Status != 400 {
+		return false
+	}
+	b := strings.ToLower(he.Body)
+	return strings.Contains(b, "output_config") || strings.Contains(b, "json_schema") || strings.Contains(b, "structured")
 }
 
 // ── GitHub Copilot ──────────────────────────────────────────────────

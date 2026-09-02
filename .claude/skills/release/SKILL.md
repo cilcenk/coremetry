@@ -105,7 +105,7 @@ description of the original report>". Include the root cause
 when it's non-obvious. Keep the body tight — 3-12 lines is
 typical for v0.10.X commits.>
 
-Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+Co-Authored-By: Claude <noreply@anthropic.com>
 ```
 
 The body should be derived from the actual diff content + the

@@ -74,7 +74,9 @@ araç açıklamaları genel olarak sözleşme odaklı ve yeterince uzun (medyan 
 kısa varyantlar için ayrı kapı var) — Grup 3 "az açıklanmış" bulgusu yok; `ai_calls`
 muhasebesi mevcut (Grup 4 ön koşulu).
 
-## 4. Önerilen diff (yalnız Yüksek/Orta; hunk başına bir bulgu; UYGULANMADI)
+## 4. Önerilen diff (yalnız Yüksek/Orta; hunk başına bir bulgu) — **UYGULANDI v0.10.253** (2026-09-02)
+
+Uygulama notları: D1 tam (buffered + streaming + tools gövdeleri; testler tersine çevrildi) · D2 JSONSchema seviyesi `output_config.format` (json_schema) + 400'de düz çağrıya düşüş ve uç-başına işaret; JSONObject seviyesi bu API'de yok → düz çağrı · D3 `Request.Effort` → `output_config.effort` + `stop_reason=refusal` açık hata; adaptive thinking GÖNDERİLMİYOR (5 ailesinde varsayılan, 4.6'da maliyet kararı operatörün) · D4 · D5 (`DefaultAnthropicModel` + `/api/settings/ai defaultModel` + AiTab) · D6 · D7 (9 prompt + 2 sohbet) · D8 · D9 · D10 (+ route_registry notu) · D11 · D12. F1-F4 bayrak olarak kaldı.
 
 ### D1 — H1: Anthropic gövdesinde örnekleme parametresi gönderme
 ```diff

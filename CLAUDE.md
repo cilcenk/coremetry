@@ -38,8 +38,7 @@ truth for shareable views.
 ldflag > `/app/VERSION` > `"dev"` = **build** kimliği; `COREMETRY_VERSION`
 env yalnız GÖSTERİLENİ değiştirir (v0.9.339). `/api/version` ikisini de
 döndürür + `overridden` bayrağı — bayat bir env artık imajmış gibi
-davranamaz (v0.5.394 olayı). Bu satır v0.5.394→v0.9.339 arasında YANLIŞTI:
-env override kaldırılmıştı ama doküman onu zincirin başında gösteriyordu.
+davranamaz (olay: v0.5.394, docs/INCIDENTS.md).
 
 ## Architectural invariants
 
@@ -200,7 +199,7 @@ Decision log (architectural calls, v0.5.208 → v0.6.8):
 
 ## Backend (Go)
 - Veri yazma işlemlerinde ClickHouse Async Insert (`async_insert=1`) mekanizmasını bozma.
-- Her yeni API endpoint'i tip güvenli rota olarak kaydedilir — ama `api.go` İÇİNE DEĞİL: kendi `internal/api/<domain>.go` dosyasında `registerXxxRoutes(mux)` metoduyla, `api.go` yalnız tek satır çağrıyla büyür (`/api-route`). api.go 11.8k satır; oraya route eklemek bu dosyayı büyütmenin tek yolu.
+- Her yeni API endpoint'i tip güvenli rota olarak kaydedilir — ama `api.go` İÇİNE DEĞİL: kendi `internal/api/<domain>.go` dosyasında `registerXxxRoutes(mux)` metoduyla, `api.go` yalnız tek satır çağrıyla büyür (`/api-route`). api.go zaten çok büyük; oraya route eklemek onu büyütmenin tek yolu — yeni yüzeyler route_registry.go defterine `init()` ile de kaydolabilir (v0.10.247), o zaman api.go hiç büyümez.
 - Arka plan işçilerinde lider kilidini (Leader Lock) korumak için mutlaka Redis mutex yapısını kullan.
 
 ## Frontend (TypeScript/React)

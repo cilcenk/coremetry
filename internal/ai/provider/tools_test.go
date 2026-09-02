@@ -306,9 +306,13 @@ func TestChatAnthropicTools_GoldenRequestBody(t *testing.T) {
 		t.Fatalf("headers: version=%q key=%q", h.Get("Anthropic-Version"), h.Get("X-Api-Key"))
 	}
 	b := rt.bodies[0]
-	if b["max_tokens"] != float64(8192) || b["temperature"] != float64(0.9) ||
+	if b["max_tokens"] != float64(8192) ||
 		b["system"] != "sys" || b["model"] != "claude-x" {
 		t.Fatalf("gövde = %v", b)
+	}
+	// v0.10.253 (prompt audit D1): temperature Anthropic gövdesine BİNMEZ.
+	if _, has := b["temperature"]; has {
+		t.Fatalf("anthropic tools gövdesi temperature taşıyor: %v", b)
 	}
 	tools, _ := b["tools"].([]any)
 	if len(tools) != 1 {

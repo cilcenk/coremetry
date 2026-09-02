@@ -516,7 +516,7 @@ func StreamAnthropic(ctx context.Context, cfg Config, req Request, onDelta func(
 		model = cfg.Model
 	}
 	if model == "" {
-		model = defaultAnthropicModel
+		model = DefaultAnthropicModel
 	}
 	maxTokens := req.MaxTokens
 	if maxTokens <= 0 {
@@ -535,9 +535,7 @@ func StreamAnthropic(ctx context.Context, cfg Config, req Request, onDelta func(
 			{"role": "user", "content": req.User},
 		},
 	}
-	if req.Temperature != nil {
-		body["temperature"] = *req.Temperature
-	}
+	// temperature bilinçli olarak GÖNDERİLMEZ (anthropic.go başlığı, v0.10.253 D1).
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return Response{}, err

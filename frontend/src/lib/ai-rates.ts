@@ -17,8 +17,8 @@ import type { AIRate } from './types';
 
 export type AIRateTable = Record<string, AIRate>;
 
-// USD per 1M tokens — verified against each provider's public
-// pricing page on 2025-12 (snapshot, not live). When the table
+// USD per 1M tokens — OpenAI rows verified 2025-12, Anthropic rows
+// 2026-06-24 (snapshot, not live). When the table
 // drifts an operator can override entries via Settings without
 // re-deploying; an override-empty install starts seeing accurate
 // numbers right away.
@@ -31,14 +31,17 @@ export const BUNDLED_RATES: AIRateTable = {
   'gpt-3.5-turbo':       { inputPer1M: 0.50, outputPer1M: 1.50 },
   'o1-preview':          { inputPer1M: 15.00, outputPer1M: 60.00 },
   'o1-mini':             { inputPer1M: 3.00, outputPer1M: 12.00 },
-  // Anthropic
-  'claude-opus-4-7':           { inputPer1M: 15.00, outputPer1M: 75.00 },
-  'claude-opus-4-6':           { inputPer1M: 15.00, outputPer1M: 75.00 },
-  'claude-sonnet-4-6':         { inputPer1M: 3.00,  outputPer1M: 15.00 },
-  'claude-haiku-4-5':          { inputPer1M: 0.80,  outputPer1M: 4.00 },
-  'claude-3-5-sonnet-20241022': { inputPer1M: 3.00,  outputPer1M: 15.00 },
-  'claude-3-5-haiku-20241022':  { inputPer1M: 0.80,  outputPer1M: 4.00 },
-  'claude-3-opus-20240229':     { inputPer1M: 15.00, outputPer1M: 75.00 },
+  // Anthropic — 2026-06-24 fiyat önbelleği (prompt audit 2026-09-02 D4);
+  // emekli 3.x kimlikleri çıkarıldı, Opus 4.7 $15/$75 → $5/$25 düzeltildi.
+  'claude-fable-5-1':    { inputPer1M: 10.00, outputPer1M: 50.00 },
+  'claude-fable-5':      { inputPer1M: 10.00, outputPer1M: 50.00 },
+  'claude-opus-5':       { inputPer1M: 5.00,  outputPer1M: 25.00 },
+  'claude-opus-4-8':     { inputPer1M: 5.00,  outputPer1M: 25.00 },
+  'claude-opus-4-7':     { inputPer1M: 5.00,  outputPer1M: 25.00 },
+  'claude-opus-4-6':     { inputPer1M: 5.00,  outputPer1M: 25.00 },
+  'claude-sonnet-5':     { inputPer1M: 2.00,  outputPer1M: 10.00 },
+  'claude-sonnet-4-6':   { inputPer1M: 3.00,  outputPer1M: 15.00 },
+  'claude-haiku-4-5':    { inputPer1M: 1.00,  outputPer1M: 5.00 },
   // Common local / OSS — explicit 0 so the UI doesn't flag them
   // as "unknown rate" and operators see "free" instead.
   'llama3.1:8b':         { inputPer1M: 0, outputPer1M: 0 },

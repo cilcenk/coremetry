@@ -62,7 +62,7 @@ v0.X.Y — short title (≤70 chars)
 Body: what changed, why, root cause if a bug fix. Wrap at 72 cols.
 Operator-reported bugs start with "Operator-reported: …".
 
-Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+Co-Authored-By: Claude <noreply@anthropic.com>
 ```
 
 ## Skills — consult BEFORE the matching change

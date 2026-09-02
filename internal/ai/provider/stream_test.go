@@ -415,8 +415,12 @@ func TestStreamAnthropic_GoldenRequestBody(t *testing.T) {
 	}
 	b := rt.bodies[0]
 	if b["stream"] != true || b["system"] != "sys" || b["model"] != "claude-x" ||
-		b["max_tokens"] != float64(8192) || b["temperature"] != float64(0.9) {
+		b["max_tokens"] != float64(8192) {
 		t.Fatalf("gövde = %v", b)
+	}
+	// v0.10.253 (prompt audit D1): temperature Anthropic gövdesine BİNMEZ.
+	if _, has := b["temperature"]; has {
+		t.Fatalf("anthropic stream gövdesi temperature taşıyor: %v", b)
 	}
 	if _, has := b["stream_options"]; has {
 		t.Fatalf("anthropic gövdesine openai'ye özgü stream_options sızmış: %v", b)

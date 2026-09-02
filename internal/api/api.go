@@ -8774,6 +8774,7 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		"timeoutS":       timeoutSNow,
 		"autoExplain":    s.copilot.AutoExplainEnabled(),
 		"intentClassify": s.copilot.IntentClassifyMode(),
+		"defaultModel":   s.copilot.DefaultModels(), // v0.10.253 — tek kaynak (D5)
 		"profiles":       pp["profiles"],
 		"defaultProfile": pp["defaultProfile"],
 		"surfaceMap":     pp["surfaceMap"],

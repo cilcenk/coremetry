@@ -195,10 +195,11 @@ func TestExplainWireBody_Anthropic(t *testing.T) {
 				t.Fatalf("istek sayısı %d, want 1", len(rt.bodies))
 			}
 			want := jsonRoundTrip(t, map[string]any{
-				"model":       "model-x",
-				"max_tokens":  tc.wantTok,
-				"temperature": tc.wantTemp,
-				"system":      paritySys,
+				"model":      "model-x",
+				"max_tokens": tc.wantTok,
+				// v0.10.253 (prompt audit D1): temperature Anthropic gövdesine BİNMEZ
+				// (Opus 4.7+/5, Sonnet 5, Fable'da 400); tuning yalnız max_tokens'ı taşır.
+				"system": paritySys,
 				"messages": []map[string]any{
 					{"role": "user", "content": parityUsr},
 				},

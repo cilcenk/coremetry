@@ -145,35 +145,27 @@ export interface CorePanelProps {
   // sorgusuna karışmaz, çağıran kendi fetch'inden verir (spec şartı).
   // {fromSec,toSec} — fromSec===toSec dikey çizgi gibi ince bant çizer.
   regions?: ChartTimeRegion[];
-  // p50-p99 gölgeli bant: [üst seri indeksi, alt seri indeksi] (1-tabanlı
-  // uPlot serisi; 0 = x). Çizgi olarak zaten var olan iki serinin ARASI
-  // doldurulur — p95 çizgisi ayrı bir seri olarak gelir.
-  bands?: { above: number; below: number; fill?: string }[];
   // Başlangıçta GİZLİ seriler (ada göre) — ChartCard defaultHidden
   // paritesi (v0.9.720): Response time P99'u kapalı açar, lejant açar.
   // Kullanıcı dokunuşu seri kümesi değişene dek kalıcıdır.
   defaultHidden?: string[];
-  // Kısa boşlukları köprüle (ms eşiği) — Grafana "Connect null values:
-  // Threshold" birebiri. VARSAYILAN YOK = sıkı doktrin (null → boşluk).
-  // Operatör kararı 2026-08-06: köprüleme panel-başına açık tercih.
-  connectNulls?: number;
   // v0.9.725 — x ekseni SORGU aralığına mıhlanır (saniye, epoch).
   // Grafana her zaman seçili [from,to]'yu çizer: kenarlar = aralık
   // kenarı; verilmezse uPlot veriden türetir (eski davranış) ve
   // eksende sağlı-sollu ölü boşluk kalır (operatör bulgusu).
   xRange?: { from: number; to: number } | null;
-  // v0.9.728 (rt-ops v2) — başlık satırına ek kontrol yuvası (segment
-  // anahtarı gibi); menünün SOLUNA girer. ChartCard.headerAside paritesi.
-  headerExtra?: import('react').ReactNode;
   // Dürüstlük notu ("+N operasyon daha…", satır tavanı) — grafiğin
   // altında soluk tek satır. ChartCard.note paritesi.
   note?: string | null;
   // "Sorguyu göster" menü kalemi için: paneli besleyen sorgunun/isteğin
   // insan-okur özeti. Verilmezse kalem çizilmez.
   queryText?: string;
-  // Log ölçek kullanıcıya AÇILSIN mı (menüde toggle). logScale prop'u
-  // başlangıç değeri; toggle panel-yerel state'e biner.
-  logScaleToggle?: boolean;
+  // v0.10.284 (chart audit B2, Dilim 1.1) — dört ölü prop kanalı SİLİNDİ:
+  // bands (p50-p99 prop bandı), connectNulls (spanNulls eşiği),
+  // headerExtra (başlık yuvası), logScaleToggle (menü log anahtarı).
+  // Hiçbirinin tüketicisi yoktu; yeni prop tüketicisiyle birlikte iner
+  // (corePanelEntry.tsx "yarım kablo bırakmıyoruz"). Boşluk doktrini
+  // artık koşulsuz SIKI (spanNulls: false); log ölçek yalnız logScale prop'u.
   // v0.9.1163 (operatör-raporlu: "panellerde çift ⋯") — DEVREDİLEN menü
   // satırları. Paneli SARAN bir kabuk (MetricPanel'in "her metrik bir
   // kapıdır" affordance'ı) kendi kebabını bastırıp eylemlerini buraya
@@ -273,8 +265,8 @@ function fullNameOf(frame: { meta?: { custom?: Record<string, unknown> } } | und
 
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
-  thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
-  defaultHidden, xRange, headerExtra, note, onExpandClick, exemplars, onExemplarClick, onRegionClick, regionClickHint,
+  thresholds, regions, queryText,
+  defaultHidden, xRange, note, onExpandClick, exemplars, onExemplarClick, onRegionClick, regionClickHint,
   onBucketClick, hiddenNames, hideLegend, onCursorTime, dashed, viz = 'line',
   focusedLabel, menuExtra,
 }: CorePanelProps) {
@@ -320,8 +312,7 @@ export function CorePanel({
   const onCursorTimeRef = useRef(onCursorTime);
   onCursorTimeRef.current = onCursorTime;
   const [showQuery, setShowQuery] = useState(false);
-  const [logLocal, setLogLocal] = useState(!!logScale);
-  const effLog = logScaleToggle ? logLocal : !!logScale;
+  const effLog = !!logScale;
 
   // v0.9.950 (E2/Ö28) — Esc KATMAN yığınında. Tam ekran ve menü AYRI
   // katmanlar: tam ekranken menüyü açan operatörün ilk Esc'i menüyü,
@@ -438,10 +429,10 @@ export function CorePanel({
   const stackedBands = useMemo(
     () => (stacked && !stackedBars ? stackBands(aligned.names.length, hiddenIdx) : null),
     [stacked, stackedBars, aligned.names.length, hiddenIdx]);
-  // v0.9.788 — stacked iken PROP bands (p50-p99) imzaya bile girmez:
-  // aşağıda yok sayılıyor, imzada tutmak sahte rebuild üretirdi.
+  // v0.9.788 — bant imzası: yalnız yığın bantları (prop bands v0.10.284'te
+  // silindi); imzada tutmak sahte rebuild üretirdi.
   const overlaySig = JSON.stringify([
-    thresholds ?? null, regions ?? null, stacked ? null : (bands ?? null), stackedBands,
+    thresholds ?? null, regions ?? null, stackedBands,
   ]);
 
   // Görünen aralık (uPlot x scale) — legend istatistikleri bundan.
@@ -748,11 +739,11 @@ export function CorePanel({
         // (aşağıdaki effect). Config'e gömmek her legend tıkını full
         // rebuild yapardı — uPlot'un ucuz toggle'ı varken.
         show: true,
-        // Doktrin (operatör onayı 2026-08-06): varsayılan SIKI — null
-        // boşluk çizilir, Grafana'nın "Connect null values: Never"
-        // karşılığı. connectNulls (ms eşiği) panel-başına AÇIK tercihtir:
-        // Grafana'daki "Threshold" modunun birebiri (spanNulls: number).
-        spanNulls: connectNulls ?? false,
+        // Doktrin (operatör onayı 2026-08-06): SIKI — null boşluk çizilir,
+        // Grafana'nın "Connect null values: Never" karşılığı. Köprüleme
+        // eşiği (connectNulls) v0.10.284'te tüketicisiz diye silindi;
+        // gerekirse tüketicisiyle birlikte geri gelir.
+        spanNulls: false,
       });
     });
     // ── v0.9.799 — İMLEÇ NOKTALARI (operatör: "çizgiler üzerinde imleçle
@@ -787,12 +778,9 @@ export function CorePanel({
       points: { size: CURSOR_POINT_PX, width: CURSOR_POINT_BORDER_PX },
       ...(syncKey ? { sync: { key: syncKey } } : {}),
     });
-    // v0.9.788 — İKİ bant kaynağı vardır ve AYNI ANDA kullanılamazlar:
-    // uPlot'ta bir seri en fazla BİR bandın üst kenarı olabilir
-    // (`bands.find(b => b.series[0] == si)`), iki liste çakışırsa katman
-    // dolgusu sessizce p50-p99 bandına kayar. Bu yüzden stacked iken
-    // PROP bands YOK SAYILIR — yığma bir mark kararıdır; çağıran ikisini
-    // birden istiyorsa mark yanlış seçilmiştir.
+    // v0.9.788 — bant kaynağı TEK: yığın bantları (prop p50-p99 bandı
+    // v0.10.284'te tüketicisiz diye silindi; uPlot'ta bir seri en fazla BİR
+    // bandın üst kenarı olabilir, iki liste çakışınca dolgu sessizce kayardı).
     if (stacked) {
       // Yığın bantları: ardışık görünür katmanların arası. fill BİLEREK
       // verilmez — uPlot bant dolgusu boşsa üst serinin kendi dolgusuna
@@ -800,14 +788,6 @@ export function CorePanel({
       // kanaldan (seriesRoleColor → fillOpacity) gelir ve burada ikinci
       // bir palet doğmaz.
       for (const sb of stackedBands ?? []) b.addBand({ series: sb.series });
-    } else {
-      // p50-p99 bandı: uPlot native band — iki mevcut serinin arası dolar.
-      for (const band of bands ?? []) {
-        b.addBand({
-          series: [band.above, band.below],
-          fill: resolveVar(band.fill ?? 'var(--accent-soft)'),
-        });
-      }
     }
     // Eşik çizgileri + annotation bölgeleri: M3 çizim çekirdeği. Renk
     // token'ları DRAW anında çözülür (tema-canlı) — build anında değil;
@@ -986,13 +966,11 @@ export function CorePanel({
     //                için ilk günden latent değil, doğrudan bozuk olurdu).
     //   • dashed   — join(',') ile İÇERİK imzası (dizi kimliği değil:
     //                inline [] her render'da yeni kimlik = sürekli yıkım).
-    //   • connectNulls — spanNulls eşiği; panel-başına açık tercih
-    //                değişince boşluk doktrini gerçekten değişmeliydi.
     //   • yGutter.px — eksen oluk genişliği (v0.9.799). Bir ÇİZİM girdisi
     //                değil ÖLÇÜ; mandal yüzünden yalnız büyür, yani
     //                rebuild seyrek ve gerçekten gerekli olduğunda olur.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aligned.names.join(' '), roles?.join(), syncKey, effLog, themeTick, overlaySig, xRange?.from, xRange?.to, viz, dashed?.join(','), connectNulls, yGutter.px]);
+  }, [aligned.names.join(' '), roles?.join(), syncKey, effLog, themeTick, overlaySig, xRange?.from, xRange?.to, viz, dashed?.join(','), yGutter.px]);
 
   // ── v0.9.793 — focusedLabel (lejant hover vurgusu) ───────────────────────
   //
@@ -1128,7 +1106,6 @@ export function CorePanel({
         {data.state === 'ready' && data.partial && (
           <span className="badge b-warn" title={data.partial}>kısmi</span>
         )}
-        {headerExtra && <span style={{ marginLeft: 'auto' }}>{headerExtra}</span>}
         {/* FAZ 2D — panel menüsü: tam ekran / CSV / sorguyu göster / log.
             v0.9.1163 (operatör-raporlu) — PANEL BAŞINA TEK ⋯. Saran kabuğun
             kapı eylemleri menuExtra ile buraya iner; artık ikinci bir tetik
@@ -1141,7 +1118,7 @@ export function CorePanel({
             menü ekran okuyucuya menü OLARAK tanıtılmıyordu (BB10'un kendi
             gerekçesi). minWidth 150 → 188: Dashboard PanelMenu ve MetricPanel
             dropdown'larıyla aynı ölçü, ve devredilen etiketler daha uzun. */}
-        <span ref={menuRef} style={{ marginLeft: headerExtra ? 0 : 'auto', position: 'relative' }}>
+        <span ref={menuRef} style={{ marginLeft: 'auto', position: 'relative' }}>
           <IconButton variant="secondary" size="xs"
             aria-label="Panel menüsü" aria-haspopup="menu" aria-expanded={menuOpen}
             onClick={() => setMenuOpen(o => !o)} icon="⋯" />
@@ -1176,11 +1153,6 @@ export function CorePanel({
               {queryText && (
                 <MenuItem onClick={() => { setShowQuery(q => !q); setMenuOpen(false); }}>
                   Sorguyu göster
-                </MenuItem>
-              )}
-              {logScaleToggle && (
-                <MenuItem onClick={() => setLogLocal(l => !l)}>
-                  {effLog ? '✓ ' : ''}Log ölçek
                 </MenuItem>
               )}
             </div>

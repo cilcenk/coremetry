@@ -128,8 +128,9 @@ describe('CorePanel self-review düzeltmeleri', () => {
     expect(src).toMatch(/mousedown/);
   });
 
-  it('doktrin: spanNulls connectNulls üzerinden, varsayılan sıkı', () => {
-    expect(src).toMatch(/spanNulls: connectNulls \?\? false/);
+  it('doktrin: spanNulls koşulsuz SIKI (connectNulls v0.10.284\'te silindi)', () => {
+    expect(src).toMatch(/spanNulls: false/);
+    expect(src).not.toMatch(/connectNulls/);
   });
 });
 
@@ -192,7 +193,8 @@ describe('CorePanel bars markı (v0.9.785)', () => {
     expect(cfg[0]).toContain('viz');
     // dizi KİMLİĞİ değil İÇERİK imzası — inline [] her render'da yeni.
     expect(cfg[0]).toContain("dashed?.join(',')");
-    expect(cfg[0]).toContain('connectNulls');
+    // v0.10.284 — connectNulls silindi; dizide kalırsa tanımsız kimlik.
+    expect(cfg[0]).not.toContain('connectNulls');
   });
 });
 
@@ -232,8 +234,8 @@ describe('CorePanel yığılmış alan (v0.9.788)', () => {
 
   it('🟠 bant imzası overlaySig\'e katılır — poll tick\'i uPlot\'u yıkmasın', () => {
     expect(src).toMatch(/const overlaySig = JSON\.stringify\(\[[\s\S]*?stackedBands,?[\s\S]*?\]\)/);
-    // stacked iken prop bands imzadan da düşer (sahte rebuild üretirdi).
-    expect(src).toMatch(/stacked \? null : \(bands \?\? null\)/);
+    // v0.10.284 — prop bands silindi; imzada yalnız yığın bantları.
+    expect(src).not.toMatch(/bands \?\? null/);
   });
 
   it('bant listesi saf çekirdekten; stacked iken prop bands YOK SAYILIR', () => {
@@ -1032,5 +1034,19 @@ describe('CorePanel bölge çizimi ms ölçeğinde (v0.10.164)', () => {
     // v0.10.182 (#6) — isabet testi de aynı xUnit'i geçer (hover + tık); sürüklenirse
     // bantlar çizilir ama tıklanamaz/hover'lanamaz — sessiz.
     expect((src.match(/regionAt\(u, regionsRef\.current, 1000,/g) ?? []).length).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.10.284 — chart audit B2 / Dilim 1.1: dört ölü prop kanalı silindi.
+// Kapı: geri gelirse tüketicisiyle birlikte gelmeli (yarım kablo yok).
+// ---------------------------------------------------------------------------
+describe('CorePanel ölü prop kapısı (v0.10.284)', () => {
+  const src = readFileSync(f, 'utf8');
+  it('bands / connectNulls / headerExtra / logScaleToggle prop olarak YOK', () => {
+    for (const name of ['bands?:', 'connectNulls?:', 'headerExtra?:', 'logScaleToggle?:']) {
+      expect(src, `${name} geri gelmiş — tüketicisi var mı?`).not.toContain(name);
+    }
+    expect(src).not.toMatch(/setLogLocal/);
   });
 });

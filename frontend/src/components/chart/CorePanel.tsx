@@ -43,6 +43,7 @@ import {
   seriesExtent, paddedExtent,
 } from '@/lib/chart/axisSize';
 import { IconButton } from '@/components/ui/IconButton';
+import { PanelLegend } from './PanelLegend';
 import { seriesRoleColor, type SeriesRole } from '@/lib/chart/seriesRole';
 import { visibleRangeStats } from '@/lib/chart/visibleStats';
 import { resolveLegendCollapsed, isAdditiveUnit } from '@/lib/chart/legendStats';
@@ -1296,73 +1297,13 @@ export function CorePanel({
       )}
 
       {data.state === 'ready' && aligned.names.length > 0 && !hideLegend && (
-        <div style={{ fontSize: 11 }}>
-          <Button variant="secondary" size="xs"
-            aria-expanded={legendOpen} onClick={toggleLegend}>
-            {legendOpen ? '▼' : '▶'} Series ({aligned.names.length})
-          </Button>
-          {legendOpen && (
-            <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', marginTop: 4 }}>
-              <thead><tr>
-                <th style={{ textAlign: 'left' }}>Seri</th>
-                <th className="num">Son</th><th className="num">Min</th>
-                <th className="num">Maks</th><th className="num">Ort</th>
-                <th className="num">Toplam</th>
-              </tr></thead>
-              <tbody>
-                {stats.map((s, i) => (
-                  <tr key={`${i}:${s.name}`}
-                    tabIndex={0}
-                    role="button"
-                    aria-pressed={vis[i] !== false}
-                    aria-label={`${s.name} — Enter: izole et, Boşluk: gizle/göster`}
-                    style={{
-                      opacity: vis[i] === false ? 0.35 : 1, cursor: 'pointer',
-                      background: focusName === s.name ? 'var(--bg2)' : undefined,
-                    }}
-                    // v0.9.793 — hover/fokus SERİYİ VURGULAR (TSP sözleşmesi).
-                    // Klavye fokusu da aynı kanaldan geçer: vurgu yalnız fareye
-                    // ait olsaydı Tab'la gezen operatör hangi satırın hangi
-                    // çizgi olduğunu göremezdi (v0.9.711 erişim dersi).
-                    onMouseEnter={() => setHoverName(s.name)}
-                    onMouseLeave={() => setHoverName(n => (n === s.name ? null : n))}
-                    onFocus={() => setHoverName(s.name)}
-                    onBlur={() => setHoverName(n => (n === s.name ? null : n))}
-                    onClick={e => setVis(v =>
-                      e.ctrlKey || e.metaKey
-                        ? toggleSeriesVisibility(v, i)
-                        : isolateSeriesVisibility(v, i))}
-                    onKeyDown={e => {
-                      // v0.9.711 — Ctrl+tık klavyeden ERİŞİLEMEZ (review
-                      // bulgusu): Enter=izole, Space=tekil gizle/göster.
-                      if (e.key === 'Enter') { e.preventDefault(); setVis(v => isolateSeriesVisibility(v, i)); }
-                      if (e.key === ' ') { e.preventDefault(); setVis(v => toggleSeriesVisibility(v, i)); }
-                    }}>
-                    <td>
-                      <span style={{
-                        display: 'inline-block', width: 8, height: 8, borderRadius: 2,
-                        background: resolveVar(seriesRoleColor(s.name, roles?.[i] ?? 'data')),
-                        marginRight: 6,
-                      }} />
-                      {/* v0.9.1369 — tam ad title'da: lejant Grafana
-                          yoğunluğunda kısa kalır (v0.9.539 operatör
-                          isteği) ama operatör pod adını üzerine gelerek
-                          okuyabilir/kopyalayabilir. */}
-                      <span title={fullNameOf(frames[i]) || undefined}>{s.name}</span>
-                    </td>
-                    <td className="num">{fmtCell(i, s.stat.last)}</td>
-                    <td className="num">{fmtCell(i, s.stat.min)}</td>
-                    <td className="num">{fmtCell(i, s.stat.max)}</td>
-                    <td className="num">{fmtCell(i, s.stat.mean)}</td>
-                    <td className="num">{sumAdditive ? fmtCell(i, s.stat.sum) : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </div>
-          )}
-        </div>
+        <PanelLegend
+          count={aligned.names.length} open={legendOpen} onToggle={toggleLegend}
+          stats={stats} vis={vis} onVisChange={setVis}
+          focusName={focusName}
+          onHover={(name, leaving) => setHoverName(n => (name !== null ? name : (n === leaving ? null : n)))}
+          roles={roles} fullNames={frames.map(f => fullNameOf(f))}
+          fmtCell={fmtCell} sumAdditive={sumAdditive} />
       )}
     </div>
   );

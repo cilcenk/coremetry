@@ -863,6 +863,9 @@ export interface ScoredCause {
   hops: number;
   path?: string[];
   reason?: string;
+  // v0.10.94 node kinds; v0.10.242 'rollout' = özne bir rollout kaydı
+  // ("rollout:<cluster>/<ns>/<workload>@<rev>"), servis değil.
+  kind?: string;
 }
 
 // RootCauseHypothesis — the full persisted ranking for one anchor (mirrors Go
@@ -920,6 +923,28 @@ export interface DeepEvidence {
   traceIds?: string[];
   affectedPods?: PodHit[];
   logSignatures?: LogSignature[];
+  // v0.10.242 — Problem↔Rollout korelasyonu: puanlanmış rollout adayları
+  // (≤3); chstore.RolloutEvidence aynası. D3 RootCausePanel okur.
+  rollouts?: RolloutEvidence[];
+}
+
+// RolloutEvidence — chstore.RolloutEvidence aynası (v0.10.242).
+export interface RolloutEvidence {
+  clusterId: string;
+  namespace: string;
+  workload: string;
+  kind?: string;
+  revision: string;
+  startedAtNs: number;
+  status: string;
+  imageTag?: string;
+  prevImageTag?: string;
+  detectedBy?: string;
+  matchedBy: 'service' | 'pod';
+  ageMin: number;
+  band: 'high' | 'low';
+  score: number;
+  reason: string;
 }
 
 // ExternalMetricEvidence — Go chstore.ExternalMetricEvidence aynası.

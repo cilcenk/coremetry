@@ -159,3 +159,15 @@ export function decodeRolloutParam(s: string | null): RolloutIdParam | null {
   }
 }
 
+/**
+ * rolloutEvidenceHref — v0.10.243 Problem↔Rollout D3: DeepEvidence.rollouts
+ * satırından /rollouts çekmece linki. startedAtNs NANOSANİYE (Go
+ * RolloutEvidence), çekmece parametresi MİLİSANİYE (rollout.startedAt) —
+ * birim sınırı burada, testli.
+ */
+export function rolloutEvidenceHref(ev: { clusterId: string; namespace: string; workload: string; revision: string; startedAtNs: number }): string {
+  return '/rollouts?rollout=' + encodeRolloutParam({
+    clusterId: ev.clusterId, namespace: ev.namespace, workload: ev.workload, revision: ev.revision,
+    startedAt: Math.round(ev.startedAtNs / 1e6),
+  });
+}

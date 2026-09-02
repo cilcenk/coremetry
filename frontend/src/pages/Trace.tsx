@@ -25,7 +25,7 @@ import { useCorrelatedLogs, spanHasError, traceLogWindow } from '@/lib/otel';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
 import { traceBackHref } from '@/lib/traceBackHref';
 import { SvcBadge } from '@/components/traces/shared';
-import type { LogRow, SpanRow, TimeRange, PivotAnchor } from '@/lib/types';
+import type { LogRow, SpanRow, TimeRange, PivotAnchor, TraceAnalysis } from '@/lib/types';
 import { TraceWaterfall, TraceServiceBreakdown } from '@/components/TraceWaterfall';
 import { SpanDetail } from '@/components/SpanDetail';
 import { TraceHonesty } from '@/components/traces/TraceHonesty';
@@ -50,6 +50,8 @@ function TraceDetailInner() {
 
   const [range, setRange] = useUrlRange('30m');
   const [spans, setSpans] = useState<SpanRow[] | null | undefined>(undefined);
+  // v0.10.276 (Dilim 1c) — sunucu analizi (ağaç/kritik yol/öz süre/servis özeti).
+  const [analysis, setAnalysis] = useState<TraceAnalysis | undefined>(undefined);
   // v0.5.208 — "clickhouse" when the trace lives in Coremetry's
   // store, "tempo" when getTrace fell back to the external Tempo
   // backend (Coremetry sampled it out). Drives the small banner
@@ -150,6 +152,7 @@ function TraceDetailInner() {
     setSpans(undefined);
     setSource(undefined);
     setStub(undefined);
+    setAnalysis(undefined);
     const g = raceGuard();
     api.trace(id, g.signal)
       .then(d => {
@@ -157,6 +160,7 @@ function TraceDetailInner() {
         setSpans(d.spans ?? []);
         setSource(d.source);
         setStub(d.stub);
+        setAnalysis(d.analysis);
         setSpanCap({ capped: d.spanCapped ?? false, total: d.spanTotal });
       })
       // İptal de reject eder: guard'sız catch, operatörün kendi
@@ -584,7 +588,7 @@ function TraceDetailInner() {
                 <TraceHonesty spans={spans} source={source} capped={spanCap.capped} totalSpans={spanCap.total} />
                 <div ref={spanAreaRef} style={{ display: 'flex', alignItems: 'stretch', gap: 10, minHeight: 240 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <TraceServiceBreakdown spans={spans} />
+                    <TraceServiceBreakdown spans={spans} services={analysis?.services} />
                     <SpanFilterBar spans={spans} value={spanFilter} onChange={setSpanFilter}
                       critCount={criticalPath?.ids.size ?? 0}
                       critFocus={critFocus} onCritFocus={setCritFocus}
@@ -596,7 +600,7 @@ function TraceDetailInner() {
                       onGroupSimilarChange={setGroupSimilar}
                       criticalPathIds={criticalPathIds} matchIds={spanMatchIds}
                       focusIds={critFocus && criticalPath ? criticalPath.ids : undefined}
-                      linkedSpanIds={linkedIds}
+                      linkedSpanIds={linkedIds} analysis={analysis}
                       logSignals={logSignals} onLogsClick={() => setTab('logs')} />
                   </div>
                   {sel && <SpanDetail span={sel} onClose={closeSpanPanel} traceSpans={spans ?? undefined}

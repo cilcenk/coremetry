@@ -3839,3 +3839,8 @@ thead th:hover .th-remove { opacity: 1; }
   font-size: 9px; line-height: 1; color: var(--text3);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+/* v0.10.282 — /logs satırında pod pivotu: hücre üstüne gelince ⊕/⊖ (KvRow
+   .kv-actions deseninin hücre-kapsamlı ikizi). */
+.lt-pivot .kv-actions { opacity: 0; }
+.lt-pivot:hover .kv-actions { opacity: 1; }

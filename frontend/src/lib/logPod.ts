@@ -38,14 +38,28 @@ export function podOfLog(l: {
   attributes?: Record<string, string> | null;
   resourceAttributes?: Record<string, string> | null;
 } | null | undefined): string {
-  if (!l) return '';
+  return podEntryOfLog(l)?.value ?? '';
+}
+
+// podEntryOfLog — v0.10.282 (log-search audit Dilim 1, pod pivotu): pod
+// değeriyle birlikte ONU TAŞIYAN ANAHTAR. Satır menüsündeki ⊕/⊖ pill'i
+// bu anahtarla yazılır (`kubernetes.pod_name:"x"`), kanonik bir takma
+// adla değil — ES'te alan gerçek mapping yolu, CH'de logql hedefi aynı
+// yazımı pod zincirine bağlar. Gösterilen değer ile filtrenin bulduğu
+// değer aynı kaynaktan gelir (v0.8.265 sınıfı: seçimi başka bir kümeye
+// karşı doğrulama).
+export function podEntryOfLog(l: {
+  attributes?: Record<string, string> | null;
+  resourceAttributes?: Record<string, string> | null;
+} | null | undefined): { key: string; value: string } | null {
+  if (!l) return null;
   const ra = l.resourceAttributes ?? {};
   const at = l.attributes ?? {};
   for (const src of [ra, at]) {
     for (const k of POD_FIELDS) {
       const v = src[k];
-      if (typeof v === 'string' && v.length > 0) return v;
+      if (typeof v === 'string' && v.length > 0) return { key: k, value: v };
     }
   }
-  return '';
+  return null;
 }

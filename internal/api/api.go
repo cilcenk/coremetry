@@ -1686,8 +1686,7 @@ func (s *Server) warmDependenciesCache() {
 		// warmer exists) still paid a cold scan on every login. Building it
 		// through the same function the handler uses means they cannot drift
 		// again.
-		landingKey := servicesListKey(true, 50, 0, cacheBucket(landingFrom, to),
-			"", "errorRate", "desc", "", "", "", "", "", false)
+		landingKey := servicesLandingWarmKey(landingFrom, to) // v0.10.256 — handler ile aynı fonksiyon (ek dahil)
 		warm("services-landing", landingKey, 30*time.Second,
 			func(ctx context.Context) (any, error) {
 				list, err := s.store.GetServicesAggFiltered(ctx,
@@ -1825,6 +1824,25 @@ func servicesListKey(useMV bool, limit, offset int, bucket, nameMatch, sort, dir
 		useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, namespace, withTotal)
 }
 
+// servicesFullKey — v0.10.256 (perf §7 madde 2, C1 ⭐): handler anahtarı =
+// liste anahtarı + görüntü süzgeci eki. Isıtıcı da BUNU kurar; v0.9.231
+// aynı sınıfı bir kez düzeltmişti (":env=:ns=:wt=" eki), sonra
+// ":err=…:cmp=…" eki yalnız handler'a eklendi ve ısıtılan anahtar yine
+// erişilmez oldu — servis sayfası her girişte soğuk MV taraması ödedi.
+// Test: TestServicesLandingWarmKeyMatchesHandler.
+func servicesFullKey(useMV bool, limit, offset int, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, namespace string, withTotal bool, display chstore.ServiceDisplayFilters, compare bool) string {
+	return servicesListKey(useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, namespace, withTotal) +
+		fmt.Sprintf(":err=%v:minSpans=%d:minP99=%g:cmp=%v", display.ErrorsOnly, display.MinSpans, display.MinP99Ms, compare)
+}
+
+// servicesLandingWarmKey — ısıtıcının (api.go warm("services-landing")) ve
+// testin ortak anahtarı: açılış isteği = mv, 50/0, errorRate desc, süzgeç
+// yok, 15 dk pencere.
+func servicesLandingWarmKey(landingFrom, to time.Time) string {
+	return servicesFullKey(true, 50, 0, cacheBucket(landingFrom, to),
+		"", "errorRate", "desc", "", "", "", "", "", false, chstore.ServiceDisplayFilters{}, false)
+}
+
 func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	since := parseDuration(q.Get("since"), 24*time.Hour)
@@ -1938,8 +1956,7 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// Display filters join the key: they change WHICH services come back, so
 	// two operators on different filters must not share one cached page —
 	// the v0.5.187 cross-poisoning shape.
-	key := servicesListKey(useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, namespace, withTotal) +
-		fmt.Sprintf(":err=%v:minSpans=%d:minP99=%g:cmp=%v", display.ErrorsOnly, display.MinSpans, display.MinP99Ms, compare)
+	key := servicesFullKey(useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, namespace, withTotal, display, compare)
 	// 30s cache. The 5m-MV-backed query is already sub-second on
 	// 10k+ services, but 30s collapses every page-flip and tab
 	// switch in a session into one CH round-trip per (page,
@@ -3779,7 +3796,8 @@ func (s *Server) getAttributeKeys(w http.ResponseWriter, r *http.Request) {
 	keySince := q.Get("since")
 	if absolute {
 		keySince = ""
-		keyFrom, keyTo = absFrom.UnixNano(), absTo.UnixNano()
+		// v0.10.256 — 30 s grid (cacheBucket ile aynı basamak): SPA to=Date.now() her poll MISS etmesin.
+		keyFrom, keyTo = absFrom.Truncate(cacheRawQueryGrid).UnixNano(), absTo.Truncate(cacheRawQueryGrid).UnixNano()
 	}
 	key := fmt.Sprintf("attr-keys:since=%s:from=%d:to=%d:limit=%d:f=%s:fg=%s",
 		keySince, keyFrom, keyTo, limit, rawFilters, rawFilterGroup)
@@ -4272,7 +4290,7 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 	// query string (GET, no body/role variance). raw from/to keep a
 	// relative window stable within the TTL (do NOT key on parsed now()-
 	// ticking time, the v0.5.184 class).
-	key := "traces:" + r.URL.RawQuery
+	key := "traces:" + cacheRawQuery(r) // v0.10.256 — from/to 30 s grid, refresh düşer
 	s.serveCached(w, r, key, 20*time.Second, func(ctx context.Context) (any, error) {
 		// OUT param (v0.8.369): set to the recency-slice size when a
 		// non-time sort was ranked within the newest-N slice, so the
@@ -4444,7 +4462,7 @@ func (s *Server) getTracesCount(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, ferr.Error(), http.StatusBadRequest)
 		return
 	}
-	s.serveCached(w, r, "traces-count:"+r.URL.RawQuery, 20*time.Second,
+	s.serveCached(w, r, "traces-count:"+cacheRawQuery(r), 20*time.Second,
 		func(ctx context.Context) (any, error) {
 			return s.store.CountTracesCapped(ctx, f)
 		})
@@ -4518,7 +4536,7 @@ func (s *Server) getTraceAggregate(w http.ResponseWriter, r *http.Request) {
 	// is stable across distinct callers (pure function of the query
 	// string; GET, no body/role variance). raw from/to keep a
 	// relative window stable within the TTL (v0.5.184 class).
-	key := "traces-agg:" + r.URL.RawQuery
+	key := "traces-agg:" + cacheRawQuery(r)
 	s.serveCached(w, r, key, 20*time.Second, func(ctx context.Context) (any, error) {
 		return s.store.GetTraceAggregate(ctx, f)
 	})
@@ -5211,7 +5229,7 @@ func (s *Server) spanMetric(w http.ResponseWriter, r *http.Request) {
 	// tick now() and poison the key (v0.5.184 class).
 	// v0.10.147 — v2: zarfa `tail` eklendi; rolling deploy'da eski pod'un
 	// tail'siz gövdesi 90 s servis edilmesin (v0.9.1157 anahtar-bump kuralı).
-	key := "span-metric:v2:" + r.URL.RawQuery
+	key := "span-metric:v2:" + cacheRawQuery(r)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.x — trim the wire payload on a high-cardinality groupBy. The
 		// frontend (PanelStack) only ever renders the top ≤TOP_N_MAX series by
@@ -7580,7 +7598,7 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 	// service/assignee/q/sort/dir/limit/offset/ownerTeam/sreTeam); TTL
 	// kardeş /api/problems ile aynı 5s, state/assign mutasyonları
 	// prefix'i anında düşürür — bayatlık operatörce görülmez.
-	key := "exc-groups:" + r.URL.RawQuery
+	key := "exc-groups:" + cacheRawQuery(r)
 	s.serveCached(w, r, key, 5*time.Second, func(ctx context.Context) (any, error) {
 		// Ortam kısıtı ÖNCE çözülür ki takım süzgeciyle KESİŞEBİLSİN;
 		// ikisi birden seçiliyse cevap "bu takımın BU ortamdaki

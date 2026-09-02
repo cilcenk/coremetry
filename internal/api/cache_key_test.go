@@ -1,6 +1,12 @@
 package api
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/cilcenk/coremetry/internal/chstore"
+)
 
 // v0.5.187 — locks the cache-key digest invariants for set-shaped
 // inputs. The original bug: cache keys for the topology exclude
@@ -149,4 +155,43 @@ func TestInboxListKeyIncludesSearch(t *testing.T) {
 			seen[k] = name
 		}
 	})
+}
+
+// v0.10.256 — RawQuery anahtarları: from/to 30 s grid'e, refresh düşer,
+// diğer parametreler korunur ve anahtar sıralı; sayısal olmayan from/to
+// dokunulmaz; aynı grid'deki iki poll aynı anahtar.
+func TestCacheRawQueryString(t *testing.T) {
+	a := cacheRawQueryString("to=1788345617123456789&from=1788302417123456789&service=api&refresh=1&sort=duration")
+	b := cacheRawQueryString("service=api&from=1788302429000000000&to=1788345629000000000&sort=duration")
+	if a != b {
+		t.Errorf("aynı 30 s grid farklı anahtar:\n a=%s\n b=%s", a, b)
+	}
+	if a != "from=1788302400000000000&service=api&sort=duration&to=1788345600000000000" {
+		t.Errorf("normalize: %s", a)
+	}
+	c := cacheRawQueryString("from=1788302400000000000&to=1788345631000000000&x=1")
+	if c == a {
+		t.Error("farklı grid aynı anahtar olmamalı")
+	}
+	if got := cacheRawQueryString("from=abc&to=&q=1"); got != "from=abc&q=1&to=" {
+		t.Errorf("sayısal olmayan from ve boş to aynen korunur: %s", got)
+	}
+	if got := cacheRawQueryString("%zz"); got != "%zz" {
+		t.Errorf("bozuk sorgu dizesi aynen: %s", got)
+	}
+}
+
+// v0.10.256 (C1 ⭐) — ısıtılan açılış anahtarı handler'ın kuracağı anahtarla
+// BİREBİR aynı olmalı; ek (":err=…:cmp=…") iki tarafta da tek fonksiyondan.
+func TestServicesLandingWarmKeyMatchesHandler(t *testing.T) {
+	to := time.Date(2026, 9, 2, 12, 0, 7, 0, time.UTC)
+	from := to.Add(-15 * time.Minute)
+	warm := servicesLandingWarmKey(from, to)
+	handler := servicesFullKey(true, 50, 0, cacheBucket(from, to), "", "errorRate", "desc", "", "", "", "", "", false, chstore.ServiceDisplayFilters{}, false)
+	if warm != handler {
+		t.Fatalf("ısıtma anahtarı handler anahtarından ayrıştı:\n warm=%s\n hand=%s", warm, handler)
+	}
+	if !strings.HasSuffix(warm, ":err=false:minSpans=0:minP99=0:cmp=false") {
+		t.Errorf("görüntü süzgeci eki anahtarda yok: %s", warm)
+	}
 }

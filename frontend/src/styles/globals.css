@@ -2365,6 +2365,53 @@ button.accent.copied {
 .fb-chip b { color: var(--accent2); font-weight: 600; }
 .fb-chip-op { color: var(--text2); font-family: monospace; font-size: 11px; }
 .fb-chip-val { color: var(--text); font-family: monospace; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── FilterQueryBox (v0.10.264, Traces "Add filter" Öneri A) — token-only;
+   yoğunluk cascade'i input ölçüsünü kapsıyor. Kardeş: .fb-chip (FilterBuilder). ── */
+.fq { position: relative; }
+.fq-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 36px; padding: 4px 8px 4px 10px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: text; }
+.fq-bar.is-open, .fq-bar:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.fq-lens { color: var(--text3); font-size: 13px; }
+.fq-chip { display: inline-flex; align-items: stretch; height: 24px; border-radius: 4px; overflow: hidden; border: 1px solid var(--border); background: var(--bg1); font-size: 12px; max-width: 420px; }
+.fq-chip > span { padding: 0 7px; display: inline-flex; align-items: center; cursor: pointer; }
+.fq-chip .fq-k { color: var(--text2); border-right: 1px solid var(--border); }
+.fq-chip .fq-o { color: var(--text3); font-size: 11px; background: var(--bg2); border-right: 1px solid var(--border); }
+.fq-chip .fq-v { color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.fq-chip .fq-n { color: var(--accent2); font-weight: 600; margin-left: 4px; }
+.fq-chip .fq-x { color: var(--text3); padding: 0 6px; border: none; border-left: 1px solid var(--border); background: transparent; cursor: pointer; font: inherit; font-size: 11px; }
+.fq-chip .fq-x:hover { color: var(--err); background: color-mix(in srgb, var(--err) 10%, transparent); }
+.fq-chip:hover { border-color: var(--accent); }
+.fq-chip.is-editing, .fq-chip.is-draft { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.fq-chip.is-draft .fq-o { border-right: none; }
+.fq-input { flex: 1; min-width: 220px; background: transparent; border: none; outline: none; color: var(--text); font: inherit; font-size: 13px; padding: 4px 2px; }
+.fq-input::placeholder { color: var(--text3); }
+.fq-hint { margin-left: auto; color: var(--text3); font-size: 11px; white-space: nowrap; display: inline-flex; gap: 4px; align-items: center; }
+.fq-hint kbd { display: inline-block; padding: 0 5px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--bg2); font-size: 10px; line-height: 15px; color: var(--text2); font-family: ui-monospace, Menlo, monospace; }
+.fq-pop { position: absolute; top: calc(100% + 6px); left: 0; width: min(640px, 100%); background: var(--bg1); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-pop); z-index: var(--z-popover); overflow: hidden; }
+.fq-steps { display: flex; border-bottom: 1px solid var(--border); background: var(--bg2); }
+.fq-steps > div { padding: 6px 12px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--text3); border-right: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }
+.fq-steps > div.on { color: var(--accent); font-weight: 700; background: var(--accent-soft); }
+.fq-steps > div.done { color: var(--text2); }
+.fq-steps .mono { text-transform: none; letter-spacing: 0; color: var(--text); }
+.fq-list { max-height: 262px; overflow: auto; padding: 6px 0; }
+.fq-grp, .fq-empty { padding: 6px 12px 3px; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text3); }
+.fq-empty { text-transform: none; letter-spacing: 0; font-size: 12px; padding: 10px 12px; }
+.fq-opt { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 5px 12px; font-size: 12.5px; align-items: baseline; cursor: pointer; }
+.fq-opt:hover, .fq-opt.sel { background: var(--accent-soft); }
+.fq-opt.sel .name { color: var(--accent2); }
+.fq-opt .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fq-opt .cnt { color: var(--text3); font-variant-numeric: tabular-nums; font-size: 11px; }
+.fq-opt .cnt.bar { display: inline-flex; align-items: center; gap: 6px; }
+.fq-opt .cnt i { display: inline-block; height: 6px; background: var(--accent); opacity: .55; border-radius: 2px; }
+.fq-ops { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; }
+.fq-ops button { font-size: 12px; padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg2); color: var(--text); cursor: pointer; }
+.fq-ops button.sel { border-color: var(--accent); background: var(--accent-soft); color: var(--accent2); font-weight: 600; }
+.fq-ops .fq-oplong { color: var(--text3); font-size: 10.5px; }
+.fq-foot { border-top: 1px solid var(--border); padding: 6px 12px; display: flex; gap: 14px; font-size: 11px; color: var(--text3); background: var(--bg2); flex-wrap: wrap; }
+.fq-foot b { color: var(--text2); font-weight: 600; }
+.fq-quick { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 6px; font-size: 11.5px; color: var(--text3); }
+.fq-quick-label { color: var(--text3); }
 /* `.btn-chip-x` is the same affordance under the Chip atom's namespace
    (v0.9.894, MB6). One rule, two selectors — an alias rather than a copy,
    so the two can never drift the way the four hand-rolled `×` buttons did.

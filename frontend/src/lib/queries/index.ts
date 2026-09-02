@@ -69,3 +69,4 @@ export {
   useServicePods as useEntityServicePods, useEntitySettings, useSaveEntitySettings, useEntitySync, useRunEntitySync,
 } from './entities';
 export { useRollouts, useRolloutStats, useRolloutRuns, useRolloutDetail } from './rollouts'; // v0.10.201/203
+export { useTablePrefs } from './prefs'; // v0.10.248 — kalıcı sütun tercihi

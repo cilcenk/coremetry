@@ -34,6 +34,7 @@ import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer'
 // clipboard copies (it alone fell back when writeText rejected). That
 // version is now lib/clipboard, and the two local functions are gone.
 import { copyToClipboard } from '@/lib/clipboard';
+import { indexSpanLinks, linkedSpanIds } from '@/lib/spanLinks';
 import { traceHref } from '@/lib/traceHref';
 import { PageShell } from '@/components/ui/PageShell';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
@@ -67,6 +68,16 @@ function TraceDetailInner() {
     () => searchParams.get('span'));
   // v0.9.408 — explain'in deterministik kanıt span'leri; waterfall kutular.
   const [evidenceIds, setEvidenceIds] = useState<Set<string>>(new Set());
+  // v0.10.274 (Dilim 1a) — span link'leri span düzeyine: LinkedTracesSection
+  // ile AYNI query anahtarı (react-query tekilleştirir, ikinci istek yok).
+  const linksQuery = useQuery({
+    queryKey: ['trace-links', id],
+    queryFn: () => api.traceLinks(id),
+    enabled: !!id,
+    staleTime: 30_000,
+  });
+  const linkIndex = useMemo(() => indexSpanLinks(id, linksQuery.data), [id, linksQuery.data]);
+  const linkedIds = useMemo(() => linkedSpanIds(linkIndex), [linkIndex]);
   // v0.9.477 — kanıt artık AppShell'deki AI çekmecesinden window köprüsüyle
   // geliyor (eski onEvidence prop'unun yerine); kutulama sözleşmesi aynı.
   useAiEvidence(d => { if (d.spanIds?.length) setEvidenceIds(new Set(d.spanIds)); });
@@ -585,10 +596,12 @@ function TraceDetailInner() {
                       onGroupSimilarChange={setGroupSimilar}
                       criticalPathIds={criticalPathIds} matchIds={spanMatchIds}
                       focusIds={critFocus && criticalPath ? criticalPath.ids : undefined}
+                      linkedSpanIds={linkedIds}
                       logSignals={logSignals} onLogsClick={() => setTab('logs')} />
                   </div>
                   {sel && <SpanDetail span={sel} onClose={closeSpanPanel} traceSpans={spans ?? undefined}
-                    logsFrom={logWin?.from} logsTo={logWin?.to} pageRange={range} />}
+                    logsFrom={logWin?.from} logsTo={logWin?.to} pageRange={range}
+                    links={linkIndex.get(sel.spanId)} onSelectSpan={setSelectedId} />}
                 </div>
               </>
             )}

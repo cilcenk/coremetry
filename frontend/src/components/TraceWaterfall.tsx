@@ -161,7 +161,7 @@ export function TraceServiceBreakdown({ spans }: { spans: SpanRow[] }) {
 export function TraceWaterfall({
   spans, selectedId, onSelect, defaultCollapsed, groupSimilar = false,
   onGroupSimilarChange,
-  criticalPathIds, matchIds, focusIds, evidenceIds, logSignals, onLogsClick,
+  criticalPathIds, matchIds, focusIds, evidenceIds, logSignals, onLogsClick, linkedSpanIds,
 }: {
   spans: SpanRow[];
   selectedId: string | null;
@@ -193,6 +193,8 @@ export function TraceWaterfall({
   // deterministik döner): satır .wf-evidence kutusu alır — "kök neden
   // soruşturulacak kısım" waterfall'da GÖRÜNÜR.
   evidenceIds?: Set<string>;
+  // v0.10.274 (Dilim 1a) — OTel span link'i olan span'ler; satırda ⛓ rozeti.
+  linkedSpanIds?: ReadonlySet<string>;
   // v0.5.383 — in-trace span filter. Matching span IDs get the
   // .wf-match class (highlight); non-matches get .wf-dim (low
   // opacity). Undefined = no filter active, every row renders
@@ -736,6 +738,10 @@ export function TraceWaterfall({
                   <span className="wf-cluster" title={`Cluster: ${rootCluster}`}>
                     {rootCluster}
                   </span>
+                )}
+                {linkedSpanIds?.has(s.spanId) && (
+                  /* v0.10.274 — span link rozeti; detay panelinde Links bölümü. */
+                  <span className="wf-link" title="Bu span OTel span link taşıyor (giden ya da gelen) — detay panelinde Links">⛓</span>
                 )}
                 <span className="wf-name" title={s.name === displayName ? s.name : `raw: ${s.name}`}>
                   {displayName}

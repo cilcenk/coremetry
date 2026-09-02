@@ -2474,7 +2474,68 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	}
 	var out []TraceRow
 	var hasMore, served bool
-	if traceRawProbeEligible(f) {
+	// v0.10.235 — Operator-reported (prod): attribute filtreli (http.route)
+	// 12 saatlik arama, sort=duration ile CH 241 "memory limit exceeded
+	// 3.73 GiB" (SourceFromNativeStream / deserializeBinaryBulk: shard'dan
+	// gelen GROUP BY trace_id durumları başlatıcıda birleşirken). Attribute
+	// filtresi MV yolunu düşürür; süre/span/durum sıralaması tüm pencereyi
+	// görmek zorunda ve tek geçiş her trace için STRING durumlar (anyIf(name),
+	// any(service_name)) taşıyordu. Ölçüldü (lokal, aynı yüklem, 3 koşu):
+	// tek geçiş 4.03 MiB / 626 ms, hafif 1. aşama 1.06 MiB / 324 ms —
+	// bellek 3.8× (oran prod'a taşınır). İki aşama: 1) yalnız trace_id +
+	// SAYISAL sıralama anahtarı, LIMIT/OFFSET burada; 2) tam satır YALNIZ
+	// sayfanın id'leri için (traceExtrasSQL ile aynı `trace_id IN` deseni).
+	if !served && rawListLightEligible(f) {
+		stage1SQL, _ := traceRawStage1LightSQL(wc.sql(), havingSQL, f.Sort, order)
+		s1args := append([]any{}, wc.args...)
+		s1args = append(s1args, havingArgs...)
+		s1args = append(s1args, pageLimit, f.Offset)
+		idRows, err := s.telemetryReadConn().Query(ctx, stage1SQL, s1args...)
+		if err != nil {
+			return nil, 0, false, err
+		}
+		var ids []string
+		for idRows.Next() {
+			var id string
+			if err := idRows.Scan(&id); err != nil {
+				idRows.Close()
+				return nil, 0, false, err
+			}
+			ids = append(ids, id)
+		}
+		idRows.Close()
+		if err := idRows.Err(); err != nil {
+			return nil, 0, false, err
+		}
+		if len(ids) > 0 {
+			lwc := buildGetTracesWhere(f, s.clusterExpr())
+			idArgs := make([]any, len(ids))
+			for i, id := range ids {
+				idArgs[i] = id
+			}
+			lwc.add("trace_id IN ("+chPlaceholders(len(ids))+")", idArgs...)
+			querySQL := buildGetTracesListSQL(lwc.sql(), havingSQL, sortCol, order)
+			args := append([]any{}, lwc.args...)
+			args = append(args, havingArgs...)
+			args = append(args, len(ids), 0)
+			rows, err := s.telemetryReadConn().Query(ctx, querySQL, args...)
+			if err != nil {
+				return nil, 0, false, err
+			}
+			page, err := scanTraceListRows(rows)
+			rows.Close()
+			if err != nil {
+				return nil, 0, false, err
+			}
+			out = page
+		}
+		hasMore = len(ids) > f.Limit
+		if len(out) > f.Limit {
+			out = out[:f.Limit]
+		}
+		served = true
+	}
+	if !served && traceRawProbeEligible(f) {
 		for _, w := range traceRawProbeWindows(f.From, f.To) {
 			floor := f.To.Add(-w)
 			rows, err := runList(floor.Add(-traceRawProbeLookback), f.Offset+pageLimit, 0)
@@ -2550,6 +2611,55 @@ func buildGetTracesListSQL(whereSQL, havingSQL, sortCol, order string) string {
 		  optimize_aggregation_in_order = 1,
 		  distributed_product_mode = 'global',
 		  ` + tracesSpillSettings
+}
+
+// rawListLightEligible — ham liste yolunda hafif 1. aşamanın uygulandığı
+// sıralamalar: sıralama anahtarı SAYISAL olanlar (süre/span/durum). Zaman
+// sıralaması pencere basamaklarıyla (trace_raw_probe.go) zaten daralıyor;
+// servis/operasyon sıralamasının anahtarı string durumun kendisi
+// (hafifletilecek bir şey yok); id listesi zaten sınırlı. SAF.
+func rawListLightEligible(f TraceFilter) bool {
+	if f.TraceID != "" || len(f.TraceIDs) > 0 {
+		return false
+	}
+	switch f.Sort {
+	case "duration", "spans", "status":
+		return true
+	}
+	return false
+}
+
+// traceRawStage1LightSQL — ham yolun HAFİF 1. aşaması (v0.10.235): yalnız
+// trace_id + sıralama anahtarı; string durum yok. Aynı WHERE/HAVING, LIMIT ?
+// OFFSET ? burada; tam satır 2. aşamada sayfanın id'leri için hesaplanır.
+// Sıralama ifadeleri buildGetTracesListSQL'deki kolonlarla BİREBİR aynı
+// (dur_ms / span_count / has_error) — iki aşamanın sırası eşit olsun.
+// ok=false: bu sıralama hafifletilemez. SAF; trace_raw_light_test.go pinler.
+func traceRawStage1LightSQL(whereSQL, havingSQL, sort, order string) (string, bool) {
+	var sortExpr string
+	switch sort {
+	case "duration":
+		sortExpr = "(max(toUnixTimestamp64Nano(time) + duration) - toUnixTimestamp64Nano(min(time)))"
+	case "spans":
+		sortExpr = "count()"
+	case "status":
+		sortExpr = "max(if(status_code = 'error', 1, 0))"
+	default:
+		return "", false
+	}
+	if order != "ASC" {
+		order = "DESC"
+	}
+	return `
+		SELECT trace_id
+		FROM spans ` + whereSQL + `
+		GROUP BY trace_id` + havingSQL + `
+		ORDER BY ` + sortExpr + ` ` + order + `, trace_id
+		LIMIT ? OFFSET ?
+		SETTINGS
+		  max_execution_time = 25,
+		  distributed_product_mode = 'global',
+		  ` + tracesSpillSettings, true
 }
 
 // getTracesFromMV implements the two-stage fast path:

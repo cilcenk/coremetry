@@ -114,8 +114,9 @@ func TestConnStrategySplit(t *testing.T) {
 // v0.9.486'nın /users tutarsızlığı geri gelir.
 func TestTelemetryReadConnCallSurface(t *testing.T) {
 	allowed := map[string]bool{
-		"store.go":   true, // tanım + fallback
-		"summary.go": true, // service_summary_5m / operation_summary_5m / spans (v0.9.496 dilim 1)
+		"store.go":                     true, // tanım + fallback
+		"rollout_problem_telemetry.go": true, // workload_revision_activity_1m + spans pod→revizyon (v0.10.241 Problem↔Rollout)
+		"summary.go":                   true, // service_summary_5m / operation_summary_5m / spans (v0.9.496 dilim 1)
 		// v0.9.497 dilim 2 — üçü de SAF telemetri (aşağıdaki testle pinli):
 		"repo.go":              true, // spans / logs / metric_points / trace_*_5m / topology_edges_5m
 		"topology.go":          true, // topology_*_5m / service_summary_5m / spans / root_traces
@@ -144,15 +145,15 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// (AggregatingMergeTree telemetri MV'si, spans'ten beslenir; state
 		// tablosu DEĞİL). deploys.go'nun service_version_5m okumasıyla aynı
 		// sınıf, aynı havuz. Aşağıdaki pozitif test de pinliyor.
-		"service_seen.go":     true,
-		"oracle.go":           true, // metric_points
-		"profile.go":          true, // profiles (yazma yarısı ingest havuzunda)
-		"spanmetric.go":       true, // service_summary_5m / operation_summary_5m / spans
-		"spans_by_trace.go":   true, // spans — trace_id IN (...) özetleri (Influx D4, v0.10.229)
+		"service_seen.go":      true,
+		"oracle.go":            true, // metric_points
+		"profile.go":           true, // profiles (yazma yarısı ingest havuzunda)
+		"spanmetric.go":        true, // service_summary_5m / operation_summary_5m / spans
+		"spans_by_trace.go":    true, // spans — trace_id IN (...) özetleri (Influx D4, v0.10.229)
 		"external_seasonal.go": true, // metric_points — dış seri mevsimsel dilim (Influx D6, v0.10.231)
-		"dbstmt_detail.go":    true, // db_statement_summary_5m / spans
-		"db_capacity.go":      true, // metric_points
-		"endpoints_detail.go": true, // spans
+		"dbstmt_detail.go":     true, // db_statement_summary_5m / spans
+		"db_capacity.go":       true, // metric_points
+		"endpoints_detail.go":  true, // spans
 		// v0.9.839 — SAF telemetri: iki FROM'u da spans (rotanın giriş
 		// span'leri + ebeveynlerinin service_name'i). endpoints_detail.go
 		// ile aynı kaynak, aynı havuz.

@@ -209,16 +209,32 @@ func serviceSlicePlan(f TraceFilter, pageLimit, stage1Limit int) (want int, orde
 	return traceStage2MaxIDs, order, false
 }
 
-// serviceStage2Floor — v0.10.265: stage 2 tabanı. DESC'te kesim (dilimin en
-// eski kovası; runTraceStage2 lookback + kırpma tespiti uygular). ASC'te
-// id'ler pencerenin BAŞINDA durur — kesim (en yeni okunan kova) taban olsaydı
-// id'lerin kendi satırları düşerdi → sıfır (taban f.From kalır). Tükenmişse
-// dilim = pencere, daraltma yok. SAF.
-func serviceStage2Floor(order string, cut time.Time, exhausted bool) time.Time {
-	if order == "asc" || exhausted {
-		return time.Time{}
+// sliceStageBounds — v0.10.265/267: dilimden stage 2 sınırları. DESC'te
+// taban = kesim (dilimin en eski kovası; runTraceStage2 lookback + kırpma
+// tespiti uygular), tavan yok. ASC'te id'ler pencerenin BAŞINDA durur: taban
+// f.From kalır (sıfır), TAVAN = kesim (dilimin en yeni kovası; v0.10.267
+// lookahead + kırpma tespiti). Tükenmişse dilim = pencere, daraltma yok. SAF.
+func sliceStageBounds(order string, cut time.Time, exhausted bool) (floor, ceil time.Time) {
+	if exhausted || cut.IsZero() {
+		return time.Time{}, time.Time{}
 	}
-	return cut
+	if order == "asc" {
+		return time.Time{}, cut
+	}
+	return cut, time.Time{}
+}
+
+// stage2Ceiling — v0.10.267: tavan adayı (kesim + lookahead), tam toplama
+// tavanını (aggWindowEnd) aşamaz. ceil sıfırsa tam tavan. SAF.
+func stage2Ceiling(ceil time.Time, lookahead time.Duration, fullTo time.Time) time.Time {
+	if ceil.IsZero() {
+		return fullTo
+	}
+	to := ceil.Add(lookahead)
+	if to.After(fullTo) {
+		return fullTo
+	}
+	return to
 }
 
 // scanIDSlice — dilim okuma döngüsü (v0.10.265'te traceRecencySlice'tan
@@ -335,7 +351,7 @@ const (
 // whenever a returned row sits on the floor.
 func (s *Store) runTraceStage2(
 	ctx context.Context, f TraceFilter, stage2 string, idArgs []any,
-	floor time.Time, pageLimit int,
+	floor, ceil time.Time, pageLimit int,
 ) ([]TraceRow, bool, error) {
 	from := f.From
 	lookback := time.Duration(traceSliceLookbackBuckets) * 5 * time.Minute
@@ -345,6 +361,12 @@ func (s *Store) runTraceStage2(
 			from = f.From
 		}
 	}
+	// v0.10.267 — TAVAN (asc dilimi): id'ler pencerenin başında; toplama
+	// tavanı kesim + lookahead'e çekilir, tavana OTURAN satır (last_bucket
+	// son kovada) görülürse ×8 genişler — tabanın aynası. Tavanı daraltmak
+	// da yanlış sayı üretebilir (trace'in kuyruk kovaları düşer), o yüzden
+	// varsayım değil TESPİT (max(time_bucket) döner).
+	lookahead := lookback
 
 	// v0.9.1185 — TOPLAMA tavanı, seçim tavanından slack kadar geniş.
 	//
@@ -365,7 +387,8 @@ func (s *Store) runTraceStage2(
 	// slack yeni trace getirmez ve maliyeti ~sıfır. Boşsa tüm pencere
 	// GROUP BY ediliyor ve slack doğrudan taranan kovaya biner —
 	// aggWindowEnd orada pencere genişliğiyle kelepçeler.
-	aggTo := aggWindowEnd(f.From, f.To, len(idArgs) > 0)
+	fullAggTo := aggWindowEnd(f.From, f.To, len(idArgs) > 0)
+	aggTo := stage2Ceiling(ceil, lookahead, fullAggTo)
 
 	narrowed := 0
 	for attempt := 0; ; attempt++ {
@@ -377,17 +400,23 @@ func (s *Store) runTraceStage2(
 		}
 		out := []TraceRow{}
 		clipped := false
+		clippedHigh := false
+		ceilBucket := aggTo.Add(-5 * time.Minute)
 		for rows.Next() {
 			var t TraceRow
 			var hasErr uint8
-			var ts, firstBucket time.Time
+			var ts, firstBucket, lastBucket time.Time
 			if serr := rows.Scan(&t.TraceID, &t.RootName, &t.ServiceName, &ts,
-				&t.DurationMs, &t.SpanCount, &hasErr, &t.ErrorSpans, &firstBucket); serr != nil {
+				&t.DurationMs, &t.SpanCount, &hasErr, &t.ErrorSpans, &firstBucket, &lastBucket); serr != nil {
 				rows.Close()
 				return nil, false, serr
 			}
 			t.StartTime = ts.UnixNano()
 			t.HasError = hasErr != 0
+			// Tavana oturan satır: son kovası pencerenin son kovası → ötesi olabilir.
+			if aggTo.Before(fullAggTo) && !lastBucket.Before(ceilBucket) {
+				clippedHigh = true
+			}
 			// Sitting ON the floor means rows may exist just below it.
 			if !firstBucket.After(from) {
 				clipped = true
@@ -438,11 +467,11 @@ func (s *Store) runTraceStage2(
 				half := len(idArgs) / 2
 				log.Printf("[traces] stage2 exhausted with %d ids (%v) — splitting the id list at %d and merging",
 					len(idArgs), rerr, half)
-				lo, loMore, lerr := s.runTraceStage2(ctx, f, stage2, idArgs[:half], floor, pageLimit)
+				lo, loMore, lerr := s.runTraceStage2(ctx, f, stage2, idArgs[:half], floor, ceil, pageLimit)
 				if lerr != nil {
 					return nil, false, lerr
 				}
-				hi, hiMore, herr := s.runTraceStage2(ctx, f, stage2, idArgs[half:], floor, pageLimit)
+				hi, hiMore, herr := s.runTraceStage2(ctx, f, stage2, idArgs[half:], floor, ceil, pageLimit)
 				if herr != nil {
 					return nil, false, herr
 				}
@@ -487,17 +516,25 @@ func (s *Store) runTraceStage2(
 
 		// Widening is pointless once the floor IS the requested window start:
 		// nothing can be clipped by a floor the caller asked for.
-		if !clipped || from.Equal(f.From) || attempt >= traceSliceLookbackMaxRetry {
+		canWidenLow := clipped && !from.Equal(f.From)
+		canWidenHigh := clippedHigh && aggTo.Before(fullAggTo)
+		if (!canWidenLow && !canWidenHigh) || attempt >= traceSliceLookbackMaxRetry {
 			hasMore := len(out) > f.Limit
 			if hasMore {
 				out = out[:f.Limit]
 			}
 			return out, hasMore, nil
 		}
-		lookback *= 8
-		from = floor.Add(-lookback)
-		if from.Before(f.From) {
-			from = f.From
+		if canWidenLow {
+			lookback *= 8
+			from = floor.Add(-lookback)
+			if from.Before(f.From) {
+				from = f.From
+			}
+		}
+		if canWidenHigh {
+			lookahead *= 8
+			aggTo = stage2Ceiling(ceil, lookahead, fullAggTo)
 		}
 	}
 }

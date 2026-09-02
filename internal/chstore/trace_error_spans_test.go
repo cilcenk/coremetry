@@ -69,7 +69,7 @@ func TestTraceErrorSpans_MVStage2SQL(t *testing.T) {
 func TestTraceErrorSpans_BothScannersReadIt(t *testing.T) {
 	cases := []struct{ file, fn, want string }{
 		{"trace_raw_probe.go", "func scanTraceListRows(", "&t.SpanCount, &hasErr, &t.ErrorSpans)"},
-		{"trace_slice.go", "func (s *Store) runTraceStage2(", "&t.SpanCount, &hasErr, &t.ErrorSpans, &firstBucket)"},
+		{"trace_slice.go", "func (s *Store) runTraceStage2(", "&t.SpanCount, &hasErr, &t.ErrorSpans, &firstBucket, &lastBucket)"},
 	}
 	for _, c := range cases {
 		body := funcBody(t, c.file, c.fn)

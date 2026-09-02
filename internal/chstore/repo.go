@@ -3456,7 +3456,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	// heavy argMax state — nothing to lighten).
 	var traceIDs []any
 	holders := ""
-	var stage2Floor time.Time
+	var stage2Floor, stage2Ceil time.Time
 	// v0.10.265 — Operator-reported (prod 7g + servis + hasError, zaman sıralı):
 	// her "Next" 40+ s ve "shortened" rozeti. İki eski servis şekli de
 	// pencereyle lineerdi (trace_slice.go traceServiceSliceScanSQL başlığı).
@@ -3477,7 +3477,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		traceIDs = ids
 		holders = strings.Repeat("?,", len(ids))
 		holders = holders[:len(holders)-1]
-		stage2Floor = serviceStage2Floor(sliceOrder, cut, exhausted)
+		stage2Floor, stage2Ceil = sliceStageBounds(sliceOrder, cut, exhausted)
 		if sliced && f.RankedWithin != nil {
 			*f.RankedWithin = len(ids)
 			if exhausted {
@@ -3547,7 +3547,9 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 			traceIDs = ids
 			holders = strings.Repeat("?,", len(ids))
 			holders = holders[:len(holders)-1]
-			stage2Floor = cut
+			// v0.10.267 — asc'te kesim TAVAN'dır (id'ler pencerenin başında);
+			// eskiden taban sayılıyor, kırpma tespiti ×8 genişleterek kurtarıyordu.
+			stage2Floor, stage2Ceil = sliceStageBounds(s1f.Order, cut, exhausted)
 			if ranked && f.RankedWithin != nil {
 				// Report the REAL slice, not the constant. When the slice
 				// exhausted the window the ordering is global, so the "ranked
@@ -3690,7 +3692,8 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		       countMerge(span_count_state)                                AS span_count,
 		       toUInt8(countMerge(error_count_state) > 0)                  AS has_error,
 		       countMerge(error_count_state)                               AS err_spans,
-		       min(time_bucket)                                            AS first_bucket
+		       min(time_bucket)                                            AS first_bucket,
+		       max(time_bucket)                                            AS last_bucket
 		FROM trace_summary_5m
 		WHERE ` + traceIDClause + `time_bucket >= ? AND time_bucket < ?
 		GROUP BY trace_id` + havingSQL + `
@@ -3715,7 +3718,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	// locally is 5 minutes and ZERO of 565,546 traces exceed it. So we do not
 	// assume — we DETECT, by asking Stage 2 for min(time_bucket) and widening
 	// the floor if any returned row sits on it.
-	out, hasMore, err := s.runTraceStage2(ctx, f, stage2, idArgs, stage2Floor, pageLimit)
+	out, hasMore, err := s.runTraceStage2(ctx, f, stage2, idArgs, stage2Floor, stage2Ceil, pageLimit)
 	if err != nil {
 		return nil, 0, false, err
 	}

@@ -2507,7 +2507,20 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// bellek 3.8× (oran prod'a taşınır). İki aşama: 1) yalnız trace_id +
 	// SAYISAL sıralama anahtarı, LIMIT/OFFSET burada; 2) tam satır YALNIZ
 	// sayfanın id'leri için (traceExtrasSQL ile aynı `trace_id IN` deseni).
-	if !served && rawListLightEligible(f) {
+	if traceRawProbeEligible(f) {
+		for _, w := range traceRawProbeWindows(f.From, f.To) {
+			floor := f.To.Add(-w)
+			rows, err := runList(floor.Add(-traceRawProbeLookback), f.Offset+pageLimit, 0)
+			if err != nil {
+				return nil, 0, false, err
+			}
+			if page, more, ok := traceRawProbePage(rows, floor.UnixNano(), f.Offset, f.Limit); ok {
+				out, hasMore, served = page, more, true
+				break
+			}
+		}
+	}
+	if !served && rawListLightEligible(f, rootPostFilter) {
 		// v0.10.237 — 1. aşama tüm pencereyi GÖRMEK zorunda (süre sıralaması
 		// zamanla kesilemez); prod'da pencere/hacim yine sınırı aşarsa 500
 		// yerine MV yolunun sözleşmesi (v0.9.297, trace_slice.go): kaynak
@@ -2578,19 +2591,6 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 			out = out[:f.Limit]
 		}
 		served = true
-	}
-	if !served && traceRawProbeEligible(f) {
-		for _, w := range traceRawProbeWindows(f.From, f.To) {
-			floor := f.To.Add(-w)
-			rows, err := runList(floor.Add(-traceRawProbeLookback), f.Offset+pageLimit, 0)
-			if err != nil {
-				return nil, 0, false, err
-			}
-			if page, more, ok := traceRawProbePage(rows, floor.UnixNano(), f.Offset, f.Limit); ok {
-				out, hasMore, served = page, more, true
-				break
-			}
-		}
 	}
 	if !served {
 		rows, err := runList(f.From, pageLimit, f.Offset)
@@ -2776,13 +2776,19 @@ func narrowOnExhaustion(err error, from, to time.Time, attempt int) (time.Time, 
 // sıralaması pencere basamaklarıyla (trace_raw_probe.go) zaten daralıyor;
 // servis/operasyon sıralamasının anahtarı string durumun kendisi
 // (hafifletilecek bir şey yok); id listesi zaten sınırlı. SAF.
-func rawListLightEligible(f TraceFilter) bool {
+func rawListLightEligible(f TraceFilter, rootPostFilter bool) bool {
 	if f.TraceID != "" || len(f.TraceIDs) > 0 {
 		return false
 	}
 	switch f.Sort {
 	case "duration", "spans", "status":
 		return true
+	case "", "time":
+		// v0.10.239 — zaman sıralaması ancak kök son-filtresi gerekiyorsa
+		// hafif yola girer (pencere basamağı ÖNCE denenir; buraya tam
+		// pencereye düşüşte gelinir) — sınırsız GLOBAL IN HAVING'i
+		// taşıyan tek geçişe düşmemek için.
+		return rootPostFilter
 	}
 	return false
 }
@@ -2802,6 +2808,11 @@ func traceRawStage1LightSQL(whereSQL, havingSQL, sort, order string) (string, bo
 		sortExpr = "count()"
 	case "status":
 		sortExpr = "max(if(status_code = 'error', 1, 0))"
+	case "", "time":
+		// v0.10.239 — yalnız kök son-filtreli tam-pencere düşüşünde
+		// (rawListLightEligible); zaman sıralamasının normal yolu pencere
+		// basamağıdır (trace_raw_probe.go). trace_start = min(time).
+		sortExpr = "min(time)"
 	default:
 		return "", false
 	}

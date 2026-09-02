@@ -47,10 +47,14 @@ func TestTraceRawStage1LightSQL_Shape(t *testing.T) {
 	if s, _ := traceRawStage1LightSQL("", "", "duration", "sideways"); !strings.Contains(s, " DESC, trace_id") {
 		t.Fatalf("unknown order defaults to DESC: %s", s)
 	}
-	for _, sort := range []string{"", "time", "service", "operation", "weird"} {
+	for _, sort := range []string{"service", "operation", "weird"} {
 		if _, ok := traceRawStage1LightSQL("", "", sort, "DESC"); ok {
-			t.Fatalf("sort %q must not be light-eligible (string key or probe path)", sort)
+			t.Fatalf("sort %q must not be light-eligible (string key)", sort)
 		}
+	}
+	// v0.10.239 — zaman sıralaması yalnız kök son-filtreli düşüşte: min(time).
+	if s, ok := traceRawStage1LightSQL("", "", "time", "DESC"); !ok || !strings.Contains(s, "ORDER BY min(time) DESC, trace_id") {
+		t.Fatalf("time sort light expr: %v %s", ok, s)
 	}
 }
 
@@ -58,20 +62,23 @@ func TestRawListLightEligible(t *testing.T) {
 	cases := []struct {
 		name string
 		f    TraceFilter
+		root bool
 		want bool
 	}{
-		{"duration", TraceFilter{Sort: "duration"}, true},
-		{"spans", TraceFilter{Sort: "spans"}, true},
-		{"status", TraceFilter{Sort: "status"}, true},
-		{"time → probe path", TraceFilter{Sort: "time"}, false},
-		{"default (time)", TraceFilter{}, false},
-		{"service (string key)", TraceFilter{Sort: "service"}, false},
-		{"operation (string key)", TraceFilter{Sort: "operation"}, false},
-		{"trace id list already bounded", TraceFilter{Sort: "duration", TraceIDs: []string{"a"}}, false},
-		{"trace id prefix already bounded", TraceFilter{Sort: "duration", TraceID: "ab"}, false},
+		{"duration", TraceFilter{Sort: "duration"}, false, true},
+		{"spans", TraceFilter{Sort: "spans"}, false, true},
+		{"status", TraceFilter{Sort: "status"}, false, true},
+		{"time → probe path (no root post-filter)", TraceFilter{Sort: "time"}, false, false},
+		{"default (time), no root", TraceFilter{}, false, false},
+		{"time + root post-filter → light full-window fallback (v0.10.239)", TraceFilter{Sort: "time"}, true, true},
+		{"default (time) + root post-filter", TraceFilter{}, true, true},
+		{"service (string key) even with root", TraceFilter{Sort: "service"}, true, false},
+		{"operation (string key)", TraceFilter{Sort: "operation"}, false, false},
+		{"trace id list already bounded", TraceFilter{Sort: "duration", TraceIDs: []string{"a"}}, false, false},
+		{"trace id prefix already bounded", TraceFilter{Sort: "duration", TraceID: "ab"}, false, false},
 	}
 	for _, c := range cases {
-		if got := rawListLightEligible(c.f); got != c.want {
+		if got := rawListLightEligible(c.f, c.root); got != c.want {
 			t.Errorf("%s: got %v want %v", c.name, got, c.want)
 		}
 	}

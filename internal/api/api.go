@@ -3616,26 +3616,16 @@ func (s *Server) getServiceSparklines(w http.ResponseWriter, r *http.Request) {
 	// range can't defeat the 30s TTL. (scale-audit v0.8.201)
 	sortedSvcs := append([]string(nil), wantSvcs...)
 	sort.Strings(sortedSvcs)
-	key := fmt.Sprintf("services-spark:window=%s:svcs=%s",
+	// v0.10.262 (CDV-1) — anahtar v2: gövde artık slot grid'i (≤120 dilim).
+	key := fmt.Sprintf("services-spark:v2:window=%s:svcs=%s",
 		cacheBucket(from, to), strings.Join(sortedSvcs, ","))
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		rows, err := s.store.GetServiceSummary5mFor(ctx, wantSvcs, from, to)
 		if err != nil {
 			return nil, err
 		}
-		// Group by service. Map insertion preserves nothing on Go's side,
-		// but the front-end indexes by name so order doesn't matter.
-		out := map[string][]map[string]any{}
-		for _, b := range rows {
-			out[b.Service] = append(out[b.Service], map[string]any{
-				"t":     b.BucketStart,
-				"spans": b.SpanCount,
-				"errs":  b.ErrorCount,
-				"avgMs": b.AvgMs,
-				"p99Ms": b.P99Ms,
-			})
-		}
-		return out, nil
+		// 7 g × 50 servis ≈ 100k nesne → ≤120 slot × servis (sparkline_slots.go).
+		return sparklineSlots(rows, from, to, sparklineMaxSlots), nil
 	})
 }
 

@@ -745,3 +745,34 @@ func (s *Store) spanmetricsCoverageStart(ctx context.Context) time.Time {
 	s.smCovMu.Unlock()
 	return earliest
 }
+
+// MetricPointBudget — v0.10.262 (perf §7 madde 6, CDV-2): açık adımda
+// varsayılan nokta bütçesi (MaxDataPoints verilmemişse). 7 g / 10 s adım =
+// 60.480 nokta × seri sayısı tavansız gidiyordu; bütçe pencereyi adıma
+// böler, adım küçükse kaba adıma yuvarlar.
+const MetricPointBudget = 2000
+
+// clampExplicitStep — SAF: step > 0 iken pencere/bütçe'den küçükse yükseltir.
+// budget = maxDataPoints (>0) ya da MetricPointBudget. step ≤ 0 aynen (auto
+// yol metricAutoStepPx'te zaten bütçeli).
+func clampExplicitStep(step int, from, to time.Time, maxDataPoints int) int {
+	if step <= 0 || to.IsZero() || from.IsZero() || !to.After(from) {
+		return step
+	}
+	budget := maxDataPoints
+	if budget <= 0 {
+		budget = MetricPointBudget
+	}
+	minStep := int((to.Sub(from).Seconds() + float64(budget) - 1) / float64(budget))
+	if minStep < 1 {
+		minStep = 1
+	}
+	if step >= minStep {
+		return step
+	}
+	// Kaba adım açık adımın katı olsun (kova hizası korunur).
+	if r := minStep % step; r != 0 {
+		minStep += step - r
+	}
+	return minStep
+}

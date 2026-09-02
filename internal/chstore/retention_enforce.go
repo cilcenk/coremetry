@@ -64,12 +64,16 @@ func (s *Store) EnforceRetention(ctx context.Context) error {
 		"retention.metrics":  overrides.Metrics,
 		"retention.profiles": overrides.Profiles,
 	}
+	spansDays := 0
 	for _, t := range tables {
 		days := t.defaultDays
 		if v, ok := overrideMap[t.settingsKey]; ok && v != "" {
 			if d, err := parseRetentionDays(v); err == nil {
 				days = d
 			}
+		}
+		if t.tableName == "spans" {
+			spansDays = days
 		}
 		if days <= 0 {
 			continue // retention disabled / unconfigured
@@ -79,6 +83,9 @@ func (s *Store) EnforceRetention(ctx context.Context) error {
 			continue
 		}
 	}
+	// v0.10.263 — MV depoları (retention_mv.go): trace MV'leri spans+1 gün,
+	// spanmetrics_1s/10s 1/2 gün; TTL merge'lerini beklemeden partition düşer.
+	s.enforceMVRetention(ctx, spansDays)
 	return nil
 }
 

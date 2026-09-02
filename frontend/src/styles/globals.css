@@ -2213,7 +2213,7 @@ tbody tr.wf-evidence:hover > td { background: color-mix(in srgb, var(--warn) 14%
 .context-bar .ctx-field select, .context-bar .ctx-field input { min-width: 0; }
 .context-bar .ctx-disabled { width: 6ch; }
 .context-bar .ctx-panel { display: none; }
-.context-bar .ctx-panel.is-open { display: flex; flex-direction: column; gap: var(--space-2, 8px); position: absolute; top: 100%; right: 0; padding: var(--space-3, 12px); background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm); z-index: 20; }
+.context-bar .ctx-panel.is-open { display: flex; flex-direction: column; gap: var(--space-2, 8px); position: absolute; top: 100%; right: 0; padding: var(--space-3, 12px); background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm); z-index: var(--z-popover); }
 .context-bar { position: relative; }
 
 /* accent — "emphasised but not primary" tinted chip (v0.8.540).

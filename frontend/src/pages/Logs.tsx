@@ -20,6 +20,7 @@ import {
   LogsHistogram, parseBreakdown, histogramFeedsChips, type LogsBreakdown,
 } from '@/components/LogsHistogram';
 import { LogFieldsPanel } from '@/components/LogFieldsPanel';
+import { LogPatternsPanel } from '@/components/LogPatternsPanel';
 import { Button } from '@/components/ui/Button';
 import { RenderedMarkdown } from '@/components/Markdown';
 import { Pager } from '@/components/Pager';
@@ -181,6 +182,14 @@ function LogsInner() {
     hasTrace: false,
   });
   const [draft, setDraft] = useState(filter);
+  // v0.10.298 — "Desenler" paneli (log-search Dilim 2b): açık/kapalı kalıcı;
+  // fetch yalnız açıkken. Satır/"Ara" → türetilmiş sorgu serbest metne.
+  const [patternsOpen, setPatternsOpen] = useState<boolean>(() => getRaw('logs.patterns.open') === '1');
+  const togglePatterns = () => setPatternsOpen(v => { setRaw('logs.patterns.open', v ? '0' : '1'); return !v; });
+  const searchFromPattern = (qStr: string) => {
+    const next = { ...filter, search: qStr };
+    setFilter(next); setDraft(next); resetPaging(); writeUrl(next, filters);
+  };
   // v0.9.1100 (F3.5) — ✨ desen anlatımı durumu (Shift emsali).
   // v0.9.1121 (Faz 0.3b) — xid: cevabın ai_calls kimliği; 👍/👎 buna asılı.
   const [aiPat, setAiPat] = useState<{ busy: boolean; text: string | null; err: string | null; xid?: string }>({ busy: false, text: null, err: null });
@@ -720,6 +729,11 @@ function LogsInner() {
           </div>
           {/* v0.9.1100 (F3.5) — ✨ desen anlatımı. Fetch YALNIZ tıkla
               (ES-maliyet disiplini); pencere sunucuda rung'lanır. */}
+          <Button variant={patternsOpen ? 'primary' : 'secondary'} size="sm"
+            onClick={togglePatterns} aria-pressed={patternsOpen}
+            title="Penceredeki log desenleri (örneklemeli imza grupları)">
+            ≡ Desenler
+          </Button>
           <Button variant="secondary" size="sm" disabled={aiPat.busy}
             onClick={explainPatterns}
             title="Penceredeki yeni/patlayan log desenlerini ve sürekli gürültü şablonlarını AI anlatır">
@@ -902,6 +916,9 @@ function LogsInner() {
             <div><AIFeedbackButtons exchangeId={aiPat.xid} /></div>
           </div>
         )}
+
+        <LogPatternsPanel open={patternsOpen} onSearch={searchFromPattern}
+          params={{ ...filter, env, search: compiledSearch, from: from ?? undefined, to: to ?? undefined }} />
 
         {/* v0.9.1084 — HONEST with-trace chip (EnvUnapplied ikizi;
             operator-reported: prod'ta "with trace" hiç log getirmiyordu).

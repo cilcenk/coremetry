@@ -3844,3 +3844,10 @@ thead th:hover .th-remove { opacity: 1; }
    .kv-actions deseninin hücre-kapsamlı ikizi). */
 .lt-pivot .kv-actions { opacity: 0; }
 .lt-pivot:hover .kv-actions { opacity: 1; }
+
+/* v0.10.298 — /logs Desenler paneli: sayı hücresinde pay çubuğu */
+.lp-panel .table-wrap { max-height: 380px; overflow: auto; }
+.lp-search { white-space: nowrap; }
+.lp-row td.num { position: relative; }
+.lp-bar { position: absolute; right: 6px; top: 6px; bottom: 6px; background: color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 2px; pointer-events: none; }
+.lp-row:hover td { background: color-mix(in srgb, var(--accent) 5%, transparent); }

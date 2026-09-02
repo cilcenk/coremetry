@@ -80,6 +80,9 @@ func TestGroupBySignatureGroupsAndSorts(t *testing.T) {
 	if len(g.Hash) != 16 {
 		t.Errorf("hash %q", g.Hash)
 	}
+	if g.Query != `"connection refused to" AND "after"` {
+		t.Errorf("query %q", g.Query)
+	}
 	if res.Groups[1].Template != "user <x> logged in" {
 		t.Errorf("ikinci grup %q", res.Groups[1].Template)
 	}

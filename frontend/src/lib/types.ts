@@ -6735,3 +6735,31 @@ export interface MetricCompareReport {
   noteA?: string;
   noteB?: string;
 }
+
+// /api/logs/patterns (v0.10.296/297, log-search Dilim 2) — pencere içi log
+// desenleri: NormalizeSignature imzasıyla gruplanmış, ÖRNEKLEMELİ (≤cap
+// satır, en yeniden eskiye). Sayımlar örneğe göredir; sampled/total/
+// truncated bunu ilan eder. sample VERBATİM (redaksiyon yok).
+export interface LogPatternGroup {
+  hash: string;
+  template: string;
+  count: number;
+  sample: string;
+  severity: number;
+  severityText?: string;
+  firstSeen: number; // unix ns
+  lastSeen: number;
+  services: string[];
+  serviceCount: number;
+  query: string; // "Ara" — şablondan türetilen tırnaklı AND sorgusu ('' = yok)
+}
+export interface LogPatternsResult {
+  groups: LogPatternGroup[];
+  sampled: number;
+  total: number;
+  cap: number;
+  truncated: boolean;
+  distinct: number;
+  degraded?: boolean;
+  reason?: string;
+}

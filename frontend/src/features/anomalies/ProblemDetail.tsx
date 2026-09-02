@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useEscLayer } from '@/lib/escLayer';
 import { Link, useNavigate } from 'react-router-dom';
+import { rolloutEvidenceHref } from '@/lib/rolloutRow';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ArrowDownToLine } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -21,7 +22,7 @@ import { fmtDurationNs, fmtStartedTs } from './problemTime';
 import { emptySamplesNote } from './exceptionSamples';
 import { ExceptionPodsPanel } from './ExceptionPodsPanel';
 import { ExternalEvidencePanel } from './ExternalEvidencePanel';
-import type { ExceptionGroup, ExceptionGroupState, Problem } from '@/lib/types';
+import type { ExceptionGroup, ExceptionGroupState, Problem, RolloutEvidence } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 import { PageShell } from '@/components/ui/PageShell';
 import { ShareButton } from '@/components/ShareButton';
@@ -686,6 +687,10 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
   // A row with no usable startedAt is broken, not zero-length — the helper
   // returns undefined rather than pinning a window at the epoch, and the
   // page falls back to the same shape anchored on the end it does know.
+  // v0.10.243 — Problem↔Rollout D3: RootCausePanel'in /rootcause yanıtından
+  // rollout kanıtı; zaman çizgisine "Rollout" işareti (ikinci istek yok).
+  const [rcRollouts, setRcRollouts] = useState<RolloutEvidence[]>([]);
+  useEffect(() => { setRcRollouts([]); }, [problem.id]);
   const probWindow = eventLifespanWindow(problem)
     ?? { fromNs: endNs - 60 * 60 * 1e9, toNs: endNs + 10 * 60 * 1e9 };
   // v0.9.1348 — el-yapımı log linki logsHref üreticisine indi; v0.9.1356 —
@@ -754,7 +759,8 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
                 pod'lar, log imzaları) D4'ün yazdığı hipotezden çizilir. */}
             {isExternal
               ? <ExternalEvidencePanel problem={problem} window={probWindow} />
-              : <RootCausePanel problemId={problem.id} service={problem.service} window={probWindow} />}
+              : <RootCausePanel problemId={problem.id} service={problem.service} window={probWindow}
+                  onLoaded={rc => setRcRollouts(rc?.hypothesis?.deep?.rollouts ?? [])} />}
             {/* Background problemExplainer's persisted first-look blurb —
                 full prose here (the feed card only tooltips it). */}
             {problem.aiSummary && (
@@ -800,6 +806,18 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
 
           <Sect title="Problem timeline">
             <ul className="pb-tl">
+              {rcRollouts.map(ev => (
+                <li key={`${ev.clusterId}/${ev.namespace}/${ev.workload}@${ev.revision}`} className={ev.band === 'high' ? 'warn' : ''}>
+                  <b>Rollout</b>{' '}
+                  <Link to={rolloutEvidenceHref(ev)} className="mono" title={ev.reason}>
+                    {ev.namespace}/{ev.workload}{ev.imageTag ? ` → ${ev.imageTag}` : ''}
+                  </Link>
+                  {ev.matchedBy === 'pod' && <span className="badge b-warn" style={{ marginLeft: 6 }}>POD</span>}
+                  <span className="mono" style={{ color: 'var(--text3)', marginLeft: 8 }}>
+                    {fmtStartedTs(ev.startedAtNs)}
+                  </span>
+                </li>
+              ))}
               {problem.recentDeploy && (
                 <li className="warn">
                   <b>Deploy</b> <code className="mono">{problem.recentDeploy.version}</code>

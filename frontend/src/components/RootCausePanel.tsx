@@ -4,7 +4,9 @@ import { Spinner, Empty } from './Spinner';
 import { IconFlame } from './icons';
 import { api } from '@/lib/api';
 import { fmtFixed, fmtDurShort } from '@/lib/utils';
-import type { RootCause, BubbleUpValue } from '@/lib/types';
+import type { RootCause, BubbleUpValue, RolloutEvidence } from '@/lib/types';
+import { rolloutEvidenceHref, shortRevision } from '@/lib/rolloutRow';
+import { tsLong } from '@/lib/utils';
 import { serviceHref } from '@/lib/serviceHref';
 import { traceHref } from '@/lib/traceHref';
 
@@ -24,15 +26,22 @@ import { traceHref } from '@/lib/traceHref';
 // v0.9.860 (UX denetimi K1) — `window`: bu paneldeki servis linkleri OLAY
 // bağlamında yaşıyor (problemin penceresi). Pencere üstten gelir; panelin
 // kendi verisi zaman taşımıyor.
-export function RootCausePanel({ problemId, service, window: win }: {
+export function RootCausePanel({ problemId, service, window: win, onLoaded }: {
   problemId: string; service: string; window?: { fromNs: number; toNs: number };
+  // v0.10.243 — ProblemDetail zaman çizgisi rollout işaretlerini buradan
+  // alır (aynı /rootcause yanıtı; ikinci istek yok).
+  onLoaded?: (rc: RootCause | null) => void;
 }) {
   const [rc, setRc] = useState<RootCause | null | undefined>(undefined);
   useEffect(() => {
     setRc(undefined);
+    let cancelled = false;
     api.problemRootCause(problemId)
-      .then(r => setRc(r ?? null))
-      .catch(() => setRc(null));
+      .then(r => { if (cancelled) return; setRc(r ?? null); onLoaded?.(r ?? null); })
+      .catch(() => { if (cancelled) return; setRc(null); onLoaded?.(null); });
+    return () => { cancelled = true; };
+    // onLoaded kimliği her render değişebilir; yalnız problemId tetikler.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [problemId]);
 
   if (rc === undefined) return <Spinner />;
@@ -48,8 +57,9 @@ export function RootCausePanel({ problemId, service, window: win }: {
   // goroutine'i nil dönüşle `[]` zarfını eziyordu). Aynı çökme sınıfı,
   // farklı metot ('filter').
   const corr = (rc.correlations ?? []).filter(c => c.service !== service);
-  const headline = likelyCause(rc, service, bubble);
-  const nothing = !rc.recentDeploy && !bubble && !blast && corr.length === 0 && !rc.exemplar;
+  const rollouts: RolloutEvidence[] = rc.hypothesis?.deep?.rollouts ?? [];
+  const headline = likelyCause(rc, service, bubble, rollouts);
+  const nothing = !rc.recentDeploy && !bubble && !blast && corr.length === 0 && !rc.exemplar && rollouts.length === 0;
 
   if (nothing) {
     return (
@@ -212,6 +222,58 @@ export function RootCausePanel({ problemId, service, window: win }: {
         </Section>
       )}
 
+      {/* 5b. İlgili dağıtımlar (v0.10.243, Problem↔Rollout D3) — worker'ın
+          puanladığı rollout kayıtları (≤3). RecentDeploy (deploy OLAYI) ile
+          ayrı kaynak: burası Kubernetes rollout kaydı (span/KSM kanıtı).
+          Puan bandı: 0–30 dk yüksek, 30–120 dk düşük; pod eşlemesi ayrıca
+          işaretli. Satır = /rollouts çekmece linki. */}
+      {rollouts.length > 0 && (
+        <Section title="İlgili dağıtımlar"
+                 subtitle="problem başlangıcından önceki 120 dk içinde bu servisin iş yüklerinde başlayan rollout'lar">
+          <div className="table-wrap">
+            <table>
+              <thead><tr>
+                <th>İş yükü</th>
+                <th>Geçiş</th>
+                <th style={{ width: 110 }}>Ne zaman</th>
+                <th style={{ width: 90 }}>Durum</th>
+                <th className="num" style={{ width: 64 }}>Puan</th>
+              </tr></thead>
+              <tbody>
+                {rollouts.map(ev => (
+                  <tr key={`${ev.clusterId}/${ev.namespace}/${ev.workload}@${ev.revision}`} title={ev.reason}>
+                    <td>
+                      <Link to={rolloutEvidenceHref(ev)} style={{ fontWeight: 600 }}>
+                        {ev.namespace}/{ev.workload}
+                      </Link>
+                      {ev.matchedBy === 'pod' && (
+                        <span className="badge b-warn" style={{ marginLeft: 6 }} title="problemin pod'u bu revizyonda">POD</span>
+                      )}
+                    </td>
+                    <td className="mono" style={{ fontSize: 12 }}>
+                      {ev.prevImageTag && ev.imageTag && ev.prevImageTag !== ev.imageTag
+                        ? <>{ev.prevImageTag} → {ev.imageTag}</>
+                        : (ev.imageTag || shortRevision(ev.revision, ev.workload))}
+                    </td>
+                    <td className="mono" style={{ fontSize: 12, color: 'var(--text2)' }} title={tsLong(ev.startedAtNs)}>
+                      {ev.ageMin <= 0 ? 'aynı dakika' : `${ev.ageMin} dk önce`}
+                    </td>
+                    <td>
+                      <span className={`badge ${ev.status === 'stalled' || ev.status === 'rolled_back' ? 'b-err' : ev.status === 'in_progress' ? 'b-warn' : 'b-gray'}`}>
+                        {ev.status}
+                      </span>
+                    </td>
+                    <td className="num mono" style={{ fontWeight: 600, color: ev.band === 'high' ? 'var(--err)' : 'var(--warn)' }}>
+                      {ev.score.toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
+
       {/* 6. Neye bakıldı (v0.9.1066, Faz 3.1 / K7) — derin soruşturmanın
           denetim izi. Bugüne dek yalnız LLM prompt'una ve MCP'ye gidiyordu;
           operatör "hangi sinyale bakıldı, ne bulundu"yu göremiyordu.
@@ -264,6 +326,7 @@ function Section({ title, subtitle, children }: { title: string; subtitle?: stri
 function likelyCause(
   rc: RootCause, service: string,
   bubble: { key: string; values: BubbleUpValue[] } | null,
+  rollouts: RolloutEvidence[] = [],
 ): { text: ReactNode; accent: string; bg: string; border: string } {
   const deploy = { accent: 'var(--warn)', bg: 'color-mix(in srgb, var(--warn) 10%, transparent)', border: 'color-mix(in srgb, var(--warn) 40%, transparent)' };
   const dim = { accent: 'var(--err)', bg: 'color-mix(in srgb, var(--err) 8%, transparent)', border: 'color-mix(in srgb, var(--err) 35%, transparent)' };
@@ -275,6 +338,18 @@ function likelyCause(
       ...deploy,
       text: <>Coincides with a <b>deploy</b> — <code>service.version={rc.recentDeploy.version}</code> first
         seen <b>{fmtDurShort(rc.recentDeploy.ageSeconds)}</b> before this problem opened.</>,
+    };
+  }
+  // v0.10.243 — deploy OLAYI yoksa ama yüksek bantlı rollout kaydı varsa
+  // manşet odur (0–30 dk). Düşük bant (30–120 dk) manşet olmaz; tabloda kalır.
+  const hot = rollouts.find(r => r.band === 'high');
+  if (hot) {
+    return {
+      ...deploy,
+      text: <>Coincides with a <b>rollout</b> — <code>{hot.namespace}/{hot.workload}</code>
+        {hot.imageTag ? <> → <code>{hot.imageTag}</code></> : null} started{' '}
+        <b>{hot.ageMin <= 0 ? 'the same minute' : `${hot.ageMin}m before`}</b> this problem opened
+        {hot.status === 'stalled' ? ' and is stalled' : hot.status === 'rolled_back' ? ' and was rolled back' : ''}.</>,
     };
   }
   const top = bubble?.values[0];

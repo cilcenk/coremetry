@@ -1,6 +1,6 @@
 // rolloutRow.test.ts — v0.10.201 sözleşmesi (rolloutRow.ts başlığı).
 import { describe, it, expect } from 'vitest';
-import { rolloutKey, upsertRollouts, statusTone, rolloutDurationSec, shortRevision, imageDiff, rolloutTracesFilters } from './rolloutRow';
+import { rolloutKey, upsertRollouts, statusTone, rolloutDurationSec, shortRevision, imageDiff, rolloutTracesFilters, rolloutEvidenceHref, decodeRolloutParam } from './rolloutRow';
 import type { WorkloadRollout } from './types';
 
 const base: WorkloadRollout = {
@@ -95,5 +95,14 @@ describe('rolloutChangeKind', () => {
     expect(imageRef('reg/app', '1.0')).toBe('reg/app:1.0');
     expect(imageRef('reg/app', '')).toBe('reg/app');
     expect(imageRef('', '')).toBe('—');
+  });
+});
+
+describe('rolloutEvidenceHref (v0.10.243)', () => {
+  it('ns → ms sınırı: çekmece parametresi ms, decode ile geri döner', () => {
+    const href = rolloutEvidenceHref({ clusterId: 'c-1', namespace: 'pay', workload: 'api', revision: 'api-7fb7dffckb', startedAtNs: 1700000000123456789 });
+    expect(href.startsWith('/rollouts?rollout=')).toBe(true);
+    const dec = decodeRolloutParam(href.slice('/rollouts?rollout='.length));
+    expect(dec).toEqual({ clusterId: 'c-1', namespace: 'pay', workload: 'api', revision: 'api-7fb7dffckb', startedAt: 1700000000123 });
   });
 });

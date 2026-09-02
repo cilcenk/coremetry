@@ -648,9 +648,10 @@ export const api = {
 
   // services: comma-separated allow-list — server caps to 200 to keep
   // the payload small even on 10k+ service installs.
-  serviceSparklines: (r: RangeParams, services?: string[]) =>
+  // v0.10.286 — maxSlots: istemci piksel bütçesi (lib/sparkline sparkMaxSlotsForWidth).
+  serviceSparklines: (r: RangeParams, services?: string[], maxSlots?: number) =>
     get<Record<string, SparklineBucket[]> | null>(
-      `/api/services/sparklines?${qs({ ...r, services: services?.join(',') })}`),
+      `/api/services/sparklines?${qs({ ...r, services: services?.join(','), maxSlots })}`),
   serviceNames: (q?: string, limit = 200, offset = 0) =>
     get<{ names: string[]; total: number; hasMore: boolean }>(
       `/api/service-names?${qs({ q, limit, offset })}`),

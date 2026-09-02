@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { sparkMaxSlotsForWidth, SPARK_DEFAULT_WIDTH } from '@/lib/sparkline';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { TrendDelta } from '@/components/TrendDelta';
 import { Star } from 'lucide-react';
@@ -390,7 +391,9 @@ export default function ServicesPage() {
       // skip the fetch and the cells degrade to value-only (the same
       // look as an empty MV window); the table footer says why.
       if (names.length > 0 && !env) {
-        api.serviceSparklines(r, names).then(d => { if (!cancelled) setSparklines(d ?? {}); }).catch(() => {});
+        // v0.10.286 — sunucudan yalnız çizilebilecek kadar slot iste
+        // (varsayılan 80 px sparkline → 80 slot; eski sabit 120).
+        api.serviceSparklines(r, names, sparkMaxSlotsForWidth(SPARK_DEFAULT_WIDTH)).then(d => { if (!cancelled) setSparklines(d ?? {}); }).catch(() => {});
       }
     }).catch(e => {
       if (cancelled) return;

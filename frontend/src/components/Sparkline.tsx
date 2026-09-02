@@ -1,5 +1,5 @@
 import { useId, useRef, useState } from 'react';
-import { barGeometry, barIndexAt, classifyThreshold, downsampleBuckets, maxBarsForWidth, maxLinePointsForWidth, sparkRenderMode } from '@/lib/sparkline';
+import { SPARK_DEFAULT_WIDTH, barGeometry, barIndexAt, classifyThreshold, downsampleBuckets, maxBarsForWidth, maxLinePointsForWidth, sparkRenderMode } from '@/lib/sparkline';
 import { downsampleXY } from '@/lib/perf/lttb';
 
 // Tiny inline SVG sparkline — no chart library. Auto-scales to its own
@@ -78,7 +78,7 @@ interface Props {
 }
 
 export function Sparkline({
-  values, width = 80, height = 22, color, title, className,
+  values, width = SPARK_DEFAULT_WIDTH, height = 22, color, title, className,
   unit, threshold, thresholdComparator = '>', onClick, showDelta, domainMax,
   mode = 'area',
 }: Props) {

@@ -190,3 +190,23 @@ export function barIndexAt(x: number, width: number, count: number): number | nu
   if (x < 0 || x > width) return null;
   return Math.min(count - 1, Math.floor((x / width) * count));
 }
+
+// ── v0.10.286 (chart audit D1 / Dilim 1.7): sunucu slot bütçesi ─────────
+// /api/services/sparklines ?maxSlots= — sunucu (internal/api/sparkline_slots.go
+// sparklineSlotRungs) bu basamaklara snap eder; iki liste Go testiyle
+// çivili (TestSparklineRungsMatchFrontend). Basamak = sınırlı cache
+// kardinalitesi.
+export const SPARK_SLOT_RUNGS = [40, 60, 80, 120];
+export const SPARK_DEFAULT_WIDTH = 80;
+
+// sparkMaxSlotsForWidth — bir sparkline'ın genişliğinden sunucuya istenecek
+// slot sayısı: çizgi için 1 nokta/px yeterli (daha sıkı çizilemez), bar
+// için maxBarsForWidth; ikisinin büyüğü basamağa YUKARI yuvarlanır.
+// Varsayılan 80 px → 80 slot (eski sabit 120'ye göre tel gövdesi −33 %,
+// görünür kayıp yok).
+export function sparkMaxSlotsForWidth(width: number): number {
+  if (!isFinite(width) || width <= 0) return SPARK_SLOT_RUNGS[SPARK_SLOT_RUNGS.length - 1];
+  const want = Math.max(maxBarsForWidth(width), Math.ceil(width));
+  for (const r of SPARK_SLOT_RUNGS) if (want <= r) return r;
+  return SPARK_SLOT_RUNGS[SPARK_SLOT_RUNGS.length - 1];
+}

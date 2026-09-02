@@ -3596,16 +3596,19 @@ func (s *Server) getServiceSparklines(w http.ResponseWriter, r *http.Request) {
 	// v0.10.269 — slot genişliği CH'ye iner (GROUP BY slot, tek tDigest
 	// merge); sparklineSlots artık geçiş (aynı grid, aynı origin) — ≤120
 	// slot garantisi ve grid hizası orada kalır. Anahtar v3: slot girer.
-	width := sparklineSlotWidth(from, to, sparklineMaxSlots)
-	key := fmt.Sprintf("services-spark:v3:window=%s:slot=%d:svcs=%s",
-		cacheBucket(from, to), int(width/time.Second), strings.Join(sortedSvcs, ","))
+	// v0.10.286 (D1) — istemci piksel bütçesi: ?maxSlots= basamağa snap
+	// (40/60/80/120); yoksa 120 = eski gövde. Anahtar v4: basamak girer.
+	maxSlots := sparklineSlotRung(parseInt(q.Get("maxSlots"), 0))
+	width := sparklineSlotWidth(from, to, maxSlots)
+	key := fmt.Sprintf("services-spark:v4:window=%s:slot=%d:max=%d:svcs=%s",
+		cacheBucket(from, to), int(width/time.Second), maxSlots, strings.Join(sortedSvcs, ","))
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		rows, err := s.store.GetServiceSummarySlots(ctx, wantSvcs, from, to, width)
 		if err != nil {
 			return nil, err
 		}
-		// 7 g × 50 servis ≈ 100k nesne → ≤120 slot × servis (sparkline_slots.go).
-		return sparklineSlots(rows, from, to, sparklineMaxSlots), nil
+		// 7 g × 50 servis ≈ 100k nesne → ≤maxSlots slot × servis (sparkline_slots.go).
+		return sparklineSlots(rows, from, to, maxSlots), nil
 	})
 }
 

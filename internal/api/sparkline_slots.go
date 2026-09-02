@@ -27,6 +27,27 @@ const (
 	sparklineBucket   = 5 * time.Minute
 )
 
+// sparklineSlotRungs — v0.10.286 (chart audit D1 / Dilim 1.7): istemcinin
+// piksel bütçesinden gelen `maxSlots` isteği bu basamaklara SNAP edilir.
+// Basamak = sınırlı kardinalite (v0.5.187 cache-key kuralı: serbest bir
+// tamsayı her genişlikte ayrı cache satırı üretirdi). 120 = eski sabit
+// (bütçesiz istemci aynı gövdeyi görür); 40 = ~80 px'lik sütun (2 px/slot).
+var sparklineSlotRungs = []int{40, 60, 80, sparklineMaxSlots}
+
+// sparklineSlotRung — istenen slot sayısını basamağa yuvarlar (yukarı:
+// istemci en az istediği kadar nokta alır); 0/negatif/aşırı → 120.
+func sparklineSlotRung(want int) int {
+	if want <= 0 {
+		return sparklineMaxSlots
+	}
+	for _, r := range sparklineSlotRungs {
+		if want <= r {
+			return r
+		}
+	}
+	return sparklineMaxSlots
+}
+
 type sparkPoint struct {
 	T     int64   `json:"t"`
 	Spans uint64  `json:"spans"`

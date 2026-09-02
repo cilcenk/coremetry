@@ -328,12 +328,15 @@ func (s *Server) getClusterNamespacePodsTrend(w http.ResponseWriter, r *http.Req
 	}
 	from, to := parseFromTo(r, time.Hour)
 	from, to, _ = clampThanosWindow(from, to)
-	key := fmt.Sprintf("cluster-ns-pods-trend:%s:%s:%s:%s",
-		name, namespace, clusterCfgDigest(cfg), cacheBucket(from, to))
+	// v0.10.287 (D2) — istemci piksel bütçesi basamağa snap (120/240/480);
+	// yoksa 480 = merdiven aynen. Anahtara girer.
+	mdp := thanos.TrendMaxDataPointsRung(parseInt(q.Get("maxDataPoints"), 0))
+	key := fmt.Sprintf("cluster-ns-pods-trend:%s:%s:%s:%s:mdp=%d",
+		name, namespace, clusterCfgDigest(cfg), cacheBucket(from, to), mdp)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		pods, total, err := s.thanos.NamespacePodsTrend(qctx, cfg, namespace, from, to)
+		pods, total, err := s.thanos.NamespacePodsTrend(qctx, cfg, namespace, from, to, mdp)
 		if err != nil {
 			return nil, err
 		}
@@ -457,12 +460,13 @@ func (s *Server) getClusterDeployTrend(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := parseFromTo(r, time.Hour)
 	from, to, _ = clampThanosWindow(from, to)
-	key := fmt.Sprintf("cluster-deploy-trend:%s:%s:%s:%s:%t:%s:%s",
-		name, ns, deploy, metric, byPod, clusterCfgDigest(cfg), cacheBucket(from, to))
+	mdp := thanos.TrendMaxDataPointsRung(parseInt(q.Get("maxDataPoints"), 0)) // v0.10.287 (D2)
+	key := fmt.Sprintf("cluster-deploy-trend:%s:%s:%s:%s:%t:%s:%s:mdp=%d",
+		name, ns, deploy, metric, byPod, clusterCfgDigest(cfg), cacheBucket(from, to), mdp)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		series, total, err := s.thanos.DeployTrend(qctx, cfg, ns, deploy, metric, byPod, from, to)
+		series, total, err := s.thanos.DeployTrend(qctx, cfg, ns, deploy, metric, byPod, from, to, mdp)
 		if err != nil {
 			return nil, err
 		}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { STEP_RUNGS, stepForWidth, stepForPoints, quantizeWidth, barPanelMaxDataPoints, logsBucketSec } from './chartStep';
+import { THANOS_MDP_RUNGS, thanosMaxDataPoints } from './chartStep';
 
 // GRAN-A (v0.8.245) — Grafana-style width-aware step. stepForWidth picks the
 // step a chart should REQUEST for its pixel budget (~2px/point, 120–720
@@ -163,5 +164,16 @@ describe('stepForPoints bar entegrasyonu', () => {
     const bars = (3 * 3600) / step;
     expect(bars).toBeLessThanOrEqual(240);
     expect(bars).toBeGreaterThanOrEqual(30);
+  });
+});
+
+describe('thanosMaxDataPoints (v0.10.287)', () => {
+  it('basamağa yukarı yuvarlar; tavan 480; basamaklar artan', () => {
+    for (const cols of [1, 2, 3, 4]) {
+      const v = thanosMaxDataPoints(cols);
+      expect(THANOS_MDP_RUNGS).toContain(v);
+    }
+    expect(thanosMaxDataPoints(1)).toBeGreaterThanOrEqual(thanosMaxDataPoints(4));
+    expect([...THANOS_MDP_RUNGS].sort((a, b) => a - b)).toEqual(THANOS_MDP_RUNGS);
   });
 });

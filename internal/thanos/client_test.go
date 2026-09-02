@@ -447,7 +447,7 @@ func TestNamespacePodsTrendTopNAndMerge(t *testing.T) {
 	s := New()
 	pods, total, err := s.NamespacePodsTrend(context.Background(),
 		ClusterConfig{Name: "c", URL: srv.URL, Enabled: true},
-		"payments", time.Unix(1784271000, 0), time.Unix(1784271200, 0))
+		"payments", time.Unix(1784271000, 0), time.Unix(1784271200, 0), 0)
 	if err != nil {
 		t.Fatalf("NamespacePodsTrend: %v", err)
 	}
@@ -953,6 +953,40 @@ func TestWorseTermReasonFoldIsOrderIndependent(t *testing.T) {
 	} {
 		if got := fold(perm); got != base {
 			t.Errorf("fold(%v) = %q, want %q — sıra bağımsız olmalı", perm, got, base)
+		}
+	}
+}
+
+// v0.10.287 (D2 / Dilim 1.6) — istemci bütçesi: merdivenden ince değil,
+// bütçeyi aşmaz.
+func TestStepForWindowMDP(t *testing.T) {
+	base := time.Unix(1784271000, 0)
+	for _, c := range []struct{ spanSec, mdp, want int }{
+		{3600, 0, 15},              // bütçesiz → merdiven
+		{3600, 480, 15},            // 240 nokta ≤ 480 → merdiven
+		{3600, 120, 30},            // 240 > 120 → 30 s (120 nokta)
+		{3600, 100, 60},            // 120 > 100 → 60 s (60)
+		{6 * 3600, 120, 300},       // 360 > 120 → 120 (180) → 300 s (72)
+		{24 * 3600, 240, 600},      // 288 > 240 → 600 s (144)
+		{24 * 3600, 120, 900},      // 288 > 120 → 600 (144) → 900 s (96)
+		{7 * 86400, 120, 3600 * 2}, // 336 > 120; 3600 → 168 > 120; 2h → 84
+		{30 * 86400, 120, 3600 * 6},
+		{30 * 86400, 480, 7200}, // merdiven zaten ≤480 (360)
+	} {
+		got := stepForWindowMDP(base, base.Add(time.Duration(c.spanSec)*time.Second), c.mdp)
+		if got != c.want {
+			t.Errorf("stepForWindowMDP(%ds, mdp=%d) = %d; want %d", c.spanSec, c.mdp, got, c.want)
+		}
+		if lad := stepForWindow(base, base.Add(time.Duration(c.spanSec)*time.Second)); got < lad {
+			t.Errorf("mdp adımı merdivenden ince: %d < %d", got, lad)
+		}
+		if c.mdp > 0 && c.spanSec/got > c.mdp {
+			t.Errorf("span %ds step %d = %d nokta > mdp %d", c.spanSec, got, c.spanSec/got, c.mdp)
+		}
+	}
+	for _, tc := range []struct{ want, rung int }{{0, 480}, {1, 120}, {120, 120}, {121, 240}, {240, 240}, {241, 480}, {480, 480}, {2000, 480}} {
+		if got := TrendMaxDataPointsRung(tc.want); got != tc.rung {
+			t.Errorf("TrendMaxDataPointsRung(%d) = %d; want %d", tc.want, got, tc.rung)
 		}
 	}
 }

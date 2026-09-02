@@ -1727,10 +1727,12 @@ export const api = {
   // v0.9.50 (handoff §8) — Service→Infra sekmesinin CPU/Mem grafiği.
   // v0.9.546 — netin/netout eklendi (operatör: JVM yokken CPU/Mem/Network
   // grafikleri). Sunucuda beyaz listeli: değer cache anahtarına giriyor.
-  clusterDeployTrend: (cluster: string, ns: string, deploy: string, metric: 'cpu' | 'mem' | 'netin' | 'netout', byPod: boolean, fromNs: number, toNs: number) =>
+  // maxDataPoints (v0.10.287) — istemci piksel bütçesi (lib/chartStep thanosMaxDataPoints).
+  clusterDeployTrend: (cluster: string, ns: string, deploy: string, metric: 'cpu' | 'mem' | 'netin' | 'netout', byPod: boolean, fromNs: number, toNs: number, maxDataPoints?: number) =>
     get<ClusterDeployTrendResponse>(`/api/clusters/deploy-trend?cluster=${encodeURIComponent(cluster)}` +
       `&ns=${encodeURIComponent(ns)}&deploy=${encodeURIComponent(deploy)}` +
-      `&metric=${metric}&byPod=${byPod ? 1 : 0}&from=${fromNs}&to=${toNs}`),
+      `&metric=${metric}&byPod=${byPod ? 1 : 0}&from=${fromNs}&to=${toNs}` +
+      (maxDataPoints ? `&maxDataPoints=${maxDataPoints}` : '')),
   // v0.9.534 — Service→Infra "Router / HAProxy": namespace'in route'larına
   // router gözünden trend (2xx/5xx oranı, backend gecikmesi).
   clusterHaproxyTrend: (cluster: string, ns: string, kind: '2xx' | '5xx' | 'latency', fromNs: number, toNs: number) =>
@@ -1751,9 +1753,10 @@ export const api = {
   clusterNetworkTrend: (cluster: string, fromNs: number, toNs: number) =>
     get<ClusterNetworkTrendResponse>(`/api/clusters/network-trend?cluster=${encodeURIComponent(cluster)}` +
       `&from=${fromNs}&to=${toNs}`),
-  clusterNamespacePodsTrend: (cluster: string, namespace: string, fromNs: number, toNs: number) =>
+  clusterNamespacePodsTrend: (cluster: string, namespace: string, fromNs: number, toNs: number, maxDataPoints?: number) =>
     get<ClusterPodsTrendResponse>(`/api/clusters/namespaces/pods-trend?cluster=${encodeURIComponent(cluster)}` +
-      `&namespace=${encodeURIComponent(namespace)}&from=${fromNs}&to=${toNs}`),
+      `&namespace=${encodeURIComponent(namespace)}&from=${fromNs}&to=${toNs}` +
+      (maxDataPoints ? `&maxDataPoints=${maxDataPoints}` : '')),
   // podRe (v0.9.536, opsiyonel) — hedefli envanter: sunucu pod=~ ile
   // daraltır, topk(500) servisin kendi pod'ları içinde işler. Boş =
   // tüm cluster (/clusters sayfası, eski davranış).

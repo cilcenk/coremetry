@@ -1500,8 +1500,9 @@ func (s *Service) resourceTrendWith(ctx context.Context, c ClusterConfig, query 
 // yoksa boş döner; UI grafiği gizler (görünmez-düşer).
 // İkinci dönüş (v0.9.539): kesme ÖNCESİ seri sayısı — UI "N / M pod"
 // rozetini bununla çizer (NamespacePodsTrend'in aynı sözleşmesi).
-func (s *Service) DeployTrend(ctx context.Context, c ClusterConfig, namespace, deploy, metric string, byPod bool, from, to time.Time) ([]NamedSeries, int, error) {
-	step := stepForWindow(from, to)
+// mdp (v0.10.287, chart audit D2) — istemci piksel bütçesi; 0 = merdiven.
+func (s *Service) DeployTrend(ctx context.Context, c ClusterConfig, namespace, deploy, metric string, byPod bool, from, to time.Time, mdp int) ([]NamedSeries, int, error) {
+	step := stepForWindowMDP(from, to, mdp)
 	params := url.Values{
 		"query": {deployTrendQuery(namespace, deploy, metric, byPod)},
 		"start": {fmt.Sprintf("%d", from.Unix())},
@@ -1779,11 +1780,12 @@ const maxPodTrendSeries = 40
 // kırar — promql.go notu); top-10 seçimi ortalama CPU'ya göre
 // Go'da, cpu+mem AYNI pod setine filtrelenir. İkinci dönüş: kesme
 // öncesi toplam pod sayısı ("top 10 of N" etiketi için).
-func (s *Service) NamespacePodsTrend(ctx context.Context, c ClusterConfig, namespace string, from, to time.Time) ([]PodSeriesTrend, int, error) {
+// mdp (v0.10.287, chart audit D2) — istemci piksel bütçesi; 0 = merdiven.
+func (s *Service) NamespacePodsTrend(ctx context.Context, c ClusterConfig, namespace string, from, to time.Time, mdp int) ([]PodSeriesTrend, int, error) {
 	// v0.9.26 — adaptif step, TABAN 15s; bucket rounding da bu
 	// step'e bağlanır (aksi halde 60s yuvarlaması saniye-altı
 	// çözünürlüğü çöpe atardı).
-	step := stepForWindow(from, to)
+	step := stepForWindowMDP(from, to, mdp)
 	params := func(q string) url.Values {
 		return url.Values{
 			"query": {q},
@@ -1903,6 +1905,67 @@ func (s *Service) NamespacePodsTrend(ctx context.Context, c ClusterConfig, names
 //
 //	≤1h→15s(240) · ≤3h→30s(360) · ≤6h→60s(360) · ≤24h→300s(288)
 //	· ≤7d→1800s(336) · else→3600s.
+//
+// TrendMaxDataPointsRungs — v0.10.287 (chart audit D2 / Dilim 1.6):
+// istemcinin piksel bütçesi (`?maxDataPoints=`) bu basamaklara snap
+// edilir; basamak = sınırlı cache-key kardinalitesi (v0.5.187 kuralı).
+// 480 = merdivenin bugünkü tavanı (bütçesiz istemci aynı seriyi görür).
+// FE karşılığı lib/chartStep.ts thanosMaxDataPoints — route_pins_test
+// iki listeyi çiviler.
+var TrendMaxDataPointsRungs = []int{120, 240, 480}
+
+// TrendMaxDataPointsRung — istenen bütçeyi basamağa yuvarlar (yukarı);
+// 0/negatif/aşırı → 480.
+func TrendMaxDataPointsRung(want int) int {
+	if want <= 0 {
+		return 480
+	}
+	for _, r := range TrendMaxDataPointsRungs {
+		if want <= r {
+			return r
+		}
+	}
+	return 480
+}
+
+// stepRungs — bütçe kabalaşma basamakları (saniye): merdivenin adımları +
+// aralarına 120/600/900 (300→1800 sıçraması 288 noktayı 48'e düşürürdü;
+// ara basamaklar bütçeyi aşmayan EN İNCE adımı verir). >3600 dinamik saat
+// katları.
+var stepRungs = []int{15, 30, 60, 120, 300, 600, 900, 1800, 3600}
+
+// stepForWindowMDP — merdiven adımı, ama nokta sayısı mdp'yi AŞMAZ:
+// merdiven adımından başlayıp span/adım ≤ mdp sağlanana dek kabalaşır
+// (asla merdivenden ince değil — 15 s taban scrape aralığı varsayımı).
+// mdp ≤ 0 → merdiven aynen. Saf, tablo-testli.
+func stepForWindowMDP(from, to time.Time, mdp int) int {
+	step := stepForWindow(from, to)
+	if mdp <= 0 {
+		return step
+	}
+	span := int(to.Sub(from).Seconds())
+	if span <= 0 {
+		return step
+	}
+	if span/step <= mdp {
+		return step
+	}
+	for _, r := range stepRungs {
+		if r <= step {
+			continue
+		}
+		if span/r <= mdp {
+			return r
+		}
+	}
+	// >3600: saat katı, tam sayı aritmetiği.
+	mult := (span + mdp*3600 - 1) / (mdp * 3600)
+	if mult < 1 {
+		mult = 1
+	}
+	return mult * 3600
+}
+
 func stepForWindow(from, to time.Time) int {
 	span := to.Sub(from).Seconds()
 	switch {

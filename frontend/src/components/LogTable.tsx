@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { CopyButton } from './CopyButton';
 import { useDataTable, DataTableColgroup, DataTableHead } from './DataTable';
 import { highlightSegments } from '@/lib/logFilters';
-import { podOfLog } from '@/lib/logPod';
+import { podOfLog, podEntryOfLog } from '@/lib/logPod';
 import { tsLong, sevName, sevClass } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { LogRow } from '@/lib/types';
@@ -455,10 +455,35 @@ function LogRow({
             );
           }
           if (id === 'pod') {
+            // v0.10.282 — pod pivotu satır menüsünde: ⊕/⊖ pill'i pod'u
+            // TAŞIYAN anahtarla yazılır (podEntryOfLog); geri çağrı yoksa
+            // (trace Logs sekmesi) yalnız değer.
+            const pe = pod ? podEntryOfLog(l) : null;
+            const canPivot = !!pe && !!(onFilterAdd || onFilterExclude);
             return (
-              <td key={id} className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
+              <td key={id} className={'mono' + (canPivot ? ' lt-pivot' : '')} style={{ fontSize: 11, color: 'var(--text2)' }}
                   title={pod || 'no k8s.pod.name / kubernetes.pod_name resource attr'}>
-                {pod ? truncMid(pod, 22) : '—'}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <span>{pod ? truncMid(pod, 22) : '—'}</span>
+                  {canPivot && pe && (
+                    <span className="kv-actions" style={{ display: 'inline-flex', gap: 2 }}>
+                      {onFilterAdd && (
+                        <IconButton variant="bare" size="xs" className="ib-add"
+                          onClick={(e) => { e.stopPropagation(); onFilterAdd(pe.key, pe.value); }}
+                          title={`Filter for ${pe.key}: ${pe.value}`}
+                          aria-label={`Filter for ${pe.key}: ${pe.value}`}
+                          icon="⊕" />
+                      )}
+                      {onFilterExclude && (
+                        <IconButton variant="bare" size="xs" className="ib-not"
+                          onClick={(e) => { e.stopPropagation(); onFilterExclude(pe.key, pe.value); }}
+                          title={`Filter out ${pe.key}: ${pe.value}`}
+                          aria-label={`Filter out ${pe.key}: ${pe.value}`}
+                          icon="⊖" />
+                      )}
+                    </span>
+                  )}
+                </span>
               </td>
             );
           }

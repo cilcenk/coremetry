@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { POD_FIELDS, podOfLog } from './logPod';
+import { POD_FIELDS, podOfLog, podEntryOfLog } from './logPod';
 
 // v0.9.1249 — bağlam modalının pod kapsamı.
 
@@ -68,5 +68,19 @@ describe('Go ↔ TS pod alan aynası', () => {
     }).join('\n');
     const goFields = [...code.matchAll(/"([^"]+)"/g)].map(m => m[1]);
     expect(goFields).toEqual([...POD_FIELDS]);
+  });
+});
+
+describe('podEntryOfLog (v0.10.282 pod pivotu)', () => {
+  it('değerle birlikte onu taşıyan anahtarı döner — pill o anahtarla yazılır', () => {
+    expect(podEntryOfLog({ resourceAttributes: { 'k8s.pod.name': 'api-7f-x1' } }))
+      .toEqual({ key: 'k8s.pod.name', value: 'api-7f-x1' });
+    expect(podEntryOfLog({ attributes: { pod_name: 'w-1' } })).toEqual({ key: 'pod_name', value: 'w-1' });
+    expect(podEntryOfLog({ resourceAttributes: { 'k8s.pod.name': '' }, attributes: {} })).toBeNull();
+    expect(podEntryOfLog(null)).toBeNull();
+  });
+  it('podOfLog aynı girdiden türer', () => {
+    const l = { resourceAttributes: { 'kubernetes.pod_name': 'p' } };
+    expect(podOfLog(l)).toBe(podEntryOfLog(l)!.value);
   });
 });

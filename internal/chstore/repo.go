@@ -2052,7 +2052,16 @@ func buildGetTracesWhere(f TraceFilter, clusterExpr string) whereClause {
 		}
 		wc.add("trace_id IN ("+strings.Join(holders, ",")+")", args...)
 	}
-	if f.HasError {
+	// v0.10.258 — operator-reported: "root diye aratınca geliyor ama error
+	// seçince no traces". Errors = TRACE'te hata var; search/root/attr
+	// filtreleri HAVING'de trace-düzeyi (countIf > 0) çalışırken bu WHERE
+	// span-düzeyiydi: aynı span hem hata hem aranan operasyon olmak
+	// zorundaydı (hata çocuk span'deyse → 0 satır; MV yolu ise
+	// countMerge(error_count_state) > 0 ile trace-düzeyi bakıyordu —
+	// iki yol ayrışmıştı). Başka span-düzeyi yüklem yoksa WHERE kalır
+	// (idx_status set index'i granül budar); varsa hata HAVING'e taşınır
+	// (hasErrorSpanLocal, GetTraces HAVING bloğu).
+	if f.HasError && hasErrorSpanLocal(f) {
 		wc.add("status_code = 'error'")
 	}
 	if f.MinMs > 0 {
@@ -2337,6 +2346,11 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	rootSubInHaving := rootPostFilter
 	lightHavingParts := []string{}
 	lightHavingArgs := []any{}
+	if f.HasError && !hasErrorSpanLocal(f) {
+		// v0.10.258 — trace-düzeyi hata (bkz. buildGetTracesWhere).
+		havingParts = append(havingParts, traceHasErrorHaving)
+		lightHavingParts = append(lightHavingParts, traceHasErrorHaving)
+	}
 	if f.RootOnly {
 		// "Root traces only" — strict: a real root span must
 		// be present AND complete. A complete root has:
@@ -2648,6 +2662,10 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		if len(cands) > 0 {
 			lf := f
 			lf.From = from
+			// v0.10.258 — id'ler 1. aşamada hata-doğrulandı; 2. aşama satırı
+			// TÜM span'lerden kurar (span-düzeyi status WHERE'i olmadan) ki
+			// süre/span sayısı yalnız hatalı span'lerin toplamı çıkmasın.
+			lf.HasError = false
 			lwc := buildGetTracesWhere(lf, s.clusterExpr())
 			// v0.10.241 — kök kontrolü zaten id'ler üstünde yapıldı; 2. aşama
 			// HAFİF HAVING (alt sorgusuz). v0.10.245 — id listesi PREWHERE'de
@@ -3373,6 +3391,42 @@ func tracePostAggFiltered(f TraceFilter) bool {
 	return f.HasError || f.RootOnly || f.MinMs > 0 || f.MaxMs > 0
 }
 
+// traceHasErrorHaving — trace-düzeyi "hata var" yüklemi (GROUP BY trace_id
+// üstünde). Liste sorgusunun has_error kolonuyla aynı ifade.
+const traceHasErrorHaving = "max(if(status_code = 'error', 1, 0)) = 1"
+
+// hasErrorSpanLocal — v0.10.258: HasError'ın span-düzeyi WHERE olarak
+// kalabileceği durum: trace'in ÖTEKİ span'lerinin sağlayabileceği başka bir
+// yüklem yok (search / attr filtreleri / kök / RequireServices). Aksi hâlde
+// "aynı span hem hata hem aranan" tuzağı → HAVING. SAF; tablo-testli.
+func hasErrorSpanLocal(f TraceFilter) bool {
+	if !f.HasError {
+		return false
+	}
+	if f.Search != "" || len(f.Filters) > 0 || len(f.RequireServices) > 0 || f.RootOnly {
+		return false
+	}
+	if f.FilterRoot != nil && f.FilterRoot.hasPredicate() {
+		return false
+	}
+	return true
+}
+
+// aggHasErrorSpanLocal — AggregateFilter için aynı kural (search / attr
+// filtreleri yoksa WHERE, varsa iç HAVING).
+func aggHasErrorSpanLocal(f AggregateFilter) bool {
+	if !f.HasError {
+		return false
+	}
+	if f.Search != "" || len(f.Filters) > 0 {
+		return false
+	}
+	if f.FilterRoot != nil && f.FilterRoot.hasPredicate() {
+		return false
+	}
+	return true
+}
+
 func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow, uint64, bool, error) {
 	if f.Limit == 0 {
 		f.Limit = 50
@@ -3867,7 +3921,10 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	// v0.5.369 — search moved to inner HAVING below (cross-
 	// service trace-level match). See GetTraces commentary for
 	// the root-cause rationale.
-	if f.HasError {
+	// v0.10.258 — aynı sınıf: hata yüklemi başka span-düzeyi yüklem
+	// (search / attr filtreleri) varken WHERE'de kalırsa aynı span hem
+	// hata hem aranan olmak zorunda; iç HAVING'e taşınır (aşağıda).
+	if f.HasError && aggHasErrorSpanLocal(f) {
 		wc.add("status_code = 'error'")
 	}
 	// v0.8.383 — env narrowing, always ANDed (see AggregateFilter.Env).
@@ -3947,6 +4004,9 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	searchHaving := ""
 	if searchSQL != "" {
 		searchHaving = " AND countIf(" + searchSQL + ") > 0"
+	}
+	if f.HasError && !aggHasErrorSpanLocal(f) {
+		searchHaving += " AND " + traceHasErrorHaving // v0.10.258 — trace-düzeyi hata
 	}
 	sql := `
 		SELECT group_key, group_extra,

@@ -209,6 +209,9 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 		// v0.9.105 (F1) — pixel-adaptif; MaxDataPoints=0 ise eski ladder.
 		f.StepSeconds = metricAutoStepPx(f.From, f.To, f.MaxDataPoints)
 	}
+	// v0.10.262 (CDV-2) — açık adım da bütçeli: pencere/bütçe'den küçük adım
+	// kaba adıma yuvarlanır (7 g / 10 s = 60k nokta × seri tavansızdı).
+	f.StepSeconds = clampExplicitStep(f.StepSeconds, f.From, f.To, f.MaxDataPoints)
 	// v0.9.687 — filtreler proba da iniyor (bkz. metricrate.go'daki not).
 	if iv := s.metricExportIntervalFiltered(ctx, f.Name, f.Service, f.Filters, len(f.GroupBy) > 0); iv > 0 {
 		f.StepSeconds = clampStepToExport(f.StepSeconds, iv)

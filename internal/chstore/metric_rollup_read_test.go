@@ -125,3 +125,28 @@ func TestAutoStepResolvedBeforeRollupPlans(t *testing.T) {
 		t.Fatalf("auto-step (%d) rollup planlarından (%d, %d) SONRA çözülüyor — planlar StepSeconds=0 görür", step, route, plan)
 	}
 }
+
+// v0.10.262 (CDV-2) — açık adımda nokta bütçesi: 7 g / 10 s → bütçeye göre
+// kaba adım (adımın katı); bütçe içindeki adım aynen; auto (≤0) dokunulmaz.
+func TestClampExplicitStep(t *testing.T) {
+	to := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	week := to.Add(-7 * 24 * time.Hour)
+	if got := clampExplicitStep(10, week, to, 0); got != 310 {
+		t.Errorf("7g/10s varsayılan bütçe 2000 → 310 (302.4'ün 10'a yuvarlanmışı), got %d", got)
+	}
+	if got := clampExplicitStep(10, week, to, 400); got != 1520 {
+		t.Errorf("maxDataPoints=400 → 1512→1520, got %d", got)
+	}
+	if got := clampExplicitStep(600, week, to, 0); got != 600 {
+		t.Errorf("bütçe içindeki adım aynen kalmalı, got %d", got)
+	}
+	if got := clampExplicitStep(0, week, to, 0); got != 0 {
+		t.Errorf("auto adım dokunulmaz, got %d", got)
+	}
+	if got := clampExplicitStep(10, to.Add(-time.Hour), to, 0); got != 10 {
+		t.Errorf("1s/10s (360 nokta) bütçe içinde, got %d", got)
+	}
+	if got := clampExplicitStep(10, time.Time{}, to, 0); got != 10 {
+		t.Errorf("pencere bilinmiyorsa dokunma, got %d", got)
+	}
+}

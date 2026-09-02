@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { SpanMetricSeries } from '@/lib/types';
-import { buildVolumeSeries, fmtVolumeDuration } from './volumeSeries';
+import { buildVolumeSeries, fmtVolumeDuration, volumeUnitLabel } from './volumeSeries';
 
 const S = 1_000_000_000; // 1 saniye, ns
 const T0 = 1_700_000_000 * S;
@@ -22,14 +22,14 @@ function mk(values: (number)[], stepSec = 300): SpanMetricSeries[] {
 const byKey = (cfg: ReturnType<typeof buildVolumeSeries>, k: string) =>
   cfg.series.find(s => s.key === k)!;
 
-describe('buildVolumeSeries — eksen eşlemesi (v0.9.843 Grafana düzeni)', () => {
+describe('buildVolumeSeries — eksen eşlemesi (v0.10.268 Dynatrace düzeni; v0.9.843 takası geri alındı)', () => {
   const cfg = buildVolumeSeries(mk([10, 20, 30]), mk([1, 2, 3]), mk([120, 130, 140]));
 
   // TABLO: seri → beklenen eksen. Takasın TEK kaynağı bu.
   it.each([
-    ['total', 'right', 'bar'],   // span sayısı → SAĞ
-    ['error', 'right', 'bar'],   // span sayısı → SAĞ
-    ['p50', 'left', 'line'],     // SÜRE → SOL
+    ['total', 'left', 'bar'],   // span sayısı → SAĞ
+    ['error', 'left', 'bar'],   // span sayısı → SAĞ
+    ['p50', 'right', 'line'],     // SÜRE → SOL
   ] as const)('%s serisi %s eksende ve %s tipinde', (key, axis, type) => {
     const s = byKey(cfg, key);
     expect(s.axis).toBe(axis);
@@ -107,5 +107,15 @@ describe('fmtVolumeDuration — her birim dalı', () => {
     for (const v of [0, 1, 42, 999.4]) expect(fmtVolumeDuration(v).endsWith('ms')).toBe(true);
     for (const v of [1000, 5000, 120000]) expect(fmtVolumeDuration(v).endsWith('s')).toBe(true);
     for (const v of [1000, 5000, 120000]) expect(fmtVolumeDuration(v).endsWith('ms')).toBe(false);
+  });
+});
+
+describe('volumeUnitLabel — v0.10.268 çubuk birimi', () => {
+  it('servis seçiliyken traces, servissiz requests; etiket seriye iner', () => {
+    expect(volumeUnitLabel(true)).toBe('traces');
+    expect(volumeUnitLabel(false)).toBe('requests');
+    const cfg = buildVolumeSeries(mk([1]), null, null, 'requests');
+    expect(byKey(cfg, 'total').label).toBe('requests');
+    expect(byKey(cfg, 'error').label).toBe('error requests');
   });
 });

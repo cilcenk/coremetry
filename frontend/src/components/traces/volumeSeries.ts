@@ -37,10 +37,17 @@ export interface VolumeChartConfig {
 /** buildVolumeSeries — count/errors/p50 serilerini TimeChart konfigine çevirir.
  *  Çizim sırası = üst üste binme sırası: tam bar (accent) önce, hata payı
  *  (kırmızı) üstüne — böylece her barın DİBİNDE okunur; p50 çizgisi en son. */
+/** v0.10.268 — çubuk etiketi: servis seçiliyken giriş span'i = istek ≈ trace
+ *  ("traces"); servissiz pencerede her hop sayılır ("requests"). SAF. */
+export function volumeUnitLabel(serviceScoped: boolean): string {
+  return serviceScoped ? 'traces' : 'requests';
+}
+
 export function buildVolumeSeries(
   count: SpanMetricSeries[] | null,
   errors: SpanMetricSeries[] | null,
   p50: SpanMetricSeries[] | null,
+  unit: string = 'traces',
 ): VolumeChartConfig {
   const cPts = count?.[0]?.points ?? [];
   if (!cPts.length) return { times: [], series: [], bucketMin: 1 };
@@ -57,13 +64,19 @@ export function buildVolumeSeries(
     return v && v > 0 ? v : null;
   });
   const dt = t.length > 1 ? Math.round((t[1] - t[0]) / 60) : 1;
+  // v0.10.268 (operatör: "bar gösterimleri Dynatrace gibi olabilir", mockup A
+  // onayı) — SAYIM SOL eksende (çubuklar), MEDYAN yanıt süresi SAĞ eksende
+  // (çizgi): Dynatrace "Trace count / Response Time (Median)" düzeni.
+  // v0.9.843'ün Grafana takası bilinçli geri alındı; geri dönüş tek commit
+  // (git revert). Seriler giriş span'ı (server/consumer) kapsamlı
+  // (Traces.tsx şerit filtresi) — istek ≈ trace.
   const series: TimeChartSeries[] = [
     // v0.9.843 — bar'lar SAĞ eksende (span sayısı).
-    { key: 'total', label: 'ok spans', data: total, color: 'var(--accent)', type: 'bar', axis: 'right' },
-    { key: 'error', label: 'errors', data: err, color: statusColor('error'), type: 'bar', axis: 'right' },
+    { key: 'total', label: unit, data: total, color: 'var(--accent)', type: 'bar', axis: 'left' },
+    { key: 'error', label: 'error ' + unit, data: err, color: statusColor('error'), type: 'bar', axis: 'left' },
     // v0.9.73 — kalın çizgi + nokta: seyrek p50 örnekleri artık okunur.
     // v0.9.843 — süre SOL eksende (Grafana düzeni).
-    { key: 'p50', label: 'p50 latency', data: p50d, color: 'var(--orange)', type: 'line', axis: 'left', width: 2.2, pointsShow: true },
+    { key: 'p50', label: 'response time (median)', data: p50d, color: 'var(--orange)', type: 'line', axis: 'right', width: 2, pointsShow: true },
   ];
   return { times: t, series, bucketMin: Math.max(1, dt) };
 }

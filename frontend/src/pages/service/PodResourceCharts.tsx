@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { thanosMaxDataPoints } from '@/lib/chartStep';
 import { clampSuffix } from '@/lib/thanosWindow';
 import { api } from '@/lib/api';
 import { MetricArea } from '@/pages/clusters/MetricArea';
@@ -42,24 +43,27 @@ export function PodResourceCharts({ service, cluster, ns, deploy, cFrom, cTo, cl
   // retry:false — v0.9.539 gerekçesi: yanıt vermeyen cluster'ı
   // yeniden denemek beklemeyi ikiye katlıyor, 60s poll zaten doğal
   // yeniden deneme.
+  // v0.10.291 (chart Dilim 1.8, /pod pilotu) — sunucu nokta bütçesi: iki
+  // sütunlu grid; anahtara girer, aynı istek Pod.tsx/Inline ile paylaşılır.
+  const mdp = thanosMaxDataPoints(2);
   const cpuQ = useQuery({
-    queryKey: ['deploy-trend', cluster, ns, deploy, 'cpu', true, cFrom, cTo],
-    queryFn: () => api.clusterDeployTrend(cluster, ns, deploy, 'cpu', true, cFrom, cTo),
+    queryKey: ['deploy-trend', cluster, ns, deploy, 'cpu', true, cFrom, cTo, mdp],
+    queryFn: () => api.clusterDeployTrend(cluster, ns, deploy, 'cpu', true, cFrom, cTo, mdp),
     staleTime: 60_000, retry: false, enabled: ok,
   });
   const memQ = useQuery({
-    queryKey: ['deploy-trend', cluster, ns, deploy, 'mem', true, cFrom, cTo],
-    queryFn: () => api.clusterDeployTrend(cluster, ns, deploy, 'mem', true, cFrom, cTo),
+    queryKey: ['deploy-trend', cluster, ns, deploy, 'mem', true, cFrom, cTo, mdp],
+    queryFn: () => api.clusterDeployTrend(cluster, ns, deploy, 'mem', true, cFrom, cTo, mdp),
     staleTime: 60_000, retry: false, enabled: ok,
   });
   const inQ = useQuery({
-    queryKey: ['deploy-trend', cluster, ns, deploy, 'netin', true, cFrom, cTo],
-    queryFn: () => api.clusterDeployTrend(cluster, ns, deploy, 'netin', true, cFrom, cTo),
+    queryKey: ['deploy-trend', cluster, ns, deploy, 'netin', true, cFrom, cTo, mdp],
+    queryFn: () => api.clusterDeployTrend(cluster, ns, deploy, 'netin', true, cFrom, cTo, mdp),
     staleTime: 60_000, retry: false, enabled: ok,
   });
   const outQ = useQuery({
-    queryKey: ['deploy-trend', cluster, ns, deploy, 'netout', true, cFrom, cTo],
-    queryFn: () => api.clusterDeployTrend(cluster, ns, deploy, 'netout', true, cFrom, cTo),
+    queryKey: ['deploy-trend', cluster, ns, deploy, 'netout', true, cFrom, cTo, mdp],
+    queryFn: () => api.clusterDeployTrend(cluster, ns, deploy, 'netout', true, cFrom, cTo, mdp),
     staleTime: 60_000, retry: false, enabled: ok,
   });
 

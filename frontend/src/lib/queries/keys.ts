@@ -174,4 +174,10 @@ export const keys = {
     settings:    () => ['entities', 'settings'] as const,
     sync:        () => ['entities', 'sync'] as const,
   },
+  // v0.10.248 — kullanıcı-kapsamlı UI tercihleri (prefs.ts). Anahtar
+  // kullanıcıyı TAŞIMAZ: oturum değişince AuthProvider queryClient'ı temizler.
+  prefs: {
+    all: ['prefs'] as const,
+    get: (key: string) => ['prefs', key] as const,
+  },
 } as const;

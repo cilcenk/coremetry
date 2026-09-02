@@ -951,6 +951,17 @@ export const api = {
     }),
   deleteAnomalySilence: (id: string) =>
     request<void>(`/api/anomalies/silences/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // v0.10.248 — kullanıcı-kapsamlı UI tercihi (kalıcı sütun modeli). Kişisel
+  // FINAL nokta okuma: serveCached yok, cache'siz; signal ile iptal.
+  getPreference: <M = unknown>(key: string, signal?: AbortSignal) =>
+    request<import('./types').PreferenceResponse<M>>(`/api/preferences/${encodeURIComponent(key)}`, { signal }),
+  putPreference: (key: string, model: unknown) =>
+    request<{ ok: true; key: string; updatedAt: number }>(`/api/preferences/${encodeURIComponent(key)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(model),
+    }),
+  deletePreference: (key: string) =>
+    request<{ ok: true; key: string }>(`/api/preferences/${encodeURIComponent(key)}`, { method: 'DELETE' }),
   bulkDeleteAnomalySilences: (ids: string[]) =>
     request<{ deleted: number }>(`/api/anomalies/silences/bulk-delete`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

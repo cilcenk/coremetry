@@ -6631,3 +6631,7 @@ export interface ServicePodsResponse {
   /** kısmilik ilanları: durum (seçici tavanı / Thanos hatası) + latency (200 pod tavanı / sorgu hatası). */
   statusNotes?: string[];
 }
+
+// ── UI tercihleri (v0.10.248, DataTable/ContextBar audit §11) ────────────────
+/** GET /api/preferences/{key} — model null = kayıt yok/silinmiş. updatedAt unix ns. */
+export interface PreferenceResponse<M = unknown> { key: string; model: M | null; updatedAt?: number }

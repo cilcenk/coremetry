@@ -1042,7 +1042,9 @@ describe('CorePanel bölge çizimi ms ölçeğinde (v0.10.164)', () => {
 // Kapı: geri gelirse tüketicisiyle birlikte gelmeli (yarım kablo yok).
 // ---------------------------------------------------------------------------
 describe('CorePanel ölü prop kapısı (v0.10.284)', () => {
-  const src = readFileSync(f, 'utf8');
+  const src = readFileSync(
+    resolve(__dirname, './CorePanel.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
   it('bands / connectNulls / headerExtra / logScaleToggle prop olarak YOK', () => {
     for (const name of ['bands?:', 'connectNulls?:', 'headerExtra?:', 'logScaleToggle?:']) {
       expect(src, `${name} geri gelmiş — tüketicisi var mı?`).not.toContain(name);

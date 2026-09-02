@@ -38,4 +38,6 @@ func (s *Server) registerLogsRoutes(mux *http.ServeMux) {
 	// templates with sticky first_seen so the operator can ask
 	// "what shape just started appearing?".
 	mux.HandleFunc("GET /api/logs/templates", s.getLogsTemplates)
+	// v0.10.296 — Dilim 2: pencere içi desenler (NormalizeSignature, örneklemeli).
+	mux.HandleFunc("GET /api/logs/patterns", s.getLogsPatterns)
 }

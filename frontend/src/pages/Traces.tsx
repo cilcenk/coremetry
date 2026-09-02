@@ -27,7 +27,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { OperationPicker } from '@/components/OperationPicker';
 import { ServicePicker } from '@/components/ServicePicker';
-import { FilterBuilder } from '@/components/FilterBuilder';
+import { FilterQueryBox } from '@/components/FilterQueryBox';
 import { FilterGroupBuilder } from '@/components/FilterGroupBuilder';
 import { Button } from '@/components/ui/Button';
 import { Chip } from '@/components/ui/Chip';
@@ -161,6 +161,12 @@ const ATTR_W = 130;
 const EXTRA_COLS_LS_KEY = 'traces-extra-cols';
 // Shared value-suggestion seeds for the advanced filter builders (flat +
 // grouped). Hoisted so both render paths use the identical hints.
+// v0.10.264 — hızlı çipler (mockup A); son kullanılanlar tarayıcı-yerel.
+const TRACES_QUICK_FILTERS: FilterExpr[] = [
+  { k: 'status_code', op: '=', v: ['error'] },
+  { k: 'kind', op: '=', v: ['server'] },
+  { k: 'http.method', op: '=', v: ['POST'] },
+];
 const FILTER_SUGGESTED_VALUES: Record<string, string[]> = {
   'kind': ['internal', 'server', 'client', 'producer', 'consumer'],
   'status_code': ['ok', 'error', 'unset'],
@@ -1287,8 +1293,11 @@ function TracesPageInner() {
             )}
           </div>
           {!grouped ? (
-            <FilterBuilder value={advFilters} onChange={setAdvFilters}
-              suggestedValues={FILTER_SUGGESTED_VALUES} />
+            /* v0.10.264 (operatör: "add filter daha kullanışlı" → mockup A onayı) —
+               tek satır sorgu kutusu; FilterBuilder Explore/Logs'ta kalır. */
+            <FilterQueryBox value={advFilters} onChange={setAdvFilters}
+              suggestedValues={FILTER_SUGGESTED_VALUES} quick={TRACES_QUICK_FILTERS}
+              recentKey="traces-recent-filters" />
           ) : (
             <FilterGroupBuilder value={advGroup ?? { join: 'AND', filters: [] }}
               onChange={setAdvGroup}

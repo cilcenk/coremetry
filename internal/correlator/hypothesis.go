@@ -3,6 +3,7 @@ package correlator
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
@@ -71,9 +72,9 @@ const (
 	// signalRatioSpan — how much of the band the over-baseline ratio can
 	// climb. ratio 2 (the detector's trigger floor) → +0; ratio ≥ 10 → full
 	// span. A "new template" event records ratio 0 and clamps to the base.
-	signalRatioSpan      = 0.25
-	signalRatioFloor     = 2.0
-	signalRatioSaturate  = 10.0
+	signalRatioSpan     = 0.25
+	signalRatioFloor    = 2.0
+	signalRatioSaturate = 10.0
 	// signalLogPatternBonus — log_pattern over trace_op at equal ratio: the
 	// pattern carries the error TEXT (the most diagnostic artefact for the
 	// LLM and the operator); a trace_op only says "this operation is off",
@@ -98,10 +99,10 @@ const (
 	// tier'ında (≤0.70) ayrıca yarışır. Upstream (called_by) çarpanı 0.6:
 	// yukarı-akış anomalisi genelde KURBANDIR, nadiren neden — ama artık
 	// tamamen kör de değiliz (K1'in upstream yarısı).
-	neighborSignalTierBase      = 0.28
-	neighborSignalRatioSpan     = 0.24
+	neighborSignalTierBase       = 0.28
+	neighborSignalRatioSpan      = 0.24
 	neighborSignalUpstreamFactor = 0.6
-	neighborSignalMaxCandidates = 3
+	neighborSignalMaxCandidates  = 3
 )
 
 // Confidence model weights — the blend of breadth (distinct evidence types) and
@@ -163,13 +164,37 @@ type SynthesisInput struct {
 	// kanalına (Neighbours ∪ NeighbourSignals) katlanır ki mevcut
 	// hipotezlerin confidence'ı değişmesin (payda 4 kalır).
 	NeighbourSignals []NeighbourSignalEvidence
+
+	// Rollouts — v0.10.241 Problem↔Rollout korelasyonu: rollout.Rank'ın
+	// puanladığı ≤3 aday. Deploy ile AYNI "ne değişti" kanıt türünü
+	// paylaşır: ikisi birden varsa distinctTypes bir kez artar; imaj tag'i
+	// deploy sürümüyle eşleşen aday deploy adayına KATLANIR (tek satır,
+	// puan yükselir), eşleşmeyen ayrı Kind="rollout" adayı olur.
+	Rollouts []RolloutCandidate
 }
+
+// RolloutCandidate — anomaly paketinin rollout.Scored'dan indirgediği
+// aday; correlator rollout paketini import etmez (katman sırası).
+type RolloutCandidate struct {
+	Subject  string  // "rollout:<cluster>/<ns>/<workload>@<rev>" (rollout.SubjectID)
+	ImageTag string  // deploy sürümüyle eşleştirme anahtarı
+	Score    float64 // rollout.Score çıktısı (≤0.98)
+	Reason   string
+}
+
+// CauseKindRollout — ScoredCause.Kind: özne bir servis değil, bir rollout
+// kaydı; FE /rollouts detayına linkler, topolojide aramaz.
+const CauseKindRollout = "rollout"
+
+// rolloutCorroborationBonus — deploy adayı bir rollout kaydıyla
+// doğrulanınca (aynı imaj tag'i) eklenen puan; tavan deployMaxScore.
+const rolloutCorroborationBonus = 0.05
 
 // NeighbourSignalEvidence is one active anomaly signal on a topology
 // neighbour of the anchor service.
 type NeighbourSignalEvidence struct {
 	Service    string
-	Kind       string  // "log_pattern" | "trace_op"
+	Kind       string // "log_pattern" | "trace_op"
 	Pattern    string
 	Ratio      float64 // max(current, peak) over baseline; 0 for new-template
 	Downstream bool    // anchor → neighbour (calls); false = upstream (called_by)
@@ -292,6 +317,43 @@ func Synthesize(
 			Path:    []string{service},
 			Reason:  reason,
 		})
+	}
+	if len(in.Rollouts) > 0 {
+		if in.Deploy == nil {
+			distinctTypes++ // deploy ile aynı kanıt türü; ikisi varsa bir kez
+		}
+		for _, rc := range in.Rollouts {
+			if rc.Subject == "" {
+				continue
+			}
+			if in.Deploy != nil && rc.ImageTag != "" && deployMatchesTag(in.Deploy.Version, rc.ImageTag) {
+				// Deploy olayı + rollout kaydı aynı imaj: tek aday, doğrulanmış.
+				for i := range cands {
+					if cands[i].Service == service && cands[i].Kind == "" && cands[i].Hops == 0 {
+						sc := cands[i].Score
+						if rc.Score > sc {
+							sc = rc.Score
+						}
+						sc += rolloutCorroborationBonus
+						if sc > deployBaseScore+deployFreshnessBonusMax {
+							sc = deployBaseScore + deployFreshnessBonusMax
+						}
+						cands[i].Score = sc
+						cands[i].Reason += " — rollout kaydıyla doğrulandı: " + rc.Reason
+						break
+					}
+				}
+				continue
+			}
+			cands = append(cands, chstore.ScoredCause{
+				Service: rc.Subject,
+				Score:   rc.Score,
+				Hops:    0,
+				Path:    []string{service},
+				Kind:    CauseKindRollout,
+				Reason:  rc.Reason,
+			})
+		}
 	}
 
 	// Tier 2 — propagation-ranked downstream neighbours. Already best-first.
@@ -476,4 +538,22 @@ func Synthesize(
 		h.Confidence = 1
 	}
 	return h
+}
+
+// deployMatchesTag — deploy olayının sürümü ("1.5.0", "v1.5.0",
+// "api:1.5.0") ile rollout imaj tag'i aynı şeyi mi anlatıyor. Tam eşitlik
+// ya da sürümün son ':'/'@' sonrası parçası; boşlar eşleşmez.
+func deployMatchesTag(version, tag string) bool {
+	version = strings.TrimSpace(version)
+	tag = strings.TrimSpace(tag)
+	if version == "" || tag == "" {
+		return false
+	}
+	if version == tag || strings.TrimPrefix(version, "v") == strings.TrimPrefix(tag, "v") {
+		return true
+	}
+	if i := strings.LastIndexAny(version, ":@"); i >= 0 && i+1 < len(version) {
+		return version[i+1:] == tag
+	}
+	return false
 }

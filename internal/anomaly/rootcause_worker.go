@@ -10,6 +10,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/correlator"
+	"github.com/cilcenk/coremetry/internal/rollout"
 )
 
 // shouldDeepInvestigate — derin soruşturma kapısı (v0.9.1060, Faz 1.5).
@@ -119,6 +120,10 @@ type RootCauseSynthesizer struct {
 	// autoVerdict — bkz. AutoVerdictFunc. Start() öncesinde SetAutoVerdict
 	// ile kuruluyor; tick'ler tek goroutine'de koştuğu için yarış yok.
 	autoVerdict AutoVerdictFunc
+	// rolloutClusters / rolloutEnabled — v0.10.242 Problem↔Rollout
+	// korelasyonu (rollout_causes.go); SetRollouts ile kurulur, nil = kapalı.
+	rolloutClusters rollout.ClusterSource
+	rolloutEnabled  func() bool
 }
 
 // SetAutoVerdict — kancayı bağlar. Start()'tan ÖNCE çağrılmalı (main.go
@@ -238,6 +243,7 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 			synthIn := synthInputForProblem(p, bundle)
 			appendNodeCauses(&synthIn, in, p.Service)
 			s.enrichDeployImpact(ctx, p.Service, &synthIn) // v0.9.1059
+			rolloutEv := s.rolloutCauses(ctx, p, &synthIn) // v0.10.242
 			h := correlator.Synthesize(
 				"problem", p.ID, p.Service, now.UnixNano(),
 				synthIn,
@@ -272,6 +278,14 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 					d := gatherDeepEvidence(ctx, s.store, p, plan, now.Add(-evidenceWindow), now)
 					h.Deep = &d
 				}
+			}
+			if len(rolloutEv) > 0 {
+				// Rollout kanıtı derin incelemeden bağımsız: Deep yoksa yalnız
+				// bu alanla kurulur (okuyucular Checked'e bakar, nil'e değil).
+				if h.Deep == nil {
+					h.Deep = &chstore.DeepEvidence{}
+				}
+				h.Deep.Rollouts = rolloutEv
 			}
 			if err := s.store.UpsertHypothesis(ctx, h); err != nil {
 				log.Printf("[rootcause-synth] upsert problem %s: %v", p.ID, err)

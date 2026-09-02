@@ -59,6 +59,30 @@ type DeepEvidence struct {
 	TraceIDs      []string                `json:"traceIds,omitempty"`
 	AffectedPods  []PodHit                `json:"affectedPods,omitempty"`
 	LogSignatures []LogSignature          `json:"logSignatures,omitempty"`
+	// Rollouts — v0.10.241 Problem↔Rollout korelasyonu: problemin
+	// servisine/pod'una bağlanan, puanlanmış rollout adayları (≤3).
+	Rollouts []RolloutEvidence `json:"rollouts,omitempty"`
+}
+
+// RolloutEvidence — DeepEvidence.Rollouts satırı (v0.10.241). FE
+// RootCausePanel "İlgili dağıtımlar" bölümü + Problem zaman çizgisi
+// işareti bunu okur; RolloutID alanları /rollouts detay linkine yeter.
+type RolloutEvidence struct {
+	ClusterID    string  `json:"clusterId"`
+	Namespace    string  `json:"namespace"`
+	Workload     string  `json:"workload"`
+	Kind         string  `json:"kind,omitempty"`
+	Revision     string  `json:"revision"`
+	StartedAtNs  int64   `json:"startedAtNs"`
+	Status       string  `json:"status"`
+	ImageTag     string  `json:"imageTag,omitempty"`
+	PrevImageTag string  `json:"prevImageTag,omitempty"`
+	DetectedBy   string  `json:"detectedBy,omitempty"`
+	MatchedBy    string  `json:"matchedBy"` // service | pod
+	AgeMin       int     `json:"ageMin"`
+	Band         string  `json:"band"` // high | low
+	Score        float64 `json:"score"`
+	Reason       string  `json:"reason"`
 }
 
 // v0.10.229 (Influx D4, audit §4) — dış metrik kaynağı kanıtı. Problem

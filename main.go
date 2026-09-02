@@ -35,6 +35,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/elasticml"
 	"github.com/cilcenk/coremetry/internal/entity"
 	"github.com/cilcenk/coremetry/internal/evaluator"
+	"github.com/cilcenk/coremetry/internal/influx"
 	"github.com/cilcenk/coremetry/internal/ldap"
 	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/mcp"
@@ -53,7 +54,6 @@ import (
 	"github.com/cilcenk/coremetry/internal/thanos"
 	"github.com/cilcenk/coremetry/internal/topology"
 	"github.com/cilcenk/coremetry/internal/vmetrics"
-	"github.com/cilcenk/coremetry/internal/influx"
 )
 
 //go:embed all:frontend/dist
@@ -1213,6 +1213,9 @@ func main() {
 	var rcSynth *anomaly.RootCauseSynthesizer
 	if mode.worker {
 		rcSynth = anomaly.NewRootCauseSynthesizer(store, lockImpl)
+		// v0.10.242 — Problem↔Rollout korelasyonu: küme çevirisi (span değeri →
+		// EffectiveID) + rollouts bayrağı; kapalıyken hiçbir sorgu koşmaz.
+		rcSynth.SetRollouts(rolloutClusterSource{thanosSvc}, func() bool { return rolloutSettings.Resolved().Enabled })
 	}
 
 	// ── HTTP server (OTLP + API + UI) ─────────────────────────────────────────
@@ -1335,7 +1338,7 @@ func main() {
 		srv.StartRolloutTail(ctx) // v0.10.200 — pod-yerel SSE tail (audit §3 T); yalnız api
 	}
 	srv.SetVMetrics(vmSvc)
-	srv.SetInflux(influxSvc)       // v0.10.222
+	srv.SetInflux(influxSvc)          // v0.10.222
 	srv.SetInfluxWorker(influxWorker) // v0.10.223 — nil = bu pod poll'lamıyor
 	srv.SetDevOps(devopsSvc)
 	srv.SetMCPClient(mcpCliSvc)

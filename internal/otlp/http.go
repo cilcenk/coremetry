@@ -52,6 +52,13 @@ type Ingester struct {
 	// cadence as Spans. nil-safe: addSpanLink no-ops the enqueue (counters
 	// still tick) on pods where main didn't wire it.
 	SpanLinks *consumer.Consumer[*chstore.SpanLinkRow]
+	// MetricForward (v0.10.293) — OTLP metrik gövdesinin VM'e HAM iletimi
+	// (forward.go). nil-safe; ForwardEnabled false iken kopya alınmaz.
+	MetricForward     *consumer.Consumer[MetricBody]
+	metricFwd         func(MetricBody) bool
+	metricFwdEnabled  func() bool
+	metricFwdDropped  atomic.Uint64
+	metricFwdEnqueued atomic.Uint64
 
 	// pipeline (v0.5.263) — ingest-time drop / enrich rules. nil = no rules
 	// (the engine is a no-op-on-empty, so passing it through is fine too).
@@ -385,12 +392,15 @@ func (ing *Ingester) handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ing *Ingester) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	var req metricscollpb.ExportMetricsServiceRequest
-	if err := readProto(r, &req); err != nil {
+	// v0.10.293 — decode + HAM ileti gövdesi tek okumada (forward.go);
+	// ileti kuyruğa kopyalanır, cevap CH kabulüne göre verilir.
+	req, fwd, err := readMetricsBody(r)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	pts, exs := ConvertMetrics(&req)
+	ing.forwardMetrics(fwd.Body, fwd.Gzipped)
+	pts, exs := ConvertMetrics(req)
 	dropped := 0
 	for _, p := range pts {
 		// v0.8.345 (HA audit H5) — Add result was discarded; see handleLogs.

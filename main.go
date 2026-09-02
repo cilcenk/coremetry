@@ -1143,6 +1143,31 @@ func main() {
 	// YALNIZ vmetrics yapılandırılmışken, VM'den okuyarak değerlendirir
 	// (SetLogs geç-bağlama emsali; runtime_vm.go başlığı).
 	evalr.SetVMetrics(vmSvc)
+	// v0.10.293 (VM tek metrik deposu Dilim 1b) — OTLP metrik gövdesinin
+	// VM'e HAM iletimi: ayrı, bayt bütçeli kuyruk (ingest yolunda ikinci ağ
+	// çağrısı ASLA senkron — audit R5). Yazım kapalıyken ingester kopya bile
+	// almaz (WriteReady istek anında okunur; PUT ile açılır, restart yok).
+	// 400 (VM gövdeyi reddetti) yeniden denenmez — aynı gövde aynı cevabı
+	// alır — loglanır ve düşer; 429/5xx/bağlantı consumer'ın retry'ına gider.
+	vmForward := consumer.NewSized("vm-metrics", opts, otlp.MetricBodyApproxBytes,
+		func(fctx context.Context, batch []otlp.MetricBody) error {
+			for _, b := range batch {
+				err := vmSvc.WriteOTLP(fctx, b.Body, b.Gzipped)
+				switch {
+				case err == nil, errors.Is(err, vmetrics.ErrNoWrite):
+				case errors.Is(err, vmetrics.ErrRejected):
+					log.Printf("[vm-metrics] forward rejected (dropped %d B): %v", len(b.Body), err)
+				default:
+					return err
+				}
+			}
+			return nil
+		})
+	ing.SetMetricForward(vmForward)
+	ing.SetForwardEnabled(vmSvc.WriteReady)
+	if mode.ingest {
+		vmForward.Start(pipeCtx)
+	}
 	if vmSvc.Configured() {
 		v := vmSvc.Snapshot()
 		log.Printf("[vmetrics] metric read backend enabled (baseUrl=%s authType=%s) — "+
@@ -1423,6 +1448,7 @@ func main() {
 		metricConsumer.Stop()
 		exemplarConsumer.Stop()
 		spanLinkConsumer.Stop()
+		vmForward.Stop() // v0.10.293
 	}
 	log.Println("Bye.")
 }

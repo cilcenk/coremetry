@@ -65,6 +65,11 @@ func LooksLikeFieldQuery(s string) bool {
 // evaluator) elinde olan tek kimlik bu ve arka uç ÇALIŞMA ZAMANINDA
 // değişebiliyor (Settings toggle + boot degrade). Bir sabite bakmak
 // "bugün doğru" bir cevap verirdi.
+//
+// v0.10.279 — ClickHouse da anlıyor: arama metni logql AST'sine ayrışıp
+// gerçek kolon/res-array yüklemine derleniyor (chstore/log_query_compile.go).
+// Yukarıdaki ölçüm o günün gerçeğiydi; tarihçe olarak duruyor. Bilinmeyen
+// arka uç için varsayım yine "anlamıyor" (yanlış yön burada ucuz).
 func BackendUnderstandsFieldQuery(backend string) bool {
-	return backend == "elasticsearch"
+	return backend == "elasticsearch" || backend == "clickhouse"
 }

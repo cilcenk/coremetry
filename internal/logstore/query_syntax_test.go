@@ -41,9 +41,11 @@ func TestLooksLikeFieldQuery(t *testing.T) {
 }
 
 func TestBackendUnderstandsFieldQuery(t *testing.T) {
-	// ClickHouse VARSAYILAN arka uç — bu satır kapının bütün gerekçesi.
-	if BackendUnderstandsFieldQuery("clickhouse") {
-		t.Error("clickhouse alan yazımını ayrıştırmıyor; true dönmek sessiz alarmı meşrulaştırır")
+	// v0.10.279 — ClickHouse VARSAYILAN arka uç ve artık alan yazımını
+	// logql üzerinden gerçek yükleme derliyor; false dönmek her CH
+	// kurulumunda geçerli alarmları reddederdi.
+	if !BackendUnderstandsFieldQuery("clickhouse") {
+		t.Error("clickhouse alan yazımını v0.10.279'dan beri derliyor (chstore.LogSearchConjunct)")
 	}
 	if !BackendUnderstandsFieldQuery("elasticsearch") {
 		t.Error("elasticsearch query_string kullanıyor, alan yazımı orada GERÇEK")

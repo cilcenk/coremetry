@@ -37,9 +37,13 @@ func TestDeadLogQueryDecisionTable(t *testing.T) {
 		reject  bool
 	}{
 		// ── reddedilmesi gerekenler ───────────────────────────────────
-		{"CH + servis kapsamı (şerhin önerdiği yazım)", `service.name:"checkout"`, "clickhouse", true},
-		{"CH + seviye alanı", `level:error`, "clickhouse", true},
-		{"CH + bileşik ifadenin içinde alan", `"disk full" AND service.name:"db"`, "clickhouse", true},
+		// v0.10.279'a kadar CH satırları buradaydı; CH artık alan yazımını
+		// derliyor (chstore.LogSearchConjunct). Kapı yalnız BİLİNMEYEN
+		// arka uçta kapalı kalır.
+		{"bilinmeyen arka uç + alan yazımı", `service.name:"checkout"`, "unknown", true},
+		{"CH + servis kapsamı ARTIK GEÇER (v0.10.279)", `service.name:"checkout"`, "clickhouse", false},
+		{"CH + seviye alanı ARTIK GEÇER", `level:error`, "clickhouse", false},
+		{"CH + bileşik ifadenin içinde alan ARTIK GEÇER", `"disk full" AND service.name:"db"`, "clickhouse", false},
 
 		// ── geçmesi gerekenler ────────────────────────────────────────
 		{"CH + düz metin ÇALIŞIR", `OutOfMemoryError`, "clickhouse", false},
@@ -54,7 +58,7 @@ func TestDeadLogQueryDecisionTable(t *testing.T) {
 		// bakmazsa CH'de ölü kuralları geçirir. İkisi de tek başına
 		// yanlış.
 		{"aynı sorgu ES'te geçer", `level:error`, "elasticsearch", false},
-		{"aynı sorgu CH'de reddedilir", `level:error`, "clickhouse", true},
+		{"aynı sorgu bilinmeyen arka uçta reddedilir", `level:error`, "unknown", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := shouldReject(tc.query, tc.backend); got != tc.reject {

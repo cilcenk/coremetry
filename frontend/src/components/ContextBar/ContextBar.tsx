@@ -60,7 +60,8 @@ export function ContextBar({ ctx, envApplies = false }: ContextBarProps) {
 
   return (
     <div className="context-bar" role="group" aria-label="Query context">
-      {applies.has('range') && <TimeRangePicker value={params.range} onChange={r => patch({ range: r })} />}
+      {/* v0.10.255 (operatör): zaman seçici EN SAĞDA kalır — eski Topbar
+          düzeni (EnvPicker → TimeRangePicker); kapsam kontrolleri araya girer. */}
       <EnvPicker applies={envApplies && applies.has('env')} />
       {narrow ? (
         <>
@@ -76,6 +77,7 @@ export function ContextBar({ ctx, envApplies = false }: ContextBarProps) {
           ? <Chip active pill onRemove={() => patch({ compare: '' })} removeLabel="Karşılaştırmayı kapat">Compare: prior</Chip>
           : <Chip pill onClick={() => patch({ compare: 'prior' })} title="Önceki eş-boy pencereyle karşılaştır">Compare</Chip>
       )}
+      {applies.has('range') && <TimeRangePicker value={params.range} onChange={r => patch({ range: r })} />}
     </div>
   );
 }

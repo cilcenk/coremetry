@@ -59,3 +59,19 @@ describe('ContextBar', () => {
     expect(ctx.set).toHaveBeenCalledWith({ compare: '' });
   });
 });
+
+describe('ContextBar — zaman seçici sağda (v0.10.255, operatör)', () => {
+  it('TimeRangePicker çubuğun SON çocuğu; EnvPicker ondan önce', () => {
+    const el = render(<ContextBar ctx={ctxOf(['range', 'env', 'cluster', 'namespace', 'service', 'compare'])} envApplies />);
+    const bar = el.querySelector('[role="group"][aria-label="Query context"]')!;
+    const last = bar.lastElementChild!;
+    expect(last.querySelector('select, button, input')).not.toBeNull();
+    expect(last.textContent ?? '').not.toContain('Compare');
+    // zaman seçici çubuğun son çocuğu, kapsam kontrolleri ondan önce
+    const kids = Array.from(bar.children);
+    const idxRange = kids.indexOf(last);
+    const idxService = kids.findIndex(k => k.querySelector('[aria-label="Service"], input[placeholder="All services"]'));
+    expect(idxService).toBeGreaterThanOrEqual(0);
+    expect(idxRange).toBeGreaterThan(idxService);
+  });
+});

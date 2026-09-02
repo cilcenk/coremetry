@@ -7,6 +7,7 @@ package chstore
 // kolonlarıyla birebir; uygunluk yalnız sayısal sıralamalarda.
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -73,5 +74,37 @@ func TestRawListLightEligible(t *testing.T) {
 		if got := rawListLightEligible(c.f); got != c.want {
 			t.Errorf("%s: got %v want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// v0.10.237 — kaynak tükenmesinde pencere yarılanır (MV yolunun sabitleri),
+// başka hatada asla; taban ve deneme tavanı aşılmaz.
+func TestNarrowOnExhaustion(t *testing.T) {
+	to := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	from := to.Add(-12 * time.Hour)
+	mem := errors.New("code: 241, message: Query memory limit exceeded: would use 3.73 GiB")
+	next, ok := narrowOnExhaustion(mem, from, to, 0)
+	if !ok || !next.Equal(to.Add(-6*time.Hour)) {
+		t.Fatalf("first exhaustion halves 12h → 6h: %v %v", next, ok)
+	}
+	next2, ok := narrowOnExhaustion(mem, next, to, 1)
+	if !ok || !next2.Equal(to.Add(-3*time.Hour)) {
+		t.Fatalf("second halves 6h → 3h: %v %v", next2, ok)
+	}
+	if _, ok := narrowOnExhaustion(mem, next2, to, 2); ok {
+		t.Fatal("retry ceiling (2) must stop narrowing")
+	}
+	if _, ok := narrowOnExhaustion(mem, to.Add(-20*time.Minute), to, 0); ok {
+		t.Fatal("window at/below the 30m floor must not narrow")
+	}
+	if _, ok := narrowOnExhaustion(errors.New("code: 62, syntax error"), from, to, 0); ok {
+		t.Fatal("a non-resource error must surface unchanged")
+	}
+	if _, ok := narrowOnExhaustion(nil, from, to, 0); ok {
+		t.Fatal("nil error is not a retry")
+	}
+	timeout := errors.New("code: 159, message: Timeout exceeded: elapsed 25.1 s")
+	if _, ok := narrowOnExhaustion(timeout, from, to, 0); !ok {
+		t.Fatal("timeout is resource exhaustion too")
 	}
 }

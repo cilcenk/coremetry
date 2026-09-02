@@ -453,14 +453,14 @@ describe('CorePanel menuExtra (v0.9.1163)', () => {
       { key: 'b', label: '⧉ Kapı B', onClick: () => {} },
     ];
     const el = render(
-      <CorePanel title="L" storageKey="me-order" queryText="q" logScaleToggle
+      <CorePanel title="L" storageKey="me-order" queryText="q"
         menuExtra={extra} data={ready} />);
     openMenu(el);
     // Sıra SÖZLEŞME: sarmalayıcının vaadi "bu panel bir kapıdır", yani ⋯
     // önce kapıyı açar; panelin yerlileri altta.
     expect(rowLabels(el)).toEqual([
       '⤢ Kapı A', '⧉ Kapı B',
-      'Tam ekran', 'CSV indir', 'Sorguyu göster', 'Log ölçek',
+      'Tam ekran', 'CSV indir', 'Sorguyu göster',
     ]);
     expect(el.querySelectorAll('[role="separator"]').length).toBe(1);
   });
@@ -478,12 +478,12 @@ describe('CorePanel menuExtra (v0.9.1163)', () => {
     // vaat edip satırlarına menuitem vermeyen bir menü ekran okuyucuya menü
     // OLARAK tanıtılmaz (v0.9.890/BB10\'un kendi gerekçesi).
     const el = render(
-      <CorePanel title="L" storageKey="me-a11y" queryText="q" logScaleToggle
+      <CorePanel title="L" storageKey="me-a11y" queryText="q"
         menuExtra={[{ key: 'a', label: 'A', onClick: () => {} }]} data={ready} />);
     openMenu(el);
     const menu = el.querySelector('[role="menu"]')!;
     const buttons = Array.from(menu.querySelectorAll('button'));
-    expect(buttons.length).toBe(5);
+    expect(buttons.length).toBe(4); // v0.10.284 — Log ölçek satırı silindi
     for (const b of buttons) expect(b.getAttribute('role')).toBe('menuitem');
   });
 

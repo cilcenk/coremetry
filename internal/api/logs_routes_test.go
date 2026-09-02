@@ -19,6 +19,7 @@ var logsRoutePatterns = []string{
 	`"GET /api/logs/field-values"`,
 	`"GET /api/logs/context"`,
 	`"GET /api/logs/templates"`,
+	`"GET /api/logs/patterns"`, // v0.10.296
 }
 
 func TestLogsRoutesLiveInLogsRoutesFile(t *testing.T) {

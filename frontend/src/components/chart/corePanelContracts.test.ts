@@ -117,10 +117,12 @@ describe('CorePanel self-review düzeltmeleri', () => {
   // davranışın kaynağını çiviler: satırlar fokuslanabilir + Enter/Space
   // yolları var + menü ESC/dış-tık kapanışı bağlı.
   it('♿ legend satırları klavyeden erişilir', () => {
-    expect(src).toMatch(/tabIndex=\{0\}/);
-    expect(src).toMatch(/onKeyDown/);
-    expect(src).toMatch(/e\.key === 'Enter'/);
-    expect(src).toMatch(/e\.key === ' '/);
+    // v0.10.290 — lejant DOM'u PanelLegend.tsx'te.
+    const legend = readFileSync(resolve(__dirname, './PanelLegend.tsx'), 'utf8').replace(/\/\/.*$/gm, '');
+    expect(legend).toMatch(/tabIndex=\{0\}/);
+    expect(legend).toMatch(/onKeyDown/);
+    expect(legend).toMatch(/e\.key === 'Enter'/);
+    expect(legend).toMatch(/e\.key === ' '/);
   });
 
   it('♿ menü ESC + dış-tık ile kapanır', () => {
@@ -587,10 +589,24 @@ describe('CorePanel focusedLabel (v0.9.793)', () => {
 
   it('iki sürücü tek kanal: kontrollü prop kazanır, yoksa iç lejant hover', () => {
     expect(src).toMatch(/const focusName = focusedLabel \?\? hoverName;/);
-    expect(src).toMatch(/onMouseEnter=\{\(\) => setHoverName\(s\.name\)\}/);
+    // v0.10.290 — lejant DOM'u PanelLegend.tsx'te; hover/fokus kanalı orada,
+    // CorePanel onHover ile setHoverName'e bağlar.
+    const legend = readFileSync(resolve(__dirname, './PanelLegend.tsx'), 'utf8').replace(/\/\/.*$/gm, '');
+    expect(legend).toMatch(/onMouseEnter=\{\(\) => onHover\(s\.name\)\}/);
     // ♿ klavye fokusu da aynı kanaldan (v0.9.711 erişim dersinin devamı).
-    expect(src).toMatch(/onFocus=\{\(\) => setHoverName\(s\.name\)\}/);
-    expect(src).toMatch(/onBlur=/);
+    expect(legend).toMatch(/onFocus=\{\(\) => onHover\(s\.name\)\}/);
+    expect(legend).toMatch(/onBlur=/);
+    expect(src).toMatch(/onHover=\{\(name, leaving\) => setHoverName/);
+  });
+
+  it('v0.10.290 — tek lejant: CorePanel iç tablo çizmez, PanelLegend\'i kullanır', () => {
+    expect(src).toMatch(/import \{ PanelLegend \} from '\.\/PanelLegend';/);
+    expect(src).toMatch(/<PanelLegend/);
+    expect(src).not.toMatch(/<th className="num">Son<\/th>/);
+    const legend = readFileSync(resolve(__dirname, './PanelLegend.tsx'), 'utf8');
+    for (const want of ['isolateSeriesVisibility', 'toggleSeriesVisibility', 'aria-pressed', "e.key === 'Enter'", "e.key === ' '", 'sumAdditive']) {
+      expect(legend, want).toContain(want);
+    }
   });
 });
 
@@ -799,7 +815,10 @@ describe('CorePanel vurgu kanalı SİLİNDİ (v0.9.799)', () => {
     expect(src).toMatch(
       /import \{ seriesRoleColor, type SeriesRole \} from '@\/lib\/chart\/seriesRole'/);
     // Üç çağrı: config lineColor + tooltip satırı + lejant swatch'ı.
-    expect((src.match(/seriesRoleColor\(/g) ?? []).length).toBe(3);
+    // v0.10.290 — üçüncü okuma yeri (lejant swatch'ı) PanelLegend.tsx'te.
+    expect((src.match(/seriesRoleColor\(/g) ?? []).length).toBe(2);
+    const legend = readFileSync(resolve(__dirname, './PanelLegend.tsx'), 'utf8').replace(/\/\/.*$/gm, '');
+    expect((legend.match(/seriesRoleColor\(/g) ?? []).length).toBe(1);
   });
 
   it('config bağımlılığı da temizlendi (ölü imza rebuild üretmesin)', () => {
@@ -1013,7 +1032,10 @@ describe('CorePanel tam seri adı (v0.9.1369)', () => {
   });
 
   it('🔴 lejant hücresi tam adı title olarak taşır', () => {
-    expect(src).toMatch(/title=\{fullNameOf\(frames\[i\]\) \|\| undefined\}/);
+    // v0.10.290 — hücre PanelLegend'de; CorePanel tam adları fullNameOf ile verir.
+    const legend = readFileSync(resolve(__dirname, './PanelLegend.tsx'), 'utf8').replace(/\/\/.*$/gm, '');
+    expect(legend).toMatch(/title=\{fullNames\[i\] \|\| undefined\}/);
+    expect(src).toMatch(/fullNames=\{frames\.map\(f => fullNameOf\(f\)\)\}/);
   });
 
   it('🔴 tam ad okuması TİP GÜVENLİ — as any yok', () => {

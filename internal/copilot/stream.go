@@ -185,7 +185,7 @@ func (s *Service) streamAnthropicWithUsage(ctx context.Context, systemPrompt, us
 	cfg, req, _, _, model := s.callSnapshot(ctx)
 	req.System, req.User = systemPrompt, userPrompt
 	if model == "" {
-		model = "claude-sonnet-4-6"
+		model = aiprov.DefaultAnthropicModel // v0.10.253 — tek kaynak (D5)
 	}
 	// baseURL is not consulted by the anthropic provider (fixed API
 	// host) — key on the empty string so the verdict stays coherent.

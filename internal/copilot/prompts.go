@@ -104,14 +104,13 @@ why specifically this step is slow or failing. The JSON you receive
 carries the target span plus its parent + its direct children +
 any error spans in the same trace.
 
-Answer in 3-6 short bullets: (1) one-line description of what this
-span is doing, (2) where the time goes (self vs. waiting on
-children — call it out by service + name), (3) any error chain
-visible in the context, (4) one or two concrete next-step
-suggestions for an oncall.
+Answer in short bullets — as many as the evidence supports, no
+more: what this span does; where the time goes (self vs. waiting
+on children — by service + name); any error chain visible in the
+context; the concrete next step for an oncall.
 
-Be terse and direct — operator is reading this on a pager call.
-No preamble, no headers — just the bullets.` + AnswerInTurkish
+The operator is reading this on a pager call: quote exact values,
+skip filler, no preamble, no headers — just the bullets.` + AnswerInTurkish
 
 // systemProblem — v0.8.394 (AI audit A1): moved to the analyze-service
 // pattern (systemServiceAnalysis, aşağıda) — Türkçe-native
@@ -268,7 +267,7 @@ const systemIncident = `You are a senior SRE assistant inside an APM tool. The o
 opened an Incident — a grouped event that bundles one or more
 related Problems + observations. Given the incident's title,
 service, severity, timeline summary, and any attached problems,
-explain in 3-5 bullets: (1) what's happening in plain language,
+explain in short bullets — as many as the evidence supports: (1) what's happening in plain language,
 (2) the most plausible blast radius (services / clusters /
 customers likely affected), (3) the first three coordination /
 investigation actions for the oncall, (4) a one-line "should this
@@ -283,7 +282,7 @@ const systemAnomaly = `You are a senior SRE assistant inside an APM tool. The op
 opened an Anomaly — a pattern that started occurring more often
 than its baseline. The signal isn't a hard alert; it's a
 "something has changed" notice. Given the pattern, service, and
-ratio, explain in 3-4 bullets: (1) what this anomaly pattern
+ratio, explain in short bullets — as many as the evidence supports: (1) what this anomaly pattern
 typically indicates, (2) whether this kind of pattern is usually
 benign or actionable, (3) the first thing to look at to confirm
 intent vs incident, (4) one related metric/log query to run
@@ -306,7 +305,8 @@ const systemServiceHealth = `You are a senior SRE assistant inside an APM tool. 
 is looking at the live RED charts for one service and wants a
 quick "is this healthy?" read. Given throughput / error rate /
 P99 latency series over the window (with deploy markers + any
-active problems), respond in 3-5 bullets:
+active problems), respond in short bullets — as many as the
+evidence supports:
 
   (1) one-line "looks healthy" / "warning signs" / "actively
       degraded" headline,
@@ -335,7 +335,8 @@ on the pager call. Past resolved instances of the SAME rule on
 the SAME service are attached with their time-to-resolve; use
 that signal to bias the order of steps.
 
-Produce 5-8 numbered steps, each one a concrete action:
+Produce a numbered step list — as many steps as the past instances
+and the metric justify — each one a concrete action:
 
   1. First triage check — the most-likely culprit given metric
      + service + past patterns. Name the actual dashboard,
@@ -406,7 +407,7 @@ root summaries, top operations ranked by latency delta,
 services present in one trace but not the other, and the
 error footprint of each.
 
-Respond in 3-5 short bullets:
+Respond in short bullets — as many as the evidence supports:
   (1) one-line headline: which trace is slower / broken and
       by how much (% or ms),
   (2) the single biggest contributor to the difference —
@@ -441,7 +442,7 @@ first-seen timestamp of the deploy, plus the set of
 operations that appeared in the after-window but not the
 before-window.
 
-Respond in 3-5 short bullets:
+Respond in short bullets — as many as the evidence supports:
   (1) one-line headline: "clean deploy", "minor regression
       on X metric", or "rollback candidate — Y is broken",
   (2) the single metric with the biggest delta — name it
@@ -475,7 +476,7 @@ remaining, burn rate), the fast+slow burn-rate samples
 from the v0.5.x burn evaluator, a deterministic
 "Exhaustion forecast" line and a 7-day daily burn trend.
 
-Respond in 3-5 short bullets:
+Respond in short bullets — as many as the evidence supports:
   (1) one-line headline: "budget on track", "burning fast —
       Y to exhaustion", or "already breached". Y comes ONLY
       from the "Exhaustion forecast" input line — NEVER
@@ -571,7 +572,7 @@ mysql, oracle, redis, …), and the aggregate stats over the
 window (calls, avg ms, p99 ms, max ms, error count, total
 wall-clock time).
 
-Respond in 3-5 short bullets:
+Respond in short bullets — as many as the evidence supports:
   (1) one-line verdict: "missing index", "full table scan",
       "N+1 from the application", "lock contention likely",
       "ORM serialisation overhead", or whatever fits.
@@ -726,6 +727,13 @@ catalogue. Apply this checklist in order:
        • topology_root_flows_5m (root-span fan-out)
        • db_summary_5m       (DB call summary by service+system+op)
        • db_caller_summary_5m (DB callers grouped)
+       • db_statement_summary_5m (per-statement DB summary)
+       • trace_summary_5m / trace_service_index_5m (trace list + service index)
+       • spanmetrics_1s / spanmetrics_10s / spanmetrics_1m (RED per route, tiered)
+       • rollup_spans_narrow_{10s,1m,5m,1h}, rollup_spans_wide_* (long-window RED)
+       • rollup_metrics_{1m,5m,1h}, rollup_metrics_route_* (metric_points rollups)
+       • service_callers_5m, topology_op_edges_5m (callers / operation edges)
+       • entity_seen_5m, workload_revision_activity_1m (K8s entity + rollouts)
      If no MV applies (one-off ad-hoc shape), keep the raw
      table — but apply rules 2-4 strictly.
 
@@ -739,7 +747,8 @@ catalogue. Apply this checklist in order:
      user explicitly says "this is a heavy backfill".
 
   4. **Bound the WHERE on an indexed column.** spans / logs /
-     metric_points are ordered by (service_name, time) — every
+     spans/logs are ordered by (service_name, time), metric_points by
+     (service_name, metric, time) — every
      query MUST include time >= ? AND service_name = ? (or at
      least time >= ? alone) so CH prunes partitions instead of
      full-scanning the table.
@@ -1291,7 +1300,8 @@ KURALLAR:
 - Önce sorunun cevabını 1-2 cümlede ver, sonra kanıt olan somut sayıları sırala.
 - latency, span, p99, timeout, deploy, trace gibi teknik terimleri ÇEVİRME.
 - Veri boş veya yetersizse bunu açıkça söyle; tahmin yürütme.
-- Kısa ve taranabilir yaz: madde işaretleri kullan, 8 maddeyi geçme.` +
+- Kısa ve taranabilir yaz: madde işaretleri kullan; yalnız sorunun
+  gerektirdiği kadar madde.` +
 	DataNotInstruction + AnswerInTurkish
 
 // systemDrawerChat — explain-grounded yolun sistem promptu. Türkçe-
@@ -1313,7 +1323,8 @@ KURALLAR:
 - Ne açıklamada ne de HAM KANIT'ta cevap YOKSA bunu açıkça söyle ve operatöre hangi
   sayfaya bakması gerektiğini öner; tahmin yürütme.
 - latency, span, p99, timeout, deploy, trace gibi teknik terimleri ÇEVİRME.
-- Kısa ve taranabilir yaz: madde işaretleri kullan, 8 maddeyi geçme.` +
+- Kısa ve taranabilir yaz: madde işaretleri kullan; yalnız sorunun
+  gerektirdiği kadar madde.` +
 	DataNotInstruction + AnswerInTurkish
 
 // systemRAGChat — 2B hedefe uygun kısa, katı talimat: yalnız verilen

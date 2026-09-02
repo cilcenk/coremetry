@@ -38,10 +38,21 @@ func TestZeroTempBlockWiredInBothProviderPaths(t *testing.T) {
 		t.Fatalf("provider_calls.go okunamadı: %v", err)
 	}
 	body := string(src)
-	if n := strings.Count(body, "if jsonLevelRequested(ctx) > jsonNone {"); n < 2 {
-		t.Fatalf("sıfır-sıcaklık kapısı 2 yolda beklenirdi (openai + anthropic), %d bulundu", n)
+	// v0.10.253 (prompt audit D1): Anthropic yolu sıcaklık GÖNDERMEZ (Opus
+	// 4.7+/5, Sonnet 5, Fable'da 400) — kapı yalnız openai-compat yolunda.
+	if n := strings.Count(body, "if jsonLevelRequested(ctx) > jsonNone {"); n < 1 {
+		t.Fatalf("sıfır-sıcaklık kapısı openai yolunda beklenirdi, %d bulundu", n)
 	}
 	if !strings.Contains(body, "req.Temperature = &zero") {
 		t.Fatal("sıfır-sıcaklık ataması kayıp — katı-JSON determinizmi (v0.9.1261) sökülmüş")
+	}
+	if i := strings.Index(body, "func (s *Service) explainAnthropic("); i >= 0 {
+		fn := body[i:]
+		if j := strings.Index(fn, "\nfunc "); j > 0 {
+			fn = fn[:j]
+		}
+		if strings.Contains(fn, "req.Temperature") {
+			t.Fatal("explainAnthropic sıcaklık ayarlıyor — D1: Anthropic gövdesine temperature binmez")
+		}
 	}
 }

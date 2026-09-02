@@ -182,7 +182,7 @@ func buildAnthropicToolsBody(cfg Config, req ChatRequest) map[string]any {
 	}
 
 	body := map[string]any{
-		"model": req.resolvedModel(cfg, defaultAnthropicModel),
+		"model": req.resolvedModel(cfg, DefaultAnthropicModel),
 		// v0.8.393 (AI denetimi A2) — eskiden 1500'dü: Explain'in
 		// öğrendiği bütçe reasoning modelleri için küçük (v0.8.384).
 		// v0.9.1120 — sabit operatör-ayarlı bir getter'a dönüştü ve
@@ -191,9 +191,7 @@ func buildAnthropicToolsBody(cfg Config, req ChatRequest) map[string]any {
 		"max_tokens": req.resolvedMaxTokens(), "system": req.System,
 		"messages": apiMsgs, "tools": apiTools,
 	}
-	if req.Temperature != nil {
-		body["temperature"] = *req.Temperature
-	}
+	// temperature bilinçli olarak GÖNDERİLMEZ (anthropic.go başlığı, v0.10.253 D1).
 	return body
 }
 

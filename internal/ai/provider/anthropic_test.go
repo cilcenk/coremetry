@@ -29,7 +29,7 @@ func TestDoAnthropic_GoldenRequestBody(t *testing.T) {
 		cfg      Config
 		req      Request
 		wantMT   float64
-		wantTemp *float64 // nil = gövdede OLMAMALI
+		wantTemp *float64 // v0.10.253 (D1): HER durumda nil — temperature bu yolda gönderilmez
 		wantMdl  string
 	}{
 		{
@@ -37,23 +37,23 @@ func TestDoAnthropic_GoldenRequestBody(t *testing.T) {
 			cfg:      Config{APIKey: "sk-ant", Model: "claude-x"},
 			req:      Request{Model: "claude-x", MaxTokens: 4096, Temperature: f(0.2), System: "sys", User: "usr"},
 			wantMT:   4096,
-			wantTemp: f(0.2),
+			wantTemp: nil,
 			wantMdl:  "claude-x",
 		},
 		{
-			name:     "operatör ezmesi (8192 / 0.9)",
+			name:     "operatör ezmesi (8192 / 0.9) — temperature yine gönderilmez",
 			cfg:      Config{APIKey: "sk-ant", Model: "claude-x"},
 			req:      Request{Model: "claude-x", MaxTokens: 8192, Temperature: f(0.9), System: "sys", User: "usr"},
 			wantMT:   8192,
-			wantTemp: f(0.9),
+			wantTemp: nil,
 			wantMdl:  "claude-x",
 		},
 		{
-			name:     "deterministik: temperature=0 gövdeye 0 olarak biner",
+			name:     "deterministik: temperature=0 bile gövdeye BİNMEZ (Opus 4.7+/5 400 verir)",
 			cfg:      Config{APIKey: "sk-ant", Model: "claude-x"},
 			req:      Request{Model: "claude-x", MaxTokens: 4096, Temperature: f(0), System: "sys", User: "usr"},
 			wantMT:   4096,
-			wantTemp: f(0),
+			wantTemp: nil,
 			wantMdl:  "claude-x",
 		},
 		{
@@ -80,7 +80,7 @@ func TestDoAnthropic_GoldenRequestBody(t *testing.T) {
 			cfg:      Config{APIKey: "sk-ant", Model: "claude-x", BaseURL: "http://eski-uc.invalid/v1"},
 			req:      Request{MaxTokens: 4096, Temperature: f(0.2), System: "sys", User: "usr"},
 			wantMT:   4096,
-			wantTemp: f(0.2),
+			wantTemp: nil,
 			wantMdl:  "claude-x",
 		},
 	}
@@ -138,7 +138,7 @@ func TestDoAnthropic_GoldenRequestBody(t *testing.T) {
 			case tc.wantTemp == nil && has:
 				t.Errorf("temperature gövdede olmamalıydı; got %v", tv)
 			case tc.wantTemp != nil && !has:
-				t.Errorf("temperature eksik; want %v (v0.9.1120)", *tc.wantTemp)
+				t.Errorf("temperature eksik; want %v", *tc.wantTemp)
 			case tc.wantTemp != nil && tv.(float64) != *tc.wantTemp:
 				t.Errorf("temperature = %v, want %v", tv, *tc.wantTemp)
 			}
@@ -262,19 +262,69 @@ func TestDoAnthropic_ErrorSemantics(t *testing.T) {
 		}
 	})
 
-	// JSON basamağı bu API'de yok. Sessizce yok saymak yerine AÇIK hata:
-	// çağıran (Service) basamağı düşürmekle yükümlü ve bugün öyle yapıyor.
-	t.Run("JSONLevel>0 açıkça reddedilir, istek gitmez", func(t *testing.T) {
-		rt := &captureRT{}
+	// v0.10.253 (prompt audit D2): JSONObject bu API'de yok → düz çağrı
+	// (hata değil, output_config yok); JSONSchema → structured outputs
+	// (TestDoAnthropic_StructuredOutputsAndEffort).
+	t.Run("JSONObject düz çağrıya düşer, istek gider", func(t *testing.T) {
+		rt := &captureRT{body: anthropicOK}
 		cfg := base
 		cfg.HTTPClient = newCaptureClient(rt)
 		jr := req
 		jr.JSONLevel = JSONObject
-		if _, err := DoAnthropic(context.Background(), cfg, jr); err == nil {
-			t.Fatal("hata bekleniyordu")
+		if _, err := DoAnthropic(context.Background(), cfg, jr); err != nil {
+			t.Fatalf("JSONObject hata olmamalı: %v", err)
 		}
-		if len(rt.reqs) != 0 {
-			t.Fatalf("desteklenmeyen basamakta yine de istek gitti (%d)", len(rt.reqs))
+		if len(rt.reqs) != 1 {
+			t.Fatalf("istek sayısı %d, want 1", len(rt.reqs))
+		}
+		if _, has := rt.bodies[0]["output_config"]; has {
+			t.Fatal("JSONObject seviyesinde output_config olmamalı")
 		}
 	})
+}
+
+// v0.10.253 (prompt audit D2/D3): structured outputs + effort gövdeye biner,
+// JSONObject seviyesi hata DEĞİL (düz çağrı), refusal açık hata.
+func TestDoAnthropic_StructuredOutputsAndEffort(t *testing.T) {
+	rt := &captureRT{body: anthropicOK}
+	cfg := Config{APIKey: "sk-ant", Model: "claude-opus-5", HTTPClient: newCaptureClient(rt)}
+	schema := map[string]any{"type": "object", "properties": map[string]any{"a": map[string]any{"type": "string"}}}
+	if _, err := DoAnthropic(context.Background(), cfg, Request{System: "s", User: "u", JSONLevel: JSONSchema, JSONSchemaName: "x", JSONSchema: schema, Effort: "low"}); err != nil {
+		t.Fatalf("DoAnthropic: %v", err)
+	}
+	got := rt.bodies[0]
+	oc, _ := got["output_config"].(map[string]any)
+	if oc == nil {
+		t.Fatalf("output_config yok: %v", got)
+	}
+	f, _ := oc["format"].(map[string]any)
+	if f == nil || f["type"] != "json_schema" || f["schema"] == nil {
+		t.Errorf("format = %v, want json_schema + schema", oc["format"])
+	}
+	if oc["effort"] != "low" {
+		t.Errorf("effort = %v, want low", oc["effort"])
+	}
+	if _, has := got["temperature"]; has {
+		t.Error("temperature gövdede olmamalı (D1)")
+	}
+	// JSONObject → hata yok, output_config yok (bu API'de yok).
+	rt2 := &captureRT{body: anthropicOK}
+	cfg2 := Config{APIKey: "sk-ant", Model: "claude-x", HTTPClient: newCaptureClient(rt2)}
+	if _, err := DoAnthropic(context.Background(), cfg2, Request{System: "s", User: "u", JSONLevel: JSONObject}); err != nil {
+		t.Fatalf("JSONObject düz çağrı olmalı: %v", err)
+	}
+	if _, has := rt2.bodies[0]["output_config"]; has {
+		t.Error("JSONObject seviyesinde output_config olmamalı")
+	}
+}
+
+func TestParseAnthropic_Refusal(t *testing.T) {
+	body := []byte(`{"content":[],"stop_reason":"refusal","usage":{"input_tokens":12,"output_tokens":0}}`)
+	resp, err := ParseAnthropic(body)
+	if err == nil || !strings.Contains(err.Error(), "refusal") {
+		t.Fatalf("refusal açık hata olmalı, err=%v", err)
+	}
+	if resp.InputTokens != 12 {
+		t.Errorf("kullanım korunmalı: %+v", resp)
+	}
 }

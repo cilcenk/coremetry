@@ -28,11 +28,15 @@ that triggered the skill.
 mistake unless I re-read the lesson list at the start of each
 bugfix.** This step is non-skippable.
 
-Before any investigation, open and read in full:
+Before any investigation: the memory index (MEMORY.md) is already in
+context every session — scan its feedback entries and OPEN, in full,
+the 1-3 `feedback-*.md` files that plausibly apply to this report.
+(Reading every feedback file each time was the v0.6.37 mechanic; the
+index now loads automatically and the point of the step is picking
+the right lessons, not re-reading every lesson.)
 
-1. `/Users/cenk/.claude/projects/-Users-cenk-Documents-gotrace/memory/MEMORY.md`
-   — the index of feedback memories.
-2. Every `feedback-*.md` file referenced in that index. The
+1. `MEMORY.md` — the index of feedback memories (already in context).
+2. The relevant `feedback-*.md` files from that index. The
    feedback memories encode patterns of past failure I am known to
    repeat: bug-repro discipline, unit-mixing in templates,
    audit/verify context, terse-response preference, etc.

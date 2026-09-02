@@ -33,6 +33,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	aiprovider "github.com/cilcenk/coremetry/internal/ai/provider"
 	"io"
 	"log"
 	"net/http"
@@ -588,6 +589,18 @@ func (s *Service) Snapshot() (provider, model, baseURL string, hasKey, skipTLS, 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.provider, s.model, s.baseURL, s.apiKey != "", s.skipTLS, s.enabled
+}
+
+// DefaultModels — v0.10.253 (prompt audit D5): sağlayıcı başına varsayılan
+// model, TEK kaynaktan (Anthropic: aiprovider.DefaultAnthropicModel).
+// /api/settings/ai bunu `defaultModel` olarak döner; AiTab yer tutucu
+// etiketi buradan okur — üç kopya kayması (v0.9.1120 sınıfı) kapanır.
+func (s *Service) DefaultModels() map[string]string {
+	return map[string]string{
+		"anthropic": aiprovider.DefaultAnthropicModel,
+		"openai":    "gpt-4o-mini",
+		"github":    "gpt-4o",
+	}
 }
 
 // Configured reports whether the service has credentials. The "openai"

@@ -1236,6 +1236,8 @@ export interface AISettings {
   model: string;
   baseUrl: string;
   hasKey: boolean;
+  /** v0.10.253 — sağlayıcı başına sunucu varsayılanı (AiTab yer tutucu etiketi; tek kaynak). */
+  defaultModel?: Partial<Record<AIProvider, string>>;
   // v0.5.360 — InsecureSkipVerify on the outbound HTTP client.
   // Operator-opt-in for self-hosted LLMs behind an enterprise
   // CA Go's default trust store doesn't know about.

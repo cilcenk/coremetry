@@ -68,6 +68,11 @@ type Request struct {
 	// buradaki denetim o sözleşmenin ikinci kilidi.
 	JSONSchemaName string
 	JSONSchema     map[string]any
+	// Effort — v0.10.253 (prompt audit D3): Anthropic 4.6+ ailesinde
+	// output_config.effort ("low" | "medium" | "high" | "max"). Boş =
+	// gönderilmez (sağlayıcı varsayılanı). Derinlik prompt'la değil
+	// bununla ayarlanır; openai-compat yolu yok sayar.
+	Effort string
 }
 
 // Response — çözümlenmiş yanıt. Token sayıları `usage` alanından

@@ -1,11 +1,11 @@
 ---
 name: api-route
-description: Add a new HTTP endpoint to Coremetry — ALWAYS in its own internal/api/<domain>.go file with a `registerXxxRoutes(mux)` method, so api.go (11.8k lines, 352 routes) grows by exactly one line. Covers route/auth/audit/serveCached/writeErr conventions, the four frontend touchpoints, and the silent-failure list (an unregistered route answers HTTP 200 with a blank page, never 404). Use BEFORE adding, moving or deleting any /api/* route, and whenever someone proposes editing api.go to add an endpoint. Do NOT use for MCP tools (use /mcp-tools), AI explain surfaces (/copilot-surface), or ClickHouse query design (/clickhouse-schema).
+description: Add a new HTTP endpoint to Coremetry — ALWAYS in its own internal/api/<domain>.go file with a `registerXxxRoutes(mux)` method, so api.go grows by exactly one line (or by zero — register via route_registry.go init()). Covers route/auth/audit/serveCached/writeErr conventions, the four frontend touchpoints, and the silent-failure list (an unregistered route answers HTTP 200 with a blank page, never 404). Use BEFORE adding, moving or deleting any /api/* route, and whenever someone proposes editing api.go to add an endpoint. Do NOT use for MCP tools (use /mcp-tools), AI explain surfaces (/copilot-surface), or ClickHouse query design (/clickhouse-schema).
 ---
 
 # /api-route — yeni endpoint, kendi dosyasında
 
-`internal/api/api.go` **11.848 satır / 352 route**. Yeni yüzey oraya
+`internal/api/api.go` on binin üstünde satır ve yüzlerce route taşıyor. Yeni yüzey oraya
 yazılmaz: kendi dosyasını açar, `api.go` **tek satır** büyür. Bu bir
 temenni değil, kodda yazılı direktif — `vmetrics_routes.go:5-8`,
 `ai_routes.go:11-13`, `api.go:1083-1085` ("Yeni AI ucu ORAYA eklenir,
@@ -78,6 +78,13 @@ Okuma kardeşini kapısız bırak — viewer state'i GÖRMELİ, boş sayfa deği
 POST/PUT/DELETE `RequireAnyRole`).
 
 ### 6. `api.go`'ya tek satır
+
+> v0.10.247 — alternatif: `internal/api/route_registry.go` defteri. Domain dosyası
+> `func init() { registerRoutesExtra("<ad>", (*Server).registerXxxRoutes) }` yazar,
+> api.go'ya satır GİRMEZ; `buildMux` defteri ad sırasıyla boşaltır ve
+> `TestMuxRoutePatterns` çakışmayı görür (`preferences_routes.go`,
+> `admin_function_id.go` emsalleri). Operatörün "api.go'ya satır ekleme" kısıtı
+> geldiğinde bu yol.
 ```go
 s.registerWidgetRoutes(mux) // v0.10.X — widget drill-down, widgets.go
 ```
@@ -288,8 +295,8 @@ spaHandler(sub))` (`api.go:1338`, kayıt sırası SON olmalı).
    `/api/spans`, `/api/admin/clickhouse`)
 
 Mekanik aileler (handler'ı %100 tek dosyada): `/api/topology` 11 route ·
-`/api/logs` 9 · `/api/incidents` 9. Bağlam: api.go'nun 352 route'unun
-**179'unun handler'ı zaten başka dosyada** — `registerRoutes`'un yarısı
+`/api/logs` 9 · `/api/incidents` 9. Bağlam: api.go'daki route'ların
+**yaklaşık yarısının handler'ı zaten başka dosyada** — `registerRoutes`'un yarısı
 saf pas-geçme kaydı, taşımanın davranışsal riski sıfır.
 
 ## Sessizce bozulanlar

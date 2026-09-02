@@ -60,6 +60,7 @@ export function AITab() {
   // Çeviri aiTuning.ts'te ve TABLO-TESTLİ: "boş kutu = sıfırla"
   // sözleşmesinin yanlış dalı sessiz ayar donmasına yol açıyor, o
   // yüzden bileşenin içinde satır içi kalmıyor.
+  const [defaultModels, setDefaultModels] = useState<Partial<Record<AIProvider, string>>>({});
   const applyTuning = (s: Partial<AISettings>) => {
     const f = tuningToForm(s);
     setMaxTokens(f.maxTokens);
@@ -70,6 +71,7 @@ export function AITab() {
   const { loaded, error: loadErr, retry } = useSettingsLoad(
     () => api.getAISettings(),
     s => {
+      setDefaultModels(s.defaultModel ?? {});
       setProvider(s.provider || 'anthropic');
       setModel(s.model || '');
       setBaseUrl(s.baseUrl || '');
@@ -171,10 +173,12 @@ export function AITab() {
     </>
   );
 
+  // v0.10.253 (prompt audit D5) — varsayılan model etiketi SUNUCUDAN
+  // (/api/settings/ai defaultModel); literal yalnız yükleme öncesi.
   const modelPlaceholder =
-    provider === 'github' ? 'gpt-4o (default)' :
-    provider === 'openai' ? 'gpt-4o-mini / llama3.1 / qwen2.5-coder …' :
-    'claude-sonnet-4-6 (default)';
+    provider === 'github' ? `${defaultModels.github ?? 'gpt-4o'} (default)` :
+    provider === 'openai' ? `${defaultModels.openai ?? 'gpt-4o-mini'} / llama3.1 / qwen2.5-coder …` :
+    `${defaultModels.anthropic ?? 'claude-sonnet-4-6'} (default)`;
 
   const providerLabel =
     provider === 'github' ? 'GitHub Copilot' :

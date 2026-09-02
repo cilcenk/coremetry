@@ -21,18 +21,26 @@ import (
 //     var. Sessizce baseURL'e uymak, "openai" seçiliyken girilmiş bayat
 //     bir uca anahtar göndermek demekti (Configure'un baseURL'i yalnız
 //     openai için okuması aynı kararın öteki yarısı).
-//   - JSON basamağı yok. Bu yola bugüne kadar hiç response_format
-//     gönderilmedi (Anthropic'in yazılışı zaten farklı: tool-forcing).
-//     Taşıma davranış değiştirmez — JSONPlain dışındaki basamak AÇIK
-//     hatayla reddedilir ki çağıran "uyguladım" sanmasın. Service, bu
-//     sağlayıcıda basamağı bugün olduğu gibi düşürüyor.
+//   - JSON basamağı (v0.10.253, prompt audit D2): JSONSchema seviyesi
+//     structured outputs ile karşılanır — output_config.format
+//     {type:"json_schema", schema}. JSONObject seviyesi bu API'de yok;
+//     düz çağrı yapılır (çağıran salvage zinciriyle yaşar). Tool-forcing
+//     ya da assistant prefill KULLANILMAZ (4.6+'da prefill 400).
+//   - Örnekleme parametresi YOK (v0.10.253, prompt audit D1): temperature
+//     Opus 4.7+/4.8/5, Sonnet 5, Fable 5/5.1'de kaldırıldı (400).
+//     Request.Temperature bu yolda yok sayılır; determinizm istenirse
+//     Request.Effort (output_config.effort). Sonnet 4.6 kabul etse de
+//     model adı değişince yol düşmesin diye hiç gönderilmez.
 const (
 	anthropicURL = "https://api.anthropic.com/v1/messages"
 	// anthropicVersion — zorunlu sürüm header'ı. Eksikse API 400 döner;
 	// yani bu sabit düşerse ANTHROPIC YOLU TAMAMEN kırılır.
 	anthropicVersion = "2023-06-01"
-	// defaultAnthropicModel — copilot.go'nun aynı varsayılanı.
-	defaultAnthropicModel = "claude-sonnet-4-6"
+	// DefaultAnthropicModel — TEK kaynak (v0.10.253, prompt audit D5):
+	// stream.go, tools.go ve /api/settings/ai varsayılan etiketi buradan
+	// okur (üç kopya v0.9.1120 sınıfı kayma). Varsayılanı yükseltmek ürün
+	// kararı — burada yalnız tek-kaynak.
+	DefaultAnthropicModel = "claude-sonnet-4-6"
 )
 
 // DoAnthropic tek bir buffered Messages çağrısı yapar.
@@ -45,15 +53,12 @@ func DoAnthropic(ctx context.Context, cfg Config, req Request) (Response, error)
 	if cfg.HTTPClient == nil {
 		return Response{}, errors.New("provider: nil HTTPClient — timeout ve TLS-skip ayarları onun içinde yaşıyor")
 	}
-	if req.JSONLevel != JSONPlain {
-		return Response{}, fmt.Errorf("provider: anthropic yolunda JSONLevel=%d desteklenmiyor (response_format bu API'de yok — çağıran basamağı düşürmeliydi)", req.JSONLevel)
-	}
 	model := req.Model
 	if model == "" {
 		model = cfg.Model
 	}
 	if model == "" {
-		model = defaultAnthropicModel
+		model = DefaultAnthropicModel
 	}
 	maxTokens := req.MaxTokens
 	if maxTokens <= 0 {
@@ -68,8 +73,19 @@ func DoAnthropic(ctx context.Context, cfg Config, req Request) (Response, error)
 			{"role": "user", "content": req.User},
 		},
 	}
-	if req.Temperature != nil {
-		body["temperature"] = *req.Temperature
+	// temperature bilinçli olarak GÖNDERİLMEZ (dosya başlığı, D1).
+	if req.JSONLevel >= JSONSchema && len(req.JSONSchema) > 0 {
+		body["output_config"] = map[string]any{"format": map[string]any{
+			"type": "json_schema", "schema": req.JSONSchema,
+		}}
+	}
+	if e := strings.TrimSpace(req.Effort); e != "" {
+		oc, _ := body["output_config"].(map[string]any)
+		if oc == nil {
+			oc = map[string]any{}
+		}
+		oc["effort"] = e
+		body["output_config"] = oc
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -108,13 +124,21 @@ func ParseAnthropic(respBody []byte) (Response, error) {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
-		Usage struct {
+		StopReason string `json:"stop_reason"`
+		Usage      struct {
 			InputTokens  int `json:"input_tokens"`
 			OutputTokens int `json:"output_tokens"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		return Response{}, fmt.Errorf("decode anthropic response: %w", err)
+	}
+	// v0.10.253 (prompt audit D3): Fable/Opus 5 reddi HTTP 200 + boş
+	// metin + stop_reason=refusal döner. Boş panel değil, açık hata —
+	// çağıran salvage/yeniden deneme yerine operatöre söyler.
+	if parsed.StopReason == "refusal" {
+		return Response{InputTokens: parsed.Usage.InputTokens, OutputTokens: parsed.Usage.OutputTokens},
+			errors.New("anthropic: model isteği reddetti (stop_reason=refusal)")
 	}
 	var out strings.Builder
 	for _, c := range parsed.Content {

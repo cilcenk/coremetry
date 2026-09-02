@@ -1605,6 +1605,12 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* Katlı alt ağaç özeti (v0.10.276) — .wf-cluster geometrisi, muted tokens. */
 .wf-sub { font-size: 9px; font-weight: 600; letter-spacing: 0.2px; flex-shrink: 0; padding: 0 5px; border-radius: 3px; margin-right: 8px; color: var(--text2); border: 1px solid var(--border); font-family: ui-monospace, Menlo, monospace; line-height: 1.4; white-space: nowrap; }
 
+/* Sanal satır kabı (v0.10.278) — mutlak konumlu satırlar için referans. */
+.wf-rows { position: relative; }
+/* Trace haritası (v0.10.278) — canvas, başlığın altında, yapışkan değil. */
+.tm-wrap { margin: 4px 0 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg2); overflow: hidden; cursor: pointer; }
+.tm-wrap canvas { display: block; width: 100%; height: 100%; }
+
 /* Span link badge (v0.10.274) — .wf-cat geometry, accent2 tokens. */
 .wf-link {
   font-size: 10px;

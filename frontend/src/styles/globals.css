@@ -1600,6 +1600,19 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   line-height: 1.4;
 }
 
+/* Span link badge (v0.10.274) — .wf-cat geometry, accent2 tokens. */
+.wf-link {
+  font-size: 10px;
+  flex-shrink: 0;
+  padding: 0 4px;
+  border-radius: 3px;
+  margin-right: 8px;
+  color: var(--accent2);
+  border: 1px solid var(--accent2);
+  line-height: 1.4;
+  opacity: .85;
+}
+
 /* Cluster tag — root span only (v0.8.539). Shares the .wf-cat
    outlined-pill geometry so the two sit as one chip group, but stays
    mixed-case in the mono face and takes muted/border tokens instead of

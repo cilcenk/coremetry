@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useEscLayer } from '@/lib/escLayer';
 import { Link } from 'react-router-dom';
+import type { SpanLinkEntry } from '@/lib/spanLinks';
+import { traceHref } from '@/lib/traceHref';
 import type { SpanRow, ProfileRow, SpanHotspotsResponse, LogRow, TimeRange } from '@/lib/types';
 import { selfTimeMs } from '@/lib/selfTime';
 import { tsLong, tsShort, sevName, sevClass, displaySpanName } from '@/lib/utils';
@@ -31,8 +33,12 @@ const SPAN_LOG_WINDOW_BUFFER_NS = 60_000_000_000;
 // @timestamp'ler pencere dışında kalmasın.
 const LOGS_LINK_EXTRA_NS = 15 * 60_000_000_000;
 
-export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = true, traceSpans, pageRange }: {
+export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = true, traceSpans, pageRange, links, onSelectSpan }: {
   span: SpanRow;
+  // v0.10.274 (Dilim 1a) — bu span'in OTel link'leri (lib/spanLinks indeksi).
+  links?: SpanLinkEntry;
+  // Aynı trace içindeki hedef span'e atlama (Trace.tsx setSelectedId).
+  onSelectSpan?: (spanId: string) => void;
   onClose: () => void;
   // Trace-anchored log lookup window (Unix ns), threaded down from the Trace
   // page so the trace→logs ES query is bounded to the trace's time ±1min
@@ -388,6 +394,53 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
                 )}
               </div>
             ))}
+          </Section>
+        )}
+
+        {links && (links.outgoing.length + links.incoming.length) > 0 && (
+          /* v0.10.274 — Links: trace-düzeyi şerit spanId'yi atıyordu; burada
+             span başına giden (→) ve gelen (←) link'ler, attribute'larıyla. */
+          <Section title={`Links (${links.outgoing.length + links.incoming.length})`}>
+            {[...links.outgoing.map(l => ({ dir: 'out' as const, l })), ...links.incoming.map(l => ({ dir: 'in' as const, l }))].map(({ dir, l }, i) => {
+              const otherTrace = dir === 'out' ? l.linkedTraceId : l.traceId;
+              const otherSpan = dir === 'out' ? l.linkedSpanId : l.spanId;
+              const sameTrace = otherTrace === span.traceId;
+              const attrs = Object.entries(l.attrs ?? {});
+              return (
+                <div key={`${dir}:${otherTrace}:${otherSpan}:${i}`} className="ps-event">
+                  <span style={{ color: 'var(--text3)' }} title={dir === 'out' ? 'Bu span link veriyor' : 'Bu span\'e link veren'}>
+                    {dir === 'out' ? '→' : '←'}
+                  </span>{' '}
+                  {sameTrace ? (
+                    <>
+                      <span style={{ color: 'var(--text2)' }}>bu trace · span </span>
+                      {onSelectSpan
+                        ? <a href="#" className="mono" onClick={e => { e.preventDefault(); onSelectSpan(otherSpan); }} title="Aynı trace içinde hedef span'e git">{otherSpan.slice(0, 8)}…</a>
+                        : <span className="mono">{otherSpan.slice(0, 8)}…</span>}
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ color: 'var(--text2)' }}>trace </span>
+                      <Link to={traceHref(otherTrace, { span: otherSpan || undefined, pageRange })} className="mono"
+                        title={`${otherTrace} · span ${otherSpan}`}>{otherTrace.slice(0, 8)}…</Link>
+                      <span style={{ color: 'var(--text2)' }}> · span </span>
+                      <span className="mono">{otherSpan ? otherSpan.slice(0, 8) + '…' : '—'}</span>
+                      <CopyButton value={otherTrace} title="Copy linked trace ID" />
+                    </>
+                  )}
+                  {l.serviceName && <span style={{ color: 'var(--text3)', marginLeft: 6 }}>{l.serviceName}</span>}
+                  {attrs.length > 0 && (
+                    <table className="ps-kv" style={{ marginTop: 4 }}>
+                      <tbody>
+                        {attrs.map(([k, v]) => (
+                          <tr key={k}><td>{k}</td><td>{String(v)}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              );
+            })}
           </Section>
         )}
 

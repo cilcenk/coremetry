@@ -18,7 +18,7 @@ func TestTraceRawStage1LightSQL_Shape(t *testing.T) {
 	from := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
 	wc := buildGetTracesWhere(TraceFilter{From: from, To: from.Add(12 * time.Hour), Service: "svc",
 		Filters: []FilterExpr{{Key: "http.route", Op: "=", Values: []string{"/x"}}}}, clusterDeriveExpr)
-	sql, ok := traceRawStage1LightSQL(wc.sql(), " HAVING countIf(service_name = ?) > 0", "duration", "DESC")
+	sql, ok := traceRawStage1GroupSQL(wc.sql(), " HAVING countIf(service_name = ?) > 0", "duration", "DESC", 25)
 	if !ok {
 		t.Fatal("duration must be light-eligible")
 	}
@@ -39,22 +39,22 @@ func TestTraceRawStage1LightSQL_Shape(t *testing.T) {
 	if !strings.Contains(list, "(max(toUnixTimestamp64Nano(time) + duration) -") {
 		t.Fatal("list dur_ms expression changed — keep stage-1 in sync")
 	}
-	if s, _ := traceRawStage1LightSQL("", "", "spans", "ASC"); !strings.Contains(s, "ORDER BY count() ASC, trace_id") {
+	if s, _ := traceRawStage1GroupSQL("", "", "spans", "ASC", 25); !strings.Contains(s, "ORDER BY count() ASC, trace_id") {
 		t.Fatalf("spans sort: %s", s)
 	}
-	if s, _ := traceRawStage1LightSQL("", "", "status", "DESC"); !strings.Contains(s, "ORDER BY max(if(status_code = 'error', 1, 0)) DESC, trace_id") {
+	if s, _ := traceRawStage1GroupSQL("", "", "status", "DESC", 25); !strings.Contains(s, "ORDER BY max(if(status_code = 'error', 1, 0)) DESC, trace_id") {
 		t.Fatalf("status sort: %s", s)
 	}
-	if s, _ := traceRawStage1LightSQL("", "", "duration", "sideways"); !strings.Contains(s, " DESC, trace_id") {
+	if s, _ := traceRawStage1GroupSQL("", "", "duration", "sideways", 25); !strings.Contains(s, " DESC, trace_id") {
 		t.Fatalf("unknown order defaults to DESC: %s", s)
 	}
 	for _, sort := range []string{"service", "operation", "weird"} {
-		if _, ok := traceRawStage1LightSQL("", "", sort, "DESC"); ok {
+		if _, ok := traceRawStage1GroupSQL("", "", sort, "DESC", 25); ok {
 			t.Fatalf("sort %q must not be light-eligible (string key)", sort)
 		}
 	}
 	// v0.10.239 — zaman sıralaması yalnız kök son-filtreli düşüşte: min(time).
-	if s, ok := traceRawStage1LightSQL("", "", "time", "DESC"); !ok || !strings.Contains(s, "ORDER BY min(time) DESC, trace_id") {
+	if s, ok := traceRawStage1GroupSQL("", "", "time", "DESC", 25); !ok || !strings.Contains(s, "ORDER BY min(time) DESC, trace_id") {
 		t.Fatalf("time sort light expr: %v %s", ok, s)
 	}
 }
@@ -180,7 +180,8 @@ func TestRawLightStage2UsesLightHaving(t *testing.T) {
 		t.Fatal("hafif bloğun sonu (served = true) bulunamadı")
 	}
 	block := text[start : start+end]
-	if !strings.Contains(block, "buildGetTracesListSQL(lwc.sql(), lightHavingSQL, sortCol, order)") {
+	// v0.10.245 — 2. aşama PREWHERE'li kurucuya geçti; sözleşme aynı: HAFİF HAVING.
+	if !strings.Contains(block, "lwc.sql(), lightHavingSQL, sortCol, order") {
 		t.Error("2. aşama lightHavingSQL ile kurulmuyor")
 	}
 	if !strings.Contains(block, "append(args, lightHavingArgs...)") {

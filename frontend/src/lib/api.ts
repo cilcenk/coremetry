@@ -1005,7 +1005,7 @@ export const api = {
   // paths the configured logs backend knows about. Empty array
   // for ClickHouse (shape is fixed); ES backend returns the
   // mapping leaves. Server caches 60s.
-  logsFields: () => get<{ fields: string[]; total?: number; backend: string }>(
+  logsFields: () => get<{ fields: string[]; total?: number; types?: Record<string, string>; backend: string }>(
     `/api/logs/fields`),
   // Top values of one keyword field prefix-matched against `q`.
   // Backs the /logs search box autocomplete (v0.5.464). Returns

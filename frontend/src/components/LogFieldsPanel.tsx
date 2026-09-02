@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { logFieldGlyph } from '@/lib/logFieldTypes';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
@@ -165,10 +166,12 @@ const POPULAR_FIELDS: readonly string[] = [
 ];
 
 export function LogFieldsPanel({
-  fields, fieldsTotal, columns, scope, onToggleColumn, onPillAdd, onPillExclude,
+  fields, fieldsTotal, types, columns, scope, onToggleColumn, onPillAdd, onPillExclude,
   onExists, windowTotal,
 }: {
   fields: string[];          // available fields from the backend mapping
+  // v0.10.280 — alan → mapping tipi; satır başında glif (lib/logFieldTypes).
+  types?: Record<string, string>;
   // v0.9.292 — how many paths the mapping actually had. The backend
   // caps the list (dynamic mapping at 10B docs/day routinely produces
   // four-digit field counts); a clipped list rendered without saying so
@@ -263,6 +266,7 @@ export function LogFieldsPanel({
           background: expandedField === f ? 'var(--accent-soft)' : 'transparent',
           color: removable ? 'var(--accent2)' : 'var(--text2)',
         }}>
+        {(() => { const g = logFieldGlyph(types?.[f]); return g ? <span className="lf-type" title={g.label} aria-label={g.label}>{g.glyph}</span> : null; })()}
         <span style={{
           flex: 1, minWidth: 0, overflow: 'hidden',
           textOverflow: 'ellipsis', whiteSpace: 'nowrap',

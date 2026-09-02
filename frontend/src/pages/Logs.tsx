@@ -599,6 +599,8 @@ function LogsInner() {
   // backend returns an empty list (its shape is fixed).
   const [fields, setFields] = useState<string[]>([]);
   const [fieldsTotal, setFieldsTotal] = useState<number | undefined>(undefined);
+  // v0.10.280 — alan → mapping tipi (panel tip rozeti); CH'de sabit şema.
+  const [fieldTypes, setFieldTypes] = useState<Record<string, string>>({});
 
   // Kibana deep-link config (v0.5.236). Loaded once on mount;
   // when disabled or unconfigured, buildKibanaURL returns null
@@ -617,8 +619,9 @@ function LogsInner() {
         // the list; the rail says "first N of M" rather than implying
         // the cap is the whole mapping.
         setFieldsTotal(d.total);
+        setFieldTypes(d.types ?? {});
       })
-      .catch(() => { setFields([]); setFieldsTotal(undefined); });
+      .catch(() => { setFields([]); setFieldsTotal(undefined); setFieldTypes({}); });
   }, []);
   const apply = () => { resetPaging(); setFilter(draft); writeUrl(draft, filters); };
   const reset = () => {
@@ -1099,6 +1102,7 @@ function LogsInner() {
           <LogFieldsPanel
             fields={fields}
             fieldsTotal={fieldsTotal}
+            types={fieldTypes}
             columns={logCols}
             scope={fieldStatsScope}
             onToggleColumn={toggleColumn}

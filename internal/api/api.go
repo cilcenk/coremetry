@@ -10833,6 +10833,10 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 		"span_links_capacity":     slCap,
 		"span_links_dropped":      s.ing.SpanLinks.Dropped(),
 		"span_links_write_failed": s.ing.SpanLinks.WriteFailed(),
+		// v0.10.293 — VM çift yazım ileti kuyruğu (self-observability kuralı:
+		// yeni ingest yolu = sayaç).
+		"vm_metrics_forward_enqueued": s.ing.MetricForwardEnqueued(),
+		"vm_metrics_forward_dropped":  s.ing.MetricForwardDropped(),
 		"clickhouse":              chStatusLabel(chOK, spoolDegraded),
 		// v0.9.238 — which roles THIS pod actually runs. In distributed mode
 		// the api and ingest Deployments answer the same hostname through

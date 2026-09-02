@@ -145,6 +145,7 @@ func recordCHError(span trace.Span, err error) {
 }
 
 func (t *tracedConn) Query(ctx context.Context, q string, args ...any) (driver.Rows, error) {
+	ctx = applyQueryTag(ctx) // v0.10.254 — log_comment etiketi
 	ctx, span := selfobs.Tracer().Start(ctx, "clickhouse.query")
 	span.SetAttributes(
 		attribute.String("db.system", dbSystem),
@@ -158,6 +159,7 @@ func (t *tracedConn) Query(ctx context.Context, q string, args ...any) (driver.R
 }
 
 func (t *tracedConn) QueryRow(ctx context.Context, q string, args ...any) driver.Row {
+	ctx = applyQueryTag(ctx) // v0.10.254 — log_comment etiketi
 	ctx, span := selfobs.Tracer().Start(ctx, "clickhouse.queryrow")
 	span.SetAttributes(
 		attribute.String("db.system", dbSystem),
@@ -174,6 +176,7 @@ func (t *tracedConn) QueryRow(ctx context.Context, q string, args ...any) driver
 }
 
 func (t *tracedConn) Exec(ctx context.Context, q string, args ...any) error {
+	ctx = applyQueryTag(ctx) // v0.10.254 — log_comment etiketi
 	ctx, span := selfobs.Tracer().Start(ctx, "clickhouse.exec")
 	span.SetAttributes(
 		attribute.String("db.system", dbSystem),
@@ -187,6 +190,7 @@ func (t *tracedConn) Exec(ctx context.Context, q string, args ...any) error {
 }
 
 func (t *tracedConn) PrepareBatch(ctx context.Context, q string, opts ...driver.PrepareBatchOption) (driver.Batch, error) {
+	ctx = applyQueryTag(ctx) // v0.10.254 — log_comment etiketi
 	ctx, span := selfobs.Tracer().Start(ctx, "clickhouse.batch")
 	span.SetAttributes(
 		attribute.String("db.system", dbSystem),
@@ -200,6 +204,7 @@ func (t *tracedConn) PrepareBatch(ctx context.Context, q string, opts ...driver.
 }
 
 func (t *tracedConn) AsyncInsert(ctx context.Context, q string, wait bool, args ...any) error {
+	ctx = applyQueryTag(ctx) // v0.10.254 — log_comment etiketi
 	ctx, span := selfobs.Tracer().Start(ctx, "clickhouse.async_insert")
 	span.SetAttributes(
 		attribute.String("db.system", dbSystem),

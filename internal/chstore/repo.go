@@ -73,7 +73,7 @@ func safeF(p *float64) float64 {
 //     INSERT'ler tek flush'ta birleşsin; part churn (yerelde 305 part/saat/
 //     node, 41 satır/part) düşsün. Tavan 1000 ms değişmedi.
 func asyncInsertCtx(ctx context.Context) context.Context {
-	return clickhouse.Context(ctx, clickhouse.WithSettings(asyncInsertSettings()))
+	return WithQuerySettings(ctx, asyncInsertSettings()) // v0.10.254 — tek kapı (log_comment ile birleşir)
 }
 
 // asyncInsertSettings — SAF; async_insert_settings_test.go pinler

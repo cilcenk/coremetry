@@ -632,18 +632,18 @@ func main() {
 	evalr.SetVersion(BuildVersion)
 	if mode.worker {
 		// ── Alert evaluator (background — opens & resolves problems) ─────
-		go evalr.Start(ctx)
+		go evalr.Start(chstore.WithQueryTag(ctx, "worker:evaluator")) // v0.10.254 — log_comment
 
 		// ── Topology correlator (incident auto-clustering) ──────────────
 		corr := correlator.New(store)
-		go corr.Start(ctx)
+		go corr.Start(chstore.WithQueryTag(ctx, "worker:correlator"))
 		store.SetNeighborProvider(corr)
 
 		// ── Anomaly detector (Watchdog-style baseline check) ────────────
-		go anomaly.New(store, cfg.Background.AnomalyInterval, lockImpl, notifier).Start(ctx)
+		go anomaly.New(store, cfg.Background.AnomalyInterval, lockImpl, notifier).Start(chstore.WithQueryTag(ctx, "worker:anomaly"))
 
 		// ── Synthetic monitor runner (HTTP probes + heartbeat absence) ──
-		go monitor.New(store, notifier, lockImpl).Start(ctx)
+		go monitor.New(store, notifier, lockImpl).Start(chstore.WithQueryTag(ctx, "worker:monitor"))
 
 		// ── Exception inbox refresher ───────────────────────────────────
 		go runExceptionRefresher(ctx, store, lockImpl)
@@ -652,7 +652,7 @@ func main() {
 		go runServiceTeamDeriver(ctx, store, lockImpl)
 
 		// ── Topology aggregator ─────────────────────────────────────────
-		topology.New(store, 5*time.Minute, 1*time.Hour, lockImpl).Start(ctx)
+		topology.New(store, 5*time.Minute, 1*time.Hour, lockImpl).Start(chstore.WithQueryTag(ctx, "worker:topology"))
 
 		// ── Elastic ML anomaly poller (v0.5.120) ────────────────────────
 		if cfg.Logs.Elasticsearch.MLEnabled && len(cfg.Logs.Elasticsearch.Addresses) > 0 {
@@ -897,10 +897,10 @@ func main() {
 		// it works against whichever backend is wired (CH or ES); ES
 		// path uses _msearch so all curated patterns ship in one HTTP
 		// round-trip even at billion-log scale.
-		anomaly.NewRecorder(store, logsStore, cfg.Background.AnomalyRecordInterval, cfg.Background.AnomalyRecordBackfill, lockImpl).Start(ctx)
+		anomaly.NewRecorder(store, logsStore, cfg.Background.AnomalyRecordInterval, cfg.Background.AnomalyRecordBackfill, lockImpl).Start(chstore.WithQueryTag(ctx, "worker:anomaly-recorder"))
 
 		// ── Drain-3 log template puller (v0.5.244) ───────────────────────
-		go templater.New(store, logsStore, 5*time.Minute, 1000, lockImpl).Start(ctx)
+		go templater.New(store, logsStore, 5*time.Minute, 1000, lockImpl).Start(chstore.WithQueryTag(ctx, "worker:templater"))
 	} else if mode.worker {
 		log.Printf("[anomaly] log-pattern recorder + Drain templater DISABLED (COREMETRY_LOG_ANOMALY_ENABLED=false) — no periodic logstore queries; metric anomaly detection unaffected")
 	}
@@ -1039,7 +1039,7 @@ func main() {
 		entityLeader := cache.NewLeaderHolder(lockImpl, "entity-sync", cache.LeaderTTL(time.Minute))
 		entitySyncer.SetLeaderCheck(entityLeader.IsLeader) // v0.10.141 — API tetikli tick yalnız liderde
 		entityLeader.SetOnAcquire(func() { entitySyncer.Tick(ctx) })
-		entityLeader.Start(ctx)
+		entityLeader.Start(chstore.WithQueryTag(ctx, "worker:entity-syncer"))
 		go entitySyncer.Run(ctx, entityLeader.IsLeader)
 		// v0.10.223 — Influx poll işçisi (audit §5): yalnız worker lideri.
 		// LeaderTTL(30 s) = 90 s kira / 30 s yenileme; liderlik alınır alınmaz
@@ -1085,7 +1085,7 @@ func main() {
 		})
 		influxLeader := cache.NewLeaderHolder(lockImpl, "influx-poller", cache.LeaderTTL(30*time.Second))
 		influxLeader.SetOnAcquire(func() { influxWorker.Tick(ctx) })
-		influxLeader.Start(ctx)
+		influxLeader.Start(chstore.WithQueryTag(ctx, "worker:influx-poller"))
 		go influxWorker.Run(ctx, influxLeader.IsLeader)
 		// v0.10.140 — Thanos etiketi periyodik doğrulama (auto eşleme
 		// brief'i): 10 dk'da bir, yalnız lider; sonuç bellekte, Settings
@@ -1094,7 +1094,7 @@ func main() {
 		// Liderlik alınır alınmaz ilk denetim (entity-sync emsali) — yoksa ilk
 		// sonuç boot'tan 10 dk sonra görünür (lokal e2e: 100 s'de labelCheck yok).
 		labelLeader.SetOnAcquire(func() { thanosSvc.LabelCheckTickPersist(ctx, store) })
-		labelLeader.Start(ctx)
+		labelLeader.Start(chstore.WithQueryTag(ctx, "worker:cluster-labels"))
 		go func() {
 			t := time.NewTicker(10 * time.Minute)
 			defer t.Stop()
@@ -1122,7 +1122,7 @@ func main() {
 		rolloutLeader := cache.NewLeaderHolder(lockImpl, "rollout-reconciler", cache.LeaderTTL(time.Minute))
 		rolloutRec.SetLeaderCheck(rolloutLeader.IsLeader)
 		rolloutLeader.SetOnAcquire(func() { rolloutRec.Tick(ctx) })
-		rolloutLeader.Start(ctx)
+		rolloutLeader.Start(chstore.WithQueryTag(ctx, "worker:rollout-reconciler"))
 		go rolloutRec.Run(ctx)
 	}
 	// v0.9.1150 — dış VictoriaMetrics OKUMA backend'i (tempo/thanos
@@ -1235,7 +1235,7 @@ func main() {
 	// çağrı sessizce hiçbir şey yapmaz.
 	if rcSynth != nil {
 		rcSynth.SetAutoVerdict(srv.AutoRCAVerdict)
-		go rcSynth.Start(ctx)
+		go rcSynth.Start(chstore.WithQueryTag(ctx, "worker:rootcause-synth"))
 	}
 	// v0.9.775 — exception triyaj pencereleri (P1 tazeliği / P2 aynı-gün)
 	// system_settings'ten. Boot'ta hidrate, sonra 30 sn'de bir yenile:

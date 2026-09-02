@@ -97,10 +97,21 @@ Ortam çıpası: ns `coremetry`, küme adı `coremetry`, DB `coremetry`,
 
 ### Sorguyu bulma — sert gerçek
 
-**Uygulama sorguları işaretlenmiyor**: `query_id` / `log_comment`
-kullanımı repoda sıfır, SQL log'a da basılmıyor. `query_log` satırını API
-ucuna bağlayan tek bağ sorgu metnidir. Üstelik bind farkı arama
-stratejisini belirler:
+**Sorgular etiketli (v0.10.254):** her CH sorgusu `log_comment` taşır —
+`route:<GET /api/...>` (serveCached'ten geçen uçlar), `worker:<ad>` (main.go
+arka plan işçileri), `admin:playground`. Önce etiketle ara:
+
+```sql
+SELECT log_comment, count() runs, round(quantile(0.9)(query_duration_ms)) p90_ms,
+       formatReadableQuantity(sum(read_rows)) rows
+FROM clusterAllReplicas('coremetry', system.query_log)
+WHERE event_time > now()-1800 AND type='QueryFinish' AND is_initial_query
+  AND log_comment LIKE 'route:%'
+GROUP BY log_comment ORDER BY sum(read_rows) DESC LIMIT 10
+```
+
+Etiketsiz sorgu (serveCached dışı bir handler, ya da eski build) için tek
+bağ hâlâ sorgu metnidir. Bind farkı arama stratejisini belirler:
 
 | Kaynak | Bind |
 |---|---|
@@ -392,8 +403,9 @@ CHECK 5b GLOBAL'ı görüyor ama alt sorgudaki zaman sınırını denetlemiyor.
   doğrulanmadı; prod'da `SELECT count() FROM system.query_log` yoklanmalı.
   Kapalıysa ADIM 2 prod'da kullanılamaz, elde yalnız kümülatif
   `system.events` kalır.
-- **`query_id`/`log_comment` yok** — API ucu ↔ `query_log` bağı bugün
-  yalnız metin eşleştirmesiyle kuruluyor. Tek satırlık düzeltme
-  (`SETTINGS log_comment`) bu akışın en yüksek getirili iyileştirmesi.
+- **`log_comment` var (v0.10.254)** — `route:`/`worker:`/`admin:` etiketleri
+  (`chstore/query_tag.go`). Kapsam dışı: serveCached'ten GEÇMEYEN handler'lar
+  (etiketsiz kalır — bulursan `chstore.WithQueryTag` ile etiketle) ve
+  `query_id` (hâlâ rastgele).
 - **`/admin/clickhouse` yavaş-sorgu paneli `clusterAllReplicas`
   kullanmıyor** — çok-node prod'da tek node gösterir.

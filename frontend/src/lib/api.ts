@@ -3172,6 +3172,26 @@ export const api = {
       body: JSON.stringify({ cluster }), timeoutMs: 200_000,
     }),
   // v0.10.197 — 0012 rollouts katmanı şeması sihirbazı (0011 aynası).
+  // v0.10.252 — 0013 attr_function_id terfi kolonu sihirbazı (admin_function_id.go).
+  functionIdColumnStatus: () =>
+    get<import('./types').FunctionIDColumnStatusResult>('/api/admin/function-id-column/status'),
+  functionIdColumnPreflight: () =>
+    get<import('./types').FunctionIDColumnPreflightResult>('/api/admin/function-id-column/preflight'),
+  functionIdColumnApply: (cluster: string) =>
+    request<import('./types').RollupActionResult & { note?: string }>('/api/admin/function-id-column/apply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster }), timeoutMs: 330_000, // sunucu bütçesi 5 dk (3 ON CLUSTER ifadesi)
+    }),
+  functionIdColumnMaterialize: (cluster: string) =>
+    request<import('./types').RollupActionResult & { note?: string }>('/api/admin/function-id-column/materialize', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster }), timeoutMs: 150_000,
+    }),
+  functionIdColumnRollback: (cluster: string) =>
+    request<import('./types').RollupActionResult>('/api/admin/function-id-column/rollback', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster }), timeoutMs: 200_000,
+    }),
   rolloutLayerStatus: () =>
     get<import('./types').RolloutLayerStatusResult>('/api/admin/rollout-layer/status'),
   rolloutLayerPreflight: () =>

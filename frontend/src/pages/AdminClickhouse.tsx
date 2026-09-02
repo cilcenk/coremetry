@@ -12,6 +12,7 @@ import type {
   RollupActionResult, RollupPreflightResult, RollupTableStatus, RollupTarget,
   EntityLayerObjectStatus, EntityLayerStatusResult, EntityLayerPreflightResult,
   RolloutLayerStatusResult, RolloutLayerPreflightResult,
+  FunctionIDColumnStatusResult, FunctionIDColumnPreflightResult,
   StateUnifyPreflightResult, StateUnifyRun, StateUnifyTable,
   StateRepartPreflightResult, StateRepartRun, StateRepartTable,
   TraceBackfillDay, TraceBackfillRun,
@@ -732,6 +733,8 @@ export default function AdminClickhousePage() {
             <EntityLayerWizardPanel />
             {/* v0.10.197 — 0012 rollouts katmanı şeması (audit §5(j)). */}
             <RolloutLayerWizardPanel />
+            {/* v0.10.252 — 0013 attr_function_id terfi kolonu (operatör: "sihirbazı var mı"). */}
+            <FunctionIdColumnWizardPanel />
 
             {/* v0.9.1341 — 0010 partition sökme sihirbazı. 0009'un
                 hemen ALTINDA ve bu SIRA anlamlı: 0010'un önkoşulu
@@ -2775,6 +2778,183 @@ function TraceBackfillWizardPanel() {
 // tam set, öteki namespace bile yok) ve MV kapısı (her cluster'da replicaset
 // ≥ %95) kapalıyken «Uygula» kolon+index+tabloyu basar, MV'yi ATLAR
 // (Faz 1a/1b ayrımı; sunucu da kapıyı kendi doğrular).
+// v0.10.252 — 0013 attr_function_id terfi kolonu sihirbazı (RolloutLayerWizardPanel
+// aynası; chstore/function_id_admin.go). Prod dış Distributed'da boot ON
+// CLUSTER DDL koşmaz; dosya gömülüydü ama sihirbazı yoktu. Ön kontrol
+// "kolon var" ≠ "dolu" ≠ "anahtar bu yazımla geliyor" üçünü ayrı gösterir
+// (v0.9.626: 11 gün boş kolon). MATERIALIZE COLUMN ayrı düğme (eski
+// part'lar; disk + merge, mesai dışı).
+function FunctionIdColumnWizardPanel() {
+  const [status, setStatus] = useState<FunctionIDColumnStatusResult | null>(null);
+  const [statusErr, setStatusErr] = useState<string | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [pre, setPre] = useState<FunctionIDColumnPreflightResult | null>(null);
+  const [preBusy, setPreBusy] = useState(false);
+  const [preErr, setPreErr] = useState<string | null>(null);
+  const [cluster, setCluster] = useState('');
+  type Kind = 'apply' | 'materialize' | 'rollback';
+  const [confirmKind, setConfirmKind] = useState<Kind | null>(null);
+  const [busyKind, setBusyKind] = useState<Kind | null>(null);
+  const [action, setAction] = useState<{ kind: Kind; res: RollupActionResult & { note?: string } } | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const busy = busyKind !== null;
+  const rows = status?.objects ?? [];
+  const dt = useDataTable<EntityLayerObjectStatus>({ storageKey: 'ch-function-id-status', columns: ENTITY_LAYER_COLS, rows });
+  const loadStatus = async () => {
+    setStatusBusy(true); setStatusErr(null);
+    try { setStatus(await api.functionIdColumnStatus()); }
+    catch (e: unknown) { setStatusErr(e instanceof Error ? e.message : String(e)); }
+    finally { setStatusBusy(false); }
+  };
+  useEffect(() => { void loadStatus(); }, []);
+  const runPreflight = async () => {
+    setPreBusy(true); setPreErr(null);
+    try {
+      const r = await api.functionIdColumnPreflight();
+      setPre(r);
+      const suggested = r.suggestedCluster && r.clusters.includes(r.suggestedCluster)
+        ? r.suggestedCluster : r.clusters.length === 1 ? r.clusters[0] : '';
+      setCluster(suggested);
+    } catch (e: unknown) { setPreErr(e instanceof Error ? e.message : String(e)); setPre(null); }
+    finally { setPreBusy(false); }
+  };
+  const runAction = async (kind: Kind) => {
+    setConfirmKind(null); setBusyKind(kind); setActionErr(null); setAction(null);
+    try {
+      const res = kind === 'apply' ? await api.functionIdColumnApply(cluster)
+        : kind === 'materialize' ? await api.functionIdColumnMaterialize(cluster)
+        : await api.functionIdColumnRollback(cluster);
+      setAction({ kind, res });
+    } catch (e: unknown) { setActionErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusyKind(null); void loadStatus(); void runPreflight(); }
+  };
+  const canApply = !!pre?.supported && !!cluster && !busy;
+  const allOk = rows.length > 0 && rows.every(o => o.state === 'ok');
+  const fillPct = (f: number, t: number) => (t > 0 ? `%${((f / t) * 100).toFixed(0)}` : '—');
+  const label: Record<Kind, string> = { apply: 'Uygula (0013)', materialize: 'Eski part\'ları yaz (MATERIALIZE)', rollback: 'Geri al' };
+  return (
+    <Section title="function_id terfi kolonu (0013)">
+      <p style={{ fontSize: 12, color: 'var(--text2)', margin: '0 0 10px', lineHeight: 1.55 }}>
+        Traces varsayılan kolonlarından <code className="mono">function_id</code> tek başına dizi yolundan okunuyordu (4 şişman dizinin
+        dekompresyonu; 50 trace için 84 MiB vs terfi kolonu 5 MiB). 0013: <code className="mono">spans.attr_function_id String MATERIALIZED</code>
+        (iki yazım: function_id / FUNCTION_ID) + Distributed sarmalayıcı + <code className="mono">set(0)</code> index. Boot bunu dış Distributed'da
+        ASLA koşmaz (N pod ON CLUSTER yarışı). Kolon eklendikten sonra pod'lar yeniden başlatılınca haritaya alır; eski part'lar okuma anında
+        hesaplanır — tam kazanç için MATERIALIZE ayrı eylem (mesai dışı).
+      </p>
+      {statusBusy && !status && <Spinner />}
+      {statusErr && <Empty icon="⚠" title="Durum okunamadı">{statusErr}</Empty>}
+      {status && (
+        <>
+          <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>
+            küme <span className="mono">{status.cluster || '(tek düğüm)'}</span> ·{' '}
+            {status.bootManaged ? <span className="badge b-gray" title="spans uygulama yönetimli: boot kolonu kendisi ekler">BOOT YÖNETİYOR</span>
+              : allOk ? <span className="badge b-ok">TAM</span> : <span className="badge b-warn">EKSİK</span>} ·
+            doluluk (son 10 dk): <span className="mono">{fmtNum(status.filled)} / {fmtNum(status.total)}</span> ({fillPct(status.filled, status.total)})
+          </div>
+          <div className="table-wrap is-fit" style={{ marginBottom: 10 }}>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} />
+              <DataTableHead dt={dt} />
+              <tbody>
+                {dt.sortedRows.map(o => (
+                  <tr key={`${o.kind}:${o.name}`}>
+                    <td className="mono">{o.name}</td>
+                    <td style={{ fontSize: 11, color: 'var(--text3)' }}>{o.kind}{o.table ? ` · ${o.table}` : ''}</td>
+                    <td>
+                      {o.state === 'ok' ? <span className="badge b-ok">VAR</span>
+                        : o.state === 'partial' ? <span className="badge b-warn" title="bazı host'larda yok — dağıtık DDL yarım kalmış">KISMİ</span>
+                        : o.state === 'missing' ? <span className="badge b-gray">YOK</span>
+                        : <span className="badge b-warn" title={o.err}>OKUNAMADI</span>}
+                    </td>
+                    <td className="num mono">{o.haveHosts}/{o.hosts}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+        <Button variant="secondary" size="sm" onClick={runPreflight} loading={preBusy}>Ön kontrol</Button>
+        <Button variant="ghost" size="sm" onClick={() => void loadStatus()} disabled={statusBusy}>Durumu yenile</Button>
+        {preErr && <span style={{ color: 'var(--err)', fontSize: 12 }}>{preErr}</span>}
+      </div>
+      {pre && (
+        <div style={{
+          padding: '12px 14px', borderRadius: 6, marginBottom: 12,
+          border: `1px solid ${pre.supported ? 'var(--ok)' : 'var(--warn)'}`,
+          background: pre.supported ? 'color-mix(in srgb, var(--ok) 8%, transparent)' : 'color-mix(in srgb, var(--warn) 10%, transparent)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span className={`badge ${pre.supported ? 'b-ok' : 'b-warn'}`}>{pre.supported ? 'UYGULANABİLİR' : 'UYGULANAMAZ'}</span>
+            <span style={{ fontSize: 12.5, color: 'var(--text2)', lineHeight: 1.5 }}>{pre.detail}</span>
+          </div>
+          <div className="table-wrap" style={{ marginBottom: 8 }}>
+            <table style={{ width: '100%' }}>
+              <thead><tr><th>Kontrol</th><th>Sonuç</th></tr></thead>
+              <tbody>
+                <PreRow label="spans_local" ok={pre.spansLocal} />
+                <PreRow label="Tanımlı küme" ok={pre.clusters.length > 0} note={pre.clusters.join(', ')} />
+                <PreRow label="Anahtar yazımı (son 10 dk, örneklem)" ok={pre.keyCounts.length > 0}
+                  note={pre.keyCounts.length ? pre.keyCounts.map(k => `${k.key}: ~${fmtNum(k.count)}`).join(' · ') : 'function_id anahtarı görülmedi'} />
+                <PreRow label="Kolon var" ok={pre.columnExists} neutral={!pre.columnExists} />
+                <PreRow label="Kolon dolu (son 10 dk)" ok={pre.columnExists && pre.filled > 0} neutral={!pre.columnExists}
+                  note={pre.columnExists ? `${fmtNum(pre.filled)} / ${fmtNum(pre.total)} (${fillPct(pre.filled, pre.total)})` : undefined} />
+                <PreRow label="Skip index var" ok={pre.indexExists} neutral={!pre.indexExists} />
+              </tbody>
+            </table>
+          </div>
+          {pre.probeErrors && pre.probeErrors.length > 0 && (
+            <div style={{ fontSize: 11.5, color: 'var(--warn)' }}>Probe hataları: {pre.probeErrors.join(' · ')}</div>
+          )}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text3)' }}>
+          Küme
+          <select value={cluster} onChange={e => setCluster(e.target.value)} disabled={!pre || busy}>
+            <option value="">—</option>
+            {(pre?.clusters ?? []).map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </label>
+        {confirmKind === null ? (
+          <>
+            <Button variant="primary" size="sm" disabled={!canApply} onClick={() => setConfirmKind('apply')}>{label.apply}</Button>
+            <Button variant="secondary" size="sm" disabled={!cluster || busy || !pre?.columnExists} title="ADIM 5: eski part'ları yeniden yazar — disk + merge maliyeti; mesai dışı" onClick={() => setConfirmKind('materialize')}>{label.materialize}</Button>
+            <Button variant="ghost-danger" size="sm" disabled={!cluster || busy} onClick={() => setConfirmKind('rollback')}>{label.rollback}</Button>
+          </>
+        ) : (
+          <>
+            <span style={{ fontSize: 12 }}>
+              {confirmKind === 'apply'
+                ? <>0013 <span className="mono">{cluster}</span> kümesine uygulanacak (kolon + sarmalayıcı + index; IF NOT EXISTS; ilk hatada durur). Emin misin?</>
+                : confirmKind === 'materialize'
+                  ? <><span className="mono">{cluster}</span> üzerinde MATERIALIZE COLUMN — retention boyu part yeniden yazımı (saatler, IO). Mesai dışı mı? Emin misin?</>
+                  : <>idx_attr_function_id ve attr_function_id (spans + spans_local) düşürülecek — uygulama dizi yoluna döner. Emin misin?</>}
+            </span>
+            <Button variant={confirmKind === 'rollback' ? 'danger' : 'primary'} size="sm" loading={busy} onClick={() => void runAction(confirmKind)}>Evet</Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirmKind(null)}>Vazgeç</Button>
+          </>
+        )}
+        {actionErr && <span style={{ color: 'var(--err)', fontSize: 12 }}>{actionErr}</span>}
+      </div>
+      {action && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, marginBottom: 6 }}>
+            {label[action.kind]}: {action.res.ok ? <span className="badge b-ok">TAMAM</span> : <span className="badge b-err">HATA</span>}
+            {action.res.note && <span className="field-hint"> · {action.res.note}</span>}
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11.5 }}>
+            {action.res.statements.map((st, i) => (
+              <li key={i} className="mono" style={{ color: st.ok ? 'var(--text2)' : 'var(--err)' }}>{st.head}{st.err ? ` — ${st.err}` : ''}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Section>
+  );
+}
+
 function RolloutLayerWizardPanel() {
   const [status, setStatus] = useState<RolloutLayerStatusResult | null>(null);
   const [statusErr, setStatusErr] = useState<string | null>(null);

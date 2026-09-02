@@ -61,3 +61,18 @@ func TestRouteRegistryResolvesPreferences(t *testing.T) {
 		t.Fatalf("kalıp %q, istenen GET /api/preferences/{key}", pattern)
 	}
 }
+
+// v0.10.252 — 0013 sihirbazı da defterden (api.go'ya satır yok).
+func TestRouteRegistryResolvesFunctionIDColumn(t *testing.T) {
+	s := &Server{}
+	mux := s.buildMux()
+	for _, p := range []string{"/api/admin/function-id-column/status", "/api/admin/function-id-column/preflight"} {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		if _, pattern := mux.Handler(req); !strings.HasPrefix(pattern, "GET /api/admin/function-id-column/") {
+			t.Errorf("%s → %q", p, pattern)
+		}
+	}
+	if b, _ := os.ReadFile("api.go"); strings.Contains(string(b), "function-id-column") || strings.Contains(string(b), "FunctionIDColumn") {
+		t.Error("api.go 0013 sihirbazını içeriyor — defter üzerinden olmalı")
+	}
+}

@@ -2212,6 +2212,7 @@ tbody tr.wf-evidence:hover > td { background: color-mix(in srgb, var(--warn) 14%
 .context-bar .ctx-field .field-label { font-size: var(--fs-xs, 11px); color: var(--text3); white-space: nowrap; }
 .context-bar .ctx-field select, .context-bar .ctx-field input { min-width: 0; }
 .context-bar .ctx-disabled { width: 6ch; }
+.context-bar .ctx-more { flex: none; white-space: nowrap; } /* v0.10.266 — 246-251 sınıfı tanımsız bırakmıştı */
 .context-bar .ctx-panel { display: none; }
 .context-bar .ctx-panel.is-open { display: flex; flex-direction: column; gap: var(--space-2, 8px); position: absolute; top: 100%; right: 0; padding: var(--space-3, 12px); background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm); z-index: var(--z-popover); }
 .context-bar { position: relative; }
@@ -2373,7 +2374,7 @@ button.accent.copied {
   background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: text; }
 .fq-bar.is-open, .fq-bar:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .fq-lens { color: var(--text3); font-size: 13px; }
-.fq-chip { display: inline-flex; align-items: stretch; height: 24px; border-radius: 4px; overflow: hidden; border: 1px solid var(--border); background: var(--bg1); font-size: 12px; max-width: 420px; }
+.fq-chip { display: inline-flex; align-items: stretch; height: 24px; border-radius: var(--radius-xs); overflow: hidden; border: 1px solid var(--border); background: var(--bg1); font-size: 12px; max-width: 420px; }
 .fq-chip > span { padding: 0 7px; display: inline-flex; align-items: center; cursor: pointer; }
 .fq-chip .fq-k { color: var(--text2); border-right: 1px solid var(--border); }
 .fq-chip .fq-o { color: var(--text3); font-size: 11px; background: var(--bg2); border-right: 1px solid var(--border); }
@@ -2387,7 +2388,7 @@ button.accent.copied {
 .fq-input { flex: 1; min-width: 220px; background: transparent; border: none; outline: none; color: var(--text); font: inherit; font-size: 13px; padding: 4px 2px; }
 .fq-input::placeholder { color: var(--text3); }
 .fq-hint { margin-left: auto; color: var(--text3); font-size: 11px; white-space: nowrap; display: inline-flex; gap: 4px; align-items: center; }
-.fq-hint kbd { display: inline-block; padding: 0 5px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--bg2); font-size: 10px; line-height: 15px; color: var(--text2); font-family: ui-monospace, Menlo, monospace; }
+.fq-hint kbd { display: inline-block; padding: 0 5px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: var(--radius-xs); background: var(--bg2); font-size: 10px; line-height: 15px; color: var(--text2); font-family: ui-monospace, Menlo, monospace; }
 .fq-pop { position: absolute; top: calc(100% + 6px); left: 0; width: min(640px, 100%); background: var(--bg1); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-pop); z-index: var(--z-popover); overflow: hidden; }
 .fq-steps { display: flex; border-bottom: 1px solid var(--border); background: var(--bg2); }
 .fq-steps > div { padding: 6px 12px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--text3); border-right: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }
@@ -2405,7 +2406,7 @@ button.accent.copied {
 .fq-opt .cnt.bar { display: inline-flex; align-items: center; gap: 6px; }
 .fq-opt .cnt i { display: inline-block; height: 6px; background: var(--accent); opacity: .55; border-radius: 2px; }
 .fq-ops { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; }
-.fq-ops button { font-size: 12px; padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg2); color: var(--text); cursor: pointer; }
+.fq-ops button { font-size: 12px; padding: 4px 10px; border-radius: var(--radius-xs); border: 1px solid var(--border); background: var(--bg2); color: var(--text); cursor: pointer; }
 .fq-ops button.sel { border-color: var(--accent); background: var(--accent-soft); color: var(--accent2); font-weight: 600; }
 .fq-ops .fq-oplong { color: var(--text3); font-size: 10.5px; }
 .fq-foot { border-top: 1px solid var(--border); padding: 6px 12px; display: flex; gap: 14px; font-size: 11px; color: var(--text3); background: var(--bg2); flex-wrap: wrap; }

@@ -15,7 +15,7 @@ export { columnLayoutSig, visibleColumns, nextSort, parseSortParam, formatSortPa
 export type { ColumnDef, CellContext, ColumnModel, ColumnSource, ColumnSpec, ColumnModelBinding, SelectionBinding, ServerBinding } from './types';
 export {
   defaultColumnModel, reconcileColumnModel, visibleColumnIds, toggleHidden, moveColumnTo,
-  parseColsParam, modelFromVisible, resolveColumnModel, serializeColumnModel, parseColumnModel,
+  parseColsParam, modelFromVisible, resolveColumnModel, serializeColumnModel, parseColumnModel, orderColumnsByModel,
 } from '@/lib/columnModel';
 export { EMPTY_SELECTION, toggleRow, rangeSelect, selectAll, pruneSelection } from '@/lib/rowSelection';
 export type { SelectionState } from '@/lib/rowSelection';

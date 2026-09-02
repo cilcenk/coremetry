@@ -159,3 +159,28 @@ export function parseColumnModel(raw: unknown): ColumnModel | null {
   }
   return out;
 }
+
+/**
+ * orderColumnsByModel — bildirilen kolonları modele göre sıralar ve gizlileri
+ * düşürür (useDataTable columnModel bağlaması). Modelde olmayan kolon
+ * (uzlaştırma öncesi) tanım sırasına göre SONA eklenir — tablo asla
+ * kolon kaybetmez. SAF; genişlik mühürleme imzası (columnLayoutSig)
+ * bildirilen kolonlardan hesaplanır, buradan değil.
+ */
+export function orderColumnsByModel<C extends { id: string }>(columns: C[], model: ColumnModel | null | undefined): C[] {
+  if (!model) return columns;
+  const byId = new Map(columns.map(c => [c.id, c]));
+  const hidden = new Set(model.hidden);
+  const out: C[] = [];
+  const seen = new Set<string>();
+  for (const id of model.order) {
+    const c = byId.get(id);
+    if (!c || seen.has(id)) continue;
+    seen.add(id);
+    if (!hidden.has(id)) out.push(c);
+  }
+  for (const c of columns) {
+    if (!seen.has(c.id)) out.push(c);
+  }
+  return out;
+}

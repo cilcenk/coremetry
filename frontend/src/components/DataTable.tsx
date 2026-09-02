@@ -3,6 +3,8 @@ import {
   type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject,
 } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { orderColumnsByModel, type ColumnModel } from '@/lib/columnModel';
+import { EMPTY_SELECTION, toggleRow, rangeSelect, selectAll, pruneSelection, type SelectionState } from '@/lib/rowSelection';
 import { useTableNav, type TableNav } from '@/lib/useTableNav';
 import { useShortcuts } from '@/lib/keyboard';
 import { useIsNarrow } from '@/lib/useNarrow';
@@ -59,19 +61,57 @@ export interface DataTable<T> {
   setSort: (s: SortState) => void;
   colWidths: Record<string, number>;
   startResize: (id: string, e: ReactPointerEvent) => void;
+  /** v0.10.249 — klavye/programatik genişlik değişimi (minWidth kelepçeli). */
+  resizeBy: (id: string, deltaPx: number) => void;
   resetLayout: () => void;
   // Keyboard nav (UX#4). Always present; inert (selected = -1, no key
   // bindings) unless the caller supplied onOpen. Spread `rowProps(i)` on each
   // <tr> for data-row-idx + the .row-selected accent.
   nav: TableNav<T>;
   rowProps: (index: number) => { 'data-row-idx': number; 'data-table-id': string; className?: string };
+  // v0.10.249 (DataTable dilim 4) — ADDİTİF. Seçenek verilmediğinde
+  // bugünkü davranış bayt-bayt aynı (109 çağrı yeri).
+  /** Bildirilen kolonların tamamı (columnModel gizlemiş olsa da). */
+  allColumns: DataTableColumn<T>[];
+  /** Satır seçimi (selection verilmişse); yoksa null. */
+  selection: DataTableSelection<T> | null;
+  /** Sunucu sayfalama demeti (server verilmişse); j son satırda onPage(page+1). */
+  server: DataTableServer | null;
+  /** Satır = link (v0.10.216); VirtualTable ownLink olmayan hücreyi sarar. */
+  getRowHref: ((row: T) => string | null) | null;
 }
 
-export function useDataTable<T>({ storageKey, columns, rows, initialSort, serverSort, onSortChange, urlSortFallback, onOpen, searchRef }: {
+export interface DataTableSelection<T> {
+  ids: ReadonlySet<string>;
+  isSelected: (row: T) => boolean;
+  toggle: (row: T) => void;
+  range: (row: T) => void;
+  all: () => void;
+  clear: () => void;
+  mode: 'single' | 'multi';
+  getRowId: (row: T) => string;
+}
+
+export interface DataTableServer {
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  onPage: (p: number) => void;
+  onSort?: (s: SortState) => void;
+}
+
+export function useDataTable<T>({ storageKey, columns: declaredColumns, rows, initialSort, serverSort, onSortChange, urlSortFallback, onOpen, searchRef, columnModel, selection: selectionOpt, server, getRowHref }: {
   storageKey: string;
   columns: DataTableColumn<T>[];
   rows: T[];
   initialSort?: SortState;
+  /** v0.10.249 — sıra/gizli modeli (lib/columnModel). Genişlik imzası bildirilen kolonlardan. */
+  columnModel?: { value: ColumnModel | null; onChange?: (next: ColumnModel) => void };
+  /** v0.10.249 — satır seçimi; getRowId zorunlu (indeks anahtarı sıralamada kırılır). */
+  selection?: { mode: 'single' | 'multi'; getRowId: (row: T) => string; value?: ReadonlySet<string>; onChange?: (ids: ReadonlySet<string>) => void };
+  /** v0.10.249 — sunucu sayfalama/sıralama demeti. */
+  server?: DataTableServer;
+  getRowHref?: (row: T) => string | null;
   // serverSort (v0.8.251) — for server-paged tables (Services first): the
   // ORDER BY runs on the backend, so the hook keeps EVERY piece of the sort
   // UX — URL `s_<storageKey>` param, localStorage persistence, header click /
@@ -100,6 +140,11 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, server
 }): DataTable<T> {
   const sortLSKey = dtSortKey(storageKey);
   const widthLSKey = dtWidthKey(storageKey);
+  // columnModel: görünür sıra buradan; genişlik imzası (layoutSig) ve LS
+  // anahtarı BİLDİRİLEN kolonlardan — bir kolonu gizlemek herkesin
+  // genişliklerini sıfırlamaz (audit §9).
+  const modelValue = columnModel?.value ?? null;
+  const columns = useMemo(() => orderColumnsByModel(declaredColumns, modelValue), [declaredColumns, modelValue]);
   // Sort is shareable (UX#3): the URL param `s_<storageKey>` wins so a copied
   // link reproduces the exact sort; else the urlSortFallback bridge (an OLD
   // URL schema decoded by the page — still link intent, so it outranks the
@@ -119,7 +164,7 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, server
   // Sürümsüz haldeyken bayat bir harita yeni kolon tanımını sessizce
   // eziyordu — v0.9.660'ın Users düzeltmesi tam bu yüzden operatörün
   // ekranına hiç ulaşmadı (gerekçe: lib/dataTable.ts columnLayoutSig).
-  const layoutSig = useMemo(() => columnLayoutSig(columns), [columns]);
+  const layoutSig = useMemo(() => columnLayoutSig(declaredColumns), [declaredColumns]);
   const [colWidths, setColWidths] = useState<Record<string, number>>(() =>
     readPersistedWidths(getItem<unknown>(widthLSKey, null), layoutSig));
 
@@ -142,7 +187,8 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, server
       return next;
     }, { replace: true });
     onSortChange?.(s);
-  }, [setSearchParams, urlKey, onSortChange]);
+    server?.onSort?.(s);
+  }, [setSearchParams, urlKey, onSortChange, server]);
 
   // Back/forward — or an inbound shared link — changes the URL sort: restore
   // it into state. Guarded to fire only on a genuine difference, which also
@@ -196,6 +242,11 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, server
     window.addEventListener('pointercancel', onUp);
   }, [columns, colWidths]);
 
+  const resizeBy = useCallback((id: string, deltaPx: number) => {
+    const col = columns.find(c => c.id === id);
+    const min = col?.minWidth ?? DEFAULT_MIN;
+    setColWidths(prev => ({ ...prev, [id]: Math.max(min, (prev[id] ?? col?.width ?? DEFAULT_W) + deltaPx) }));
+  }, [columns]);
   const resetLayout = useCallback(() => setColWidths({}), []);
 
   // serverSort mode returns `rows` verbatim (reference-equal) — the
@@ -209,7 +260,48 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, server
   // gg/G/Enter/o/Esc bindings + auto-scroll; inert when onOpen is absent (no
   // bindings) so a plain display table doesn't capture the keys. "/" focuses
   // the page filter when both onOpen + searchRef are supplied.
-  const nav = useTableNav<T>(sortedRows, { onOpen, enabled: !!onOpen, pageId: storageKey });
+  // v0.10.249 — sunucu demeti: son satırda j → sonraki sayfa, ilk satırda
+  // k → önceki (onPageBoundary v0.9.1018; Traces hiç bağlamamıştı).
+  const onPageBoundary = useCallback((dir: 'next' | 'prev') => {
+    if (!server) return false;
+    if (dir === 'next' && server.hasMore) { server.onPage(server.page + 1); return true; }
+    if (dir === 'prev' && server.page > 0) { server.onPage(server.page - 1); return true; }
+    return false;
+  }, [server]);
+  const nav = useTableNav<T>(sortedRows, { onOpen, enabled: !!onOpen, pageId: storageKey, onPageBoundary: server ? onPageBoundary : undefined });
+  // v0.10.249 — satır seçimi: kontrollü (value/onChange) ya da iç durum.
+  const [selInner, setSelInner] = useState<SelectionState>(EMPTY_SELECTION);
+  const selIds = selectionOpt?.value ?? selInner.ids;
+  const orderedIds = useMemo(
+    () => (selectionOpt ? sortedRows.map(r => selectionOpt.getRowId(r)) : []),
+    [sortedRows, selectionOpt],
+  );
+  const applySel = useCallback((next: SelectionState) => {
+    setSelInner(next);
+    selectionOpt?.onChange?.(next.ids);
+  }, [selectionOpt]);
+  useEffect(() => {
+    if (!selectionOpt) return;
+    const pruned = pruneSelection(selInner, orderedIds);
+    if (pruned !== selInner) applySel(pruned);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderedIds]);
+  const selectionApi = useMemo<DataTableSelection<T> | null>(() => {
+    if (!selectionOpt) return null;
+    const cur = (): SelectionState => ({ ids: selIds, anchor: selInner.anchor });
+    return {
+      ids: selIds,
+      mode: selectionOpt.mode,
+      getRowId: selectionOpt.getRowId,
+      isSelected: row => selIds.has(selectionOpt.getRowId(row)),
+      toggle: row => applySel(toggleRow(cur(), selectionOpt.getRowId(row), selectionOpt.mode)),
+      range: row => applySel(selectionOpt.mode === 'multi'
+        ? rangeSelect(cur(), orderedIds, selectionOpt.getRowId(row))
+        : toggleRow(cur(), selectionOpt.getRowId(row), 'single')),
+      all: () => { if (selectionOpt.mode === 'multi') applySel(selectAll(orderedIds)); },
+      clear: () => applySel(EMPTY_SELECTION),
+    };
+  }, [selectionOpt, selIds, selInner.anchor, orderedIds, applySel]);
   useShortcuts(
     onOpen && searchRef
       ? [{ keys: '/', label: 'Focus filter', group: 'Lists', handler: () => searchRef.current?.focus() }]
@@ -236,7 +328,10 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, server
   const narrow = useIsNarrow();
   const visible = useMemo(() => visibleColumns(columns, narrow), [columns, narrow]);
 
-  return { storageKey, columns, visibleColumns: visible, narrow, sortedRows, sort, toggleSort, setSort, colWidths, startResize, resetLayout, nav, rowProps };
+  return {
+    storageKey, columns, visibleColumns: visible, narrow, sortedRows, sort, toggleSort, setSort, colWidths, startResize, resizeBy, resetLayout, nav, rowProps,
+    allColumns: declaredColumns, selection: selectionApi, server: server ?? null, getRowHref: getRowHref ?? null,
+  };
 }
 
 // resolveInitialSort — the precedence the hook restores a sort with, hoisted
@@ -437,6 +532,10 @@ export function DataTableHead<T>({ dt, leading, trailing, renderLabel, stickyLef
             <th key={c.id}
                 className={cls || undefined}
                 onClick={sortable ? () => dt.toggleSort(c.id) : undefined}
+                // v0.10.249 — klavye: sıralanabilir başlık odaklanır; Enter/Space
+                // sıralar, Shift+←/→ 8 px daraltır/genişletir (audit §9).
+                tabIndex={sortable ? 0 : undefined}
+                onKeyDown={sortable ? (e) => headKeyDown(e, dt, c.id) : undefined}
                 aria-sort={active ? (dt.sort.dir === 'asc' ? 'ascending' : 'descending') : (sortable ? 'none' : undefined)}
                 style={{
                   left: leftOff,
@@ -492,4 +591,18 @@ export function DataTableHead<T>({ dt, leading, trailing, renderLabel, stickyLef
       </tr>
     </thead>
   );
+}
+
+// headKeyDown — v0.10.249: başlık klavye sözleşmesi (jsdom testli).
+export const HEAD_RESIZE_STEP_PX = 8;
+export function headKeyDown<T>(e: { key: string; shiftKey: boolean; preventDefault: () => void }, dt: DataTable<T>, colId: string) {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    dt.toggleSort(colId);
+    return;
+  }
+  if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    e.preventDefault();
+    dt.resizeBy(colId, e.key === 'ArrowRight' ? HEAD_RESIZE_STEP_PX : -HEAD_RESIZE_STEP_PX);
+  }
 }

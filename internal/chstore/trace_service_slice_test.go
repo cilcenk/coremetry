@@ -61,16 +61,52 @@ func TestServiceSlicePlan(t *testing.T) {
 	}
 }
 
-func TestServiceStage2Floor(t *testing.T) {
+func TestSliceStageBounds(t *testing.T) {
 	cut := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	if got := serviceStage2Floor("desc", cut, false); !got.Equal(cut) {
-		t.Errorf("desc: taban kesim olmalı, %v", got)
+	if fl, ce := sliceStageBounds("desc", cut, false); !fl.Equal(cut) || !ce.IsZero() {
+		t.Errorf("desc: taban kesim, tavan yok; (%v, %v)", fl, ce)
 	}
-	if got := serviceStage2Floor("asc", cut, false); !got.IsZero() {
-		t.Errorf("asc: taban SIFIR olmalı (id'ler pencerenin başında), %v", got)
+	if fl, ce := sliceStageBounds("asc", cut, false); !fl.IsZero() || !ce.Equal(cut) {
+		t.Errorf("asc: taban SIFIR (id'ler pencerenin başında), TAVAN kesim; (%v, %v)", fl, ce)
 	}
-	if got := serviceStage2Floor("desc", cut, true); !got.IsZero() {
-		t.Errorf("tükenmiş dilim: daraltma yok, %v", got)
+	if fl, ce := sliceStageBounds("desc", cut, true); !fl.IsZero() || !ce.IsZero() {
+		t.Errorf("tükenmiş dilim: daraltma yok; (%v, %v)", fl, ce)
+	}
+	if fl, ce := sliceStageBounds("asc", time.Time{}, false); !fl.IsZero() || !ce.IsZero() {
+		t.Errorf("kesimsiz: daraltma yok; (%v, %v)", fl, ce)
+	}
+}
+
+// v0.10.267 — tavan adayı tam tavanı aşamaz; lookahead ×8 genişlemesi
+// runTraceStage2'de tabanın aynasıdır (kaynak pini aşağıda).
+func TestStage2Ceiling(t *testing.T) {
+	cut := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	full := cut.Add(48 * time.Hour)
+	if got := stage2Ceiling(cut, time.Hour, full); !got.Equal(cut.Add(time.Hour)) {
+		t.Errorf("kesim+lookahead bekleniyordu, %v", got)
+	}
+	if got := stage2Ceiling(cut, 96*time.Hour, full); !got.Equal(full) {
+		t.Errorf("tam tavanı aşmamalı, %v", got)
+	}
+	if got := stage2Ceiling(time.Time{}, time.Hour, full); !got.Equal(full) {
+		t.Errorf("tavansız → tam tavan, %v", got)
+	}
+	b, err := os.ReadFile("trace_slice.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	for _, want := range []string{"lookahead *= 8", "aggTo = stage2Ceiling(ceil, lookahead, fullAggTo)", "!lastBucket.Before(ceilBucket)"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("runTraceStage2 tavan genişletmesi/tespiti eksik: %q", want)
+		}
+	}
+	rb, err := os.ReadFile("repo.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rb), "max(time_bucket)                                            AS last_bucket") {
+		t.Error("stage 2 SELECT last_bucket döndürmüyor — tavan kırpması tespit edilemez")
 	}
 }
 

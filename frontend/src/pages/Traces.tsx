@@ -1452,7 +1452,10 @@ function TracesPageInner() {
                     </span>
                   ) : null}
                   {data?.rankedWithinRecent ? (
-                    <span title={`For speed, ${sort} ranks the newest ${data.rankedWithinRecent.toLocaleString()} traces in the window — an older trace beyond that slice won't appear. Sort by time for the full window.`}
+                    <span title={sort === 'time'
+                      /* v0.10.265 — servisli + filtreli (hata/kök/süre) liste en yeni N trace içinde süzülür. */
+                      ? `For speed, the filter is applied within the newest ${data.rankedWithinRecent.toLocaleString()} traces of the service — narrow the range to reach older ones.`
+                      : `For speed, ${sort} ranks the newest ${data.rankedWithinRecent.toLocaleString()} traces in the window — an older trace beyond that slice won't appear. Sort by time for the full window.`}
                       style={{ marginLeft: 6, color: 'var(--text3)' }}>
                       · ranked within newest {data.rankedWithinRecent.toLocaleString()}
                     </span>

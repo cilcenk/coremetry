@@ -2124,15 +2124,15 @@ const tracesSpillSettings = "max_bytes_before_external_group_by = 536870912, max
 // be an inline condition with a test that MIRRORED it, which proves the
 // mirror, not the code. Everything that decides whether the expensive
 // statement can be built now goes through here.
-func stage2NeedsSafetySlice(serviceSubquery bool, holders string) bool {
-	return !serviceSubquery && holders == ""
+func stage2NeedsSafetySlice(holders string) bool {
+	return holders == ""
 }
 
 // stage2IsBounded is the invariant that must hold when the statement is
 // handed to ClickHouse: one of the two bounds is present. False here
 // means an unbounded `GROUP BY trace_id` over the whole window.
-func stage2IsBounded(serviceSubquery bool, holders string) bool {
-	return serviceSubquery || holders != ""
+func stage2IsBounded(holders string) bool {
+	return holders != ""
 }
 
 // countModeAllowsMV reports whether the requested count mode leaves the
@@ -3456,60 +3456,36 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	// heavy argMax state — nothing to lighten).
 	var traceIDs []any
 	holders := ""
-	serviceSubquery := false
-	if f.Service != "" && tracePostAggFiltered(f) {
-		// v0.8.365 — self-telemetry follow-up: the recency-bounded
-		// Stage 1 below is BLIND to the post-aggregate filters
-		// (hasError / minMs / maxMs / rootOnly). On a busy service
-		// errors are rare, so "the stage1Limit most recent trace ids"
-		// often contains zero matches and the page comes back empty
-		// while matching traces exist in the window (ground truth: 18
-		// error traces, API 0). With any post-aggregate filter active,
-		// narrow Stage 2 by an IN-subquery over the service index
-		// instead — every trace the service participated in inside the
-		// window stays eligible, the HAVING then filters them. Costs a
-		// wider Stage-2 merge, bounded by the window + LIMIT +
-		// max_execution_time; without filters the fast recency path
-		// below is unchanged.
-		serviceSubquery = true
-	} else if f.Service != "" {
-		rows1, err := s.telemetryReadConn().Query(ctx, `
-			SELECT trace_id
-			FROM trace_service_index_5m
-			WHERE service_name = ? AND time_bucket >= ? AND time_bucket < ?
-			GROUP BY trace_id
-			ORDER BY maxMerge(last_seen_state) DESC
-			LIMIT ?
-			SETTINGS
-			  max_execution_time = 15,
-			  optimize_read_in_order = 1,
-			  optimize_aggregation_in_order = 1,
-			  `+s.shardSkipSetting(),
-			f.Service, f.From, f.To, stage1Limit)
+	var stage2Floor time.Time
+	// v0.10.265 — Operator-reported (prod 7g + servis + hasError, zaman sıralı):
+	// her "Next" 40+ s ve "shortened" rozeti. İki eski servis şekli de
+	// pencereyle lineerdi (trace_slice.go traceServiceSliceScanSQL başlığı).
+	// Şimdi tek yol: servis indeksinden akışkan dilim (PK sırası, GROUP BY
+	// yok) → id listesi + kesim → stage 2 zaten sınırlı (holders) ve desc'te
+	// tabanı kesime çekilir. Plan saf (serviceSlicePlan), tablo-testli.
+	if f.Service != "" {
+		want, sliceOrder, sliced := serviceSlicePlan(f, pageLimit, stage1Limit)
+		s1f := f
+		s1f.Order = sliceOrder
+		ids, cut, exhausted, err := s.traceServiceSlice(ctx, s1f, want)
 		if err != nil {
 			return nil, 0, false, fmt.Errorf("stage1: %w", err)
 		}
-		defer rows1.Close()
-		traceIDs = make([]any, 0, stage1Limit)
-		for rows1.Next() {
-			var id string
-			if err := rows1.Scan(&id); err != nil {
-				return nil, 0, false, err
-			}
-			traceIDs = append(traceIDs, id)
-		}
-		if err := rows1.Err(); err != nil {
-			return nil, 0, false, err
-		}
-		if len(traceIDs) == 0 {
+		if len(ids) == 0 {
 			return []TraceRow{}, 0, false, nil
 		}
-
-		holders = strings.Repeat("?,", len(traceIDs))
+		traceIDs = ids
+		holders = strings.Repeat("?,", len(ids))
 		holders = holders[:len(holders)-1]
+		stage2Floor = serviceStage2Floor(sliceOrder, cut, exhausted)
+		if sliced && f.RankedWithin != nil {
+			*f.RankedWithin = len(ids)
+			if exhausted {
+				*f.RankedWithin = 0
+			}
+		}
 	}
 
-	// Push-down HAVING built from the post-aggregate filters.
 	having := []string{}
 	if f.RootOnly {
 		// Root span exists with non-empty service_name (same
@@ -3536,7 +3512,6 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	// Zero means "no narrowing" — Stage 2 then uses f.From, i.e. today's
 	// behaviour. Only the aggregation-free slice sets it, because only it
 	// knows where the slice was actually cut.
-	var stage2Floor time.Time
 	if f.Service == "" && holders == "" {
 		s1f := f
 		ranked := traceSortRecencySliced(f.Sort)
@@ -3669,7 +3644,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	// aggregation-free and reads the sorting-key prefix, so it is cheap
 	// at any window — it is exactly what the normal path uses. After
 	// this, the unbounded shape is unreachable by construction.
-	if stage2NeedsSafetySlice(serviceSubquery, holders) {
+	if stage2NeedsSafetySlice(holders) {
 		log.Printf("[traces] stage2 had NO trace-id bound (sort=%q, window=%s) — "+
 			"Stage 1 left it unset; building the recency slice here rather than "+
 			"aggregating the whole window", f.Sort, f.To.Sub(f.From))
@@ -3698,20 +3673,9 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 
 	traceIDClause := ""
 	var idArgs []any
-	if serviceSubquery {
-		// v0.10.102 (operatör-raporlu) — GLOBAL şart: dağıtıkta çıplak
-		// IN alt-sorgusu code 288 ile REDDEDİLİYOR
-		// (distributed_product_mode='deny'), yani her filtreli+servisli
-		// liste sorgusu ham yola düşüyordu. CHECK 5'in tek-satır grep'i
-		// bu ÇOK-SATIRLI yazımı göremedi; auditor aynı sürümde
-		// çok-satır tarıyor.
-		traceIDClause = `trace_id GLOBAL IN (
-			SELECT trace_id FROM trace_service_index_5m
-			WHERE service_name = ? AND time_bucket >= ? AND time_bucket < ?
-			GROUP BY trace_id
-		) AND `
-		idArgs = []any{f.Service, f.From, f.To}
-	} else if holders != "" {
+	// v0.10.265 — `trace_id GLOBAL IN (index GROUP BY trace_id)` dalı KALDIRILDI:
+	// servis yolu artık her zaman holders taşır (yukarıdaki dilim).
+	if holders != "" {
 		traceIDClause = "trace_id IN (" + holders + ") AND "
 		idArgs = traceIDs
 	}

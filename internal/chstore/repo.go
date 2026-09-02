@@ -2486,29 +2486,43 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// SAYISAL sıralama anahtarı, LIMIT/OFFSET burada; 2) tam satır YALNIZ
 	// sayfanın id'leri için (traceExtrasSQL ile aynı `trace_id IN` deseni).
 	if !served && rawListLightEligible(f) {
-		stage1SQL, _ := traceRawStage1LightSQL(wc.sql(), havingSQL, f.Sort, order)
-		s1args := append([]any{}, wc.args...)
-		s1args = append(s1args, havingArgs...)
-		s1args = append(s1args, pageLimit, f.Offset)
-		idRows, err := s.telemetryReadConn().Query(ctx, stage1SQL, s1args...)
-		if err != nil {
-			return nil, 0, false, err
-		}
+		// v0.10.237 — 1. aşama tüm pencereyi GÖRMEK zorunda (süre sıralaması
+		// zamanla kesilemez); prod'da pencere/hacim yine sınırı aşarsa 500
+		// yerine MV yolunun sözleşmesi (v0.9.297, trace_slice.go): kaynak
+		// tükenmesinde pencere yarılanır, NarrowedFrom ile UI'ya "pencere
+		// daraltıldı" söylenir — daha dar pencerenin top-N'i FARKLI bir
+		// cevaptır, daha yavaşı değil; o yüzden sessiz değil.
+		from := f.From
 		var ids []string
-		for idRows.Next() {
-			var id string
-			if err := idRows.Scan(&id); err != nil {
-				idRows.Close()
+		for attempt := 0; ; {
+			lf := f
+			lf.From = from
+			lwc := buildGetTracesWhere(lf, s.clusterExpr())
+			stage1SQL, _ := traceRawStage1LightSQL(lwc.sql(), havingSQL, f.Sort, order)
+			s1args := append([]any{}, lwc.args...)
+			s1args = append(s1args, havingArgs...)
+			s1args = append(s1args, pageLimit, f.Offset)
+			got, err := s.queryTraceIDs(ctx, stage1SQL, s1args)
+			if err == nil {
+				ids = got
+				break
+			}
+			next, ok := narrowOnExhaustion(err, from, f.To, attempt)
+			if !ok {
 				return nil, 0, false, err
 			}
-			ids = append(ids, id)
-		}
-		idRows.Close()
-		if err := idRows.Err(); err != nil {
-			return nil, 0, false, err
+			attempt++
+			from = next
+			if f.NarrowedFrom != nil {
+				*f.NarrowedFrom = from
+			}
+			log.Printf("[traces] raw stage1 exhausted resources (%v) — halving the window to %s and retrying (attempt %d/%d)",
+				err, from.Format(time.RFC3339), attempt, traceStage2NarrowMaxRetry)
 		}
 		if len(ids) > 0 {
-			lwc := buildGetTracesWhere(f, s.clusterExpr())
+			lf := f
+			lf.From = from
+			lwc := buildGetTracesWhere(lf, s.clusterExpr())
 			idArgs := make([]any, len(ids))
 			for i, id := range ids {
 				idArgs[i] = id
@@ -2611,6 +2625,40 @@ func buildGetTracesListSQL(whereSQL, havingSQL, sortCol, order string) string {
 		  optimize_aggregation_in_order = 1,
 		  distributed_product_mode = 'global',
 		  ` + tracesSpillSettings
+}
+
+// queryTraceIDs — tek kolonlu (trace_id) sorguyu dilime okur.
+func (s *Store) queryTraceIDs(ctx context.Context, sql string, args []any) ([]string, error) {
+	rows, err := s.telemetryReadConn().Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// narrowOnExhaustion — kaynak tükenmesinde (241/159/…) pencereyi yarılar:
+// attempt < traceStage2NarrowMaxRetry ve kalan pencere > traceStage2NarrowFloor
+// ise yeni from (= to − span/2) ve ok=true; aksi hâlde ok=false (hata
+// olduğu gibi yüzeye). MV yolunun (trace_slice.go) sabitleriyle aynı —
+// iki yol farklı eşiklerle daralmasın. SAF; trace_raw_light_test.go pinler.
+func narrowOnExhaustion(err error, from, to time.Time, attempt int) (time.Time, bool) {
+	if err == nil || !isResourceExhaustion(err) || attempt >= traceStage2NarrowMaxRetry {
+		return from, false
+	}
+	span := to.Sub(from)
+	if span <= traceStage2NarrowFloor {
+		return from, false
+	}
+	return to.Add(-span / 2), true
 }
 
 // rawListLightEligible — ham liste yolunda hafif 1. aşamanın uygulandığı

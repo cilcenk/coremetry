@@ -12,7 +12,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { serviceHref } from '@/lib/serviceHref';
 import { fmtDateTime, fmtNum } from '@/lib/utils';
 import { useRolloutDetail } from '@/lib/queries';
-import { statusTone, statusLabel, shortRevision, imageDiff } from '@/lib/rolloutRow';
+import { statusTone, statusLabel, statusTitle, shortRevision, imageDiff, imageRef, rolloutChangeKind, changeKindLabel, changeKindTitle, changeKindTone } from '@/lib/rolloutRow';
 import type { RolloutIdParam } from '@/lib/rolloutRow';
 
 function pct(n: number) { return `%${n.toFixed(1)}`; }
@@ -36,6 +36,28 @@ export function RolloutDrawer({ id, onClose }: { id: RolloutIdParam; onClose: ()
       {d && (d.rollout.note || d.note) && (
         <div className="field-hint" style={{ marginBottom: 8 }}>{[d.rollout.note, d.note].filter(Boolean).join(' · ')}</div>
       )}
+      {d && (() => {
+        // v0.10.234 — Operator-reported: "hangi versiyondan hangisine geçti
+        // göremiyorum". Başlıktaki tek satır kısaltılmış revizyon + imaj
+        // diff'iydi; tam kimlikler (revizyon, repo:tag) ve olayın TÜRÜ
+        // (imaj değişti → Deployment / aynı → config rollout) burada.
+        const r = d.rollout;
+        const k = rolloutChangeKind(r);
+        const mono = { fontFamily: 'ui-monospace, monospace', wordBreak: 'break-all' as const };
+        return (
+          <DrawerSection title="Geçiş">
+            <table style={{ width: '100%' }}>
+              <tbody>
+                <tr><th style={{ textAlign: 'left', width: 110 }}>tür</th><td><Badge tone={changeKindTone(k)}>{changeKindLabel(k)}</Badge> <span className="field-hint">{changeKindTitle(k)}</span></td></tr>
+                <tr><th style={{ textAlign: 'left' }}>durum</th><td><Badge tone={statusTone(r.status)}>{statusLabel(r.status)}</Badge> <span className="field-hint">{statusTitle(r.status)}</span></td></tr>
+                <tr><th style={{ textAlign: 'left' }}>revizyon</th><td style={mono}>{r.prevRevision || '—'} → <b>{r.revision}</b></td></tr>
+                <tr><th style={{ textAlign: 'left' }}>imaj</th><td style={mono}>{imageRef(r.prevImage, r.prevImageTag)} → <b>{imageRef(r.image, r.imageTag)}</b></td></tr>
+                <tr><th style={{ textAlign: 'left' }}>zaman</th><td className="field-hint">başladı {fmtDateTime(new Date(r.startedAt))}{r.completedAt > 0 ? ` · tamamlandı ${fmtDateTime(new Date(r.completedAt))}` : ''}{r.detectedBy ? ` · kaynak ${r.detectedBy}` : ''}</td></tr>
+              </tbody>
+            </table>
+          </DrawerSection>
+        );
+      })()}
       {d && d.services.length === 0 && (
         <Empty icon="∅" title="Bu revizyonun servisi çözülemedi">{d.note || 'MV bu revizyon için servis kaydı taşımıyor (etkinlik penceresi geçmiş olabilir).'}</Empty>
       )}

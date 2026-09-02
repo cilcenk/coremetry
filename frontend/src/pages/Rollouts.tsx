@@ -32,7 +32,7 @@ import { keys, useRollouts, useRolloutStats, useRolloutRuns, useEntityClusters }
 import { RolloutDrawer } from '@/components/RolloutDrawer';
 import { tracesPivotHref } from '@/lib/pivotHref';
 import { entityHref } from '@/lib/entityHref';
-import { rolloutKey, statusTone, statusLabel, rolloutDurationSec, shortRevision, imageDiff, encodeRolloutParam, decodeRolloutParam, rolloutTracesFilters } from '@/lib/rolloutRow';
+import { rolloutKey, statusTone, statusLabel, statusTitle, rolloutDurationSec, shortRevision, imageDiff, encodeRolloutParam, decodeRolloutParam, rolloutTracesFilters, rolloutChangeKind, changeKindLabel, changeKindTitle, changeKindTone } from '@/lib/rolloutRow';
 import type { WorkloadRollout } from '@/lib/types';
 
 const STATUSES = ['', 'in_progress', 'completed', 'rolled_back', 'superseded', 'stalled'] as const;
@@ -49,6 +49,7 @@ const COLS: DataTableColumn<WorkloadRollout>[] = [
   { id: 'status', label: 'Durum', width: 120, minWidth: 96 },
   { id: 'workload', label: 'Workload', width: 300, minWidth: 200 },
   { id: 'kind', label: 'Tür', width: 100, minWidth: 64 },
+  { id: 'change', label: 'Değişiklik', width: 130, minWidth: 100 }, // v0.10.234 — imaj değişti mi (Deployment) / aynı mı (config)
   { id: 'revision', label: 'Revizyon', width: 150, minWidth: 120 },
   { id: 'image', label: 'İmaj (eski → yeni)', width: 300, minWidth: 170 },
   { id: 'started', label: 'Başladı', width: 170, minWidth: 140, numeric: true },
@@ -177,12 +178,13 @@ export default function RolloutsPage() {
                       return (
                         <tr key={rolloutKey(r)} style={rows.length > 100 ? { ...ROW_CV, cursor: 'pointer' } : { cursor: 'pointer' }}
                           onClick={e => { if ((e.target as HTMLElement).closest('a, button')) return; setParam('rollout', encodeRolloutParam(r)); }}>
-                          <td><Badge tone={statusTone(r.status)} title={r.completedAt ? `tamamlandı ${fmtDateTime(new Date(r.completedAt))}` : undefined}>{statusLabel(r.status)}</Badge></td>
+                          <td><Badge tone={statusTone(r.status)} title={[statusTitle(r.status), r.completedAt ? `tamamlandı ${fmtDateTime(new Date(r.completedAt))}` : ''].filter(Boolean).join(' · ') || undefined}>{statusLabel(r.status)}</Badge></td>
                           <td title={`${cname} / ${r.namespace} / ${r.workload}`} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             <Link to={wlHref} className="sec">{r.workload}</Link>
                             <span className="field-hint"> · {r.namespace} · {cname}</span>
                           </td>
                           <td className="field-hint">{r.kind || '—'}</td>
+                          <td>{(() => { const k = rolloutChangeKind(r); return <Badge tone={changeKindTone(k)} title={changeKindTitle(k)}>{changeKindLabel(k)}</Badge>; })()}</td>
                           <td className="mono" title={r.revision} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{shortRevision(r.revision, r.workload)}{r.prevRevision ? <span className="field-hint"> ← {shortRevision(r.prevRevision, r.workload)}</span> : null}</td>
                           <td className="mono" title={r.image || undefined} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{imageDiff(r)}</td>
                           <td className="mono">{fmtDateTime(new Date(r.startedAt))}</td>

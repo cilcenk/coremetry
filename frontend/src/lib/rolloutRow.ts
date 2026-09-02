@@ -46,6 +46,62 @@ export function statusLabel(status: string): string {
   }
 }
 
+/** v0.10.234 — Operator-reported: durum rozeti ("devralındı") olayın NE olduğunu
+ * söylemiyordu. Durumun anlamı (reconcile.go §DURUM) ipucu olarak. */
+export function statusTitle(status: string): string {
+  switch (status) {
+    case 'in_progress': return 'Yeni revizyon trafik alıyor; eski revizyon henüz tamamen çekilmedi';
+    case 'completed': return 'Yeni revizyon tek aktif revizyon; eskileri çekildi';
+    case 'rolled_back': return 'Bu revizyon çekildi ve yerine ÖNCEKİ revizyon geri döndü';
+    case 'superseded': return 'Bu revizyon çekildi; yerini önceki değil BAŞKA bir revizyon aldı (devralındı)';
+    case 'stalled': return 'Yeni revizyon ilerlemiyor: pod\'lar hazır değil ya da trafik teyit edilmedi';
+    default: return '';
+  }
+}
+
+/** v0.10.234 — Operator-reported: "imaj değiştiyse deployment, değişmediyse
+ * rollout (config change)". Değişikliğin TÜRÜ imaj kimliğinden (repo:tag)
+ * türetilir; önceki revizyon bilinmiyorsa kıyas yoktur (ilk gözlem). */
+export type RolloutChangeKind = 'deployment' | 'config' | 'initial' | 'unknown';
+export function rolloutChangeKind(r: Pick<WorkloadRollout, 'image' | 'imageTag' | 'prevImage' | 'prevImageTag' | 'prevRevision'>): RolloutChangeKind {
+  if (!r.prevRevision) return 'initial';
+  const cur = `${r.image || ''}:${r.imageTag || ''}`;
+  const prev = `${r.prevImage || ''}:${r.prevImageTag || ''}`;
+  if (cur === ':' && prev === ':') return 'unknown';
+  if (cur === ':' || prev === ':') return 'unknown';
+  return cur === prev ? 'config' : 'deployment';
+}
+export function changeKindLabel(k: RolloutChangeKind): string {
+  switch (k) {
+    case 'deployment': return 'Deployment';
+    case 'config': return 'Rollout (config)';
+    case 'initial': return 'ilk gözlem';
+    default: return 'bilinmiyor';
+  }
+}
+export function changeKindTitle(k: RolloutChangeKind): string {
+  switch (k) {
+    case 'deployment': return 'İmaj değişti (eski → yeni tag): yeni sürüm yayını';
+    case 'config': return 'İmaj aynı, yalnız revizyon değişti: config/env/secret/replica değişikliği ya da yeniden başlatma';
+    case 'initial': return 'Önceki revizyon bilinmiyor — Coremetry bu iş yükünü ilk kez gördü, kıyas yok';
+    default: return 'İmaj bilgisi eksik (span\'ler container.image taşımıyor) — tür belirlenemedi';
+  }
+}
+export function changeKindTone(k: RolloutChangeKind): RolloutTone {
+  switch (k) {
+    case 'deployment': return 'info';
+    case 'config': return 'neutral';
+    default: return 'neutral';
+  }
+}
+/** Tam imaj kimliği `repo:tag`; ikisi de boşsa '—'. */
+export function imageRef(image: string, tag: string): string {
+  if (!image && !tag) return '—';
+  if (!tag) return image;
+  if (!image) return `:${tag}`;
+  return `${image}:${tag}`;
+}
+
 /** Süre (sn): tamamlandıysa completedAt − startedAt, değilse now − startedAt. */
 export function rolloutDurationSec(r: Pick<WorkloadRollout, 'startedAt' | 'completedAt'>, nowMs: number): number {
   const end = r.completedAt && r.completedAt > 0 ? r.completedAt : nowMs;

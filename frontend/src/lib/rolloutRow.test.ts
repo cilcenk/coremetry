@@ -63,3 +63,37 @@ describe('rolloutTracesFilters', () => {
     expect(rolloutTracesFilters({ kind: '', namespace: 'n', workload: 'w', revision: 'w-abc' })[0].k).toBe('resource.k8s.replicaset.name');
   });
 });
+
+// v0.10.234 — Operator-reported: çekmecede "hangi sürümden hangisine" görünmüyordu,
+// "devralındı" olayın türünü söylemiyordu. Değişiklik türü imaj kimliğinden.
+import { rolloutChangeKind, changeKindLabel, statusTitle, imageRef } from './rolloutRow';
+describe('rolloutChangeKind', () => {
+  const base = { prevRevision: 'w-aaa', image: 'reg/app', imageTag: '2.0', prevImage: 'reg/app', prevImageTag: '1.0' };
+  it('imaj tag değişti → deployment', () => {
+    expect(rolloutChangeKind(base)).toBe('deployment');
+    expect(changeKindLabel('deployment')).toBe('Deployment');
+  });
+  it('imaj repo değişti, tag aynı → deployment', () => {
+    expect(rolloutChangeKind({ ...base, prevImage: 'reg/other', imageTag: '1.0' })).toBe('deployment');
+  });
+  it('imaj aynı, revizyon farklı → config rollout', () => {
+    expect(rolloutChangeKind({ ...base, imageTag: '1.0' })).toBe('config');
+    expect(changeKindLabel('config')).toBe('Rollout (config)');
+  });
+  it('önceki revizyon yok → ilk gözlem (imaj olsa da)', () => {
+    expect(rolloutChangeKind({ ...base, prevRevision: '' })).toBe('initial');
+  });
+  it('imaj bilgisi bir tarafta yok → bilinmiyor', () => {
+    expect(rolloutChangeKind({ ...base, prevImage: '', prevImageTag: '' })).toBe('unknown');
+    expect(rolloutChangeKind({ ...base, image: '', imageTag: '', prevImage: '', prevImageTag: '' })).toBe('unknown');
+  });
+  it('durum ipuçları her durumda dolu, bilinmeyen boş', () => {
+    for (const st of ['in_progress', 'completed', 'rolled_back', 'superseded', 'stalled']) expect(statusTitle(st)).not.toBe('');
+    expect(statusTitle('weird')).toBe('');
+  });
+  it('imageRef', () => {
+    expect(imageRef('reg/app', '1.0')).toBe('reg/app:1.0');
+    expect(imageRef('reg/app', '')).toBe('reg/app');
+    expect(imageRef('', '')).toBe('—');
+  });
+});

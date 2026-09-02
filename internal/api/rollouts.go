@@ -100,6 +100,7 @@ func (s *Server) listRollouts(w http.ResponseWriter, r *http.Request) {
 		if rows == nil {
 			rows = []chstore.RolloutRow{}
 		}
+		s.attachProblemsCaused(ctx, rows) // v0.10.244 — D4 feed rozeti (hata = rozet yok)
 		resp := map[string]any{"rollouts": rows, "from": from.UnixMilli(), "to": to.UnixMilli(), "limit": limit}
 		if len(rows) >= limit {
 			resp["capped"] = true

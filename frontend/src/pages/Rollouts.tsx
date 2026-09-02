@@ -55,6 +55,7 @@ const COLS: DataTableColumn<WorkloadRollout>[] = [
   { id: 'started', label: 'Başladı', width: 170, minWidth: 140, numeric: true },
   { id: 'dur', label: 'Süre', width: 90, minWidth: 64, numeric: true },
   { id: 'spans', label: 'Span', width: 90, minWidth: 64, numeric: true },
+  { id: 'problems', label: 'Problem', width: 90, minWidth: 64, numeric: true }, // v0.10.244 — D4: başlangıçtan beri açık problemler (çekmece sayımı)
   { id: 'by', label: 'Kaynak', width: 90, minWidth: 76 },
   { id: 'note', label: 'Not', width: 260, minWidth: 120 },
   { id: 'links', label: '', width: 120, minWidth: 96 },
@@ -190,6 +191,12 @@ export default function RolloutsPage() {
                           <td className="mono">{fmtDateTime(new Date(r.startedAt))}</td>
                           <td className="num mono">{fmtDurShort(rolloutDurationSec(r, Date.now()))}</td>
                           <td className="num mono">{fmtNum(r.spanCount)}</td>
+                          <td className="num">{r.problemsCaused
+                            ? <Link to={`?${(() => { const p = new URLSearchParams(sp); p.set('rollout', encodeRolloutParam(r)); return p.toString(); })()}`}
+                                    title="rollout başladığından beri açık problemler (servisleri) — çekmeceyi açar" style={{ textDecoration: 'none' }}>
+                                <Badge tone="danger">{fmtNum(r.problemsCaused)}</Badge>
+                              </Link>
+                            : <span className="field-hint">—</span>}</td>
                           <td className="field-hint">{r.detectedBy}</td>
                           <td className="field-hint" title={r.note || undefined} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.note || ''}</td>
                           <td><Link to={tracesHref} className="sec">Traces →</Link></td>

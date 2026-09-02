@@ -289,6 +289,10 @@ type RolloutID struct {
 type RolloutRow struct {
 	rollout.Rollout
 	UpdatedAt time.Time `json:"updatedAt"`
+	// ProblemsCaused — v0.10.244 (Problem↔Rollout D4): rollout başladığından
+	// beri açık ∩ rollout'un servisleri (api/rollout_problems.go); liste
+	// yükleyicisi doldurur, store yazmaz.
+	ProblemsCaused int `json:"problemsCaused,omitempty"`
 }
 
 // MarshalJSON — camelCase alanlar (lib/types.ts aynası); sıfır zamanlar 0.
@@ -306,6 +310,7 @@ func (r RolloutRow) MarshalJSON() ([]byte, error) {
 		"firstSpanAt": ms(r.FirstSpanAt), "trafficConfirmedAt": ms(r.TrafficConfirmedAt), "ksmStartedAt": ms(r.KSMStartedAt),
 		"podsReadyAt": ms(r.PodsReadyAt), "ksmNotReadySince": ms(r.KSMNotReadySince), "completedAt": ms(r.CompletedAt),
 		"detectedBy": r.DetectedBy, "spanCount": r.SpanCount, "note": r.Note, "updatedAt": ms(r.UpdatedAt),
+		"problemsCaused": r.ProblemsCaused,
 	})
 }
 

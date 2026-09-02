@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -49,4 +50,63 @@ func (s *Store) RolloutServices(ctx context.Context, clusterValues []string, nam
 		out, capped = out[:200], true
 	}
 	return out, capped, rows.Err()
+}
+
+// RolloutServiceKey — v0.10.244 (Problem↔Rollout D4): toplu servis
+// çözümünün anahtarı; Cluster SPAN değeridir (bir EffectiveID birden çok
+// span değeri taşıyabilir — çağıran birleştirir).
+type RolloutServiceKey struct {
+	Cluster, Namespace, Workload, Revision string
+}
+
+// rolloutServicesBatchSQL — SAF: n demet için tek MV sorgusu. MV ORDER BY
+// (cluster, k8s_namespace, workload, revision, service_name, bucket) →
+// demet IN = PK öneği. LIMIT 200 servis × n rollout.
+func rolloutServicesBatchSQL(n int) string {
+	tuples := make([]string, n)
+	for i := range tuples {
+		tuples[i] = "(?, ?, ?, ?)"
+	}
+	return `
+		SELECT cluster, k8s_namespace, workload, revision, service_name
+		FROM workload_revision_activity_1m
+		WHERE (cluster, k8s_namespace, workload, revision) IN (` + strings.Join(tuples, ", ") + `)
+		  AND bucket >= toDateTime(?, 'UTC') AND bucket <= now()
+		GROUP BY cluster, k8s_namespace, workload, revision, service_name
+		ORDER BY cluster, k8s_namespace, workload, revision, service_name
+		LIMIT ` + fmt.Sprint(200*n) + `
+		SETTINGS max_execution_time = 10`
+}
+
+// RolloutServicesBatch — listelenen rollout'ların servis kümeleri tek
+// sorguda (feed rozeti: rollout başına ayrı MV sorgusu 200 satırda 200
+// sorgu olurdu). since = en eski rollout başlangıcı − 1 saat (RolloutServices
+// ile aynı pay). keys boşsa sorgu yok.
+func (s *Store) RolloutServicesBatch(ctx context.Context, keys []RolloutServiceKey, since time.Time) (map[RolloutServiceKey][]string, error) {
+	out := map[RolloutServiceKey][]string{}
+	if len(keys) == 0 {
+		return out, nil
+	}
+	if len(keys) > 1000 {
+		keys = keys[:1000]
+	}
+	args := make([]any, 0, len(keys)*4+1)
+	for _, k := range keys {
+		args = append(args, k.Cluster, k.Namespace, k.Workload, k.Revision)
+	}
+	args = append(args, chDateTimeArg(since))
+	rows, err := s.conn.Query(ctx, rolloutServicesBatchSQL(len(keys)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("rollout services batch: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k RolloutServiceKey
+		var svc string
+		if err := rows.Scan(&k.Cluster, &k.Namespace, &k.Workload, &k.Revision, &svc); err != nil {
+			return nil, err
+		}
+		out[k] = append(out[k], svc)
+	}
+	return out, rows.Err()
 }

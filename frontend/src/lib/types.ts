@@ -6247,6 +6247,8 @@ export interface WorkloadRollout {
   prevRevision: string; image: string; imageTag: string; prevImage: string; prevImageTag: string;
   firstSpanAt: number; trafficConfirmedAt: number; ksmStartedAt: number; podsReadyAt: number; ksmNotReadySince: number; completedAt: number;
   detectedBy: string; spanCount: number; note: string; updatedAt: number;
+  /** v0.10.244 — başlangıçtan beri açık ∩ rollout'un servisleri (liste yükleyicisi; çekmece sayımıyla aynı). */
+  problemsCaused?: number;
 }
 export interface RolloutListResponse { rollouts: WorkloadRollout[]; from: number; to: number; limit: number; capped?: boolean; note?: string; disabled?: boolean }
 export interface RolloutWorkloadN { clusterId: string; namespace: string; workload: string; n: number }

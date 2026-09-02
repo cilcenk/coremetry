@@ -1391,6 +1391,9 @@ export interface VMSnapshot {
   baseUrl: string;
   authType?: VMAuthType;
   hasToken: boolean;
+  // v0.10.292 — çift yazım (VM tek metrik deposu Dilim 1a).
+  writeUrl?: string;
+  writeEnabled?: boolean;
   insecureSkipVerify?: boolean;
   rateWindowFloorS?: number;
   allowUnfilteredPercentiles?: boolean;
@@ -1412,6 +1415,9 @@ export interface VMSettingsInput {
   // what the string-state form prevents (see vmForm.ts).
   rateWindowFloorS?: number;
   allowUnfilteredPercentiles?: boolean;
+  // v0.10.292 — çift yazım alanları (boş writeUrl = baseUrl'e yaz).
+  writeUrl?: string;
+  writeEnabled?: boolean;
 }
 // A failed probe answers HTTP 200 with ok:false — a connection failure is
 // a successful ANSWER to "is this URL right?", not a request error.

@@ -3080,6 +3080,34 @@ export interface RolloutLayerPreflightResult {
   detail: string;
   generated: number;
 }
+/** v0.10.252 — 0013 attr_function_id terfi kolonu sihirbazı (chstore.FunctionIDColumn*). */
+export interface FunctionIDColumnStatusResult {
+  cluster: string;
+  objects: EntityLayerObjectStatus[];
+  /** spans uygulama yönetimli: boot kolonu kendisi ekler, sihirbaz gerekmez. */
+  bootManaged: boolean;
+  /** son 10 dk: kolon dolu mu ("kolon var" ≠ "dolu"). */
+  filled: number;
+  total: number;
+  generated: number;
+}
+export interface FunctionIDKeyCount { key: string; count: number }
+export interface FunctionIDColumnPreflightResult {
+  clusters: string[];
+  suggestedCluster?: string;
+  spansLocal: boolean;
+  bootManaged: boolean;
+  /** son 10 dk'da gelen yazımlar (function_id / FUNCTION_ID), örneklemden ölçeklenmiş. */
+  keyCounts: FunctionIDKeyCount[];
+  columnExists: boolean;
+  indexExists: boolean;
+  filled: number;
+  total: number;
+  probeErrors?: string[];
+  supported: boolean;
+  detail: string;
+  generated: number;
+}
 export interface EntityLayerPreflightResult {
   clusters: string[];
   suggestedCluster?: string;

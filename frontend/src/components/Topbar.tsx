@@ -5,6 +5,7 @@ import { DensityToggle } from './DensityToggle';
 import { ThemeToggle } from './ThemeToggle';
 import { TopbarSearch } from './TopbarSearch';
 import type { TimeRange } from '@/lib/types';
+import { ContextBar, type ContextBarProps } from './ContextBar';
 
 // `range` is optional — pages that aren't time-bound (e.g. /users) omit it
 // and the time picker is hidden. The global env picker (v0.8.383) rides the
@@ -19,13 +20,15 @@ import type { TimeRange } from '@/lib/types';
 // envApplies: bu sayfa env filtresini GERÇEKTEN uyguluyor mu? Varsayılan
 // false; picker uygulamayan sayfada devre dışı + dürüst ipuçlu görünür.
 // Gerekçe ve neden gizlemek yerine devre dışı: EnvPicker.tsx.
-export function Topbar({ title, range, onRangeChange, showEnv, envApplies }: {
+export function Topbar({ title, range, onRangeChange, showEnv, envApplies, context }: {
   title: string;
   range?: TimeRange;
   onRangeChange?: (r: TimeRange) => void;
   showEnv?: boolean;
   /** Sayfa `?env=` değerini kendi sorgularına GEÇİRİYORSA true. */
   envApplies?: boolean;
+  /** v0.10.250 — ContextBar: verilirse EnvPicker+TimeRangePicker çiftinin yerine geçer (aynı yuva). */
+  context?: ContextBarProps;
 }) {
   return (
     <div id="topbar">
@@ -38,14 +41,18 @@ export function Topbar({ title, range, onRangeChange, showEnv, envApplies }: {
           arama yalnız gezinme. Bir operatörün yanlışlıkla pencereyi
           daraltması, arama kutusunu kaybetmesinden pahalı. */}
       <TopbarSearch />
-      {showEnv && !(range && onRangeChange) && <EnvPicker applies={envApplies} />}
-      {range && onRangeChange && (
+      {context ? <ContextBar {...context} /> : (
         <>
-          <EnvPicker applies={envApplies} />
-          <TimeRangePicker value={range} onChange={onRangeChange} />
+          {showEnv && !(range && onRangeChange) && <EnvPicker applies={envApplies} />}
+          {range && onRangeChange && (
+            <>
+              <EnvPicker applies={envApplies} />
+              <TimeRangePicker value={range} onChange={onRangeChange} />
+            </>
+          )}
         </>
       )}
-      {range && <div className="topbar-prefs-sep" />}
+      {(range || context) && <div className="topbar-prefs-sep" />}
       <div className="topbar-prefs">
         <LangToggle />
         <DensityToggle />

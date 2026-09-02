@@ -4745,8 +4745,13 @@ func logsWhere(f LogFilter) whereClause {
 		// `%`/`_` joker olmuyor) ve v0.8.521'in çıplak-hex kolon dalı
 		// burada da var — o sözleşme ekranın yalnız histogram yarısında
 		// çalışıyordu.
-		expr, args := logSearchConjunct(f.Search)
-		wc.add(expr, args...)
+		// v0.10.279 — yüklem artık logql AST'sinden derleniyor
+		// (log_query_compile.go): alan yazımı gerçek kolon/res-array
+		// yüklemi, serbest metin gövde araması; ayrışmayan metin eski
+		// alt-dize yoluna düşer.
+		if expr, args := LogSearchConjunct(f.Search); expr != "" {
+			wc.add(expr, args...)
+		}
 	}
 	if f.SeverityMin > 0 {
 		wc.add("severity_num >= ?", f.SeverityMin)

@@ -302,13 +302,12 @@ func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 		// "Search'e trace yapıştırınca bulsun" sözleşmesi, id'si
 		// body'de olmayan kurulumlarda da tutar. Yalnız id-şekilli
 		// sorguda ek dal; pencere + LIMIT sınırları aynen.
-		if isBareHexID(f.Search) {
-			wc += " AND (multiSearchAnyCaseInsensitive(body, [?]) OR trace_id = ? OR span_id = ?)"
-			id := strings.ToLower(strings.TrimSpace(f.Search))
-			args = append(args, f.Search, id, id)
-		} else {
-			wc += " AND multiSearchAnyCaseInsensitive(body, [?])"
-			args = append(args, f.Search)
+		// v0.10.279 — liste yoluyla (chstore.logsWhere) AYNI derlenmiş
+		// yüklem: alan yazımı kolona/res-array'e bağlanır, serbest metin
+		// gövdede aranır, çıplak hex id kolon dalını korur.
+		if expr, sargs := chstore.LogSearchConjunct(f.Search); expr != "" {
+			wc += " AND " + expr
+			args = append(args, sargs...)
 		}
 	}
 	if f.SeverityMin > 0 {
@@ -611,13 +610,12 @@ func (s *CHStore) FieldStats(ctx context.Context, f Filter, field string, limit 
 	}
 	if f.Search != "" {
 		// v0.8.521 — bkz. Search'teki id-şekilli dal (yukarıdaki site).
-		if isBareHexID(f.Search) {
-			wc += " AND (multiSearchAnyCaseInsensitive(body, [?]) OR trace_id = ? OR span_id = ?)"
-			id := strings.ToLower(strings.TrimSpace(f.Search))
-			args = append(args, f.Search, id, id)
-		} else {
-			wc += " AND multiSearchAnyCaseInsensitive(body, [?])"
-			args = append(args, f.Search)
+		// v0.10.279 — liste yoluyla (chstore.logsWhere) AYNI derlenmiş
+		// yüklem: alan yazımı kolona/res-array'e bağlanır, serbest metin
+		// gövdede aranır, çıplak hex id kolon dalını korur.
+		if expr, sargs := chstore.LogSearchConjunct(f.Search); expr != "" {
+			wc += " AND " + expr
+			args = append(args, sargs...)
 		}
 	}
 	if f.SeverityMin > 0 {

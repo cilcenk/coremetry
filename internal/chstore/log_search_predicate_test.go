@@ -42,7 +42,7 @@ func TestIsBareHexID(t *testing.T) {
 
 func TestLogSearchConjunct(t *testing.T) {
 	t.Run("düz metin — histogramla AYNI yüklem", func(t *testing.T) {
-		expr, args := logSearchConjunct("timeout")
+		expr, args := LogSearchConjunct("timeout")
 		if !strings.Contains(expr, "multiSearchAnyCaseInsensitive(body, [?])") {
 			t.Errorf("expr = %q; histogram yolunun yüklemi bekleniyordu", expr)
 		}
@@ -58,7 +58,7 @@ func TestLogSearchConjunct(t *testing.T) {
 	t.Run("operatörün yazdığı yüzde ARTIK sorun değil", func(t *testing.T) {
 		// Eski LIKE yolunda `%` jokerdi ve kaçışlanması gerekiyordu.
 		// multiSearchAny iğneyi olduğu gibi arıyor: kaçış kavramı yok.
-		_, args := logSearchConjunct("disk 90%")
+		_, args := LogSearchConjunct(`"disk 90%"`)
 		if args[0] != "disk 90%" {
 			t.Errorf("args[0] = %q; iğne AYNEN taşınmalıydı", args[0])
 		}
@@ -68,7 +68,7 @@ func TestLogSearchConjunct(t *testing.T) {
 	// yapıştır, bulsun" ekranın yalnız histogram yarısında çalışıyordu —
 	// histogram sayıyor, tablo göstermiyordu.
 	t.Run("çıplak hex id kolonlara da bakar", func(t *testing.T) {
-		expr, args := logSearchConjunct("4BF92F3577B34DA6A3CE929D0E0E4736")
+		expr, args := LogSearchConjunct("4BF92F3577B34DA6A3CE929D0E0E4736")
 		for _, want := range []string{"multiSearchAnyCaseInsensitive(body, [?])", "trace_id = ?", "span_id = ?", " OR "} {
 			if !strings.Contains(expr, want) {
 				t.Errorf("expr = %q; %q içermeliydi", expr, want)
@@ -88,7 +88,7 @@ func TestLogSearchConjunct(t *testing.T) {
 		// 32 karakterlik ama hex OLMAYAN bir metin kolon dalını
 		// tetiklememeli; tetiklerse her uzun arama iki gereksiz kolon
 		// karşılaştırması taşır.
-		expr, args := logSearchConjunct(strings.Repeat("z", 32))
+		expr, args := LogSearchConjunct(strings.Repeat("z", 32))
 		if strings.Contains(expr, "trace_id") || len(args) != 1 {
 			t.Errorf("expr = %q, args = %v; hex olmayan metin için tek LIKE bekleniyordu", expr, args)
 		}
@@ -101,7 +101,9 @@ func TestLogSearchConjunct(t *testing.T) {
 // Saf çekirdek yeşil ama çağrıldığı yer pinli değilse, kusur yerinde
 // kalır. logsWhere saf bir dikiş olduğu için doğrudan çağrılabiliyor.
 func TestListPathUsesTheSharedPredicate(t *testing.T) {
-	wc := logsWhere(LogFilter{Search: "disk 90%"})
+	// v0.10.279 — iki terim = iki iğne (örtük AND, ES default_operator ile
+	// aynı); tırnaklı ifade tek iğne olarak kalır.
+	wc := logsWhere(LogFilter{Search: `"disk 90%"`})
 	joined := strings.Join(wc.conds, " AND ")
 	if !strings.Contains(joined, "multiSearchAnyCaseInsensitive") {
 		t.Errorf("logsWhere histogramla aynı yüklemi kurmuyor: %q", joined)
@@ -117,6 +119,17 @@ func TestListPathUsesTheSharedPredicate(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("logsWhere iğneyi aynen taşımıyor: %v", wc.args)
+	}
+
+	// v0.10.279 — alan yazımı artık kolona bağlanır (B1): `service.name:"x"`
+	// gövde iğnesi DEĞİL, service_name eşitliğidir.
+	fq := logsWhere(LogFilter{Search: `service.name:"checkout" level:error`})
+	fj := strings.Join(fq.conds, " AND ")
+	if !strings.Contains(fj, "service_name = ?") || !strings.Contains(fj, "lower(") {
+		t.Errorf("logsWhere alan yazımını derlemiyor: %q", fj)
+	}
+	if strings.Contains(fj, "multiSearchAnyCaseInsensitive") {
+		t.Errorf("alan yazımı gövdede aranıyor — B1 geri geldi: %q", fj)
 	}
 
 	hex := logsWhere(LogFilter{Search: "00f067aa0ba902b7"})

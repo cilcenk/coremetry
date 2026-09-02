@@ -23,16 +23,16 @@ func splitCSV(s string) []string {
 }
 
 type Config struct {
-	Listen     ListenConfig    `yaml:"listen"`
-	ClickHouse CHConfig        `yaml:"clickhouse"`
-	Retention  RetentionConfig `yaml:"retention"`
-	Ingestion  IngestionConfig `yaml:"ingestion"`
-	Auth       AuthConfig      `yaml:"auth"`
-	Redis      RedisConfig     `yaml:"redis"`
-	Logs       LogsConfig      `yaml:"logs"`
-	AI         AIConfig        `yaml:"ai"`
+	Listen     ListenConfig     `yaml:"listen"`
+	ClickHouse CHConfig         `yaml:"clickhouse"`
+	Retention  RetentionConfig  `yaml:"retention"`
+	Ingestion  IngestionConfig  `yaml:"ingestion"`
+	Auth       AuthConfig       `yaml:"auth"`
+	Redis      RedisConfig      `yaml:"redis"`
+	Logs       LogsConfig       `yaml:"logs"`
+	AI         AIConfig         `yaml:"ai"`
 	Background BackgroundConfig `yaml:"background"`
-	Exemplars  ExemplarsConfig `yaml:"exemplars"`
+	Exemplars  ExemplarsConfig  `yaml:"exemplars"`
 	// PublicURL is the operator-facing base URL of this
 	// Coremetry deployment (e.g. https://coremetry.bank.local).
 	// Notification bodies (Slack / Teams / Zoom / email /
@@ -202,19 +202,19 @@ type RedisConfig struct {
 // rotates every restart and invalidates sessions, so production deployments
 // should set it explicitly.
 type AuthConfig struct {
-	JWTSecret       string        `yaml:"jwt_secret"`        // HS256 key — set via COREMETRY_JWT_SECRET in prod
-	TokenTTL        time.Duration `yaml:"token_ttl"`         // session lifetime (default 24h)
-	InitialAdmin    string        `yaml:"initial_admin"`     // email — seeded if users table is empty
-	InitialPassword string        `yaml:"initial_password"`  // bcrypted on first boot
+	JWTSecret       string        `yaml:"jwt_secret"`       // HS256 key — set via COREMETRY_JWT_SECRET in prod
+	TokenTTL        time.Duration `yaml:"token_ttl"`        // session lifetime (default 24h)
+	InitialAdmin    string        `yaml:"initial_admin"`    // email — seeded if users table is empty
+	InitialPassword string        `yaml:"initial_password"` // bcrypted on first boot
 	// AdminReset (COREMETRY_ADMIN_RESET) makes the env creds authoritative for
 	// the bootstrap admin: when true, InitialAdmin's password is reconciled
 	// from InitialPassword on EVERY boot, even if the users table already has
 	// rows. Set once to recover a locked-out admin (then remove), or leave on
 	// for GitOps installs where the secret is the source of truth. Default off
 	// preserves the seed-once behaviour (UI password rotation survives restart).
-	AdminReset      bool          `yaml:"admin_reset"`
-	OIDC            OIDCConfig    `yaml:"oidc"`
-	TrustedHeader   TrustedHeaderConfig `yaml:"trusted_header"`
+	AdminReset    bool                `yaml:"admin_reset"`
+	OIDC          OIDCConfig          `yaml:"oidc"`
+	TrustedHeader TrustedHeaderConfig `yaml:"trusted_header"`
 
 	// Demo only — when true, /api/auth/config exposes the initial admin
 	// credentials so the login page can pre-fill them. NEVER enable in
@@ -236,18 +236,18 @@ type AuthConfig struct {
 // TrustedProxies enforces source-IP gating; we refuse to honour
 // the headers from any other source.
 type TrustedHeaderConfig struct {
-	Enabled       bool     `yaml:"enabled"`
+	Enabled bool `yaml:"enabled"`
 	// Header names — defaults match oauth2-proxy (which is the
 	// dominant implementation in the OAuth-proxy-fronts-app
 	// pattern). Operators using a different proxy override.
-	EmailHeader   string   `yaml:"email_header"`     // default "X-Auth-Request-Email"
-	UserHeader    string   `yaml:"user_header"`      // default "X-Auth-Request-User"
-	GroupsHeader  string   `yaml:"groups_header"`    // default "X-Auth-Request-Groups"
+	EmailHeader  string `yaml:"email_header"`  // default "X-Auth-Request-Email"
+	UserHeader   string `yaml:"user_header"`   // default "X-Auth-Request-User"
+	GroupsHeader string `yaml:"groups_header"` // default "X-Auth-Request-Groups"
 	// AutoProvision: first-sight user lands in the users table
 	// with DefaultRole. Without it, an unmapped email returns
 	// 403 — admins pre-create accounts.
-	AutoProvision bool     `yaml:"auto_provision"`
-	DefaultRole   string   `yaml:"default_role"`     // default "viewer"
+	AutoProvision bool   `yaml:"auto_provision"`
+	DefaultRole   string `yaml:"default_role"` // default "viewer"
 	// TrustedProxies — CIDR blocks the headers are accepted
 	// from. Required when Enabled is true; an empty list with
 	// Enabled=true is a config error (the validate step refuses
@@ -261,14 +261,14 @@ type TrustedHeaderConfig struct {
 // when OIDC is on, so admins always have a fallback path.
 type OIDCConfig struct {
 	Enabled        bool     `yaml:"enabled"`
-	IssuerURL      string   `yaml:"issuer_url"`        // e.g. https://accounts.google.com
+	IssuerURL      string   `yaml:"issuer_url"` // e.g. https://accounts.google.com
 	ClientID       string   `yaml:"client_id"`
 	ClientSecret   string   `yaml:"client_secret"`
-	RedirectURL    string   `yaml:"redirect_url"`      // public URL of /api/auth/oidc/callback
-	Scopes         []string `yaml:"scopes"`            // default: ["openid", "email", "profile"]
-	DisplayName    string   `yaml:"display_name"`      // shown on login button (default: "SSO")
-	DefaultRole    string   `yaml:"default_role"`      // role for first-time OIDC users (default: viewer)
-	AllowedDomains []string `yaml:"allowed_domains"`   // optional email-domain whitelist (e.g. ["acme.com"])
+	RedirectURL    string   `yaml:"redirect_url"`    // public URL of /api/auth/oidc/callback
+	Scopes         []string `yaml:"scopes"`          // default: ["openid", "email", "profile"]
+	DisplayName    string   `yaml:"display_name"`    // shown on login button (default: "SSO")
+	DefaultRole    string   `yaml:"default_role"`    // role for first-time OIDC users (default: viewer)
+	AllowedDomains []string `yaml:"allowed_domains"` // optional email-domain whitelist (e.g. ["acme.com"])
 }
 
 type ListenConfig struct {
@@ -296,7 +296,7 @@ type ListenConfig struct {
 // internal certs — set false in production once a CA bundle is in
 // place.
 type CHConfig struct {
-	Addr               string `yaml:"addr"`                 // comma-separated for cluster
+	Addr               string `yaml:"addr"` // comma-separated for cluster
 	Database           string `yaml:"database"`
 	Username           string `yaml:"username"`
 	Password           string `yaml:"password"`
@@ -444,7 +444,7 @@ var defaults = Config{
 	// 7d; the retention enforcer uses these when no operator override
 	// is persisted (system_settings retention.* always wins). Raise via
 	// config.yaml retention block or the admin Retention tab.
-	Retention:  RetentionConfig{SpansDays: 7, LogsDays: 7, MetricsDays: 7},
+	Retention: RetentionConfig{SpansDays: 7, LogsDays: 7, MetricsDays: 7},
 	// Defaults tuned for production-grade ingest at ~1B spans/day
 	// (12k/sec average, 50k/sec burst). Workers parallelise the CH
 	// insert path so a 200ms stall on one flush doesn't queue up
@@ -452,7 +452,7 @@ var defaults = Config{
 	// when all workers are mid-flush. ByteBudgetMB 512 additionally
 	// caps each of the 5 consumers by BYTES (≈2.5GB total worst case)
 	// so fat items can't turn that headroom into an OOMKill (v0.8.355).
-	Ingestion:  IngestionConfig{BatchSize: 10_000, BufferSize: 500_000, FlushInterval: 2 * time.Second, Workers: 8, ByteBudgetMB: 512},
+	Ingestion: IngestionConfig{BatchSize: 10_000, BufferSize: 500_000, FlushInterval: 5 * time.Second, Workers: 8, ByteBudgetMB: 512}, // v0.10.240 — 2 s → 5 s: part churn (perf audit ING-3); COREMETRY_INGEST_FLUSH_INTERVAL ile geçersiz kılınır
 	Auth: AuthConfig{
 		TokenTTL:        24 * time.Hour,
 		InitialAdmin:    "admin@coremetry.local",

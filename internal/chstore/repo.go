@@ -57,14 +57,38 @@ func safeF(p *float64) float64 {
 //     — flush a partial buffer 1s after the last insert so
 //     low-traffic services (test envs, off-hours) don't sit
 //     on rows indefinitely.
+//
+// v0.10.240 (perf audit ING-1/ING-2/ING-3, docs/audit/performance-profile.md):
+//   - async_insert_deduplicate = 1 — spans_local flush'ı 19 MV'yi tetikler;
+//     kaskad ortasında zaman aşımı ("Timeout exceeded … while pushing to
+//     view") kaynak part'ı commit edilmiş hâlde döner ve consumer aynı
+//     batch'i 3 kez yeniden dener → span'ler ÇİFT, MV oranları çift
+//     (yerelde 43 FlushError/24 s). Replicated tablolarda aynı bloğun
+//     yeniden gönderimi hash'le düşer (wait_for_async_insert=1 şart, var);
+//     Replicated olmayan tabloda ayar etkisiz — kural zararsız.
+//   - parallel_view_processing = 1 — MV'ler sırayla değil paralel itilir;
+//     flush gecikmesi satır hacminden değil kaskaddan geliyordu.
+//   - async_insert_busy_timeout_min_ms = 500 — adaptif busy timeout tabanı
+//     (varsayılan 50 ms): 8 flusher'ın ~aynı anda gönderdiği küçük
+//     INSERT'ler tek flush'ta birleşsin; part churn (yerelde 305 part/saat/
+//     node, 41 satır/part) düşsün. Tavan 1000 ms değişmedi.
 func asyncInsertCtx(ctx context.Context) context.Context {
-	return clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
-		"async_insert":                  1,
-		"wait_for_async_insert":         1,
-		"async_insert_max_data_size":    10_485_760,
-		"async_insert_busy_timeout_ms":  1000,
-		"async_insert_stale_timeout_ms": 1000,
-	}))
+	return clickhouse.Context(ctx, clickhouse.WithSettings(asyncInsertSettings()))
+}
+
+// asyncInsertSettings — SAF; async_insert_settings_test.go pinler
+// (CLAUDE.md: async_insert mekanizmasını bozma).
+func asyncInsertSettings() clickhouse.Settings {
+	return clickhouse.Settings{
+		"async_insert":                     1,
+		"wait_for_async_insert":            1,
+		"async_insert_deduplicate":         1,
+		"async_insert_max_data_size":       10_485_760,
+		"async_insert_busy_timeout_min_ms": 500,
+		"async_insert_busy_timeout_ms":     1000,
+		"async_insert_stale_timeout_ms":    1000,
+		"parallel_view_processing":         1,
+	}
 }
 
 // spansInsertColumns is the EXPLICIT, physically-ordered column list for the
@@ -2696,7 +2720,7 @@ func applyRootFilterPage(ids []string, hasRoot map[string]bool, offset, pageLimi
 }
 
 // filterRootTraces — aday id'ler için kök-varlığı (MV yolunun aynı katı
-// kuralı: argMaxIfMerge(root_service_state) != ''), id listesiyle SINIRLI:
+// kuralı: argMaxIfMerge(root_service_state) != ”), id listesiyle SINIRLI:
 // maliyet pencereden değil id sayısından gelir (≤ traceStage2MaxIDs).
 func (s *Store) filterRootTraces(ctx context.Context, ids []string, from, to time.Time) (map[string]bool, error) {
 	out := make(map[string]bool, len(ids))

@@ -96,7 +96,7 @@ No proprietary SDK, no vendor agent, no shim layer.
   `Replicated*MergeTree` tables on each shard plus a
   `Distributed` wrapper that fans out queries.
 - **Async insert + parallel flushers** — 8-worker pool, 500k
-  buffer, 2 s flush window. Consumer pushback via bounded
+  buffer, 5 s flush window (v0.10.240; was 2 s). Consumer pushback via bounded
   channels.
 - **Trace sampling** — head sampling with always-keep-errors
   + always-keep-roots + per-service ratios. Optional buffered
@@ -414,7 +414,7 @@ retention:
 ingestion:
   batch_size: 10000
   buffer_size: 500000
-  flush_interval: 2s
+  flush_interval: 5s
   workers: 8
 
 sampling:

@@ -1600,6 +1600,11 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   line-height: 1.4;
 }
 
+/* Öz-süre payı (v0.10.276) — barın içinde soldan koyu şerit; token karışımı. */
+.wf-bar-self { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--text) 30%, transparent); pointer-events: none; }
+/* Katlı alt ağaç özeti (v0.10.276) — .wf-cluster geometrisi, muted tokens. */
+.wf-sub { font-size: 9px; font-weight: 600; letter-spacing: 0.2px; flex-shrink: 0; padding: 0 5px; border-radius: 3px; margin-right: 8px; color: var(--text2); border: 1px solid var(--border); font-family: ui-monospace, Menlo, monospace; line-height: 1.4; white-space: nowrap; }
+
 /* Span link badge (v0.10.274) — .wf-cat geometry, accent2 tokens. */
 .wf-link {
   font-size: 10px;

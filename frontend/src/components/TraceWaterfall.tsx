@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { SpanRow } from '@/lib/types';
+import type { SpanRow, TraceAnalysis, TraceNode, TraceServiceSummary } from '@/lib/types';
 import { collectSubtreeIds, groupParentOf, clusterBadge } from './traceWaterfall.tree';
 import { resolveResource } from '@/lib/otel/semconv';
 import { fmtNs, displaySpanName } from '@/lib/utils';
@@ -110,8 +110,13 @@ export const svcColorToken = svcColor;
 // trace-summary pattern: "stripe-api ate 83% of these 4.8s" at a
 // glance. Colours come from the same svcColorToken hash the waterfall
 // stripes use so the strip and the rows read as one palette.
-export function TraceServiceBreakdown({ spans }: { spans: SpanRow[] }) {
+export function TraceServiceBreakdown({ spans, services }: { spans: SpanRow[]; services?: TraceServiceSummary[] }) {
   const breakdown = useMemo(() => {
+    // v0.10.276 — sunucu özeti varsa (aralık birleşimli öz süre) onu kullan;
+    // naif çocuk-toplamı yalnız analysis'siz çağıranlar (Public/Compare) için.
+    if (services && services.length > 0) {
+      return services.map(sv => ({ svc: sv.service, ns: sv.selfNs, pct: sv.selfPct }));
+    }
     // O(n): one pass to sum direct-child durations per parent,
     // one pass to fold self-time per service.
     const childSum = new Map<string, number>();
@@ -129,7 +134,7 @@ export function TraceServiceBreakdown({ spans }: { spans: SpanRow[] }) {
     return [...bySvc.entries()]
       .sort((a, b) => b[1] - a[1])
       .map(([svc, ns]) => ({ svc, ns, pct: (ns / total) * 100 }));
-  }, [spans]);
+  }, [spans, services]);
 
   if (breakdown.length === 0) return null;
   return (
@@ -161,7 +166,7 @@ export function TraceServiceBreakdown({ spans }: { spans: SpanRow[] }) {
 export function TraceWaterfall({
   spans, selectedId, onSelect, defaultCollapsed, groupSimilar = false,
   onGroupSimilarChange,
-  criticalPathIds, matchIds, focusIds, evidenceIds, logSignals, onLogsClick, linkedSpanIds,
+  criticalPathIds, matchIds, focusIds, evidenceIds, logSignals, onLogsClick, linkedSpanIds, analysis,
 }: {
   spans: SpanRow[];
   selectedId: string | null;
@@ -195,6 +200,9 @@ export function TraceWaterfall({
   evidenceIds?: Set<string>;
   // v0.10.274 (Dilim 1a) — OTel span link'i olan span'ler; satırda ⛓ rozeti.
   linkedSpanIds?: ReadonlySet<string>;
+  // v0.10.276 (Dilim 1c) — sunucu analizi (chstore.BuildTraceAnalysis):
+  // bar içinde öz-süre payı, katlanmış satırda alt ağaç özeti. Yoksa eski görünüm.
+  analysis?: TraceAnalysis;
   // v0.5.383 — in-trace span filter. Matching span IDs get the
   // .wf-match class (highlight); non-matches get .wf-dim (low
   // opacity). Undefined = no filter active, every row renders
@@ -280,6 +288,12 @@ export function TraceWaterfall({
   }, [spans]);
 
   const { minT, totalNs } = tree;
+  // v0.10.276 — sunucu analizi düğümleri (spanId → TraceNode); yoksa boş.
+  const nodeById = useMemo(() => {
+    const m = new Map<string, TraceNode>();
+    for (const n of analysis?.nodes ?? []) m.set(n.spanId, n);
+    return m;
+  }, [analysis]);
 
   const { rows, maxDepth } = useMemo(() => {
     const { map, children, roots } = tree;
@@ -617,6 +631,7 @@ export function TraceWaterfall({
         const displayName = displaySpanName(s);
         const durMs = dur / 1e6;
         const isCol = collapsed.has(s.spanId);
+        const node = nodeById.get(s.spanId);
         const sel = selectedId !== null && realIds.includes(selectedId);
         const onCritical = anyId(criticalPathIds);
         // v0.5.383 — in-trace filter classes. matchIds undefined →
@@ -743,6 +758,13 @@ export function TraceWaterfall({
                   /* v0.10.274 — span link rozeti; detay panelinde Links bölümü. */
                   <span className="wf-link" title="Bu span OTel span link taşıyor (giden ya da gelen) — detay panelinde Links">⛓</span>
                 )}
+                {isCol && hasChildren && node && node.subtreeCount > 1 && (
+                  /* v0.10.276 — katlanmış alt ağaç özeti (sunucu analizi). */
+                  <span className="wf-sub"
+                        title={`Katlı alt ağaç: ${node.subtreeCount - 1} span · ${fmtNs(node.subtreeNs)} duvar saati` + (node.subtreeErrors ? ` · ${node.subtreeErrors} hata` : '')}>
+                    ▸ {node.subtreeCount - 1} · {fmtNs(node.subtreeNs)}{node.subtreeErrors ? ` · ${node.subtreeErrors} err` : ''}
+                  </span>
+                )}
                 <span className="wf-name" title={s.name === displayName ? s.name : `raw: ${s.name}`}>
                   {displayName}
                 </span>
@@ -807,13 +829,18 @@ export function TraceWaterfall({
                   `end:   ${fmtClock(s.endTime)}\n` +
                   // v0.9.217 — the share moved here from the row's inline
                   // % label. Removing that label must not lose the number.
-                  `dur:   ${fmtNs(dur)} (${durMs.toFixed(2)}ms, ${durPctLabel}% of trace)`
+                  `dur:   ${fmtNs(dur)} (${durMs.toFixed(2)}ms, ${durPctLabel}% of trace)` +
+                  (node ? `\nself:  ${fmtNs(node.selfNs)} (${dur > 0 ? Math.round((node.selfNs / dur) * 100) : 0}% of span)` : '')
                 }
                 style={{
                   left: `${startPct}%`, width: `${widthPct}%`, background: color,
                   opacity: criticalActive && !onCritical ? 0.62 : 1,
                 }}
               >
+                {/* v0.10.276 — öz süre payı (sunucu analizi): koyu iç şerit. */}
+                {node && dur > 0 && node.selfNs < dur && (
+                  <span className="wf-bar-self" style={{ width: `${Math.max(0, Math.min(100, (node.selfNs / dur) * 100))}%` }} />
+                )}
                 {labelInside && <span className="wf-bar-label">{fmtNs(dur)}</span>}
               </div>
               {excLeftPct !== null && (

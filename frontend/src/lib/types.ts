@@ -1662,6 +1662,10 @@ export interface ThanosClusterSnapshot {
   labelCheck?: ThanosLabelCheck;
   authType?: ThanosAuthType;
   hasToken: boolean;
+  // v0.10.272 — token referansı (`env:NAME` | `file:/path`); görünür, secret değil.
+  tokenRef?: string;
+  tokenResolved?: boolean;
+  tokenError?: string;
   namespaceFilter?: string;
   insecureSkipVerify?: boolean;
   enabled: boolean;
@@ -1681,6 +1685,7 @@ export interface ThanosClusterInput {
   thanosLabelSource?: 'auto' | 'manual';
   authType?: ThanosAuthType;
   token?: string;
+  tokenRef?: string;
   namespaceFilter?: string;
   insecureSkipVerify?: boolean;
   enabled: boolean;

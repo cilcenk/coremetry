@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cilcenk/coremetry/internal/secretref"
 	"github.com/cilcenk/coremetry/internal/thanos"
 )
 
@@ -751,6 +752,11 @@ func (s *Server) putThanosSettings(w http.ResponseWriter, r *http.Request) {
 		c.ThanosLabelName = strings.TrimSpace(c.ThanosLabelName)
 		c.ThanosLabelValue = strings.TrimSpace(c.ThanosLabelValue)
 		c.SpanClusterValue = strings.TrimSpace(c.SpanClusterValue)
+		c.TokenRef = strings.TrimSpace(c.TokenRef) // v0.10.272
+		if c.TokenRef != "" && !secretref.Valid(c.TokenRef) {
+			http.Error(w, "cluster "+c.Name+": "+secretref.InvalidMessage, http.StatusBadRequest)
+			return
+		}
 		if c.Name == "" {
 			http.Error(w, "cluster name required", http.StatusBadRequest)
 			return

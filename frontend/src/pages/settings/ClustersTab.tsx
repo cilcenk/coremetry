@@ -3,7 +3,7 @@ import { fmtDateTime } from '@/lib/utils';
 import { SpanClusterValuesPanel } from './SpanClusterValuesPanel';
 import { Combobox } from '@/components/Combobox';
 import { Spinner } from '@/components/Spinner';
-import { Button } from '@/components/ui';
+import { Button, Field } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useSettingsLoad, SettingsLoadError } from './shared';
 import { useClusters } from '@/lib/queries';
@@ -38,6 +38,10 @@ interface EditRow {
   authType: ThanosAuthType;
   token: string;    // only ever holds a NEW token; '' = keep stored
   hasToken: boolean;
+  // v0.10.272 — token referansı (Influx/Tempo sözleşmesi): görünür, secret değil.
+  tokenRef: string;
+  tokenResolved: boolean;
+  tokenError: string;
   namespaceFilter: string;
   insecureSkipVerify: boolean;
   enabled: boolean;
@@ -53,6 +57,7 @@ function fromSnapshot(c: ThanosClusterSnapshot): EditRow {
     thanosLabelSource: c.thanosLabelSource, thanosLabelDetectedAt: c.thanosLabelDetectedAt, labelCheck: c.labelCheck,
     authType: (c.authType || 'none') as ThanosAuthType,
     token: '', hasToken: c.hasToken,
+    tokenRef: c.tokenRef || '', tokenResolved: !!c.tokenResolved, tokenError: c.tokenError || '',
     namespaceFilter: c.namespaceFilter || '',
     insecureSkipVerify: !!c.insecureSkipVerify,
     enabled: c.enabled,
@@ -61,6 +66,7 @@ function fromSnapshot(c: ThanosClusterSnapshot): EditRow {
 
 const EMPTY_ROW: EditRow = {
   id: '', name: '', url: '', authType: 'bearer', token: '', hasToken: false,
+  tokenRef: '', tokenResolved: false, tokenError: '',
   thanosLabelName: '', thanosLabelValue: '', spanClusterValue: '', spanClusterValues: '',
   namespaceFilter: '', insecureSkipVerify: false, enabled: true,
 };
@@ -149,6 +155,7 @@ export function ClustersTab() {
           id: r.id || undefined, // server-owned: lets a rename keep its id + token
           name: r.name.trim(), url: r.url.trim(), authType: r.authType,
           token: r.token, // '' keeps stored (server contract, id/name-matched)
+          tokenRef: r.tokenRef.trim() || undefined,
           thanosLabelName: r.thanosLabelName.trim() || undefined,
           thanosLabelValue: r.thanosLabelValue.trim() || undefined,
           spanClusterValue: r.spanClusterValue.trim() || undefined,
@@ -259,6 +266,17 @@ export function ClustersTab() {
                       placeholder={r.hasToken ? '(leave empty to keep stored value)' : 'paste ServiceAccount token…'}
                       style={{ width: '100%' }} />
                   </label>
+                )}
+                {r.authType === 'bearer' && (
+                  /* v0.10.272 — Influx/Tempo deseni: referans doluysa saklı token yerine kullanılır. */
+                  <div style={{ flex: 1 }}>
+                    <Field label="…ya da token referansı" value={r.tokenRef}
+                      onChange={e => patch(i, { tokenRef: e.target.value })}
+                      placeholder="env:COREMETRY_THANOS_TOKEN_PROD  ·  file:/var/run/secrets/thanos/token"
+                      autoComplete="off"
+                      error={r.tokenError || undefined}
+                      hint={r.tokenResolved ? 'Çözüldü ✓' : 'env: Helm extraEnv + existingSecret; file: mount edilmiş Secret (≤30 s)'} />
+                  </div>
                 )}
               </div>
               {/* v0.10.128 — identity mapping (entity layer). Label name empty = no

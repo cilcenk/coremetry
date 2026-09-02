@@ -23,10 +23,12 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/cilcenk/coremetry/internal/secretref"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -73,6 +75,10 @@ type ClusterConfig struct {
 	AuthType string `json:"authType,omitempty"`
 	// Token — never echoed; Snapshot exposes HasToken only.
 	Token string `json:"token,omitempty"`
+	// TokenRef — v0.10.272: `env:NAME` | `file:/path` (internal/secretref);
+	// doluysa saklı Token'a TERCİH edilir. Çözüm Configure'da (boot / PUT /
+	// 30 s yenileme), istekte IO yok; file rotasyonu ≤30 s.
+	TokenRef string `json:"tokenRef,omitempty"`
 	// NamespaceFilter is a PromQL regex injected as
 	// namespace=~"..." into every query — the cardinality shield
 	// that keeps a 10k-pod estate from riding home in one
@@ -102,12 +108,16 @@ type ClusterSnapshot struct {
 	ThanosLabelDetectedAt int64    `json:"thanosLabelDetectedAt,omitempty"`
 	// LabelCheck — v0.10.140: periyodik doğrulama sonucu (bellek; auto
 	// etiketli kayıtlar). nil = henüz denetlenmedi.
-	LabelCheck         *LabelCheck `json:"labelCheck,omitempty"`
-	AuthType           string      `json:"authType,omitempty"`
-	HasToken           bool        `json:"hasToken"`
-	NamespaceFilter    string      `json:"namespaceFilter,omitempty"`
-	InsecureSkipVerify bool        `json:"insecureSkipVerify,omitempty"`
-	Enabled            bool        `json:"enabled"`
+	LabelCheck *LabelCheck `json:"labelCheck,omitempty"`
+	AuthType   string      `json:"authType,omitempty"`
+	HasToken   bool        `json:"hasToken"`
+	// v0.10.272 — referans görünür (secret değil); çözüm durumu rozet.
+	TokenRef           string `json:"tokenRef,omitempty"`
+	TokenResolved      bool   `json:"tokenResolved"`
+	TokenError         string `json:"tokenError,omitempty"`
+	NamespaceFilter    string `json:"namespaceFilter,omitempty"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"`
+	Enabled            bool   `json:"enabled"`
 }
 
 // Snapshot is what GET /api/settings/thanos returns.
@@ -238,9 +248,15 @@ type Service struct {
 	labelCheckState // v0.10.140 — periyodik etiket doğrulama sonuçları
 	mu              sync.RWMutex
 	cfg             Settings
+	// v0.10.272 — tokenRef çözümü (Configure'da), küme id'sine göre;
+	// testler getenv/readFile enjekte eder (influx/tempo deseni).
+	resolvedTokens map[string]string
+	resolveErrs    map[string]string
+	getenv         func(string) string
+	readFile       func(string) ([]byte, error)
 }
 
-func New() *Service { return &Service{} }
+func New() *Service { return &Service{getenv: os.Getenv, readFile: os.ReadFile} }
 
 // settingsStore — narrow chstore surface (tempo precedent; avoids
 // an import cycle if chstore ever depends back on thanos).
@@ -310,6 +326,12 @@ func (s *Service) SavePersisted(ctx context.Context, store settingsStore, cfg Se
 	if s == nil || store == nil {
 		return nil
 	}
+	// v0.10.272 — düz token blob'a referans kılığında GİRMEZ.
+	for _, c := range cfg.Clusters {
+		if c.TokenRef != "" && !secretref.Valid(c.TokenRef) {
+			return fmt.Errorf("cluster %s: %s", c.Name, secretref.InvalidMessage)
+		}
+	}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
 		return err
@@ -328,7 +350,46 @@ func (s *Service) Configure(cfg Settings) {
 	}
 	s.mu.Lock()
 	s.cfg = cfg
+	// v0.10.272 — referanslar burada çözülür (boot / PUT / 30 s yenileme).
+	s.resolvedTokens, s.resolveErrs = map[string]string{}, map[string]string{}
+	getenv, readFile := s.getenv, s.readFile
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if readFile == nil {
+		readFile = os.ReadFile
+	}
+	for _, c := range cfg.Clusters {
+		if c.TokenRef == "" {
+			continue
+		}
+		id := c.EffectiveID()
+		if v, err := secretref.ResolveWith(c.TokenRef, getenv, readFile); err != nil {
+			s.resolveErrs[id] = err.Error()
+		} else {
+			s.resolvedTokens[id] = v
+		}
+	}
 	s.mu.Unlock()
+}
+
+// effectiveToken — v0.10.272: ref doluysa çözülmüş değer (çözülemediyse
+// BOŞ — saklı token'a sessizce düşülmez), yoksa saklı düz token. SAF.
+func effectiveToken(c ClusterConfig, resolved string) string {
+	if c.TokenRef != "" {
+		return resolved
+	}
+	return c.Token
+}
+
+// effectiveTokenFor — kilitli okuma (istek yolu).
+func (s *Service) effectiveTokenFor(c ClusterConfig) string {
+	if s == nil {
+		return c.Token
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return effectiveToken(c, s.resolvedTokens[c.EffectiveID()])
 }
 
 // Snapshot returns the masked config for the settings UI.
@@ -347,6 +408,8 @@ func (s *Service) Snapshot() Snapshot {
 			SpanClusterValue: c.SpanClusterValue, SpanClusterValues: c.ExplicitSpanClusterValues(),
 			LabelCheck: s.labelCheckFor(c.EffectiveID()),
 			HasToken:   c.Token != "", NamespaceFilter: c.NamespaceFilter,
+			TokenRef: c.TokenRef, TokenResolved: c.TokenRef != "" && s.resolvedTokens[c.EffectiveID()] != "",
+			TokenError:         s.resolveErrs[c.EffectiveID()],
 			InsecureSkipVerify: c.InsecureSkipVerify, Enabled: c.Enabled,
 		})
 	}
@@ -487,8 +550,8 @@ func (s *Service) doQueryWith(ctx context.Context, c ClusterConfig, path string,
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	if c.AuthType == "bearer" && c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
+	if token := s.effectiveTokenFor(c); c.AuthType == "bearer" && token != "" { // v0.10.272 — ref > saklı
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := thanosClientFor(c.InsecureSkipVerify).Do(req)
 	if err != nil {

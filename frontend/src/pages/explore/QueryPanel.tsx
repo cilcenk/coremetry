@@ -1,4 +1,5 @@
 import { memo, lazy, Suspense } from 'react';
+import { msSyncKey } from '@/lib/chart/syncNamespace';
 import { type TSMode } from '@/components/viz/TimeSeriesPanel';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
@@ -44,7 +45,7 @@ const CorePanelMultiLazy = lazy(() =>
 // '-ms' eki KALIYOR ve süs değil: uPlot.sync değeri karşı grafiğin
 // ölçeğine VALUE olarak taşır, yani ad alanı motorun x birimini
 // söylemeye devam etmeli (repoda saniye-eksenli motorlar hâlâ var).
-const SYNC_KEY = 'explore-v2-ms';
+const SYNC_KEY = msSyncKey('explore-v2'); // v0.10.289 — ad alanı tek yerden
 const PANEL_HEIGHT = 200;
 
 export const QueryPanel = memo(function QueryPanel({

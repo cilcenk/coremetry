@@ -1,4 +1,5 @@
 import { lazy, Suspense, useMemo } from 'react';
+import { msSyncKey } from '@/lib/chart/syncNamespace';
 import { Link } from 'react-router-dom';
 import { Turtle } from 'lucide-react';
 import { Card, PanelTitle, StatTile } from '@/components/ui';
@@ -220,7 +221,7 @@ export function DatabaseTrendCards({ trend, pending, xRange }: {
               xRange={xRange}
               // '-ms' = engine namespace (v0.9.789); one group so
               // the crosshair correlates the three.
-              syncKey="database-detail-ms"
+              syncKey={msSyncKey('database-detail')}
               emptyReason={series[k].length ? undefined
                 : (pending ? 'Yükleniyor…'
                   : 'Bu pencerede bu veritabanı için kova yok')}

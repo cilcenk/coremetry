@@ -1,4 +1,5 @@
 import { lazy, Suspense, useMemo } from 'react';
+import { msSyncKey } from '@/lib/chart/syncNamespace';
 import { Spinner } from '@/components/Spinner';
 import { timeRangeToNs } from '@/lib/utils';
 import type { ChartTimeRegion } from '@/lib/chart/overlays';
@@ -72,7 +73,7 @@ export function MetricTile({
             unit={unit}
             xRange={xRange}
             // The '-ms' suffix is the ENGINE NAMESPACE (v0.9.789).
-            syncKey="endpoint-detail-ms"
+            syncKey={msSyncKey('endpoint-detail')}
             emptyReason={hasData ? undefined : (emptyLabel ?? 'Bu pencerede veri yok')}
             items={[{ name: label, role: role ?? 'data', series }]}
             regions={regions}

@@ -1,4 +1,5 @@
 import { lazy, Suspense } from 'react';
+import { msSyncKey } from '@/lib/chart/syncNamespace';
 import type { SpanMetricSeries } from '@/lib/types';
 import { Spinner } from '@/components/Spinner';
 import { type XPin } from '@/lib/chart/xRange';
@@ -175,7 +176,7 @@ export function MultiLineChart(props: MultiLineChartProps) {
         // (DetailsMetricsSection, v0.9.789). v0.9.844'te motor sökümünden
         // SONRA DA ŞART — sökülen v1 gövdesiydi, saniye-eksenli kardeşler
         // değil.
-        syncKey={syncKey ? `${syncKey}-ms` : undefined}
+        syncKey={msSyncKey(syncKey)} // v0.10.289 — ad alanı tek yerden (lib/chart/syncNamespace)
         onZoom={onZoom} onZoomReset={onZoomReset} onCursorTime={onCursorTime}
         onBucketClick={onBucketClick}
       />

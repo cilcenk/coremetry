@@ -68,6 +68,7 @@ import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, Aggreg
 import { traceHref } from '@/lib/traceHref';
 
 import { VolumeChart } from '@/components/traces/VolumeChart';
+import { volumeUnitLabel } from '@/components/traces/volumeSeries';
 import { LatencyScatter } from '@/components/traces/LatencyScatter';
 import { ShapesView } from '@/components/traces/ShapesView';
 import { SvcBadge, DurationBar, fmtDur } from '@/components/traces/shared';
@@ -633,6 +634,12 @@ function TracesPageInner() {
     // of the operator's ad-hoc predicate group, so it applies even in
     // grouped mode where the group itself is omitted (see above).
     const chartFilters: FilterExpr[] = (!grouped && advFilters.length) ? [...advFilters] : [];
+    // v0.10.268 (operatör onayı, mockup A) — şerit GİRİŞ span'ı kapsamlı:
+    // istek ≈ trace (Dynatrace "trace count"), medyan = giriş span'ı p50.
+    // Dar rollup (service_name, span_kind, status_code) bu şekli MV'den
+    // servis eder (rollup_fastpath.go başlığı); attribute filtresi varsa
+    // zaten ham yol. Geri alma: bu satır + volumeSeries eksen takası.
+    chartFilters.push({ k: 'kind', op: 'IN', v: ['server', 'consumer'] });
     if (env) chartFilters.push({ k: 'deployment.environment', op: '=', v: [env] });
     // v0.9.943 (B3) — hacim şeridi de aynı kapsamı çizmeli, yoksa grafik
     // tablonun saymadığı trace'leri gösterirdi. `cluster` v0.9.942'den beri
@@ -877,6 +884,7 @@ function TracesPageInner() {
   // filtered Rate/Errors/Duration numbers ride here + in the table.
   // Header TOTAL/ERRORS/ERR RATE/P99 MAX — derived from the TRUE-volume series
   // (whole window), so they describe real traffic rather than the 50-row page.
+  const volumeUnit = volumeUnitLabel(!!filter.service);
   const headerStats = useMemo(() => {
     const cPts = volSeries?.count?.[0]?.points ?? [];
     const eMap = new Map((volSeries?.errors?.[0]?.points ?? []).map(p => [p.time, p.value]));
@@ -1082,24 +1090,27 @@ function TracesPageInner() {
           // RED stat group — mono, right-aligned, over the filtered rows.
           const vizStats = (
             <>
-              <HeaderStat label="TOTAL" value={fmtNum(headerStats.total)} />
+              {/* v0.10.268 — giriş span'ı sayımı: servisli pencerede trace, servissiz istek. */}
+              <HeaderStat label={volumeUnit.toUpperCase()} value={fmtNum(headerStats.total)}
+                title="Giriş span'leri (server/consumer): servis seçiliyken istek = trace; servissiz pencerede her hop sayılır." />
               {/* v0.9.222 — scope spelled out. This counts error SPANS
                   across the whole window; the "Errors N" quick-chip below
                   counts error TRACES on the loaded page. Both were right
                   and both said "Errors", so 12.4k sitting a few hundred
                   pixels above 3 read as a broken number. */}
-              <HeaderStat label="ERROR SPANS" value={fmtNum(headerStats.err)}
+              <HeaderStat label={'ERROR ' + volumeUnit.toUpperCase()} value={fmtNum(headerStats.err)}
                 tone={headerStats.err > 0 ? 'err' : undefined}
-                title="Seçili pencerenin tamamındaki hatalı SPAN sayısı — yüklü satırlardan bağımsız, gerçek trafiği tarif eder." />
+                title="Seçili pencerenin tamamındaki hatalı giriş span'ı sayısı — yüklü satırlardan bağımsız, gerçek trafiği tarif eder." />
               <HeaderStat label="ERR RATE" value={`${headerStats.errRate.toFixed(2)}%`} tone={headerStats.errRate > 0 ? 'err' : undefined} />
-              <HeaderStat label="P50 MAX" value={headerStats.p50Max ? fmtDur(headerStats.p50Max) : '—'} tone="warn" />
+              <HeaderStat label="MEDIAN MAX" value={headerStats.p50Max ? fmtDur(headerStats.p50Max) : '—'} tone="warn"
+                title="Giriş span'ı medyan yanıt süresinin penceredeki en yüksek kovası." />
             </>
           );
           return data === undefined ? (
             <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 8,
               // v0.9.301 — the skeleton must match the real card, or the
               // table jumps on every load. Tracks the persisted height.
-              height: chartTall ? 192 : 152,
+              height: chartTall ? 282 : 222,
               display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Spinner />
             </div>
@@ -1107,7 +1118,8 @@ function TracesPageInner() {
             // slimmer + recedes — it's the brush/overview "tool", not the
             // headline chart; the RED strip below carries the filtered numbers.
             <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} p50={volSeries?.p50 ?? null}
-              height={chartTall ? 140 : 100} onBrush={applyBrush} onZoomReset={clearBrush}
+              // v0.10.268 — Dynatrace ölçeği (mockup A: 200 px); shrink/expand duruyor.
+              height={chartTall ? 230 : 170} unit={volumeUnit} onBrush={applyBrush} onZoomReset={clearBrush}
               xRange={{ from: listRangeNs.from / 1e9, to: listRangeNs.to / 1e9 }}
               header={vizToggle}
               headerRight={<>{vizStats}

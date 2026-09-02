@@ -81,6 +81,10 @@ interface Props {
   // atlar). Trace listesi gibi ASIL içeriğin ekranın üstünde kalması
   // gereken sayfalar için.
   legendCollapsed?: boolean;
+  // v0.10.268 — bar genişlik oranı (0..1, varsayılan 0.86). Traces genel
+  // bakış şeridi Dynatrace gibi ince çubuk + boşluk ister (0.62); diğer
+  // grafikler dokunulmadan kalır.
+  barSize?: number;
   // v0.9.489 (operatör: "Series gözükmesine ihtiyacım yok") — lejantı
   // tamamen kaldırır (kapalı tek satır bile yok). Log histogramları gibi
   // seri kimliğinin zaten yüzeydeki chip'lerden okunduğu yerler için.
@@ -97,7 +101,7 @@ const MAX_BAR_PX = 18;
 export function TimeChart({
   times, series, height = 150, leftUnit = '', rightUnit = '',
   deployMarkers, thresholds, regions, onBrush, onZoomReset, syncKey, fmtLeft, fmtRight, fmtX, xRange,
-  legendCollapsed, hideLegend,
+  legendCollapsed, hideLegend, barSize = 0.86,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const ttRef = useRef<HTMLDivElement>(null);
@@ -190,7 +194,7 @@ export function TimeChart({
     // maxBarWidth ile aynı tavanı koyar. Oran (0.86) korunuyor, yani bucket
     // yoğunken davranış birebir aynı — tavan yalnız seyrek bucket'ta devreye
     // girer.
-    const barPath = uPlot.paths.bars!({ size: [0.86, MAX_BAR_PX], align: 0 });
+    const barPath = uPlot.paths.bars!({ size: [barSize, MAX_BAR_PX], align: 0 });
 
     // Overlay plugin — regions (background-most) + threshold lines (Grafana-
     // parite M3) + dashed red deploy vlines. Drawn in a hook so they re-paint

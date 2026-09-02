@@ -327,6 +327,8 @@ function TraceDetailInner() {
   // view on a long waterfall. Fires ONCE, only when the page OPENED with
   // ?span= (LogTable's trace link now appends it) — user clicks never scroll.
   const urlSpanRef = useRef<string | null>(searchParams.get('span'));
+  // v0.10.278 — sanal modda hedef satır mount olmayabilir; kaydırmayı şelale yapar.
+  const [revealSpanId] = useState<string | null>(() => searchParams.get('span'));
   useEffect(() => {
     const want = urlSpanRef.current;
     if (!want || !spans || spans.length === 0) return;
@@ -600,7 +602,7 @@ function TraceDetailInner() {
                       onGroupSimilarChange={setGroupSimilar}
                       criticalPathIds={criticalPathIds} matchIds={spanMatchIds}
                       focusIds={critFocus && criticalPath ? criticalPath.ids : undefined}
-                      linkedSpanIds={linkedIds} analysis={analysis}
+                      linkedSpanIds={linkedIds} analysis={analysis} revealSpanId={revealSpanId}
                       logSignals={logSignals} onLogsClick={() => setTab('logs')} />
                   </div>
                   {sel && <SpanDetail span={sel} onClose={closeSpanPanel} traceSpans={spans ?? undefined}

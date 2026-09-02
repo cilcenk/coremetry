@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useWindowVirtualizer } from '@tanstack/react-virtual';
+import { TraceMinimap } from './traces/TraceMinimap';
 import type { SpanRow, TraceAnalysis, TraceNode, TraceServiceSummary } from '@/lib/types';
 import { collectSubtreeIds, groupParentOf, clusterBadge } from './traceWaterfall.tree';
 import { resolveResource } from '@/lib/otel/semconv';
 import { fmtNs, displaySpanName } from '@/lib/utils';
 import { nameColWidth, NAME_MIN, NAME_MAX, INDENT_PX } from '@/lib/traceNameCol';
+
+// v0.10.278 — sanal satır eşiği ve harita eşiği (ölçüm: 1000-1500 satır arası
+// content-visibility ile açık basılıyordu, audit §1.3).
+const VIRTUAL_MIN_ROWS = 400;
+const MINIMAP_MIN_ROWS = 150;
+const ROW_EST_PX = 24;
 
 // HH:MM:SS.mmm wall-clock formatter for the waterfall ruler +
 // per-span tooltips. Locked to the browser's local timezone so
@@ -166,7 +174,7 @@ export function TraceServiceBreakdown({ spans, services }: { spans: SpanRow[]; s
 export function TraceWaterfall({
   spans, selectedId, onSelect, defaultCollapsed, groupSimilar = false,
   onGroupSimilarChange,
-  criticalPathIds, matchIds, focusIds, evidenceIds, logSignals, onLogsClick, linkedSpanIds, analysis,
+  criticalPathIds, matchIds, focusIds, evidenceIds, logSignals, onLogsClick, linkedSpanIds, analysis, revealSpanId,
 }: {
   spans: SpanRow[];
   selectedId: string | null;
@@ -203,6 +211,9 @@ export function TraceWaterfall({
   // v0.10.276 (Dilim 1c) — sunucu analizi (chstore.BuildTraceAnalysis):
   // bar içinde öz-süre payı, katlanmış satırda alt ağaç özeti. Yoksa eski görünüm.
   analysis?: TraceAnalysis;
+  // v0.10.278 (Dilim 1d) — ?span= derin bağlantısı: satır sanal modda mount
+  // olmayabilir; şelale kendisi kaydırır (bir kez).
+  revealSpanId?: string | null;
   // v0.5.383 — in-trace span filter. Matching span IDs get the
   // .wf-match class (highlight); non-matches get .wf-dim (low
   // opacity). Undefined = no filter active, every row renders
@@ -513,6 +524,51 @@ export function TraceWaterfall({
   // then non-critical bars drop to 0.62 opacity (design: critOn && !crit).
   const criticalActive = criticalPathIds !== undefined;
 
+  // v0.10.278 (Dilim 1d) — sanal satırlar: 400+ satırda pencere sanallaştırıcı
+  // (sayfa kaydırması korunur; sabit yükseklikli scroller YOK — globals.css
+  // .wf-row sözleşmesi). Altında content-visibility yolu aynen kalır.
+  const virtual = rows.length >= VIRTUAL_MIN_ROWS;
+  const listRef = useRef<HTMLDivElement>(null);
+  const [listTop, setListTop] = useState(0);
+  useEffect(() => {
+    if (!virtual || !listRef.current) return;
+    const r = listRef.current.getBoundingClientRect();
+    setListTop(r.top + (typeof window !== 'undefined' ? window.scrollY : 0));
+  }, [virtual, rows.length]);
+  const virtualizer = useWindowVirtualizer({
+    count: virtual ? rows.length : 0,
+    estimateSize: () => ROW_EST_PX,
+    overscan: 20,
+    scrollMargin: listTop,
+    initialRect: { width: 1200, height: 900 },
+    // Yerleşimsiz ortamda (jsdom / gizli sekme) ölçüm 0 döner; 0 yüksekliğe
+    // güvenmek sanallaştırıcıyı "hepsi sığıyor" sanısına düşürür → tahmin.
+    measureElement: el => el.getBoundingClientRect().height || ROW_EST_PX,
+  });
+  const vItems = virtual ? virtualizer.getVirtualItems() : null;
+  const rendered = vItems
+    ? vItems.map(v => ({ row: rows[v.index], v }))
+    : rows.map(row => ({ row, v: null as null }));
+  const seekRow = (idx: number) => {
+    if (idx < 0 || idx >= rows.length) return;
+    if (virtual) { virtualizer.scrollToIndex(idx, { align: 'center' }); return; }
+    const id = rows[idx].span.spanId;
+    requestAnimationFrame(() => document.querySelector(`[data-span-id="${id}"]`)?.scrollIntoView({ block: 'center' }));
+  };
+  // Derin bağlantı: bir kez, satırlar gelince.
+  const revealedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!revealSpanId || rows.length === 0 || revealedRef.current === revealSpanId) return;
+    const idx = rows.findIndex(r => r.span.spanId === revealSpanId || r.memberIds?.includes(revealSpanId));
+    if (idx < 0) return;
+    revealedRef.current = revealSpanId;
+    seekRow(idx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealSpanId, rows]);
+  const minimapSpans = useMemo(() => rows.map(r => r.span), [rows]);
+  const visibleRange: [number, number] | null = vItems && vItems.length
+    ? [vItems[0].index, vItems[vItems.length - 1].index] : null;
+
   return (
     <div id="wf-outer" ref={containerRef}>
       <div className="wf-header">
@@ -591,9 +647,15 @@ export function TraceWaterfall({
         </div>
       </div>
 
-      {rows.map(({ span: s, depth, hasChildren, ancestorContinues, isLastSibling,
+      {rows.length >= MINIMAP_MIN_ROWS && (
+        /* v0.10.278 — trace haritası (canvas), görünür pencere + tıkla-git. */
+        <TraceMinimap spans={minimapSpans} minT={minT} totalNs={totalNs} colorFor={colorFor}
+          range={visibleRange} onSeek={seekRow} />
+      )}
+      <div ref={listRef} className="wf-rows" style={virtual ? { position: 'relative', height: virtualizer.getTotalSize() } : undefined}>
+      {rendered.map(({ row: { span: s, depth, hasChildren, ancestorContinues, isLastSibling,
                     groupCount, groupTotalDur, groupAvgDur, groupMaxDur, repSpanId,
-                    memberIds }) => {
+                    memberIds }, v }) => {
         // v0.9.1277 — id kimliği İKİ soruya ayrıldı.
         //   • `s.spanId` DÜĞÜM kimliği: katlama anahtarı, React key,
         //     data-span-id. Sentetik grup satırında "group:…" olması
@@ -699,8 +761,12 @@ export function TraceWaterfall({
         // data-span-id (v0.9.477): AI çekmecesindeki kanıt satırı tıklanınca
         // sayfa bu satırı bulup görünüme kaydırır.
         return (
-          <div key={s.spanId} data-span-id={pickId} className={cls} onClick={() => onSelect(pickId)}
-            style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 28px' }}>
+          <div key={s.spanId} data-span-id={pickId} data-index={v ? v.index : undefined}
+            ref={v ? virtualizer.measureElement : undefined}
+            className={cls} onClick={() => onSelect(pickId)}
+            style={v
+              ? { position: 'absolute', top: 0, left: 0, right: 0, transform: `translateY(${v.start - virtualizer.options.scrollMargin}px)` }
+              : { contentVisibility: 'auto', containIntrinsicSize: 'auto 28px' }}>
             {/* Left stripe — solid 3px service-color marker so the eye
                 can scan service handoffs down the trace. Selected row
                 gets a brighter, wider stripe to mark focus. */}
@@ -859,6 +925,7 @@ export function TraceWaterfall({
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

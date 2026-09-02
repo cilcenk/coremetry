@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { createCoalescer, type Coalescer } from './invalidationCoalescer';
 import { eventInvalidations, catchupInvalidations, type EventKind } from './eventInvalidations';
 
 // useEventStream — live-update bus subscriber (v0.8.529 single-SSE).
@@ -29,10 +30,21 @@ import { eventInvalidations, catchupInvalidations, type EventKind } from './even
 const LEADER_LOCK = 'coremetry-sse-leader';
 const CHANNEL = 'coremetry-events';
 
-function applyInvalidations(qc: QueryClient, kind: EventKind | string) {
-  for (const key of eventInvalidations(kind)) {
-    qc.invalidateQueries({ queryKey: key });
+// v0.10.260 (perf §7 madde 4, F4) — olay başına invalidate yerine 250 ms
+// birleştirme: fırtınada aynı 'problems'/'inbox' ağaçları bir kez tazelenir.
+// QueryClient başına bir birleştirici (uygulama kabuğunda tek QC).
+const coalescers = new WeakMap<QueryClient, Coalescer>();
+function coalescerFor(qc: QueryClient): Coalescer {
+  let c = coalescers.get(qc);
+  if (!c) {
+    c = createCoalescer(key => qc.invalidateQueries({ queryKey: key }));
+    coalescers.set(qc, c);
   }
+  return c;
+}
+function applyInvalidations(qc: QueryClient, kind: EventKind | string) {
+  const c = coalescerFor(qc);
+  for (const key of eventInvalidations(kind)) c.add(key);
 }
 function applyCatchup(qc: QueryClient) {
   for (const key of catchupInvalidations()) {

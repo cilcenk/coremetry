@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import type { GoDuration } from '@/lib/utils';
 import { keys } from './keys';
-import type { Problem, EvaluatorHealth } from '@/lib/types';
+import type { Problem, EvaluatorHealth, BlastRadius } from '@/lib/types';
 
 // /api/problems — the open-incident inbox feeding /problems,
 // /anomalies, the sidebar badge, and several deep-link
@@ -135,5 +136,17 @@ export function useEvaluatorHealth() {
       },
     refetchInterval: 30_000,
     staleTime: 25_000,
+  });
+}
+
+// v0.10.260 (perf §7 madde 4, F3 ⭐) — inbox'ın açık problem satırları için
+// TEK blast-radius isteği. Anahtar sıralı servis kümesi; staleTime = sunucu
+// TTL (60 s); boş kümede fetch yok; signal ile iptal (cancellation.test.ts).
+export function useBlastRadiusBatch(services: string[], since: GoDuration = '1h') {
+  return useQuery<{ items: Record<string, BlastRadius>; since: string }>({
+    queryKey: keys.problems.blastRadius(services, since),
+    queryFn: ({ signal }) => api.blastRadiusBatch(services, since, signal),
+    staleTime: 60_000,
+    enabled: services.length > 0,
   });
 }

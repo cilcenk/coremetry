@@ -31,6 +31,7 @@ import { IconBell, IconSparkles } from '@/components/icons';
 import { useProblems, useProblemByID, useServicesMetadata, keys } from '@/lib/queries';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { useBlastRadiusBatch } from '@/lib/queries/problems';
 import { fmtFixed, tsLong } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
@@ -339,6 +340,14 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // Preserve the tri-state contract (undefined loading / null error /
   // rows) the render below branches on.
   const sorted = data == null ? data : dt.sortedRows;
+  // v0.10.260 (perf §7 madde 4, F3 ⭐) — açık satırların servisleri TEK
+  // toplu blast-radius isteğiyle (satır başına istek yerine; 200 satır =
+  // 200 istek + 200 cache anahtarıydı). Küme sıralı → anahtar kararlı.
+  const openServices = useMemo(
+    () => Array.from(new Set((sorted ?? []).filter(p => p.status === 'open' && p.service).map(p => p.service))).sort(),
+    [sorted],
+  );
+  const blast = useBlastRadiusBatch(openServices);
 
   // Counts per severity for the chip labels — operator sees
   // "critical (3)" instead of guessing how many would land.
@@ -702,7 +711,7 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                             with no upstream callers. Cascade
                             count surfaces in amber. */}
                         {p.status === 'open' && p.service && (
-                          <BlastRadiusChip service={p.service} />
+                          <BlastRadiusChip data={blast.data?.items?.[p.service] ?? null} />
                         )}
                         {isAnomaly && (
                           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
@@ -990,15 +999,8 @@ function fmtAge(sec: number): string {
 // shift the chip to amber + the count surfaces in the tooltip
 // so the operator sees "this isn't isolated — 3 downstream
 // services are already firing too" without expanding the row.
-function BlastRadiusChip({ service }: { service: string }) {
-  const [data, setData] = useState<import('@/lib/types').BlastRadius | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    api.serviceBlastRadius(service)
-      .then(d => { if (!cancelled) setData(d); })
-      .catch(() => { /* silent — chip just doesn't render */ });
-    return () => { cancelled = true; };
-  }, [service]);
+// v0.10.260 — veri toplu uçtan (useBlastRadiusBatch) gelir; çip fetch yapmaz.
+function BlastRadiusChip({ data }: { data: import('@/lib/types').BlastRadius | null }) {
   if (!data || data.totalCallers === 0) return null;
   const cascading = data.cascadingCallers > 0;
   const tooltipLines = [

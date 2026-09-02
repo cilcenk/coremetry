@@ -70,3 +70,4 @@ export {
 } from './entities';
 export { useRollouts, useRolloutStats, useRolloutRuns, useRolloutDetail } from './rollouts'; // v0.10.201/203
 export { useTablePrefs } from './prefs'; // v0.10.248 — kalıcı sütun tercihi
+export { useBlastRadiusBatch } from './problems'; // v0.10.260 — inbox toplu blast-radius

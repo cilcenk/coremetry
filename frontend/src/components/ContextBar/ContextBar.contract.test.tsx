@@ -75,3 +75,11 @@ describe('ContextBar — zaman seçici sağda (v0.10.255, operatör)', () => {
     expect(idxRange).toBeGreaterThan(idxService);
   });
 });
+
+describe('ContextBar — gizli boyut (v0.10.257, operatör: service iki kez)', () => {
+  it('hidden içindeki boyut çubukta hiç çizilmez', () => {
+    const el = render(<ContextBar ctx={ctxOf(['range', 'env', 'cluster'])} hidden={['service']} />);
+    expect(el.querySelector('input[aria-label="Service"], input[placeholder="All services"]')).toBeNull();
+    expect(el.querySelector('select[aria-label="Cluster"]')).not.toBeNull();
+  });
+});

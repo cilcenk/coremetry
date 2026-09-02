@@ -25,6 +25,13 @@ export interface ContextBarProps {
   ctx: ContextParamsResult;
   /** Sayfa `?env=` değerini sorgularına geçiriyorsa true (EnvPicker applies). */
   envApplies?: boolean;
+  /**
+   * v0.10.257 (operatör: "service filtresi iki defa olmuş") — sayfanın KENDİ
+   * kontrolüyle zaten sunduğu boyutlar çubukta HİÇ çizilmez (devre dışı
+   * kutu bile değil). Uygulanmayan-ama-gelecek boyutlar (namespace/compare)
+   * devre dışı + ipucu kalır.
+   */
+  hidden?: ContextDim[];
 }
 
 const NOT_APPLIED = 'Bu sayfada uygulanmıyor';
@@ -34,8 +41,9 @@ function scopeCount(p: ContextParamsResult['params']): number {
   return [p.cluster, p.namespace, p.service].filter(Boolean).length;
 }
 
-export function ContextBar({ ctx, envApplies = false }: ContextBarProps) {
+export function ContextBar({ ctx, envApplies = false, hidden = [] }: ContextBarProps) {
   const { params, applies, set, windowNs } = ctx;
+  const hide = new Set<ContextDim>(hidden);
   const narrow = useIsNarrow();
   const [open, setOpen] = useState(false);
   const clusterOn = applies.has('cluster');
@@ -45,16 +53,18 @@ export function ContextBar({ ctx, envApplies = false }: ContextBarProps) {
 
   const scopeControls: ReactNode = (
     <>
-      <ClusterControl value={params.cluster} options={clusters} disabled={!clusterOn}
-        onChange={v => patch({ cluster: v })} />
-      <NamespaceControl value={params.namespace} disabled={!applies.has('namespace') || (clusterOn && !params.cluster)}
-        onChange={v => patch({ namespace: v })} />
-      <div className="ctx-field" title={applies.has('service') ? undefined : NOT_APPLIED}>
-        <span className="field-label">Service</span>
-        {applies.has('service')
-          ? <ServicePicker value={params.service} onChange={v => patch({ service: v })} placeholder="All services" width={180} />
-          : <input className="ctx-disabled" disabled aria-label="Service" placeholder="—" title={NOT_APPLIED} />}
-      </div>
+      {!hide.has('cluster') && <ClusterControl value={params.cluster} options={clusters} disabled={!clusterOn}
+        onChange={v => patch({ cluster: v })} />}
+      {!hide.has('namespace') && <NamespaceControl value={params.namespace} disabled={!applies.has('namespace') || (clusterOn && !params.cluster)}
+        onChange={v => patch({ namespace: v })} />}
+      {!hide.has('service') && (
+        <div className="ctx-field" title={applies.has('service') ? undefined : NOT_APPLIED}>
+          <span className="field-label">Service</span>
+          {applies.has('service')
+            ? <ServicePicker value={params.service} onChange={v => patch({ service: v })} placeholder="All services" width={180} />
+            : <input className="ctx-disabled" disabled aria-label="Service" placeholder="—" title={NOT_APPLIED} />}
+        </div>
+      )}
     </>
   );
 
@@ -72,7 +82,7 @@ export function ContextBar({ ctx, envApplies = false }: ContextBarProps) {
           <div role="group" aria-label="Kapsam" className={open ? 'ctx-panel is-open' : 'ctx-panel'}>{scopeControls}</div>
         </>
       ) : scopeControls}
-      {applies.has('compare') && (
+      {applies.has('compare') && !hide.has('compare') && (
         params.compare
           ? <Chip active pill onRemove={() => patch({ compare: '' })} removeLabel="Karşılaştırmayı kapat">Compare: prior</Chip>
           : <Chip pill onClick={() => patch({ compare: 'prior' })} title="Önceki eş-boy pencereyle karşılaştır">Compare</Chip>

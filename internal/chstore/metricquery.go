@@ -188,6 +188,31 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 	// SONRA. Öne alınsaydı p50/p95/p99 sorguları buradan geçerdi ve 0008
 	// yüzdelik taşımadığı için ya yanlış cevap ya da boşuna prob olurdu
 	// (v0.9.669 sınıfı: prob penceresini/WHERE'ini oynatan sıra hatası).
+	// v0.10.261 (perf §7 madde 5, CDV-5) — pencere + auto-step ÇÖZÜMÜ rollup
+	// planlarından ÖNCE: StepSeconds=0 (auto) planı "ham" a düşürüyordu, yani
+	// Explore/grafiklerin çoğunluğu (adım seçmeyen istekler) 0003/0008
+	// katmanlarına hiç erişemiyordu. Aşağıdaki blok eskiden ham yolun hemen
+	// üstündeydi; taşındı, içeriği aynı (v0.8.243 clamp dahil).
+	// v0.8.243 — min-step clamp: never bucket finer than the metric's
+	// observed export cadence (Grafana's $__rate_interval equivalent —
+	// see metric_export_interval.go). Normalize the window + auto-step
+	// HERE with the same rules buildMetricQuerySQL applies internally,
+	// so the clamp sees the effective step, not the raw 0=auto.
+	now := time.Now()
+	if f.To.IsZero() {
+		f.To = now
+	}
+	if f.From.IsZero() {
+		f.From = f.To.Add(-24 * time.Hour)
+	}
+	if f.StepSeconds <= 0 {
+		// v0.9.105 (F1) — pixel-adaptif; MaxDataPoints=0 ise eski ladder.
+		f.StepSeconds = metricAutoStepPx(f.From, f.To, f.MaxDataPoints)
+	}
+	// v0.9.687 — filtreler proba da iniyor (bkz. metricrate.go'daki not).
+	if iv := s.metricExportIntervalFiltered(ctx, f.Name, f.Service, f.Filters, len(f.GroupBy) > 0); iv > 0 {
+		f.StepSeconds = clampStepToExport(f.StepSeconds, iv)
+	}
 	if ser, ok := s.tryMetricRollupRoute(ctx, f); ok {
 		return ser, nil
 	}
@@ -209,27 +234,6 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 				// hata → ham yola devam (fail-open)
 			}
 		}
-	}
-
-	// v0.8.243 — min-step clamp: never bucket finer than the metric's
-	// observed export cadence (Grafana's $__rate_interval equivalent —
-	// see metric_export_interval.go). Normalize the window + auto-step
-	// HERE with the same rules buildMetricQuerySQL applies internally,
-	// so the clamp sees the effective step, not the raw 0=auto.
-	now := time.Now()
-	if f.To.IsZero() {
-		f.To = now
-	}
-	if f.From.IsZero() {
-		f.From = f.To.Add(-24 * time.Hour)
-	}
-	if f.StepSeconds <= 0 {
-		// v0.9.105 (F1) — pixel-adaptif; MaxDataPoints=0 ise eski ladder.
-		f.StepSeconds = metricAutoStepPx(f.From, f.To, f.MaxDataPoints)
-	}
-	// v0.9.687 — filtreler proba da iniyor (bkz. metricrate.go'daki not).
-	if iv := s.metricExportIntervalFiltered(ctx, f.Name, f.Service, f.Filters, len(f.GroupBy) > 0); iv > 0 {
-		f.StepSeconds = clampStepToExport(f.StepSeconds, iv)
 	}
 
 	sql, args, err := buildMetricQuerySQL(f, now, instrument, temporality, s.MetricExclusions())

@@ -535,6 +535,11 @@ type ListFieldsResult struct {
 	// Total — how many distinct paths the mapping actually had, before
 	// the cap. Equal to len(Fields) when nothing was dropped.
 	Total int `json:"total"`
+	// Types (v0.10.280, log-search audit §2.2) — alan → mapping tipi
+	// (keyword/text/long/date/boolean/ip…), yalnız Fields'taki yollar.
+	// ES: aynı GetMapping turundan (ek _field_caps turu YOK — mapping
+	// tipi zaten taşıyor); CH: sabit şema + örneklenmiş anahtarlar.
+	Types map[string]string `json:"types,omitempty"`
 }
 
 func (s *ESStore) ListFields(ctx context.Context) ([]string, error) {
@@ -576,12 +581,14 @@ func (s *ESStore) ListFieldsBounded(ctx context.Context) (ListFieldsResult, erro
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
 		return ListFieldsResult{}, err
 	}
-	seen := map[string]struct{}{}
+	types := map[string]string{}
 	for _, idx := range body {
-		walkProperties("", idx.Mappings.Properties, seen)
+		walkProperties("", idx.Mappings.Properties, types)
 	}
-	out := make([]string, 0, len(seen))
-	for k := range seen {
+	seen := make(map[string]struct{}, len(types))
+	out := make([]string, 0, len(types))
+	for k := range types {
+		seen[k] = struct{}{}
 		out = append(out, k)
 	}
 	sortStrings(out)
@@ -596,7 +603,11 @@ func (s *ESStore) ListFieldsBounded(ctx context.Context) (ListFieldsResult, erro
 		// çalışır; cap'e kurban giden konvansiyonel yol geri eklenir.
 		out = ensureConventionalFields(out, seen)
 	}
-	return ListFieldsResult{Fields: out, Total: total}, nil
+	outTypes := make(map[string]string, len(out))
+	for _, f := range out {
+		outTypes[f] = types[f]
+	}
+	return ListFieldsResult{Fields: out, Total: total, Types: outTypes}, nil
 }
 
 // EQLSearch runs ES Event Query Language sequence detection.
@@ -1144,7 +1155,8 @@ func (s *ESStore) FieldStats(ctx context.Context, f Filter, field string, limit 
 // nested types (object / nested) into dot paths. Skips internal
 // fields starting with "_". Only emits leaf paths whose type
 // looks searchable.
-func walkProperties(prefix string, props map[string]any, out map[string]struct{}) {
+// v0.10.280 — çıktı artık yol → mapping tipi (alan paneli tip rozeti).
+func walkProperties(prefix string, props map[string]any, out map[string]string) {
 	for name, raw := range props {
 		if name == "" || name[0] == '_' {
 			continue
@@ -1165,7 +1177,7 @@ func walkProperties(prefix string, props map[string]any, out map[string]struct{}
 		switch t {
 		case "keyword", "text", "long", "integer", "short",
 			"double", "float", "date", "boolean", "ip":
-			out[path] = struct{}{}
+			out[path] = t
 		}
 	}
 }

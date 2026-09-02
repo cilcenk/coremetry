@@ -396,6 +396,11 @@ func (s *Server) serveLogsSearch(w http.ResponseWriter, r *http.Request, q url.V
 	// straight to ES. Key hashes EVERY filter input; raw from/to strings keep a
 	// relative window stable within the TTL (mirrors getLogsTimeseries).
 	// (operator asked to ease ES request pressure).
+	// v0.10.280 — CH arka ucunda ayrışmayan arama metni 400 (mesaj
+	// operatöre); sessiz alt-dize düşüşü yalnız derin katmanda kalır.
+	if s.rejectLogQuerySyntax(w, f.Search) {
+		return
+	}
 	key := logsSearchKey(f, q.Get("from"), q.Get("to"))
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.330 (pivot Phase 2) — the TRACE-LOGS branch (?traceId=, the
@@ -524,9 +529,13 @@ func (s *Server) getLogsFields(w http.ResponseWriter, r *http.Request) {
 			if res.Fields == nil {
 				res.Fields = []string{}
 			}
+			if res.Types == nil {
+				res.Types = map[string]string{}
+			}
 			return map[string]any{
 				"fields":  res.Fields,
 				"total":   res.Total,
+				"types":   res.Types, // v0.10.280 — alan paneli tip rozeti
 				"backend": s.logs.Backend(),
 			}, nil
 		}
@@ -977,6 +986,9 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 		SeverityMin: uint8(sev),
 		TraceID:     q.Get("traceId"),
 		HasTrace:    parseBoolParam(q.Get("hasTrace")), // v0.8.406 — trace-only filter
+	}
+	if s.rejectLogQuerySyntax(w, f.Search) { // v0.10.280
+		return
 	}
 	bucketSec := parseInt(q.Get("bucketSec"), 30)
 	// v0.5.259 — was: floor 5s. Lowered to 1s so the operator can

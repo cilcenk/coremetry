@@ -3832,3 +3832,10 @@ thead th:hover .th-remove { opacity: 1; }
 .cx-verdict { margin: 0 0 8px; padding: 6px 10px; border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; font-weight: 600; }
 .cx-verdict-k { display: inline-block; font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: .06em; color: var(--accent2); margin-right: 8px; font-weight: 700; }
 .cx-evidence { margin: 0 0 8px; font-size: var(--fs-xs); color: var(--text2); }
+
+/* v0.10.280 — /logs alan paneli tip rozeti (lib/logFieldTypes) */
+.lf-type {
+  display: inline-block; flex: none; width: 12px; text-align: center;
+  font-size: 9px; line-height: 1; color: var(--text3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

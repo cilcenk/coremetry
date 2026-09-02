@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   defaultColumnModel, reconcileColumnModel, visibleColumnIds, toggleHidden, moveColumnTo,
-  parseColsParam, modelFromVisible, resolveColumnModel, serializeColumnModel, parseColumnModel,
+  parseColsParam, modelFromVisible, resolveColumnModel, serializeColumnModel, parseColumnModel, orderColumnsByModel,
   type ColumnModel,
 } from './columnModel';
 
@@ -85,5 +85,14 @@ describe('moveColumnTo / serialize / parse', () => {
     expect(parseColumnModel('{not json')).toBeNull();
     expect(parseColumnModel({ v: 2, order: [], hidden: [] })).toBeNull();
     expect(parseColumnModel({ v: 1, order: ['a', 5, ''], hidden: [], widths: { a: 10, b: -1 } })).toEqual({ v: 1, order: ['a'], hidden: [], sig: '', widths: { a: 10 } });
+  });
+});
+
+describe('orderColumnsByModel', () => {
+  it('modele göre sıralar, gizlileri düşürür, modelde olmayanı sona ekler', () => {
+    const declared = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }];
+    const model: ColumnModel = { v: 1, order: ['c', 'zzz', 'a', 'b'], hidden: ['b'], sig: 's' };
+    expect(orderColumnsByModel(declared, model).map(c => c.id)).toEqual(['c', 'a', 'd']);
+    expect(orderColumnsByModel(declared, null)).toBe(declared);
   });
 });

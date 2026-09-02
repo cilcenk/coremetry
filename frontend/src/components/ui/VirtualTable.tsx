@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { DataTableColgroup, DataTableHead, type DataTable } from '../DataTable';
 
@@ -66,14 +66,26 @@ export function VirtualTable<T>({
   const totalSize = virtualizer.getTotalSize();
   const padTop = items.length ? items[0].start : 0;
   const padBottom = items.length ? totalSize - items[items.length - 1].end : 0;
-  const colCount = (leading?.length ?? 0) + dt.columns.filter(c => !c.headerHidden).length;
+  // v0.10.249 (audit §9, dört gizli kusur): colSpan GÖRÜNÜR kolonları
+  // sayar (dar ekranda mobileHide düşer, boş satır taşmasın).
+  const colCount = (leading?.length ?? 0) + dt.visibleColumns.filter(c => !c.headerHidden).length;
+  // Klavye seçimi (j/k) sanal satıra kaydırır — useTableNav'ın
+  // querySelector'ı mount edilmemiş satırı bulamaz.
+  const selected = dt.nav.selected;
+  useEffect(() => {
+    if (selected >= 0 && selected < rows.length) virtualizer.scrollToIndex(selected, { align: 'auto' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+  // contain:strict yalnız sınırlı (sayısal) yükseklikte anlamlı; 'auto'
+  // yükseklikte içeriği keser.
+  const contain = typeof height === 'number' ? 'strict' : undefined;
 
   return (
     <div
       ref={parentRef}
       className={['vt-scroll', className].filter(Boolean).join(' ')}
-      style={{ height, overflow: 'auto', position: 'relative', contain: 'strict' }}>
-      <table style={{ tableLayout: 'fixed', width: '100%' }}>
+      style={{ height, overflow: 'auto', position: 'relative', contain }}>
+      <table style={{ tableLayout: 'fixed', width: '100%' }} aria-rowcount={rows.length}>
         <DataTableColgroup dt={dt} leading={leading} />
         <DataTableHead dt={dt} leading={leadingHead} />
         <tbody>
@@ -91,6 +103,8 @@ export function VirtualTable<T>({
                     key={vi.key}
                     {...rpRest}
                     className={cls}
+                    aria-rowindex={vi.index + 1}
+                    aria-selected={dt.selection ? dt.selection.isSelected(row) : undefined}
                     style={{ height: rowHeight }}
                     onClick={onRowClick ? () => onRowClick(row, vi.index) : undefined}>
                     {renderRow(row, vi.index)}

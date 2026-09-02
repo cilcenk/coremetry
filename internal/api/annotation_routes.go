@@ -39,6 +39,11 @@ type AnnotationItem struct {
 
 const annotationCap = 500
 
+// v0.10.247 — kayıt route_registry.go defteri üzerinden (api.go satırı kaldırıldı).
+func init() {
+	registerRoutesExtra("annotation", func(s *Server, mux *http.ServeMux) { registerAnnotationRoutes(mux, s) })
+}
+
 func registerAnnotationRoutes(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("GET /api/annotations", s.getAnnotations)
 }

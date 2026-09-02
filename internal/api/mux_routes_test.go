@@ -1,7 +1,6 @@
 package api
 
 import (
-	"net/http"
 	"testing"
 )
 
@@ -22,6 +21,8 @@ func TestMuxRoutePatterns(t *testing.T) {
 		}
 	}()
 	s := &Server{}
-	mux := http.NewServeMux()
-	s.registerRoutes(mux)
+	// v0.10.247 — buildMux: init() defteri (route_registry.go) rotaları da
+	// çakışma testine girer; yalnız registerRoutes olsaydı defter rotası
+	// boot'ta panic'lerdi (v0.9.465-470 sınıfı).
+	_ = s.buildMux()
 }

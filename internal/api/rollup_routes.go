@@ -29,6 +29,11 @@ import (
 // stepSeconds SÖZLEŞMENİN parçası — grafik-audit Faz B kontratıyla aynı.
 // Tablolar yoksa (migrations elle uygulanmadı) 424 + dürüst mesaj; boot ve
 // ingest bu uçtan tamamen bağımsızdır.
+// v0.10.247 — kayıt route_registry.go defteri üzerinden (api.go satırı kaldırıldı).
+func init() {
+	registerRoutesExtra("rollup", func(s *Server, mux *http.ServeMux) { registerRollupRoutes(mux, s) })
+}
+
 func registerRollupRoutes(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("GET /api/rollup/red", s.getRollupRED)
 }

@@ -603,24 +603,9 @@ func (s *Server) Start() error {
 	return s.listen(mux)
 }
 
-// buildMux registers every route. Ayrı fonksiyon (v0.9.471): Go 1.22
-// ServeMux kalıp çakışmaları KAYIT anında panic'ler — kayıt Start()
-// içinde gömülüyken hiçbir test bunu göremiyordu ve v0.9.465-470
-// tag'leri boot'ta patladı. TestMuxRoutePatterns artık bu fonksiyonu
-// kurarak sınıfı derleme-sonrası ilk test koşusunda yakalar.
-func (s *Server) buildMux() *http.ServeMux {
-	mux := http.NewServeMux()
-	s.registerRoutes(mux)
-	return mux
-}
-
+// buildMux → route_registry.go (v0.10.247): registerRoutes + init()
+// defteri (registerRoutesExtra). Yeni yüzey api.go'ya satır eklemez.
 func (s *Server) registerRoutes(mux *http.ServeMux) {
-
-	// Rollup okuma uçları (Aşama 2) — api.go büyütülmez kısıtı gereği
-	// tüm route'lar internal/api/rollup_routes.go'da yaşar.
-	registerRollupRoutes(mux, s)
-	// Annotation şeridi (Faz C-2 Ş1) — aynı desen.
-	registerAnnotationRoutes(mux, s)
 
 	// OTLP HTTP
 	otlpHandler := otlpRouteGuard(s.roleIngestOff, otlp.HTTPHandler(s.ing))

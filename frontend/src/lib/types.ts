@@ -1346,6 +1346,11 @@ export interface TempoSnapshot {
   // v0.5.218 — operators with self-signed Tempo certs in POC
   // can flip this on to skip TLS chain verification. Default off.
   insecureSkipVerify?: boolean;
+  // v0.10.271 — token referansı (`env:NAME` | `file:/path`); referans
+  // görünür, secret değil. tokenResolved/tokenError Settings rozeti.
+  tokenRef?: string;
+  tokenResolved?: boolean;
+  tokenError?: string;
 }
 export interface TempoSettingsInput {
   enabled: boolean;
@@ -1355,6 +1360,7 @@ export interface TempoSettingsInput {
   username?: string;
   orgId?: string;
   insecureSkipVerify?: boolean;
+  tokenRef?: string;
 }
 
 // External VictoriaMetrics READ backend (v0.9.1150, Faz 1). When

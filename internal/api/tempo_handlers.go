@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cilcenk/coremetry/internal/secretref"
 	"github.com/cilcenk/coremetry/internal/tempo"
 )
 
@@ -42,6 +43,7 @@ func (s *Server) putTempoSettings(w http.ResponseWriter, r *http.Request) {
 		Username           string `json:"username"`
 		OrgID              string `json:"orgId"`
 		InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+		TokenRef           string `json:"tokenRef"` // v0.10.271
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -51,6 +53,11 @@ func (s *Server) putTempoSettings(w http.ResponseWriter, r *http.Request) {
 	in.AuthType = strings.TrimSpace(in.AuthType)
 	in.Username = strings.TrimSpace(in.Username)
 	in.OrgID = strings.TrimSpace(in.OrgID)
+	in.TokenRef = strings.TrimSpace(in.TokenRef)
+	if in.TokenRef != "" && !secretref.Valid(in.TokenRef) {
+		http.Error(w, secretref.InvalidMessage, http.StatusBadRequest)
+		return
+	}
 	if in.Enabled && in.BaseURL == "" {
 		http.Error(w, "baseUrl required when enabled", http.StatusBadRequest)
 		return
@@ -77,6 +84,7 @@ func (s *Server) putTempoSettings(w http.ResponseWriter, r *http.Request) {
 		Username:           in.Username,
 		OrgID:              in.OrgID,
 		InsecureSkipVerify: in.InsecureSkipVerify,
+		TokenRef:           in.TokenRef,
 	}
 	if cfg.Token == "" {
 		cfg.Token = cur.Token
@@ -97,6 +105,8 @@ func (s *Server) putTempoSettings(w http.ResponseWriter, r *http.Request) {
 		"hasToken":           snap.HasToken,
 		"orgId":              snap.OrgID,
 		"insecureSkipVerify": snap.InsecureSkipVerify,
+		"tokenRef":           snap.TokenRef, // referans, secret değil
+		"tokenResolved":      snap.TokenResolved,
 	})
 	s.audit(r, "settings.tempo.update", "settings", "tempo", string(details))
 	writeJSON(w, snap)

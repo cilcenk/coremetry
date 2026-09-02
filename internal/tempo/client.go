@@ -19,20 +19,22 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/secretref"
 )
 
 // Settings is the persisted Tempo backend config. Only one Tempo
 // endpoint per Coremetry install today; if federation becomes a
 // real need, extend to a list.
 type Settings struct {
-	Enabled  bool   `json:"enabled"`
-	BaseURL  string `json:"baseUrl"`
+	Enabled bool   `json:"enabled"`
+	BaseURL string `json:"baseUrl"`
 	// AuthType — none | bearer | basic. Bearer covers most
 	// Grafana Cloud setups (Tempo API key as Bearer); basic
 	// covers self-hosted Tempo behind nginx with htpasswd.
@@ -40,17 +42,21 @@ type Settings struct {
 	// Token holds the bearer token OR the basic-auth password.
 	// Never echoed in Snapshot() responses — the UI only sees
 	// HasToken so the operator can tell if one is configured.
-	Token    string `json:"token,omitempty"`
+	Token string `json:"token,omitempty"`
 	// Username — only used for basic auth.
 	Username string `json:"username,omitempty"`
 	// OrgID — X-Scope-OrgID header for multi-tenant Tempo (Grafana
 	// Cloud requires this; self-hosted single-tenant ignores it).
-	OrgID    string `json:"orgId,omitempty"`
+	OrgID string `json:"orgId,omitempty"`
 	// InsecureSkipVerify disables TLS certificate verification on
 	// the HTTPS path. Useful for self-hosted Tempo behind a
 	// self-signed cert during a POC; left off by default since
 	// production deployments should fix their PKI instead.
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
+	// TokenRef — v0.10.271: `env:NAME` | `file:/path` (internal/secretref);
+	// doluysa saklı Token'a TERCİH edilir. Çözüm Configure'da (boot, PUT,
+	// 30 s yenileme) — istek yolunda IO yok; file rotasyonu ≤30 s.
+	TokenRef string `json:"tokenRef,omitempty"`
 }
 
 // Snapshot is the version returned by GET /api/settings/tempo.
@@ -63,6 +69,10 @@ type Snapshot struct {
 	Username           string `json:"username,omitempty"`
 	OrgID              string `json:"orgId,omitempty"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"`
+	// v0.10.271 — referans görünür (secret değil); çözüm durumu rozet.
+	TokenRef      string `json:"tokenRef,omitempty"`
+	TokenResolved bool   `json:"tokenResolved"`
+	TokenError    string `json:"tokenError,omitempty"`
 }
 
 // Service is the per-process Tempo client. Holds the live config
@@ -72,11 +82,19 @@ type Service struct {
 	mu  sync.RWMutex
 	cfg Settings
 	cli *http.Client
+	// v0.10.271 — tokenRef çözümü (Configure'da); testler getenv/readFile
+	// enjekte eder (influx deseni).
+	resolvedToken string
+	resolveErr    string
+	getenv        func(string) string
+	readFile      func(string) ([]byte, error)
 }
 
 func New() *Service {
 	return &Service{
-		cli: newTempoHTTPClient(false),
+		cli:      newTempoHTTPClient(false),
+		getenv:   os.Getenv,
+		readFile: os.ReadFile,
 	}
 }
 
@@ -145,6 +163,10 @@ func (s *Service) SavePersisted(ctx context.Context, store settingsStore, cfg Se
 	if s == nil || store == nil {
 		return nil
 	}
+	// v0.10.271 — düz token blob'a referans kılığında GİRMEZ.
+	if cfg.TokenRef != "" && !secretref.Valid(cfg.TokenRef) {
+		return errors.New(secretref.InvalidMessage)
+	}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
 		return err
@@ -172,6 +194,42 @@ func (s *Service) Configure(cfg Settings) {
 	if s.cli == nil || prevInsecure != cfg.InsecureSkipVerify {
 		s.cli = newTempoHTTPClient(cfg.InsecureSkipVerify)
 	}
+	// v0.10.271 — referans burada çözülür (boot / PUT / 30 s yenileme).
+	s.resolvedToken, s.resolveErr = "", ""
+	if cfg.TokenRef != "" {
+		getenv, readFile := s.getenv, s.readFile
+		if getenv == nil {
+			getenv = os.Getenv
+		}
+		if readFile == nil {
+			readFile = os.ReadFile
+		}
+		if v, err := secretref.ResolveWith(cfg.TokenRef, getenv, readFile); err != nil {
+			s.resolveErr = err.Error()
+		} else {
+			s.resolvedToken = v
+		}
+	}
+}
+
+// effectiveToken — v0.10.271: referans doluysa çözülmüş değer (çözülemediyse
+// BOŞ — eski/saklı token'a sessizce düşülmez, Snapshot hatayı söyler),
+// yoksa saklı düz token. SAF.
+func effectiveToken(cfg Settings, resolved string) string {
+	if cfg.TokenRef != "" {
+		return resolved
+	}
+	return cfg.Token
+}
+
+// EffectiveToken — kilitli okuma.
+func (s *Service) EffectiveToken() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return effectiveToken(s.cfg, s.resolvedToken)
 }
 
 // newTempoHTTPClient builds an http.Client tuned for cold S3-
@@ -202,6 +260,9 @@ func (s *Service) Snapshot() Snapshot {
 		Username:           s.cfg.Username,
 		OrgID:              s.cfg.OrgID,
 		InsecureSkipVerify: s.cfg.InsecureSkipVerify,
+		TokenRef:           s.cfg.TokenRef,
+		TokenResolved:      s.cfg.TokenRef != "" && s.resolvedToken != "",
+		TokenError:         s.resolveErr,
 	}
 }
 
@@ -245,6 +306,7 @@ func (s *Service) LookupTrace(ctx context.Context, traceID string) ([]chstore.Sp
 		return nil, errors.New("tempo not configured")
 	}
 	cfg := s.CurrentSettings()
+	token := s.EffectiveToken() // v0.10.271 — ref > saklı token
 
 	url := strings.TrimRight(cfg.BaseURL, "/") + "/api/traces/" + traceID
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -254,12 +316,12 @@ func (s *Service) LookupTrace(ctx context.Context, traceID string) ([]chstore.Sp
 	req.Header.Set("Accept", "application/json")
 	switch cfg.AuthType {
 	case "bearer":
-		if cfg.Token != "" {
-			req.Header.Set("Authorization", "Bearer "+cfg.Token)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
 		}
 	case "basic":
-		if cfg.Username != "" || cfg.Token != "" {
-			req.SetBasicAuth(cfg.Username, cfg.Token)
+		if cfg.Username != "" || token != "" {
+			req.SetBasicAuth(cfg.Username, token)
 		}
 	}
 	if cfg.OrgID != "" {
@@ -317,19 +379,19 @@ type otlpBatch struct {
 }
 
 type otlpSpan struct {
-	TraceID           string      `json:"traceId"`
-	SpanID            string      `json:"spanId"`
-	ParentSpanID      string      `json:"parentSpanId"`
-	Name              string      `json:"name"`
+	TraceID      string `json:"traceId"`
+	SpanID       string `json:"spanId"`
+	ParentSpanID string `json:"parentSpanId"`
+	Name         string `json:"name"`
 	// Kind is encoded as either an int (Tempo gRPC-to-JSON path)
 	// OR the canonical OTLP enum string ("SPAN_KIND_SERVER") —
 	// real-world Tempo deployments emit the string form. Same
 	// shape applies to Status.Code. otlpEnum unmarshals both
 	// without forcing a custom UnmarshalJSON on otlpSpan itself.
-	Kind              otlpEnum    `json:"kind"`
-	StartTimeUnixNano string      `json:"startTimeUnixNano"`
-	EndTimeUnixNano   string      `json:"endTimeUnixNano"`
-	Attributes        []otlpAttr  `json:"attributes"`
+	Kind              otlpEnum   `json:"kind"`
+	StartTimeUnixNano string     `json:"startTimeUnixNano"`
+	EndTimeUnixNano   string     `json:"endTimeUnixNano"`
+	Attributes        []otlpAttr `json:"attributes"`
 	Status            struct {
 		Code    otlpEnum `json:"code"`
 		Message string   `json:"message"`
@@ -425,7 +487,7 @@ func (e *otlpEnum) UnmarshalJSON(data []byte) error {
 type otlpAttr struct {
 	Key   string `json:"key"`
 	Value struct {
-		StringValue *string  `json:"stringValue,omitempty"`
+		StringValue *string `json:"stringValue,omitempty"`
 		// OTLP-JSON encodes int64 as a string. Parsing as
 		// *string handles overflow correctly.
 		IntValue    *string  `json:"intValue,omitempty"`

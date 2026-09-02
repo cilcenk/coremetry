@@ -9,47 +9,17 @@ package influx
 // (charts/coremetry/values.yaml). Düz token hiçbir yolda kabul edilmez
 // (Normalize → ValidTokenRef).
 
-import (
-	"fmt"
-	"regexp"
-	"strings"
-)
+import "github.com/cilcenk/coremetry/internal/secretref"
 
-var (
-	envRefRe  = regexp.MustCompile(`^env:[A-Za-z_][A-Za-z0-9_]*$`)
-	fileRefRe = regexp.MustCompile(`^file:/[^\s]+$`)
-)
+// v0.10.271 — çözücü internal/secretref'e taşındı; bu sarmalayıcılar
+// influx'un mevcut çağrı yerleri ve testleri için aynen kalır.
 
 // ValidTokenRef — `env:NAME` (POSIX env adı) ya da `file:/mutlak/yol`.
-func ValidTokenRef(ref string) bool {
-	return envRefRe.MatchString(ref) || fileRefRe.MatchString(ref)
-}
+func ValidTokenRef(ref string) bool { return secretref.Valid(ref) }
 
 // ResolveTokenRef — os üzerinden çözer (üretim yolu).
-func ResolveTokenRef(ref string) (string, error) {
-	return resolveTokenRef(ref, osGetenv, osReadFile)
-}
+func ResolveTokenRef(ref string) (string, error) { return secretref.Resolve(ref) }
 
 func resolveTokenRef(ref string, getenv func(string) string, readFile func(string) ([]byte, error)) (string, error) {
-	switch {
-	case envRefRe.MatchString(ref):
-		v := strings.TrimSpace(getenv(strings.TrimPrefix(ref, "env:")))
-		if v == "" {
-			return "", fmt.Errorf("tokenRef %s: ortam değişkeni boş ya da tanımsız", ref)
-		}
-		return v, nil
-	case fileRefRe.MatchString(ref):
-		b, err := readFile(strings.TrimPrefix(ref, "file:"))
-		if err != nil {
-			return "", fmt.Errorf("tokenRef %s: %w", ref, err)
-		}
-		// `kubectl create secret --from-file` sonda newline bırakır.
-		v := strings.TrimSpace(string(b))
-		if v == "" {
-			return "", fmt.Errorf("tokenRef %s: dosya boş", ref)
-		}
-		return v, nil
-	default:
-		return "", fmt.Errorf("tokenRef %q: şema `env:NAME` ya da `file:/path` olmalı", ref)
-	}
+	return secretref.ResolveWith(ref, getenv, readFile)
 }

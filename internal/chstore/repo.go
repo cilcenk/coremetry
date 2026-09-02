@@ -2639,6 +2639,15 @@ func registerTraceAttrMaterialized(cols map[string]string) {
 //
 // Keys flow as `?` parameters; HTTP-layer sanitisation (isSafeAttrKey)
 // already rejected anything outside [a-zA-Z0-9._-]. Pure — table-tested.
+// clusterAliasKeys — spans.cluster kolonunun coalesce zincirindeki
+// anahtarlar (clusterDeriveExpr / metricClusterExpr ile aynı altı
+// permütasyonun anahtar seti) + FilterBuilder'ın `resource.` önekli
+// yazımları. traces_extras_test.go clusterDeriveExpr'e pinler.
+var clusterAliasKeys = map[string]bool{
+	"cluster": true, "k8s.cluster.name": true, "openshift.cluster.name": true,
+	"resource.cluster": true, "resource.k8s.cluster.name": true, "resource.openshift.cluster.name": true,
+}
+
 func traceExtrasProjection(attrs []string) (string, []any) {
 	sel := ""
 	args := []any{}
@@ -2647,7 +2656,13 @@ func traceExtrasProjection(attrs []string) (string, []any) {
 		// kolonuna (k8s.cluster.name / openshift.cluster.name / cluster
 		// coalesce zinciri, v0.8.185) düşer; çıplak dizi araması yalnız
 		// literal `cluster` attribute'unu bulur (çoğu kurulumda boş — inceleme).
-		if key == "cluster" {
+		// v0.10.233 (docs/audit/traces-attribute-columns.md D1) — kolon adı
+		// yalnız literal `cluster` değil, kolonun coalesce ZİNCİRİNDEKİ her
+		// anahtar: varsayılan kolon `openshift.cluster.name` dizi yoluna
+		// düşüyordu (84 MiB / 212 ms vs 5.25 MiB / 66 ms, 50 trace, lokal
+		// query_log medyanı). Aynı kolon, aynı değer: clusterDeriveExpr'in
+		// kendisi bu anahtarları coalesce ediyor (k8s.cluster.name önce).
+		if clusterAliasKeys[key] {
 			sel += fmt.Sprintf(", anyIf(cluster, cluster != '') AS extra_%d", i)
 			continue
 		}

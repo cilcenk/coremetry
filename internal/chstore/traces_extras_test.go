@@ -143,3 +143,32 @@ func TestTraceExtrasBounds_AndSlack(t *testing.T) {
 		t.Fatalf("upper-bound slack: want +%v, got +%v", want, got)
 	}
 }
+
+// v0.10.233 (docs/audit/traces-attribute-columns.md D1) — cluster kolonunun
+// coalesce zincirindeki HER anahtar terfi `cluster` kolonunu okur; dizi
+// ifadesi yok, bind yok. Anahtar seti clusterDeriveExpr'e pinli: zincire
+// anahtar eklenip burası unutulursa o yazım sessizce şişman yola düşer.
+func TestTraceExtrasProjection_ClusterAliasesReadTheColumn(t *testing.T) {
+	for _, key := range []string{"cluster", "k8s.cluster.name", "openshift.cluster.name", "resource.k8s.cluster.name", "resource.openshift.cluster.name"} {
+		sel, args := traceExtrasProjection([]string{key})
+		if !strings.Contains(sel, "anyIf(cluster, cluster != '') AS extra_0") || strings.Contains(sel, "attr_values") {
+			t.Fatalf("%s must read the promoted cluster column; got:\n%s", key, sel)
+		}
+		if len(args) != 0 {
+			t.Fatalf("%s: column path binds no args, got %d", key, len(args))
+		}
+	}
+	for _, key := range []string{"k8s.cluster.name", "openshift.cluster.name", "cluster"} {
+		if !strings.Contains(clusterDeriveExpr, "'"+key+"'") {
+			t.Fatalf("clusterDeriveExpr no longer coalesces %q — alias map and column diverged", key)
+		}
+		if !clusterAliasKeys[key] {
+			t.Fatalf("clusterDeriveExpr key %q missing from clusterAliasKeys", key)
+		}
+	}
+	// Kolon adına benzeyen ama zincirde OLMAYAN anahtar dizi yolunda kalır.
+	sel, _ := traceExtrasProjection([]string{"cluster_name"})
+	if !strings.Contains(sel, "attr_values") {
+		t.Fatalf("unrelated key must stay on the array path; got:\n%s", sel)
+	}
+}

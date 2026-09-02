@@ -180,3 +180,34 @@ func TestPromotedAttrDDLMustBypassAlterPlanner(t *testing.T) {
 		t.Fatal("beklenmedik: ADD COLUMN hayatta kaldı — tuzak kapanmış olabilir, yorumları güncelle")
 	}
 }
+
+// v0.10.233 (traces audit D2) — function_id terfi kolonu: iki yazım, düz
+// String tipi, MATERIALIZED ifade + set(0) indeks; migrasyon 0013 ile
+// BİREBİR aynı ifade (dosya parity testi ayrı).
+func TestPromotedAttrFunctionID(t *testing.T) {
+	var a *promotedAttr
+	for i := range promotedAttrs {
+		if promotedAttrs[i].col == "attr_function_id" {
+			a = &promotedAttrs[i]
+		}
+	}
+	if a == nil {
+		t.Fatal("attr_function_id missing from promotedAttrs")
+	}
+	if a.res || a.colType() != "String" {
+		t.Fatalf("function_id is a span attribute with a plain String column: %+v", a)
+	}
+	expr := promotedAttrExprFor(*a)
+	for _, k := range []string{"'function_id'", "'FUNCTION_ID'"} {
+		if !strings.Contains(expr, k) {
+			t.Fatalf("expr must read both spellings, missing %s: %s", k, expr)
+		}
+	}
+	if !strings.Contains(expr, "attr_values[indexOf(attr_keys") || strings.Contains(expr, "res_values") {
+		t.Fatalf("function_id lives in span attrs, not resource: %s", expr)
+	}
+	got := promotedAttrDDL(*a, "", false, false)
+	if len(got) != 2 || !strings.Contains(got[0], "attr_function_id String MATERIALIZED") || !strings.Contains(got[1], "idx_attr_function_id attr_function_id TYPE set(0) GRANULARITY 4") {
+		t.Fatalf("fresh DDL: %v", got)
+	}
+}

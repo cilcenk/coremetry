@@ -85,6 +85,13 @@ func (a promotedAttr) colType() string {
 var promotedAttrs = []promotedAttr{
 	{col: "attr_channel_code", keys: []string{"CHANNEL_CODE", "channel_code"}},
 	{col: "attr_function_code", keys: []string{"FUNCTION_CODE", "function_code"}},
+	// v0.10.233 (docs/audit/traces-attribute-columns.md D2) — varsayılan
+	// dört trace kolonundan terfi kolonu OLMAYAN tek anahtar; dizi yolu
+	// 16× bayt okuyordu (audit §1c). Düz String (C3: kimlik değil, serbest
+	// değer — kardinalite ölçülmeden LC yok; `uniq(attr_function_id) < 10k`
+	// ölçülürse LC'ye geçiş ayrı sürüm). Prod (dış Distributed):
+	// repairPromotedAttrCols ALTER'ı atlar → migrations/0013_function_id.sql.
+	{col: "attr_function_id", keys: []string{"function_id", "FUNCTION_ID"}, typ: "String"},
 	// v0.10.127 — K8s entity katmanı (docs/plans/entity-layer-design-2026-08-28.md §2.3).
 	// Kanonik namespace zinciri identity.go'daki nsIdentityKeys'in k8s
 	// yarısı (service.namespace bilinçli DIŞARIDA: o "servis ad alanı",

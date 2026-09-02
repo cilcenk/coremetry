@@ -24,5 +24,5 @@ import "embed"
 
 // FS — gömülü DDL dosyaları. chstore.RollupApply okur.
 //
-//go:embed 0001_rollup_narrow.sql 0003_rollup_metrics.sql 0008_rollup_metrics_route.sql 0011_entity_layer.sql 0012_rollout_layer.sql
+//go:embed 0001_rollup_narrow.sql 0003_rollup_metrics.sql 0008_rollup_metrics_route.sql 0011_entity_layer.sql 0012_rollout_layer.sql 0013_function_id.sql 0013_function_id_rollback.sql
 var FS embed.FS

@@ -2595,9 +2595,17 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 				idArgs[i] = id
 			}
 			lwc.add("trace_id IN ("+chPlaceholders(len(ids))+")", idArgs...)
-			querySQL := buildGetTracesListSQL(lwc.sql(), havingSQL, sortCol, order)
+			// v0.10.241 — operator-reported (7 gün + http.route → boş/zaman
+			// aşımı): 2. aşama havingSQL'i taşıyordu, yani rootOnly'nin
+			// GLOBAL IN (SELECT trace_id FROM trace_summary_5m … TÜM pencere)
+			// alt sorgusu 1. aşamadan çıkarılmış ama 2. aşamada duruyordu —
+			// 238'in ikinci yarısı. Ölçüldü (lokal 7g): 2. aşama 3.57M satır /
+			// 434 MiB / 27 s → 159; alt sorgusuz aynı id listesi ~50 satır.
+			// Kök kontrolü zaten filterRootTraces ile id'ler üstünde yapıldı;
+			// 2. aşama HAFİF HAVING'i (alt sorgusuz) kullanır.
+			querySQL := buildGetTracesListSQL(lwc.sql(), lightHavingSQL, sortCol, order)
 			args := append([]any{}, lwc.args...)
-			args = append(args, havingArgs...)
+			args = append(args, lightHavingArgs...)
 			args = append(args, len(ids), 0)
 			rows, err := s.telemetryReadConn().Query(ctx, querySQL, args...)
 			if err != nil {

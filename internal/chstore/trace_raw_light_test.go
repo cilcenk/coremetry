@@ -8,6 +8,7 @@ package chstore
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -152,5 +153,42 @@ func TestApplyRootFilterPage(t *testing.T) {
 	}
 	if got := applyRootFilterPage(ids, map[string]bool{}, 0, 3); got != nil {
 		t.Fatalf("nothing has a root → empty: %v", got)
+	}
+}
+
+// TestRawLightStage2UsesLightHaving — v0.10.241 regresyon kapısı.
+// Operator-reported: 7 gün + http.route filtresi → boş sayfa / 159. Kök
+// neden: hafif iki-aşamalı yolun 2. aşaması havingSQL'i (rootOnly'nin TÜM
+// pencereyi tarayan GLOBAL IN trace_summary_5m alt sorgusu dahil) taşıyordu;
+// 238 alt sorguyu yalnız 1. aşamadan çıkarmıştı. Kök kontrolü id'ler
+// üstünde filterRootTraces ile yapıldığı için 2. aşama HAFİF HAVING'i
+// kullanmak ZORUNDA. Kaynak taraması: hafif blok içinde
+// buildGetTracesListSQL lightHavingSQL/lightHavingArgs ile çağrılır,
+// havingSQL/havingArgs ASLA.
+func TestRawLightStage2UsesLightHaving(t *testing.T) {
+	src, err := os.ReadFile("repo.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	start := strings.Index(text, "rawListLightEligible(f, rootPostFilter) {")
+	if start < 0 {
+		t.Fatal("hafif blok bulunamadı — test çapası kaydı")
+	}
+	end := strings.Index(text[start:], "served = true")
+	if end < 0 {
+		t.Fatal("hafif bloğun sonu (served = true) bulunamadı")
+	}
+	block := text[start : start+end]
+	if !strings.Contains(block, "buildGetTracesListSQL(lwc.sql(), lightHavingSQL, sortCol, order)") {
+		t.Error("2. aşama lightHavingSQL ile kurulmuyor")
+	}
+	if !strings.Contains(block, "append(args, lightHavingArgs...)") {
+		t.Error("2. aşama lightHavingArgs bağlamıyor")
+	}
+	for _, bad := range []string{"(lwc.sql(), havingSQL,", "append(args, havingArgs...)"} {
+		if strings.Contains(block, bad) {
+			t.Errorf("2. aşama ağır HAVING taşıyor (%q) — rootOnly GLOBAL IN alt sorgusu tüm pencereyi tarar (v0.10.241)", bad)
+		}
 	}
 }

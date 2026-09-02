@@ -23,6 +23,7 @@
 // kullanıyor — üçüncü bir sıralama fikri icat etmiyoruz.
 
 import type { SpanMetricSeries } from '@/lib/types';
+import { durationUnitToGrafana } from '@/lib/chart/metricUnit';
 import { rankRootOps, rootOpName } from './rootOpSeries';
 
 /** Kaç route çizilir. 10: panel 200px ve lejant varsayılan kapalı;
@@ -115,19 +116,7 @@ export function metricAvgToMs(value: number | null | undefined, unit: string | u
   }
 }
 
-export function metricUnitToGrafana(u: string | undefined): 's' | 'ms' | undefined {
-  switch ((u ?? '').trim().toLowerCase()) {
-    case 's':
-    case 'sec':
-    case 'secs':
-    case 'second':
-    case 'seconds':
-      return 's';
-    case 'ms':
-    case 'millisecond':
-    case 'milliseconds':
-      return 'ms';
-    default:
-      return undefined;
-  }
-}
+// v0.10.288 — TEK SÖZLÜK: lib/chart/metricUnit.ts (AS-4). Bu ad çağıranlar
+// (Overview KPI karosu) için korunuyor; gövde artık oradaki süre alt
+// kümesi. Kendi switch'i buraya geri gelmez (routeSeries.test.ts pinler).
+export const metricUnitToGrafana = durationUnitToGrafana;

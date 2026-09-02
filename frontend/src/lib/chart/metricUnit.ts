@@ -25,7 +25,27 @@ const UNIT_MAP: Record<string, string | undefined> = {
   '': undefined,
 };
 
+// v0.10.288 (chart audit AS-4 / Dilim 1.5) — süre birimlerinin YAZILI
+// biçimleri (Prometheus/receiver katalogları 'seconds', 'milliseconds'
+// yayar). routeSeries.ts'in kendi yarım haritası buraya katlandı: iki
+// harita aynı seriyi iki sayfada farklı yazabiliyordu. Harf-duyarsız
+// (katalog 'Seconds' da yazar); UCUM sembolleri (By, µs) ise duyarlı.
+const DURATION_WORDS: Record<string, 's' | 'ms'> = {
+  s: 's', sec: 's', secs: 's', second: 's', seconds: 's',
+  ms: 'ms', millis: 'ms', millisecond: 'ms', milliseconds: 'ms',
+};
+
 export function otlpUnitToGrafana(unit: string | undefined): string | undefined {
   const t = (unit ?? '').trim();
-  return Object.prototype.hasOwnProperty.call(UNIT_MAP, t) ? UNIT_MAP[t] : undefined;
+  if (Object.prototype.hasOwnProperty.call(UNIT_MAP, t)) return UNIT_MAP[t];
+  const w = t.toLowerCase();
+  return Object.prototype.hasOwnProperty.call(DURATION_WORDS, w) ? DURATION_WORDS[w] : undefined;
+}
+
+// durationUnitToGrafana — yalnız SÜRE birimleri ('s' | 'ms'); başka her
+// şey undefined (KPI karosu ms'ye çevirirken 'bytes'ı süre sanmasın).
+// routeSeries.metricUnitToGrafana bunun takma adı.
+export function durationUnitToGrafana(unit: string | undefined): 's' | 'ms' | undefined {
+  const g = otlpUnitToGrafana(unit);
+  return g === 's' || g === 'ms' ? g : undefined;
 }

@@ -212,3 +212,12 @@ describe('Service Overview — Toplam çizgisi ve karo kaynak birliği (v0.9.799
     expect(src).toMatch(/'Throughput \(span\)'/);
   });
 });
+
+// v0.10.288 — birim sözlüğü TEK yerde: routeSeries kendi switch'ini taşımaz.
+describe('birim haritası tek sözlük (AS-4)', () => {
+  it('routeSeries.ts metricUnitToGrafana = lib/chart/metricUnit durationUnitToGrafana', () => {
+    const src = readFileSync(resolve(__dirname, './routeSeries.ts'), 'utf8');
+    expect(src).toContain('export const metricUnitToGrafana = durationUnitToGrafana');
+    expect(src).not.toMatch(/case 'seconds'/);
+  });
+});

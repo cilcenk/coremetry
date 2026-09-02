@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { otlpUnitToGrafana } from './metricUnit';
+import { otlpUnitToGrafana, durationUnitToGrafana } from './metricUnit';
 
 // v0.9.784'te detailsMetricPanels.test.ts'te doğmuştu; v0.9.801'de harita
 // ortak leaf'e taşınınca testi de onunla geldi. Tablo AYNEN korundu:
@@ -28,5 +28,25 @@ describe('otlpUnitToGrafana', () => {
   it('kenar boşlukları kırpılır (katalog satırı boşluklu gelebilir)', () => {
     expect(otlpUnitToGrafana(' s ')).toBe('s');
     expect(otlpUnitToGrafana('  ms')).toBe('ms');
+  });
+});
+
+// v0.10.288 (AS-4 / Dilim 1.5) — yazılı süre birimleri tek sözlükte.
+describe('yazılı süre birimleri + durationUnitToGrafana', () => {
+  it('seconds/milliseconds yazımları ve büyük harf', () => {
+    for (const [u, want] of [['seconds', 's'], ['Seconds', 's'], ['sec', 's'], ['SECS', 's'], ['second', 's'],
+      ['milliseconds', 'ms'], ['millisecond', 'ms'], ['MS', 'ms'], ['millis', 'ms']] as const) {
+      expect(otlpUnitToGrafana(u), u).toBe(want);
+      expect(durationUnitToGrafana(u), u).toBe(want);
+    }
+  });
+  it('durationUnitToGrafana süre olmayanı reddeder; UCUM sembolleri duyarlı kalır', () => {
+    expect(durationUnitToGrafana('By')).toBeUndefined();
+    expect(durationUnitToGrafana('%')).toBeUndefined();
+    expect(durationUnitToGrafana('us')).toBeUndefined();
+    expect(otlpUnitToGrafana('By')).toBe('bytes');
+    expect(otlpUnitToGrafana('by')).toBeUndefined();
+    expect(durationUnitToGrafana('')).toBeUndefined();
+    expect(durationUnitToGrafana(undefined)).toBeUndefined();
   });
 });

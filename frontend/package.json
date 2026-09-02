@@ -17,8 +17,8 @@
     "build:ds": "vite build --config vite.lib.config.ts && tsc -p tsconfig.ds.json && echo \"export * from './types/components/ui/index';\" > dist-ds/index.d.ts"
   },
   "dependencies": {
-    "@grafana/data": "^13.1.2",
-    "@grafana/ui": "^13.1.2",
+    "@grafana/data": "13.1.2",
+    "@grafana/ui": "13.1.2",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/context-zone": "^2.7.1",
     "@opentelemetry/exporter-trace-otlp-http": "^0.218.0",
@@ -37,7 +37,7 @@
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-router-dom": "^6.30.4",
-    "uplot": "^1.6.32"
+    "uplot": "1.6.32"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
@@ -60,7 +60,8 @@
   },
   "overrides": {
     "js-yaml": "^4.3.1",
-    "nanoid": "^3.3.18"
+    "nanoid": "^3.3.18",
+    "uplot": "1.6.32"
   },
   "types": "dist-ds/index.d.ts"
 }

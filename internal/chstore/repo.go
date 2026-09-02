@@ -2330,6 +2330,11 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// aynı (kök herhangi bir serviste olabilir, v0.10.107), maliyet id
 	// sayısıyla sınırlı.
 	rootPostFilter := f.RootOnly && (f.Service != "" || len(f.RequireServices) > 0)
+	// v0.10.245 — HAVING'in ilk iki argümanı kök alt sorgusunun (from, to)
+	// unix sn sınırı; zaman sıralı probe bunları BASAMAK penceresiyle
+	// bağlar (probeHavingArgs) — 1 saatlik basamak için 30 günlük alt
+	// sorgu 159 veriyordu.
+	rootSubInHaving := rootPostFilter
 	lightHavingParts := []string{}
 	lightHavingArgs := []any{}
 	if f.RootOnly {
@@ -2503,13 +2508,19 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	//   1. WHERE  predicates (time / service / DSL filters)
 	//   2. HAVING predicates (RequireServices fan-in)
 	//   3. LIMIT / OFFSET
-	runList := func(from time.Time, limit, offset int) ([]TraceRow, error) {
+	// light — v0.10.245: kök alt sorgusuz HAVING (kök kontrolü satırlar
+	// üstünde sonradan, filterRootTracesAt). Probe rootPostFilter'da light.
+	runList := func(from time.Time, limit, offset int, light bool) ([]TraceRow, error) {
 		lf := f
 		lf.From = from
 		lwc := buildGetTracesWhere(lf, s.clusterExpr())
-		querySQL := buildGetTracesListSQL(lwc.sql(), havingSQL, sortCol, order)
+		hs, ha := havingSQL, probeHavingArgs(havingArgs, rootSubInHaving, from)
+		if light {
+			hs, ha = lightHavingSQL, lightHavingArgs
+		}
+		querySQL := buildGetTracesListSQL(lwc.sql(), hs, sortCol, order)
 		args := append([]any{}, lwc.args...)
-		args = append(args, havingArgs...)
+		args = append(args, ha...)
 		args = append(args, limit, offset)
 		rows, err := s.telemetryReadConn().Query(ctx, querySQL, args...)
 		if err != nil {
@@ -2534,9 +2545,29 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	if traceRawProbeEligible(f) {
 		for _, w := range traceRawProbeWindows(f.From, f.To) {
 			floor := f.To.Add(-w)
-			rows, err := runList(floor.Add(-traceRawProbeLookback), f.Offset+pageLimit, 0)
+			rows, err := runList(floor.Add(-traceRawProbeLookback), probeFetchLimit(f.Offset+pageLimit, rootPostFilter), 0, rootPostFilter)
 			if err != nil {
 				return nil, 0, false, err
+			}
+			if rootPostFilter && len(rows) > 0 {
+				// v0.10.245 — kök kontrolü basamak satırları üstünde (iki-IN nokta
+				// okuma); alt sorgu basamak penceresinde bile MV'nin tüm
+				// servislerini tarıyordu (lokal 2 s: 7-9 s).
+				cands := make([]stage1Cand, len(rows))
+				for i, r := range rows {
+					cands[i] = stage1Cand{id: r.TraceID, t0: r.StartTime, t1: r.StartTime}
+				}
+				hasRoot, err := s.filterRootTracesAt(ctx, cands, f.From, f.To)
+				if err != nil {
+					return nil, 0, false, err
+				}
+				kept := rows[:0]
+				for _, r := range rows {
+					if hasRoot[r.TraceID] {
+						kept = append(kept, r)
+					}
+				}
+				rows = kept
 			}
 			if page, more, ok := traceRawProbePage(rows, floor.UnixNano(), f.Offset, f.Limit); ok {
 				out, hasMore, served = page, more, true
@@ -2546,25 +2577,44 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	}
 	if !served && rawListLightEligible(f, rootPostFilter) {
 		// v0.10.237 — 1. aşama tüm pencereyi GÖRMEK zorunda (süre sıralaması
-		// zamanla kesilemez); prod'da pencere/hacim yine sınırı aşarsa 500
-		// yerine MV yolunun sözleşmesi (v0.9.297, trace_slice.go): kaynak
-		// tükenmesinde pencere yarılanır, NarrowedFrom ile UI'ya "pencere
-		// daraltıldı" söylenir — daha dar pencerenin top-N'i FARKLI bir
-		// cevaptır, daha yavaşı değil; o yüzden sessiz değil.
+		// zamanla kesilemez); kaynak tükenmesinde pencere yarılanır,
+		// NarrowedFrom ile UI'ya söylenir (daha dar pencerenin top-N'i FARKLI
+		// bir cevaptır, daha yavaşı değil).
+		// v0.10.245 — uzun aralık (trace_raw_light.go başlığı): akışkan 1.
+		// aşama (GROUP BY'sız, bellek düz) + pencereyle ölçeklenen tavan;
+		// kök kontrolü demet nokta okuma; 2. aşama trace-başı zaman aralığı.
 		from := f.From
-		var ids []string
+		var cands []stage1Cand
+		streaming := traceRawStage1Streaming(f.Sort, lightHavingSQL)
 		s1Limit, s1Offset := rawLightStage1Window(f.Offset, pageLimit, rootPostFilter)
+		wantK := s1Limit
+		if streaming && !rootPostFilter {
+			// Span-düzeyi OFFSET anlamsız: offset+sayfa kadar trace çekilir,
+			// Go'da tekilleştirilip dilimlenir.
+			wantK = f.Offset + pageLimit
+			s1Offset = 0
+		}
 		for attempt := 0; ; {
 			lf := f
 			lf.From = from
 			lwc := buildGetTracesWhere(lf, s.clusterExpr())
-			stage1SQL, _ := traceRawStage1LightSQL(lwc.sql(), lightHavingSQL, f.Sort, order)
+			maxExec := traceRawStage1MaxExec(from, f.To)
+			var stage1SQL string
 			s1args := append([]any{}, lwc.args...)
-			s1args = append(s1args, lightHavingArgs...)
-			s1args = append(s1args, s1Limit, s1Offset)
-			got, err := s.queryTraceIDs(ctx, stage1SQL, s1args)
+			if streaming {
+				stage1SQL = traceRawStage1StreamSQL(lwc.sql(), f.Sort, order, maxExec)
+				s1args = append(s1args, traceRawStage1OverFetch(wantK))
+			} else {
+				stage1SQL, _ = traceRawStage1GroupSQL(lwc.sql(), lightHavingSQL, f.Sort, order, maxExec)
+				s1args = append(s1args, lightHavingArgs...)
+				s1args = append(s1args, s1Limit, s1Offset)
+			}
+			got, err := s.queryStage1Cands(ctx, stage1SQL, s1args, streaming)
 			if err == nil {
-				ids = got
+				if streaming {
+					got = dedupeStage1(got, wantK)
+				}
+				cands = got
 				break
 			}
 			next, ok := narrowOnExhaustion(err, from, f.To, attempt)
@@ -2579,34 +2629,38 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 			log.Printf("[traces] raw stage1 exhausted resources (%v) — halving the window to %s and retrying (attempt %d/%d)",
 				err, from.Format(time.RFC3339), attempt, traceStage2NarrowMaxRetry)
 		}
-		if rootPostFilter && len(ids) > 0 {
-			hasRoot, err := s.filterRootTraces(ctx, ids, f.From, f.To)
+		if rootPostFilter && len(cands) > 0 {
+			hasRoot, err := s.filterRootTracesAt(ctx, cands, f.From, f.To)
 			if err != nil {
 				return nil, 0, false, err
 			}
-			ids = applyRootFilterPage(ids, hasRoot, f.Offset, pageLimit)
+			cands = applyRootFilterPageCands(cands, hasRoot, f.Offset, pageLimit)
+		} else if streaming {
+			if f.Offset >= len(cands) {
+				cands = nil
+			} else {
+				cands = cands[f.Offset:]
+			}
+			if len(cands) > pageLimit {
+				cands = cands[:pageLimit]
+			}
 		}
-		if len(ids) > 0 {
+		if len(cands) > 0 {
 			lf := f
 			lf.From = from
 			lwc := buildGetTracesWhere(lf, s.clusterExpr())
-			idArgs := make([]any, len(ids))
-			for i, id := range ids {
-				idArgs[i] = id
+			// v0.10.241 — kök kontrolü zaten id'ler üstünde yapıldı; 2. aşama
+			// HAFİF HAVING (alt sorgusuz). v0.10.245 — id listesi PREWHERE'de
+			// (trace_raw_light.go §4: 2794 → 326 ms).
+			idArgs := make([]any, len(cands))
+			for i, c := range cands {
+				idArgs[i] = c.id
 			}
-			lwc.add("trace_id IN ("+chPlaceholders(len(ids))+")", idArgs...)
-			// v0.10.241 — operator-reported (7 gün + http.route → boş/zaman
-			// aşımı): 2. aşama havingSQL'i taşıyordu, yani rootOnly'nin
-			// GLOBAL IN (SELECT trace_id FROM trace_summary_5m … TÜM pencere)
-			// alt sorgusu 1. aşamadan çıkarılmış ama 2. aşamada duruyordu —
-			// 238'in ikinci yarısı. Ölçüldü (lokal 7g): 2. aşama 3.57M satır /
-			// 434 MiB / 27 s → 159; alt sorgusuz aynı id listesi ~50 satır.
-			// Kök kontrolü zaten filterRootTraces ile id'ler üstünde yapıldı;
-			// 2. aşama HAFİF HAVING'i (alt sorgusuz) kullanır.
-			querySQL := buildGetTracesListSQL(lwc.sql(), lightHavingSQL, sortCol, order)
-			args := append([]any{}, lwc.args...)
+			querySQL := buildGetTracesListSQLWith(stage2PrewhereSQL(len(cands))+lwc.sql(), lightHavingSQL, sortCol, order, stage2Settings)
+			args := append([]any{}, idArgs...)
+			args = append(args, lwc.args...)
 			args = append(args, lightHavingArgs...)
-			args = append(args, len(ids), 0)
+			args = append(args, len(cands), 0)
 			rows, err := s.telemetryReadConn().Query(ctx, querySQL, args...)
 			if err != nil {
 				return nil, 0, false, err
@@ -2618,14 +2672,14 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 			}
 			out = page
 		}
-		hasMore = len(ids) > f.Limit
+		hasMore = len(cands) > f.Limit
 		if len(out) > f.Limit {
 			out = out[:f.Limit]
 		}
 		served = true
 	}
 	if !served {
-		rows, err := runList(f.From, pageLimit, f.Offset)
+		rows, err := runList(f.From, pageLimit, f.Offset, false)
 		if err != nil {
 			return nil, 0, false, err
 		}
@@ -2661,6 +2715,16 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 // name/service so the operator at least sees a label — the
 // trace detail view still shows the full trace on click.
 func buildGetTracesListSQL(whereSQL, havingSQL, sortCol, order string) string {
+	return buildGetTracesListSQLWith(whereSQL, havingSQL, sortCol, order, "")
+}
+
+// buildGetTracesListSQLWith — extraSettings: SETTINGS listesine eklenen
+// ek ayar(lar) (v0.10.245 2. aşama: optimize_move_to_prewhere = 0).
+// whereSQL "PREWHERE … WHERE …" ile başlayabilir.
+func buildGetTracesListSQLWith(whereSQL, havingSQL, sortCol, order, extraSettings string) string {
+	if extraSettings != "" {
+		extraSettings = extraSettings + ",\n\t\t  "
+	}
 	return `
 		SELECT trace_id,
 		       coalesce(
@@ -2682,7 +2746,7 @@ func buildGetTracesListSQL(whereSQL, havingSQL, sortCol, order string) string {
 		ORDER BY ` + sortCol + ` ` + order + `
 		LIMIT ? OFFSET ?
 		SETTINGS
-		  max_execution_time = 25,
+		  ` + extraSettings + `max_execution_time = 25,
 		  optimize_read_in_order = 1,
 		  optimize_aggregation_in_order = 1,
 		  distributed_product_mode = 'global',
@@ -2770,21 +2834,87 @@ func (s *Store) filterRootTraces(ctx context.Context, ids []string, from, to tim
 }
 
 // queryTraceIDs — tek kolonlu (trace_id) sorguyu dilime okur.
-func (s *Store) queryTraceIDs(ctx context.Context, sql string, args []any) ([]string, error) {
+// queryStage1Cands — 1. aşama adayları: akışkan (id, t) ya da GROUP BY
+// (id, t0, t1) satırları.
+func (s *Store) queryStage1Cands(ctx context.Context, sql string, args []any, streaming bool) ([]stage1Cand, error) {
 	rows, err := s.telemetryReadConn().Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var ids []string
+	var out []stage1Cand
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var c stage1Cand
+		if streaming {
+			if err := rows.Scan(&c.id, &c.t0); err != nil {
+				return nil, err
+			}
+			c.t1 = c.t0
+		} else if err := rows.Scan(&c.id, &c.t0, &c.t1); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		out = append(out, c)
 	}
-	return ids, rows.Err()
+	return out, rows.Err()
+}
+
+// filterRootTracesAt — v0.10.245: aday sayısı rootCheckTupleMaxIDs'i
+// aşmıyorsa (time_bucket, trace_id) demet nokta okuması (MV PK), aşıyorsa
+// eski pencereli tarama (filterRootTraces).
+func (s *Store) filterRootTracesAt(ctx context.Context, cands []stage1Cand, from, to time.Time) (map[string]bool, error) {
+	if len(cands) > rootCheckTupleMaxIDs {
+		ids := make([]string, len(cands))
+		for i, c := range cands {
+			ids[i] = c.id
+		}
+		return s.filterRootTraces(ctx, ids, from, to)
+	}
+	out := make(map[string]bool, len(cands))
+	const chunkSize = 500
+	for start := 0; start < len(cands); start += chunkSize {
+		end := start + chunkSize
+		if end > len(cands) {
+			end = len(cands)
+		}
+		chunk := cands[start:end]
+		buckets, ids := rootCheckArgs(chunk)
+		args := append(buckets, ids...)
+		rows, err := s.telemetryReadConn().Query(ctx, rootCheckSQL(len(buckets), len(ids)), args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[id] = true
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// applyRootFilterPageCands — applyRootFilterPage'in aday karşılığı.
+func applyRootFilterPageCands(cands []stage1Cand, hasRoot map[string]bool, offset, pageLimit int) []stage1Cand {
+	kept := make([]stage1Cand, 0, len(cands))
+	for _, c := range cands {
+		if hasRoot[c.id] {
+			kept = append(kept, c)
+		}
+	}
+	if offset >= len(kept) {
+		return nil
+	}
+	kept = kept[offset:]
+	if len(kept) > pageLimit {
+		kept = kept[:pageLimit]
+	}
+	return kept
 }
 
 // narrowOnExhaustion — kaynak tükenmesinde (241/159/…) pencereyi yarılar:
@@ -2823,44 +2953,6 @@ func rawListLightEligible(f TraceFilter, rootPostFilter bool) bool {
 		return rootPostFilter
 	}
 	return false
-}
-
-// traceRawStage1LightSQL — ham yolun HAFİF 1. aşaması (v0.10.235): yalnız
-// trace_id + sıralama anahtarı; string durum yok. Aynı WHERE/HAVING, LIMIT ?
-// OFFSET ? burada; tam satır 2. aşamada sayfanın id'leri için hesaplanır.
-// Sıralama ifadeleri buildGetTracesListSQL'deki kolonlarla BİREBİR aynı
-// (dur_ms / span_count / has_error) — iki aşamanın sırası eşit olsun.
-// ok=false: bu sıralama hafifletilemez. SAF; trace_raw_light_test.go pinler.
-func traceRawStage1LightSQL(whereSQL, havingSQL, sort, order string) (string, bool) {
-	var sortExpr string
-	switch sort {
-	case "duration":
-		sortExpr = "(max(toUnixTimestamp64Nano(time) + duration) - toUnixTimestamp64Nano(min(time)))"
-	case "spans":
-		sortExpr = "count()"
-	case "status":
-		sortExpr = "max(if(status_code = 'error', 1, 0))"
-	case "", "time":
-		// v0.10.239 — yalnız kök son-filtreli tam-pencere düşüşünde
-		// (rawListLightEligible); zaman sıralamasının normal yolu pencere
-		// basamağıdır (trace_raw_probe.go). trace_start = min(time).
-		sortExpr = "min(time)"
-	default:
-		return "", false
-	}
-	if order != "ASC" {
-		order = "DESC"
-	}
-	return `
-		SELECT trace_id
-		FROM spans ` + whereSQL + `
-		GROUP BY trace_id` + havingSQL + `
-		ORDER BY ` + sortExpr + ` ` + order + `, trace_id
-		LIMIT ? OFFSET ?
-		SETTINGS
-		  max_execution_time = 25,
-		  distributed_product_mode = 'global',
-		  ` + tracesSpillSettings, true
 }
 
 // getTracesFromMV implements the two-stage fast path:

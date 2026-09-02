@@ -2204,6 +2204,18 @@ tbody tr.wf-evidence:hover > td { background: color-mix(in srgb, var(--warn) 14%
 /* Vertical separator between the time-range picker and the pref group */
 .topbar-prefs-sep { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; margin: 0 8px; }
 
+/* ── ContextBar (v0.10.250) — Topbar'ın EnvPicker+TimeRangePicker yuvası;
+   token-only, satır içi ölçü yok. Yoğunluk cascade'i alan/input ölçülerini
+   zaten kapsıyor. ── */
+.context-bar { display: flex; align-items: center; gap: var(--space-2, 8px); min-width: 0; flex-wrap: nowrap; }
+.context-bar .ctx-field { display: inline-flex; align-items: center; gap: var(--space-1, 4px); min-width: 0; }
+.context-bar .ctx-field .field-label { font-size: var(--fs-xs, 11px); color: var(--text3); white-space: nowrap; }
+.context-bar .ctx-field select, .context-bar .ctx-field input { min-width: 0; }
+.context-bar .ctx-disabled { width: 6ch; }
+.context-bar .ctx-panel { display: none; }
+.context-bar .ctx-panel.is-open { display: flex; flex-direction: column; gap: var(--space-2, 8px); position: absolute; top: 100%; right: 0; padding: var(--space-3, 12px); background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm); z-index: 20; }
+.context-bar { position: relative; }
+
 /* accent — "emphasised but not primary" tinted chip (v0.8.540).
    Replaces the old hand-rolled `.share-btn`, which was a byte-for-byte
    clone of `button.sec` and therefore invisible next to every other

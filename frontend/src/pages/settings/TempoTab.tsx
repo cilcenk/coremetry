@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
-import { Button, useConfirm } from '@/components/ui';
+import { Button, Field, useConfirm } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useSettingsLoad, SettingsLoadError } from './shared';
 import type { TempoAuthType } from '@/lib/types';
@@ -20,6 +20,10 @@ export function TempoTab() {
   const [orgId, setOrgId] = useState('');
   const [token, setToken] = useState('');
   const [hasToken, setHasToken] = useState(false);
+  // v0.10.271 — token referansı (Influx sözleşmesi): görünür, secret değil.
+  const [tokenRef, setTokenRef] = useState('');
+  const [tokenResolved, setTokenResolved] = useState(false);
+  const [tokenError, setTokenError] = useState('');
   const [insecureSkipVerify, setInsecureSkipVerify] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -33,6 +37,9 @@ export function TempoTab() {
       setUsername(s.username || '');
       setOrgId(s.orgId || '');
       setHasToken(s.hasToken);
+      setTokenRef(s.tokenRef ?? '');
+      setTokenResolved(!!s.tokenResolved);
+      setTokenError(s.tokenError ?? '');
       setInsecureSkipVerify(!!s.insecureSkipVerify);
     },
   );
@@ -45,8 +52,11 @@ export function TempoTab() {
         enabled, baseUrl, authType,
         token, // empty preserved on the server side
         username, orgId, insecureSkipVerify,
+        tokenRef: tokenRef.trim() || undefined,
       });
       setHasToken(next.hasToken);
+      setTokenResolved(!!next.tokenResolved);
+      setTokenError(next.tokenError ?? '');
       setToken('');
       setMsg({ kind: 'ok',
         text: next.enabled
@@ -171,6 +181,20 @@ export function TempoTab() {
               placeholder={hasToken ? '(leave empty to keep stored value)' : 'paste token…'}
               style={{ width: '100%' }} />
           </label>
+        )}
+
+        {(authType === 'bearer' || authType === 'basic') && (
+          /* v0.10.271 — InfluxTab deseni: referans doluysa saklı token yerine kullanılır. */
+          <div style={{ marginBottom: 12 }}>
+            <Field label="…ya da token referansı" value={tokenRef}
+              onChange={e => setTokenRef(e.target.value)}
+              placeholder="env:COREMETRY_TEMPO_TOKEN  ·  file:/var/run/secrets/tempo/token"
+              autoComplete="off"
+              error={tokenError || undefined}
+              hint={tokenResolved
+                ? 'Çözüldü ✓ — saklı token yerine bu kullanılıyor'
+                : 'Doluysa saklı token yerine bu kullanılır. env: Helm extraEnv + existingSecret (pod restart); file: mount edilmiş Secret (≤30 s). Kaydedince çözüm durumu burada görünür.'} />
+          </div>
         )}
 
         <label style={{ display: 'block', marginBottom: 12 }}>

@@ -204,3 +204,85 @@ func (s *Store) openProblemServicesDuring(ctx context.Context, from, to time.Tim
 	}
 	return out, rows.Err()
 }
+
+// GetBlastRadiusBatch — v0.10.260 (perf §7 madde 4, F3 ⭐): N servisin blast
+// radius'u TEK MV sorgusuyla (service IN … GROUP BY service, caller; LIMIT 25
+// BY service) + TEK açık-problem taraması. Sonuç GetServiceBlastRadius ile
+// satır-satır aynı (aynı pencere, aynı sıralama). Servis boş listede yoksa
+// (pencerede çağıran yok) haritada sıfır satırlı kayıt döner — istemci
+// "çip yok" okur, ikinci istek atmaz.
+func (s *Store) GetBlastRadiusBatch(ctx context.Context, services []string, from, to time.Time) (map[string]BlastRadius, error) {
+	out := make(map[string]BlastRadius, len(services))
+	if len(services) == 0 {
+		return out, nil
+	}
+	from, to = blastRadiusWindow(from, to, time.Now())
+	windowSec := to.Sub(from).Seconds()
+	if windowSec < 1 {
+		windowSec = 1
+	}
+	for _, svc := range services {
+		out[svc] = BlastRadius{Service: svc, WindowSec: int(to.Sub(from).Seconds()), Callers: []BlastRadiusCaller{}}
+	}
+	bucketStart := from.Truncate(5 * time.Minute)
+	args := make([]any, 0, len(services)+2)
+	for _, svc := range services {
+		args = append(args, svc)
+	}
+	args = append(args, bucketStart, to)
+	rows, err := s.conn.Query(ctx, `
+		SELECT service, caller_service,
+		       sum(calls)  AS calls,
+		       sum(errors) AS errors
+		FROM service_callers_5m FINAL
+		WHERE service IN (`+chPlaceholders(len(services))+`)
+		  AND time_bucket >= ?
+		  AND time_bucket < ?
+		  AND caller_service != ''
+		GROUP BY service, caller_service
+		ORDER BY service, calls DESC
+		LIMIT 25 BY service
+		SETTINGS max_execution_time = 10`, args...)
+	if err != nil {
+		return out, fmt.Errorf("blast-radius batch: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var svc string
+		var r BlastRadiusCaller
+		if err := rows.Scan(&svc, &r.Service, &r.Calls, &r.Errors); err != nil {
+			return out, fmt.Errorf("scan blast-radius batch row: %w", err)
+		}
+		r.RPS = float64(r.Calls) / windowSec
+		if r.Calls > 0 {
+			r.ErrorRate = float64(r.Errors) * 100.0 / float64(r.Calls)
+		}
+		br := out[svc]
+		br.Callers = append(br.Callers, r)
+		br.TotalRPS += r.RPS
+		br.TotalErrorsPerSec += float64(r.Errors) / windowSec
+		out[svc] = br
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	openProblems, _ := s.openProblemServicesDuring(ctx, from, to)
+	for svc, br := range out {
+		br.TotalCallers = len(br.Callers)
+		for i := range br.Callers {
+			if _, has := openProblems[br.Callers[i].Service]; has {
+				br.Callers[i].HasOpenProblem = true
+				br.CascadingCallers++
+			}
+		}
+		sort.SliceStable(br.Callers, func(i, j int) bool {
+			a, b := br.Callers[i], br.Callers[j]
+			if a.HasOpenProblem != b.HasOpenProblem {
+				return a.HasOpenProblem
+			}
+			return a.Calls > b.Calls
+		})
+		out[svc] = br
+	}
+	return out, nil
+}

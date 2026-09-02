@@ -527,6 +527,11 @@ export const api = {
   // v0.6.29 — Blast radius for an open Problem. Returns upstream
   // callers + their RPS + cascade-flag (caller has own open
   // problem). Sorted cascading-first, then by calls desc.
+  // v0.10.260 (perf §7 madde 4, F3) — inbox: açık problem servisleri TEK
+  // istekte (satır başına /blast-radius yerine). Sunucu ≤200 servis, 60 s cache.
+  blastRadiusBatch: (services: string[], since: GoDuration = '1h', signal?: AbortSignal) =>
+    request<{ items: Record<string, import('./types').BlastRadius>; since: string }>(
+      `/api/blast-radius?services=${encodeURIComponent(services.join(','))}&since=${since}`, signal ? { signal } : undefined),
   serviceBlastRadius: (svc: string, since: GoDuration = '1h') =>
     get<import('./types').BlastRadius>(
       `/api/services/${encodeURIComponent(svc)}/blast-radius?since=${since}`),

@@ -44,6 +44,9 @@ type SignatureGroup struct {
 	LastSeen     int64    `json:"lastSeen"`
 	Services     []string `json:"services"`     // en çok görülen ≤3
 	ServiceCount int      `json:"serviceCount"` // farklı servis sayısı
+	// Query — v0.10.297: şablondan türetilen arama dizesi (PatternSearchQuery);
+	// UI "Ara" ile bunu serbest metne koyar. Boş = aranabilir literal yok.
+	Query string `json:"query"`
 }
 
 // PatternsResult — gruplar + örnekleme dürüstlüğü.
@@ -141,6 +144,7 @@ func GroupBySignature(ctx context.Context, st Store, f Filter, limit int) (*Patt
 	out := make([]SignatureGroup, 0, len(groups))
 	for _, a := range groups {
 		a.g.ServiceCount = len(a.svcs)
+		a.g.Query = PatternSearchQuery(a.g.Template)
 		type sc struct {
 			n string
 			c int64

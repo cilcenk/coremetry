@@ -37,7 +37,7 @@ import type {
   OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
   ExceptionTriageConfig, ProblemPriorityConfig, FailureSLOConfig, MetricExclusions, AnomalyTrackedConfig,
   InsightKind, InsightResponse, InsightSignal, InsightLink, InsightChartSpec,
-  AnomalySensitivityConfig, TailPoint , MetricCompareReport } from './types';
+  AnomalySensitivityConfig, TailPoint , MetricCompareReport , LogPatternsResult } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // withMetricSource — v0.9.1151 deneme modu. Sayfa URL'sindeki
 // ?metricsrc=vm|ch işaretini metrik uçlarının sorgu dizesine basar. TEK
@@ -1010,6 +1010,9 @@ export const api = {
   // paths the configured logs backend knows about. Empty array
   // for ClickHouse (shape is fixed); ES backend returns the
   // mapping leaves. Server caches 60s.
+  // v0.10.297 — /api/logs/patterns: /api/logs filtre kümesi + limit (20/50/100).
+  logsPatterns: (params: LogsParams & { limit?: number }, signal?: AbortSignal) =>
+    get<LogPatternsResult>(`/api/logs/patterns?${qs(params)}`, signal),
   logsFields: () => get<{ fields: string[]; total?: number; types?: Record<string, string>; backend: string }>(
     `/api/logs/fields`),
   // Top values of one keyword field prefix-matched against `q`.

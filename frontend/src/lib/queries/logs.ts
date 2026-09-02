@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { LogsParams } from '@/lib/api';
-import type { LogsResponse } from '@/lib/types';
+import type { LogsResponse, LogPatternsResult } from '@/lib/types';
 
 // /api/logs query — keyed on the full filter object so a
 // pagination click or filter change caches separately.
@@ -35,5 +35,19 @@ export function useLogs(params: LogsParams) {
     // while the next page loads (isPlaceholderData guards the
     // accumulator from ingesting the stand-in).
     placeholderData: keepPreviousData,
+  });
+}
+
+// v0.10.297 — /logs "Desenler" paneli. YALNIZ panel açıkken (enabled) —
+// v0.8.270 ES-maliyet disiplini: liste prefetch'i yok, açılışta fetch.
+// staleTime = sunucu TTL (30 s); anahtar TÜM parametreler.
+export function useLogsPatterns(params: LogsParams & { limit?: number }, enabled: boolean) {
+  return useQuery<LogPatternsResult>({
+    queryKey: ['logs', 'patterns', params],
+    queryFn: ({ signal }) => api.logsPatterns(params, signal),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    placeholderData: keepPreviousData,
+    enabled,
   });
 }

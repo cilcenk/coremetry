@@ -120,7 +120,9 @@ const COL_LABEL: Record<string, string> = {
 };
 // v0.10.251 — ContextBar'ın bu sayfada uyguladığı boyutlar; namespace/compare
 // uygulanmıyor (backend FilterExpr yok — audit soru 8 açık) → çubukta devre dışı.
-const TRACES_CONTEXT_DIMS: ContextDim[] = ['range', 'env', 'cluster', 'service'];
+// v0.10.257 (operatör): service sayfanın kendi picker'ında — çubukta İKİ KEZ çizilmez.
+const TRACES_CONTEXT_DIMS: ContextDim[] = ['range', 'env', 'cluster'];
+const TRACES_CONTEXT_HIDDEN: ContextDim[] = ['service'];
 // Default widths are tuned so the fixed columns PLUS the attribute columns
 // fit a 1440px laptop without horizontal scroll (v0.9.243 — operator-reported:
 // "columns don't fit, I always have to scroll right"). Budget at 1440px:
@@ -216,8 +218,8 @@ function TracesPageInner() {
   const { range, setRange, handleZoom, handleZoomReset, zoomDepth } = usePageZoomRange('30m', () => setPage(0));
   // v0.10.251 — ContextBar (Topbar yuvası). Aralık sahibi usePageZoomRange
   // KALIR (sayfa sıfırlama + zoom); çubuğun set()'i aralığı oraya, kalanı
-  // URL'ye (cluster/service) yönlendirir. İki yazıcı aynı useUrlRange
-  // kanalından geçer → hemfikir. service: URL → state içe aktarımı sig ile.
+  // URL'ye (cluster) yönlendirir. İki yazıcı aynı useUrlRange kanalından
+  // geçer → hemfikir. v0.10.257: service çubukta YOK (sayfanın picker'ı).
   const ctx = useContextParams({ defaultPreset: '30m', applies: TRACES_CONTEXT_DIMS });
   const ctxForBar = useMemo(() => ({
     ...ctx,
@@ -301,14 +303,6 @@ function TracesPageInner() {
     rootOnly: parseRootOnlyParam(searchParams.get('rootOnly')).rootOnly,
     requireServices: (searchParams.get('services') ?? '').split(',').map(s => s.trim()).filter(Boolean),
   }));
-  // v0.10.251 — ContextBar servis seçimi URL'ye yazar; sayfa durumu sig
-  // değişince içe aktarır (tek yönlü okuma bug sınıfı 256/265/267).
-  useEffect(() => {
-    const svc = ctx.params.service;
-    setFilter(f => (f.service === svc ? f : { ...f, service: svc }));
-    setPage(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctx.sig]);
   const [draft, setDraft] = useState(filter);
   // v0.9.1372 — sessiz root geri dönüşü KURULUMU. `?rootOnly=auto` ile gelen
   // pivotlar (endpoint / database) root seçili açılır; liste boş dönerse
@@ -995,7 +989,7 @@ function TracesPageInner() {
     <>
       {/* v0.9.430 — Topbar seçimi out-of-band: hook yığını kendisi
           geçersizleştirir, elle temizlik gerekmez. */}
-      <Topbar title="Traces" context={{ ctx: ctxForBar, envApplies: true }} />
+      <Topbar title="Traces" context={{ ctx: ctxForBar, envApplies: true, hidden: TRACES_CONTEXT_HIDDEN }} />
       <PageShell>
         {/* v0.9.304 (operatör) — Trace ID araması sayfanın SAĞ ÜSTÜNE,
             zaman aralığı seçicisinin hemen altına taşındı. Filtre satırının

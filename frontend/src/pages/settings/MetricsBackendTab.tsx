@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
-import { Button } from '@/components/ui';
+import { Button, Field } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useSettingsLoad, SettingsLoadError } from './shared';
 import { vmFloorToForm, vmFloorToWire } from './vmForm';
@@ -26,6 +26,10 @@ export function MetricsBackendTab() {
   const [authType, setAuthType] = useState<VMAuthType>('none');
   const [token, setToken] = useState('');
   const [hasToken, setHasToken] = useState(false);
+  // v0.10.273 — token referansı (Influx/Tempo/Thanos sözleşmesi): görünür, secret değil.
+  const [tokenRef, setTokenRef] = useState('');
+  const [tokenResolved, setTokenResolved] = useState(false);
+  const [tokenError, setTokenError] = useState('');
   const [insecureSkipVerify, setInsecureSkipVerify] = useState(false);
   // DİZİ state, sayı değil — '' tek dürüst "üstüne yazma yok" gösterimi.
   // Çeviri vmForm.ts'te ve tablo-testli; gerekçesi orada.
@@ -42,6 +46,9 @@ export function MetricsBackendTab() {
       setBaseUrl(s.baseUrl || '');
       setAuthType((s.authType || 'none') as VMAuthType);
       setHasToken(s.hasToken);
+      setTokenRef(s.tokenRef ?? '');
+      setTokenResolved(!!s.tokenResolved);
+      setTokenError(s.tokenError ?? '');
       setInsecureSkipVerify(!!s.insecureSkipVerify);
       setRateWindowFloor(vmFloorToForm(s.rateWindowFloorS));
       setAllowUnfilteredPercentiles(!!s.allowUnfilteredPercentiles);
@@ -51,6 +58,7 @@ export function MetricsBackendTab() {
   const buildInput = (): VMSettingsInput => ({
     enabled, baseUrl, authType,
     token, // empty preserved on the server side
+    tokenRef: tokenRef.trim() || undefined,
     insecureSkipVerify,
     // Bu ikisinde "boş = sakla" kuralı YOK: 0 ve false burada anlamlı
     // değerler ("varsayılan taban", "koruma açık"), token'ın tersine.
@@ -64,6 +72,8 @@ export function MetricsBackendTab() {
     try {
       const next = await api.putVMSettings(buildInput());
       setHasToken(next.hasToken);
+      setTokenResolved(!!next.tokenResolved);
+      setTokenError(next.tokenError ?? '');
       setToken('');
       // Sunucu NE SAKLADIĞININ tek yetkilisi: dönen snapshot'tan yeniden
       // tohumla. Aralık dışı bir değer 400 atar (buraya hiç gelmez) ve kutu
@@ -193,6 +203,20 @@ export function MetricsBackendTab() {
               placeholder={hasToken ? '(saklı değeri korumak için boş bırakın)' : 'token’ı yapıştırın…'}
               style={{ width: '100%' }} />
           </label>
+        )}
+
+        {authType === 'bearer' && (
+          /* v0.10.273 — Influx/Tempo/Thanos deseni: referans doluysa saklı token yerine kullanılır. */
+          <div style={{ marginBottom: 12 }}>
+            <Field label="…ya da token referansı" value={tokenRef}
+              onChange={e => setTokenRef(e.target.value)}
+              placeholder="env:COREMETRY_VM_TOKEN  ·  file:/var/run/secrets/vm/token"
+              autoComplete="off"
+              error={tokenError || undefined}
+              hint={tokenResolved
+                ? 'Çözüldü ✓ — saklı token yerine bu kullanılıyor'
+                : 'Doluysa saklı token yerine bu kullanılır. env: Helm extraEnv + existingSecret (pod restart); file: mount edilmiş Secret. Test de bu referansı çözer.'} />
+          </div>
         )}
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>

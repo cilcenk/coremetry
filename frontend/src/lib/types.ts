@@ -1394,12 +1394,17 @@ export interface VMSnapshot {
   insecureSkipVerify?: boolean;
   rateWindowFloorS?: number;
   allowUnfilteredPercentiles?: boolean;
+  // v0.10.273 — token referansı (`env:NAME` | `file:/path`); görünür, secret değil.
+  tokenRef?: string;
+  tokenResolved?: boolean;
+  tokenError?: string;
 }
 export interface VMSettingsInput {
   enabled: boolean;
   baseUrl: string;
   authType?: VMAuthType;
   token?: string;
+  tokenRef?: string;
   insecureSkipVerify?: boolean;
   // Sent on every PUT, unlike `token`: 0 and false are MEANINGFUL values
   // here ("default floor", "guard on"), so there is no preserve-on-empty

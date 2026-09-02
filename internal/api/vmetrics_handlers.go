@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cilcenk/coremetry/internal/secretref"
 	"github.com/cilcenk/coremetry/internal/vmetrics"
 )
 
@@ -31,6 +32,7 @@ type vmSettingsInput struct {
 	AuthType           string `json:"authType"`
 	Token              string `json:"token"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+	TokenRef           string `json:"tokenRef"` // v0.10.273
 	// v0.9.1164 — the two query-shaping knobs. Both are plain values with no
 	// preserve-on-empty rule: 0 and false are MEANINGFUL here ("use the
 	// default floor", "keep the guard on"), which is the opposite of the
@@ -48,6 +50,10 @@ type vmSettingsInput struct {
 func mergeVMSettings(in vmSettingsInput, cur vmetrics.Settings) (vmetrics.Settings, string) {
 	in.BaseURL = strings.TrimSpace(in.BaseURL)
 	in.AuthType = strings.TrimSpace(in.AuthType)
+	in.TokenRef = strings.TrimSpace(in.TokenRef)
+	if in.TokenRef != "" && !secretref.Valid(in.TokenRef) {
+		return vmetrics.Settings{}, secretref.InvalidMessage
+	}
 	if in.Enabled && in.BaseURL == "" {
 		return vmetrics.Settings{}, "baseUrl required when enabled"
 	}
@@ -78,6 +84,7 @@ func mergeVMSettings(in vmSettingsInput, cur vmetrics.Settings) (vmetrics.Settin
 		BaseURL:                    in.BaseURL,
 		AuthType:                   in.AuthType,
 		Token:                      in.Token,
+		TokenRef:                   in.TokenRef,
 		InsecureSkipVerify:         in.InsecureSkipVerify,
 		RateWindowFloorS:           in.RateWindowFloorS,
 		AllowUnfilteredPercentiles: in.AllowUnfilteredPercentiles,
@@ -136,6 +143,8 @@ func (s *Server) putVMSettings(w http.ResponseWriter, r *http.Request) {
 		"baseUrl":            snap.BaseURL,
 		"authType":           snap.AuthType,
 		"hasToken":           snap.HasToken,
+		"tokenRef":           snap.TokenRef, // referans, secret değil
+		"tokenResolved":      snap.TokenResolved,
 		"insecureSkipVerify": snap.InsecureSkipVerify,
 		// v0.9.1164 — both knobs are audited, and the guard one is the reason
 		// this list had to grow rather than stay a connection summary. Lifting

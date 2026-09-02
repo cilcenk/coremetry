@@ -425,3 +425,20 @@ kapı; Playwright yalnız istenirse.
 6. `viewer` kendi kolon tercihini yazabilsin mi? (öneri: evet; audit satırı yok)
 7. ContextBar sonradan tüm aralık-sahibi sayfalarda EnvPicker+TimeRangePicker çiftinin yerine varsayılan mı olsun, opt-in mi?
 8. Traces'ta `namespace` filtresi için backend (`k8s.namespace.name` FilterExpr) ayrı spec mi, boyut "uygulanmıyor" mu kalsın?
+
+---
+
+## Uygulama durumu (2026-09-02, "Sırayla devam" — önerilen varsayılanlar)
+
+| Dilim | Sürüm | Not |
+|---|---|---|
+| 1 barrel + saf çekirdek | v0.10.246 | `ui/DataTable/index.ts`, `lib/columnModel.ts`, `lib/rowSelection.ts` |
+| 2 route defteri + `/api/preferences` | v0.10.247 | `route_registry.go` (buildMux taşındı, api.go −5 satır; rollup/annotation deftere), `preferences_routes.go` |
+| 3 prefs istemcisi | v0.10.248 | `lib/queries/prefs.ts` useTablePrefs (debounce, BroadcastChannel) |
+| 4 useDataTable additif + VirtualTable | v0.10.249 | columnModel/selection/server/getRowHref; th klavyesi; 4 VirtualTable düzeltmesi; jsdom sözleşmesi |
+| 5 ContextBar + useContextParams | v0.10.250 | `src/hooks/useContextParams.ts` (**soru 3: operatörün istediği konum**), Topbar `context` prop'u, codec + alias kapısı |
+| 6 Traces | v0.10.251 | ContextBar applies=[range,env,cluster,service]; sunucu tercihi; CHANNEL_CODE/FUNCTION_CODE etiketi; server demeti. **Ertelenen:** ColumnPicker (ColumnManager kalır), hücre renderer ayrıştırması, satır-link sarmalaması (VirtualTable getRowHref) |
+| 7 fiziksel taşınma | — | bekliyor |
+| 8+ diğer sayfalar | — | brief gereği dokunulmadı |
+
+Onay soruları → uygulanan varsayılanlar: 1 `range=` kanonik, from/to giriş takma adı · 2 `namespace` · 3 `src/hooks/` (operatör isteği) · 4 genişlik tarayıcı-yerel · 5 kimlik küçük harf + etiket büyük · 6 viewer yazabilir · 7 opt-in (Topbar `context`) · 8 namespace backend ayrı spec.

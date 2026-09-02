@@ -2518,6 +2518,24 @@ export interface SpanRow {
   peerService?: string;
 }
 
+// v0.10.275 — chstore.TraceNode / TraceServiceSummary / TraceAnalysis birebir.
+export interface TraceNode {
+  spanId: string; parentSpanId?: string;
+  depth: number; order: number;
+  childCount: number; subtreeCount: number; subtreeErrors: number;
+  subtreeNs: number; selfNs: number; critical?: boolean;
+}
+export interface TraceServiceSummary {
+  service: string; spanCount: number; errorCount: number;
+  selfNs: number; selfPct: number; entryCount: number;
+}
+export interface TraceAnalysis {
+  v: number; nodes: TraceNode[];
+  criticalNs: number; criticalIds: string[];
+  services: TraceServiceSummary[];
+  rootSpanId: string; orphanCount: number; truncated: boolean;
+}
+
 export interface TraceDetailResponse {
   traceId: string;
   spans: SpanRow[];
@@ -2534,6 +2552,9 @@ export interface TraceDetailResponse {
   // aged out, only aggregates remain" pane instead of a blank
   // waterfall in that case. `stub` carries the aggregate stats.
   source?: 'clickhouse' | 'tempo' | 'mv_only';
+  // v0.10.275 (trace view Dilim 1b) — ağaç + kritik yol + öz süre + servis
+  // özeti sunucuda (chstore.BuildTraceAnalysis). Eski gövdelerde yok.
+  analysis?: TraceAnalysis;
   stub?: {
     rootService: string;
     rootName: string;

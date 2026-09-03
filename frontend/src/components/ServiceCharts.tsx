@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { MultiLineChart, type DeployMarker } from './MultiLineChart';
 import { publishCursor } from '@/lib/chart/cursorBus';
 import { MetricPanel } from './MetricPanel';
@@ -20,8 +20,10 @@ import { isResolverEligible, serviceRedDescriptors } from '@/lib/resolverEligibi
 import { metricQuery } from '@/lib/metricQuery';
 import { bucketTracesHref } from '@/lib/pivotHref';
 import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
-import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
-import { type CompareMode, parseCompareParam, encodeCompareParam, parseStoredCompare, compareOffsetNs as compareOffset } from '@/lib/chart/compareParam';
+import { STORAGE_KEYS } from '@/lib/storage';
+import { compareOffsetNs as compareOffset } from '@/lib/chart/compareParam';
+import { useCompareParam } from '@/lib/chart/useCompareParam';
+import { CompareToggle } from '@/components/charts/CompareToggle';
 import type { ChartTimeRegion } from '@/lib/chart/overlays';
 import type { Problem, SpanMetricSeries, TimeRange } from '@/lib/types';
 import { QueryError } from '@/components/QueryError';
@@ -143,44 +145,12 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
   const [redErr, setRedErr] = useState<string | null>(null);
   const [redRetry, setRedRetry] = useState(0);
 
-  // Compare-to-previous-period toggle. 'off' suppresses the
-  // second fetch entirely; '24h' / '7d' / 'prev' (matched
-  // window) all hit the same /api/spans/span-metric path with
-  // shifted from/to.
-  // v0.10.311 (chart-layer 2.3) — seçim URL'de (?compare=prior|24h|7d):
-  // link taşır, Copy link / SavedViews birebir. localStorage yalnız TOHUM:
-  // URL'de anahtar yokken saklanan tercih okunur ve URL'ye YAZILIR
-  // (tek yönlü okuma bug sınıfı v0.8.256/265/267; useUrlRange emsali).
-  // Yazım replace:true, yabancı anahtarlar korunur; içe aktarım yalnız
-  // compare anahtarına bağlı (aralık değişimi state'i silmez).
-  const [searchParams, setSearchParams] = useSearchParams();
-  const urlCompare = parseCompareParam(searchParams.get('compare'));
-  const [compare, setCompare] = useState<CompareMode>(
-    () => urlCompare ?? parseStoredCompare(getRaw(STORAGE_KEYS.svcChartsCompare)));
-  useEffect(() => {
-    if (urlCompare === null) {
-      const seed = parseStoredCompare(getRaw(STORAGE_KEYS.svcChartsCompare));
-      if (seed !== 'off') {
-        setSearchParams(prev => {
-          const n = new URLSearchParams(prev);
-          n.set('compare', encodeCompareParam(seed));
-          return n;
-        }, { replace: true });
-      }
-      return;
-    }
-    setCompare(c => (c === urlCompare ? c : urlCompare));
-  }, [urlCompare, setSearchParams]);
-  const setCompareAndPersist = (m: CompareMode) => {
-    setCompare(m);
-    setRaw(STORAGE_KEYS.svcChartsCompare, m);
-    setSearchParams(prev => {
-      const n = new URLSearchParams(prev);
-      const v = encodeCompareParam(m);
-      if (v) n.set('compare', v); else n.delete('compare');
-      return n;
-    }, { replace: true });
-  };
+  // Compare-to-previous-period toggle. 'off' suppresses the second fetch
+  // entirely; '24h' / '7d' / 'prev' (matched window) all hit the same
+  // /api/spans/span-metric path with shifted from/to.
+  // v0.10.311 — seçim URL'de (?compare=prior|24h|7d); v0.10.315 — sarmalayıcı
+  // useCompareParam'a çıktı (Pod ile ortak); localStorage yalnız tohum.
+  const [compare, setCompareAndPersist] = useCompareParam({ seedKey: STORAGE_KEYS.svcChartsCompare });
   const [rpsPrev, setRpsPrev] = useState<SpanMetricSeries[] | null>(null);
   const [errPrev, setErrPrev] = useState<SpanMetricSeries[] | null>(null);
   const [p99Prev, setP99Prev] = useState<SpanMetricSeries[] | null>(null);
@@ -537,21 +507,7 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
         display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6,
         fontSize: 11, color: 'var(--text2)', flexWrap: 'wrap', rowGap: 6,
       }}>
-        <span style={{
-          textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700,
-        }}>Compare to:</span>
-        {(['off', '24h', '7d', 'prev'] as CompareMode[]).map(m => (
-          <Button key={m} size="xs"
-            variant={compare === m ? 'accent' : 'secondary'}
-            aria-pressed={compare === m}
-            onClick={() => setCompareAndPersist(m)}
-            title={m === 'off' ? 'No comparison'
-              : m === 'prev' ? 'Previous window of the same length'
-              : `${m} ago at the same time`}
-            style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}>
-            {m === 'off' ? 'off' : m === 'prev' ? 'prev window' : m}
-          </Button>
-        ))}
+        <CompareToggle value={compare} onChange={setCompareAndPersist} />
         {/* v0.8.414 (Tempo-parity T2) — operation scope. Narrows all
             three RED panels to the picked operation and upgrades the
             latency panel to the full p50–p99 percentile band, matching

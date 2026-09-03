@@ -64,6 +64,9 @@ import { useTablePrefs } from '@/lib/queries/prefs';
 import { parseColsParam } from '@/lib/columnModel';
 import type { ContextDim } from '@/lib/contextParams';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
+import { useAuth } from '@/components/AuthProvider';
+import { tracesExplainUrl } from '@/lib/tracesExplainUrl';
+import type { TracesParams } from '@/lib/api';
 import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, FilterGroup, SpanMetricSeries } from '@/lib/types';
 import { traceHref } from '@/lib/traceHref';
 
@@ -397,6 +400,9 @@ function TracesPageInner() {
 
 
   const [data, setData] = useState<TracesResponse | null | undefined>(undefined);
+  const lastListParamsRef = useRef<TracesParams | null>(null);
+  const { user: authUser } = useAuth();
+  const explainHref = authUser?.role === 'admin' ? tracesExplainUrl(lastListParamsRef.current) : null;
   // v0.8.478 (perf dalga-3) — refetch'te ekran boşalmaz: önceki sonuç
   // solgunlaştırılarak ekranda kalır (keepPreviousData semantiği),
   // skeleton yalnız İLK yüklemede. dataRef effect'lere dep eklemeden
@@ -518,7 +524,7 @@ function TracesPageInner() {
     const traceIdExact = /^[0-9a-f]{32}$/.test(tid) ? tid : undefined;
     const useTimeRange = !traceIdExact;
     const { from, to } = useTimeRange ? listRangeNs : { from: undefined, to: undefined };
-    api.traces({
+    const listParams: TracesParams = {
       limit: 50, offset: page * 50, from, to, sort, order,
       service: filter.service || undefined,
       search: filter.search || undefined,
@@ -547,7 +553,11 @@ function TracesPageInner() {
       // (çift ceza). Sayı ayrı endpoint'ten geliyor; liste SQL'i bayt bayt
       // aynı kaldığı için "toplamı göster" listeyi MV'de BIRAKIYOR.
       count: 'skip',
-    }, ctl.signal).then(d => { if (!cancelled) { setData(d); setRefreshing(false); } }).catch((e: unknown) => {
+    };
+    // v0.10.328 — boş sonuç ekranındaki "Teşhis (explain)" linki SON isteğin
+    // parametrelerini kullanır (URL cerrahisi yok; yalnız admin görür).
+    lastListParamsRef.current = listParams;
+    api.traces(listParams, ctl.signal).then(d => { if (!cancelled) { setData(d); setRefreshing(false); } }).catch((e: unknown) => {
       // İptal HATA DEĞİL — operatörün kendi eylemi. Yutulmazsa aralık
       // her değiştiğinde ekrana kırmızı bir kutu düşerdi.
       if (cancelled || isCanceled(e)) return;
@@ -1332,6 +1342,7 @@ function TracesPageInner() {
         )}
         {view === 'list' && !listErr && data && traces.length === 0 && (
           <TracesEmpty service={filter.service} search={filter.search} range={range} onSwitchView={() => setView('aggregate')}
+            explainHref={explainHref ?? undefined}
             narrowedFromNs={data?.narrowedFromNs} />
         )}
         {view === 'list' && data && traces.length > 0 && (
@@ -1665,10 +1676,12 @@ export default function TracesPage() {
 
 // TracesEmpty — distinguishes "aged out of raw spans (MV still has it)" from
 // "search matched nothing" so the operator gets the right next step.
-function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs }: {
+function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, explainHref }: {
   service: string; search: string; range: TimeRange; onSwitchView: () => void;
   // v0.10.307 — arka uç pencereyi daralttıysa (kaynak bütçesi) "yok" değil "bakılamadı".
   narrowedFromNs?: number;
+  // v0.10.328 — admin: aynı sorgunun ?explain=1 çıktısı (yol + SQL + süre) yeni sekmede.
+  explainHref?: string;
 }) {
   const [mvSpans, setMvSpans] = useState<number | null | undefined>(undefined);
   const rangeNs = useMemo(() => timeRangeToNs(range), [range]);
@@ -1705,6 +1718,13 @@ function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs }: {
           <>Try widening the time range, dropping the service or search filter, or turning off the "Root traces" chip. If even an unfiltered query is empty, check ingest health at <Link to="/system/stats" style={{ color: 'var(--accent2)' }}>system stats</Link>.</>
         )}
       </div>
+      {explainHref && (
+        <div style={{ marginTop: 10, fontSize: 11 }}>
+          <a href={explainHref} target="_blank" rel="noreferrer" title="Aynı sorgunun teşhisi: seçilen yol, her ClickHouse adımı, süre, satır (yalnız admin)">
+            Teşhis (explain) →
+          </a>
+        </div>
+      )}
     </Empty>
   );
 }

@@ -150,6 +150,11 @@ func (s *Store) reprobePromotedAttrs() {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		found := s.probePromotedAttrs(ctx)
+		// v0.10.299 — attribute hash indeksi de ertelenen DDL ile iner; kolonlar
+		// görünür görünmez derleyici bloom yoluna geçer (restart gerekmez).
+		if !AttrIndexAvailable() && s.probeAttrIndex(ctx) {
+			registerAttrIndex(true)
+		}
 		cancel()
 		if len(found) == 0 {
 			continue

@@ -3247,6 +3247,10 @@ func (s *Store) migrate(ctx context.Context) error {
 	// ayrı ayrı "kolon, dizi aramasının verdiği değerin aynısını mı
 	// veriyor?" sorusunu veriyle cevaplıyor.
 	registerTraceAttrMaterialized(s.probePromotedAttrs(ctx))
+	// v0.10.299 — attribute hash indeksi (attr_kvh/res_kvh + bloom): DDL +
+	// probe (küme kipinde ertelenir → ddl_defer.go yeniden probe eder).
+	s.repairAttrIndexCols(ctx)
+	registerAttrIndex(s.probeAttrIndex(ctx))
 
 	// v0.10.127 — entity_seen MV'leri k8s_pod terfi kolonunu OKUR; kolon
 	// yoksa (dış Distributed: repairPromotedAttrCols atlandı, ya da DDL

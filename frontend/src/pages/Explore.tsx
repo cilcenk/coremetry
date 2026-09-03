@@ -1,4 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTablePrefs } from '@/lib/queries/prefs';
 import type { CSSProperties } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
@@ -240,6 +241,32 @@ function ExploreInner({ onSelfWrite }: {
     () => parseInt(searchParams.get('limit') ?? '50', 10) || 50);
   const [extraCols, setExtraCols] = useState<string[]>(
     () => (searchParams.get('cols') ?? '').split(',').map(s => s.trim()).filter(Boolean));
+  // v0.10.320 (DataTable/ContextBar audit dilim 8, Explore) — trace sonuç
+  // tablosunun öznitelik kolonları için SUNUCU tercihi (useTablePrefs
+  // 'explore-traces'; Traces v0.10.251 ile aynı sözleşme, ayrı anahtar —
+  // Explore geçici bir çalışma yüzeyi, Traces'ın tercihini ezmemeli).
+  // Öncelik URL cols= (deep link) > sunucu > varsayılan (boş). URL'de cols
+  // yokken sunucu modeli BİR KEZ benimsenir; sonrası operatör değişikliği
+  // (ColumnManager → setExtraCols) sunucu modelinden farklıysa kaydedilir.
+  const prefs = useTablePrefs('explore-traces');
+  const urlHadCols = useRef(!!(searchParams.get('cols') ?? '').trim());
+  const prefsAdopted = useRef(false);
+  useEffect(() => {
+    if (prefs.model === undefined || prefsAdopted.current) return;
+    prefsAdopted.current = true;
+    if (urlHadCols.current || !prefs.model) return;
+    const hidden = new Set(prefs.model.hidden);
+    const extras = prefs.model.order.filter(id => !hidden.has(id)).slice(0, 8);
+    if (extras.length) setExtraCols(extras);
+  }, [prefs.model]);
+  useEffect(() => {
+    if (!prefsAdopted.current) return;
+    const server = prefs.model ? prefs.model.order.filter(id => !prefs.model!.hidden.includes(id)) : null;
+    if (server && server.join(',') === extraCols.join(',')) return;
+    if (!server && extraCols.length === 0) return;
+    prefs.save({ v: 1, order: extraCols, hidden: [], sig: 'explore-traces' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extraCols]);
 
   const [services, setServices] = useState<string[]>([]);
   const [heatmap, setHeatmap] = useState<Heatmap | null | undefined>(undefined);

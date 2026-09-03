@@ -10840,6 +10840,7 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 		// v0.10.300 — attribute hash indeksi: hazır mı, kaç yüklem bloom yolunda.
 		"attr_index_available": chstore.AttrIndexAvailable(),
 		"attr_index_used":      chstore.AttrIndexUsed(),
+		"attr_slice_used":      chstore.AttrSliceUsed(), // v0.10.301 — indeks-güdümlü aday dilimi
 		"clickhouse":           chStatusLabel(chOK, spoolDegraded),
 		// v0.9.238 — which roles THIS pod actually runs. In distributed mode
 		// the api and ingest Deployments answer the same hostname through

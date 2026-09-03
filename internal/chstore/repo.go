@@ -3463,7 +3463,32 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	// Şimdi tek yol: servis indeksinden akışkan dilim (PK sırası, GROUP BY
 	// yok) → id listesi + kesim → stage 2 zaten sınırlı (holders) ve desc'te
 	// tabanı kesime çekilir. Plan saf (serviceSlicePlan), tablo-testli.
-	if f.Service != "" {
+	// v0.10.301 (trace arama Dilim 1c) — attribute filtresi bloom'a
+	// bağlanabiliyorsa aday kümesi İNDEKSTEN gelir (spans, zaman sıralı);
+	// servis/recency dilimleri atlanır. Boş sonuç = bulunamadı (dilime
+	// düşülmez). Diğer yüklemler aşama 2'de tam listeyle koşar.
+	if attrSQL, attrArgs, attrOK := attrSlicePredicates(f); attrOK {
+		want, sliceOrder, sliced := serviceSlicePlan(f, pageLimit, stage1Limit)
+		s1f := f
+		s1f.Order = sliceOrder
+		ids, cut, exhausted, err := s.traceAttrSlice(ctx, s1f, want, attrSQL, attrArgs)
+		if err != nil {
+			return nil, 0, false, fmt.Errorf("stage1 attr: %w", err)
+		}
+		if len(ids) == 0 {
+			return []TraceRow{}, 0, false, nil
+		}
+		traceIDs = ids
+		holders = strings.Repeat("?,", len(ids))
+		holders = holders[:len(holders)-1]
+		stage2Floor, stage2Ceil = sliceStageBounds(sliceOrder, cut, exhausted)
+		if sliced && f.RankedWithin != nil {
+			*f.RankedWithin = len(ids)
+			if exhausted {
+				*f.RankedWithin = 0
+			}
+		}
+	} else if f.Service != "" {
 		want, sliceOrder, sliced := serviceSlicePlan(f, pageLimit, stage1Limit)
 		s1f := f
 		s1f.Order = sliceOrder

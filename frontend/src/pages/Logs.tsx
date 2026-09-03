@@ -30,6 +30,8 @@ import type { KibanaSettings } from '@/lib/types';
 import { useLogs } from '@/lib/queries';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
+import { useTablePrefs } from '@/lib/queries/prefs';
+import { parseColsParam } from '@/lib/columnModel';
 import { getRaw, setRaw } from '@/lib/storage';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
@@ -327,6 +329,26 @@ function LogsInner() {
   // drift apart. `severity` used to be missing from all three: the chip
   // changed the filter, the URL never learned, and Share handed out a link
   // that opened on All levels.
+  // v0.10.318 (DataTable/ContextBar audit dilim 8, Logs) — SUNUCU sütun
+  // tercihi (useTablePrefs 'logs', saved_views page='table:logs'); Traces
+  // v0.10.251 sözleşmesinin aynısı. Öncelik: URL cols= (deep link, sunucuyu
+  // EZMEZ) > sunucu > localStorage > varsayılan. URL'de cols yokken sunucu
+  // modeli BİR KEZ benimsenir (prefs çözülünce); yalnız operatörün kendi
+  // değişikliği (changeCols) sunucuya yazılır — deep-link'in kolonları
+  // alıcının tercihini bozmaz (v0.9.4xx tasarımı korunur). Kendi-kendine-
+  // yazım yarışı: prefs bekliyorken ve URL'de cols yokken writeUrl cols
+  // yazmaz — aksi hâlde URL > sunucu önceliği sunucu tercihini gömerdi.
+  const prefs = useTablePrefs('logs');
+  const urlHadCols = useRef(!!parseColsParam(searchParams.get('cols')));
+  const prefsAdopted = useRef(false);
+  useEffect(() => {
+    if (prefs.model === undefined || prefsAdopted.current) return;
+    prefsAdopted.current = true;
+    if (urlHadCols.current || !prefs.model) return;
+    const hidden = new Set(prefs.model.hidden);
+    const visible = prefs.model.order.filter(id => !hidden.has(id));
+    if (visible.length) setLogCols(visible);
+  }, [prefs.model]);
   const urlSig = logsUrlSig;
   const lastUrlSigRef = useRef<string | null>(null);
   useEffect(() => {
@@ -353,7 +375,7 @@ function LogsInner() {
   // resulting searchParams change as a no-op.
   const writeUrl = (f: typeof filter, pills: LogFilter[], cols?: string[]) => {
     const filtersRaw = encodeFiltersParam(pills);
-    const colsRaw = colsParam(cols ?? logCols);
+    const colsRaw = (prefs.model === undefined && !urlHadCols.current) ? '' : colsParam(cols ?? logCols);
     lastUrlSigRef.current = urlSig(f, filtersRaw, colsRaw);
     setSearchParams(prev => writeLogsParams(prev, f, filtersRaw, colsRaw), { replace: true });
   };
@@ -362,6 +384,9 @@ function LogsInner() {
   const changeCols = (next: string[]) => {
     setLogCols(next);
     setRaw(COLS_STORE_KEY, JSON.stringify(next));
+    // v0.10.318 — operatörün kendi değişikliği sunucuya (debounce'lu PUT,
+    // BroadcastChannel ile diğer sekmeler). Genişlikler tarayıcı-yerel kalır.
+    prefs.save({ v: 1, order: next, hidden: [], sig: 'logs' });
     writeUrl(filter, filters, next);
   };
   const removeColumn = (id: string) => changeCols(logCols.filter(c => c !== id));

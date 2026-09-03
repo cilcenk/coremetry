@@ -18,6 +18,7 @@ import { ServiceAnnotationLane } from '@/components/charts/ServiceAnnotationLane
 import { CompareToggle } from '@/components/charts/CompareToggle';
 import { useCompareParam } from '@/lib/chart/useCompareParam';
 import { compareOffsetNs, ghostItemsFrom } from '@/lib/chart/compareParam';
+import { okErrorPoints } from '@/lib/chart/redBands';
 import { Spinner, Empty } from '@/components/Spinner';
 import { MultiLineChart } from '@/components/MultiLineChart';
 // v0.9.945 (D2/K10) — RED kartları ChartCard'dan (saniye eksenli
@@ -604,10 +605,9 @@ function throughputBandsFrom(s: Record<string, SpanMetricSeries[] | null> | unde
   const ratePts = s?.rate?.[0]?.points ?? [];
   const erPts = s?.error_rate?.[0]?.points ?? [];
   if (ratePts.length < 2) return [{ series: s?.rate ?? [], name: 'req/s', role: 'data' }];
-  const okPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * (1 - (erPts[i]?.value ?? 0) / 100)) }));
-  const errPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * ((erPts[i]?.value ?? 0) / 100)) }));
+  const { ok, err } = okErrorPoints(ratePts, erPts);
   return [
-    { series: [{ groupKey: [], points: okPts }], name: 'OK', role: 'success' },
-    { series: [{ groupKey: [], points: errPts }], name: 'Errors', role: 'error' },
+    { series: [{ groupKey: [], points: ok }], name: 'OK', role: 'success' },
+    { series: [{ groupKey: [], points: err }], name: 'Errors', role: 'error' },
   ];
 }

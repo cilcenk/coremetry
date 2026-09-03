@@ -2461,6 +2461,8 @@ export interface TraceRow {
 }
 
 export interface TracesResponse {
+  // v0.10.329 — boş liste öz-teşhisi: aynı filtreyle eşleşen SPAN sayısı (yalnız boş sonuçta).
+  emptyDiag?: { matchingSpans: number; error?: string };
   // Absent in the default ("skip") count mode — clients should treat
   // missing-or-undefined as "unknown" and rely on `hasMore` for paging.
   total?: number;

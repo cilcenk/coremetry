@@ -1343,6 +1343,7 @@ function TracesPageInner() {
         {view === 'list' && !listErr && data && traces.length === 0 && (
           <TracesEmpty service={filter.service} search={filter.search} range={range} onSwitchView={() => setView('aggregate')}
             explainHref={explainHref ?? undefined}
+            matchingSpans={data?.emptyDiag?.matchingSpans}
             narrowedFromNs={data?.narrowedFromNs} />
         )}
         {view === 'list' && data && traces.length > 0 && (
@@ -1676,12 +1677,14 @@ export default function TracesPage() {
 
 // TracesEmpty — distinguishes "aged out of raw spans (MV still has it)" from
 // "search matched nothing" so the operator gets the right next step.
-function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, explainHref }: {
+function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, explainHref, matchingSpans }: {
   service: string; search: string; range: TimeRange; onSwitchView: () => void;
   // v0.10.307 — arka uç pencereyi daralttıysa (kaynak bütçesi) "yok" değil "bakılamadı".
   narrowedFromNs?: number;
   // v0.10.328 — admin: aynı sorgunun ?explain=1 çıktısı (yol + SQL + süre) yeni sekmede.
   explainHref?: string;
+  // v0.10.329 — sunucu öz-teşhisi: aynı filtreyle eşleşen span sayısı (boş listede).
+  matchingSpans?: number;
 }) {
   const [mvSpans, setMvSpans] = useState<number | null | undefined>(undefined);
   const rangeNs = useMemo(() => timeRangeToNs(range), [range]);
@@ -1718,6 +1721,13 @@ function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, exp
           <>Try widening the time range, dropping the service or search filter, or turning off the "Root traces" chip. If even an unfiltered query is empty, check ingest health at <Link to="/system/stats" style={{ color: 'var(--accent2)' }}>system stats</Link>.</>
         )}
       </div>
+      {matchingSpans !== undefined && (
+        <div style={{ marginTop: 10, fontSize: 11, color: matchingSpans > 0 ? 'var(--warn)' : 'var(--text3)' }}>
+          {matchingSpans > 0
+            ? <>Diagnostic: <b>{matchingSpans.toLocaleString()}</b> spans in this window match the filter, yet the trace list came back empty — the backend logged the query plan (<span className="mono">[traces] EMPTY list</span>).</>
+            : <>Diagnostic: no span in this window matches the filter at span level — the data or the predicate, not the list query.</>}
+        </div>
+      )}
       {explainHref && (
         <div style={{ marginTop: 10, fontSize: 11 }}>
           <a href={explainHref} target="_blank" rel="noreferrer" title="Aynı sorgunun teşhisi: seçilen yol, her ClickHouse adımı, süre, satır (yalnız admin)">

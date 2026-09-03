@@ -4272,9 +4272,9 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusForbidden, "explain requires admin")
 		return
 	}
-	if explain {
-		f.Explain = &chstore.TraceExplain{}
-	}
+	// v0.10.329 — explain kaydı HER istekte tutulur (ucuz: SQL metni + arg);
+	// yanıta yalnız explain=1'de girer, boş sonuçta pod loguna düşer.
+	f.Explain = &chstore.TraceExplain{}
 	fn := func(ctx context.Context) (any, error) {
 		// OUT param (v0.8.369): set to the recency-slice size when a
 		// non-time sort was ranked within the newest-N slice, so the
@@ -4291,6 +4291,23 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 		resp := map[string]interface{}{"traces": traces, "hasMore": hasMore}
+		// v0.10.329 — boş liste öz-teşhisi (operatör, prod: kısa pencerede
+		// aramalı liste boş, şerit dolu; lokalde tekrar etmiyor). Aynı
+		// WHERE + arama yüklemiyle span sayımı: N>0 = liste sorgusu
+		// kaybediyor, N=0 = veri/yüklem. Yanıta emptyDiag, pod loguna
+		// explain (SQL/arg/ms/satır) — operatör tıklaması gerekmez.
+		if chstore.EmptyDiagWanted(f, len(traces)) {
+			n, cerr := s.store.CountMatchingSpans(ctx, f)
+			diag := map[string]any{"matchingSpans": n}
+			if cerr != nil {
+				diag["error"] = cerr.Error()
+			}
+			resp["emptyDiag"] = diag
+			if ej, jerr := json.Marshal(f.Explain); jerr == nil {
+				log.Printf("[traces] EMPTY list (window=%s→%s service=%q search=%q filters=%d hasError=%v sort=%s) matchingSpans=%d explain=%s",
+					f.From.UTC().Format(time.RFC3339), f.To.UTC().Format(time.RFC3339), f.Service, f.Search, len(f.Filters), f.HasError, f.Sort, n, ej)
+			}
+		}
 		// v0.10.124 — pencere MV'de boş bir güne değiyorsa ham yoldan okundu;
 		// UI bunu söyler (sihirbaz doldurunca kendiliğinden kaybolur).
 		if s.store.TraceMVGap(ctx, f.From, f.To) {
@@ -4311,7 +4328,7 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 		if f.CountMode != "skip" {
 			resp["total"] = total
 		}
-		if f.Explain != nil {
+		if explain {
 			resp["explain"] = f.Explain
 		}
 		return resp, nil

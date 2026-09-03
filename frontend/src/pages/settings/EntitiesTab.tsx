@@ -4,7 +4,7 @@ import { Field } from '@/components/ui/Field';
 import { Stack, Row } from '@/components/ui';
 import { Badge, type Tone } from '@/components/ui/Badge';
 import { Spinner, Empty } from '@/components/Spinner';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { fmtDateTime } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { useEntitySettings, useSaveEntitySettings, useEntitySync, useRunEntitySync } from '@/lib/queries';

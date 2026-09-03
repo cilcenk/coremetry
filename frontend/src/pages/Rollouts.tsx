@@ -21,7 +21,7 @@ import { Topbar } from '@/components/Topbar';
 import { PageShell } from '@/components/ui/PageShell';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Badge, Button, StatTile } from '@/components/ui';
-import { useDataTable, DataTableColgroup, DataTableHead, ResetLayoutButton } from '@/components/DataTable';
+import { useDataTable, DataTableColgroup, DataTableHead, ResetLayoutButton } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs } from '@/lib/utils';

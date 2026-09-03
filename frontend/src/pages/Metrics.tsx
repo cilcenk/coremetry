@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Pager } from '@/components/Pager';
 import { ServicePicker } from '@/components/ServicePicker';
 import { MetricQueryEditor } from '@/components/viz/MetricQueryEditor';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { useDebouncedValue } from '@/lib/perf/useDebouncedValue';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';

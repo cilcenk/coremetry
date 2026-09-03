@@ -6,7 +6,7 @@ import { Button, LinkButton } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import { useAuditLog } from '@/lib/queries';
 import { tsLong, type GoDuration } from '@/lib/utils';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { AuditEntry } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';

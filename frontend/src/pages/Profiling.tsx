@@ -9,7 +9,7 @@ import { useProfiles, useProfileHotspots } from '@/lib/queries';
 import { copyToClipboard } from '@/lib/clipboard';
 import { tsShort, timeRangeToNs, fmtNum } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ProfileRow, ProfileHotspotsResponse, TimeRange } from '@/lib/types';
 import { PageShell } from '@/components/ui/PageShell';

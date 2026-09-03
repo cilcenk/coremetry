@@ -28,7 +28,7 @@ one exists because its violation shipped a bug or an incident.
 ## 2. Tables
 
 - EVERY data table adopts `useDataTable`
-  (`components/DataTable.tsx`, pure core `lib/dataTable.ts`):
+  (`components/ui/DataTable/DataTable.tsx`, pure core `lib/dataTable.ts`):
   sortable + column-resizable, widths/sort persisted by
   `storageKey`. Template: `SlowQueries.tsx`.
 - Server-paged tables (Services, Traces, Logs) use serverSort /

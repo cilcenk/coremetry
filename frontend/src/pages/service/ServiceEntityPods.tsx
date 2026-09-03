@@ -10,7 +10,7 @@ import { Link } from 'react-router-dom';
 import { Stack, Row } from '@/components/ui';
 import { Badge } from '@/components/ui/Badge';
 import { Spinner, Empty } from '@/components/Spinner';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { useEntityEnabled, useEntityServicePods } from '@/lib/queries';
 import { timeRangeToNs, fmtDateTime, fmtBytes } from '@/lib/utils';

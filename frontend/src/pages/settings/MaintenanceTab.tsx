@@ -5,7 +5,7 @@ import { readState } from '@/lib/readState';
 import { Button, Modal, Stack, useConfirm } from '@/components/ui';
 import { api, type MaintenanceWindow } from '@/lib/api';
 import { Field, Row } from './shared';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { tsLong } from '@/lib/utils';
 import { formatDateTime, parseDateTime } from '@/lib/rangePicker';

@@ -4,7 +4,7 @@ import { TableSkeleton } from '@/components/Skeleton';
 import { useAuth } from '@/components/AuthProvider';
 import { IconShield } from '@/components/icons';
 import { api } from '@/lib/api';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { Button } from '@/components/ui/Button';
 import { ActionRow } from '@/components/ui/ActionRow';
 import type { DataTableColumn } from '@/lib/dataTable';

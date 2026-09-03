@@ -49,7 +49,7 @@ function walk(dir: string, out: string[] = []): string[] {
 
 // Testleri ve primitifin KENDİSİNİ sayma: DataTable.tsx butonu tanımlıyor,
 // tüketmiyor.
-const PRIMITIVE = join('components', 'DataTable.tsx');
+const PRIMITIVE = join('components', 'ui', 'DataTable', 'DataTable.tsx');
 function isConsumer(abs: string): boolean {
   return !abs.endsWith('.test.tsx') && !abs.includes('.test.') && !abs.endsWith(PRIMITIVE);
 }

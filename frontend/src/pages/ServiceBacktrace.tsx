@@ -7,7 +7,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { useServiceBacktrace } from '@/lib/queries';
 import { fmtNum, tsLong, rangeToSince } from '@/lib/utils';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { CallerRow, TimeRange } from '@/lib/types';
 import { useUrlRange } from '@/lib/useUrlRange';

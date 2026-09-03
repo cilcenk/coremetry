@@ -94,7 +94,7 @@ describe('readPersistedWidths', () => {
 // test daha yapıcıyı test edip çağrı yerini kaçırdığı için mutasyondan
 // geçti. Kapı, okumanın ve yazmanın gerçekten imzadan geçtiğini çiviler.
 describe('useDataTable çağrı yeri', () => {
-  const src = readFileSync(resolve(__dirname, '../components/DataTable.tsx'), 'utf8');
+  const src = readFileSync(resolve(__dirname, '../components/ui/DataTable/DataTable.tsx'), 'utf8');
   const code = src.split('\n').map(l => {
     const i = l.indexOf('//');
     return i >= 0 ? l.slice(0, i) : l;

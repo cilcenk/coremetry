@@ -18,7 +18,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { percentiles } from '@/lib/perf/transforms';
 import { Spinner, Empty } from '@/components/Spinner';
-import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
+import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { timeRangeToNs } from '@/lib/utils';
 import type { TimeRange, TraceRow } from '@/lib/types';

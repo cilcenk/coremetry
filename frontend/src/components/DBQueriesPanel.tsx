@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Spinner, Empty } from './Spinner';
 import { DisclosureButton } from '@/components/ui';
-import { useDataTable, DataTableColgroup, DataTableHead } from './DataTable';
+import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/ui/DataTable';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
 import { encodeFilters, windowRangeParam } from '@/lib/urlState';

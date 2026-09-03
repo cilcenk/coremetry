@@ -10,7 +10,7 @@ import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
 import { useIncidents, useCreateIncident } from '@/lib/queries';
 import { tsLong, fmtNum } from '@/lib/utils';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { Incident, IncidentStatus } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';

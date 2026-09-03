@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { SectionUnavailable, StatTile } from '@/components/ui';
 import { Sparkline } from '@/components/Sparkline';
 import { TrendDelta } from '@/components/TrendDelta';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { fmtNum } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, DBStmtDetail, DBStmtCaller } from '@/lib/types';

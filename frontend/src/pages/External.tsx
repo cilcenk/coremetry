@@ -8,7 +8,7 @@ import { Drawer, DrawerSection, DrawerTrendRow } from '@/components/ui';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { ExternalPaths } from '@/components/ExternalPaths';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ExternalHost, ExternalHostDetail, TimeRange } from '@/lib/types';

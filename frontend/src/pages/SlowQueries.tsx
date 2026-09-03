@@ -14,7 +14,7 @@ import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
 import { tracesPivotHref } from '@/lib/pivotHref';
 import { useUrlRange } from '@/lib/useUrlRange';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { encodeStmtParam, stmtDetailHref } from '@/pages/slowqueries/stmtParam';
 import { useStmtParamRedirect } from '@/pages/slowqueries/useStmtParamRedirect';
 import type { DataTableColumn } from '@/lib/dataTable';

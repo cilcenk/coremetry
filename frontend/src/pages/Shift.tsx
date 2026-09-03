@@ -5,7 +5,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
 import { IconSparkles } from '@/components/icons';
-import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
+import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { tsLong, fmtFixed } from '@/lib/utils';

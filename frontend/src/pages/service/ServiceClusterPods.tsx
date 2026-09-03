@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { DataTableHead, DataTableColgroup, type DataTable } from '@/components/DataTable';
+import { DataTableHead, DataTableColgroup, type DataTable } from '@/components/ui/DataTable';
 import { PodJmxInline } from './PodJmxInline';
 import { fmtCores, fmtBps, podPhaseBadge, restartColor } from '@/pages/clusters/thresholds';
 import { fmtBytes } from '@/lib/utils';

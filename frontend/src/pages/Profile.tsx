@@ -8,7 +8,7 @@ import { MethodHotspots } from '@/components/MethodHotspots';
 import { BreakdownBar } from '@/components/KindBadge';
 import { CopyButton } from '@/components/CopyButton';
 import { Button } from '@/components/ui/Button';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { raceGuard } from '@/lib/raceGuard';

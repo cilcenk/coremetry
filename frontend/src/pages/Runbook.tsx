@@ -12,7 +12,7 @@ import { readState } from '@/lib/readState';
 import { useAuth } from '@/components/AuthProvider';
 import { RenderedMarkdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/Button';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useRunbook, useUpdateRunbook, useDeleteRunbook, useRunbookExecutions, useExecuteRunbook } from '@/lib/queries';

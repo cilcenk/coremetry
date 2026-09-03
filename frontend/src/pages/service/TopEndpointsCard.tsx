@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useEffect } from 'react';
 import { endpointDetailHref } from '@/pages/endpoints/endpointParam';
 import { encodeRange } from '@/lib/urlState';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { EndpointRow, TimeRange } from '@/lib/types';
 

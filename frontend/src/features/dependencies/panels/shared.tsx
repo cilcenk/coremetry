@@ -10,7 +10,7 @@ import { serviceHref } from '@/lib/serviceHref';
 import { statementTracesHref } from '@/lib/pivotHref';
 import { metricCatalogueHref } from '@/pages/explore/urlCodec';
 import { Button } from '@/components/ui/Button';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, SpanMetricSeries } from '@/lib/types';
 

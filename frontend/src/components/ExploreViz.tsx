@@ -3,7 +3,7 @@ import { seriesColor } from '@/lib/chartFmt';
 import { fmtClock } from '@/lib/utils';
 import { MultiLineChart } from './MultiLineChart';
 import type { ExploreSeries, SpanMetricSeries } from '@/lib/types';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 
 type TopNRow = { name: string; latest: number; total: number };

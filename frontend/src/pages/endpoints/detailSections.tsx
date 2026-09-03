@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, PanelTitle, SectionUnavailable } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { useEndpointSplit, useEndpointDownstream, useEndpointCallers } from '@/lib/queries';
 import { fmtNum, tsLong } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';

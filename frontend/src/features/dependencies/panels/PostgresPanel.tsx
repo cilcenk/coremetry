@@ -3,7 +3,7 @@ import { Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import type { TimeRange, PostgresMetrics } from '@/lib/types';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 
 // v0.9.873 (tutarlılık denetimi BT15) — sabit `sizeBytes desc` sıralaması

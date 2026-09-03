@@ -71,7 +71,7 @@ export type { VirtualListProps } from './VirtualList';
 // sınırı" kuralı bu dördü için fiilen uygulanmıyordu. Ekleme SALT
 // EKLEME: mevcut doğrudan import'lar taşınmıyor (14 dosyalık bir
 // süpürme, kendi kararı), ama yeni çağrı yeri artık barrel'ı bulur.
-export { VirtualTable } from './VirtualTable';
+export { VirtualTable } from './DataTable/VirtualTable';
 export { FacetMultiSelect } from './FacetMultiSelect';
 export { PageControls } from './PageControls';
 export { RouteSkeleton } from './RouteSkeleton';

@@ -6,7 +6,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { Button, Field, IconButton, Modal, SearchField, Stack } from '@/components/ui';
 import { Sparkline } from '@/components/Sparkline';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { parseDashboardImport } from '@/lib/dashboardIO';

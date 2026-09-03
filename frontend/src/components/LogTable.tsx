@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CopyButton } from './CopyButton';
-import { useDataTable, DataTableColgroup, DataTableHead } from './DataTable';
+import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/ui/DataTable';
 import { highlightSegments } from '@/lib/logFilters';
 import { podOfLog, podEntryOfLog } from '@/lib/logPod';
 import { tsLong, sevName, sevClass } from '@/lib/utils';

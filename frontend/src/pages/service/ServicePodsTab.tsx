@@ -1,7 +1,7 @@
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { useDataTable } from '@/components/DataTable';
+import { useDataTable } from '@/components/ui/DataTable';
 import { Spinner, Empty } from '@/components/Spinner';
 import { RuntimeCharts, familyOf } from './RuntimeCharts';
 import { PodResourceCharts } from './PodResourceCharts';

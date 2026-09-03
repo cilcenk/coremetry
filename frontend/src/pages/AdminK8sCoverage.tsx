@@ -7,7 +7,7 @@ import {
   podSeenWindow, podStabilityWarning, coverageHeaderTitle,
 } from '@/pages/k8s/coverageRows';
 import type { K8sCoverageRow, PodRow } from '@/lib/types';
-import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
+import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 
 // AdminK8sCoverage — K8s bağlam kapsama kartı (v0.10.36, entity Faz 0).

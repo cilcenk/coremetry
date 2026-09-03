@@ -29,7 +29,7 @@ function stripComments(src: string): string {
 
 const SRC = stripComments(readFileSync(resolve(__dirname, 'keyboard.ts'), 'utf8'));
 const NAV = stripComments(readFileSync(resolve(__dirname, 'useTableNav.ts'), 'utf8'));
-const DT = stripComments(readFileSync(resolve(__dirname, '..', 'components', 'DataTable.tsx'), 'utf8'));
+const DT = stripComments(readFileSync(resolve(__dirname, '..', 'components', 'ui', 'DataTable', 'DataTable.tsx'), 'utf8'));
 
 describe('kısayol defteri yığın', () => {
   it('defter tuş başına DİZİ tutuyor', () => {

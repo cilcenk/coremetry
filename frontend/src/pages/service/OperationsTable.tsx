@@ -7,7 +7,7 @@ import { MultiLineChart } from '@/components/MultiLineChart';
 import { EventMarkers } from '@/components/EventMarkers';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters, encodeRange, buildQuery } from '@/lib/urlState';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { serviceHref } from '@/lib/serviceHref';
 import type { TimeRange, OperationSummary, SpanMetricSeries, SpanAgg } from '@/lib/types';

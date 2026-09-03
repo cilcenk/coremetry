@@ -4,7 +4,7 @@ import { useClusterMembers } from '@/lib/queries';
 import { type ClusterMember } from '@/lib/api';
 import { tsLong, tsRel } from '@/lib/utils';
 import { IconLock } from '@/components/icons';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { Button } from '@/components/ui/Button';
 

@@ -4,7 +4,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
 import { ColumnManager } from '@/components/ColumnManager';
-import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
+import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/ui/DataTable';
 import { fmtNum, tsLong, rowClickHandlers } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TraceRow } from '@/lib/types';

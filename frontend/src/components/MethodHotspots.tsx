@@ -3,7 +3,7 @@ import { Button } from '@/components/ui';
 import type { FlameNode, ProfileFrameKind } from '@/lib/types';
 import { flameToHotspots, flameCategoryBreakdown, type MethodHotspot } from '@/lib/flameHotspots';
 import { KindBadge, BreakdownBar, kindLabel } from './KindBadge';
-import { useDataTable, DataTableColgroup, DataTableHead } from './DataTable';
+import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 
 // Method Hotspots — Dynatrace-style "which functions are

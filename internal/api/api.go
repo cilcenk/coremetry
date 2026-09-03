@@ -4264,7 +4264,18 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 	// relative window stable within the TTL (do NOT key on parsed now()-
 	// ticking time, the v0.5.184 class).
 	key := "traces:" + cacheRawQuery(r) // v0.10.256 — from/to 30 s grid, refresh düşer
-	s.serveCached(w, r, key, 20*time.Second, func(ctx context.Context) (any, error) {
+	// v0.10.326 — ?explain=1 (yalnız admin): cache'i ATLAR, yanıta yol
+	// kararları + her CH adımı (SQL/arg/ms/satır/hata) eklenir. Prod'da
+	// tekrar etmeyen "kısa pencere boş" sınıfının teşhis aracı.
+	explain := q.Get("explain") == "1"
+	if explain && !explainAllowed(auth.FromContext(r.Context())) {
+		writeJSONError(w, http.StatusForbidden, "explain requires admin")
+		return
+	}
+	if explain {
+		f.Explain = &chstore.TraceExplain{}
+	}
+	fn := func(ctx context.Context) (any, error) {
 		// OUT param (v0.8.369): set to the recency-slice size when a
 		// non-time sort was ranked within the newest-N slice, so the
 		// UI can hint honestly (0 = exact/global ordering served).
@@ -4300,8 +4311,27 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 		if f.CountMode != "skip" {
 			resp["total"] = total
 		}
+		if f.Explain != nil {
+			resp["explain"] = f.Explain
+		}
 		return resp, nil
-	})
+	}
+	if explain {
+		res, err := fn(r.Context())
+		if err != nil {
+			// Hata da teşhistir: adımlar kaydedildi, hatayla birlikte döner.
+			writeJSON(w, map[string]any{"error": err.Error(), "explain": f.Explain})
+			return
+		}
+		writeJSON(w, res)
+		return
+	}
+	s.serveCached(w, r, key, 20*time.Second, fn)
+}
+
+// explainAllowed — v0.10.326: teşhis çıktısı SQL + arg taşır; yalnız admin.
+func explainAllowed(c *auth.Claims) bool {
+	return c != nil && c.Role == auth.RoleAdmin
 }
 
 // exportTracesCSV serves the current /traces filter set as a

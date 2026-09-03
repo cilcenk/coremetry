@@ -8,7 +8,7 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 
-const { logsPatterns } = vi.hoisted(() => ({
+const { logsPatterns, logsTemplates } = vi.hoisted(() => ({
   logsPatterns: vi.fn(async (..._a: unknown[]) => ({
   groups: [
     { hash: 'a', template: 'connection refused to <x> after <x>ms', count: 120, sample: 'connection refused to 10.0.0.1 after 15ms', severity: 17, severityText: 'ERROR', firstSeen: 1, lastSeen: Date.now() * 1e6, services: ['api', 'worker'], serviceCount: 3, query: '"connection refused to" AND "after"' },
@@ -16,11 +16,15 @@ const { logsPatterns } = vi.hoisted(() => ({
   ],
   sampled: 2000, total: 48000, cap: 2000, truncated: true, distinct: 2,
 })),
+  // v0.10.310 — Şablonlar sekmesi (Drain kalıcı).
+  logsTemplates: vi.fn(async (..._a: unknown[]) => ([
+    { id: 't1', template: 'svc: JWT signature expired: token for session <*> rejected', firstSeen: 1, lastSeen: Date.now() * 1e6, totalCount: 42, services: ['svc'], sample: 'svc: JWT signature expired: token for session s1 rejected', query: '"svc: JWT signature expired: token for session" AND "rejected"' },
+  ])),
 }));
 
-vi.mock('@/lib/api', () => ({ api: { logsPatterns } }));
+vi.mock('@/lib/api', () => ({ api: { logsPatterns, logsTemplates } }));
 
-import { LogPatternsPanel, agoLabel } from './LogPatternsPanel';
+import { LogPatternsPanel, agoLabel, templatesSinceRung } from './LogPatternsPanel';
 
 let host: HTMLDivElement | null = null; let root: Root | null = null;
 function render(node: ReactNode): HTMLElement {
@@ -30,7 +34,11 @@ function render(node: ReactNode): HTMLElement {
   act(() => { root!.render(<MemoryRouter><QueryClientProvider client={qc}>{node}</QueryClientProvider></MemoryRouter>); });
   return host;
 }
-afterEach(() => { act(() => { root?.unmount(); }); host?.remove(); root = null; host = null; logsPatterns.mockClear(); });
+afterEach(() => {
+  act(() => { root?.unmount(); }); host?.remove(); root = null; host = null;
+  logsPatterns.mockClear(); logsTemplates.mockClear();
+  try { localStorage.clear(); } catch { /* jsdom */ }
+});
 
 describe('LogPatternsPanel', () => {
   it('açıkken satırları ve dürüst altbilgiyi çizer; Ara türetilmiş sorguyu verir', async () => {
@@ -51,6 +59,39 @@ describe('LogPatternsPanel', () => {
     await act(async () => { await new Promise(r => setTimeout(r, 20)); });
     expect(logsPatterns).not.toHaveBeenCalled();
     expect(el.querySelector('.lp-panel')).toBeNull();
+  });
+  it('Şablonlar sekmesi: yalnız açılınca, since rung ile çeker; Ara türetilmiş sorguyu verir', async () => {
+    const onSearch = vi.fn();
+    const now = Date.now();
+    const el = render(<LogPatternsPanel params={{ service: 'svc', from: (now - 5 * 3600 * 1000) * 1e6, to: now * 1e6 }} open onSearch={onSearch} />);
+    await act(async () => { await new Promise(r => setTimeout(r, 30)); });
+    expect(logsTemplates).not.toHaveBeenCalled();
+    const tabBtn = Array.from(el.querySelectorAll('.tab-strip button')).find(b => b.textContent === 'Şablonlar') as HTMLButtonElement;
+    act(() => { tabBtn.click(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 30)); });
+    expect(logsTemplates).toHaveBeenCalledTimes(1);
+    expect(logsTemplates.mock.calls[0][0]).toMatchObject({ since: '6h', limit: 200, sort: 'last_seen', service: 'svc' });
+    expect(el.querySelectorAll('tr.lp-row').length).toBe(1);
+    expect(el.textContent).toContain('1 kalıcı şablon');
+    expect(el.textContent).toContain('son 6h içinde');
+    expect(el.querySelector('tr.lp-row td')!.textContent).toContain('JWT signature expired');
+    act(() => { (el.querySelector('tr.lp-row .lp-search') as HTMLButtonElement).click(); });
+    expect(onSearch).toHaveBeenCalledWith('"svc: JWT signature expired: token for session" AND "rejected"');
+    // Desenler sekmesine dönüş: fetch tekrar etmez (cache), satırlar desenler.
+    const backBtn = Array.from(el.querySelectorAll('.tab-strip button')).find(b => b.textContent === 'Desenler') as HTMLButtonElement;
+    act(() => { backBtn.click(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 30)); });
+    expect(el.querySelectorAll('tr.lp-row').length).toBe(2);
+  });
+  it('templatesSinceRung basamakları', () => {
+    const now = 1_000_000_000_000;
+    const h = 3_600_000;
+    expect(templatesSinceRung(undefined, now)).toBe('24h');
+    expect(templatesSinceRung((now - 0.5 * h) * 1e6, now)).toBe('1h');
+    expect(templatesSinceRung((now - 5 * h) * 1e6, now)).toBe('6h');
+    expect(templatesSinceRung((now - 20 * h) * 1e6, now)).toBe('24h');
+    expect(templatesSinceRung((now - 72 * h) * 1e6, now)).toBe('168h');
+    expect(templatesSinceRung((now - 60 * 24 * h) * 1e6, now)).toBe('720h');
   });
   it('agoLabel basamakları', () => {
     const now = 1_000_000_000_000;

@@ -725,24 +725,43 @@ func (s *Server) getLogsTemplates(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
+	service := strings.TrimSpace(q.Get("service"))
 	since := time.Now().Add(-sinceDur).UnixNano()
 
-	key := fmt.Sprintf("logs-templates:sort=%s:since=%s:limit=%d",
-		sortBy, sinceDur, limit)
+	key := logsTemplatesKey(sortBy, sinceDur, limit, service)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		rows, err := s.store.ListLogTemplates(ctx, chstore.ListLogTemplatesFilter{
 			SinceNs: since,
 			SortBy:  sortBy,
 			Limit:   limit,
+			Service: service,
 		})
 		if err != nil {
 			return nil, err
 		}
-		if rows == nil {
-			rows = []chstore.LogTemplate{}
+		out := make([]logTemplateRow, 0, len(rows))
+		for _, t := range rows {
+			out = append(out, logTemplateRow{LogTemplate: t, Query: logstore.PatternSearchQuery(t.Template)})
 		}
-		return rows, nil
+		return out, nil
 	})
+}
+
+// logTemplateRow — v0.10.310 (/logs Şablonlar sekmesi): satır + "Ara"
+// sorgusu. Drain `<*>` yer tutucuları atılır; tek türetici
+// logstore.PatternSearchQuery — Desenler paneliyle aynı sözleşme.
+// Gömülü struct JSON'da düzleşir (id/template/… aynı kalır, query eklenir).
+type logTemplateRow struct {
+	chstore.LogTemplate
+	Query string `json:"query"`
+}
+
+// logsTemplatesKey — v0.10.310: servis anahtara girdi (v0.5.187
+// çapraz-zehir sınıfı: servisli okuma servissiz girdiden sunulamaz).
+// Saf; logs_templates_key_test.go.
+func logsTemplatesKey(sortBy string, since time.Duration, limit int, service string) string {
+	return fmt.Sprintf("logs-templates:sort=%s:since=%s:limit=%d:svc=%s",
+		sortBy, since, limit, service)
 }
 
 // getLogsContext returns ±N logs around a pivot timestamp, scoped

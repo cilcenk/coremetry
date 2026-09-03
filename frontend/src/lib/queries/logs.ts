@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { LogsParams } from '@/lib/api';
-import type { LogsResponse, LogPatternsResult } from '@/lib/types';
+import type { LogsParams, LogsTemplatesParams } from '@/lib/api';
+import type { LogsResponse, LogPatternsResult, LogTemplate } from '@/lib/types';
 
 // /api/logs query — keyed on the full filter object so a
 // pagination click or filter change caches separately.
@@ -45,6 +45,19 @@ export function useLogsPatterns(params: LogsParams & { limit?: number }, enabled
   return useQuery<LogPatternsResult>({
     queryKey: ['logs', 'patterns', params],
     queryFn: ({ signal }) => api.logsPatterns(params, signal),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    placeholderData: keepPreviousData,
+    enabled,
+  });
+}
+
+// v0.10.310 — /logs "Şablonlar" sekmesi (Drain kalıcı). YALNIZ sekme
+// açıkken; staleTime = sunucu TTL (30 s); anahtar TÜM parametreler.
+export function useLogsTemplates(params: LogsTemplatesParams, enabled: boolean) {
+  return useQuery<LogTemplate[]>({
+    queryKey: ['logs', 'templates', params],
+    queryFn: ({ signal }) => api.logsTemplates(params, signal),
     staleTime: 30_000,
     refetchOnWindowFocus: false,
     placeholderData: keepPreviousData,

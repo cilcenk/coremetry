@@ -70,16 +70,14 @@ type ListLogTemplatesFilter struct {
 	SinceNs int64
 	SortBy  string // "first_seen" | "last_seen" | "count" (default "count")
 	Limit   int
+	// Service — v0.10.310 (/logs Şablonlar sekmesi): has(services, ?).
+	// Boş = tüm servisler.
+	Service string
 }
 
-// ListLogTemplates returns the persisted templates ordered by
-// the requested signal. The "spike" sort is computed in the
-// API layer because it needs both the 1h and 24h counts which
-// don't live on the row.
-func (s *Store) ListLogTemplates(ctx context.Context, f ListLogTemplatesFilter) ([]LogTemplate, error) {
-	if f.Limit <= 0 || f.Limit > 500 {
-		f.Limit = 100
-	}
+// logTemplatesWhere — v0.10.310: WHERE + ORDER BY saf kurucu (tablo testi
+// log_templates_test.go). Bilinmeyen sort → total_count (eski davranış).
+func logTemplatesWhere(f ListLogTemplatesFilter) (string, []any) {
 	order := "total_count DESC"
 	switch f.SortBy {
 	case "first_seen":
@@ -93,6 +91,22 @@ func (s *Store) ListLogTemplates(ctx context.Context, f ListLogTemplatesFilter) 
 		wc += " AND last_seen >= ?"
 		args = append(args, time.Unix(0, f.SinceNs).UTC())
 	}
+	if f.Service != "" {
+		wc += " AND has(services, ?)"
+		args = append(args, f.Service)
+	}
+	return wc + "\n\t\tORDER BY " + order, args
+}
+
+// ListLogTemplates returns the persisted templates ordered by
+// the requested signal. The "spike" sort is computed in the
+// API layer because it needs both the 1h and 24h counts which
+// don't live on the row.
+func (s *Store) ListLogTemplates(ctx context.Context, f ListLogTemplatesFilter) ([]LogTemplate, error) {
+	if f.Limit <= 0 || f.Limit > 500 {
+		f.Limit = 100
+	}
+	wo, args := logTemplatesWhere(f)
 	args = append(args, f.Limit)
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, template,
@@ -100,8 +114,7 @@ func (s *Store) ListLogTemplates(ctx context.Context, f ListLogTemplatesFilter) 
 		       toUnixTimestamp64Nano(last_seen),
 		       total_count, services, exception_type, sample
 		FROM log_templates FINAL
-		`+wc+`
-		ORDER BY `+order+`
+		`+wo+`
 		LIMIT ?
 		SETTINGS max_execution_time = 5`, args...)
 	if err != nil {

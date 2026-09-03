@@ -48,12 +48,13 @@ describe('/traces satırı gerçek bir link', () => {
     expect(src).not.toMatch(/`\/trace\?id=/);
   });
 
-  it('K8s entity hücresi satır linkine sarılmıyor (<a> içinde <a> yok)', () => {
+  it('K8s hücresi düz metin → satır linkine sarılır; hücre içinde ikinci <a> yok (v0.10.330)', () => {
     const src = traces();
-    expect(src).toContain('const ownLink = k8sOn && isTraceK8sCol(id);');
+    // v0.10.330 (operatör): entity çipi kalktı, hücre düz metin — artık
+    // <a> içinde <a> tehlikesi yok, hücre diğerleri gibi satır linkine sarılır.
+    expect(src).toContain('const ownLink = false;');
     expect(src).toContain('{ownLink ? cell : <Link to={href}');
-    // Eski stopPropagation kaçağı: satır linki yokken gerekliydi, şimdi
-    // varlığı "hücre hâlâ satır-tıkına sarılı" demek olurdu.
+    expect(src).not.toContain('className="mono sec"');
     expect(src).not.toContain('onClick={e => e.stopPropagation()}>{v}</Link>');
   });
 

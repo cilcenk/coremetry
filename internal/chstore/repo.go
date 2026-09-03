@@ -1848,6 +1848,10 @@ type TraceFilter struct {
 	// window. Caller caps the slice length (≤ page size). When set, the
 	// trace_summary MV fast-path is disqualified (raw access required).
 	TraceIDs []string
+	// CandidateIDs — v0.10.307: hata-önce aday daraltması (trace_error_first.go).
+	// TraceIDs'ten farkı: uygunluk kapıları (probe / light / MV) bunu GÖRMEZ —
+	// yalnız WHERE'e `trace_id IN` olarak iner. Dışarıdan verilmez.
+	CandidateIDs []string
 	MinMs    float64
 	MaxMs    float64
 	AttrKey  string
@@ -2047,6 +2051,15 @@ func buildGetTracesWhere(f TraceFilter, clusterExpr string) whereClause {
 		holders := make([]string, len(f.TraceIDs))
 		args := make([]any, len(f.TraceIDs))
 		for i, id := range f.TraceIDs {
+			holders[i] = "?"
+			args[i] = id
+		}
+		wc.add("trace_id IN ("+strings.Join(holders, ",")+")", args...)
+	}
+	if len(f.CandidateIDs) > 0 { // v0.10.307 — hata-önce adaylar (idx_trace bloom)
+		holders := make([]string, len(f.CandidateIDs))
+		args := make([]any, len(f.CandidateIDs))
+		for i, id := range f.CandidateIDs {
 			holders[i] = "?"
 			args[i] = id
 		}
@@ -2317,6 +2330,23 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		}
 	}
 
+	// v0.10.307 — Operator-reported: Errors + attribute filtresi + servis ham
+	// yolda tam taramayla 25 s bütçesini aşıyor, pencere yarılanıyor, sonuç
+	// "boş" görünüyordu. Önce servisin hatalı trace id'leri (ucuz), sonra her
+	// aşama yalnız o id'lerde. Hiç hatalı trace yoksa cevap BOŞ ve doğrudur.
+	if errorFirstEligible(f) {
+		ids, bounded, err := s.errorFirstCandidates(ctx, f)
+		if err != nil {
+			return nil, 0, false, err
+		}
+		if len(ids) == 0 {
+			return []TraceRow{}, 0, false, nil
+		}
+		f.CandidateIDs = ids
+		if bounded && f.RankedWithin != nil {
+			*f.RankedWithin = len(ids)
+		}
+	}
 	wc := buildGetTracesWhere(f, s.clusterExpr())
 	if f.Limit == 0 {
 		f.Limit = 50

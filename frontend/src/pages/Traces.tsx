@@ -1325,7 +1325,8 @@ function TracesPageInner() {
           </Empty>
         )}
         {view === 'list' && !listErr && data && traces.length === 0 && (
-          <TracesEmpty service={filter.service} search={filter.search} range={range} onSwitchView={() => setView('aggregate')} />
+          <TracesEmpty service={filter.service} search={filter.search} range={range} onSwitchView={() => setView('aggregate')}
+            narrowedFromNs={data?.narrowedFromNs} />
         )}
         {view === 'list' && data && traces.length > 0 && (
           <div style={{ opacity: refreshing ? 0.55 : 1, transition: 'opacity 120ms' }}
@@ -1658,8 +1659,10 @@ export default function TracesPage() {
 
 // TracesEmpty — distinguishes "aged out of raw spans (MV still has it)" from
 // "search matched nothing" so the operator gets the right next step.
-function TracesEmpty({ service, search, range, onSwitchView }: {
+function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs }: {
   service: string; search: string; range: TimeRange; onSwitchView: () => void;
+  // v0.10.307 — arka uç pencereyi daralttıysa (kaynak bütçesi) "yok" değil "bakılamadı".
+  narrowedFromNs?: number;
 }) {
   const [mvSpans, setMvSpans] = useState<number | null | undefined>(undefined);
   const rangeNs = useMemo(() => timeRangeToNs(range), [range]);
@@ -1677,9 +1680,17 @@ function TracesEmpty({ service, search, range, onSwitchView }: {
   }, [service, rangeNs]);
   const aged = service && search && (mvSpans ?? 0) > 0;
   return (
-    <Empty icon="⋮" title="No traces found">
+    <Empty icon="⋮" title={narrowedFromNs ? 'No traces in the shortened window' : 'No traces found'}>
       <div style={{ marginTop: 6, color: 'var(--text2)' }}>
-        {aged ? (
+        {narrowedFromNs ? (
+          <>
+            {/* v0.10.307 — Operator-reported: "3 saat seçince no traces". Sorgu kaynak
+                sınırına takılınca arka uç pencereyi kısaltır; bu boş sonuç "yok" değil
+                "bakılamadı"dır ve öyle söylenir. */}
+            The query hit its resource budget, so the backend only searched from <b>{tsLong(narrowedFromNs)}</b> onward — and found nothing there.
+            Older traces in your range were <b>not</b> searched. Narrow the range (e.g. 1h) or simplify the filter; do not read this as "no matching traces".
+          </>
+        ) : aged ? (
           <>
             <b style={{ color: 'var(--warn)' }}>{mvSpans!.toLocaleString()}</b> spans recorded for <code>{service}</code> in this window via the 5-min MV, but no raw spans match the search. This usually means the span data aged out past the raw-spans TTL while the MV still holds the rollup.{' '}
             <Button variant="secondary" size="sm" onClick={onSwitchView} style={{ marginLeft: 4 }}>Switch to Aggregate view →</Button>

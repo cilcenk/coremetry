@@ -21,6 +21,7 @@ import { tracesLink } from '@/pages/endpoints/links';
 import { serviceHref } from '@/lib/serviceHref';
 import { parseColsParam, formatColsParam } from '@/pages/endpoints/endpointCols';
 import { ColumnToggle } from '@/pages/endpoints/ColumnToggle';
+import { useTablePrefs } from '@/lib/queries/prefs';
 import {
   EXP_PARAM, LIST_NEW_LABEL, LIST_NEW_TITLE,
   decodeExpandedParam, decodeEndpointRowKey, encodeExpandedParam,
@@ -371,6 +372,29 @@ export default function EndpointsPage() {
     if (v) next.set('cols', v); else next.delete('cols');
     return next;
   }, { replace: true });
+  // v0.10.319 (DataTable/ContextBar audit dilim 8, Endpoints) — SUNUCU
+  // sütun tercihi (useTablePrefs 'endpoints'); Traces v0.10.251 / Logs
+  // v0.10.318 sözleşmesi. Bu sayfada kolon durumu URL'nin kendisi:
+  // benimseme = URL'ye bir kez yazmak (replace, deep-link cols= varken
+  // ASLA); yalnız operatörün ColumnToggle değişikliği sunucuya. Sıra sabit
+  // (ENDPOINT_COLS) → model.order kanonik sıra, hidden = gizlenenler.
+  const prefs = useTablePrefs('endpoints');
+  const urlHadCols = useRef(!!params.get('cols'));
+  const prefsAdopted = useRef(false);
+  useEffect(() => {
+    if (prefs.model === undefined || prefsAdopted.current) return;
+    prefsAdopted.current = true;
+    if (urlHadCols.current || !prefs.model) return;
+    const hidden = new Set(prefs.model.hidden);
+    const vis = new Set(ALL_COL_IDS.filter(id => !hidden.has(id)));
+    if (vis.size) setVisibleCols(vis);
+    // setVisibleCols her render'da yeni; effect anahtarı yalnız sunucu modeli.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.model]);
+  const changeVisibleCols = (s: Set<string>) => {
+    setVisibleCols(s);
+    prefs.save({ v: 1, order: [...ALL_COL_IDS], hidden: ALL_COL_IDS.filter(id => !s.has(id)), sig: 'endpoints' });
+  };
   // The hook sees only visible columns (+ the sort-only headerHidden
   // impact) so DataTableColgroup/Head stay aligned with the body cells.
   // Sorting by a now-hidden column keeps working: serverSort forwards
@@ -578,7 +602,7 @@ export default function EndpointsPage() {
           <ColumnToggle
             columns={ENDPOINT_COLS.filter(c => !c.headerHidden).map(c => ({ id: c.id, label: c.label }))}
             visible={visibleCols}
-            onChange={setVisibleCols} />
+            onChange={changeVisibleCols} />
         </PageControls>
 
         {/* v0.9.812 — sıralama havuzu şeridi. "Kötüleşenler önce"

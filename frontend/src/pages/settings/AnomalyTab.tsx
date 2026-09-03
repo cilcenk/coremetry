@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
-import type { AnomalyTrackedConfig, AnomalySensitivityConfig, AnomalyBehaviorConfig, ExceptionTriageConfig, ProblemPriorityConfig } from '@/lib/types';
+import type { AnomalyTrackedConfig, AnomalySensitivityConfig, AnomalyBehaviorConfig, ExceptionTriageConfig, ProblemPriorityConfig, DBSlowQueryConfig } from '@/lib/types';
 import { Field, FlashBox, humanize } from './shared';
 
 // ── Anomaly promotion tab ───────────────────────────────────────
@@ -159,6 +159,7 @@ export function AnomalyPromotionTab() {
 
       <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '28px 0 22px' }} />
       <EscalationSection />
+      <DBSlowQuerySection />
 
       <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '28px 0 22px' }} />
       <ExceptionTriageSection />
@@ -1014,6 +1015,80 @@ function ProblemPrioritySection() {
             <Button variant="primary" onClick={save} disabled={ratioBad || staleBad} loading={busy}>
               Kaydet
             </Button>
+            {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── DB yavaş sorgu dedektörü (v0.10.325, operatör isteği) ────────────
+// EscalationSection ile aynı anatomi: yükle → düzenle → kaydet; evaluator
+// bir sonraki tik'te okur. Yönlendirme mevcut takım kuralı (DB sahibi + SRE).
+function DBSlowQuerySection() {
+  const [cfg, setCfg] = useState<DBSlowQueryConfig | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  useEffect(() => {
+    api.getDBSlowQuery().then(c => setCfg(c)).catch(err => setFlash({ kind: 'err', text: humanize(err) }));
+  }, []);
+  const save = async () => {
+    if (!cfg) return;
+    setBusy(true); setFlash(null);
+    try {
+      const saved = await api.putDBSlowQuery(cfg);
+      setCfg(saved);
+      setFlash({ kind: 'ok', text: 'Saved — next evaluator tick picks it up automatically.' });
+    } catch (err) {
+      setFlash({ kind: 'err', text: humanize(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const num = (k: keyof DBSlowQueryConfig) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setCfg(c => (c ? { ...c, [k]: Number(e.target.value) } : c));
+  return (
+    <div style={{ marginTop: 28 }}>
+      <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Slow SQL statements</h2>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 18, lineHeight: 1.55 }}>
+        A SQL statement whose 5-minute <b>p95</b> stays above the threshold for the given number of
+        consecutive buckets (and clears the execution floor) opens a Problem on the database subject.
+        The database owner team and SRE are mailed through the existing team routing — no extra channel.
+      </p>
+      {!cfg ? (
+        flash ? <FlashBox kind={flash.kind}>{flash.text}</FlashBox> : <Spinner />
+      ) : (
+        <>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
+            <input type="checkbox" checked={cfg.enabled}
+              onChange={e => setCfg({ ...cfg, enabled: e.target.checked })} />
+            <span style={{ fontSize: 13, color: 'var(--text)' }}>Open a Problem for slow SQL statements</span>
+          </label>
+          <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', opacity: cfg.enabled ? 1 : 0.5 }}>
+            <Field label="p95 threshold (ms)">
+              <input type="number" min={100} max={600000} step={100} value={cfg.thresholdMs} onChange={num('thresholdMs')} disabled={!cfg.enabled} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Default 1000 ms (warning).</div>
+            </Field>
+            <Field label="critical at p95 (ms)">
+              <input type="number" min={cfg.thresholdMs} max={3600000} step={100} value={cfg.criticalMs} onChange={num('criticalMs')} disabled={!cfg.enabled} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Default 5000 ms. Must be ≥ the threshold.</div>
+            </Field>
+            <Field label="minimum executions / 5 min">
+              <input type="number" min={1} max={1000000} value={cfg.minExecutions} onChange={num('minExecutions')} disabled={!cfg.enabled} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Default 20 — below this a bucket is noise.</div>
+            </Field>
+            <Field label="consecutive 5-min buckets">
+              <input type="number" min={1} max={12} value={cfg.forBuckets} onChange={num('forBuckets')} disabled={!cfg.enabled} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Default 2 (≈10 minutes sustained).</div>
+            </Field>
+            <Field label="hold before resolve (seconds)">
+              <input type="number" min={0} max={86400} step={60} value={cfg.cooldownSec} onChange={num('cooldownSec')} disabled={!cfg.enabled} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Default 900 s — an open Problem is not resolved before this age.</div>
+            </Field>
+          </div>
+          <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Button variant="primary" onClick={save} loading={busy}>Save</Button>
             {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
           </div>
         </>

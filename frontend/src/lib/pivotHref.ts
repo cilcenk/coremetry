@@ -63,6 +63,12 @@ export type TracesPivot = {
   // value it knows, so every caller asking for it silently landed on the
   // list view. Union corrected so the mistake is a type error.
   view?: 'list' | 'aggregate' | 'shapes' | 'relations';
+  /**
+   * v0.10.313 (chart-layer Dilim 2.4) — liste sıralaması. /traces `?sort=`
+   * okur (Traces.tsx SortColumn); 'duration' = "bu kovanın en yavaşları"
+   * pivotu için, tek exemplar yerine LİSTE. Yazılmazsa /traces varsayılanı.
+   */
+  sort?: 'time' | 'duration';
 };
 
 /**
@@ -99,6 +105,7 @@ export function tracesPivotHref(p: TracesPivot): string {
   if (p.hasError) q.set('hasError', 'true');
   q.set('rootOnly', p.rootOnly ? 'true' : 'false');
   if (p.view) q.set('view', p.view);
+  if (p.sort) q.set('sort', p.sort);
   // '' = pencere reddedildi. `range=` boş yazmak, çıplak `custom` yazmakla
   // aynı yalanın başka bir hecesi olurdu: paramı ATLIYORUZ.
   const range = rangeParam(p.window);
@@ -371,4 +378,31 @@ export function repeatsExploreHref(p: {
   const range = rangeParam(p.window);
   if (range) q.set('range', range);
   return `/explore?${q.toString()}`;
+}
+
+// bucketTracesHref — v0.10.313 (chart-layer audit Dilim 2.4): RED
+// panelindeki bir kovaya tık → o kovanın trace LİSTESİ. v0.9.789'dan beri
+// tık tek bir temsilci exemplar açıyordu (TracePeekDrawer); bu link onun
+// yanında yaşar — "kovadaki tümü". kind=error → hasError + zaman sırası;
+// kind=slow → süre sırası (en yavaş üstte; eşik yok, çünkü kovanın "yavaş"
+// tanımı exemplar ucunda p99'a göre, listede operatör kendisi görür).
+// Operasyon kapsamı varsa exact `name =` filtresi (operationTracesHref ile
+// aynı sözleşme; substring search DEĞİL, v0.8.488). rootOnly:false —
+// hatalı span'ler çoğunlukla çocuk (v0.8.585).
+export function bucketTracesHref(p: {
+  service: string;
+  kind: 'slow' | 'error';
+  fromNs: number;
+  toNs: number;
+  operation?: string;
+}): string {
+  return tracesPivotHref({
+    window: { fromNs: p.fromNs, toNs: p.toNs },
+    service: p.service,
+    hasError: p.kind === 'error',
+    sort: p.kind === 'slow' ? 'duration' : 'time',
+    filters: p.operation ? encodeFilters([{ k: 'name', op: '=', v: [p.operation] }]) : undefined,
+    view: 'list',
+    rootOnly: false,
+  });
 }

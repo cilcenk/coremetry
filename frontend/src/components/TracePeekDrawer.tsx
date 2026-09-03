@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Modal } from '@/components/ui';
 import { Spinner } from '@/components/Spinner';
@@ -41,8 +41,12 @@ const TRACE_LOG_PAD_NS = 60 * 1e9; // 60 sn
 //   - ESC / backdrop close — standard "peek" affordance the rest
 //     of the app uses (Endpoints metric modal, Service ops modal).
 export function TracePeekDrawer({
-  traceId, onClose,
-}: { traceId: string | null; onClose: () => void }) {
+  traceId, onClose, headerExtra,
+}: {
+  traceId: string | null; onClose: () => void;
+  /** v0.10.313 — başlığın sağında çağıranın bağlam eylemi (ör. "kovadaki tümü → /traces"). */
+  headerExtra?: ReactNode;
+}) {
   const [trace, setTrace] = useState<TraceDetailResponse | null | undefined>(undefined);
   const [logs, setLogs] = useState<LogRow[] | null | undefined>(undefined);
   const [logsDegraded, setLogsDegraded] = useState<string | null>(null);
@@ -116,6 +120,7 @@ export function TracePeekDrawer({
           <span className="mono" style={{ color: 'var(--text3)', marginLeft: 8, fontSize: 11 }}>
             {traceId.slice(0, 16)}…
           </span>
+          {headerExtra && <span style={{ marginLeft: 12, fontSize: 11 }}>{headerExtra}</span>}
         </span>
       }
     >

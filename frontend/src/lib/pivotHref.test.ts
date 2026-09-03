@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { tracesPivotHref, messagingTracesHref, dbTracesHref, operationTracesHref,
-  statementTracesHref, STATEMENT_LIKE_PREFIX_LEN } from './pivotHref';
+  statementTracesHref, bucketTracesHref, STATEMENT_LIKE_PREFIX_LEN } from './pivotHref';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { decodeRange } from './urlState';
@@ -487,5 +487,34 @@ describe('kaynak taraması — dependencies yüzeyinde el-yapımı /traces? yok'
       'düşürebilir — pivotHref ailesinin tip zorlaması onları görmez (§3.1 K2).',
       'tracesPivotHref / statementTracesHref / messagingTracesHref kullan.',
     ].join('\n')).toEqual([]);
+  });
+});
+
+// v0.10.313 (chart-layer Dilim 2.4) — kova → liste pivotu: pencere kovadır,
+// hata kovası hasError + zaman sırası, yavaş kovası süre sırası, operasyon
+// kapsamı exact name filtresi; rootOnly false, view list.
+describe('bucketTracesHref', () => {
+  it('error kovası: hasError + sort=time, pencere kova', () => {
+    const q = params(bucketTracesHref({ service: 'api', kind: 'error', fromNs: FROM_NS, toNs: TO_NS }));
+    expect(q.get('service')).toBe('api');
+    expect(q.get('hasError')).toBe('true');
+    expect(q.get('sort')).toBe('time');
+    expect(q.get('rootOnly')).toBe('false');
+    expect(q.get('view')).toBe('list');
+    expect(q.get('filters')).toBeNull();
+    const r = decodeRange(q.get('range')!, { preset: '30m' });
+    expect(r.preset).toBe('custom');
+    expect(r.fromMs!).toBeLessThanOrEqual(FROM_NS / 1e6);
+    expect(r.toMs!).toBeGreaterThanOrEqual(TO_NS / 1e6);
+  });
+  it('slow kovası: süre sırası, hasError yok; operasyon → exact name filtresi', () => {
+    const q = params(bucketTracesHref({ service: 'api', kind: 'slow', fromNs: FROM_NS, toNs: TO_NS, operation: 'GET /x' }));
+    expect(q.get('sort')).toBe('duration');
+    expect(q.get('hasError')).toBeNull();
+    expect(JSON.parse(q.get('filters')!)).toEqual([{ k: 'name', op: '=', v: ['GET /x'] }]);
+    expect(q.get('search')).toBeNull();
+  });
+  it('tracesPivotHref: sort yazılmazsa param yok', () => {
+    expect(params(tracesPivotHref({ window: { fromNs: FROM_NS, toNs: TO_NS }, service: 'api' })).get('sort')).toBeNull();
   });
 });

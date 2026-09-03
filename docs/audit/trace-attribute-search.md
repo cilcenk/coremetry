@@ -131,3 +131,21 @@ query_log: her istekte aşama-2 ifadesi (`SELECT trace_id, coalesce(nullIf(anyIf
 3. Prod'da eski part'lar: `MATERIALIZE INDEX` (IO, saatler) mi, retention boyunca kademeli mi?
 4. Dilim 2 facet kaydı (Settings UI + üretilen migration SQL) — bu brief'in kapsamında mı, ayrı mı?
 5. `!=` / regex / LIKE / aralık dizi yolunda (yavaş, tam tarama) kalıyor — Dilim 3 araştırma olarak kabul mü?
+
+---
+
+## Durum (2026-09-03) — Dilim 1 ve 2 gemide
+
+| Sürüm | Ne |
+|---|---|
+| v0.10.299 | 1a şema: `attr_kvh`/`res_kvh` `Array(UInt64) MATERIALIZED cityHash64(k'\x1F'v)` + `bloom_filter(0.01)` (kv + anahtar); boot repair/probe, ertelenmiş DDL sonrası yeniden probe; `migrations/0014_attr_kvh.sql` (+rollback, gömülü) |
+| v0.10.300 | 1b derleyici: dizi yolundaki `=`/`IN` → `has(attr_kvh, cityHash64(concat(?, '\x1F', ?))) AND kesin eşitlik` / `hasAny`; kapı `AttrIndexAvailable()` (kolon yoksa eski şekil bayt-bayt); metric_points asla; `/api/health` `attr_index_available/used` |
+| v0.10.301 | 1c aday akışı: indeks-kullanabilir yüklem varsa aşama 1 `spans` üzerinden (recency/servis diliminden ÖNCE); boş sonuç dilime düşmez; `attr_slice_used` |
+| v0.10.302 | 2a facet kaydı: `system_settings['trace_facets']` → yerleşik terfi listesiyle birleşir (`attr_f_<key>` + set(0)); GET/PUT `/api/settings/trace-facets`; prod için üretilen ON CLUSTER SQL |
+| v0.10.303 | 2b Settings → "Trace facet'leri" sekmesi |
+
+**Prod'a alma sırası (dış Distributed):** (1) `migrations/0014_attr_kvh.sql` ADIM 1-4 elle (`uptrace_all` → küme adı); (2) pod'ları yeniden başlat → `/api/health` `attr_index_available: true`; (3) doğrulama: nadir bir attribute değeriyle `/traces` 7 g — önce bulunamayan satır artık bulunur, `query_log`'da `has(attr_kvh` ifadesi `SelectedMarks` düşük; (4) facet'ler: Settings → Trace facet'leri → ekle → "Prod SQL'ini göster" → elle koş → pod restart. Eski part'larda indeks yok (kademeli); istenirse ADIM 6 `MATERIALIZE INDEX` mesai dışı.
+
+**Lokal doğrulama notu:** minikube'de chc-0'ın replikasyon kuyruğu Ağustos'tan kalma takılı GET_PART'larla kilitli (partition'larda aktif satır var → düşürme = fixture veri kaybı, operatör kararı); chc-1 kolon+indeksi aldı, chc-0 almadı. Uygulama yarım şemada güvenle eski yola düşer (`AttrIndexAvailable()` probe'u). Pozitif doğrulama (7 g nadir değer) chc-0 açılınca `scratchpad/verify_301.sh`.
+
+**Kalan:** Dilim 3 regex/LIKE/aralık araştırması (`ngrambf_v1` ölçümü, scratch tek-node).

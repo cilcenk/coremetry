@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { SpanMetricSeries } from '@/lib/types';
-import { buildVolumeSeries, fmtVolumeDuration, volumeUnitLabel } from './volumeSeries';
+import { buildVolumeSeries, fmtVolumeDuration, volumeUnitLabel, smoothCentered, P50_SMOOTH_WINDOW } from './volumeSeries';
 
 const S = 1_000_000_000; // 1 saniye, ns
 const T0 = 1_700_000_000 * S;
@@ -117,5 +117,29 @@ describe('volumeUnitLabel — v0.10.268 çubuk birimi', () => {
     const cfg = buildVolumeSeries(mk([1]), null, null, 'requests');
     expect(byKey(cfg, 'total').label).toBe('requests');
     expect(byKey(cfg, 'error').label).toBe('error requests');
+  });
+});
+
+
+// v0.10.322 (operatör: "çok zigzaglı olmasın") — medyan çizgisi yumuşatılır,
+// GAP'ler korunur, etiket bunu söyler, yoğun seride nokta yok.
+describe('smoothCentered / p50 yumuşatma', () => {
+  it('merkezli ortalama; null merkez null kalır; kenarlar mevcut komşularla; window 1 = aynı', () => {
+    expect(smoothCentered([1, 3, 5, 7, 9], 3)).toEqual([2, 3, 5, 7, 8]);
+    expect(smoothCentered([1, null, 5, 7, 9], 3)).toEqual([1, null, 6, 7, 8]);
+    const same = [1, 2, 3];
+    expect(smoothCentered(same, 1)).toBe(same);
+    expect(P50_SMOOTH_WINDOW % 2).toBe(1);
+  });
+  it('p50 serisi yumuşatılmış, etiket söyler, GAP korunur, yoğun seride nokta yok', () => {
+    const n = 30;
+    const mk = (f: (i: number) => number | null): SpanMetricSeries[] => [{ groupKey: [], points: Array.from({ length: n }, (_, i) => ({ time: (1_700_000_000 + i * 120) * 1e9, value: f(i) ?? 0 })) }];
+    const cfg = buildVolumeSeries(mk(() => 100), mk(() => 1), mk(i => (i === 10 ? 0 : (i % 2 ? 10 : 2))));
+    const p50 = cfg.series.find(s0 => s0.key === 'p50')!;
+    expect(p50.label).toContain('ort.');
+    expect(p50.pointsShow).toBe(false);
+    expect(p50.data[10]).toBeNull();                       // GAP korunur (0 → null)
+    expect(p50.data[15]).not.toBe(10); expect(p50.data[15]).not.toBe(2); // zikzak yumuşadı
+    expect(Math.abs((p50.data[15] as number) - 6)).toBeLessThan(2.1);
   });
 });

@@ -22,6 +22,11 @@ import { PanelTitle } from '@/components/ui/PanelTitle';
 // ChartCard BİLEŞENİ v0.9.844'te bu sayfadan çıktı (eski motor söküldü),
 // dosyası ise yaşıyor (Runtime paneli tüketiyor).
 import { type ChartLine } from './charts/ChartCard';
+import { STORAGE_KEYS } from '@/lib/storage';
+import { useCompareParam } from '@/lib/chart/useCompareParam';
+import { CompareToggle } from '@/components/charts/CompareToggle';
+import { compareOffsetNs, ghostItemsFrom } from '@/lib/chart/compareParam';
+import { okErrorPoints } from '@/lib/chart/redBands';
 import { scopedChartTitle, scopeTitleTip } from './charts/scopeTitle';
 import { sumSeries } from './charts/throughputTotal';
 import { MetricThroughputNote } from './MetricThroughputNote';
@@ -211,6 +216,16 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // series'ini soyar — tüketici gövdeleri değişmeden kalır, stepSeconds
   // gerektiğinde d'den okunur.
   const redMdp = panelMaxDataPoints(3);
+  // v0.10.316 (chart-layer Dilim 2.3b, Overview) — önceki-dönem hayaleti.
+  // ?compare= ServiceCharts/Pod ile AYNI sözleşme ve AYNI tohum anahtarı
+  // (Details ↔ Overview sekmeleri aynı URL'yi paylaşır). Açıkken span RED
+  // batch'i kaydırılmış pencereyle bir kez daha çekilir; hayalet YALNIZ
+  // span türevli "Failure rate · trace" paneline biner — metrik route
+  // kırılımı panelleri hayalet almaz (N kesikli çizgi okunmaz; operatör
+  // canlı "Toplam" çizgisini bile kaldırmıştı, v0.9.799).
+  const [compare, setCompare] = useCompareParam({ seedKey: STORAGE_KEYS.svcChartsCompare });
+  const compareOff = compareOffsetNs(compare, from, to);
+  const ghostEnabled = compareOff > 0;
   const seriesQ = useQuery({
     // v0.9.723 — 180s rate penceresi (Grafana [3m] paritesi).
     // v0.9.844 — motor bayrağı anahtardan ÇIKTI, pencere SABİT: tek mod
@@ -314,6 +329,36 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     select: (d: { stepSeconds: number; series: Record<string, import('@/lib/types').SpanMetricSeries[] | null> }) => d.series,
     enabled: !!service,
     staleTime: 30_000,
+  });
+  // v0.10.316 — hayalet çifti: canlı seçim (usingAllSpans) hangi popülasyonu
+  // okuyorsa hayalet de onu okur; ikisi de yalnız compare açıkken.
+  const seriesGhostQ = useQuery({
+    queryKey: ['service-overview-red', service, from - compareOff, to - compareOff, redMdp, env],
+    queryFn: () => api.spanMetricBatch({
+      from: from - compareOff, to: to - compareOff, maxDataPoints: redMdp,
+      rateWindow: 180,
+      dsl: `service.name = "${service.replace(/"/g, '\\"')}"` + envDSL(env),
+      aggs: [
+        { name: 'rate', agg: 'rate' },
+        { name: 'error_rate', agg: 'error_rate' },
+      ],
+    }),
+    select: (d: { stepSeconds: number; series: Record<string, import('@/lib/types').SpanMetricSeries[] | null> }) => d.series,
+    enabled: ghostEnabled, staleTime: 30_000,
+  });
+  const latencyGhostQ = useQuery({
+    queryKey: ['service-overview-entry-red', service, from - compareOff, to - compareOff, redMdp, env],
+    queryFn: () => api.spanMetricBatch({
+      from: from - compareOff, to: to - compareOff, maxDataPoints: redMdp,
+      rateWindow: 180,
+      dsl: entryLatencyDSL(service) + envDSL(env),
+      aggs: [
+        { name: 'rate', agg: 'rate' },
+        { name: 'error_rate', agg: 'error_rate' },
+      ],
+    }),
+    select: (d: { stepSeconds: number; series: Record<string, import('@/lib/types').SpanMetricSeries[] | null> }) => d.series,
+    enabled: ghostEnabled, staleTime: 30_000,
   });
   // v0.9.240 — fallback. A pure batch / producer service emits no server and
   // no consumer spans, so the entry query legitimately returns nothing. Going
@@ -462,12 +507,23 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
       // Tek nokta / veri yok — ayrıştıracak bir şey yok, ham hız çizilir.
       return [{ series: lat?.rate ?? [], color: 'var(--accent)', label: 'Toplam' }];
     }
-    const okPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * (1 - (erPts[i]?.value ?? 0) / 100)) }));
-    const errPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * ((erPts[i]?.value ?? 0) / 100)) }));
-    const okLine: ChartLine = { series: [{ groupKey: [], points: okPts }], color: 'var(--ok)', label: 'OK' };
-    const errLine: ChartLine = { series: [{ groupKey: [], points: errPts }], color: 'var(--err)', label: 'Errors' };
+    const { ok, err } = okErrorPoints(ratePts, erPts);
+    const okLine: ChartLine = { series: [{ groupKey: [], points: ok }], color: 'var(--ok)', label: 'OK' };
+    const errLine: ChartLine = { series: [{ groupKey: [], points: err }], color: 'var(--err)', label: 'Errors' };
     return [okLine, errLine];
   }, [lat]);
+  // v0.10.316 — Failure rate hayaleti: aynı band matematiği, kaydırılmış pencere.
+  const latGhost = ghostEnabled ? (usingAllSpans ? seriesGhostQ.data : latencyGhostQ.data) : undefined;
+  const failureGhost = useMemo(() => {
+    const r = latGhost?.rate?.[0]?.points ?? [];
+    const e = latGhost?.error_rate?.[0]?.points ?? [];
+    if (r.length < 2) return undefined;
+    const { ok, err } = okErrorPoints(r, e);
+    return ghostItemsFrom([
+      { name: 'OK', role: 'success', series: [{ groupKey: [], points: ok }] },
+      { name: 'Errors', role: 'error', series: [{ groupKey: [], points: err }] },
+    ], compareOff);
+  }, [latGhost, compareOff]);
 
   // v0.9.844 — `metricTputLine` (metrik türevli tek ChartLine) SİLİNDİ: eski
   // motorun alt kartını besliyordu. Tanılama tarafı YAŞIYOR — aşağıdaki
@@ -794,6 +850,13 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           sebebi yazar); Overview'da unutulmuştu — operatör bunu "grafikler
           bozuk/zıplıyor" diye yaşıyordu. Doorway hover ⋮ ve `e` kısayoluyla
           erişilebilir kalıyor; KPI karoları gövde-tıklamasını koruyor. */}
+      {/* v0.10.316 — Compare to: (?compare=, Details/Pod ile aynı). Hayalet
+          yalnız Failure rate · trace paneline biner; not bunu söyler. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, fontSize: 11, color: 'var(--text2)', flexWrap: 'wrap', rowGap: 6 }}>
+        <CompareToggle value={compare} onChange={setCompare} />
+        {ghostEnabled && <span style={{ color: 'var(--text3)' }}>· hayalet yalnız Failure rate · trace panelinde</span>}
+        {ghostEnabled && (seriesGhostQ.isError || latencyGhostQ.isError) && <span className="badge b-warn">önceki dönem yüklenemedi</span>}
+      </div>
       <div className="ov-grid ov-charts-3 ov-mb">
         {/* v0.9.1163 (operatör-raporlu: "çift ⋯") — suppressMenu + fonksiyon
             çocuk: kapı eylemleri (⤢/✎/⟨⟩/⧉) panelin KENDİ ⋯ menüsüne
@@ -964,6 +1027,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 menuExtra={doorway}
                 storageKey="ov-throughput-failure-v2" height={200} unit="reqps" xRange={xRange}
                 loading={latStatus === 'loading'}
+                ghostItems={failureGhost}
                 items={[
                   { name: 'OK', role: 'success', series: throughput[0]?.series ?? [] },
                   { name: 'Errors', role: 'error', series: throughput[1]?.series ?? [] },

@@ -10,6 +10,8 @@
 //               ns yalnız rota izin verirse takma ad, salt-okur)
 //   service=    servis adı
 //   compare=    'prior' (compare=1 -> prior, takma ad, salt-okur)
+//               /service'te ayrıca 24h|7d (lib/chart/compareParam.ts, v0.10.311);
+//               liste sayfaları yalnız prior'ı uygular, 24h/7d orada ''.
 // Boyut uygulanmıyorsa (applies dışı) okunmaz ve yazılmaz.
 
 import type { TimeRange } from './types';

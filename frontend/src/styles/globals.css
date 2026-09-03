@@ -3855,3 +3855,7 @@ thead th:hover .th-remove { opacity: 1; }
 /* v0.10.303 — Settings → Trace facets: satır/eylem kancaları (test + hover) */
 .tf-row:hover td { background: color-mix(in srgb, var(--accent) 5%, transparent); }
 .tf-add, .tf-remove { white-space: nowrap; }
+
+/* v0.10.330 — tablo hücresinde tek satır + üç nokta (K8s kolonları: pod/node
+   adı 40+ karakter; çip kalkınca satır tek yükseklikte kalsın). */
+.cell-ellipsis { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }

@@ -79,7 +79,7 @@ import { PageControls } from '@/components/ui/PageControls';
 import { QueryError } from '@/components/QueryError';
 import { PageShell } from '@/components/ui/PageShell';
 import { useEntityEnabled } from '@/lib/queries';
-import { traceK8sHref, isTraceK8sCol, withK8sColumns, canAddK8sColumns } from '@/lib/traceK8sLinks';
+import { isTraceK8sCol, withK8sColumns, canAddK8sColumns } from '@/lib/traceK8sLinks';
 import type { EntityClusterInfo } from '@/lib/types';
 
 // v0.9.304 (operatör) — 'relations' kaldırıldı. Yapısal self-join
@@ -159,7 +159,9 @@ const TRACES_CONTEXT_HIDDEN: ContextDim[] = ['service'];
 const COL_W: Record<string, number> = {
   time: 150, service: 130, operation: 210, duration: 104, spans: 58, status: 74,
   // v0.10.187 (görsel inceleme F11) — K8s kolonları ATTR_W'de kırpılıyordu (pod adı 40+ karakter)
-  'k8s.pod.name': 280, 'k8s.namespace.name': 160, 'k8s.node.name': 220, cluster: 130,
+  // v0.10.330 — çip kalkınca düz metin + üç nokta; başlangıç genişlikleri tablo
+  // 1440 px'e sığsın diye daraltıldı (sürüklenebilir, tarayıcı başına kalıcı).
+  'k8s.pod.name': 220, 'k8s.namespace.name': 130, 'k8s.node.name': 170, cluster: 90,
 };
 const ATTR_W = 130;
 const EXTRA_COLS_LS_KEY = 'traces-extra-cols';
@@ -1413,7 +1415,9 @@ function TracesPageInner() {
                 return (
                   <Fragment>
                     {colIds.map(id => {
-                      const ownLink = k8sOn && isTraceK8sCol(id);
+                      // v0.10.330 — K8s hücreleri artık düz metin (kendi <a>'sı yok) → satır
+                      // linkine diğer hücreler gibi sarılır; ölü hücre kalmaz.
+                      const ownLink = false;
                       const cell = renderTraceCell(id, t, visibleMax, k8sOn ? { clusters: entityClusters, range } : undefined);
                       return (
                         <td key={id} onMouseEnter={() => prefetchTrace(t.traceId)}
@@ -1569,13 +1573,14 @@ function renderTraceCell(id: string, t: TraceRow, visibleMax: number, k8s?: { cl
   if (k8s && isTraceK8sCol(id)) {
     const v = t.extras?.[id] ?? '';
     if (!v) return <span className="mono" style={{ color: 'var(--text3)' }}>—</span>;
-    const { href, note } = traceK8sHref(id, t, k8s.clusters, k8s.range);
-    // v0.10.216 — satır artık hücre başına <Link>'lerden oluşuyor ve bu hücre
-    // satır linkine SARILMAZ (renderRow: ownLink), yani stopPropagation'a
-    // gerek yok: tıklama doğrudan entity sayfasına gider.
-    return href
-      ? <Link to={href} className="mono sec" title={`${v} · entity sayfası (trace anı)`}>{v}</Link>
-      : <span className="mono" style={{ color: 'var(--text2)' }} title={note ?? v}>{v}</span>;
+    // v0.10.330 (operatör, prod): "pod ismi / cluster seçilebilir olmasına
+    // gerek yok; çok satır olduğu için sayfada taşıyor". v0.10.143'ün
+    // entity-sayfası çipi (a.sec: kutu + 5×14 px dolgu + 13 px) hücreyi
+    // iki-üç satıra sarıp tabloyu taşırıyordu. Artık DÜZ tek satır metin,
+    // taşan kısım üç nokta, tam değer title'da; entity pivotu trace
+    // sayfasında ve satır linkinde duruyor. traceK8sHref korunur (pivot
+    // kaynağı başka yüzeylerde), burada çağrılmaz.
+    return <span className="mono cell-ellipsis" style={{ color: 'var(--text2)' }} title={v}>{v}</span>;
   }
   switch (id) {
     case 'time':      return <span className="mono">{tsDateTime(t.startTime)}</span>;

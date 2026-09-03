@@ -3137,6 +3137,35 @@ export interface FunctionIDColumnStatusResult {
   generated: number;
 }
 export interface FunctionIDKeyCount { key: string; count: number }
+// ── 0014 attribute hash indeksi sihirbazı (v0.10.306) — chstore/attr_index_admin.go ──
+export interface AttrIndexStatusResult {
+  cluster: string;
+  objects: EntityLayerObjectStatus[];
+  /** spans uygulama yönetimli: boot kolon/indeksleri kendisi ekler, sihirbaz gerekmez. */
+  bootManaged: boolean;
+  /** BU pod'un derleyicisi bloom yolunda mı (probe kolonu gördü). */
+  ready: boolean;
+  /** BU pod'un boot'tan beri ürettiği bloom yüklemi sayısı. */
+  used: number;
+  /** son 10 dk: attr_kvh uzunluğu attr_keys ile eşit satır / toplam. */
+  filled: number;
+  total: number;
+  generated: number;
+}
+export interface AttrIndexPreflightResult {
+  clusters: string[];
+  suggestedCluster?: string;
+  spansLocal: boolean;
+  bootManaged: boolean;
+  columnsExist: boolean;
+  indexesExist: boolean;
+  filled: number;
+  total: number;
+  probeErrors?: string[];
+  supported: boolean;
+  detail: string;
+  generated: number;
+}
 export interface FunctionIDColumnPreflightResult {
   clusters: string[];
   suggestedCluster?: string;

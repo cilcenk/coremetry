@@ -3215,6 +3215,26 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cluster }), timeoutMs: 200_000,
     }),
+  // v0.10.306 — 0014 attribute hash indeksi sihirbazı (admin_attr_index.go; 0013 aynası).
+  attrIndexStatus: () =>
+    get<import('./types').AttrIndexStatusResult>('/api/admin/attr-index/status'),
+  attrIndexPreflight: () =>
+    get<import('./types').AttrIndexPreflightResult>('/api/admin/attr-index/preflight'),
+  attrIndexApply: (cluster: string) =>
+    request<import('./types').RollupActionResult & { note?: string }>('/api/admin/attr-index/apply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster }), timeoutMs: 330_000, // sunucu bütçesi 5 dk (8 ON CLUSTER ifadesi)
+    }),
+  attrIndexMaterialize: (cluster: string) =>
+    request<import('./types').RollupActionResult & { note?: string }>('/api/admin/attr-index/materialize', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster }), timeoutMs: 200_000,
+    }),
+  attrIndexRollback: (cluster: string) =>
+    request<import('./types').RollupActionResult>('/api/admin/attr-index/rollback', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster }), timeoutMs: 200_000,
+    }),
   rolloutLayerStatus: () =>
     get<import('./types').RolloutLayerStatusResult>('/api/admin/rollout-layer/status'),
   rolloutLayerPreflight: () =>

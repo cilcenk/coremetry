@@ -3213,6 +3213,11 @@ func (s *Store) migrate(ctx context.Context) error {
 	// "yavaş" demek, "yanlış" değil. v0.9.604-615 boot krizinden sonra
 	// isteğe bağlı bir optimizasyonun pod'u ready olmaktan alıkoyması
 	// kabul edilemez.
+	// v0.10.302 — operatör facet kaydı (system_settings) yerleşik listeye
+	// katılır; DDL/probe aynı makineden geçer. Bozuk blob boot'u durdurmaz.
+	if err := s.LoadTraceFacets(ctx); err != nil {
+		log.Printf("[chstore] trace facets yüklenemedi (yerleşik liste ile devam): %v", err)
+	}
 	ensuredPromoted := s.repairPromotedAttrCols(ctx)
 	// v0.9.439 (Uptrace uyarlamaları — LC/kodek denetimi) — metric_points
 	// serbest kolonlarına ZSTD(1) (metadata-only MODIFY; v0.8.214 spans

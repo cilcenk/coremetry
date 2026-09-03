@@ -3772,7 +3772,12 @@ export type PanelHeight = 's' | 'm' | 'l';
 
 // Each panel type has a different config shape. Kept as a tagged union so
 // the renderer can switch on `type` exhaustively.
+// v0.10.314 (chart-layer Dilim 2.2) — dashboard çizgi panellerinin yatay
+// eşik bantları (stat/gauge ile AYNI editör ve şekil). Çizim tek kapıdan:
+// lib/chart/thresholdLines.ts (amber = warn, red = err çizgi; green taban).
+export type PanelThresholdBand = { value: number; color: 'green' | 'amber' | 'red' };
 export interface MetricPanelConfig {
+  thresholds?: PanelThresholdBand[]; // v0.10.314 — yatay eşik çizgileri
   metricName: string;
   service?: string;
   agg?: string;            // avg | sum | p95 | p99 | …
@@ -3804,6 +3809,7 @@ export interface MetricPanelConfig {
   viz?: PanelVizType;
 }
 export interface SpanMetricPanelConfig {
+  thresholds?: PanelThresholdBand[]; // v0.10.314 — yatay eşik çizgileri
   agg: string;             // count | error_rate | p95 | …
   field?: string;          // duration_ms (default) or attribute
   groupBy?: string;
@@ -3885,6 +3891,7 @@ export interface HeatmapPanelConfig {
 // Grafana-style. Renders line/area like the metric panel. Dashboard variables
 // (${service}) expand into the query at render time.
 export interface PromqlPanelConfig {
+  thresholds?: PanelThresholdBand[]; // v0.10.314 — yatay eşik çizgileri
   query: string;
   unit?: string;           // y-axis unit override (ms | % | rps | free text)
   step?: number;           // bucket seconds; absent/0 = width-aware auto

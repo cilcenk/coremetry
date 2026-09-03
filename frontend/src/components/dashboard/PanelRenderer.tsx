@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
+import { bandThresholdLines } from '@/lib/chart/thresholdLines';
+import type { PanelThresholdBand } from '@/lib/types';
 import { api } from '@/lib/api';
 import type {
   Panel, MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, GaugePanelConfig, MarkdownPanelConfig,
@@ -38,7 +40,7 @@ const DashCorePanelLazy = lazy(() =>
 // kaybederdi (foldTopN.ts sözleşmesi).
 import { foldTopN, foldNote, isOthersSeries } from '@/lib/chart/foldTopN';
 
-function DashChart({ series, tail, totalSeries, viz = 'line', unit, syncKey, onZoom, onZoomReset, storageKey, height }: {
+function DashChart({ series, tail, totalSeries, viz = 'line', unit, syncKey, onZoom, onZoomReset, storageKey, height, bands }: {
   series: import('@/lib/types').SpanMetricSeries[];
   // v0.10.147 — sunucu kuyruğu (top-N dışı serilerin ham sum/count'u) +
   // kırpma öncesi toplam; foldTopN/foldNote kesin katlama için.
@@ -54,8 +56,18 @@ function DashChart({ series, tail, totalSeries, viz = 'line', unit, syncKey, onZ
   // v0.9.778 — resolved pixel height (panelChartHeight of Panel.height).
   // Absent → the pre-v0.9.778 280.
   height?: number;
+  // v0.10.314 (Dilim 2.2) — config'in green/amber/red bantları → yatay
+  // eşik çizgileri (tek kapı: bandThresholdLines). Dizi kimliği config
+  // metniyle memo'lu: CorePanel inline thresholds dizisinde DESTROY+RECREATE
+  // eder (CorePanel.tsx:281 dersi).
+  bands?: PanelThresholdBand[];
 }) {
   const h = height ?? panelChartHeight();
+  const bandsKey = JSON.stringify(bands ?? []);
+  const thresholds = useMemo(() => {
+    const lines = bandThresholdLines(JSON.parse(bandsKey) as PanelThresholdBand[]);
+    return lines.length ? lines : undefined;
+  }, [bandsKey]);
   // v0.9.946 (UX denetimi D3 / Ö25) — "others" KATLAMASI dashboard'a da.
   //
   // foldTopN v0.9.807'de MultiLineChart adaptöründe kalmıştı; DashChart
@@ -93,6 +105,7 @@ function DashChart({ series, tail, totalSeries, viz = 'line', unit, syncKey, onZ
         }))}
         syncKey={syncKey}
         onZoom={onZoom} onZoomReset={onZoomReset}
+        thresholds={thresholds}
       />
     </Suspense>
   );
@@ -442,7 +455,7 @@ function MetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, refreshTick, da
         // pariteli; yokluğu = eski birimsiz davranış).
         // v0.9.808 — mark ayıklaması KALKTI: beş mark da DashChart'a gider.
         // v0.9.844 — DashChart'ın içindeki eski-motor dalı da yok; tek yol.
-        : <DashChart series={series} viz={viz} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-m-${cfg.metricName}`} height={boxPx} />}
+        : <DashChart series={series} viz={viz} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} bands={cfg.thresholds} storageKey={`dash-m-${cfg.metricName}`} height={boxPx} />}
     </div>
   );
 }
@@ -607,7 +620,7 @@ function PromqlPanel({ cfg, range, syncKey, onZoom, onZoomReset, refreshTick, he
     <div ref={ref}>
       {series === undefined ? <PanelLoading height={boxPx} />
         : !series || series.length === 0 ? <PanelEmpty height={boxPx} />
-        : <DashChart series={series} viz={viz} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-q-${cfg.query.slice(0, 60)}`} height={boxPx} />}
+        : <DashChart series={series} viz={viz} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} bands={cfg.thresholds} storageKey={`dash-q-${cfg.query.slice(0, 60)}`} height={boxPx} />}
     </div>
   );
 }
@@ -818,7 +831,7 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, refreshTick
         // zaten alıyor ve hem y-ekseni etiketlerinde hem hover
         // okumasında fmtSmart'a veriyor. Geçilmeyince aynı panelin
         // çizgi hali "142 ms", bar hali çıplak "142" yazıyordu.
-        : <DashChart series={series} tail={tail} totalSeries={total} viz={viz} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-s-${cfg.agg}-${cfg.groupBy ?? ''}`} height={boxPx} />}
+        : <DashChart series={series} tail={tail} totalSeries={total} viz={viz} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} bands={cfg.thresholds} storageKey={`dash-s-${cfg.agg}-${cfg.groupBy ?? ''}`} height={boxPx} />}
     </div>
   );
 }

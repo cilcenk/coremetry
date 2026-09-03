@@ -1,4 +1,5 @@
 import { lazy, Suspense } from 'react';
+import { severityThresholdLines, type Threshold } from '@/lib/chart/thresholdLines';
 import { msSyncKey } from '@/lib/chart/syncNamespace';
 import type { SpanMetricSeries } from '@/lib/types';
 import { Spinner } from '@/components/Spinner';
@@ -40,11 +41,9 @@ export interface DeployMarker {
 // by severity. Used for SLO targets, alert rule thresholds,
 // "this is the limit" indicators. Same idea as Grafana's "alert
 // threshold" overlay or Datadog's "warning / critical bands".
-export interface Threshold {
-  value: number;
-  label?: string;            // e.g. "SLO 500ms"
-  severity?: 'warn' | 'err'; // default 'warn'
-}
+// v0.10.314 — tip lib/chart/thresholdLines.ts'e taşındı (tek kapı);
+// buradan yeniden dışa aktarılır, importlar değişmez.
+export type { Threshold };
 
 // MultiLineChartProps — v0.9.844'te BAĞIMSIZ yazıldı. Eskiden
 // `Parameters<typeof MultiLineChartInner>[0]` idi, yani sarmalayıcının
@@ -162,10 +161,7 @@ export function MultiLineChart(props: MultiLineChartProps) {
             color: 'var(--accent2)', label: d.label,
           })),
         ]}
-        thresholds={(thresholds ?? []).map(t => ({
-          value: t.value, label: t.label,
-          color: t.severity === 'err' ? 'var(--err)' : 'var(--warn)',
-        }))}
+        thresholds={severityThresholdLines(thresholds)}
         ghostItems={ghostItems}
         // '-ms' eki MOTOR AD ALANIDIR, süs değil: saniye-eksenli motorlar
         // (TimeChart / OverviewChart / ChartCard) hâlâ yaşıyor ve uPlot.sync

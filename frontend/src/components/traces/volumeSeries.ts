@@ -110,3 +110,45 @@ export function smoothCentered(data: (number | null)[], window: number): (number
     return n ? sum / n : v;
   });
 }
+
+// ── v0.10.323 (operatör, prod: db.statement ~ … filtresinde şerit boş) ──
+// Şerit v0.10.268'den beri GİRİŞ span'ı (server/consumer) kapsamlı: istek ≈
+// trace. Ama operatörün filtresi tablo tarafında TRACE düzeyinde uygulanır
+// ("trace'in HERHANGİ bir span'i eşleşir"), şeritte ise aynı span'de AND'lenir.
+// db.statement / messaging.* gibi alanlar giriş span'ında YAŞAMAZ → şerit
+// "sıfır", tablo dolu. Çözüm dürüst ve ucuz: filtre giriş span'ında
+// yaşamayan bir alanı hedefliyorsa (ya da serbest metin araması varsa) şerit
+// EŞLEŞEN SPAN'LERİ sayar (kind kısıtı kalkar) ve bunu etikette söyler:
+// birim "spans", medyan o span'lerin süresi (db.statement için = sorgunun
+// kendi gecikmesi). Trace düzeyine çevirmek (aday id kümesi) prod ölçeğinde
+// ikinci bir tam tarama olurdu; bilinçli yapılmadı.
+export type StripScope = 'entry' | 'spans';
+
+/** Giriş span'ında yaşayan anahtarlar / önekler — bunlar şeridi giriş kapsamında tutar. */
+const ENTRY_KEYS = new Set(['service.name', 'name', 'kind', 'status_code', 'status', 'cluster', 'deployment.environment',
+  'channel_code', 'function_code', 'function_id', 'span.kind', 'span.name']);
+const ENTRY_PREFIXES = ['http.', 'url.', 'server.', 'k8s.', 'resource.', 'host.', 'service.', 'deployment.', 'telemetry.', 'process.', 'os.', 'container.', 'cloud.'];
+
+export function isEntrySpanKey(key: string): boolean {
+  const k = key.trim().toLowerCase();
+  if (ENTRY_KEYS.has(k)) return true;
+  return ENTRY_PREFIXES.some(p => k.startsWith(p));
+}
+
+/** stripScope — filtreler + serbest metin → şerit kapsamı. SAF. */
+export function stripScope(filters: { k: string }[], search: string): StripScope {
+  if (search.trim()) return 'spans';
+  return filters.every(f => isEntrySpanKey(f.k)) ? 'entry' : 'spans';
+}
+
+/** volumeUnitFor — birim etiketi: spans kapsamında "spans", değilse eski kural. */
+export function volumeUnitFor(serviceScoped: boolean, scope: StripScope): string {
+  return scope === 'spans' ? 'spans' : volumeUnitLabel(serviceScoped);
+}
+
+/** volumeHint — başlık ipucu (title); kapsam neyi saydığını söyler. */
+export function volumeHint(unit: string): string {
+  return unit === 'spans'
+    ? 'Filtre ya da arama giriş span\'ı dışındaki bir alanı hedefliyor (ör. db.statement): eşleşen SPAN\'ler sayılır, medyan o span\'lerin süresi. Tablo yine trace düzeyinde eşleşir.'
+    : 'Giriş span\'leri (server/consumer) sayılır: servis seçiliyken istek = trace; servissiz pencerede her hop bir kez sayılır.';
+}

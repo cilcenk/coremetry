@@ -68,7 +68,7 @@ import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, Aggreg
 import { traceHref } from '@/lib/traceHref';
 
 import { VolumeChart } from '@/components/traces/VolumeChart';
-import { volumeUnitLabel } from '@/components/traces/volumeSeries';
+import { stripScope, volumeUnitFor } from '@/components/traces/volumeSeries';
 import { LatencyScatter } from '@/components/traces/LatencyScatter';
 import { ShapesView } from '@/components/traces/ShapesView';
 import { SvcBadge, DurationBar, fmtDur } from '@/components/traces/shared';
@@ -639,7 +639,13 @@ function TracesPageInner() {
     // Dar rollup (service_name, span_kind, status_code) bu şekli MV'den
     // servis eder (rollup_fastpath.go başlığı); attribute filtresi varsa
     // zaten ham yol. Geri alma: bu satır + volumeSeries eksen takası.
-    chartFilters.push({ k: 'kind', op: 'IN', v: ['server', 'consumer'] });
+    // v0.10.323 (operatör, prod: "db.statement seçildiğinde histogram
+    // gelmiyor") — kind kısıtı YALNIZ filtre giriş span'ında yaşayan
+    // anahtarlardaysa; db./messaging./… ya da serbest metin varsa şerit
+    // eşleşen span'leri sayar (volumeSeries.ts stripScope başlığı).
+    if (stripScope(chartFilters, filter.search ?? '') === 'entry') {
+      chartFilters.push({ k: 'kind', op: 'IN', v: ['server', 'consumer'] });
+    }
     if (env) chartFilters.push({ k: 'deployment.environment', op: '=', v: [env] });
     // v0.9.943 (B3) — hacim şeridi de aynı kapsamı çizmeli, yoksa grafik
     // tablonun saymadığı trace'leri gösterirdi. `cluster` v0.9.942'den beri
@@ -884,7 +890,7 @@ function TracesPageInner() {
   // filtered Rate/Errors/Duration numbers ride here + in the table.
   // Header TOTAL/ERRORS/ERR RATE/P99 MAX — derived from the TRUE-volume series
   // (whole window), so they describe real traffic rather than the 50-row page.
-  const volumeUnit = volumeUnitLabel(!!filter.service);
+  const volumeUnit = volumeUnitFor(!!filter.service, stripScope(!grouped ? advFilters : [], filter.search ?? ''));
   const headerStats = useMemo(() => {
     const cPts = volSeries?.count?.[0]?.points ?? [];
     const eMap = new Map((volSeries?.errors?.[0]?.points ?? []).map(p => [p.time, p.value]));

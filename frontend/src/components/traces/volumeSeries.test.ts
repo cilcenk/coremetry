@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { SpanMetricSeries } from '@/lib/types';
-import { buildVolumeSeries, fmtVolumeDuration, volumeUnitLabel, smoothCentered, P50_SMOOTH_WINDOW } from './volumeSeries';
+import { buildVolumeSeries, fmtVolumeDuration, volumeUnitLabel, smoothCentered, P50_SMOOTH_WINDOW, stripScope, isEntrySpanKey, volumeUnitFor, volumeHint } from './volumeSeries';
 
 const S = 1_000_000_000; // 1 saniye, ns
 const T0 = 1_700_000_000 * S;
@@ -141,5 +141,27 @@ describe('smoothCentered / p50 yumuşatma', () => {
     expect(p50.data[10]).toBeNull();                       // GAP korunur (0 → null)
     expect(p50.data[15]).not.toBe(10); expect(p50.data[15]).not.toBe(2); // zikzak yumuşadı
     expect(Math.abs((p50.data[15] as number) - 6)).toBeLessThan(2.1);
+  });
+});
+
+// v0.10.323 (operatör, prod): db.statement ~ … filtresinde şerit "No traces
+// in view to bucket" derken tablo doluydu. Kapsam kararı saf ve pinli.
+describe('stripScope', () => {
+  it('giriş span\'ı anahtarları → entry; db./messaging./bilinmeyen → spans; arama → spans', () => {
+    expect(stripScope([{ k: 'service.name' }, { k: 'http.route' }, { k: 'status_code' }], '')).toBe('entry');
+    expect(stripScope([], '')).toBe('entry');
+    expect(stripScope([{ k: 'service.name' }, { k: 'db.statement' }], '')).toBe('spans');
+    expect(stripScope([{ k: 'messaging.destination' }], '')).toBe('spans');
+    expect(stripScope([{ k: 'custom.attr' }], '')).toBe('spans');
+    expect(stripScope([{ k: 'service.name' }], 'timeout')).toBe('spans');
+    expect(isEntrySpanKey('HTTP.METHOD')).toBe(true);
+    expect(isEntrySpanKey('db.system')).toBe(false);
+  });
+  it('birim ve ipucu kapsamı söyler', () => {
+    expect(volumeUnitFor(true, 'entry')).toBe('traces');
+    expect(volumeUnitFor(false, 'entry')).toBe('requests');
+    expect(volumeUnitFor(true, 'spans')).toBe('spans');
+    expect(volumeHint('spans')).toContain('SPAN');
+    expect(volumeHint('traces')).toContain('Giriş span');
   });
 });

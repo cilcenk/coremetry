@@ -114,7 +114,7 @@ var wellKnown = map[string]string{
 // pushes the key as a parameter. For numeric ops we cast to Float64 so that
 // even string-stored attributes compare correctly when they parse.
 func (f FilterExpr) SQL() (string, []any, error) {
-	return f.sql("", wellKnown, wellKnownResource, promotedCols())
+	return f.sql("", wellKnown, wellKnownResource, promotedCols(), AttrIndexAvailable())
 }
 
 // SQLForMetricPoints resolves against metric_points' column set
@@ -125,7 +125,7 @@ func (f FilterExpr) SQLForMetricPoints() (string, []any, error) {
 	// promoted=nil: terfi kolonları SPANS'a özgü. v0.9.619'un dersi —
 	// paylaşılan üretecin içine harita GÖMÜLMEZ, parametre olarak gelir;
 	// aksi halde metric_points'te var olmayan bir kolona referans üretir.
-	return f.sql("", metricPointsWellKnown, nil, nil)
+	return f.sql("", metricPointsWellKnown, nil, nil, false) // v0.10.300 — metric_points'te kvh kolonu YOK
 }
 
 // SQLAliased is the alias-qualified twin of SQL: every column reference is
@@ -137,7 +137,7 @@ func (f FilterExpr) SQLForMetricPoints() (string, []any, error) {
 // caller (relations.go uses the fixed literals "c" / "p"), never threaded
 // from user input. Keys and values still flow exclusively as `?` params.
 func (f FilterExpr) SQLAliased(alias string) (string, []any, error) {
-	return f.sql(alias, wellKnown, wellKnownResource, promotedCols())
+	return f.sql(alias, wellKnown, wellKnownResource, promotedCols(), AttrIndexAvailable())
 }
 
 // qualCol prefixes a well-known column expression (which may itself be a
@@ -165,8 +165,10 @@ func qualArr(alias, expr string) string {
 	r := strings.NewReplacer(
 		"attr_values", alias+".attr_values",
 		"attr_keys", alias+".attr_keys",
+		"attr_kvh", alias+".attr_kvh", // v0.10.300
 		"res_values", alias+".res_values",
 		"res_keys", alias+".res_keys",
+		"res_kvh", alias+".res_kvh",
 	)
 	return r.Replace(expr)
 }
@@ -193,7 +195,13 @@ func qualArr(alias, expr string) string {
 //	dizi açma            3.90 GiB   362 ms
 //	terfi kolonu         1.98 GiB   204 ms
 //	kolon + skip index    261 MiB    81 ms
-func (f FilterExpr) sql(alias string, wellKnown, resourceWellKnown, promoted map[string]string) (string, []any, error) {
+//
+// kvh (v0.10.300, trace arama Dilim 1b) — attribute hash indeksi hazır mı
+// (attr_index.go). Dizi yoluna düşen `=` / `IN` yüklemleri, ÖNÜNE bloom'un
+// kullanabildiği `has(attr_kvh, cityHash64(k<0x1F>v))` alır; kesin dizi
+// eşitliği KALIR (bloom yanlış-pozitifi eler — doğruluk indekse asılı
+// değil). Terfi kolonu / bilinen kolon / negasyon / regex / aralık aynen.
+func (f FilterExpr) sql(alias string, wellKnown, resourceWellKnown, promoted map[string]string, kvh bool) (string, []any, error) {
 	op := strings.ToUpper(strings.TrimSpace(f.Op))
 	if op == "" {
 		op = "="
@@ -211,6 +219,9 @@ func (f FilterExpr) sql(alias string, wellKnown, resourceWellKnown, promoted map
 	//   X           →  well-known dedicated column if any, else span attr
 	var lhs string
 	var args []any
+	// kvhCol / arrKey — dizi yoluna düşüldüyse bloom kolonu ve ham anahtar
+	// (v0.10.300); terfi/bilinen kolonda boş kalır.
+	var kvhCol, arrKey string
 	switch {
 	case strings.HasPrefix(f.Key, "resource."):
 		name := strings.TrimPrefix(f.Key, "resource.")
@@ -235,6 +246,7 @@ func (f FilterExpr) sql(alias string, wellKnown, resourceWellKnown, promoted map
 		} else {
 			lhs = qualArr(alias, "res_values[indexOf(res_keys, ?)]")
 			args = append(args, name)
+			kvhCol, arrKey = qualArr(alias, "res_kvh"), name
 		}
 	case strings.HasPrefix(f.Key, "span."):
 		name := strings.TrimPrefix(f.Key, "span.")
@@ -250,6 +262,7 @@ func (f FilterExpr) sql(alias string, wellKnown, resourceWellKnown, promoted map
 		} else {
 			lhs = qualArr(alias, "attr_values[indexOf(attr_keys, ?)]")
 			args = append(args, name)
+			kvhCol, arrKey = qualArr(alias, "attr_kvh"), name
 		}
 	default:
 		if col, ok := promoted[f.Key]; ok {
@@ -259,11 +272,15 @@ func (f FilterExpr) sql(alias string, wellKnown, resourceWellKnown, promoted map
 		} else {
 			lhs = qualArr(alias, "attr_values[indexOf(attr_keys, ?)]")
 			args = append(args, f.Key)
+			kvhCol, arrKey = qualArr(alias, "attr_kvh"), f.Key
 		}
 	}
 
 	// Numeric ops get a Float64 cast — `attr_values` is String, so this
 	// turns "200" into 200.0 for comparison without breaking text columns.
+	if !kvh {
+		kvhCol = ""
+	}
 	numericOp := op == ">" || op == ">=" || op == "<" || op == "<="
 
 	switch op {
@@ -309,6 +326,22 @@ func (f FilterExpr) sql(alias string, wellKnown, resourceWellKnown, promoted map
 			return "", nil, fmt.Errorf("op %s needs at least one value", op)
 		}
 		placeholders := strings.TrimRight(strings.Repeat("?,", len(f.Values)), ",")
+		if op == "IN" && kvhCol != "" {
+			// v0.10.300 — bloom: hasAny(kvh, [hash(k,v1), hash(k,v2), …]) AND kesin IN.
+			hashes := make([]string, len(f.Values))
+			pre := make([]any, 0, 2*len(f.Values))
+			for i, v := range f.Values {
+				hashes[i] = AttrKVHashSQL
+				pre = append(pre, arrKey, v)
+			}
+			all := append(pre, args...)
+			for _, v := range f.Values {
+				all = append(all, v)
+			}
+			attrIndexUsed.Add(1)
+			return "(hasAny(" + kvhCol + ", [" + strings.Join(hashes, ", ") + "]) AND " +
+				lhs + " IN (" + placeholders + "))", all, nil
+		}
 		for _, v := range f.Values {
 			args = append(args, v)
 		}
@@ -345,6 +378,14 @@ func (f FilterExpr) sql(alias string, wellKnown, resourceWellKnown, promoted map
 			args = append(args, f.Values[0])
 			return "accurateCastOrNull(" + lhs + ", 'Float64') " + op +
 				" accurateCastOrNull(?, 'Float64')", args, nil
+		}
+		if op == "=" && kvhCol != "" {
+			// v0.10.300 — bloom önce (granül budar), kesin eşitlik sonra
+			// (yanlış-pozitif eler). Bağlama sırası: hash(k, v), dizi anahtarı, v.
+			all := append([]any{arrKey, f.Values[0]}, args...)
+			all = append(all, f.Values[0])
+			attrIndexUsed.Add(1)
+			return "(has(" + kvhCol + ", " + AttrKVHashSQL + ") AND " + lhs + " = ?)", all, nil
 		}
 		args = append(args, f.Values[0])
 		return lhs + " " + op + " ?", args, nil

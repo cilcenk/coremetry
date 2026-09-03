@@ -119,7 +119,18 @@ func (s *Store) probeAttrIndex(ctx context.Context) bool {
 	return true
 }
 
-var attrIndexReady atomic.Bool
+var (
+	attrIndexReady atomic.Bool
+	// attrIndexUsed — derleyicinin bloom yolunu seçtiği yüklem sayısı
+	// (/api/health `attr_index_used`; self-observability kuralı).
+	attrIndexUsed atomic.Uint64
+)
+
+// AttrIndexStats — (bloom yüklemi sayısı, indeks hazır mı).
+func AttrIndexStats() (uint64, bool) { return attrIndexUsed.Load(), attrIndexReady.Load() }
+
+// AttrIndexUsed — /api/health sayacı.
+func AttrIndexUsed() uint64 { return attrIndexUsed.Load() }
 
 // registerAttrIndex — boot / ertelenmiş DDL inince yayınlanır.
 func registerAttrIndex(ok bool) {

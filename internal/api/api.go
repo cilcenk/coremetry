@@ -10837,7 +10837,10 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 		// yeni ingest yolu = sayaç).
 		"vm_metrics_forward_enqueued": s.ing.MetricForwardEnqueued(),
 		"vm_metrics_forward_dropped":  s.ing.MetricForwardDropped(),
-		"clickhouse":              chStatusLabel(chOK, spoolDegraded),
+		// v0.10.300 — attribute hash indeksi: hazır mı, kaç yüklem bloom yolunda.
+		"attr_index_available": chstore.AttrIndexAvailable(),
+		"attr_index_used":      chstore.AttrIndexUsed(),
+		"clickhouse":           chStatusLabel(chOK, spoolDegraded),
 		// v0.9.238 — which roles THIS pod actually runs. In distributed mode
 		// the api and ingest Deployments answer the same hostname through
 		// different Services, and until now nothing in the response said

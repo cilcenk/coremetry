@@ -117,3 +117,38 @@ Each entry references the incident-shaped fix. Avoid re-living them.
   results into `int64` and clamp, or cast explicitly in SQL
   (`toUInt64(intDiv(...))`). Same class as the tz-less DateTime64
   bind: the type is decided by the server, not by the Go side.
+- **Errors + attribute filter + service: whole-service GROUP BY, halved
+  window, "No traces found"** (v0.10.307, operator-reported on prod: 6h
+  with Errors + `name = POST` returned rows, 3h with the same filters
+  returned nothing although every row sat inside the 3h window; "it has
+  happened before"). An attribute filter forces the raw path; with
+  another span predicate present, `hasError` is not span-local (the
+  trace must have an error span AND a span matching the filter, possibly
+  different spans), so Errors moved into HAVING and stage 1 grouped
+  every trace of the service in the window — `idx_status` pruned
+  nothing. On prod that blew the 25 s stage-1 budget,
+  `narrowOnExhaustion` halved the window and the page came back empty
+  with a `narrowedFromNs` the UI never showed. Fix: error-first
+  candidate narrowing (`trace_error_first.go`) — a cheap
+  `status_code = 'error'` scan in primary-key order (service_name,
+  time) returns the service's error trace ids (cap 5000, `rankedWithin`
+  set when hit); every later stage carries `trace_id IN (ids)` through
+  `TraceFilter.CandidateIDs`, so GROUP BY sees at most the candidates
+  and an empty answer is exact ("no error traces") rather than "budget
+  ran out". `TracesEmpty` now says "No traces in the shortened window"
+  when `narrowedFromNs` is set. Local measurement (api-gateway 3h,
+  fixture where every granule carries errors and the window is two
+  index granules): stage 1/2 unchanged at 65k rows, the extra pass
+  costs ~0.7 s — the fixture cannot show the prune; the prod shape (a
+  handful of error traces in a hub service) is where the `idx_trace`
+  bloom and the bounded GROUP BY pay, and a candidate set in the
+  thousands saturates the bloom (only the GROUP BY bound remains).
+  Lesson: when a filter cannot be expressed on the primary key, find
+  the cheapest predicate that IS on it and let that drive the candidate
+  set; and an empty page under a narrowed window is a budget statement,
+  never a fact — say so in the UI. Regression pins:
+  `trace_error_first_test.go` (eligibility, SQL shape, order-of-
+  operations source pin). v0.10.308 fixed the pin itself: a substring
+  assertion on `name = ?` matched `service_name = ?`, and the 307 gate
+  chain read a missing test-output file as "no FAIL" — negative greps
+  are not gates without positive evidence (`[ -s f ] && grep -q '^ok'`).

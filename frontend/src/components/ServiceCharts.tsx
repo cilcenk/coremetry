@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { MultiLineChart, type DeployMarker } from './MultiLineChart';
 import { publishCursor } from '@/lib/chart/cursorBus';
 import { MetricPanel } from './MetricPanel';
@@ -19,6 +20,7 @@ import { isResolverEligible, serviceRedDescriptors } from '@/lib/resolverEligibi
 import { metricQuery } from '@/lib/metricQuery';
 import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
+import { type CompareMode, parseCompareParam, encodeCompareParam, parseStoredCompare, compareOffsetNs as compareOffset } from '@/lib/chart/compareParam';
 import type { ChartTimeRegion } from '@/lib/chart/overlays';
 import type { Problem, SpanMetricSeries, TimeRange } from '@/lib/types';
 import { QueryError } from '@/components/QueryError';
@@ -143,28 +145,45 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
   // Compare-to-previous-period toggle. 'off' suppresses the
   // second fetch entirely; '24h' / '7d' / 'prev' (matched
   // window) all hit the same /api/spans/span-metric path with
-  // shifted from/to. Persisted in localStorage so an operator
-  // who likes the comparison view keeps it across reloads.
-  const [compare, setCompare] = useState<CompareMode>(() => {
-    const v = getRaw(STORAGE_KEYS.svcChartsCompare) as CompareMode | null;
-    if (v === '24h' || v === '7d' || v === 'prev') return v;
-    return 'off';
-  });
+  // shifted from/to.
+  // v0.10.311 (chart-layer 2.3) — seçim URL'de (?compare=prior|24h|7d):
+  // link taşır, Copy link / SavedViews birebir. localStorage yalnız TOHUM:
+  // URL'de anahtar yokken saklanan tercih okunur ve URL'ye YAZILIR
+  // (tek yönlü okuma bug sınıfı v0.8.256/265/267; useUrlRange emsali).
+  // Yazım replace:true, yabancı anahtarlar korunur; içe aktarım yalnız
+  // compare anahtarına bağlı (aralık değişimi state'i silmez).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlCompare = parseCompareParam(searchParams.get('compare'));
+  const [compare, setCompare] = useState<CompareMode>(
+    () => urlCompare ?? parseStoredCompare(getRaw(STORAGE_KEYS.svcChartsCompare)));
+  useEffect(() => {
+    if (urlCompare === null) {
+      const seed = parseStoredCompare(getRaw(STORAGE_KEYS.svcChartsCompare));
+      if (seed !== 'off') {
+        setSearchParams(prev => {
+          const n = new URLSearchParams(prev);
+          n.set('compare', encodeCompareParam(seed));
+          return n;
+        }, { replace: true });
+      }
+      return;
+    }
+    setCompare(c => (c === urlCompare ? c : urlCompare));
+  }, [urlCompare, setSearchParams]);
   const setCompareAndPersist = (m: CompareMode) => {
     setCompare(m);
     setRaw(STORAGE_KEYS.svcChartsCompare, m);
+    setSearchParams(prev => {
+      const n = new URLSearchParams(prev);
+      const v = encodeCompareParam(m);
+      if (v) n.set('compare', v); else n.delete('compare');
+      return n;
+    }, { replace: true });
   };
   const [rpsPrev, setRpsPrev] = useState<SpanMetricSeries[] | null>(null);
   const [errPrev, setErrPrev] = useState<SpanMetricSeries[] | null>(null);
   const [p99Prev, setP99Prev] = useState<SpanMetricSeries[] | null>(null);
-  const compareOffsetNs = useMemo(() => {
-    switch (compare) {
-      case '24h':  return 24 * 3600 * 1e9;
-      case '7d':   return 7 * 24 * 3600 * 1e9;
-      case 'prev': return (to - from);
-      default:     return 0;
-    }
-  }, [compare, from, to]);
+  const compareOffsetNs = useMemo(() => compareOffset(compare, from, to), [compare, from, to]);
   // v0.9.844 — `compareLabel` ("24h ago" / "7d ago" / "prev window") SİLİNDİ.
   // Tek tüketicisi eski MLC gövdesinin lejant ekiydi; CorePanel hayaleti
   // kendi " (önceki)" ekini basar (v0.9.764'ten beri ghost dilinin tek
@@ -721,8 +740,6 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
     </div>
   );
 }
-
-type CompareMode = 'off' | '24h' | '7d' | 'prev';
 
 function ChartCard({ title, aside, children }: {
   title: string;

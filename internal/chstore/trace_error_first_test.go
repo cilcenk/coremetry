@@ -2,6 +2,7 @@ package chstore
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -48,8 +49,10 @@ func TestErrorFirstFilterAndSQL(t *testing.T) {
 			t.Errorf("%q yok:\n%s", want, sql)
 		}
 	}
-	for _, no := range []string{"name = ?", "HAVING", "GROUP BY", "coremetry."} {
-		if strings.Contains(sql, no) {
+	// v0.10.308: "name = ?" alt-dizesi "service_name = ?"'ın içinde de geçer —
+	// sözcük sınırı şart (bkz. gate-kendi-metnini-ısırır dersi).
+	for _, no := range []string{`(^|[^_a-z])name = \?`, `HAVING`, `GROUP BY`, `coremetry\.`} {
+		if regexp.MustCompile(no).MatchString(sql) {
 			t.Errorf("%q olmamalı (span filtreleri aşama 1/2'de):\n%s", no, sql)
 		}
 	}

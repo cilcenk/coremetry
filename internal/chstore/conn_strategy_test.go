@@ -202,6 +202,10 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// (system_settings) influx.go'da AYRI tutuldu ki bu kapı dosya
 		// bazında kalsın; ana bağlantı orada.
 		"influx_status.go": true,
+		// v0.10.307 — SAF telemetri: tek FROM'u ham `spans` (hata-önce aday
+		// id'leri, status_code='error' + PK). State okumaz; repo.go'nun
+		// GetTraces yardımcısı, aynı havuz doğru adres.
+		"trace_error_first.go": true,
 		// TAŞINMAZ ÜÇÜNCÜ SINIF: sysstats.go + cluster.go system.* okuyor.
 		// Bunlar NODE-LOKAL tablolar; RoundRobin'e verilirse disk/utilizasyon
 		// panelleri her çağrıda BAŞKA node'u raporlar (SQL konsolunun in-order

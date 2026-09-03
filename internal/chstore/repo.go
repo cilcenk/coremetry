@@ -1852,10 +1852,10 @@ type TraceFilter struct {
 	// TraceIDs'ten farkı: uygunluk kapıları (probe / light / MV) bunu GÖRMEZ —
 	// yalnız WHERE'e `trace_id IN` olarak iner. Dışarıdan verilmez.
 	CandidateIDs []string
-	MinMs    float64
-	MaxMs    float64
-	AttrKey  string
-	AttrVal  string
+	MinMs        float64
+	MaxMs        float64
+	AttrKey      string
+	AttrVal      string
 	// ExtraAttrs is the user-selected list of attribute keys whose
 	// values should be projected into TraceRow.Extras. Each key picks
 	// up the first non-empty value among span-attributes and resource-

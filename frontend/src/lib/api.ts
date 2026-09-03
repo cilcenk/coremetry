@@ -37,7 +37,7 @@ import type {
   OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
   ExceptionTriageConfig, ProblemPriorityConfig, FailureSLOConfig, MetricExclusions, AnomalyTrackedConfig,
   InsightKind, InsightResponse, InsightSignal, InsightLink, InsightChartSpec,
-  AnomalySensitivityConfig, TailPoint , MetricCompareReport , LogPatternsResult, LogTemplate, TraceFacet, TraceFacetsResponse } from './types';
+  AnomalySensitivityConfig, TailPoint , MetricCompareReport , LogPatternsResult, LogTemplate, TraceFacet, TraceFacetsResponse, DBSlowQueryConfig } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // withMetricSource — v0.9.1151 deneme modu. Sayfa URL'sindeki
 // ?metricsrc=vm|ch işaretini metrik uçlarının sorgu dizesine basar. TEK
@@ -1243,6 +1243,12 @@ export const api = {
   // v0.9.248 — age-based escalation (escalateStaleProblems). Separate
   // key from anomaly promotion because it applies to EVERY Problem,
   // not just promoted anomalies.
+  // v0.10.325 — yavaş SQL dedektörü ayarları (admin).
+  getDBSlowQuery: () => get<DBSlowQueryConfig>(`/api/settings/db-slow-query`),
+  putDBSlowQuery: (c: DBSlowQueryConfig) =>
+    request<DBSlowQueryConfig>(`/api/settings/db-slow-query`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c),
+    }),
   getProblemEscalation: () =>
     get<{ enabled: boolean; infoToWarningSec: number; warningToCriticalSec: number }>(
       `/api/settings/problem-escalation`),

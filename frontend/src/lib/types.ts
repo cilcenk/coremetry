@@ -6816,6 +6816,18 @@ export interface LogTemplate {
   query: string;
 }
 
+// /api/settings/db-slow-query (v0.10.325) — yavaş SQL dedektörü: statement
+// 5 dk p95'i eşiği ≥forBuckets ardışık kovada aşınca Problem (Kind=db →
+// sahibi + SRE maili). cooldownSec = çözülmeden önce tutma süresi.
+export interface DBSlowQueryConfig {
+  enabled: boolean;
+  thresholdMs: number;
+  criticalMs: number;
+  minExecutions: number;
+  forBuckets: number;
+  cooldownSec: number;
+}
+
 // /api/settings/trace-facets (v0.10.302/303, trace arama Dilim 2) — operatör
 // facet kaydı: yaygın-değerli attribute'lar için terfi kolonu + set index.
 export interface TraceFacet {

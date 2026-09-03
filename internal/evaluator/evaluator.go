@@ -534,6 +534,7 @@ func (e *Evaluator) evaluateAll(ctx context.Context) int {
 	// leader-locked tick, riding the existing notify / incident-attach
 	// pipeline like every other Problem.
 	e.evaluateDBCapacity(ctx)
+	e.evaluateDBSlowStatements(ctx) // v0.10.325 — yavaş SQL → Problem (Kind=db → sahibi + SRE maili)
 
 	// Runtime pod detector (v0.9.90) — JVM heap saturation + GC pause per
 	// pod. Overview's Runtime panel only SHOWS these; this pass makes them

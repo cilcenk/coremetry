@@ -149,3 +149,21 @@ query_log: her istekte aşama-2 ifadesi (`SELECT trace_id, coalesce(nullIf(anyIf
 **Lokal doğrulama notu:** minikube'de chc-0'ın replikasyon kuyruğu Ağustos'tan kalma takılı GET_PART'larla kilitli (partition'larda aktif satır var → düşürme = fixture veri kaybı, operatör kararı); chc-1 kolon+indeksi aldı, chc-0 almadı. Uygulama yarım şemada güvenle eski yola düşer (`AttrIndexAvailable()` probe'u). Pozitif doğrulama (7 g nadir değer) chc-0 açılınca `scratchpad/verify_301.sh`.
 
 **Kalan:** Dilim 3 regex/LIKE/aralık araştırması (`ngrambf_v1` ölçümü, scratch tek-node).
+
+## Dilim 3 — regex / LIKE / önek ölçümü (2026-09-03) — KAPANDI, kod yok
+
+Scratch tek-node MergeTree (24 s = 857 966 satır): `attr_values` üzerinde `ngrambf_v1(3, 8192, 2, 0)`, terfi kolonu `attr_f_txn` (banking.txn_ref) üzerinde `ngrambf_v1(3, 4096, 2, 0)` + `tokenbf_v1(4096, 2, 0)`; query_log 3 koşu medyanı.
+
+| Yüklem | Skip | Granül | read_rows | read_bytes | med ms |
+|---|---|---|---|---|---|
+| dizi `attr_values[indexOf(…)] LIKE '%177149%'` | — (dizi ngram indeksi UYGULANMAZ: elemana indeksle erişim) | 108/108 | 857 966 | 153 MiB | 8 114 |
+| dizi `… LIKE 'TXN-2026-17%'` | — | 108/108 | 857 966 | 153 MiB | 8 012 |
+| `arrayExists(v -> v LIKE …, attr_values)` | — | 108/108 | — | — | — |
+| terfi kolonu `attr_f_txn LIKE '%177149%'` | ngram 98/108 | 98 | 764 796 | **3.2 MiB** | **1 366** |
+| terfi kolonu `match(attr_f_txn, '177149')` | ngram 98/108 | 98 | 764 796 | 3.2 MiB | **678** |
+| terfi kolonu `LIKE 'TXN-2026-17%'` | ngram 106/108 | 106 | 848 272 | 7.7 MiB | 873 |
+| `hasToken(attr_f_txn, '177149')` (tam token) | tokenbf **0/74** | 0 | — | — | — |
+
+**Sonuç:** LIKE/regex/önek için kazanç **indeksten değil dar kolondan** geliyor — 153 MiB → 3 MiB (dizi dekompresyonu yok), 6–12× hız. ngram bloom'u id-benzeri yüksek kardinaliteli değerlerde doyuyor (98/108, 106/108 — 3-gram'lar her granülde var); yalnız `hasToken` tam-token'da budar, o da alt-dize araması değil. Dizi üzerindeki ngram indeksi `indexOf` erişimine ve `arrayExists` lambdasına hiç uygulanmıyor → **"her attribute'ta indeksli regex" mümkün değil**; Datadog da regex'i facet'lerde koşar.
+
+**Karar (kod yok):** regex/LIKE/önek'in yolu **facet kaydı** (Dilim 2, gemide): terfi kolonu tüm operatörlerde kullanılır (`promoted` haritası op'tan bağımsız kolona yönlendirir), yani `Settings → Trace facet'leri`ne eklenen bir attribute'ta LIKE/regex bugün zaten dar kolondan okur. Facet kolonuna ek `ngrambf_v1` indeksi ölçüme göre değmiyor (ek disk, sıfıra yakın budama); istenirse uzun/ayırt edici alt-dizeler için ayrı ölçümle. Dizi yolu (facet olmayan anahtar) LIKE/regex'te tam tarama olarak kalır ve öyle olduğu belgelenir.

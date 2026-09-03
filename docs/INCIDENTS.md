@@ -152,3 +152,36 @@ Each entry references the incident-shaped fix. Avoid re-living them.
   assertion on `name = ?` matched `service_name = ?`, and the 307 gate
   chain read a missing test-output file as "no FAIL" — negative greps
   are not gates without positive evidence (`[ -s f ] && grep -q '^ok'`).
+- **Traces strip empty under a non-entry-span filter** (v0.10.323,
+  operator-reported on prod: `service.name = X AND db.statement ~ …`
+  listed rows while the volume strip said "No traces in view to
+  bucket"). Since v0.10.268 the strip counts entry spans (`kind IN
+  (server, consumer)`) and ANDs the operator's filters onto the SAME
+  span; the table applies them trace-wide (any span of the trace).
+  `db.statement` never lives on an entry span, so the strip's predicate
+  was unsatisfiable. Fix: `stripScope` — when a filter targets a key
+  that does not live on entry spans (db., messaging., custom
+  attributes) or a free-text search is present, the strip counts
+  MATCHING SPANS instead (kind restriction dropped, unit "spans",
+  header labels and hint say so; the median is then the span's own
+  latency — exactly the question a db.statement filter asks). Entry-span
+  keys (service/http/url/status/cluster/channel_code…) keep the trace
+  count. Lesson: two surfaces sharing one filter must share its
+  SEMANTICS (span-local vs trace-wide), or the cheaper one must say what
+  it counts. Pin: `volumeSeries.test.ts` (stripScope table).
+- **Waterfall rows vanish past the first screen on 400+ span traces**
+  (v0.10.324, operator-reported on prod with a 1065-span trace: ~40 rows
+  then blank). v0.10.278 virtualised the waterfall with
+  `useWindowVirtualizer`, i.e. it listened to WINDOW scroll — but the
+  app never scrolls the window: `#content` (flex:1 + overflow:auto) and,
+  on the trace page, `.tc-wf` are the scroll containers. No scroll event
+  ever reached the virtualiser, `scrollOffset` stayed 0, only the first
+  viewport + 20 overscan rows were ever rendered while the spacer kept
+  the full height. jsdom cannot see this (no layout), which is why the
+  1000-row virtual test stayed green. Fix: `lib/scrollParent.ts`
+  (nearest overflow auto/scroll ancestor + offset within it as
+  `scrollMargin`) and a dual-mode `useVirtualizer` — element mode when a
+  scroll parent exists, react-virtual's own window composition
+  (`observeWindow*` + `windowScroll`) otherwise. Lesson: a virtualiser is
+  a contract with ONE scroll container; pin the container choice in
+  source (`traceWaterfallVirtual.test.tsx`), because the DOM test cannot.

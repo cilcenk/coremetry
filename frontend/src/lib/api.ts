@@ -37,7 +37,7 @@ import type {
   OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
   ExceptionTriageConfig, ProblemPriorityConfig, FailureSLOConfig, MetricExclusions, AnomalyTrackedConfig,
   InsightKind, InsightResponse, InsightSignal, InsightLink, InsightChartSpec,
-  AnomalySensitivityConfig, TailPoint , MetricCompareReport , LogPatternsResult } from './types';
+  AnomalySensitivityConfig, TailPoint , MetricCompareReport , LogPatternsResult , TraceFacet, TraceFacetsResponse } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // withMetricSource — v0.9.1151 deneme modu. Sayfa URL'sindeki
 // ?metricsrc=vm|ch işaretini metrik uçlarının sorgu dizesine basar. TEK
@@ -1569,6 +1569,13 @@ export const api = {
   // The Metrics page does NOT call these to render its source badge: the
   // badge reads `source` off the /api/metrics/names body, so a viewer
   // (who gets 403 here) still sees which store answered.
+  // v0.10.303 — trace facet kaydı (admin).
+  getTraceFacets: () => get<TraceFacetsResponse>(`/api/settings/trace-facets`),
+  putTraceFacets: (facets: TraceFacet[]) =>
+    request<TraceFacetsResponse>(`/api/settings/trace-facets`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ facets }),
+    }),
   getVMSettings: () => get<VMSnapshot>(`/api/settings/victoria-metrics`),
   putVMSettings: (s: VMSettingsInput) =>
     request<VMSnapshot>(`/api/settings/victoria-metrics`, {

@@ -16,6 +16,7 @@ export const SETTINGS_TAB_INDEX: SettingsTabRef[] = [
   { slug: 'knowledge', label: 'Knowledge (RAG)' },
   { slug: 'tempo', label: 'Tempo backend' },
   { slug: 'metrics-backend', label: 'Metrik backend’i' },
+  { slug: 'trace-facets', label: 'Trace facet’leri' }, // v0.10.303
   { slug: 'clusters', label: 'Remote clusters' },
   { slug: 'influx', label: 'Influx kaynakları' },
   { slug: 'entities', label: 'K8s entity katmanı' },

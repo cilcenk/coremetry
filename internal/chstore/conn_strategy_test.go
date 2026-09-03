@@ -209,6 +209,9 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// v0.10.329 — SAF telemetri: boş liste öz-teşhisi, tek FROM'u spans
 		// (count). State okumaz; liste sorgusuyla aynı havuz doğru adres.
 		"trace_explain.go": true,
+		// v0.10.331 — SAF telemetri: db_statement_summary_5m pencere ölçüsü + SQL
+		// arama (hedefli kural). Kural satırları problem.go ana bağlantıda kalır.
+		"alert_target.go": true,
 		// TAŞINMAZ ÜÇÜNCÜ SINIF: sysstats.go + cluster.go system.* okuyor.
 		// Bunlar NODE-LOKAL tablolar; RoundRobin'e verilirse disk/utilizasyon
 		// panelleri her çağrıda BAŞKA node'u raporlar (SQL konsolunun in-order

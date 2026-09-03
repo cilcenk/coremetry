@@ -10528,13 +10528,16 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if !s.acceptRuleTarget(w, rule) {
+		return
+	}
 	if s.rejectDeadLogQuery(w, rule) {
 		return
 	}
 	rule.BuiltIn = false
 	rule.CreatedAt = time.Now().UnixNano()
 	if err := s.store.UpsertAlertRule(r.Context(), rule); err != nil {
-		writeErr(w, err)
+		s.writeRuleErr(w, err)
 		return
 	}
 	details, _ := json.Marshal(map[string]any{"name": rule.Name, "service": rule.Service, "metric": rule.Metric})
@@ -10573,16 +10576,38 @@ func (s *Server) updateAlertRule(w http.ResponseWriter, r *http.Request) {
 	// Create ile AYNI kapı. Yalnız create'i kapatmak, kuralı önce boş
 	// bırakıp sonra düzenleyerek geçilebilir bir kapı olurdu — ve o yol
 	// bir kaçamak değil, düzenlemenin NORMAL akışıdır.
+	if !s.acceptRuleTarget(w, rule) {
+		return
+	}
 	if s.rejectDeadLogQuery(w, rule) {
 		return
 	}
 	if err := s.store.UpsertAlertRule(r.Context(), rule); err != nil {
-		writeErr(w, err)
+		s.writeRuleErr(w, err)
 		return
 	}
 	details, _ := json.Marshal(map[string]any{"name": rule.Name, "service": rule.Service, "metric": rule.Metric})
 	s.audit(r, "alert_rule.update", "alert_rule", rule.ID, string(details))
 	writeJSON(w, rule)
+}
+
+// acceptRuleTarget — v0.10.331: hedefli kural doğrulaması (400). Saf kural
+// chstore.ValidateRuleTarget; hedefli kuralda Service boş (tüm çağıranlar).
+func (s *Server) acceptRuleTarget(w http.ResponseWriter, rule chstore.AlertRule) bool {
+	if err := chstore.ValidateRuleTarget(rule); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	return true
+}
+
+// writeRuleErr — kolon henüz yoksa (ertelenmiş DDL, iki-boot) 409 + net metin.
+func (s *Server) writeRuleErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, chstore.ErrRuleTargetColumnMissing) {
+		writeJSONError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeErr(w, err)
 }
 
 func (s *Server) deleteAlertRule(w http.ResponseWriter, r *http.Request) {

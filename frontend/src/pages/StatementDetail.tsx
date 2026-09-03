@@ -1,4 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { Button } from '@/components/ui/Button';
+import { StatementAlertModal } from './alerts/StatementAlertModal';
+import { useAuth } from '@/components/AuthProvider';
 import { Link, useSearchParams } from 'react-router-dom';
 import { navHref } from '@/lib/navHref';
 import { Topbar } from '@/components/Topbar';
@@ -48,6 +51,10 @@ export default function StatementDetailPage() {
   // Compare toggle rides the URL (house rule §4): ?stmtcmp=1,
   // replace:true, foreign params preserved.
   const compare = params.get('stmtcmp') === '1';
+  // v0.10.331 — alarm kuralı modalı; yalnız yazma rolü görür (viewer salt-okur).
+  const { user } = useAuth();
+  const canEditRules = user?.role === 'admin' || user?.role === 'editor';
+  const [alertOpen, setAlertOpen] = useState(false);
   const setCompare = (v: boolean) => setParams(prev => {
     const next = new URLSearchParams(prev);
     if (v) next.set('stmtcmp', '1'); else next.delete('stmtcmp');
@@ -113,9 +120,16 @@ export default function StatementDetailPage() {
             title={`Persistent statement identity (stmt_hash ${refObj.hash})`}>
             #{refObj.hash.slice(0, 8)}
           </span>
+          {/* v0.10.331 — bu ifade için hedefli alarm kuralı (editör/admin). */}
+          {canEditRules && (
+            <Button variant="secondary" size="xs" style={{ marginLeft: 'auto' }} onClick={() => setAlertOpen(true)}
+              title="Bu ifade için eşik alarmı: p95/p99/max/avg süresi eşiği geçince Problem + DB sahibi/SRE maili">
+              ⚠ Alarm oluştur
+            </Button>
+          )}
           <label style={{
             fontSize: 11, display: 'flex', alignItems: 'center', gap: 4,
-            cursor: 'pointer', marginLeft: 'auto', whiteSpace: 'nowrap',
+            cursor: 'pointer', marginLeft: canEditRules ? undefined : 'auto', whiteSpace: 'nowrap',
           }}
             title="Compare current window against the immediately-preceding equal-length window. Adds a second backend read; off by default.">
             <input type="checkbox" checked={compare}
@@ -127,6 +141,10 @@ export default function StatementDetailPage() {
         <StmtText
           statement={detail?.statement || ''}
           sample={detail?.summary?.sampleStatement || ''} />
+        {alertOpen && (
+          <StatementAlertModal open onClose={() => setAlertOpen(false)}
+            target={{ kind: 'db_statement', dbSystem: dbSystem || refObj.system || '', dbName: dbName === 'default' ? '' : dbName, stmtHash: refObj.hash, sample: (detail?.statement || detail?.summary?.sampleStatement || '').slice(0, 300) }} />
+        )}
 
         {detail === undefined && <Spinner />}
         {detail === null && (

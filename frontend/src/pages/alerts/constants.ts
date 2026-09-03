@@ -25,6 +25,14 @@ export const METRICS = [
   { v: 'error_count',  label: 'Error count' },
 ];
 
+// v0.10.331 — hedefli (DB ifadesi) kural metrikleri; p95 varsayılan (spec).
+export const DB_STMT_METRICS = [
+  { v: 'db_stmt_p95_ms', label: 'Statement p95 (ms)' },
+  { v: 'db_stmt_p99_ms', label: 'Statement p99 (ms)' },
+  { v: 'db_stmt_max_ms', label: 'Statement max (single execution, ms)' },
+  { v: 'db_stmt_avg_ms', label: 'Statement avg (ms)' },
+];
+export const isDbStmtMetric = (m: string | undefined) => !!m && m.startsWith('db_stmt_');
 export const COMPARATORS = ['>', '>=', '<', '<='];
 export const SEVERITIES = ['info', 'warning', 'critical'];
 

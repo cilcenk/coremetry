@@ -72,7 +72,9 @@ type AlertRule struct {
 	// models. Empty for every native rule. Metric="watcher" by
 	// convention so the rules table renders consistently.
 	WatcherJSON string `json:"watcherJson,omitempty"`
-	CreatedAt   int64  `json:"createdAt"` // unix nanoseconds
+	// Target — v0.10.331: hedefli kural (alert_target.go); alert_rules.target_json.
+	Target    *RuleTarget `json:"target,omitempty"`
+	CreatedAt int64       `json:"createdAt"` // unix nanoseconds
 }
 
 // Problem ÖZNE TÜRLERİ (v0.9.1338, entity-model Faz 4b).
@@ -123,8 +125,8 @@ type Problem struct {
 	// Kind (v0.9.1338) — özne TÜRÜ. Boş = service (bkz.
 	// ProblemSubjectKind). scanProblemRow normalize eder, yani telde
 	// hiçbir zaman boş görünmez.
-	Kind   string `json:"kind,omitempty"`
-	Metric string `json:"metric"`
+	Kind      string  `json:"kind,omitempty"`
+	Metric    string  `json:"metric"`
 	Value     float64 `json:"value"`
 	Threshold float64 `json:"threshold"`
 	// Comparator (v0.9.976) — ihlali TANIMLAYAN yön, kuralın kendisinden
@@ -753,7 +755,7 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, name, service, metric, comparator, threshold, window_sec,
 		       severity, enabled, built_in, runbook_url, for_sec, min_samples,
-		       cooldown_sec, log_query, watcher_json, toUnixTimestamp64Nano(created_at)
+		       cooldown_sec, log_query, watcher_json, `+s.alertRuleTargetSelect()+`, toUnixTimestamp64Nano(created_at)
 		FROM alert_rules FINAL
 		ORDER BY created_at DESC`)
 	if err != nil {
@@ -764,12 +766,14 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	for rows.Next() {
 		var r AlertRule
 		var enabled, builtIn uint8
+		var targetJSON string
 		if err := rows.Scan(&r.ID, &r.Name, &r.Service, &r.Metric, &r.Comparator,
 			&r.Threshold, &r.WindowSec, &r.Severity, &enabled, &builtIn,
 			&r.RunbookURL, &r.ForSec, &r.MinSamples, &r.CooldownSec,
-			&r.LogQuery, &r.WatcherJSON, &r.CreatedAt); err != nil {
+			&r.LogQuery, &r.WatcherJSON, &targetJSON, &r.CreatedAt); err != nil {
 			return nil, err
 		}
+		r.Target = decodeRuleTarget(targetJSON)
 		r.Enabled = enabled == 1
 		r.BuiltIn = builtIn == 1
 		out = append(out, r)
@@ -818,17 +822,32 @@ func (s *Store) UpsertAlertRule(ctx context.Context, r AlertRule) error {
 	// a later migration. Without naming the columns, the
 	// ordinal arg shape would mismatch the table layout on
 	// upgraded installs.
-	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO alert_rules
-		(id, name, service, metric, comparator, threshold, window_sec,
+	// v0.10.331 — hedefli kural: kolon yoksa (küme kipi, ertelenmiş DDL) kayıt
+	// REDDEDİLİR; hedefsiz kurallar eski INSERT şekliyle yazılmaya devam eder.
+	if r.Target != nil && !s.hasAlertRuleTargetCol {
+		return ErrRuleTargetColumnMissing
+	}
+	cols := `(id, name, service, metric, comparator, threshold, window_sec,
 		 severity, enabled, built_in, runbook_url, for_sec, min_samples,
-		 cooldown_sec, log_query, watcher_json, created_at, version)`)
+		 cooldown_sec, log_query, watcher_json, created_at, version)`
+	if s.hasAlertRuleTargetCol {
+		cols = `(id, name, service, metric, comparator, threshold, window_sec,
+		 severity, enabled, built_in, runbook_url, for_sec, min_samples,
+		 cooldown_sec, log_query, watcher_json, target_json, created_at, version)`
+	}
+	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO alert_rules `+cols)
 	if err != nil {
 		return err
 	}
-	if err := batch.Append(r.ID, r.Name, r.Service, r.Metric, r.Comparator,
+	args := []any{r.ID, r.Name, r.Service, r.Metric, r.Comparator,
 		r.Threshold, r.WindowSec, r.Severity, enabled, builtIn,
 		r.RunbookURL, r.ForSec, r.MinSamples, r.CooldownSec, r.LogQuery,
-		r.WatcherJSON, time.Now().UTC(), uint64(time.Now().UnixNano())); err != nil {
+		r.WatcherJSON}
+	if s.hasAlertRuleTargetCol {
+		args = append(args, encodeRuleTarget(r.Target))
+	}
+	args = append(args, time.Now().UTC(), uint64(time.Now().UnixNano()))
+	if err := batch.Append(args...); err != nil {
 		return err
 	}
 	if err := batch.Send(); err != nil {
@@ -870,18 +889,20 @@ func (s *Store) SetAlertRuleEnabled(ctx context.Context, id string, enabled bool
 func (s *Store) GetAlertRule(ctx context.Context, id string) (*AlertRule, error) {
 	var r AlertRule
 	var enabled, builtIn uint8
+	var targetJSON string
 	err := s.conn.QueryRow(ctx, `
 		SELECT id, name, service, metric, comparator, threshold, window_sec,
 		       severity, enabled, built_in, runbook_url, for_sec, min_samples,
-		       cooldown_sec, log_query, watcher_json, toUnixTimestamp64Nano(created_at)
+		       cooldown_sec, log_query, watcher_json, `+s.alertRuleTargetSelect()+`, toUnixTimestamp64Nano(created_at)
 		FROM alert_rules FINAL WHERE id = ? LIMIT 1`, id).
 		Scan(&r.ID, &r.Name, &r.Service, &r.Metric, &r.Comparator, &r.Threshold,
 			&r.WindowSec, &r.Severity, &enabled, &builtIn,
 			&r.RunbookURL, &r.ForSec, &r.MinSamples, &r.CooldownSec,
-			&r.LogQuery, &r.WatcherJSON, &r.CreatedAt)
+			&r.LogQuery, &r.WatcherJSON, &targetJSON, &r.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
+	r.Target = decodeRuleTarget(targetJSON)
 	r.Enabled = enabled == 1
 	r.BuiltIn = builtIn == 1
 	return &r, nil
@@ -1095,7 +1116,7 @@ func (s *Store) CountProblems(ctx context.Context, f ProblemFilter) (uint64, err
 // yedi yere ayrı ayrı eklemek, birini unutunca SESSİZ bir hata sınıfı
 // açardı: eksik okuyan yol satırı UpsertProblem'e geri verdiğinde
 // (ack, refresh, AI özeti) ReplacingMergeTree bütün-satır replace'i
-// comparator'ı DEFAULT ''e indirir — yani öncelik hesabı sessizce eski
+// comparator'ı DEFAULT ”e indirir — yani öncelik hesabı sessizce eski
 // hatalı davranışa döner. users.go'daki userSelectExpr/scanUserRow
 // ikilisinin birebir emsali.
 //
@@ -1870,4 +1891,13 @@ func (s *Store) ListProblemWindowEvents(ctx context.Context, service string, fro
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// alertRuleTargetSelect — v0.10.331: kolon henüz yoksa (ertelenmiş DDL) SELECT
+// sabit ” okur; okuma yolu hiçbir boot'ta kırılmaz (iki-boot sözleşmesi).
+func (s *Store) alertRuleTargetSelect() string {
+	if s.hasAlertRuleTargetCol {
+		return "target_json"
+	}
+	return "''"
 }

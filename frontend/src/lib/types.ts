@@ -3238,6 +3238,25 @@ export interface HistogramResult {
 
 // ── Alerts & Problems ───────────────────────────────────────────────────────
 
+// v0.10.331 — hedefli kural: belirli bir DB ifadesi (stmt_hash) için eşik.
+// Ölçü db_statement_summary_5m (tüm çağıranlar); metrik db_stmt_{p95,p99,max,avg}_ms.
+export interface RuleTarget {
+  kind: 'db_statement';
+  dbSystem?: string;
+  dbName?: string;
+  stmtHash: string;
+  sample?: string;
+}
+// /api/db/statements/search satırı (SQL arama seçici).
+export interface StatementSearchRow {
+  dbSystem: string;
+  dbName: string;
+  stmtHash: string;
+  sample: string;
+  execs: number;
+  p95Ms: number;
+  services: string[];
+}
 export interface AlertRule {
   id: string;
   name: string;
@@ -3254,6 +3273,8 @@ export interface AlertRule {
   // notifications so the oncall lands on the playbook in one
   // click instead of digging through Confluence.
   runbookUrl?: string;
+  // v0.10.331 — hedefli kural (DB ifadesi); yoksa sıradan servis kuralı.
+  target?: RuleTarget;
   // Noise-dampening knobs (v0.5.127-129). All default to 0 =
   // legacy fire-immediately behaviour; operators opt in per rule.
   forSec?: number;       // sustained breach gate

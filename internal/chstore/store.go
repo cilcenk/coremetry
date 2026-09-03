@@ -220,6 +220,8 @@ type Store struct {
 	// v0.8.186 class) and routes GetSlowQueriesGlobal between the MV read
 	// and the raw-spans fallback.
 	hasDBStmtHashCol bool
+	// hasAlertRuleTargetCol — v0.10.331: alert_rules.target_json probu (iki-boot).
+	hasAlertRuleTargetCol bool
 	// v0.9.1097 — db_statement_summary_5m exemplar state kolonları var mı?
 	// (0.5 Alternatif-B; okuma MV-önce, yoksa ham fallback.)
 	hasDBStmtExemplarCols bool
@@ -1466,6 +1468,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			cooldown_sec UInt32       DEFAULT 0,
 			log_query    String       DEFAULT '',     -- saved-search log alert (v0.5.242)
 			watcher_json String       DEFAULT '',     -- imported ES Watcher definition, verbatim (v0.9.x)
+			target_json  String       DEFAULT '',     -- v0.10.331 hedefli kural (RuleTarget JSON)
 			created_at   DateTime64(9) DEFAULT now64(9),
 			version      UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
@@ -2580,6 +2583,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		// defined KQL → rate-threshold" rules. Evaluator
 		// switches paths based on len(log_query) > 0.
 		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS log_query String DEFAULT ''`,
+		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS target_json String DEFAULT ''`, // v0.10.331
 		// v0.9.x — ES Watcher birebir-JSON import (Faz-1). The verbatim
 		// PUT _watcher/watch body; empty for native rules. The evaluator
 		// switches to the watcher path on len(watcher_json) > 0, exactly
@@ -3155,6 +3159,15 @@ func (s *Store) migrate(ctx context.Context) error {
 		`SELECT db_stmt_hash FROM spans WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1 SETTINGS max_execution_time = 3`)
 	maybeCloseRows(dhRows, dhErr)
 	s.hasDBStmtHashCol = dhErr == nil
+	// v0.10.331 — alert_rules.target_json probu: küme kipinde kolon ertelenmiş
+	// DDL ile bir sonraki boot'ta gelir; gelene dek hedefli kural kaydı 409,
+	// okumalar '' ile sürer (iki-boot sözleşmesi, CLAUDE.md §3).
+	trRows, trErr := s.conn.Query(ctx, `SELECT target_json FROM alert_rules LIMIT 1 SETTINGS max_execution_time = 3`)
+	maybeCloseRows(trRows, trErr)
+	s.hasAlertRuleTargetCol = trErr == nil
+	if !s.hasAlertRuleTargetCol {
+		log.Printf("[chstore] alert_rules.target_json not yet present (%v) — DB-statement alert rules cannot be saved until the next restart (deferred DDL)", trErr)
+	}
 	if !s.hasDBStmtHashCol {
 		log.Printf("[chstore] `db_stmt_hash` column not resolvable on spans (%v) — db_statement_summary_5m MV disabled, /slow-queries reads stay on the raw-spans path (expected on an external Distributed cluster with cluster_name unset)", dhErr)
 	}

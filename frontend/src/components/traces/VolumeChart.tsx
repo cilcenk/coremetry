@@ -12,7 +12,7 @@
 import { useMemo } from 'react';
 import type { SpanMetricSeries } from '@/lib/types';
 import { TimeChart } from '@/components/charts/TimeChart';
-import { buildVolumeSeries, fmtVolumeDuration } from './volumeSeries';
+import { volumeHint, buildVolumeSeries, fmtVolumeDuration } from './volumeSeries';
 
 export function VolumeChart({
   count, errors, p50, height = 140, onBrush, onZoomReset, xRange, header, headerRight, unit = 'traces',
@@ -57,7 +57,7 @@ export function VolumeChart({
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4, fontSize: 10.5, color: 'var(--text-faint)' }}>
         {header}
         <span style={{ fontFamily: 'var(--font-mono, ui-monospace)' }}
-          title="Giriş span'leri (server/consumer) sayılır: servis seçiliyken istek = trace; servissiz pencerede her hop bir kez sayılır.">
+          title={volumeHint(unit ?? 'traces')}>
           {unit} / {bucketMin}m bucket · sürükle = zaman seç</span>
         {headerRight && (
           <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>

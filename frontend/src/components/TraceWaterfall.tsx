@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useWindowVirtualizer } from '@tanstack/react-virtual';
+import { useVirtualizer, observeElementRect, observeElementOffset, elementScroll, observeWindowRect, observeWindowOffset, windowScroll, type VirtualizerOptions } from '@tanstack/react-virtual';
+import { findScrollParent, offsetWithinScrollParent } from '@/lib/scrollParent';
 import { TraceMinimap } from './traces/TraceMinimap';
 import type { SpanRow, TraceAnalysis, TraceNode, TraceServiceSummary } from '@/lib/types';
 import { collectSubtreeIds, groupParentOf, clusterBadge } from './traceWaterfall.tree';
@@ -529,14 +530,39 @@ export function TraceWaterfall({
   // .wf-row sözleşmesi). Altında content-visibility yolu aynen kalır.
   const virtual = rows.length >= VIRTUAL_MIN_ROWS;
   const listRef = useRef<HTMLDivElement>(null);
+  // v0.10.324 (operatör, prod: "1000'den fazla trace'ler kesiliyor") —
+  // PENCERE sanallaştırıcısı YANLIŞ kaptı: uygulama #content / .tc-wf içinde
+  // kaydırır, window hiç scroll olayı görmez → scrollOffset 0'da kalır,
+  // yalnız ilk ekran + overscan çizilir, gerisi boş (1065 span'lik trace).
+  // Şimdi gerçek kaydırma kabı bulunur (findScrollParent), scrollMargin o
+  // kabın içindeki ofset. Kap yoksa (jsdom) documentElement — ölçüm yok,
+  // initialRect ile tahmin (testler satır sayısını pinler).
+  const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null);
   const [listTop, setListTop] = useState(0);
   useEffect(() => {
     if (!virtual || !listRef.current) return;
-    const r = listRef.current.getBoundingClientRect();
-    setListTop(r.top + (typeof window !== 'undefined' ? window.scrollY : 0));
+    const sp = findScrollParent(listRef.current);
+    setScrollEl(sp);
+    setListTop(sp ? offsetWithinScrollParent(listRef.current, sp)
+      : listRef.current.getBoundingClientRect().top + (typeof window !== 'undefined' ? window.scrollY : 0));
   }, [virtual, rows.length]);
-  const virtualizer = useWindowVirtualizer({
+  // İki kip, tek hook: kaydırma kabı bulunduysa ELEMAN kipi; bulunamadıysa
+  // (pencere kaydıran yerleşim / jsdom) PENCERE kipi — useWindowVirtualizer'ın
+  // kendi bileşimi (react-virtual: getScrollElement=window + observeWindow* +
+  // windowScroll). Hook koşullu olamaz; gözlemciler koşullu seçilir. Tipler:
+  // Window Element değildir, react-virtual'ın kendi pencere sarmalayıcısı da
+  // aynı boşluktan geçer — unknown üzerinden daraltılır (any yok).
+  type VOpts = VirtualizerOptions<HTMLElement, Element>;
+  const winMode = scrollEl === null;
+  const virtualizer = useVirtualizer<HTMLElement, Element>({
     count: virtual ? rows.length : 0,
+    getScrollElement: () => (winMode
+      ? (typeof document !== 'undefined' ? (window as unknown as HTMLElement) : null)
+      : scrollEl),
+    observeElementRect: (winMode ? observeWindowRect : observeElementRect) as unknown as VOpts['observeElementRect'],
+    observeElementOffset: (winMode ? observeWindowOffset : observeElementOffset) as unknown as VOpts['observeElementOffset'],
+    scrollToFn: (winMode ? windowScroll : elementScroll) as unknown as VOpts['scrollToFn'],
+    initialOffset: () => (winMode && typeof window !== 'undefined' ? window.scrollY : 0),
     estimateSize: () => ROW_EST_PX,
     overscan: 20,
     scrollMargin: listTop,

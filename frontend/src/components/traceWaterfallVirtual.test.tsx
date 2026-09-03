@@ -49,3 +49,21 @@ describe('TraceWaterfall × sanal satırlar + harita', () => {
     expect(host.querySelectorAll('.wf-row').length).toBe(201);
   });
 });
+
+// v0.10.324 (operatör, prod: 1065 span'lik trace kesiliyordu) — kaynak pini:
+// pencere sanallaştırıcısı YOK; gerçek kaydırma kabı bulunur ve scrollMargin
+// o kabın içindeki ofsettir. (Pencere kaydırması bu uygulamada yok:
+// #content / .tc-wf overflow:auto — globals.css.)
+import { readFileSync } from 'node:fs';
+import { resolve as pathResolve } from 'node:path';
+describe('şelale sanallaştırıcı kaydırma kabı (v0.10.324)', () => {
+  const src = readFileSync(pathResolve(__dirname, 'TraceWaterfall.tsx'), 'utf8');
+  it('useWindowVirtualizer kullanılmaz; getScrollElement + findScrollParent', () => {
+    // Kapı kendi metnini ısırmasın (yorum adı anabilir): ÇAĞRI ve IMPORT yok.
+    expect(src).not.toMatch(/useWindowVirtualizer\s*[(<]/);
+    expect(src).not.toMatch(/import \{[^}]*useWindowVirtualizer[^}]*\} from '@tanstack\/react-virtual'/);
+    expect(src).toContain('getScrollElement:');
+    expect(src).toContain('findScrollParent(listRef.current)');
+    expect(src).toContain('offsetWithinScrollParent(listRef.current, sp)');
+  });
+});

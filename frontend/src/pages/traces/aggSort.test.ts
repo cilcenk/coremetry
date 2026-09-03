@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { AGG_SORT_IDS, toAggSort, decodeLegacyAggSort } from './aggSort';
-import { resolveInitialSort } from '@/components/DataTable';
+import { resolveInitialSort } from '@/components/ui/DataTable';
 import { removeRaw, dtSortKey } from '@/lib/storage';
 
 // aggSort.test.ts — v0.9.878.

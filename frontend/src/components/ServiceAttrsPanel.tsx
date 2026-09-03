@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { QueryErrorInline } from '@/components/QueryError';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ServiceAttrRow, TimeRange } from '@/lib/types';
 

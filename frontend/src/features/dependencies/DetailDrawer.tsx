@@ -6,7 +6,7 @@ import { Spinner } from '@/components/Spinner';
 import { LazyMount } from '@/components/LazyMount';
 import { api } from '@/lib/api';
 import { fmtNum, fmtNs, timeRangeToNs } from '@/lib/utils';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, DBDetail, MessagingDetail, SpanMetricSeries, DBOpStat } from '@/lib/types';
 import { Stat } from './panels/shared';

@@ -37,7 +37,7 @@ import { teamOptionsCI } from '@/lib/teamOptions';
 import { getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import { decodeCsvSet, encodeCsvSet } from '@/lib/inboxUrl';
 import { useUrlEnv } from '@/lib/useUrlEnv';
-import { useDataTable, DataTableColgroup, DataTableHead, ResetLayoutButton } from '@/components/DataTable';
+import { useDataTable, DataTableColgroup, DataTableHead, ResetLayoutButton } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { Problem } from '@/lib/types';
 import { AlertProblemDetail } from './ProblemDetail';

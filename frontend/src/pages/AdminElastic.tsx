@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { fmtNum, fmtBytes, fmtClock } from '@/lib/utils';
 import { useElasticIndices, useElasticErrors, useTraceContext } from '@/lib/queries';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TraceContextServiceCoverage, ESQueryError } from '@/lib/types';
 import { esErrorKey } from './admin/esErrorKey';

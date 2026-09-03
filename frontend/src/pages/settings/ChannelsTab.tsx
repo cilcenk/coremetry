@@ -10,7 +10,7 @@ import { ChannelModal } from './ChannelModal';
 import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
 import { fmtAgoNs } from '@/lib/utils';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 
 // v0.9.875 (tutarlılık denetimi BT16) — bildirim kanalları paylaşılan

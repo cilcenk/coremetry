@@ -6,7 +6,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { TraceWaterfall } from '@/components/TraceWaterfall';
 import { computeCriticalPath } from '@/lib/criticalPath';
 import { alignTraces, type AlignedPair } from '@/lib/spanAlign';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { PageShell } from '@/components/ui/PageShell';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';

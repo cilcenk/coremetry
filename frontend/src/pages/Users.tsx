@@ -10,7 +10,7 @@ import { keys, useUsers, useCustomRoles } from '@/lib/queries';
 import { api, type UserRow, type CustomRole } from '@/lib/api';
 import type { Role } from '@/lib/types';
 import { tsLong, tsMinute, tsRel } from '@/lib/utils';
-import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/ui/DataTable';
 import { USER_COLS } from './usersColumns';
 import { PageControls } from '@/components/ui/PageControls';
 import { PageShell } from '@/components/ui/PageShell';

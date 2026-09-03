@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { DataTableColgroup, DataTableHead, type DataTable } from '../DataTable';
+import { DataTableColgroup, DataTableHead, type DataTable } from './DataTable';
 
 // VirtualTable — windowed rendering for a useDataTable table (v0.8.6 Phase 0).
 //

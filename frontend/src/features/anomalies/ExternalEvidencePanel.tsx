@@ -13,7 +13,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Spinner, Empty } from '@/components/Spinner';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { TimeChart } from '@/components/charts/TimeChart';
 import { fmtDateTime } from '@/lib/utils';

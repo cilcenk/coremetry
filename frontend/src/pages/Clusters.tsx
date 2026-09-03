@@ -28,7 +28,7 @@ import { clampThanosWindow, clampSuffix } from '@/lib/thanosWindow';
 import { useUrlRange, rememberRange } from '@/lib/useUrlRange';
 import { encodeRange } from '@/lib/urlState';
 import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ClusterPodRow, ClusterNodeRow, ClusterNamespaceRow, ClusterDeploymentRow, ClusterAlertRow, ClusterSummary, TimeRange } from '@/lib/types';
 import { serviceHref } from '@/lib/serviceHref';

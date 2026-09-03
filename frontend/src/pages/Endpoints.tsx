@@ -13,7 +13,7 @@ import { encodeRange } from '@/lib/urlState';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { stickyLeftOffsets } from '@/lib/dataTable';
 import { TrendDelta } from '@/components/TrendDelta';
 import { endpointDetailHref, legacyEndpointTarget } from '@/pages/endpoints/endpointParam';

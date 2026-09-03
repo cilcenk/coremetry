@@ -9,7 +9,7 @@ import { useOperatorEvents, useDeleteOperatorEvent, useNotificationLog } from '@
 import { timeRangeToNs, tsMinute } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { useUrlRange } from '@/lib/useUrlRange';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { serviceHref, pointEventWindow } from '@/lib/serviceHref';
 import type { NotificationLogEntry } from '@/lib/types';

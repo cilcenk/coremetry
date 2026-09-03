@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Spinner, Empty } from '@/components/Spinner';
 import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { fmtNum, tsLong } from '@/lib/utils';
 import type { RepeatedSpanRow } from '@/lib/types';
 import { traceHref } from '@/lib/traceHref';

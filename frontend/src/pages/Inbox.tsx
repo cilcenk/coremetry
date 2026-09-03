@@ -14,7 +14,7 @@ import { teamOptionsCI } from '@/lib/teamOptions';
 import { derivedTeamTitle } from '@/lib/problemSubject';
 import { decodeCsvSet, encodeCsvSet, readInboxTeam, INBOX_TEAM_PARAM } from '@/lib/inboxUrl';
 import { useUrlEnv } from '@/lib/useUrlEnv';
-import { useDataTable, DataTableHead, DataTableColgroup, resolveInitialSort, ResetLayoutButton } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup, resolveInitialSort, ResetLayoutButton } from '@/components/ui/DataTable';
 import { FacetMultiSelect } from '@/components/ui/FacetMultiSelect';
 import { InboxTriageDrawer } from '@/components/InboxTriageDrawer';
 import { SavedViewsBar } from '@/components/SavedViewsBar';

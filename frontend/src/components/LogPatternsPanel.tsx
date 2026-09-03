@@ -14,7 +14,7 @@ import { useMemo, useState } from 'react';
 import { useLogsPatterns, useLogsTemplates } from '@/lib/queries';
 import type { LogsParams } from '@/lib/api';
 import type { LogPatternGroup, LogTemplate } from '@/lib/types';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from '@/components/Spinner';

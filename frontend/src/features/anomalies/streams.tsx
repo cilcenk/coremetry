@@ -14,7 +14,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Check, ChevronRight, ChevronDown, ArrowDownToLine } from 'lucide-react';
 import { Badge, Button, Card, Row, useConfirm } from '@/components/ui';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { ClusterChips } from '@/components/ClusterChips';
 import { AIExplainButton } from '@/components/ai/AIExplainButton';

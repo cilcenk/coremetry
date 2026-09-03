@@ -7,7 +7,7 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { rcaPctText, rcaEngineTone, rcaSatisfactionText } from './ai/rcaQualityView';
 import type { RCAVerdictQuality } from '@/lib/types';
 import { timeRangeToNs, tsLong, fmtNum } from '@/lib/utils';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import {
   type AIRateTable, mergeRates, costForCall, fmtCost,

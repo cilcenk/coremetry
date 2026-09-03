@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { fmtNum, fmtBytes, fmtClock, fmtDateTime } from '@/lib/utils';

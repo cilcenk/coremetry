@@ -17,7 +17,7 @@ import { timeRangeToNs } from '@/lib/utils';
 import { stmtDetailHref } from '@/pages/slowqueries/stmtParam';
 import { useStmtParamRedirect } from '@/pages/slowqueries/useStmtParamRedirect';
 import type { SlowQueryRow } from '@/lib/types';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 
 // v0.9.874 (tutarlılık denetimi MT12) — "En pahalı ifadeler" tablosu.

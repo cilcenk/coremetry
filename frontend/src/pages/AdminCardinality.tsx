@@ -6,7 +6,7 @@ import { useCardinality, useSystemStats, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
 import { fmtBytes, fmtNum } from '@/lib/utils';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 
 // Row shapes for the cardinality data tables. Kept local — these

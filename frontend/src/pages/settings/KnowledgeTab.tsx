@@ -4,7 +4,7 @@ import { Button, useConfirm } from '@/components/ui';
 import { api } from '@/lib/api';
 import { tsLong } from '@/lib/utils';
 import { Field2, FlashBox, Row } from './shared';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { RagDocument } from '@/lib/types';
 

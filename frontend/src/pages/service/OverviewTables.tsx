@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { encodeRange } from '@/lib/urlState';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { Sparkline } from '@/components/Sparkline';
 import { Spinner, Empty } from '@/components/Spinner';
 import type { DataTableColumn } from '@/lib/dataTable';

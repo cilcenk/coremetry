@@ -6,7 +6,7 @@ import { copyToClipboard } from '@/lib/clipboard';
 import type { APIToken } from '@/lib/types';
 import { Field2, FlashBox, Row } from './shared';
 import { tsLong } from '@/lib/utils';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 
 // v0.9.872 (tutarlılık denetimi BT5) — `is-fit` sınıfı vardı, primitif

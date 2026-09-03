@@ -31,7 +31,7 @@ function stripComments(src: string): string {
 
 const NAV = stripComments(readFileSync(resolve(__dirname, 'useTableNav.ts'), 'utf8'));
 const KBD = stripComments(readFileSync(resolve(__dirname, 'keyboard.ts'), 'utf8'));
-const DT = stripComments(readFileSync(resolve(__dirname, '..', 'components', 'DataTable.tsx'), 'utf8'));
+const DT = stripComments(readFileSync(resolve(__dirname, '..', 'components', 'ui', 'DataTable', 'DataTable.tsx'), 'utf8'));
 const SERVICES = stripComments(readFileSync(resolve(__dirname, '..', 'pages', 'Services.tsx'), 'utf8'));
 const LOGTABLE = stripComments(readFileSync(resolve(__dirname, '..', 'components', 'LogTable.tsx'), 'utf8'));
 

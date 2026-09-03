@@ -93,7 +93,7 @@ describe('fitColumnWidths (v0.9.1030)', () => {
 describe('fitColumnWidths ULAŞILABİLİR (v0.9.1334)', () => {
   it('DataTableColgroup ölçümü overflow/computed-style muhafazasına BAĞLAMIYOR', () => {
     const src = readFileSync(
-      resolve(__dirname, '..', 'components', 'DataTable.tsx'), 'utf8');
+      resolve(__dirname, '..', 'components', 'ui', 'DataTable', 'DataTable.tsx'), 'utf8');
     // Yorumları soy: bu dosyanın şerhleri tarihi anlatmak için
     // `overflowX` ve `getComputedStyle` kelimelerini KULLANIYOR.
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
@@ -110,7 +110,7 @@ describe('fitColumnWidths ULAŞILABİLİR (v0.9.1334)', () => {
   // yok. Bu, "gate mevcudiyeti ölçüyor, etkiyi değil" sınıfının aynısı.
   it('çağrı kısa-devreye alınmamış (return doğrudan fitColumnWidths)', () => {
     const src = readFileSync(
-      resolve(__dirname, '..', 'components', 'DataTable.tsx'), 'utf8');
+      resolve(__dirname, '..', 'components', 'ui', 'DataTable', 'DataTable.tsx'), 'utf8');
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     expect(code).toMatch(/return\s+fitColumnWidths\(/);
   });

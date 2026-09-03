@@ -5,7 +5,7 @@
 // Anahtar hiç geri gelmez (hasKey); boş anahtar = mevcut korunur.
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button, Badge, Modal, SelectField, useConfirm } from '@/components/ui';
-import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import type { AIModelProfile, AIModelProfileInput, AIProfilesPayload, AIProvider, AIProfileTestResult } from '@/lib/types';

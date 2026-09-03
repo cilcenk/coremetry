@@ -13,7 +13,7 @@ import { Stack, Row } from '@/components/ui';
 import { Badge } from '@/components/ui/Badge';
 import { Spinner, Empty } from '@/components/Spinner';
 import { CopyButton } from '@/components/CopyButton';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import type { TraceFacet, TraceFacetStatus, TraceFacetsResponse } from '@/lib/types';

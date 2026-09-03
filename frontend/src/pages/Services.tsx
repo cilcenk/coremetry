@@ -10,7 +10,7 @@ import { TableSkeleton } from '@/components/Skeleton';
 import { ServicePicker } from '@/components/ServicePicker';
 import { Sparkline } from '@/components/Sparkline';
 import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
-import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
+import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/ui/DataTable';
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
 import {

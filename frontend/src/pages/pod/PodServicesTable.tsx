@@ -6,7 +6,7 @@
 // bu pod'a süzülmüş Traces.
 import { Link } from 'react-router-dom';
 import { Spinner, Empty } from '@/components/Spinner';
-import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { fmtNum, fmtDateTime } from '@/lib/utils';
 import { serviceHref } from '@/lib/serviceHref';

@@ -5,7 +5,7 @@ import { api, type PipelineRule } from '@/lib/api';
 import type { MetricExclusionRule } from '@/lib/types';
 import { Field, FlashBox, humanize } from './shared';
 import { buildPipelineRuleBody, describeCondition } from './pipelineRuleBody';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 
 // v0.9.875 (tutarlılık denetimi MT6) — kural tablosu paylaşılan primitife.

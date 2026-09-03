@@ -8,7 +8,7 @@
 // (onMute → çağıran hem kararı hem susturmayı yazar). → mevcut
 // AnomalyDetailDrawer (?anomaly=). Yalnız pencerede anomali varsa çizilir.
 import { Badge, LinkButton } from '@/components/ui';
-import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { fmtDateTime } from '@/lib/utils';
 import { ANOMALY_KIND_COLOR, ANOMALY_KIND_TR, silenceKey } from '@/lib/anomalyRegions';

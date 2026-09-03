@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from '@/components/Spinner';
 import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { Runbook } from '@/lib/types';
 import { useConfirm } from '@/components/ui/ConfirmDialog';

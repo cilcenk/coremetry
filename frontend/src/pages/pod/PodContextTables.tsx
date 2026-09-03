@@ -10,7 +10,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Button } from '@/components/ui';
 import { Spinner } from '@/components/Spinner';
-import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { fmtDateTime, fmtBytes } from '@/lib/utils';
 import { fmtCores, podPhaseBadge } from '@/pages/clusters/thresholds';

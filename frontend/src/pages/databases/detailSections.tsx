@@ -7,7 +7,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { QueryError } from '@/components/QueryError';
 import { TableSkeleton } from '@/components/Skeleton';
 import { LazyMount } from '@/components/LazyMount';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { dbTracesHref } from '@/lib/pivotHref';
 import { logsHref } from '@/lib/logsUrl';
 import { serviceHref } from '@/lib/serviceHref';

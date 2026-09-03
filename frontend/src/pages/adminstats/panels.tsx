@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { api } from '@/lib/api';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { fmtNum, fmtClock } from '@/lib/utils';

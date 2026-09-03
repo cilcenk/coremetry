@@ -16,7 +16,7 @@
 // olaylarla ÇALIŞIR; onları yasaklamak kapıyı gürültüye boğar ve gerçek
 // bulguyu saklardı.
 //
-// Kapı MUTASYONLA doğrulandı: `components/DataTable.tsx`teki
+// Kapı MUTASYONLA doğrulandı: `components/ui/DataTable/DataTable.tsx`teki
 // `pointermove` geri `mousemove` yapıldığında kırmızıya döndüğü
 // görüldükten sonra gemiye alındı.
 import { describe, it, expect } from 'vitest';

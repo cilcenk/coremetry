@@ -13,7 +13,7 @@ import { useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Chip, Button, Badge } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
-import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { fmtDateTime } from '@/lib/utils';
 import { fmtDur } from '@/components/traces/shared';

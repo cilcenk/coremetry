@@ -8,7 +8,7 @@ import { IconSparkles } from '@/components/icons';
 import { Button, Field, Modal, SelectField, Stack, useConfirm } from '@/components/ui';
 import { useSLOs, useCreateSLO, useDeleteSLO } from '@/lib/queries';
 import { api } from '@/lib/api';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { SLIType, SLORow } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import { Empty, Spinner } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { VirtualList, Button } from '@/components/ui';
-import { useDataTable } from '@/components/DataTable';
+import { useDataTable } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { useSqlSchema } from '@/lib/queries';

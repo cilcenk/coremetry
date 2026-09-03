@@ -9,7 +9,7 @@ import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { trendsEnabled, latencyPresent, depRowKey } from '@/lib/depsTable';
 import { msgP99Delta } from '@/lib/msgBalance';
-import { useDataTable, DataTableHead, DataTableColgroup } from './DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { stickyLeftOffsets } from '@/lib/dataTable';
 import { DetailDrawer } from '@/features/dependencies/DetailDrawer';
 import type { DataTableColumn } from '@/lib/dataTable';

@@ -15,7 +15,7 @@ import { api, type UserRow } from '@/lib/api';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { fmtNum, tsLong } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
-import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
+import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type {
   ExceptionGroup, ExceptionGroupState, ExceptionSample,

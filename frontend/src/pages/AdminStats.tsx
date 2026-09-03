@@ -6,7 +6,7 @@ import { Button } from '@/components/ui';
 import { useSystemStats, useTraceContext, keys } from '@/lib/queries';
 import { api } from '@/lib/api';
 import { fmtNum, fmtClock, tsLong } from '@/lib/utils';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type {
   SystemStatus,

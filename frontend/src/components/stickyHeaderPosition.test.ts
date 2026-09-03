@@ -75,7 +75,7 @@ function beats(a: string, b: string): boolean {
 }
 
 describe('DataTableHead th konumu', () => {
-  const src = readFileSync(resolve(SRC, 'components/DataTable.tsx'), 'utf8')
+  const src = readFileSync(resolve(SRC, 'components/ui/DataTable/DataTable.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
 

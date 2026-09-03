@@ -6,7 +6,7 @@ import { Sparkline } from '@/components/Sparkline';
 import { Button, Drawer, DrawerSection } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import { useAlertRules, useWatchersSummary, useWatcherHistory, useEnableAlertRule, useDisableAlertRule, useUpdateAlertRule } from '@/lib/queries';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { AlertRule, WatcherSummaryEntry } from '@/lib/types';
 import { fmtAgoNs, fmtDurShort, tsLong } from '@/lib/utils';

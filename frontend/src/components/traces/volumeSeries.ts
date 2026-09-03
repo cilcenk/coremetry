@@ -64,6 +64,13 @@ export function buildVolumeSeries(
     return v && v > 0 ? v : null;
   });
   const dt = t.length > 1 ? Math.round((t[1] - t[0]) / 60) : 1;
+  // v0.10.322 (operatör: "Süre grafiği de çok zigzaglı olmasın") — medyan
+  // çizgisi 5 kovalık merkezli hareketli ortalama (2 dk kovada 10 dk).
+  // GAP'ler korunur (null merkez null kalır); kenarlarda mevcut komşularla.
+  // Yoğun seride (≥20 kova) noktalar kapalı — nokta işaretleri zikzağın
+  // görsel yarısıydı. Başlıktaki MEDIAN MAX ham kovadan okunur; etiket
+  // yumuşatmayı söyler.
+  const p50s = smoothCentered(p50d, P50_SMOOTH_WINDOW);
   // v0.10.268 (operatör: "bar gösterimleri Dynatrace gibi olabilir", mockup A
   // onayı) — SAYIM SOL eksende (çubuklar), MEDYAN yanıt süresi SAĞ eksende
   // (çizgi): Dynatrace "Trace count / Response Time (Median)" düzeni.
@@ -76,7 +83,30 @@ export function buildVolumeSeries(
     { key: 'error', label: 'error ' + unit, data: err, color: statusColor('error'), type: 'bar', axis: 'left' },
     // v0.9.73 — kalın çizgi + nokta: seyrek p50 örnekleri artık okunur.
     // v0.9.843 — süre SOL eksende (Grafana düzeni).
-    { key: 'p50', label: 'response time (median)', data: p50d, color: 'var(--orange)', type: 'line', axis: 'right', width: 2, pointsShow: true },
+    { key: 'p50', label: `response time (median, ${P50_SMOOTH_WINDOW}-kova ort.)`, data: p50s, color: 'var(--orange)', type: 'line', axis: 'right', width: 2, pointsShow: t.length < 20 },
   ];
   return { times: t, series, bucketMin: Math.max(1, dt) };
+}
+
+
+/** v0.10.322 — medyan çizgisi yumuşatma penceresi (kova sayısı, tek). */
+export const P50_SMOOTH_WINDOW = 5;
+
+/**
+ * smoothCentered — merkezli hareketli ortalama, null-farkında. Merkez null
+ * ise null (GAP korunur); değilse penceredeki null olmayan komşuların
+ * ortalaması. window ≤ 1 → aynı dizi. SAF.
+ */
+export function smoothCentered(data: (number | null)[], window: number): (number | null)[] {
+  if (window <= 1 || data.length < 3) return data;
+  const half = Math.floor(window / 2);
+  return data.map((v, i) => {
+    if (v == null) return null;
+    let sum = 0; let n = 0;
+    for (let j = Math.max(0, i - half); j <= Math.min(data.length - 1, i + half); j++) {
+      const x = data[j];
+      if (x != null) { sum += x; n++; }
+    }
+    return n ? sum / n : v;
+  });
 }

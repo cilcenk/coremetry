@@ -45,3 +45,25 @@ func TestGetTracesRecordsExplainSteps(t *testing.T) {
 		}
 	}
 }
+
+// v0.10.329 — boş liste öz-teşhisi: ne zaman istenir + sayım SQL sözleşmesi.
+func TestEmptyDiagWantedAndCountSQL(t *testing.T) {
+	if emptyDiagWanted(TraceFilter{Search: "x"}, 3) {
+		t.Error("dolu sonuçta istenmez")
+	}
+	if emptyDiagWanted(TraceFilter{}, 0) {
+		t.Error("daraltma yokken istenmez")
+	}
+	if emptyDiagWanted(TraceFilter{Search: "x", TraceID: "abc"}, 0) {
+		t.Error("trace id aramasında istenmez")
+	}
+	for _, f := range []TraceFilter{{Search: "x"}, {Filters: []FilterExpr{{Key: "k", Op: "=", Values: []string{"v"}}}}, {HasError: true}} {
+		if !emptyDiagWanted(f, 0) {
+			t.Errorf("istenmeli: %+v", f)
+		}
+	}
+	sql := countMatchingSpansSQL("WHERE time >= ? AND service_name = ?")
+	if !strings.HasPrefix(sql, "SELECT count() FROM spans WHERE") || !strings.Contains(sql, "max_execution_time = 10") {
+		t.Errorf("sayım SQL: %s", sql)
+	}
+}

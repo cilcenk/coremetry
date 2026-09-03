@@ -9,6 +9,7 @@ package chstore
 // nil-güvenli: Explain verilmediğinde sıfır maliyet (nil alıcı, erken dönüş).
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -59,4 +60,46 @@ func (x *TraceExplain) step(name, sql string, args []any, start time.Time, rows 
 		st.Err = err.Error()
 	}
 	x.Steps = append(x.Steps, st)
+}
+
+// ── v0.10.329 — boş liste öz-teşhisi ─────────────────────────────────────
+// Operatör (prod): filtreli/aramalı liste kısa pencerede boş, şerit dolu.
+// Kanıt toplamayı ürüne gömüyoruz: liste boş dönerse aynı WHERE + arama
+// yüklemiyle SPAN düzeyinde sayım yapılır. N > 0 ise veri var, liste
+// sorgusu (GROUP BY/HAVING) onları kaybediyor; N = 0 ise veri/yüklem.
+
+// emptyDiagWanted — sayım yalnız boş sonuçta ve bir daraltma varken
+// (arama / filtre / hata): filtresiz boş liste zaten "pencerede iz yok"tur.
+func emptyDiagWanted(f TraceFilter, rows int) bool {
+	if rows != 0 || f.TraceID != "" || len(f.TraceIDs) > 0 {
+		return false
+	}
+	return f.Search != "" || len(f.Filters) > 0 || (f.FilterRoot != nil && f.FilterRoot.hasPredicate()) || f.HasError
+}
+
+func EmptyDiagWanted(f TraceFilter, rows int) bool { return emptyDiagWanted(f, rows) }
+
+// countMatchingSpansSQL — saf: liste WHERE'i + arama yüklemi span düzeyinde.
+func countMatchingSpansSQL(whereSQL string) string {
+	return `SELECT count() FROM spans ` + whereSQL + ` SETTINGS max_execution_time = 10`
+}
+
+// CountMatchingSpans — bkz. üst yorum. Hata teşhisin parçası: hata dönerse
+// çağıran onu da kaydeder.
+func (s *Store) CountMatchingSpans(ctx context.Context, f TraceFilter) (uint64, error) {
+	lf := f
+	lf.CandidateIDs = nil
+	wc := buildGetTracesWhere(lf, s.clusterExpr())
+	if pred, pargs := searchPredicate(f.Search); pred != "" {
+		wc.add(pred, pargs...)
+	}
+	if f.HasError && !hasErrorSpanLocal(f) {
+		wc.add("status_code = 'error'")
+	}
+	t0 := time.Now()
+	sql := countMatchingSpansSQL(wc.sql())
+	var n uint64
+	err := s.telemetryReadConn().QueryRow(ctx, sql, wc.args...).Scan(&n)
+	f.Explain.step("empty-diag-count", sql, wc.args, t0, int(n), err)
+	return n, err
 }

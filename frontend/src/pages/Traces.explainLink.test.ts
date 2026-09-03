@@ -15,3 +15,12 @@ describe('Traces teşhis linki', () => {
     expect(src).toMatch(/<a href=\{explainHref\} target="_blank" rel="noreferrer"/);
   });
 });
+
+// v0.10.329 — boş liste öz-teşhisi satırı: emptyDiag yanıttan TracesEmpty'ye.
+describe('Traces boş liste öz-teşhisi', () => {
+  it('matchingSpans prop yanıttan gelir ve iki hâli yazılır', () => {
+    expect(src).toContain('matchingSpans={data?.emptyDiag?.matchingSpans}');
+    expect(src).toContain('spans in this window match the filter, yet the trace list came back empty');
+    expect(src).toContain('no span in this window matches the filter at span level');
+  });
+});

@@ -6763,3 +6763,26 @@ export interface LogPatternsResult {
   degraded?: boolean;
   reason?: string;
 }
+
+// /api/settings/trace-facets (v0.10.302/303, trace arama Dilim 2) — operatör
+// facet kaydı: yaygın-değerli attribute'lar için terfi kolonu + set index.
+export interface TraceFacet {
+  key: string;
+  spellings?: string[];
+  scope?: 'span' | 'resource';
+  type?: 'lc' | 'string';
+}
+export interface TraceFacetStatus {
+  key: string;
+  column: string;
+  columnExists: boolean;
+  indexExists: boolean;
+  routed: boolean;
+}
+export interface TraceFacetsResponse {
+  facets: TraceFacet[];
+  status: TraceFacetStatus[];
+  bootManaged: boolean;
+  migrationSql: string;
+  note?: string;
+}

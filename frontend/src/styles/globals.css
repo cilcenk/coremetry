@@ -3851,3 +3851,7 @@ thead th:hover .th-remove { opacity: 1; }
 .lp-row td.num { position: relative; }
 .lp-bar { position: absolute; right: 6px; top: 6px; bottom: 6px; background: color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 2px; pointer-events: none; }
 .lp-row:hover td { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+
+/* v0.10.303 — Settings → Trace facets: satır/eylem kancaları (test + hover) */
+.tf-row:hover td { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.tf-add, .tf-remove { white-space: nowrap; }

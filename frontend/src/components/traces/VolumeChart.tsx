@@ -85,10 +85,13 @@ export function VolumeChart({
           // biçimlendirici eksenle birlikte taşındı (sayıya "ms" yazma tuzağı).
           fmtRight={fmtVolumeDuration}
           xRange={xRange}
-          // v0.10.268 — lejant AÇIK ve altta (Dynatrace: "Trace count ·
-          // Response Time (Median)"); v0.9.245'in kapalı başlangıcı geri
-          // alındı, tıkla katlanabilir. İnce çubuk + boşluk (0.62).
-          legendCollapsed={false}
+          // v0.10.321 (operatör, prod ekran görüntüsü: "Series paneli kapalı
+          // olsun. Shrink mode gelsin.") — lejant VARSAYILAN KAPALI: şerit
+          // sayfanın aracı, tablo sayfanın kendisi; açık lejant ~150 px
+          // yiyip tabloyu katlanın altına itiyordu. v0.10.268'in "açık"
+          // kararı geri alındı; ▶ Series (3) tıkla açılır (oturumluk).
+          // İnce çubuk + boşluk (0.62).
+          legendCollapsed={true}
           barSize={0.62}
         />
       )}

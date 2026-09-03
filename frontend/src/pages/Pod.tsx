@@ -13,6 +13,7 @@ import { Card, DisclosureButton, Badge, LinkButton } from '@/components/ui';
 import { readBandsParam, writeBandsParam } from '@/lib/bandsParam';
 import type { ChartTimeRegion } from '@/lib/chart/overlays';
 import { PanelTitle } from '@/components/ui/PanelTitle';
+import { ServiceAnnotationLane } from '@/components/charts/ServiceAnnotationLane';
 import { Spinner, Empty } from '@/components/Spinner';
 import { MultiLineChart } from '@/components/MultiLineChart';
 // v0.9.945 (D2/K10) — RED kartları ChartCard'dan (saniye eksenli
@@ -380,6 +381,7 @@ function PodDetail() {
             Servis metrikleri · bu pod
           </PanelTitle>
           {redEnabled ? (
+            <>
             <div className="ov-grid ov-charts-3 ov-mb">
               <Suspense fallback={<Spinner />}>
                 <CorePanelMultiLazy
@@ -424,6 +426,14 @@ function PodDetail() {
                 />
               </Suspense>
             </div>
+            {/* v0.10.312 (chart-layer audit Dilim 2.1) — annotation şeridi
+                Pod'da: üç RED paneli aynı x-eksenini paylaşır, yığının
+                altında TEK şerit (Service.tsx v0.9.395 emsali; aynı
+                queryKey → servis sayfasıyla cache paylaşımı). Şerit servis
+                düzeyi (rollout/problem/alarm olaylarında pod boyutu yok);
+                boşsa yer kaplamaz. Tık = ±15 dk zoom (aynı zoom yığını). */}
+            <ServiceAnnotationLane service={service} fromNs={from} toNs={to} onZoomTo={handleZoom} />
+            </>
           ) : (
             <Empty icon="—" title="Bu pod bir Coremetry servisine eşlenmedi — RED metrikleri yok (trace listesi ve altyapı aşağıda).">
               {/* v0.9.959 (G8/Ö22) — "eşlenmedi" ile "kesik listede

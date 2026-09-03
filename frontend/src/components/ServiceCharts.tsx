@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { MultiLineChart, type DeployMarker } from './MultiLineChart';
 import { publishCursor } from '@/lib/chart/cursorBus';
 import { MetricPanel } from './MetricPanel';
@@ -18,6 +18,7 @@ import { quantizeWidth, stepForWidth } from '@/lib/chartStep';
 import { useContentWidth } from '@/lib/useContentWidth';
 import { isResolverEligible, serviceRedDescriptors } from '@/lib/resolverEligibility';
 import { metricQuery } from '@/lib/metricQuery';
+import { bucketTracesHref } from '@/lib/pivotHref';
 import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import { type CompareMode, parseCompareParam, encodeCompareParam, parseStoredCompare, compareOffsetNs as compareOffset } from '@/lib/chart/compareParam';
@@ -446,6 +447,19 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
   // matching exemplar (the operator clicked a quiet gap, or the
   // window genuinely held no slow/error spans). Auto-clears.
   const [exemplarNote, setExemplarNote] = useState<string | null>(null);
+  // v0.10.313 (chart-layer Dilim 2.4) — son tıklanan kova: tek exemplar'ın
+  // yanında "kovadaki tümü → /traces" LİSTE pivotu (çekmece başlığı + toast).
+  // Pencere/opScope değişince temizlenir — bayat kova linki kalmasın.
+  const [bucketPivot, setBucketPivot] = useState<{ kind: 'slow' | 'error'; fromNs: number; toNs: number } | null>(null);
+  useEffect(() => { setBucketPivot(null); }, [from, to, opScope]);
+  const bucketHref = bucketPivot
+    ? bucketTracesHref({ service, kind: bucketPivot.kind, fromNs: bucketPivot.fromNs, toNs: bucketPivot.toNs, operation: opScope || undefined })
+    : null;
+  const bucketLink = bucketHref && bucketPivot ? (
+    <Link to={bucketHref} style={{ color: 'var(--accent2)' }} title="Bu kovadaki trace listesi (/traces, kova penceresi)">
+      {bucketPivot.kind === 'error' ? 'Kovadaki tüm hatalı trace\'ler →' : 'Kovadaki en yavaş trace\'ler →'}
+    </Link>
+  ) : null;
   const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (noteTimer.current) clearTimeout(noteTimer.current); }, []);
 
@@ -464,6 +478,7 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
 
   const openExemplar = useCallback(
     async (kind: 'slow' | 'error', fromNs: number, toNs: number) => {
+      setBucketPivot({ kind, fromNs, toNs });
       try {
         const ex = await api.spanExemplar({
           service: serviceRef.current, from: fromNs, to: toNs, kind,
@@ -721,7 +736,7 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
           animation / ESC-handling matches the rest of the app. */}
       <TracePeekDrawer
         traceId={peekTraceId}
-        onClose={() => setPeekTraceId(null)} />
+        onClose={() => setPeekTraceId(null)} headerExtra={bucketLink} />
 
       {/* Non-blocking "no exemplar in this bucket" affordance.
           A small fixed toast bottom-right — doesn't shift the
@@ -735,6 +750,7 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
           maxWidth: 280,
         }}>
           {exemplarNote}
+          {bucketLink && <div style={{ marginTop: 6 }}>{bucketLink}</div>}
         </div>
       )}
     </div>

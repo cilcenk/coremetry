@@ -1,4 +1,5 @@
 import { Suspense, lazy, useMemo, useState, useCallback } from 'react';
+import type { SpanMetricSeries } from '@/lib/types';
 import { msSyncKey } from '@/lib/chart/syncNamespace';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
@@ -14,6 +15,9 @@ import { readBandsParam, writeBandsParam } from '@/lib/bandsParam';
 import type { ChartTimeRegion } from '@/lib/chart/overlays';
 import { PanelTitle } from '@/components/ui/PanelTitle';
 import { ServiceAnnotationLane } from '@/components/charts/ServiceAnnotationLane';
+import { CompareToggle } from '@/components/charts/CompareToggle';
+import { useCompareParam } from '@/lib/chart/useCompareParam';
+import { compareOffsetNs, ghostItemsFrom } from '@/lib/chart/compareParam';
 import { Spinner, Empty } from '@/components/Spinner';
 import { MultiLineChart } from '@/components/MultiLineChart';
 // v0.9.945 (D2/K10) — RED kartları ChartCard'dan (saniye eksenli
@@ -185,6 +189,13 @@ function PodDetail() {
   const redEnabled = !!pod && (!!service || (entityOn && spanClusters.length > 0));
   // v0.9.391 (Faz B) — mdp + zarf select'i (Overview deseniyle aynı).
   const podMdp = panelMaxDataPoints(3);
+  // v0.10.315 (chart-layer Dilim 2.3b) — önceki-dönem hayaleti: ?compare=
+  // (ServiceCharts ile aynı sözleşme/URL anahtarı). Açıkken AYNI iki batch
+  // kaydırılmış pencereyle bir kez daha çekilir; seriler bugünün eksenine
+  // bindirilip kesikli/soluk ghost olarak biner (CorePanelMulti ghostItems).
+  const [compare, setCompare] = useCompareParam();
+  const compareOff = compareOffsetNs(compare, from, to);
+  const ghostEnabled = redEnabled && compareOff > 0;
   const redQ = useQuery({
     queryKey: ['pod-red', podScope, pod, from, to, podMdp],
     queryFn: () => api.spanMetricBatch({ from, to, maxDataPoints: podMdp, dsl: podScope, aggs: [
@@ -207,6 +218,26 @@ function PodDetail() {
     ] }),
     select: d => d.series,
     enabled: redEnabled, staleTime: 30_000,
+  });
+  const redGhostQ = useQuery({
+    queryKey: ['pod-red', podScope, pod, from - compareOff, to - compareOff, podMdp],
+    queryFn: () => api.spanMetricBatch({ from: from - compareOff, to: to - compareOff, maxDataPoints: podMdp, dsl: podScope, aggs: [
+      { name: 'rate', agg: 'rate' },
+      { name: 'error_rate', agg: 'error_rate' },
+    ] }),
+    select: d => ({ series: d.series, stepSeconds: d.stepSeconds }),
+    enabled: ghostEnabled, staleTime: 30_000,
+  });
+  const latGhostQ = useQuery({
+    queryKey: ['pod-latency-nokafka', podScope, pod, from - compareOff, to - compareOff, podMdp],
+    queryFn: () => api.spanMetricBatch({ from: from - compareOff, to: to - compareOff, maxDataPoints: podMdp, dsl: `${podScope} AND messaging.system != "kafka"`, aggs: [
+      { name: 'p99', agg: 'p99', field: 'duration_ms' },
+      { name: 'p95', agg: 'p95', field: 'duration_ms' },
+      { name: 'p50', agg: 'p50', field: 'duration_ms' },
+      { name: 'avg', agg: 'avg', field: 'duration_ms' },
+    ] }),
+    select: d => d.series,
+    enabled: ghostEnabled, staleTime: 30_000,
   });
   const s = redQ.data?.series;
   const stepSec = redQ.data?.stepSeconds;
@@ -247,17 +278,16 @@ function PodDetail() {
   // (success/error), elle var(--ok)/var(--err) verilmiyor. Overview'un
   // "Failure rate · trace" paneliyle aynı sözleşme, yani iki sayfa aynı
   // bandı aynı renkte çiziyor.
-  const throughputBands = useMemo<CorePanelMultiItem[]>(() => {
-    const ratePts = s?.rate?.[0]?.points ?? [];
-    const erPts = s?.error_rate?.[0]?.points ?? [];
-    if (ratePts.length < 2) return [{ series: s?.rate ?? [], name: 'req/s', role: 'data' }];
-    const okPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * (1 - (erPts[i]?.value ?? 0) / 100)) }));
-    const errPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * ((erPts[i]?.value ?? 0) / 100)) }));
-    return [
-      { series: [{ groupKey: [], points: okPts }], name: 'OK', role: 'success' },
-      { series: [{ groupKey: [], points: errPts }], name: 'Errors', role: 'error' },
-    ];
-  }, [s]);
+  const throughputBands = useMemo<CorePanelMultiItem[]>(() => throughputBandsFrom(s), [s]);
+  // v0.10.315 — ghost'lar: aynı band/seri kurucuları, kaydırılmış pencere.
+  const sg = ghostEnabled ? redGhostQ.data?.series : undefined;
+  const latg = ghostEnabled ? latGhostQ.data : undefined;
+  const throughputGhost = useMemo(() => ghostItemsFrom(sg ? throughputBandsFrom(sg) : undefined, compareOff), [sg, compareOff]);
+  const latencyGhost = useMemo(() => ghostItemsFrom(latg ? [
+    { name: 'P50', role: 'data', series: latg.p50 ?? [] },
+    { name: 'P99', role: 'data', series: latg.p99 ?? [] },
+  ] : undefined, compareOff), [latg, compareOff]);
+  const failureGhost = useMemo(() => ghostItemsFrom(sg ? [{ name: 'errors', role: 'error', series: sg.error_rate ?? [] }] : undefined, compareOff), [sg, compareOff]);
 
   // v0.10.135/160 — entity katmanı: kimlik zinciri, servisler, konteynerler,
   // kardeşler, etiketler, ömürler. Bayrak kapalı → bu bölümler çizilmez, sayfa
@@ -382,6 +412,11 @@ function PodDetail() {
           </PanelTitle>
           {redEnabled ? (
             <>
+            {/* v0.10.315 — Compare to: (?compare=, ServiceCharts ile aynı). */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, fontSize: 11, color: 'var(--text2)', flexWrap: 'wrap', rowGap: 6 }}>
+              <CompareToggle value={compare} onChange={setCompare} />
+              {ghostEnabled && (redGhostQ.isError || latGhostQ.isError) && <span className="badge b-warn">önceki dönem yüklenemedi</span>}
+            </div>
             <div className="ov-grid ov-charts-3 ov-mb">
               <Suspense fallback={<Spinner />}>
                 <CorePanelMultiLazy
@@ -393,6 +428,7 @@ function PodDetail() {
                   loading={latStatus === 'loading'}
                   error={latStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
                   defaultHidden={[...defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])]}
+                  ghostItems={latencyGhost}
                   items={[
                     { name: 'avg', role: 'data', series: lat?.avg ?? [] },
                     { name: 'P50', role: 'data', series: lat?.p50 ?? [] },
@@ -410,6 +446,7 @@ function PodDetail() {
                   regions={podAnomalyRegions} onRegionClick={onRegionClick} regionClickHint="tıkla → servis sayfası"
                   loading={redStatus === 'loading'}
                   error={redStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
+                  ghostItems={throughputGhost}
                   items={throughputBands}
                 />
               </Suspense>
@@ -422,6 +459,7 @@ function PodDetail() {
                   regions={podAnomalyRegions} onRegionClick={onRegionClick} regionClickHint="tıkla → servis sayfası"
                   loading={redStatus === 'loading'}
                   error={redStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
+                  ghostItems={failureGhost}
                   items={[{ name: 'errors', role: 'error', series: s?.error_rate ?? [] }]}
                 />
               </Suspense>
@@ -558,4 +596,18 @@ function PodDetail() {
       </PageShell>
     </>
   );
+}
+
+// throughputBandsFrom — v0.9.x band kurucusu (OK/Errors = rate × (1 ∓ er));
+// v0.10.315'te saf fonksiyona çıktı: canlı seriler ve ghost aynı kurucudan.
+function throughputBandsFrom(s: Record<string, SpanMetricSeries[] | null> | undefined): CorePanelMultiItem[] {
+  const ratePts = s?.rate?.[0]?.points ?? [];
+  const erPts = s?.error_rate?.[0]?.points ?? [];
+  if (ratePts.length < 2) return [{ series: s?.rate ?? [], name: 'req/s', role: 'data' }];
+  const okPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * (1 - (erPts[i]?.value ?? 0) / 100)) }));
+  const errPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * ((erPts[i]?.value ?? 0) / 100)) }));
+  return [
+    { series: [{ groupKey: [], points: okPts }], name: 'OK', role: 'success' },
+    { series: [{ groupKey: [], points: errPts }], name: 'Errors', role: 'error' },
+  ];
 }

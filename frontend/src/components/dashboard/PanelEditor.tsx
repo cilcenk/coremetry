@@ -310,6 +310,14 @@ function MetricFields({ cfg, onChange }: {
           </select>
         </Field>
       </div>
+      {/* v0.10.314 (chart-layer Dilim 2.2) — yatay eşik çizgileri; stat/gauge
+          ile AYNI editör ve config şekli. Çizim tek kapıdan (thresholdLines):
+          amber = warn, red = err çizgi; green taban, çizgisiz. */}
+      <Field label="Threshold lines (amber = warn, red = err; green = base, no line)">
+        <ThresholdEditor
+          thresholds={cfg.thresholds ?? []}
+          onChange={t => update('thresholds', t)} />
+      </Field>
     </>
   );
 }
@@ -382,6 +390,14 @@ function PromqlFields({ cfg, onChange }: {
           <StepSelect value={cfg.step} onChange={v => update('step', v)} />
         </Field>
       </div>
+      {/* v0.10.314 (chart-layer Dilim 2.2) — yatay eşik çizgileri; stat/gauge
+          ile AYNI editör ve config şekli. Çizim tek kapıdan (thresholdLines):
+          amber = warn, red = err çizgi; green taban, çizgisiz. */}
+      <Field label="Threshold lines (amber = warn, red = err; green = base, no line)">
+        <ThresholdEditor
+          thresholds={cfg.thresholds ?? []}
+          onChange={t => update('thresholds', t)} />
+      </Field>
     </>
   );
 }
@@ -414,6 +430,14 @@ function SpanMetricFields({ cfg, onChange }: {
           </select>
         </Field>
       </div>
+      {/* v0.10.314 (chart-layer Dilim 2.2) — yatay eşik çizgileri; stat/gauge
+          ile AYNI editör ve config şekli. Çizim tek kapıdan (thresholdLines):
+          amber = warn, red = err çizgi; green taban, çizgisiz. */}
+      <Field label="Threshold lines (amber = warn, red = err; green = base, no line)">
+        <ThresholdEditor
+          thresholds={cfg.thresholds ?? []}
+          onChange={t => update('thresholds', t)} />
+      </Field>
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
         <Field label="Group by (comma-sep keys)">
           <input value={cfg.groupBy ?? ''} placeholder="service_name, http_route"

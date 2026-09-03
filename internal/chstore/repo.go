@@ -1852,10 +1852,12 @@ type TraceFilter struct {
 	// TraceIDs'ten farkı: uygunluk kapıları (probe / light / MV) bunu GÖRMEZ —
 	// yalnız WHERE'e `trace_id IN` olarak iner. Dışarıdan verilmez.
 	CandidateIDs []string
-	MinMs        float64
-	MaxMs        float64
-	AttrKey      string
-	AttrVal      string
+	// Explain — v0.10.326: ?explain=1 teşhis kaydı (trace_explain.go); nil = kapalı.
+	Explain *TraceExplain
+	MinMs   float64
+	MaxMs   float64
+	AttrKey string
+	AttrVal string
 	// ExtraAttrs is the user-selected list of attribute keys whose
 	// values should be projected into TraceRow.Extras. Each key picks
 	// up the first non-empty value among span-attributes and resource-
@@ -2295,6 +2297,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// v0.10.124 — MV boşluğu (sihirbaz henüz doldurmadıysa) ham yola düşürür.
 	f.MVGap = s.TraceMVGap(ctx, f.From, f.To)
 	if tracesMVEligible(f) && countModeAllowsMV(f.CountMode) {
+		f.Explain.note("path=mv (search/filters/env/cluster yok, pencere ≥ 5m)")
 		out, total, hasMore, err := s.getTracesFromMV(ctx, f)
 		if err == nil {
 			if len(f.ExtraAttrs) > 0 {
@@ -2335,7 +2338,12 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// "boş" görünüyordu. Önce servisin hatalı trace id'leri (ucuz), sonra her
 	// aşama yalnız o id'lerde. Hiç hatalı trace yoksa cevap BOŞ ve doğrudur.
 	if errorFirstEligible(f) {
+		ef0 := time.Now()
 		ids, bounded, err := s.errorFirstCandidates(ctx, f)
+		if f.Explain != nil {
+			efwc := buildGetTracesWhere(errorFirstFilter(f), s.clusterExpr())
+			f.Explain.step("error-first", errorFirstSQL(efwc.sql()), efwc.args, ef0, len(ids), err)
+		}
 		if err != nil {
 			return nil, 0, false, err
 		}
@@ -2566,12 +2574,16 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		args := append([]any{}, lwc.args...)
 		args = append(args, ha...)
 		args = append(args, limit, offset)
+		q0 := time.Now()
 		rows, err := s.telemetryReadConn().Query(ctx, querySQL, args...)
 		if err != nil {
+			f.Explain.step("list", querySQL, args, q0, 0, err)
 			return nil, err
 		}
 		defer rows.Close()
-		return scanTraceListRows(rows)
+		out, err := scanTraceListRows(rows)
+		f.Explain.step("list", querySQL, args, q0, len(out), err)
+		return out, err
 	}
 	var out []TraceRow
 	var hasMore, served bool
@@ -2587,6 +2599,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// SAYISAL sıralama anahtarı, LIMIT/OFFSET burada; 2) tam satır YALNIZ
 	// sayfanın id'leri için (traceExtrasSQL ile aynı `trace_id IN` deseni).
 	if traceRawProbeEligible(f) {
+		f.Explain.note("path=probe (sort=time; basamaklar %v)", traceRawProbeWindows(f.From, f.To))
 		for _, w := range traceRawProbeWindows(f.From, f.To) {
 			floor := f.To.Add(-w)
 			rows, err := runList(floor.Add(-traceRawProbeLookback), probeFetchLimit(f.Offset+pageLimit, rootPostFilter), 0, rootPostFilter)
@@ -2620,6 +2633,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		}
 	}
 	if !served && rawListLightEligible(f, rootPostFilter) {
+		f.Explain.note("path=light (sort=%s)", f.Sort)
 		// v0.10.237 — 1. aşama tüm pencereyi GÖRMEK zorunda (süre sıralaması
 		// zamanla kesilemez); kaynak tükenmesinde pencere yarılanır,
 		// NarrowedFrom ile UI'ya söylenir (daha dar pencerenin top-N'i FARKLI
@@ -2653,7 +2667,9 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 				s1args = append(s1args, lightHavingArgs...)
 				s1args = append(s1args, s1Limit, s1Offset)
 			}
+			s10 := time.Now()
 			got, err := s.queryStage1Cands(ctx, stage1SQL, s1args, streaming)
+			f.Explain.step("light-stage1", stage1SQL, s1args, s10, len(got), err)
 			if err == nil {
 				if streaming {
 					got = dedupeStage1(got, wantK)
@@ -2709,12 +2725,15 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 			args = append(args, lwc.args...)
 			args = append(args, lightHavingArgs...)
 			args = append(args, len(cands), 0)
+			s20 := time.Now()
 			rows, err := s.telemetryReadConn().Query(ctx, querySQL, args...)
 			if err != nil {
+				f.Explain.step("light-stage2", querySQL, args, s20, 0, err)
 				return nil, 0, false, err
 			}
 			page, err := scanTraceListRows(rows)
 			rows.Close()
+			f.Explain.step("light-stage2", querySQL, args, s20, len(page), err)
 			if err != nil {
 				return nil, 0, false, err
 			}
@@ -2727,6 +2746,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		served = true
 	}
 	if !served {
+		f.Explain.note("path=raw-list (sort=%s order=%s window=%s→%s)", f.Sort, f.Order, f.From.UTC().Format(time.RFC3339), f.To.UTC().Format(time.RFC3339))
 		rows, err := runList(f.From, pageLimit, f.Offset, false)
 		if err != nil {
 			return nil, 0, false, err

@@ -262,7 +262,7 @@ func promotedAttrDDL(a promotedAttr, have string, colExists, idxExists bool) []s
 // Kolon kayıtlıysa onu, değilse TÜM yazımları deneyen dizi ifadesini
 // döndürür — yani kolon henüz onarılmamış kurulumlarda da doğru çalışır.
 func promotedAttrResolve(key string) (string, []any, bool) {
-	for _, a := range promotedAttrs {
+	for _, a := range allPromotedAttrs() { // v0.10.302 — yerleşik + facet kaydı
 		match := false
 		for _, k := range a.keys {
 			if strings.EqualFold(k, key) {
@@ -351,7 +351,7 @@ func (s *Store) repairPromotedAttrCols(ctx context.Context) map[string]bool {
 		log.Printf("[chstore] dış Distributed `spans` (cluster_name boş) — terfi attribute kolonları ATLANDI; /traces dizi yolunda kalıyor")
 		return ensured
 	}
-	for _, a := range promotedAttrs {
+	for _, a := range allPromotedAttrs() { // v0.10.302 — yerleşik + facet kaydı
 		have, colExists := s.spansColumnExpr(ctx, a.col)
 		idxExists := s.spansIndexExists(ctx, "idx_"+a.col)
 		stmts := promotedAttrDDL(a, have, colExists, idxExists)
@@ -423,7 +423,7 @@ func (s *Store) repairPromotedAttrCols(ctx context.Context) map[string]bool {
 // kurulumda kolonlar ilk veriden sonraki boot'ta devreye girer.
 func (s *Store) probePromotedAttrs(ctx context.Context) map[string]string {
 	out := map[string]string{}
-	for _, a := range promotedAttrs {
+	for _, a := range allPromotedAttrs() { // v0.10.302 — yerleşik + facet kaydı
 		for _, k := range a.keys {
 			// count()/countIf() UInt64 döner — int'e taramak derlenir,
 			// testleri geçer, yalnız canlıda patlar (v0.9.595 dersi).

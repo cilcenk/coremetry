@@ -490,6 +490,12 @@ func (s *Server) reloadConfigOnSignal(ctx context.Context, svc string) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	switch svc {
+	case "trace-facets": // v0.10.302
+		if s.store != nil {
+			if err := s.store.LoadTraceFacets(ctx); err != nil {
+				log.Printf("[chstore] trace facets reload: %v", err)
+			}
+		}
 	case "ai", "copilot":
 		if s.copilot != nil {
 			if err := s.copilot.LoadPersisted(ctx, s.store); err != nil {

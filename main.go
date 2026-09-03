@@ -1139,6 +1139,8 @@ func main() {
 		log.Printf("[vmetrics] load persisted config: %v", err)
 	}
 	cfgRefresh.Add("vmetrics", func(ctx context.Context) error { return vmSvc.LoadPersisted(ctx, store) })
+	// v0.10.302 — facet kaydı çapraz-pod yenileme (DDL/probe sonraki boot'ta).
+	cfgRefresh.Add("trace-facets", func(ctx context.Context) error { return store.LoadTraceFacets(ctx) })
 	// v0.9.1213 — JVM GC alarmlarının VM dönüşü: evaluator GC çiftini
 	// YALNIZ vmetrics yapılandırılmışken, VM'den okuyarak değerlendirir
 	// (SetLogs geç-bağlama emsali; runtime_vm.go başlığı).

@@ -37,7 +37,7 @@ import type {
   OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
   ExceptionTriageConfig, ProblemPriorityConfig, FailureSLOConfig, MetricExclusions, AnomalyTrackedConfig,
   InsightKind, InsightResponse, InsightSignal, InsightLink, InsightChartSpec,
-  AnomalySensitivityConfig, TailPoint , MetricCompareReport , LogPatternsResult , TraceFacet, TraceFacetsResponse } from './types';
+  AnomalySensitivityConfig, TailPoint , MetricCompareReport , LogPatternsResult, LogTemplate, TraceFacet, TraceFacetsResponse } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // withMetricSource — v0.9.1151 deneme modu. Sayfa URL'sindeki
 // ?metricsrc=vm|ch işaretini metrik uçlarının sorgu dizesine basar. TEK
@@ -1013,6 +1013,10 @@ export const api = {
   // v0.10.297 — /api/logs/patterns: /api/logs filtre kümesi + limit (20/50/100).
   logsPatterns: (params: LogsParams & { limit?: number }, signal?: AbortSignal) =>
     get<LogPatternsResult>(`/api/logs/patterns?${qs(params)}`, signal),
+  // v0.10.310 — /api/logs/templates: Drain kalıcı şablonları (+ türetilmiş
+  // "Ara" sorgusu). Sunucu 30 s cache; yalnız Şablonlar sekmesi açıkken.
+  logsTemplates: (params: LogsTemplatesParams, signal?: AbortSignal) =>
+    get<LogTemplate[]>(`/api/logs/templates?${qs(params)}`, signal),
   logsFields: () => get<{ fields: string[]; total?: number; types?: Record<string, string>; backend: string }>(
     `/api/logs/fields`),
   // Top values of one keyword field prefix-matched against `q`.
@@ -3690,6 +3694,16 @@ export interface TracesParams {
   // Comma-separated user-selected attribute keys whose values should
   // be projected into TraceRow.extras. Bounded to 8 cols server-side.
   extraAttrs?: string;
+}
+
+// v0.10.310 — /api/logs/templates parametreleri. since rung'lu string
+// (1h/6h/24h/168h/720h): sunucu cache anahtarına giriyor, kardinalite sınırlı
+// kalsın (v0.8.270).
+export interface LogsTemplatesParams {
+  sort?: 'first_seen' | 'last_seen' | 'count';
+  since?: string;
+  limit?: number;
+  service?: string;
 }
 
 export interface LogsParams {

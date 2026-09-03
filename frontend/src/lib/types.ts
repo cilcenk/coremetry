@@ -6793,6 +6793,22 @@ export interface LogPatternsResult {
   reason?: string;
 }
 
+// /api/logs/templates (v0.10.310, log-search Dilim 2c) — Drain şablonları.
+// Templater 5 dk'da bir ≤1000 satır ÖRNEKLER ve kalıcı yazar (log_templates,
+// ReplacingMergeTree). totalCount = örneklenen gözlem toplamı, pencere
+// sayımı DEĞİL. query = "Ara" sorgusu (PatternSearchQuery; '' = yok).
+export interface LogTemplate {
+  id: string;
+  template: string;
+  firstSeen: number; // unix ns
+  lastSeen: number;
+  totalCount: number;
+  services: string[];
+  exceptionType?: string;
+  sample: string;
+  query: string;
+}
+
 // /api/settings/trace-facets (v0.10.302/303, trace arama Dilim 2) — operatör
 // facet kaydı: yaygın-değerli attribute'lar için terfi kolonu + set index.
 export interface TraceFacet {

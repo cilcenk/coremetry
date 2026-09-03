@@ -188,6 +188,9 @@ func GroupBySignature(ctx context.Context, st Store, f Filter, limit int) (*Patt
 // AND'lenir (logql / query_string). Yaklaşıktır ve öyle etiketlenir —
 // "connection refused to <x>:<x>" → "connection refused to". Boş → "".
 func PatternSearchQuery(template string) string {
+	// v0.10.310 — Drain şablonları (log_templates) yer tutucuyu "<*>" yazar;
+	// tek türetici kalsın diye burada normalize edilir.
+	template = strings.ReplaceAll(template, "<*>", "<x>")
 	parts := strings.Split(template, "<x>")
 	var terms []string
 	for _, p := range parts {

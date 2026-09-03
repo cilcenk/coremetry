@@ -3859,3 +3859,10 @@ thead th:hover .th-remove { opacity: 1; }
 /* v0.10.330 — tablo hücresinde tek satır + üç nokta (K8s kolonları: pod/node
    adı 40+ karakter; çip kalkınca satır tek yükseklikte kalsın). */
 .cell-ellipsis { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+
+/* v0.10.331 — /alerts DB statement seçici (StatementPicker). Satır ham
+   <button>: liste öğesi primitifi; Button atomu değil (tüm satır tıklanır). */
+.stmt-pick { display: block; width: 100%; }
+.stmt-pick-row { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; padding: 6px 8px; background: transparent; border: 0; border-bottom: 1px solid var(--border); color: var(--text); cursor: pointer; font: inherit; }
+.stmt-pick-row:last-child { border-bottom: 0; }
+.stmt-pick-row:hover, .stmt-pick-row:focus-visible { background: var(--bg2); outline: none; }

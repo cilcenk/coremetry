@@ -508,6 +508,11 @@ func (e *Evaluator) evaluateAll(ctx context.Context) int {
 			e.evaluateWatcher(ctx, r)
 			continue
 		}
+		// v0.10.331 — hedefli kural (DB ifadesi): tek özne, servis döngüsü yok.
+		if r.Target != nil {
+			e.evaluateTargetRule(ctx, r, openSnap)
+			continue
+		}
 		targets := ruleEvalTargets(r, serviceNames)
 		if ruleNeedsFreshTargets(r) {
 			targets = filterFreshTargets(targets, freshSet)

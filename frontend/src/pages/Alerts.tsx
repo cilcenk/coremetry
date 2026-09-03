@@ -16,9 +16,9 @@ import type { AlertRule } from '@/lib/types';
 import { logsHref } from '@/lib/logsUrl';
 import {
   METRICS, COMPARATORS, SEVERITIES, WINDOWS, emptyDraft, TEMPLATES,
-  type UserPreset,
-} from './alerts/constants';
+  type UserPreset, DB_STMT_METRICS, isDbStmtMetric } from './alerts/constants';
 import { ThresholdField } from './alerts/ThresholdField';
+import { StatementPicker } from './alerts/StatementPicker';
 import { ConditionPreview } from './alerts/ConditionPreview';
 import { NoisyRulesPanel } from './alerts/NoisyRulesPanel';
 import { WatcherImportModal } from './alerts/WatcherImportModal';
@@ -30,7 +30,8 @@ import { PageShell } from '@/components/ui/PageShell';
 // buradan okuyor ki kolon GÖRÜNENE göre sıralansın (ham `metric` alanı
 // 'log_query' / 'watcher' değerleriyle rozetlerden bambaşka bir düzen verir).
 function alertTypeLabel(r: AlertRule): string {
-  return r.metric === 'watcher' ? 'ES WATCHER'
+  return r.target ? 'DB STATEMENT'
+    : r.metric === 'watcher' ? 'ES WATCHER'
     : r.metric === 'log_query' ? 'WATCHER'
     : r.builtIn ? 'BUILT-IN'
     : 'metric';
@@ -454,9 +455,11 @@ export default function AlertsPage() {
                   onChange={e => setDraft({ ...draft, name: e.target.value })}
                   placeholder="e.g. High error rate on api-gateway" />
               </Field>
-              <Field label="Service (empty = all)">
-                <ServicePicker value={draft.service ?? ''} onChange={v => setDraft({ ...draft, service: v })}
-                  placeholder="Service…" width="100%" />
+              <Field label={draft.target ? 'Service' : 'Service (empty = all)'}>
+                {draft.target
+                  ? <div style={{ fontSize: 12, color: 'var(--text3)', padding: '6px 0' }}>— all callers of the statement —</div>
+                  : <ServicePicker value={draft.service ?? ''} onChange={v => setDraft({ ...draft, service: v })}
+                      placeholder="Service…" width="100%" />}
               </Field>
               <Field label="Severity">
                 <select value={draft.severity}
@@ -464,10 +467,21 @@ export default function AlertsPage() {
                   {SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </Field>
+              {/* v0.10.331 — hedef: belirli bir DB ifadesi (SQL arayıp seç). Seçilince
+                  metrik ailesi db_stmt_* (p95 varsayılan), servis = tüm çağıranlar. */}
+              <Field label="Target — DB statement (optional)">
+                <StatementPicker value={draft.target} onChange={t => setDraft(d => ({
+                  ...d, target: t, service: t ? '' : d.service,
+                  metric: t ? (isDbStmtMetric(d.metric) ? d.metric : 'db_stmt_p95_ms') : (isDbStmtMetric(d.metric) ? 'error_rate' : d.metric),
+                  threshold: t && !isDbStmtMetric(d.metric) ? 1000 : d.threshold,
+                  windowSec: t && (d.windowSec ?? 0) < 300 ? 600 : d.windowSec,
+                  name: t && !d.name ? `Slow SQL: ${(t.sample || '').replace(/\s+/g, ' ').slice(0, 60)}` : d.name,
+                }))} />
+              </Field>
               <Field label="Metric">
                 <select value={draft.metric}
                   onChange={e => setDraft({ ...draft, metric: e.target.value })}>
-                  {METRICS.map(m => <option key={m.v} value={m.v}>{m.label}</option>)}
+                  {(draft.target ? DB_STMT_METRICS : METRICS).map(m => <option key={m.v} value={m.v}>{m.label}</option>)}
                 </select>
               </Field>
               <Field label="Comparator">
@@ -476,7 +490,11 @@ export default function AlertsPage() {
                   {COMPARATORS.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </Field>
-              <Field label="Threshold">
+              <Field label={draft.target ? 'Threshold (ms)' : 'Threshold'}>
+                {draft.target ? (
+                  <input type="number" min={1} step={50} value={draft.threshold ?? 1000}
+                    onChange={e => setDraft({ ...draft, threshold: Number(e.target.value) })} />
+                ) : (
                 <ThresholdField
                   value={draft.threshold ?? 0}
                   service={draft.service ?? ''}
@@ -485,6 +503,7 @@ export default function AlertsPage() {
                   onChange={v => setDraft({ ...draft, threshold: v })}
                   onApplySeverity={sev => setDraft(d => ({ ...d, severity: sev }))}
                 />
+                )}
               </Field>
               <Field label="Window">
                 <select value={draft.windowSec}
@@ -629,12 +648,20 @@ export default function AlertsPage() {
                   // rendered as the projected hits.total compare.
                   const isWatcher = r.metric === 'log_query';
                   const isEsWatcher = r.metric === 'watcher';
+                  // v0.10.331 — hedefli kural (DB ifadesi): örnek SQL + ölçü.
+                  const isTarget = !!r.target;
                   return (
                   <tr key={r.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 40px' }}>
                     <td><b>{r.name}</b></td>
-                    <td className="mono">{r.service || (isWatcher || isEsWatcher ? '— logs —' : '— all —')}</td>
+                    <td className="mono">{isTarget ? '— all callers —' : (r.service || (isWatcher || isEsWatcher ? '— logs —' : '— all —'))}</td>
                     <td className="mono" style={{ maxWidth: 380 }}>
-                      {isEsWatcher ? (
+                      {isTarget ? (
+                        <>
+                          <span className="badge b-gray mono" style={{ fontSize: 10, marginRight: 6 }}>{r.target!.dbSystem || 'db'}{r.target!.dbName && r.target!.dbName !== 'default' ? ` · ${r.target!.dbName}` : ''}</span>
+                          <code className="mono cell-ellipsis" title={r.target!.sample || r.target!.stmtHash} style={{ maxWidth: 220, fontSize: 11, verticalAlign: 'middle' }}>{r.target!.sample || `#${r.target!.stmtHash}`}</code>
+                          <span style={{ color: 'var(--text3)', marginLeft: 6 }}>{r.metric.replace('db_stmt_', '').replace('_ms', '')} {r.comparator} {r.threshold} ms</span>
+                        </>
+                      ) : isEsWatcher ? (
                         <span title={r.watcherJson}>
                           hits.total {r.comparator} {r.threshold}
                         </span>

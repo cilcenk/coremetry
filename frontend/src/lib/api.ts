@@ -37,7 +37,7 @@ import type {
   OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
   ExceptionTriageConfig, ProblemPriorityConfig, FailureSLOConfig, MetricExclusions, AnomalyTrackedConfig,
   InsightKind, InsightResponse, InsightSignal, InsightLink, InsightChartSpec,
-  AnomalySensitivityConfig, TailPoint , MetricCompareReport , LogPatternsResult, LogTemplate, TraceFacet, TraceFacetsResponse, DBSlowQueryConfig } from './types';
+  AnomalySensitivityConfig, TailPoint , MetricCompareReport , LogPatternsResult, LogTemplate, TraceFacet, TraceFacetsResponse, DBSlowQueryConfig, StatementSearchRow } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // withMetricSource — v0.9.1151 deneme modu. Sayfa URL'sindeki
 // ?metricsrc=vm|ch işaretini metrik uçlarının sorgu dizesine basar. TEK
@@ -1244,6 +1244,9 @@ export const api = {
   // key from anomaly promotion because it applies to EVERY Problem,
   // not just promoted anomalies.
   // v0.10.325 — yavaş SQL dedektörü ayarları (admin).
+  // v0.10.331 — /alerts SQL arama seçici (son 24 saat, örnek SQL alt-dize).
+  searchStatements: (q: string, limit = 20, signal?: AbortSignal) =>
+    get<{ rows: StatementSearchRow[] }>(`/api/db/statements/search?${qs({ q, limit })}`, signal),
   getDBSlowQuery: () => get<DBSlowQueryConfig>(`/api/settings/db-slow-query`),
   putDBSlowQuery: (c: DBSlowQueryConfig) =>
     request<DBSlowQueryConfig>(`/api/settings/db-slow-query`, {

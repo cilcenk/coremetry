@@ -1323,10 +1323,11 @@ function ExternalLinkButtons({ spans }: { spans: SpanRow[] }) {
         const ok = !!r.url;
         // Renk AYARDAN gelir (veri), token değil: marka rengi araca özgü; yazı --on-accent.
         const fill = l.color ? { background: l.color, borderColor: l.color, color: 'var(--on-accent)' } : undefined;
+        // v0.10.348 (operatör) — "Explain this trace" ile aynı boyut (md).
         return ok
-          ? <Button key={l.label} variant="secondary" size="sm" title={`${l.label} — yeni sekmede: ${r.url}`} style={fill}
+          ? <Button key={l.label} variant="secondary" size="md" title={`${l.label} — yeni sekmede: ${r.url}`} style={fill}
               onClick={() => window.open(r.url, '_blank', 'noopener,noreferrer')}>{l.label} ↗</Button>
-          : <Button key={l.label} variant="secondary" size="sm" disabled style={fill ? { ...fill, opacity: 0.55 } : undefined}
+          : <Button key={l.label} variant="secondary" size="md" disabled style={fill ? { ...fill, opacity: 0.55 } : undefined}
               title={`${l.label}: bu trace'te çözülemeyen alanlar — ${r.missing.join(', ')}`}>{l.label} ↗</Button>;
       })}
     </>

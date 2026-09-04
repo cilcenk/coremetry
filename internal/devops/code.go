@@ -147,6 +147,14 @@ type CodeWindow struct {
 	// (AppFrames en derini başa alır) ama modele bu SIRA hiç
 	// söylenmiyordu — üç pencereyi eşit ağırlıkta okuyordu.
 	Segment int `json:"segment,omitempty"`
+	// Project/Repo/Branch/WebURL — v0.10.353: pencerenin GERÇEK kaynağı
+	// (arama isabeti başka depodan gelebilir) ve DevOps web arayüzünde
+	// dosya+satır linki (FileURL). Path arama isabetinde "depo:yol" taşır;
+	// URL kurulurken önek düşer.
+	Project string `json:"project,omitempty"`
+	Repo    string `json:"repo,omitempty"`
+	Branch  string `json:"branch,omitempty"`
+	WebURL  string `json:"webUrl,omitempty"`
 	// Resource (v0.10.73) — bu pencere bir STACK FRAME'inden değil, hata
 	// metninin ANDIĞI kaynak dosyadan geliyor (mapper XML'i, SQL parçası).
 	//
@@ -544,7 +552,7 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 			return CodeContext{Repo: repo, Reason: dead + searchOffRemedyTR}
 		}
 		p, r, snote, sok := searchResolveProjectRepo(ctx, targets, repo,
-			s.ResolveConfig().withDefaults().BranchOrder, s.searchWithRecency(cli, cfg))
+			s.ResolveConfig().withDefaults().BranchOrder, s.searchWithRecency(cli, cfg), cfg.searchLimit())
 		if !sok {
 			class = CodeProjectDeadEnd
 			return CodeContext{Repo: repo, Reason: dead + ", " + snote}
@@ -566,7 +574,7 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	if ch.class != "" && ch.class != CodeDeadline && ch.class != CodeCancelled &&
 		cfg.CodeSearch && searchNote == "" {
 		p, r, snote, sok := searchResolveProjectRepo(ctx, targets, repo,
-			s.ResolveConfig().withDefaults().BranchOrder, s.searchWithRecency(cli, cfg))
+			s.ResolveConfig().withDefaults().BranchOrder, s.searchWithRecency(cli, cfg), cfg.searchLimit())
 		if sok && r != "" && (!strings.EqualFold(r, ch.repo) || !strings.EqualFold(p, cfg.Project)) {
 			fallback := "depo çıkmazı organizasyon aramasıyla aşıldı (" + firstLine(ch.reason) + ") → " + snote
 			cfg.Project = p
@@ -636,7 +644,7 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 					pcfg.Project = prj
 				}
 				return fetchItemContent(c, cli, pcfg, ver, rp, br, pth)
-			})
+			}, cfg.searchLimit())
 		hunt.windows = append(hunt.windows, sw...)
 		for _, n := range snotes {
 			note = withNote(note, n)
@@ -658,7 +666,7 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 						pcfg.Project = prj
 					}
 					return fetchItemContent(c, cli, pcfg, ver, rp, br, pth)
-				})
+				}, cfg.searchLimit())
 			hunt.windows = append(hunt.windows, ew...)
 			for _, n := range enotes {
 				note = withNote(note, n)
@@ -681,6 +689,9 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 		})...)
 
 	windows, trimmed := ClampCodeWindows(hunt.windows, codeBudgetRunes)
+	// v0.10.353 — her pencereye kaynağı ve DevOps dosya linki: arama
+	// isabetleri kendi depo/proje/branşını taşır, ötekiler zincirinkini alır.
+	stampWindowLinks(cfg, repo, branch, windows)
 	out.Windows = windows
 	ours := deadlineHit(parent, ctx)
 	switch {
@@ -2483,4 +2494,27 @@ func bestPathForResource(paths []string, r stackparse.ResourceRef) string {
 		}
 	}
 	return ""
+}
+
+// stampWindowLinks — SAF: pencere kaynağı (depo/proje/branş) boşsa zincirin
+// değerleri; WebURL FileURL ile. Arama isabetinde Path "depo:yol" — URL için
+// önek düşer, Path gösterim için olduğu gibi kalır.
+func stampWindowLinks(cfg Settings, repo, branch string, windows []CodeWindow) {
+	for i := range windows {
+		w := &windows[i]
+		if w.Repo == "" {
+			w.Repo = repo
+		}
+		if w.Branch == "" {
+			w.Branch = branch
+		}
+		if w.Project == "" {
+			w.Project = cfg.Project
+		}
+		p := w.Path
+		if w.Repo != "" && strings.HasPrefix(p, w.Repo+":") {
+			p = strings.TrimPrefix(p, w.Repo+":")
+		}
+		w.WebURL = FileURL(cfg, w.Project, w.Repo, w.Branch, p, w.Line)
+	}
 }

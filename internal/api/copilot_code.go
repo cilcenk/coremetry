@@ -177,6 +177,9 @@ type codeFileRefDTO struct {
 	// gitmez (bilinçli); numara, operatörün "model neye baktı"yı
 	// içeriksiz görebildiği en küçük dürüst iz.
 	Line int `json:"line,omitempty"`
+	// v0.10.353 — pencerenin gerçek deposu ve DevOps dosya+satır linki.
+	Repo string `json:"repo,omitempty"`
+	URL  string `json:"url,omitempty"`
 }
 
 // codePayload — CodeContext → wire. requested=false ise nil döner:
@@ -191,7 +194,7 @@ func codePayload(cc devops.CodeContext, requested bool) *codeContextPayload {
 		BrowseURL: cc.BrowseURL,
 	}
 	for _, w := range cc.Windows {
-		p.Files = append(p.Files, codeFileRefDTO{Path: w.Path, FromLine: w.FromLine, ToLine: w.ToLine, Line: w.Line})
+		p.Files = append(p.Files, codeFileRefDTO{Path: w.Path, FromLine: w.FromLine, ToLine: w.ToLine, Line: w.Line, Repo: w.Repo, URL: w.WebURL})
 	}
 	return p
 }

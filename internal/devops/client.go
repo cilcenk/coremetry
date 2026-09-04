@@ -25,6 +25,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -111,6 +112,11 @@ type Settings struct {
 	// dosya ÇEKİMİ denenir. 0 = varsayılan (DefaultCodeLookupLimit);
 	// [1, MaxCodeLookupLimit] aralığına sıkıştırılır (lookupLimit()).
 	CodeLookupLimit int `json:"codeLookupLimit,omitempty"`
+	// CodeSearchLimit (v0.10.353, operatör: "arama tavanını yükseltelim") —
+	// bir açıklama için organizasyon geneli kod ARAMASI en fazla kaç frame /
+	// hata-kodu için denenir. 0 = varsayılan (DefaultCodeSearchLimit);
+	// [1, MaxCodeSearchLimit] aralığına sıkıştırılır (searchLimit()).
+	CodeSearchLimit int `json:"codeSearchLimit,omitempty"`
 }
 
 // Deneme tavanı sınırları (v0.10.112). Varsayılan 6 = 3 pencere + 3
@@ -120,6 +126,11 @@ type Settings struct {
 const (
 	DefaultCodeLookupLimit = 6
 	MaxCodeLookupLimit     = 30
+	// v0.10.353 — arama tavanı: eski sabit 2 idi (frame + hata-kodu ayrı ayrı);
+	// operatörün açıklamasında 9 frame "eşleşmeyen" kalıyordu. 6 varsayılan,
+	// 20 tavan (her arama ayrı bir DevOps çağrısı).
+	DefaultCodeSearchLimit = 6
+	MaxCodeSearchLimit     = 20
 )
 
 // lookupLimit — yürürlükteki deneme tavanı; 0 → varsayılan, aşırı
@@ -132,6 +143,29 @@ func (c Settings) lookupLimit() int {
 		return MaxCodeLookupLimit
 	}
 	return c.CodeLookupLimit
+}
+
+// searchLimit — v0.10.353: yürürlükteki arama tavanı (frame ve hata-kodu
+// aramaları ayrı ayrı bu kadar).
+func (c Settings) searchLimit() int {
+	switch {
+	case c.CodeSearchLimit <= 0:
+		return DefaultCodeSearchLimit
+	case c.CodeSearchLimit > MaxCodeSearchLimit:
+		return MaxCodeSearchLimit
+	}
+	return c.CodeSearchLimit
+}
+
+// ClampCodeSearchLimit — PUT girdisi: 0 kalır (varsayılan), negatif 0, tavan üstü tavan.
+func ClampCodeSearchLimit(n int) int {
+	switch {
+	case n <= 0:
+		return 0
+	case n > MaxCodeSearchLimit:
+		return MaxCodeSearchLimit
+	}
+	return n
 }
 
 // ClampCodeLookupLimit — PUT girdisi için tek yazım: 0 kalır (varsayılan
@@ -180,6 +214,7 @@ type Snapshot struct {
 	// EffectiveLookupLimit'te (kutu boşken bile yürürlükteki sayı görünsün).
 	AppPrefixes          []string `json:"appPrefixes,omitempty"`
 	CodeLookupLimit      int      `json:"codeLookupLimit,omitempty"`
+	CodeSearchLimit      int      `json:"codeSearchLimit,omitempty"` // v0.10.353
 	EffectiveLookupLimit int      `json:"effectiveLookupLimit"`
 }
 
@@ -366,6 +401,7 @@ func (s *Service) Snapshot() Snapshot {
 		BranchOrder:          rc.BranchOrder,
 		AppPrefixes:          s.cfg.AppPrefixes,
 		CodeLookupLimit:      s.cfg.CodeLookupLimit,
+		CodeSearchLimit:      s.cfg.CodeSearchLimit,
 		EffectiveLookupLimit: s.cfg.lookupLimit(),
 	}
 }
@@ -729,6 +765,41 @@ func stripUserinfo(msg string) string {
 //
 // Boş dönerse arayüz linki hiç çizmez: yanlış bir link, link olmamasından
 // kötüdür.
+// FileURL — v0.10.353 (operatör: "bulduğu satırın o dosyanın sonunda linki
+// olsun"): DevOps web arayüzünde dosya + satır. project boşsa cfg.Project;
+// path depo-içi tam yol (başında / olsun olmasın). line ≤ 0 → satırsız.
+// Azure DevOps Server/TFS ve dev.azure.com aynı şekli okur:
+//
+//	{koleksiyon}/{proje}/_git/{depo}?path=/x/y.java&version=GB{branş}&line=N&lineEnd=N&lineStartColumn=1&lineEndColumn=1&_a=contents
+func FileURL(cfg Settings, project, repo, branch, path string, line int) string {
+	repo = strings.Trim(strings.TrimSpace(repo), "/")
+	path = strings.TrimSpace(path)
+	if repo == "" || path == "" || strings.TrimSpace(cfg.BaseURL) == "" {
+		return ""
+	}
+	if project == "" {
+		project = cfg.Project
+	}
+	u := collectionURL(cfg)
+	if p := strings.Trim(strings.TrimSpace(project), "/"); p != "" {
+		u += "/" + url.PathEscape(p)
+	}
+	q := url.Values{}
+	q.Set("path", "/"+strings.TrimLeft(path, "/"))
+	if b := ShortBranch(branch); b != "" {
+		q.Set("version", "GB"+b)
+	}
+	if line > 0 {
+		ln := strconv.Itoa(line)
+		q.Set("line", ln)
+		q.Set("lineEnd", ln)
+		q.Set("lineStartColumn", "1")
+		q.Set("lineEndColumn", "1")
+	}
+	q.Set("_a", "contents")
+	return u + "/_git/" + url.PathEscape(repo) + "?" + q.Encode()
+}
+
 func BrowseURL(cfg Settings, repo, branch string) string {
 	repo = strings.Trim(strings.TrimSpace(repo), "/")
 	if repo == "" || strings.TrimSpace(cfg.BaseURL) == "" {

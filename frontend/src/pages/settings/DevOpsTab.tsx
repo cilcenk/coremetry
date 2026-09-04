@@ -43,6 +43,7 @@ export function DevOpsTab() {
   // boş kutu = varsayılan, sunucu 0'ı "ayar yok" okur.
   const [appPrefixes, setAppPrefixes] = useState('');
   const [lookupLimit, setLookupLimit] = useState('');
+  const [searchLimit, setSearchLimit] = useState(''); // v0.10.353
   const [effectiveLimit, setEffectiveLimit] = useState(6);
   const [detected, setDetected] = useState<{ flavor?: DevOpsFlavor; apiVersion?: string }>({});
   const [busy, setBusy] = useState(false);
@@ -113,6 +114,7 @@ export function DevOpsTab() {
       setBranchOrder((s.branchOrder || []).join(', '));
       setAppPrefixes((s.appPrefixes || []).join(', '));
       setLookupLimit(s.codeLookupLimit ? String(s.codeLookupLimit) : '');
+      setSearchLimit(s.codeSearchLimit ? String(s.codeSearchLimit) : '');
       setEffectiveLimit(s.effectiveLookupLimit || 6);
       setDetected({ flavor: s.detectedFlavor, apiVersion: s.detectedApiVersion });
     },
@@ -129,6 +131,7 @@ export function DevOpsTab() {
     branchOrder: splitList(branchOrder),
     appPrefixes: splitList(appPrefixes),
     codeLookupLimit: Math.max(0, parseInt(lookupLimit, 10) || 0),
+    codeSearchLimit: Math.max(0, parseInt(searchLimit, 10) || 0),
     ...(pat ? { pat } : {}),
   });
 
@@ -366,6 +369,24 @@ export function DevOpsTab() {
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
             Bir açıklama için en fazla kaç dosya çekilir. Ağaçta bulunamayan frame
             ve aynı dosyanın başka satırı tavandan düşmez. Yürürlükte: <strong>{effectiveLimit}</strong>.
+          </div>
+        </label>
+
+        {/* v0.10.353 (operatör: "arama tavanını yükseltelim") — organizasyon
+            geneli kod araması kaç frame / hata-kodu için denenir; eski sabit 2. */}
+        <label style={{ display: 'block', marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+            Kod araması tavanı <span style={{ color: 'var(--text3)' }}>(1–20, boş = varsayılan 6)</span>
+          </div>
+          <input value={searchLimit} inputMode="numeric"
+            onChange={e => setSearchLimit(e.target.value.replace(/[^0-9]/g, ''))}
+            placeholder="6"
+            style={{ width: 120 }} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Depo ağacında bulunamayan frame'ler ve hata-kodu token'ları için organizasyon
+            genelinde en fazla kaç arama yapılır (her biri ayrı bir DevOps çağrısı). Yalnız
+            "Organizasyon geneli kod araması" açıkken etkili; tavana takılan frame'ler
+            açıklamada "eşleşmeyen" olarak listelenir.
           </div>
         </label>
 

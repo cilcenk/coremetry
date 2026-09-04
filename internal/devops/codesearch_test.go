@@ -143,7 +143,7 @@ func TestSearchFindsClassInAnotherRepo(t *testing.T) {
 		gotProject, gotRepo, gotBranch = project, repo, branch
 		return javaFile("com.x.mail", "EmailSender", 700, 645), nil
 	}
-	out, notes := huntSearchWindows(context.Background(), missed, "other-service", nil, 5, search, fetchIn)
+	out, notes := huntSearchWindows(context.Background(), missed, "other-service", nil, 5, search, fetchIn, codeSearchLimit)
 
 	if len(out) != 1 {
 		t.Fatalf("pencere=%d, 1 bekleniyordu", len(out))
@@ -177,7 +177,7 @@ func TestSearchFailureIsReported(t *testing.T) {
 		return nil, errSearchProbe
 	}
 	_, notes := huntSearchWindows(context.Background(), missed, "", nil, 5, search,
-		func(context.Context, string, string, string, string) (string, error) { return "", nil })
+		func(context.Context, string, string, string, string) (string, error) { return "", nil }, codeSearchLimit)
 	if len(notes) == 0 || !strings.Contains(notes[0], "kod araması başarısız") {
 		t.Errorf("arama hatası künyeye yazılmadı: %v", notes)
 	}
@@ -195,9 +195,9 @@ func TestSearchIsBounded(t *testing.T) {
 		return nil, nil
 	}
 	huntSearchWindows(context.Background(), missed, "", nil, 5, search,
-		func(context.Context, string, string, string, string) (string, error) { return "", nil })
-	if calls != codeSearchLimit {
-		t.Errorf("arama=%d, tavan %d olmalıydı", calls, codeSearchLimit)
+		func(context.Context, string, string, string, string) (string, error) { return "", nil }, 2)
+	if calls != 2 { // v0.10.353 — tavan artık parametre; testte 2
+		t.Errorf("arama=%d, tavan 2 olmalıydı", calls)
 	}
 }
 
@@ -252,7 +252,7 @@ func TestSearchResolveProjectRepo(t *testing.T) {
 			}, nil
 		}
 		prj, repo, note, ok := searchResolveProjectRepo(context.Background(),
-			[]stackparse.Frame{fr("com.x.A")}, "", nil, search)
+			[]stackparse.Frame{fr("com.x.A")}, "", nil, search, codeSearchLimit)
 		if !ok || prj != "PLATFORM" || repo != "transfer-core" {
 			t.Fatalf("ok=%v prj=%q repo=%q", ok, prj, repo)
 		}
@@ -270,7 +270,7 @@ func TestSearchResolveProjectRepo(t *testing.T) {
 			return []CodeSearchHit{{Project: "P2", Repository: "r2", Path: "/src/com/y/B.java"}}, nil
 		}
 		prj, _, _, ok := searchResolveProjectRepo(context.Background(),
-			[]stackparse.Frame{fr("com.x.A"), fr("com.y.B")}, "", nil, search)
+			[]stackparse.Frame{fr("com.x.A"), fr("com.y.B")}, "", nil, search, codeSearchLimit)
 		if !ok || prj != "P2" {
 			t.Fatalf("ikinci frame'e geçilmedi: ok=%v prj=%q (çağrı=%d)", ok, prj, call)
 		}
@@ -280,7 +280,7 @@ func TestSearchResolveProjectRepo(t *testing.T) {
 			return nil, errSearchProbe
 		}
 		_, _, note, ok := searchResolveProjectRepo(context.Background(),
-			[]stackparse.Frame{fr("com.x.A")}, "", nil, search)
+			[]stackparse.Frame{fr("com.x.A")}, "", nil, search, codeSearchLimit)
 		if ok || !strings.Contains(note, "organizasyon araması başarısız") {
 			t.Errorf("ok=%v note=%q", ok, note)
 		}
@@ -288,7 +288,7 @@ func TestSearchResolveProjectRepo(t *testing.T) {
 	t.Run("hepsi ıska → dürüst cümle", func(t *testing.T) {
 		search := func(context.Context, string) ([]CodeSearchHit, error) { return nil, nil }
 		_, _, note, ok := searchResolveProjectRepo(context.Background(),
-			[]stackparse.Frame{fr("com.x.A")}, "", nil, search)
+			[]stackparse.Frame{fr("com.x.A")}, "", nil, search, codeSearchLimit)
 		if ok || !strings.Contains(note, "eşleşme bulamadı") {
 			t.Errorf("ok=%v note=%q", ok, note)
 		}
@@ -299,7 +299,7 @@ func TestSearchResolveProjectRepo(t *testing.T) {
 			return nil, nil
 		}
 		_, _, note, ok := searchResolveProjectRepo(context.Background(),
-			[]stackparse.Frame{fr("")}, "", nil, search)
+			[]stackparse.Frame{fr("")}, "", nil, search, codeSearchLimit)
 		if ok || !strings.Contains(note, "koşamadı") {
 			t.Errorf("ok=%v note=%q", ok, note)
 		}
@@ -374,7 +374,7 @@ func TestHuntErrorCodeWindows(t *testing.T) {
 		return body, nil
 	}
 	out, notes := huntErrorCodeWindows(context.Background(),
-		[]string{"CustomerCardsNoFlag"}, []string{"release", "master"}, 5, search, fetchIn)
+		[]string{"CustomerCardsNoFlag"}, []string{"release", "master"}, 5, search, fetchIn, codeSearchLimit)
 	if len(out) != 1 {
 		t.Fatalf("pencere=%d: %v", len(out), notes)
 	}
@@ -400,7 +400,7 @@ func TestHuntErrorCodeWindowsFailureIsReported(t *testing.T) {
 	_, notes := huntErrorCodeWindows(context.Background(), []string{"SomethingLong"},
 		nil, 5,
 		func(context.Context, string) ([]CodeSearchHit, error) { return nil, errSearchProbe },
-		func(context.Context, string, string, string, string) (string, error) { return "", nil })
+		func(context.Context, string, string, string, string) (string, error) { return "", nil }, codeSearchLimit)
 	if len(notes) == 0 || !strings.Contains(notes[0], "hata-kodu araması başarısız") {
 		t.Errorf("arama hatası künyeye yazılmadı: %v", notes)
 	}

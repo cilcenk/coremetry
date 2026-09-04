@@ -1553,7 +1553,9 @@ export interface AICodeContext {
   branch?: string;
   /** 'pin' = service_metadata.repository, 'convention' = önek/ek soyma. */
   source?: string;
-  files?: { path: string; fromLine: number; toLine: number; line?: number }[];
+  files?: { path: string; fromLine: number; toLine: number; line?: number;
+    /** v0.10.353 — pencerenin gerçek deposu ve DevOps dosya+satır linki (varsa). */
+    repo?: string; url?: string }[];
   reason?: string;
   /** Tarayıcıda açılabilir depo linki — depo bir TAHMİN olabilir, operatör
    *  onu ancak bakarak doğrulayabilir (v0.10.60). */
@@ -1580,6 +1582,8 @@ export interface DevOpsSnapshot {
   appPrefixes?: string[];
   /** v0.10.112 — deneme tavanı (dosya çekimi); 0/yok = varsayılan. */
   codeLookupLimit?: number;
+  /** v0.10.353 — organizasyon geneli kod araması tavanı (frame / hata-kodu); 0/yok = varsayılan 6. */
+  codeSearchLimit?: number;
   /** Yürürlükteki tavan (varsayılan dahil) — kutu boşken de gösterilir. */
   effectiveLookupLimit?: number;
 }

@@ -49,7 +49,8 @@ describe('/traces — işaret KONULDU (Ö31 kapandı)', () => {
     // Bu satır düzeltmenin gerekçesini canlı tutuyor: biri kutuları
     // yeniden sıralarsa ve işaret düşerse, test artık koruma sağlamaz
     // sanılmasın diye premise burada ölçülüyor.
-    const traceIdAt = traces.indexOf('placeholder="Trace ID…"');
+    // v0.10.343 — kutu artık kimlik değeri de alıyor; yer tutucu "Trace ID veya kimlik…".
+    const traceIdAt = traces.indexOf('placeholder="Trace ID veya kimlik (function_id)…"');
     const pickerAt = traces.indexOf('<ServicePicker');
     expect(traceIdAt).toBeGreaterThan(-1);
     expect(pickerAt).toBeGreaterThan(traceIdAt);

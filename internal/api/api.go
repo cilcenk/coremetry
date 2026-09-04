@@ -4287,6 +4287,13 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 		var narrowedFrom time.Time
 		f.NarrowedFrom = &narrowedFrom
 		// v0.10.342 — kimlik-önce arama (function_id / trace id) sonucu.
+		// v0.10.343 — Operator-reported: değer "Trace ID…" kutusuna yazılmıştı
+		// (?traceId=). 32-hex olmayan traceId bir KİMLİKTİR (function_id gibi):
+		// Search'e taşınır (ham hâli — büyük/küçük harf duyarlı eşitlik),
+		// TraceID boşalır; eski istemci/API çağrıları da bundan yararlanır.
+		if search, tid := identityFromTraceIDParam(q.Get("traceId"), f.Search); tid == "" && f.TraceID != "" {
+			f.TraceID, f.Search = "", search
+		}
 		var identity chstore.IdentityHit
 		f.IdentityHit = &identity
 		traces, total, hasMore, err := s.store.GetTraces(ctx, f)
@@ -12040,3 +12047,21 @@ func parseDuration(s string, def time.Duration) time.Duration {
 	}
 	return def
 }
+
+// identityFromTraceIDParam — SAF (v0.10.343): ?traceId= 32-hex ise trace id
+// (küçük harf); değilse kimlik değeri → (search, "") — mevcut search boşsa
+// onun yerine geçer, doluysa search korunur ve traceId yine düşer.
+func identityFromTraceIDParam(rawTraceID, search string) (string, string) {
+	t := strings.TrimSpace(rawTraceID)
+	if t == "" {
+		return search, ""
+	}
+	if isTraceIDHex(strings.ToLower(t)) {
+		return search, strings.ToLower(t)
+	}
+	if search == "" {
+		return t, ""
+	}
+	return search, ""
+}
+

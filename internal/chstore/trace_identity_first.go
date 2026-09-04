@@ -29,13 +29,16 @@ import (
 const identityTokenMinLen = 8
 
 // IdentityHit — OUT param (RankedWithin deseni): kimlik yolu denendi mi,
-// hangi anahtarlar, hangisi tuttu, kaç trace.
+// hangi anahtarlar (indeksli), hangileri atlandı (indeks yok → tam tarama
+// olurdu), hangisi tuttu, kaç trace, hata.
 type IdentityHit struct {
 	Keys       []string `json:"keys"`
+	Skipped    []string `json:"skipped,omitempty"`
 	MatchedKey string   `json:"matchedKey,omitempty"`
 	Hits       int      `json:"hits"`
 	Bounded    bool     `json:"bounded,omitempty"`
 	TraceID    bool     `json:"traceId,omitempty"`
+	Error      string   `json:"error,omitempty"`
 }
 
 // identityToken — SAF: arama terimi kimlik adayı mı. Tek parça, ≥8,
@@ -72,110 +75,117 @@ func identityFirstEligible(f TraceFilter) bool {
 	return identityToken(f.Search) != "" && f.TraceID == "" && len(f.TraceIDs) == 0 && len(f.CandidateIDs) == 0
 }
 
-// identityKeys — span-kapsamlı terfi + facet anahtarları (yazımlarıyla),
-// tanım sırasında, tekil. Resource kapsamı (k8s.*) kimlik değildir.
-func identityKeys() []string {
-	seen := map[string]bool{}
-	var out []string
+// identityKey — bir yazım ve derlenmiş yüklemi. indexed=false → dizi yolu
+// (tam tarama): kimlik sorgusunda KULLANILMAZ, `Skipped`e yazılır.
+//
+// v0.10.343 — Operator-reported (prod 342): kimlik araması bulamadı. İlk
+// sürüm tüm yazımları TEK OR'da birleştiriyordu; haritada olmayan yazımlar
+// (`FUNCTION_ID`, `CHANNEL_CODE`) dizi yoluna derleniyor, OR indeksi
+// öldürüyor, 10 sn'de zaman aşımı → sessizce alt-dize aramasına düşüş →
+// tam tarama → boş. Şimdi: yalnız indeksli yüklemler (terfi kolonu set(0)
+// ya da attr_kvh bloom), anahtar başına AYRI sorgu, ilk tutan kazanır.
+type identityKey struct {
+	key     string
+	sql     string
+	args    []any
+	indexed bool
+}
+
+// identityKeys — span-kapsamlı terfi + facet yazımları, derlenmiş; aynı
+// kolona derlenen yazımlar tekilleşir (function_id/FUNCTION_ID → tek sorgu).
+func identityKeys(token string) []identityKey {
+	pm := promotedCols()
+	kvh := AttrIndexAvailable()
+	seenSQL := map[string]bool{}
+	var out []identityKey
 	for _, a := range allPromotedAttrs() {
 		if a.res {
 			continue
 		}
 		for _, k := range a.keys {
-			if !seen[k] {
-				seen[k] = true
-				out = append(out, k)
+			sql, args, err := (FilterExpr{Key: k, Op: "=", Values: []string{token}}).SQL()
+			if err != nil || sql == "" || seenSQL[sql] {
+				continue
 			}
+			seenSQL[sql] = true
+			_, promoted := pm[k]
+			out = append(out, identityKey{key: k, sql: sql, args: args, indexed: promoted || kvh})
 		}
 	}
 	return out
 }
 
-// identityFirstQuery — SAF: aday sorgusu. SELECT'te multiIf (hangi anahtar),
-// WHERE'de OR; her anahtar FilterExpr.SQL() ile derlenir (terfi kolonu /
-// kvh / dizi — filtre çipiyle aynı yol). args: SELECT → WHERE → LIMIT.
-func identityFirstQuery(f TraceFilter, keys []string, token, clusterExpr string, budget int) (string, []any, bool) {
+// identityFirstQuery — SAF: TEK anahtarın aday sorgusu (pencere + servis +
+// env/cluster + eşitlik; çip/arama/hata sızmaz). args: WHERE → LIMIT.
+func identityFirstQuery(f TraceFilter, k identityKey, clusterExpr string, budget int) (string, []any) {
 	base := errorFirstFilter(f)
 	base.Search = ""
 	wc := buildGetTracesWhere(base, clusterExpr)
-	var parts []string
-	var partArgs []any
-	var multi []string
-	var multiArgs []any
-	for _, k := range keys {
-		sql, args, err := (FilterExpr{Key: k, Op: "=", Values: []string{token}}).SQL()
-		if err != nil || sql == "" {
-			continue
-		}
-		parts = append(parts, "("+sql+")")
-		partArgs = append(partArgs, args...)
-		multi = append(multi, sql, "'"+strings.ReplaceAll(k, "'", "\\'")+"'")
-		multiArgs = append(multiArgs, args...)
-	}
-	if len(parts) == 0 {
-		return "", nil, false
-	}
-	wc.add("("+strings.Join(parts, " OR ")+")", partArgs...)
+	wc.add(k.sql, k.args...)
 	sql := `
-		SELECT trace_id, multiIf(` + strings.Join(multi, ", ") + `, '') AS k
+		SELECT trace_id
 		FROM spans ` + wc.sql() + `
 		ORDER BY time DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 10,
+		SETTINGS max_execution_time = 5,
 		         distributed_product_mode = 'global'`
-	args := append(append(append([]any{}, multiArgs...), wc.args...), budget)
-	return sql, args, true
+	return sql, append(append([]any{}, wc.args...), budget)
 }
 
 // identityFirstCandidates — (idler, hit, hata). 32-hex → trace id, sorgusuz.
+// Anahtarlar sırayla; ilk tutan kazanır. Hata bir anahtarda olursa kalanlar
+// denenmez (aynı bütçeyi yakmasın), hit.Error söyler.
 func (s *Store) identityFirstCandidates(ctx context.Context, f TraceFilter) ([]string, IdentityHit, error) {
 	token := identityToken(f.Search)
-	hit := IdentityHit{Keys: identityKeys()}
+	hit := IdentityHit{Keys: []string{}}
 	if isHex32(token) {
 		hit.TraceID, hit.MatchedKey, hit.Hits = true, "trace_id", 1
+		hit.Keys = []string{"trace_id"}
 		return []string{strings.ToLower(token)}, hit, nil
 	}
 	budget := traceStage2MaxIDs * errorFirstOverfetch
-	sql, args, ok := identityFirstQuery(f, hit.Keys, token, s.clusterExpr(), budget)
-	if !ok {
-		return nil, hit, nil
-	}
-	t0 := time.Now()
-	rows, err := s.telemetryReadConn().Query(ctx, sql, args...)
-	if err != nil {
-		f.Explain.step("identity-first", sql, args, t0, 0, err)
-		return nil, hit, fmt.Errorf("identity-first candidates: %w", err)
-	}
-	defer rows.Close()
-	seen := make(map[string]struct{}, 64)
-	ids := make([]string, 0, 64)
-	keyCount := map[string]int{}
-	for rows.Next() {
-		var id, k string
-		if err := rows.Scan(&id, &k); err != nil {
-			return nil, hit, err
-		}
-		if _, dup := seen[id]; dup {
+	for _, k := range identityKeys(token) {
+		if !k.indexed {
+			hit.Skipped = append(hit.Skipped, k.key)
 			continue
 		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
-		keyCount[k]++
-		if len(ids) >= traceStage2MaxIDs {
-			break
+		hit.Keys = append(hit.Keys, k.key)
+		sql, args := identityFirstQuery(f, k, s.clusterExpr(), budget)
+		t0 := time.Now()
+		rows, err := s.telemetryReadConn().Query(ctx, sql, args...)
+		if err != nil {
+			f.Explain.step("identity-first:"+k.key, sql, args, t0, 0, err)
+			hit.Error = k.key + ": " + err.Error()
+			return nil, hit, fmt.Errorf("identity-first %s: %w", k.key, err)
+		}
+		seen := make(map[string]struct{}, 64)
+		ids := make([]string, 0, 64)
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, hit, err
+			}
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+			if len(ids) >= traceStage2MaxIDs {
+				break
+			}
+		}
+		rerr := rows.Err()
+		rows.Close()
+		f.Explain.step("identity-first:"+k.key, sql, args, t0, len(ids), rerr)
+		if rerr != nil {
+			hit.Error = k.key + ": " + rerr.Error()
+			return nil, hit, rerr
+		}
+		if len(ids) > 0 {
+			hit.MatchedKey, hit.Hits, hit.Bounded = k.key, len(ids), len(ids) >= traceStage2MaxIDs
+			return ids, hit, nil
 		}
 	}
-	f.Explain.step("identity-first", sql, args, t0, len(ids), rows.Err())
-	if err := rows.Err(); err != nil {
-		return nil, hit, err
-	}
-	hit.Hits = len(ids)
-	hit.Bounded = len(ids) >= traceStage2MaxIDs
-	best := 0
-	for k, n := range keyCount {
-		if n > best && k != "" {
-			best, hit.MatchedKey = n, k
-		}
-	}
-	return ids, hit, nil
+	return nil, hit, nil
 }

@@ -405,7 +405,12 @@ export function DataTableColgroup<T>({ dt, leading, trailing }: { dt: DataTable<
   const ref = useRef<HTMLTableColElement | null>(null);
   const [fitPx, setFitPx] = useState(0); // 0 = ölçüm yok (fail-open)
   useEffect(() => {
-    const wrap = ref.current?.closest('.table-wrap');
+    // v0.10.357 — Operator-reported (Traces: "sağa sola kaydırma olmasın, bir
+    // türlü düzeltemedik"): sanal tablonun kabı `.vt-scroll`, `.table-wrap`
+    // değil → closest null → sığdırma sanal tabloda HİÇ devreye girmiyordu;
+    // v0.9.1334'ün "muhafaza kaldırıldı" düzeltmesi VirtualTable'a ulaşmadı
+    // (tested-but-unreachable sınıfı, ikinci kez). İki kap da ölçülür.
+    const wrap = ref.current?.closest('.table-wrap, .vt-scroll');
     if (!wrap || typeof ResizeObserver === 'undefined') return;
     // v0.9.1334 — MUHAFAZA KALDIRILDI, sığdırma her kapta ölçülüyor.
     //

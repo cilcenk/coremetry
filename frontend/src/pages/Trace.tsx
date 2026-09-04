@@ -514,20 +514,9 @@ function TraceDetailInner() {
         )}
         {spans && spans.length > 0 && (
           <>
-            {source === 'tempo' && (
-              <div style={{
-                marginBottom: 10, padding: '6px 10px',
-                background: 'var(--bg2)',
-                border: '1px solid var(--border)',
-                borderLeft: '3px solid var(--accent2)',
-                borderRadius: 4,
-                fontSize: 11, color: 'var(--text2)',
-                display: 'flex', alignItems: 'center', gap: 6,
-              }} title="Coremetry didn't have this trace in its own store; the spans below were fetched from the external Tempo backend configured in Settings → Tempo backend.">
-                <span style={{ fontFamily: 'monospace', color: 'var(--accent2)' }}>⇆</span>
-                <span><b>Source:</b> Tempo fallback · Coremetry sampled this trace out, the spans were read from the external Tempo backend.</span>
-              </div>
-            )}
+            {/* v0.10.351 (operatör) — "Source: Tempo fallback" şeridi KALDIRILDI:
+                aynı bilgi PROVENANCE satırındaki "source: Tempo fallback" çipinde
+                zaten var; iki yerde yazması yalnız yer yiyordu. */}
             {/* v0.8.332 (pivot Phase 3) — OTel span links, both directions.
                 Renders NOTHING for the (vast) majority of traces that carry
                 no links; see LinkedTracesSection. */}

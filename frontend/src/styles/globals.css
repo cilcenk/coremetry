@@ -1275,6 +1275,10 @@ tbody tr:hover { background: var(--bg2); }
 tbody tr.agg-row { background: var(--bg2); border-bottom: 2px solid var(--border); cursor: default; }
 tbody tr.agg-row:hover { background: var(--bg2); }
 tbody td { padding: 9px 12px; max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* v0.10.338 — Operator-reported: çekmecedeki tam kimlik hücreleri (revizyon,
+   imaj repo:tag) yukarıdaki genel nowrap+320px kuralıyla "…" oluyordu; okunması
+   gereken tam metin kırpılamaz. Hücre sarar, kırpmaz. */
+tbody td.td-full { max-width: none; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; word-break: break-all; }
 /* Satır = link (v0.10.216, operatör-bildirimli: "trace'e orta tuşla basınca
    yeni sekmede açılsın"). Hücre `td.row-cell` padding'ini bırakır, içindeki
    `<a class="row-link">` (react-router Link) hücreyi tamamen doldurur —

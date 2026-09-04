@@ -120,6 +120,16 @@ export function rolloutTracesFilters(r: Pick<WorkloadRollout, 'kind' | 'namespac
   return [{ k: 'resource.k8s.replicaset.name', op: '=', v: [r.revision] }, ns];
 }
 
+/** v0.10.338 — Operator-reported: aynı workload birden çok cluster'a çıkıyor
+ * ama çekmece cluster'ı söylemiyordu. Yer satırı: `<küme> · <namespace> · <tür>`;
+ * ad çözülemezse cluster ID (boş bırakılmaz — iki cluster'daki iki rollout
+ * ayırt edilebilmeli). */
+export function rolloutPlaceLabel(r: Pick<WorkloadRollout, 'clusterId' | 'namespace' | 'kind'>, clusterName?: string): string {
+  const name = (clusterName ?? '').trim();
+  const cluster = name || (r.clusterId ?? '').trim() || '?';
+  return [cluster, r.namespace || '?', r.kind || 'Deployment'].join(' · ');
+}
+
 /** `<workload>-<hash>` → `<hash>`; önek yoksa olduğu gibi. */
 export function shortRevision(revision: string, workload: string): string {
   if (workload && revision.startsWith(workload + '-')) return revision.slice(workload.length + 1);

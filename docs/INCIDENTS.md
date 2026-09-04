@@ -185,3 +185,15 @@ Each entry references the incident-shaped fix. Avoid re-living them.
   (`observeWindow*` + `windowScroll`) otherwise. Lesson: a virtualiser is
   a contract with ONE scroll container; pin the container choice in
   source (`traceWaterfallVirtual.test.tsx`), because the DOM test cannot.
+
+### v0.10.338 — Çekmecede tam kimlik "…" ile kırpıldı (genel `tbody td` kuralı)
+
+Operator-reported: rollout çekmecesinde revizyon ve imaj (repo:tag) satırları
+sonundan kırpılıyordu; aynı workload birden çok cluster'a çıktığı hâlde küme
+adı görünmüyordu. Kırpmanın sebebi bileşen değil, `globals.css`'teki genel
+`tbody td { white-space: nowrap; max-width: 320px; text-overflow: ellipsis }`
+kuralı: hücreye verilen `wordBreak: break-all` nowrap'i kaldırmadığı için
+hiçbir etkisi yoktu. Ders: "kırpma" pitfall'ının üçüncü şekli — sınıfsız bir
+`<td>` her çekmecede 320 px'e kilitli. Okunması gereken tam metin taşıyan
+hücre `.td-full` alır (sarar, kırpmaz) ve yanına kopyalama düğmesi konur;
+`RolloutDrawer.pins.test.ts` hücreleri ve CSS kuralını pinler.

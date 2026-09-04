@@ -2372,12 +2372,25 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 			if hit.TraceID {
 				f.Search = "" // trace id haystack'te yok; HAVING onu elemesin
 			}
+			if hit.AnchorMs != 0 {
+				// v0.10.344 — liste de çapalı pencerede: seçili aralık id'nin
+				// zamanını kapsamıyorsa bile trace gelir (adaylarla sınırlı,
+				// idx_trace bloom). Ham liste yolunun kendi daraltmaları
+				// (narrowOnExhaustion) bu pencereye göre işler.
+				f.From, f.To = time.Unix(0, hit.WindowFromNs), time.Unix(0, hit.WindowToNs)
+			}
 			if hit.Bounded && f.RankedWithin != nil {
 				*f.RankedWithin = len(ids)
 			}
 		}
 		if f.IdentityHit != nil {
 			*f.IdentityHit = hit
+		}
+		if err == nil && identityStopsFallback(hit, len(ids)) {
+			// v0.10.344 — çapalı kimlik bulunamadı: alt-dize tam taraması
+			// yapılmaz (prod: servissiz 1 s pencerede 3.73 GiB bellek). Boş
+			// ve dürüst; zarf hangi pencerede, hangi anahtarlarda arandığını yazar.
+			return []TraceRow{}, 0, false, nil
 		}
 	}
 	// v0.10.307 — Operator-reported: Errors + attribute filtresi + servis ham

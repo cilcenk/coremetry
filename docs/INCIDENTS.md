@@ -236,3 +236,5 @@ countIf); arama yokken WHERE'de kalır (terfi kolonu / kvh indeksi budar).
 Teşhis sayımı da trace düzeyi. Ders: **bir yüzeyde gösterilen değer hangi
 düzeydense filtre de o düzeyde sorulmalı**; aksi hâlde ekran "var" der,
 sorgu "yok" der ve ikisi de haklıdır.
+v0.10.349: Aggregated sekmesi aynı şekle sahipti (çip WHERE, arama iç
+HAVING) — `aggregateChipHaving` ile aynı taşıma; arama yokken SQL bayt-bayt aynı.

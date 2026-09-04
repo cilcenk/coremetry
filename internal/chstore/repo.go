@@ -1864,10 +1864,10 @@ type TraceFilter struct {
 	// IdentityHit — v0.10.342 OUT param: kimlik-önce aday yolu denendiyse
 	// sonucu (anahtarlar, tutan anahtar, trace sayısı). nil = ilgilenmiyor.
 	IdentityHit *IdentityHit
-	MinMs               float64
-	MaxMs               float64
-	AttrKey             string
-	AttrVal             string
+	MinMs       float64
+	MaxMs       float64
+	AttrKey     string
+	AttrVal     string
 	// ExtraAttrs is the user-selected list of attribute keys whose
 	// values should be projected into TraceRow.Extras. Each key picks
 	// up the first non-empty value among span-attributes and resource-
@@ -3580,6 +3580,22 @@ func hasErrorSpanLocal(f TraceFilter) bool {
 
 // aggHasErrorSpanLocal — AggregateFilter için aynı kural (search / attr
 // filtreleri yoksa WHERE, varsa iç HAVING).
+// aggregateChipHaving — v0.10.349 SAF: arama + çip birlikteyse çipler iç
+// HAVING'e (`AND countIf(<yüklem>) > 0` …) taşınır ve WHERE'den çıkar;
+// arama yokken (false, "", nil) → WHERE davranışı aynen. traceLevelFilterHaving
+// ile aynı derleme (terfi haritası, OR kökü tek countIf).
+func aggregateChipHaving(f AggregateFilter) (bool, string, []any) {
+	tf := TraceFilter{Search: f.Search, Filters: f.Filters, FilterRoot: f.FilterRoot}
+	if !filtersTraceLevel(tf) {
+		return false, "", nil
+	}
+	parts, args := traceLevelFilterHaving(tf)
+	if len(parts) == 0 {
+		return true, "", nil
+	}
+	return true, " AND " + strings.Join(parts, " AND "), args
+}
+
 func aggHasErrorSpanLocal(f AggregateFilter) bool {
 	if !f.HasError {
 		return false
@@ -4093,10 +4109,16 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	// kolon varsa o, yoksa 6-anahtar derive — /services, /endpoints ve
 	// /databases ile AYNI soru. BOŞKEN conjunct YOK (H15).
 	addClusterConjunct(&wc, s.clusterExpr(), f.Cluster)
-	if f.FilterRoot != nil {
-		ApplyFilterGroup(&wc, *f.FilterRoot)
-	} else {
-		ApplyFilters(&wc, f.Filters)
+	// v0.10.349 — 341'in ikizi: arama iç HAVING'de TRACE düzeyi, çip WHERE'de
+	// SPAN düzeyi → aynı span tuzağı. Arama varken çipler iç HAVING'e
+	// (aggregateChipHaving); arama yokken WHERE (indeks budaması, aynı SQL).
+	chipTraceLevel, chipHaving, chipArgs := aggregateChipHaving(f)
+	if !chipTraceLevel {
+		if f.FilterRoot != nil {
+			ApplyFilterGroup(&wc, *f.FilterRoot)
+		} else {
+			ApplyFilters(&wc, f.Filters)
+		}
 	}
 
 	// Pick the grouping expression. Every form uses anyIf to grab
@@ -4166,6 +4188,7 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	if f.HasError && !aggHasErrorSpanLocal(f) {
 		searchHaving += " AND " + traceHasErrorHaving // v0.10.258 — trace-düzeyi hata
 	}
+	searchHaving += chipHaving // v0.10.349 — çipler trace düzeyi (arama varken)
 	sql := `
 		SELECT group_key, group_extra,
 		       count()                                   AS trace_count,
@@ -4204,6 +4227,7 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	args = append(args, wc.args...)
 	// v0.8.x — one bind per search token in the inner HAVING (ALL-tokens).
 	args = append(args, searchArgs...)
+	args = append(args, chipArgs...) // v0.10.349 — iç HAVING'deki çip yüklemleri (metin sırasıyla)
 	postFilter := ""
 	if f.MinMs > 0 {
 		postFilter += " AND avg_ms >= ?"

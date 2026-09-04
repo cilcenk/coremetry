@@ -1278,8 +1278,11 @@ tbody td { padding: 9px 12px; max-width: 320px; white-space: nowrap; overflow: h
 /* v0.10.338 — Operator-reported: çekmecedeki tam kimlik hücreleri (revizyon,
    imaj repo:tag) yukarıdaki genel nowrap+320px kuralıyla "…" oluyordu; okunması
    gereken tam metin kırpılamaz. Hücre sarar, kırpmaz. */
-/* v0.10.354 — Topbar sayfa eylemleri (Trace: Compare/Logs/Share/Export): arama ile zaman seçici arasında. */
-.topbar-actions { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+/* v0.10.360 (operatör: "en yukarı koy demedim") — sayfa eylemleri breadcrumb
+   satırının SAĞINDA, gri alanda (Trace: Compare/Logs/Share/Export + kritik yol). */
+.crumbs-row { display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-5); min-width: 0; }
+.crumbs-row > .crumbs { margin-bottom: 0; flex: 1 1 auto; min-width: 0; }
+.crumbs-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex-shrink: 0; }
 tbody td.td-full { max-width: none; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; word-break: break-all; }
 /* Satır = link (v0.10.216, operatör-bildirimli: "trace'e orta tuşla basınca
    yeni sekmede açılsın"). Hücre `td.row-cell` padding'ini bırakır, içindeki

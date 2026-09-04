@@ -382,3 +382,58 @@ func TestExceptionVolumeGateIsConfigurable(t *testing.T) {
 		t.Errorf("eşik 200'e indi ama 300 olay hâlâ P1 değil (%s) — vida bağlı değil", prio)
 	}
 }
+
+// v0.10.364 — operatör (2026-09-04): "Kısa sürede 5.8K ve 125.6K'lık 2
+// exception var ama P1 olmamış." Kural iki grubu da P1 sayıyor; eksik olan
+// Exceptions LİSTESİNİN önceliği hiç taşımamasıydı (yalnız Triage Inbox
+// hesaplıyordu). Bu test kuralı iki gerçek satırla çiviler; aşağıdaki pin
+// liste ucunun kuralı gerçekten çağırdığını çiviler.
+func TestExceptionPriorityOperatorBursts20260904(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name string
+		occ  uint64
+		span time.Duration
+		want []string
+	}{
+		{"5.8K / 4dk", 5800, 4 * time.Minute, []string{"5,800", "4dk"}},
+		{"125.6K / 56dk", 125600, 56 * time.Minute, []string{"125,600", "56dk"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			last := now.Add(-30 * time.Minute)
+			g := chstore.ExceptionGroup{
+				State:       "new",
+				FirstSeen:   last.Add(-tc.span).UnixNano(),
+				LastSeen:    last.UnixNano(),
+				Occurrences: tc.occ,
+			}
+			prio, reason := exceptionPriority(g)
+			if prio != "P1" {
+				t.Fatalf("%s P1 olmalıydı, alınan %s (%s)", tc.name, prio, reason)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(reason, w) {
+					t.Fatalf("gerekçe %q içermeli, alınan %q", w, reason)
+				}
+			}
+		})
+	}
+}
+
+// Liste ucu (GET /api/exceptions) satır başına exceptionPriority çağırmalı —
+// "test edilmiş ama ulaşılamaz" sınıfı: kural yeşil, ekran boş.
+func TestListExceptionGroupsAttachesPriority(t *testing.T) {
+	src := readRepoFile(t, "api.go")
+	i := strings.Index(src, "func (s *Server) listExceptionGroups(")
+	if i < 0 {
+		t.Fatal("listExceptionGroups bulunamadı")
+	}
+	body := src[i:]
+	if j := strings.Index(body, "\nfunc "); j > 0 {
+		body = body[:j]
+	}
+	if !strings.Contains(body, "exceptionPriority(items[i])") {
+		t.Fatal("listExceptionGroups satır başına exceptionPriority(items[i]) çağırmalı (v0.10.364)")
+	}
+}

@@ -49,7 +49,14 @@ type ExceptionGroup struct {
 	// özeti (problems.ai_summary'nin ikizi). Boş = henüz üretilmedi.
 	// ReplacingMergeTree tam-satır replace: HER yazma yolu bu alanı
 	// taşımak ZORUNDA (Scan'e dahil → stale-sweep/state-flip korur).
-	AISummary string `json:"aiSummary,omitempty"`
+	// Priority / PriorityReason — v0.10.364 (operatör: "5.8K ve 125.6K'lık
+	// iki exception P1 olmamış"): öncelik yalnız Triage Inbox'a katlanırken
+	// hesaplanıyordu; Exceptions sayfası göstermiyordu. Liste ucu artık
+	// satır başına doldurur (api.exceptionPriority — saf, CH okuması yok).
+	// Boş = hesaplanmadı (tekil GET, eski istemci).
+	Priority       string `json:"priority,omitempty"`
+	PriorityReason string `json:"priorityReason,omitempty"`
+	AISummary      string `json:"aiSummary,omitempty"`
 	// AISummaryAt (v0.9.530) — özetin ÜRETİLDİĞİ an, unix-ns.
 	// problems.AISummaryAt'in ikizi. Özet tek yazımlıktır ama grubun
 	// gövdesi (mesaj, occurrences) altından değişmeye devam eder; yaş

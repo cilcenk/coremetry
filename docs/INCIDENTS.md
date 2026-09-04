@@ -281,3 +281,19 @@ route'ları sıralar, (2) hata/avg/p50/p95/p99/sparkline yalnız ilk N route iç
 `pool`/`poolCapped`. Ders: "her seri için her şey" sorgusu N ile değil
 seri sayısıyla ölçeklenir; listeleme = ucuz sıralama + pahalı ayrıntı yalnız
 görünen küme için (error-first / identity-first aday deseninin aynısı).
+
+### v0.10.364 — Exceptions listesi P1 göstermiyordu: kural vardı, satır taşımıyordu
+
+Operator-reported (prod): 4 dakikada 5.8K ve 56 dakikada 125.6K olaylık iki
+exception grubu "P1 olmamış". Kural (`exceptionPriorityAt`: ≥1000 olay ve
+≥100/dk = patlama → P1) ikisini de P1 sayıyordu; hesap yalnız Triage
+Inbox'a katlanırken (`exceptionToInbox`) yapılıyordu. `GET /api/exceptions`
+`chstore.ExceptionGroup` satırlarını öncelik alanı olmadan döndürüyor,
+Exceptions sayfası da hiç çizmiyordu — operatör "P1 olmadı" gördü, aslında
+"P1 hiç gösterilmiyor"du. Çare: satıra `priority`/`priorityReason`
+(liste ucu doldurur, saf hesap, CH okuması yok) + STATE yanında rozet
+(tooltip = gerekçe). `PriorityBadge` Inbox'tan `ui/`'a taşındı. Aynı sürüm:
+tablonun sabit px bütçesi (150/150/160/240) yüksek zoom'da sığmıyordu →
+124/124/120/208. Ders: "kural yeşil" ≠ "kural görünür" — bir yüzey kuralı
+göstermiyorsa operatör için kural yoktur; liste ucunun kuralı çağırdığını
+kaynak-pin testi çiviler (`TestListExceptionGroupsAttachesPriority`).

@@ -3651,6 +3651,9 @@ export interface ExceptionGroup {
   type: string;
   message: string;
   service: string;
+  /** v0.10.364 — liste ucu doldurur (Triage Inbox kuralı); tekil GET'te yok. */
+  priority?: 'P1' | 'P2' | 'P3';
+  priorityReason?: string;
   state: ExceptionGroupState;
   assignee: string;       // user id; '' = unassigned
   firstSeen: number;      // unix ns

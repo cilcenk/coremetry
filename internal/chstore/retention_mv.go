@@ -53,9 +53,22 @@ func mvRetentionTargets(spansDays int) []mvRetentionTarget {
 	return out
 }
 
-// mvDropPartitionSQL — SAF; inner adı backtick'li gelir (innerName).
-func mvDropPartitionSQL(inner, partition, onCluster string) string {
-	return "ALTER TABLE " + inner + onCluster + " DROP PARTITION " + partition
+// mvDropPartitionSQL — SAF.
+//
+// v0.10.355 — Operator-reported (self-telemetri, coremetry-worker ERROR
+// span'i): `ALTER TABLE .inner_id.<uuid> ON CLUSTER … DROP PARTITION
+// 2026-08-16` → code 62 "Syntax error at position 13 (.)". İki sözleşme
+// kırığı: (1) yorum "inner adı backtick'li gelir" diyordu, mvInnerTablesCluster
+// ÇIPLAK ad döndürüyor (exemplar TTL yolu kendi backtick'ini basıyor) —
+// isim sözleşme ilan etti, kimse zorlamadı; (2) partition DEĞERİ
+// (`2026-08-16`) tırnaksız gömülüyordu — Date anahtarında geçersiz.
+// Şimdi: ad burada backtick'lenir (zaten backtick'li gelirse çift olmaz),
+// partition `partition_id` ile `DROP PARTITION ID '…'` — anahtar tipinden
+// bağımsız. MV saklama temizliği v0.5.320'den beri bu şekilde hiç
+// çalışmamıştı; MV'ler yalnız satır TTL'iyle (merge tabanlı, geç) küçülüyordu.
+func mvDropPartitionSQL(inner, partitionID, onCluster string) string {
+	name := "`" + strings.Trim(inner, "`") + "`"
+	return "ALTER TABLE " + name + onCluster + " DROP PARTITION ID '" + strings.ReplaceAll(partitionID, "'", "") + "'"
 }
 
 // stripBackticks — system.parts.table backtick'siz saklar.
@@ -88,20 +101,22 @@ func (s *Store) enforceMVRetention(ctx context.Context, spansDays int) {
 	}
 }
 
-// mvOldPartitions — max_time'ı cutoff'un altında kalan partition'lar; küme
+// mvOldPartitions — max_time'ı cutoff'un altında kalan partition ID'leri; küme
 // kipinde tüm host'lar taranır (inner uuid yalnız sahibinde olabilir).
 func (s *Store) mvOldPartitions(ctx context.Context, table string, cutoff time.Time) ([]string, error) {
 	src := "system.parts"
 	if s.clusterMode() {
 		src = fmt.Sprintf("clusterAllReplicas('%s', system.parts)", s.cfg.ClusterName)
 	}
+	// v0.10.355 — partition_id (`20260816`), partition değeri (`2026-08-16`) değil:
+	// DROP PARTITION ID '…' her anahtar tipinde geçerli.
 	rows, err := s.conn.Query(ctx, `
-		SELECT partition
+		SELECT partition_id
 		FROM `+src+`
 		WHERE database = currentDatabase() AND table = ? AND active = 1
-		GROUP BY partition
+		GROUP BY partition_id
 		HAVING toUnixTimestamp64Nano(toDateTime64(max(max_time), 9)) < ?
-		ORDER BY partition ASC
+		ORDER BY partition_id ASC
 		LIMIT 400
 		SETTINGS max_execution_time = 5`, table, cutoff.UnixNano())
 	if err != nil {

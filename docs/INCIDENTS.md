@@ -238,3 +238,19 @@ düzeydense filtre de o düzeyde sorulmalı**; aksi hâlde ekran "var" der,
 sorgu "yok" der ve ikisi de haklıdır.
 v0.10.349: Aggregated sekmesi aynı şekle sahipti (çip WHERE, arama iç
 HAVING) — `aggregateChipHaving` ile aynı taşıma; arama yokken SQL bayt-bayt aynı.
+
+### v0.10.355 — MV saklama temizliği hiç çalışmamış: "inner adı backtick'li gelir" yalanı
+
+Self-telemetri yakaladı: coremetry-worker'da `clickhouse.exec` ERROR span'i,
+`ALTER TABLE .inner_id.<uuid> ON CLUSTER … DROP PARTITION 2026-08-16` →
+code 62 "Syntax error at position 13". İki sözleşme kırığı aynı satırda:
+`mvDropPartitionSQL`'in yorumu "inner adı backtick'li gelir" diyordu, testi
+de backtick'li girdiyle geçiyordu; ama çağıran `mvInnerTablesCluster` ÇIPLAK
+`.inner_id.<uuid>` döndürüyor (exemplar TTL yolu kendi backtick'ini basar).
+Ayrıca `mvOldPartitions` partition DEĞERİNİ (`2026-08-16`) okuyup tırnaksız
+gömüyordu — Date anahtarında geçersiz. Sonuç: v0.5.320'den beri MV
+partition'ları enforcer'la hiç düşmedi, yalnız merge-tabanlı satır TTL'iyle
+küçüldü; hata saatte bir loga yazıldı, kimse okumadı.
+Ders: builder testi girdinin GERÇEK üreticisiyle beslenmeli — "isim sözleşme
+ilan eder, kimse zorlamaz" (feedback-names-assert-contracts). Düzeltme:
+builder adı kendisi backtick'ler, `partition_id` + `DROP PARTITION ID '…'`.

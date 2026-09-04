@@ -1,6 +1,9 @@
 package chstore
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // v0.5.326 — locks the retention horizon parser + humanBytes
 // formatter introduced by v0.5.320. Bad horizon parsing here
@@ -99,8 +102,27 @@ func TestMVRetentionTargets(t *testing.T) {
 	if len(off) != 2 {
 		t.Errorf("spans retention kapalıyken yalnız spanmetrics: %+v", off)
 	}
-	if got := mvDropPartitionSQL("`.inner_id.abc`", "20260901", " ON CLUSTER `c`"); got != "ALTER TABLE `.inner_id.abc` ON CLUSTER `c` DROP PARTITION 20260901" {
-		t.Errorf("sql: %s", got)
+	// v0.10.355 — Operator-reported (self-telemetri ERROR span'i): ad ÇIPLAK
+	// geliyordu (mvInnerTablesCluster), builder backtick bekliyordu → code 62;
+	// partition değeri (2026-08-16) tırnaksızdı. Şimdi builder kendisi
+	// backtick'ler (çift olmaz) ve `DROP PARTITION ID '…'` üretir.
+	wantSQL := "ALTER TABLE `.inner_id.abc` ON CLUSTER `c` DROP PARTITION ID '20260901'"
+	if got := mvDropPartitionSQL(".inner_id.abc", "20260901", " ON CLUSTER `c`"); got != wantSQL {
+		t.Errorf("çıplak ad: %s", got)
+	}
+	if got := mvDropPartitionSQL("`.inner_id.abc`", "20260901", " ON CLUSTER `c`"); got != wantSQL {
+		t.Errorf("backtick'li ad çiftlenmemeli: %s", got)
+	}
+	if got := mvDropPartitionSQL(".inner_id.abc", "2026-08-16'", ""); got != "ALTER TABLE `.inner_id.abc` DROP PARTITION ID '2026-08-16'" {
+		t.Errorf("id tırnaklı, içindeki tırnak temizlenir: %s", got)
+	}
+	// mvOldPartitions partition_id okur (partition DEĞERİ değil) — kaynak pini.
+	src, rerr := readRepoFile("retention_mv.go")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(src, "SELECT partition_id") || strings.Contains(src, "SELECT partition\n") {
+		t.Error("mvOldPartitions partition_id okumalı")
 	}
 	if stripBackticks("`.inner_id.abc`") != ".inner_id.abc" {
 		t.Error("backtick temizliği")

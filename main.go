@@ -1050,6 +1050,7 @@ func main() {
 		// LeaderTTL(30 s) = 90 s kira / 30 s yenileme; liderlik alınır alınmaz
 		// ilk tik (v0.9.730 dersi), sonra 5 s granülde kaynak aralığı.
 		influxWorker = influx.NewWorker(influxSvc, store)
+		influxWorker.SetStatusStore(store) // v0.10.333 — durum system_settings'e, her pod okur
 		// v0.10.228 (D3) — dış seri anomalisi: her BAŞARILI poll'dan sonra
 		// sorgu başına tarama (internal/anomaly/external.go); Problem
 		// kind=external, kanıt zinciri D4'te.

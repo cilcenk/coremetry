@@ -204,6 +204,8 @@ type SourceStatus struct {
 type Worker struct {
 	svc  *Service
 	sink MetricSink
+	// statusStore — v0.10.333: paylaşılan işçi durumu (worker_status.go); nil = yayın yok.
+	statusStore StatusPublisher
 
 	// enjekte edilebilir (testler): saat + kaynak istemcisi.
 	now         func() time.Time
@@ -278,6 +280,7 @@ func (w *Worker) Run(ctx context.Context, isLeader func() bool) {
 func (w *Worker) Tick(ctx context.Context) {
 	cfg := w.svc.CurrentSettings()
 	now := w.now()
+	polled := false
 	for _, src := range cfg.Sources {
 		if !src.Enabled || src.ID == "" {
 			continue
@@ -293,6 +296,7 @@ func (w *Worker) Tick(ctx context.Context) {
 			interval = DefaultIntervalSec * time.Second
 		}
 		st := w.pollSource(ctx, src, now)
+		polled = true
 		st.NextDueAt = now.Add(interval).UnixMilli()
 		if st.LastError == "" && w.hook != nil {
 			for _, qc := range src.Queries {
@@ -319,6 +323,9 @@ func (w *Worker) Tick(ctx context.Context) {
 		}
 	}
 	w.mu.Unlock()
+	if polled {
+		w.publishStatus(ctx, now) // v0.10.333 — durum her poll sonrası paylaşılır
+	}
 }
 
 func (w *Worker) pollSource(ctx context.Context, src SourceConfig, now time.Time) SourceStatus {

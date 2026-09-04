@@ -1512,6 +1512,10 @@ export interface InfluxStatusSource {
 export interface InfluxStatusPayload {
   sources: InfluxStatusSource[];
   workerOnThisPod: boolean;
+  // v0.10.333 — işçi başka pod'daysa paylaşılan durumdan okundu.
+  workerRemote?: boolean;
+  workerPod?: string;
+  workerUpdatedAt?: number; // unix ms
   generatedAt: number;
 }
 

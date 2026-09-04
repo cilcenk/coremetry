@@ -146,20 +146,20 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   // gibi OKUNMASIN (ES brownout'ta emin bir "No logs attached" basılıyordu);
   // total > 50 ise sayfa kısmidir.
   const [spanLogsMeta, setSpanLogsMeta] = useState<{ degraded?: string; failed?: boolean; total?: number }>({});
-  // v0.10.277 (Dilim 1e) — "bu span'in logları": varsayılan span kapsamı
-  // (trace_id + span_id, ES ve CH destekliyor — logstore.Filter.SpanID);
-  // tek tıkla tüm trace'e genişler. Audit §3.8: arayüz hazırdı, çağıran kullanmıyordu.
-  const [logsSpanScope, setLogsSpanScope] = useState(true);
-  const spanScoped = logsSpanScope && !!span.spanId;
+  // v0.10.332 (operatör: "tüm trace / bu span ayrımına gerek yok, eskisi gibi
+  // logun hepsini göster") — v0.10.277'nin span-kapsamı varsayılanı ve
+  // ayrım anahtarı GERİ ALINDI: çekmece trace'in TÜM loglarını gösterir.
+  // Span-kapsamlı okuma (logstore.Filter.SpanID) backend'de duruyor; UI'da
+  // bir daha sorulmadan açılmaz (memory: davranış değişikliğinde önce sor).
   useEffect(() => {
     if (!span.traceId) { setSpanLogs([]); setSpanLogsMeta({}); return; }
-    api.logs({ traceId: span.traceId, spanId: spanScoped ? span.spanId : undefined, from: logsFromBound, to: logsToBound, limit: 50 })
+    api.logs({ traceId: span.traceId, from: logsFromBound, to: logsToBound, limit: 50 })
       .then(r => {
         setSpanLogs(r.logs ?? []);
         setSpanLogsMeta({ degraded: r.degraded ? (r.reason || 'log backend slow/unreachable') : undefined, total: r.total });
       })
       .catch(() => { setSpanLogs([]); setSpanLogsMeta({ failed: true }); });
-  }, [span.traceId, span.spanId, spanScoped, logsFromBound, logsToBound]);
+  }, [span.traceId, logsFromBound, logsToBound]);
 
   // Baseline p50 — the 24h leading up to this span, for the same
   // service+operation, off the RED metrics path (operation_summary_5m
@@ -471,15 +471,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
             {/* v0.9.853 — ns→ms dönüşümü artık tek üreticide
                 (lib/logsUrl.ts logsRangeParam); bu dosya doğru kopyaydı,
                 Trace.tsx'in hiç yoktu (K3). */}
-            {span.spanId && (
-              <span className="segmented" style={{ marginLeft: 8, fontSize: 10, fontWeight: 400 }}>
-                <button type="button" className={spanScoped ? 'active' : ''} onClick={e => { e.stopPropagation(); setLogsSpanScope(true); }}
-                  title="Yalnız bu span'in logları (trace_id + span_id)">bu span</button>
-                <button type="button" className={!spanScoped ? 'active' : ''} onClick={e => { e.stopPropagation(); setLogsSpanScope(false); }}
-                  title="Trace'in tüm logları">tüm trace</button>
-              </span>
-            )}
-            <Link to={logsHref({ window: logsLinkRange || null, q: span.traceId, spanId: spanScoped ? span.spanId : undefined })}
+            <Link to={logsHref({ window: logsLinkRange || null, q: span.traceId })}
               style={{ marginLeft: 8, fontSize: 10, fontWeight: 400, color: 'var(--accent2)' }}>
               open in Logs ↗
             </Link>
@@ -491,7 +483,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
                 ? '⚠ Log backend\'e ulaşılamadı — log olup olmadığı bilinmiyor'
                 : spanLogsMeta.degraded
                   ? `⚠ Kısmi sonuç (${spanLogsMeta.degraded}) — log olup olmadığı bilinmiyor`
-                  : spanScoped ? 'Bu span\'a bağlı log yok — "tüm trace" ile genişlet' : 'No logs attached to this trace'}
+                  : 'No logs attached to this trace'}
             </div>
           ) : (
             spanLogs.map(l => (

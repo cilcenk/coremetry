@@ -20,6 +20,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -120,6 +121,95 @@ type QueryProbe struct {
 	Sample    []map[string]string `json:"sample,omitempty"`
 	LatencyMs int64               `json:"latencyMs"`
 	Error     string              `json:"error,omitempty"`
+	// v0.10.335 — sıfır satırda İKİNCİ deneme: aynı sorgu 24 saatlik pencerede.
+	// WideWindow doluysa deneme koştu; Hint operatöre gecikme mi / ad
+	// uyuşmazlığı mı olduğunu söyler (prod olayı: işçi koşuyor, hata yok,
+	// "0 satır → 0 nokta", kart sebebi ayırt edemiyordu).
+	WideWindow string `json:"wideWindow,omitempty"`
+	WideRows   int    `json:"wideRows,omitempty"`
+	WideNewest string `json:"wideNewest,omitempty"` // en yeni _time (RFC3339, UTC); sum() gibi _time'sız sonuçta boş
+	WideError  string `json:"wideError,omitempty"`
+	Hint       string `json:"hint,omitempty"`
+}
+
+// wideProbeWindow — sıfır-satır ikinci denemesinin penceresi. 24 saat: gecikmeli
+// yazan kaynağı (dakikalar) ve seyrek olayı (saatler) tek denemede yakalar;
+// ad uyuşmazlığında 24 saat de boş döner — ayrım tam bu.
+const wideProbeWindow = "24h"
+
+// wideRangeRe — yalnız GÖRELİ başlangıç: `range(start: -2m`. Mutlak zaman ya
+// da {{from}} placeholder'ı (kanıt sorgusu) eşleşmez → deneme atlanır.
+var wideRangeRe = regexp.MustCompile(`range\(\s*start:\s*-\d+(?:ns|us|µs|ms|s|m|h|d|w|mo|y)\b`)
+
+// widenRange — SAF: ilk göreli `range(start: -N<u>` ifadesini 24 saate
+// genişletir; göreli başlangıç yoksa dokunmaz, false döner.
+func widenRange(flux string) (string, bool) {
+	loc := wideRangeRe.FindStringIndex(flux)
+	if loc == nil {
+		return flux, false
+	}
+	return flux[:loc[0]] + "range(start: -" + wideProbeWindow + flux[loc[1]:], true
+}
+
+// newestTime — kayıtların en büyük `_time`'ı (RFC3339 UTC); yoksa "".
+func newestTime(recs []Record) string {
+	var best time.Time
+	for _, r := range recs {
+		if t := recordTime(r); t.After(best) {
+			best = t
+		}
+	}
+	if best.IsZero() {
+		return ""
+	}
+	return best.UTC().Format(time.RFC3339)
+}
+
+// emptyHint — SAF: sıfır-satır teşhisi. Geniş pencere de boşsa adlar,
+// doluysa pencere/gecikme. Deneme koşmadıysa "" (söyleyecek kanıt yok).
+func emptyHint(p QueryProbe) string {
+	switch {
+	case p.WideWindow == "":
+		return ""
+	case p.WideError != "":
+		return "Geniş pencere denemesi başarısız: " + p.WideError
+	case p.WideRows > 0:
+		h := fmt.Sprintf("Sorgu ve adlar doğru: son %s içinde %d satır var ama poll penceresi boş. "+
+			"Kaynak gecikmeli yazıyor ya da bu aralıkta olay yok — range(start: -N…) penceresini kaynağın yazım gecikmesinden büyük tut.",
+			p.WideWindow, p.WideRows)
+		if p.WideNewest != "" {
+			h += " En yeni _time: " + p.WideNewest + "."
+		}
+		return h
+	default:
+		return fmt.Sprintf("Son %s içinde de satır yok: bucket ve token doğru ama _measurement / _field / tag adları "+
+			"(büyük-küçük harf duyarlı) eşleşmiyor olabilir — aynı sorguyu Influx Data Explorer'da doğrula.", p.WideWindow)
+	}
+}
+
+// wideProbe — sıfır satır dönen sorguyu 24 saatlik pencerede bir kez daha
+// dener (limit 20). Sonuç p'ye yazılır; hata Test'i başarısız SAYMAZ
+// (asıl sorgu çalıştı), yalnız Hint'e düşer.
+func wideProbe(ctx context.Context, q QueryAPI, flux string, p *QueryProbe) {
+	wide, ok := widenRange(flux)
+	if !ok {
+		return
+	}
+	p.WideWindow = wideProbeWindow
+	recs, err := q.Query(ctx, strings.TrimRight(wide, " \t\r\n")+"\n  |> limit(n: 20)")
+	if err != nil {
+		p.WideError = err.Error()
+	} else {
+		p.WideRows = len(recs)
+		p.WideNewest = newestTime(recs)
+		if len(p.Columns) == 0 {
+			p.Columns = columnsOf(recs)
+		}
+		if len(p.Sample) == 0 {
+			p.Sample = sampleOf(recs, 3)
+		}
+	}
+	p.Hint = emptyHint(*p)
 }
 
 // TestResult — POST /api/settings/influx/test cevabı. Bağlantı denemesinin
@@ -157,6 +247,9 @@ func (s *Service) Test(ctx context.Context, src SourceConfig) TestResult {
 			p.Rows = len(recs)
 			p.Columns = columnsOf(recs)
 			p.Sample = sampleOf(recs, 3)
+			if len(recs) == 0 {
+				wideProbe(ctx, q, qc.Flux, &p) // v0.10.335 — boşluğun sebebini ayırt et
+			}
 		}
 		res.Queries = append(res.Queries, p)
 	}

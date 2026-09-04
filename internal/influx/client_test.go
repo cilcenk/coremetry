@@ -120,3 +120,104 @@ func TestServiceTest_ProbesEachQuery(t *testing.T) {
 		t.Fatalf("unresolved token must fail fast: %+v", res)
 	}
 }
+
+// v0.10.335 — sıfır satır teşhisi. Prod olayı: işçi koşuyor, hata yok,
+// "0 satır → 0 nokta"; kart gecikme mi / ad uyuşmazlığı mı söyleyemiyordu.
+// Test(): asıl sorgu boş dönerse aynı sorgu 24 saatlik pencerede bir kez
+// daha koşar (limit 20) ve Hint sebebi ayırt eder.
+func TestWidenRange(t *testing.T) {
+	cases := []struct {
+		in, want string
+		ok       bool
+	}{
+		{`from(b) |> range(start: -2m) |> sum()`, `from(b) |> range(start: -24h) |> sum()`, true},
+		{`range(start: -5mo)`, `range(start: -24h)`, true},
+		{`range( start:  -30s, stop: now())`, `range(start: -24h, stop: now())`, true},
+		{`range(start: -1h) |> x |> range(start: -2m)`, `range(start: -24h) |> x |> range(start: -2m)`, true}, // yalnız ilki
+		{`range(start: 2026-09-01T00:00:00Z)`, `range(start: 2026-09-01T00:00:00Z)`, false},
+		{`range(start: {{from}}, stop: {{to}})`, `range(start: {{from}}, stop: {{to}})`, false},
+	}
+	for _, c := range cases {
+		got, ok := widenRange(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("widenRange(%q) = %q,%v want %q,%v", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestServiceTest_WideProbeOnEmpty(t *testing.T) {
+	var queries []string
+	wideCSV := sampleCSV
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query string `json:"query"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		queries = append(queries, body.Query)
+		w.Header().Set("Content-Type", "text/csv")
+		if strings.Contains(body.Query, "range(start: -24h)") {
+			io.WriteString(w, wideCSV)
+			return
+		}
+		io.WriteString(w, "") // poll penceresi boş
+	}))
+	defer srv.Close()
+	svc := New()
+	svc.getenv = func(k string) string {
+		if k == "COREMETRY_INFLUX_TOKEN_GG" {
+			return "tok"
+		}
+		return ""
+	}
+	src := validSource()
+	src.URL = srv.URL
+
+	res := svc.Test(context.Background(), src)
+	if !res.OK || len(res.Queries) != 1 {
+		t.Fatalf("test result: %+v", res)
+	}
+	p := res.Queries[0]
+	if p.Rows != 0 || p.Error != "" {
+		t.Fatalf("asıl sorgu boş dönmeli, hata yok: %+v", p)
+	}
+	if p.WideWindow != "24h" || p.WideRows != 3 || p.WideNewest != "2026-09-01T10:02:00Z" || p.WideError != "" {
+		t.Fatalf("geniş deneme: %+v", p)
+	}
+	if !strings.Contains(p.Hint, "gecikmeli") || !strings.Contains(p.Hint, "2026-09-01T10:02:00Z") {
+		t.Fatalf("gecikme ipucu bekleniyordu: %q", p.Hint)
+	}
+	if len(p.Sample) == 0 || len(p.Columns) == 0 {
+		t.Fatalf("geniş denemenin örneği operatöre gösterilmeli: %+v", p)
+	}
+	if len(queries) != 2 || !strings.Contains(queries[0], "range(start: -2m)") || !strings.HasSuffix(strings.TrimSpace(queries[1]), "|> limit(n: 20)") {
+		t.Fatalf("iki sorgu bekleniyordu (asıl -2m, sonra -24h + limit): %q", queries)
+	}
+
+	// Geniş pencere de boş → ad uyuşmazlığı ipucu.
+	wideCSV = ""
+	queries = nil
+	res = svc.Test(context.Background(), src)
+	p = res.Queries[0]
+	if !res.OK || p.WideWindow != "24h" || p.WideRows != 0 || !strings.Contains(p.Hint, "_measurement") {
+		t.Fatalf("ad uyuşmazlığı ipucu bekleniyordu: %+v", p)
+	}
+
+	// Satır varsa geniş deneme HİÇ koşmaz.
+	wideCSV = sampleCSV
+	queries = nil
+	src.Queries[0].Flux = `from(bucket: "b") |> range(start: -24h) |> sum()` // asıl sorgu zaten -24h → dolu döner
+	res = svc.Test(context.Background(), src)
+	p = res.Queries[0]
+	if p.Rows != 3 || p.WideWindow != "" || p.Hint != "" || len(queries) != 1 {
+		t.Fatalf("dolu sonuçta ikinci deneme olmamalı: %+v (%d sorgu)", p, len(queries))
+	}
+
+	// Göreli başlangıcı olmayan sorgu: deneme atlanır, ipucu yok.
+	src.Queries[0].Flux = `from(bucket: "b") |> range(start: 2026-09-01T00:00:00Z) |> sum()`
+	queries = nil
+	res = svc.Test(context.Background(), src)
+	p = res.Queries[0]
+	if p.Rows != 0 || p.WideWindow != "" || p.Hint != "" || len(queries) != 1 {
+		t.Fatalf("mutlak zamanlı sorguda deneme olmamalı (boş kalır, ipucu yok): %+v (%d sorgu)", p, len(queries))
+	}
+}

@@ -123,6 +123,8 @@ const PAGES: Result[] = [
 // doesn't re-fetch services every time.
 
 const TRACE_ID_RE = /^[a-f0-9]{16,32}$/i;
+// v0.10.350 — kimlik adayı: tek parça, ≥8, [A-Za-z0-9._:-] (sunucu identityToken ile aynı sınıf).
+const IDENTITY_RE = /^[A-Za-z0-9._:-]{8,}$/;
 
 // ——— Görünür kapı kanalı (v0.9.1019, G1) ————————————————————————
 //
@@ -413,6 +415,16 @@ export function CommandPalette() {
         // navHref üzerinden gidiyor ve pencere katmanı ORADA.
         { kind: 'trace', label: q, hint: 'Open trace', to: traceHref(q), score: 999 },
         ...scored,
+      ];
+    } else if (q && IDENTITY_RE.test(q) && /\d/.test(q)) {
+      // v0.10.350 (kuyruk 6) — kimlik değeri (function_id gibi): Traces
+      // sayfasının Trace ID kutusuna düşer, sunucu kimlik-önce yolunu koşar
+      // (v0.10.342-344: terfi/facet anahtarlarında eşitlik, değerdeki zaman
+      // çapa). Servis/sayfa eşleşmelerinin ALTINDA — bir servis adı da bu
+      // kalıba uyabilir; kimlik seçeneği kaybolmaz ama önüne geçmez.
+      scored = [
+        ...scored,
+        { kind: 'trace', label: q, hint: 'Kimlikle trace ara (function_id gibi)', to: `/traces?traceId=${encodeURIComponent(q)}`, score: 700 },
       ];
     }
     // v0.10.126 — endpoint'ler artık rankPaletteResults içinde (servisten

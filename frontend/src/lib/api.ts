@@ -2591,10 +2591,13 @@ export const api = {
   endpoints: (params: { from: number; to: number; service?: string; search?: string; cluster?: string; env?: string; limit?: number; compare?: 'prior'; groupBy?: 'signature'; sort?: string; dir?: 'asc' | 'desc';
     // v0.9.313 (brief N1) — which inbound surface. Omitted = http, the
     // pre-v0.9.313 table.
-    entry?: 'rpc' }, signal?: AbortSignal) =>
+    entry?: 'rpc';
+    // v0.10.336 — "Kaynak: metrik": aynı zarf, /api/endpoints/metric'ten
+    // (metricsource dikişi: CH | VM). Omitted = span türevli tablo.
+    src?: 'metric' }, signal?: AbortSignal) =>
     // v0.9.812 — zarf: satırların yanında sıralama havuzunun boyutu ve
     // havuzun dolup dolmadığı (EndpointsListResponse).
-    get<EndpointsListResponse | null>(`/api/endpoints?${qs(params)}`, signal),
+    get<EndpointsListResponse | null>(`${params.src === 'metric' ? '/api/endpoints/metric' : '/api/endpoints'}?${qs(params)}`, signal),
   // v0.8.360 — endpoint detail drill-down (Stage-2 slice E2). One
   // payload with per-section null tolerance; sig=1 marks path as an
   // ID-collapsed signature (the table's "group by shape" mode).

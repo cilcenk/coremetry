@@ -183,16 +183,26 @@ func TestBuildEndpointsMetric_Reduce(t *testing.T) {
 	if h := epRow(resp.Rows, "/health"); h == nil || h.Errors != 0 || h.ErrorRate != 0 || h.Calls != 60 {
 		t.Fatalf("/health: %+v", h)
 	}
-	// histogram → count rate; increase modu; 2 rate + 4 değer sorgusu
-	want := []string{"countrate:increase", "countrate:increase",
+	// v0.10.362 — iki aşama: sıralama (kaba adım, çağrı) + ayrıntı (çağrı,
+	// hata, 4 değer) yalnız ilk N route için. histogram → count rate; increase.
+	want := []string{"countrate:increase", "countrate:increase", "countrate:increase",
 		"query:avg:http_server_request_duration_seconds", "query:p50:http_server_request_duration_seconds",
 		"query:p95:http_server_request_duration_seconds", "query:p99:http_server_request_duration_seconds"}
 	if strings.Join(src.calls, ",") != strings.Join(want, ",") {
 		t.Fatalf("sorgu dizisi: %v", src.calls)
 	}
-	// hata filtresi 5xx, çapalı
-	if fs := src.filters[1]; len(fs) != 1 || fs[0].Key != "http.response.status_code" || fs[0].Op != "=~" || fs[0].Values[0] != "^5[0-9][0-9]$" {
+	// 1. aşama daraltmasız; 2. aşama route regex'i taşır; hata sorgusu 5xx + regex
+	if len(src.filters[0]) != 0 {
+		t.Fatalf("sıralama sorgusu çip taşımaz: %+v", src.filters[0])
+	}
+	if fs := src.filters[1]; len(fs) != 1 || fs[0].Key != "http.route" || fs[0].Op != "=~" || !strings.Contains(fs[0].Values[0], "/orders/8421") || !strings.Contains(fs[0].Values[0], "/health") {
+		t.Fatalf("ayrıntı route daraltması: %+v", fs)
+	}
+	if fs := src.filters[2]; len(fs) != 2 || fs[1].Key != "http.response.status_code" || fs[1].Op != "=~" || fs[1].Values[0] != "^5[0-9][0-9]$" {
 		t.Fatalf("hata filtresi: %+v", fs)
+	}
+	if resp.Pool != 3 || resp.PoolCapped {
+		t.Fatalf("havuz: %d capped=%v", resp.Pool, resp.PoolCapped)
 	}
 	if resp.ErrorsUnknown || resp.StatusKey != "http.response.status_code" || !resp.LatencyUnitKnown || resp.LatencyUnit != "s" {
 		t.Fatalf("zarf: %+v", resp)
@@ -301,10 +311,13 @@ func TestBuildEndpointsMetric_ErrorsUnknownAndUnit(t *testing.T) {
 	if !resp.ErrorsUnknown || resp.StatusKey != "" {
 		t.Fatalf("durum-kodu etiketi yok → hata bilinmiyor: %+v", resp)
 	}
-	for _, c := range src.calls {
-		if strings.HasPrefix(c, "countrate") && len(src.filters) > 1 {
-			t.Fatalf("hata sorgusu HİÇ atılmamalı: %v", src.calls)
+	for _, fs := range src.filters {
+		if hasStatusFilter(fs) {
+			t.Fatalf("hata sorgusu HİÇ atılmamalı: %+v", src.filters)
 		}
+	}
+	if len(src.calls) != 2+4 { // sıralama + ayrıntı çağrı + 4 değer
+		t.Fatalf("sorgu sayısı: %v", src.calls)
 	}
 	r := epRow(resp.Rows, "/orders/8421")
 	if r.Errors != 0 || r.Http5xx != 0 || r.ErrorRate != 0 {

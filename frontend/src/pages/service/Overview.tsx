@@ -231,20 +231,30 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // METRİKTEN: ?src=metric (Endpoints ile aynı anahtar, replace:true;
   // Copy link aynı kipi açar). Response time (avg) + Throughput karoları
   // zaten metrikten (v0.9.798); bu kip P50/P95/P99, Failure rate ve
-  // Failure rate grafiğini de /metric-red'den okur. Varsayılan span kalır.
+  // Failure rate grafiğini de /metric-red'den okur.
+  // v0.10.359 (operatör, prod ekranı: "bu hali ok, default olsun") — VARSAYILAN
+  // METRİK: ?src yoksa metrik denenir; metrik çözülemezse (metricExists=false)
+  // sayfa kendiliğinden span'a döner ve rozet söyler. ?src=span eski görünüm,
+  // ?src=metric zorlar. (VM dilim 4'ün Overview yarısı.)
   const [srcParams, setSrcParams] = useSearchParams();
-  const metricMode = srcParams.get('src') === 'metric';
+  const srcParam = srcParams.get('src');
+  const explicitSrc: boolean | null = srcParam === 'metric' ? true : srcParam === 'span' ? false : null;
+  const wantMetric = explicitSrc ?? true;
   const setMetricMode = (v: boolean) => setSrcParams(prev => {
     const next = new URLSearchParams(prev);
-    if (v) next.set('src', 'metric'); else next.delete('src');
+    next.set('src', v ? 'metric' : 'span');
     return next;
   }, { replace: true });
   const metricRedQ = useQuery({
     queryKey: ['service-metric-red', service, from, to, redMdp, env],
     queryFn: () => api.serviceMetricRED(service, from, to, redMdp, { rateWindow: 180, env: env || undefined }),
-    enabled: !!service && metricMode,
+    enabled: !!service && wantMetric,
     staleTime: 30_000,
   });
+  // Otomatik kipte metrik yoksa span: sorgu bitene dek metrik varsayılır
+  // (karolar zaten yükleniyor). Zorlanmış metrikte (?src=metric) hep metrik.
+  const metricMode = explicitSrc ?? (metricRedQ.data ? !!metricRedQ.data.metricExists : !metricRedQ.isError);
+  const metricAutoFellBack = explicitSrc === null && !!metricRedQ.data && !metricRedQ.data.metricExists;
   const metricRedGhostQ = useQuery({
     queryKey: ['service-metric-red', service, from - compareOff, to - compareOff, redMdp, env],
     queryFn: () => api.serviceMetricRED(service, from - compareOff, to - compareOff, redMdp, { rateWindow: 180, env: env || undefined }),
@@ -902,7 +912,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         <CompareToggle value={compare} onChange={setCompare} />
         {ghostEnabled && <span style={{ color: 'var(--text3)' }}>· hayalet yalnız Failure rate panelinde</span>}
         {metricMode && metricRedQ.isError && <span className="badge b-err" title={metricRedQ.error instanceof Error ? metricRedQ.error.message : ''}>metrik RED okunamadı</span>}
-        {metricMode && metricRedQ.data && !metricRedQ.data.metricExists && <span className="badge b-warn" title={metricRedQ.data.note}>metrik bulunamadı — karolar span\u2019a düştü</span>}
+        {(metricMode || metricAutoFellBack) && metricRedQ.data && !metricRedQ.data.metricExists && <span className="badge b-warn" title={metricRedQ.data.note}>metrik bulunamadı — span gösteriliyor</span>}
         {metricMode && metricRedQ.data?.metricExists && (metricRedQ.data.errorsUnknown || !metricRedQ.data.latencyUnitKnown || metricRedQ.data.envAmbiguous) && (
           <span className="badge b-warn" title={metricRedQ.data.note}>eksik: {[
             metricRedQ.data.errorsUnknown ? 'failure rate (durum etiketi yok)' : null,

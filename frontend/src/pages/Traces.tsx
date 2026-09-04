@@ -1753,7 +1753,7 @@ function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, exp
         <div style={{ marginTop: 10, fontSize: 11, color: matchingSpans > 0 ? 'var(--warn)' : 'var(--text3)' }}>
           {matchingSpans > 0
             ? <>Diagnostic: <b>{matchingSpans.toLocaleString()}</b> spans in this window match the filter, yet the trace list came back empty — the backend logged the query plan (<span className="mono">[traces] EMPTY list</span>).</>
-            : <>Diagnostic: no span in this window matches the filter at span level — the data or the predicate, not the list query.</>}
+            : <>Diagnostic: nothing in this window matches search + filters (trace-level: a span matching the search and spans matching each chip, anywhere in the trace) — the data or the predicate, not the list query.</>}
         </div>
       )}
       {explainHref && (

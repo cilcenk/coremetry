@@ -90,6 +90,26 @@ func countMatchingSpansSQL(whereSQL string) string {
 func (s *Store) CountMatchingSpans(ctx context.Context, f TraceFilter) (uint64, error) {
 	lf := f
 	lf.CandidateIDs = nil
+	// v0.10.341 — arama + çip: liste artık TRACE düzeyi (çipler HAVING'de);
+	// teşhis de aynı soruyu sormalı — "kaç trace eşleşiyor", "kaç span" değil.
+	if filtersTraceLevel(lf) {
+		wc := buildGetTracesWhere(lf, s.clusterExpr())
+		parts, hargs := traceLevelFilterHaving(lf)
+		if pred, pargs := searchPredicate(f.Search); pred != "" {
+			parts = append(parts, "countIf("+pred+") > 0")
+			hargs = append(hargs, pargs...)
+		}
+		if f.HasError && !hasErrorSpanLocal(f) {
+			parts = append(parts, traceHasErrorHaving)
+		}
+		t0 := time.Now()
+		sql := countMatchingTracesSQL(wc.sql(), " HAVING "+strings.Join(parts, " AND "))
+		args := append(append([]any{}, wc.args...), hargs...)
+		var n uint64
+		err := s.telemetryReadConn().QueryRow(ctx, sql, args...).Scan(&n)
+		f.Explain.step("empty-diag-trace-count", sql, args, t0, int(n), err)
+		return n, err
+	}
 	wc := buildGetTracesWhere(lf, s.clusterExpr())
 	if pred, pargs := searchPredicate(f.Search); pred != "" {
 		wc.add(pred, pargs...)
@@ -105,6 +125,11 @@ func (s *Store) CountMatchingSpans(ctx context.Context, f TraceFilter) (uint64, 
 	return n, err
 }
 
+// countMatchingTracesSQL — v0.10.341: trace-düzeyi teşhis sayımı.
+func countMatchingTracesSQL(whereSQL, havingSQL string) string {
+	return `SELECT count() FROM (SELECT trace_id FROM spans ` + whereSQL + ` GROUP BY trace_id` + havingSQL + `) SETTINGS max_execution_time = 10`
+}
+
 // v0.10.339 — terfi kolonu uyuşmazlık probu (promoted_attr.go §v0.10.339).
 // Burada, çünkü telemetri SELECT'i okuma havuzundan gider ve o çağrı yüzeyi
 // dosya bazında kapılı (conn_strategy_test.go); CountMatchingSpans ile aynı
@@ -116,6 +141,7 @@ func (s *Store) PromotedMismatch(ctx context.Context, f TraceFilter) ([]Promoted
 		lf := f
 		lf.CandidateIDs = nil
 		lf.NoPromoted = noPromoted
+		lf.forceFiltersInWhere = true // span-düzeyi prob: çip WHERE'de kalır (v0.10.341)
 		wc := buildGetTracesWhere(lf, s.clusterExpr())
 		if pred, pargs := searchPredicate(f.Search); pred != "" {
 			wc.add(pred, pargs...)

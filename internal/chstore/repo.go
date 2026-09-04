@@ -1858,10 +1858,13 @@ type TraceFilter struct {
 	// filtreler dizi yoluna derlenir (promoted_attr.go §v0.10.339: kolon
 	// "var ama bu değeri taşımıyor" onarımı — boş sonuçta dizi yoluna düşüş).
 	NoPromoted bool
-	MinMs      float64
-	MaxMs      float64
-	AttrKey    string
-	AttrVal    string
+	// forceFiltersInWhere — v0.10.341: yalnız span-düzeyi problar (terfi kolonu
+	// uyuşmazlığı) için; arama varken de çipleri WHERE'de tutar.
+	forceFiltersInWhere bool
+	MinMs               float64
+	MaxMs               float64
+	AttrKey             string
+	AttrVal             string
 	// ExtraAttrs is the user-selected list of attribute keys whose
 	// values should be projected into TraceRow.Extras. Each key picks
 	// up the first non-empty value among span-attributes and resource-
@@ -2113,10 +2116,21 @@ func buildGetTracesWhere(f TraceFilter, clusterExpr string) whereClause {
 	if f.NoPromoted {
 		pm = nil
 	}
-	if f.FilterRoot != nil {
-		ApplyFilterGroupWith(&wc, *f.FilterRoot, pm)
-	} else {
-		ApplyFiltersWith(&wc, f.Filters, pm)
+	// v0.10.341 — Operator-reported: servis + operasyon araması + HERHANGİ bir
+	// attribute çipi → boş. Arama HAVING'de TRACE düzeyi, çip WHERE'de SPAN
+	// düzeyi: aynı span hem aranan adı hem attribute'u taşımak zorundaydı;
+	// tablo ise attribute'u trace'in herhangi bir span'inden gösteriyor
+	// (traceExtrasProjection anyIf). v0.10.258'in Errors için yaptığı taşıma
+	// çiplere de uygulandı: arama varken çipler HAVING'e (countIf > 0, trace
+	// düzeyi — filtersTraceLevel / traceLevelFilterHaving). Arama yokken WHERE
+	// kalır (terfi kolonu / kvh indeksi budar). Span-düzeyi problar
+	// forceFiltersInWhere ile eski şekli ister.
+	if !filtersTraceLevel(f) || f.forceFiltersInWhere {
+		if f.FilterRoot != nil {
+			ApplyFilterGroupWith(&wc, *f.FilterRoot, pm)
+		} else {
+			ApplyFiltersWith(&wc, f.Filters, pm)
+		}
 	}
 	return wc
 }
@@ -2440,6 +2454,15 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		havingArgs = append(havingArgs, svc)
 		lightHavingParts = append(lightHavingParts, "countIf(service_name = ?) > 0")
 		lightHavingArgs = append(lightHavingArgs, svc)
+	}
+	// v0.10.341 — çipler arama varken TRACE düzeyi (bkz. buildGetTracesWhere).
+	if filtersTraceLevel(f) && !f.forceFiltersInWhere {
+		fparts, fargs := traceLevelFilterHaving(f)
+		havingParts = append(havingParts, fparts...)
+		havingArgs = append(havingArgs, fargs...)
+		lightHavingParts = append(lightHavingParts, fparts...)
+		lightHavingArgs = append(lightHavingArgs, fargs...)
+		f.Explain.note("filters=trace-level (search+%d chip, v0.10.341)", len(fparts))
 	}
 	// v0.5.369 — search at trace-level via HAVING so a trace
 	// matches as long as ANY of its spans hits the substring,
@@ -3459,6 +3482,53 @@ const traceHasErrorHaving = "max(if(status_code = 'error', 1, 0)) = 1"
 // kalabileceği durum: trace'in ÖTEKİ span'lerinin sağlayabileceği başka bir
 // yüklem yok (search / attr filtreleri / kök / RequireServices). Aksi hâlde
 // "aynı span hem hata hem aranan" tuzağı → HAVING. SAF; tablo-testli.
+// filtersTraceLevel — v0.10.341: arama + çip birlikteyse çipler HAVING'de
+// trace düzeyi. SAF.
+func filtersTraceLevel(f TraceFilter) bool {
+	if f.Search == "" {
+		return false
+	}
+	if len(f.Filters) > 0 {
+		return true
+	}
+	return f.FilterRoot != nil && f.FilterRoot.hasPredicate()
+}
+
+// traceLevelFilterHaving — çiplerin HAVING karşılığı: düz liste → çip başına
+// `countIf(<yüklem>) > 0` (her attribute farklı span'de olabilir); OR/iç
+// gruplu kök → tek `countIf(<grup>) > 0`. Terfi haritası WHERE ile aynı
+// (NoPromoted saygılı). Derlenemeyen çip atlanır ve loglanır (ApplyFilters
+// sözleşmesi; API sınırı zaten reddeder, v0.10.118).
+func traceLevelFilterHaving(f TraceFilter) ([]string, []any) {
+	pm := promotedCols()
+	if f.NoPromoted {
+		pm = nil
+	}
+	if f.FilterRoot != nil && !f.FilterRoot.isFlatAnd() {
+		sql, args := buildGroupFragmentWith(*f.FilterRoot, false, pm)
+		if sql == "" {
+			return nil, nil
+		}
+		return []string{"countIf(" + sql + ") > 0"}, args
+	}
+	filters := f.Filters
+	if f.FilterRoot != nil {
+		filters = f.FilterRoot.Filters
+	}
+	var parts []string
+	var args []any
+	for _, fe := range filters {
+		sql, fargs, err := fe.SQLWithPromoted(pm)
+		if err != nil || sql == "" {
+			log.Printf("[filter] DROPPED trace-level span filter key=%q op=%q values=%d: %v — result is UNFILTERED for this clause", fe.Key, fe.Op, len(fe.Values), err)
+			continue
+		}
+		parts = append(parts, "countIf("+sql+") > 0")
+		args = append(args, fargs...)
+	}
+	return parts, args
+}
+
 func hasErrorSpanLocal(f TraceFilter) bool {
 	if !f.HasError {
 		return false

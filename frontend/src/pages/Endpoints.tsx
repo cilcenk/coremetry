@@ -5,7 +5,6 @@ import { Topbar } from '@/components/Topbar';
 import { Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { ServicePicker } from '@/components/ServicePicker';
-import { Sparkline } from '@/components/Sparkline';
 import { api } from '@/lib/api';
 import { useEndpoints, useClusters } from '@/lib/queries';
 import { timeRangeToNs, rangeToSince, fmtNum } from '@/lib/utils';
@@ -121,7 +120,9 @@ const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
   // does it have a heavy TAIL (spread high, most calls fine)? Those two
   // have different causes and different fixes.
   { id: 'spread',    label: 'Spread',     sortValue: spreadOf, numeric: true, width: 76 },
-  { id: 'trend',     label: 'Trend',      width: 104 },
+  // v0.10.363 (operatör: "sparkline çıkmasın, buton olsun") — çağrı sparkline'ı
+  // yerine detay sayfasına düğme; grafikler detay sayfasının ilk şeyi.
+  { id: 'trend',     label: 'Detay',      width: 92 },
   // v0.8.573 — pinned to the right edge: the 14-column table overflows
   // laptop widths and the horizontal scrollbar sits below 2000 rows, so
   // the trailing drill-through was effectively invisible (operator
@@ -682,6 +683,11 @@ export default function EndpointsPage() {
         {rows === undefined && <TableSkeleton cols={8} wideFirst />}
         {rows === null && (
           <Empty icon="⚠" title="Failed to load endpoints">
+            {/* v0.10.362 — Operator-reported: "request errored" sebepsizdi;
+                sunucunun hata metni (süre aşımı / VM hatası) burada. */}
+            {rowsQ.error instanceof Error && rowsQ.error.message && (
+              <p className="mono" style={{ fontSize: 12, color: 'var(--text2)', wordBreak: 'break-word', margin: '6px 0' }}>{rowsQ.error.message}</p>
+            )}
             {/* v0.9.313 — the RPC surface needs the spanmetrics MV,
                 which a cluster or env filter disables. The backend
                 refuses that combination EXPLICITLY rather than running
@@ -873,21 +879,16 @@ export default function EndpointsPage() {
                           })()}
                         </td>}
                         {visibleCols.has('trend') && <td>
-                          <button
-                            type="button"
-                            // v0.9.839 — the sparkline modal is retired;
-                            // its three RED charts are the first thing
-                            // on the detail page, so this goes to the
-                            // same place the row does.
-                            onClick={() => openEndpointPage(r)}
-                            title="Open the endpoint detail page — calls / errors / p99 on a time axis"
-                            className="btn-bare"
-                          >
-                            <Sparkline values={r.sparkline ?? []}
-                              width={88} height={22}
-                              color={r.errorRate >= 5 ? 'var(--err)' : r.errorRate >= 1 ? 'var(--warn)' : undefined}
-                              title={`${r.calls.toLocaleString()} calls — click for detail`} />
-                          </button>
+                          {/* v0.10.363 — sparkline yerine düğme (Traces → ile aynı
+                              anatomi); detay sayfası çağrı/hata/p99 grafiklerini
+                              zaten ilk sırada gösteriyor. */}
+                          <Link to={endpointDetailHref(
+                              { service: r.service, path: r.path, sig: bySignature },
+                              { range: encodeRange(range), env: env || undefined, cluster: cluster || undefined, compare, entry: entry === 'rpc' ? 'rpc' : undefined },
+                            )} className="accent" style={{ fontSize: 11, padding: '2px 8px' }}
+                            title={`${r.calls.toLocaleString()} çağrı — detay: çağrı / hata / p99 zaman ekseninde`}>
+                            Detay →
+                          </Link>
                         </td>}
                         {visibleCols.has('traces') && <td className="sticky-right"
                             style={{

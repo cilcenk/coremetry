@@ -26,11 +26,10 @@ import { useCorrelatedLogs, spanHasError, traceLogWindow } from '@/lib/otel';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
 import { traceBackHref } from '@/lib/traceBackHref';
 import { SvcBadge } from '@/components/traces/shared';
-import type { LogRow, SpanRow, TimeRange, PivotAnchor, TraceAnalysis } from '@/lib/types';
+import type { LogRow, SpanRow, TimeRange, TraceAnalysis } from '@/lib/types';
 import { TraceWaterfall, TraceServiceBreakdown } from '@/components/TraceWaterfall';
 import { SpanDetail } from '@/components/SpanDetail';
 import { TraceHonesty } from '@/components/traces/TraceHonesty';
-import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer';
 // v0.8.550 — this file used to OWN the strongest of the three hand-rolled
 // clipboard copies (it alone fell back when writeText rejected). That
 // version is now lib/clipboard, and the two local functions are gone.
@@ -39,7 +38,6 @@ import { indexSpanLinks, linkedSpanIds } from '@/lib/spanLinks';
 import { traceHref } from '@/lib/traceHref';
 import { PageShell } from '@/components/ui/PageShell';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
-import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
 
 function TraceDetailInner() {
   // v0.10.219 — breadcrumb'ın "Traces" halkası: /traces satırının Link
@@ -99,10 +97,6 @@ function TraceDetailInner() {
   // Aşağıdaki span/tab yazıcısıyla AYNI efektte URL'e iniyor.
   const [groupSimilar, setGroupSimilar] = useState(
     () => searchParams.get('xn') === '1');
-  // Correlated Signals (task #6) — "Correlate ◆" opens the pivot drawer anchored
-  // on this trace, surfacing the METRICS lens (the anchor service's RED series)
-  // the Trace page doesn't otherwise show, alongside the trace + correlated logs.
-  const [correlateAnchor, setCorrelateAnchor] = useState<PivotAnchor | null>(null);
 
   // Trace-anchored log lookup window (Unix ns) — min(span.startTime)-1min ..
   // max(span.endTime)+1min. Bounds the trace→logs ES query to the trace's own
@@ -408,7 +402,9 @@ function TraceDetailInner() {
               <span className={`badge ${hasErr ? 'b-err' : 'b-ok'}`}>{hasErr ? 'ERROR' : 'OK'}</span>
               {errSpans > 0 && <span className="cell-hint">{errSpans} error span{errSpans === 1 ? '' : 's'}</span>}
               <span style={{ color: 'var(--text2)', fontSize: 12 }}>{spans.length} spans · {svcCount} service{svcCount === 1 ? '' : 's'} · {fmtNs(totalNs)}</span>
-              {root && <span style={{ color: 'var(--text3)', fontSize: 12 }}>{tsLong(root.startTime)}</span>}
+              {/* v0.10.347 (operatör: "en üstteki tarih daha belirgin olabilir") —
+                  trace zamanı ikincil gri yazı değil, şeridin okunan sayısı. */}
+              {root && <span style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }} title="Trace başlangıcı (kök span)">{tsLong(root.startTime)}</span>}
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
                 {/* Critical path summary — when computed, the
                     chain's total duration tells the operator
@@ -458,16 +454,9 @@ function TraceDetailInner() {
                   params={{ traceId: id, range: logsRangeParam(logWin?.from, logWin?.to) }}
                   title="Logs correlated to this trace_id"
                   label="≡ Logs" variant="secondary" />
-                {/* Correlated Signals (task #6) — open the cross-signal pivot
-                    drawer anchored on this trace. Surfaces the metrics lens the
-                    Trace page doesn't show, plus the correlated logs, without a
-                    page change. */}
-                <Button variant="secondary" size="sm"
-                  onClick={() => setCorrelateAnchor({ kind: 'trace', traceId: id })}
-                  title="Correlated signals — trace ↔ logs ↔ metrics for this trace"
-                  leftIcon={<IconLink />}>
-                  <span>Correlate ◆</span>
-                </Button>
+                {/* v0.10.347 (operatör) — "Correlate ◆" düğmesi ve pivot çekmecesi
+                    KALDIRILDI ("trace'te correlate özelliğine gerek yok"). Loglar
+                    "≡ Logs" ile, metrikler servis sayfasıyla ulaşılır. */}
                 <SharePopover traceId={id} />
                 <Button variant="secondary" size="sm"
                   onClick={() => exportTraceJSON(id, spans)}
@@ -560,7 +549,9 @@ function TraceDetailInner() {
                   (width:100%), form-içi birincil ayrı bir gruptur. */}
               <AIExplainButton subject={{ kind: 'trace', id }} emphasis="strong"
                 label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain this trace</span></>} />
-              <CompareTracesButton aId={id} />
+              {/* v0.10.347 (operatör) — alt "Compare with…" (AI karşılaştırma formu)
+                  KALDIRILDI: üst şeritteki "↔ Compare trace" zaten var, ikisi aynı
+                  soruyu iki yerde soruyordu. */}
               {/* v0.10.345 — dış link düğmeleri (Settings → Dış linkler): şablon
                   trace'in span attribute'larından çözülürse etkin, değilse eksikleri
                   söyleyen pasif düğme. Yeni sekmede açılır. */}
@@ -630,9 +621,6 @@ function TraceDetailInner() {
           </>
         )}
       </PageShell>
-      <CorrelationContextDrawer
-        anchor={correlateAnchor}
-        onClose={() => setCorrelateAnchor(null)} />
     </>
   );
 }
@@ -984,102 +972,6 @@ function TraceLogsEmptyDiagnostics({ traceServices }: { traceServices: string[] 
 // the panel renders through the shared <LogTable> which
 // handles all of that itself, so the helpers are gone.
 
-// CompareTracesButton — opens an inline form asking for a
-// second trace ID, then calls /api/copilot/compare-traces.
-// Renders the model's diff explanation underneath in the
-// same panel style as CopilotExplain so the trace-detail
-// chrome stays visually consistent. Self-hides when the
-// copilot isn't configured (same gate CopilotExplain uses).
-function CompareTracesButton({ aId }: { aId: string }) {
-  const [enabled, setEnabled] = useState<boolean | null>(null);
-  const [open, setOpen] = useState(false);
-  const [bId, setBId] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [text, setText] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // v0.9.1121 (Faz 0.3b) — cevabın ai_calls kimliği; 👍/👎 buna asılı.
-  // Her karşılaştırmada sıfırlanır (yeni cevap = yeni kimlik).
-  const [exchangeId, setExchangeId] = useState<string | undefined>(undefined);
-
-  useEffect(() => {
-    api.copilotConfig().then(c => setEnabled(c.enabled)).catch(() => setEnabled(false));
-  }, []);
-  if (enabled !== true) return null;
-
-  const submit = async () => {
-    const b = bId.trim().toLowerCase().replace(/^0x/, '');
-    if (!/^[0-9a-f]{16,32}$/.test(b)) {
-      setError('Trace ID must be 16-32 hex characters.');
-      return;
-    }
-    if (b === aId.toLowerCase()) {
-      setError('Pick a DIFFERENT trace to compare with.');
-      return;
-    }
-    setBusy(true); setError(null); setText(null); setExchangeId(undefined);
-    try {
-      const r = await api.copilotCompareTraces(aId, b);
-      setText(r.explanation);
-      setExchangeId(r.exchangeId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Compare failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!open) {
-    return (
-      <Button variant="secondary" size="sm" onClick={() => setOpen(true)}
-        title="Diff this trace against another by ID — model explains why they diverged"
-        leftIcon={<IconSparkles />}>
-        <span>Compare with…</span>
-      </Button>
-    );
-  }
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-        <input value={bId}
-          onChange={e => setBId(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') submit(); }}
-          placeholder="Other trace ID (hex)"
-          className="mono"
-          style={{ width: 320, fontSize: 12 }} />
-        <Button variant="primary" size="sm" onClick={submit} loading={busy}>
-          Compare
-        </Button>
-        <Button variant="secondary" size="sm"
-          onClick={() => { setOpen(false); setText(null); setError(null); setExchangeId(undefined); }}>
-          Cancel
-        </Button>
-      </div>
-      {error && (
-        <div style={{
-          padding: 10, borderRadius: 6, fontSize: 12,
-          background: 'color-mix(in oklab, var(--err) 10%, transparent)', color: 'var(--err)',
-          border: '1px solid color-mix(in oklab, var(--err) 25%, transparent)', maxWidth: 720,
-        }}>{error}</div>
-      )}
-      {text && (
-        <div style={{
-          padding: 12, borderRadius: 6, fontSize: 13, lineHeight: 1.5,
-          background: 'var(--accent-soft)',
-          border: '1px solid color-mix(in oklab, var(--accent) 25%, transparent)',
-          color: 'var(--text)', whiteSpace: 'pre-wrap', maxWidth: 720,
-        }}>
-          <div style={{ fontSize: 10, color: 'var(--accent2)', marginBottom: 6, fontWeight: 700, letterSpacing: '.5px',
-                        display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <IconSparkles size={11} /> COMPARE
-          </div>
-          {text}
-          {/* v0.9.1121 (Faz 0.3b) — 👍/👎; kimlik yoksa çizilmez. */}
-          <div><AIFeedbackButtons exchangeId={exchangeId} /></div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function TraceDetailPage() {
   return (

@@ -226,6 +226,32 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   const [compare, setCompare] = useCompareParam({ seedKey: STORAGE_KEYS.svcChartsCompare });
   const compareOff = compareOffsetNs(compare, from, to);
   const ghostEnabled = compareOff > 0;
+  // v0.10.337 (operatör: "service overview'da en üstte ... Victoria'ya
+  // bağlayabilir miyiz"; VM ana metrik deposu dilim 2) — RED üçlüsü
+  // METRİKTEN: ?src=metric (Endpoints ile aynı anahtar, replace:true;
+  // Copy link aynı kipi açar). Response time (avg) + Throughput karoları
+  // zaten metrikten (v0.9.798); bu kip P50/P95/P99, Failure rate ve
+  // Failure rate grafiğini de /metric-red'den okur. Varsayılan span kalır.
+  const [srcParams, setSrcParams] = useSearchParams();
+  const metricMode = srcParams.get('src') === 'metric';
+  const setMetricMode = (v: boolean) => setSrcParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set('src', 'metric'); else next.delete('src');
+    return next;
+  }, { replace: true });
+  const metricRedQ = useQuery({
+    queryKey: ['service-metric-red', service, from, to, redMdp, env],
+    queryFn: () => api.serviceMetricRED(service, from, to, redMdp, { rateWindow: 180, env: env || undefined }),
+    enabled: !!service && metricMode,
+    staleTime: 30_000,
+  });
+  const metricRedGhostQ = useQuery({
+    queryKey: ['service-metric-red', service, from - compareOff, to - compareOff, redMdp, env],
+    queryFn: () => api.serviceMetricRED(service, from - compareOff, to - compareOff, redMdp, { rateWindow: 180, env: env || undefined }),
+    enabled: !!service && metricMode && ghostEnabled,
+    staleTime: 30_000,
+  });
+  const metricErrorsUnknown = metricMode && !!metricRedQ.data?.errorsUnknown;
   const seriesQ = useQuery({
     // v0.9.723 — 180s rate penceresi (Grafana [3m] paritesi).
     // v0.9.844 — motor bayrağı anahtardan ÇIKTI, pencere SABİT: tek mod
@@ -368,17 +394,24 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // chart means.
   const entryHasData = (latencyQ.data?.p50 ?? []).some(
     ser => (ser.points ?? []).some(p => p.value != null));
-  const usingAllSpans = !latencyQ.isLoading && !latencyQ.isError && !entryHasData;
-  const lat = usingAllSpans ? seriesQ.data : latencyQ.data;
-  const latStatus: 'loading' | 'error' | 'ready' =
-    latencyQ.isLoading ? 'loading' : latencyQ.isError ? 'error' : 'ready';
+  const usingAllSpans = !metricMode && !latencyQ.isLoading && !latencyQ.isError && !entryHasData;
+  // v0.10.337 — metrik kipinde seri haritası /metric-red'den; anahtarlar
+  // spanMetricBatch ile aynı, tüketiciler değişmedi. Bilinmeyen (etiket /
+  // birim) seri HİÇ gelmez, sıfır olarak değil.
+  const lat: Record<string, SpanMetricSeries[] | null | undefined> | undefined =
+    metricMode ? metricRedQ.data?.series : (usingAllSpans ? seriesQ.data : latencyQ.data);
+  const latStatus: 'loading' | 'error' | 'ready' = metricMode
+    ? (metricRedQ.isLoading ? 'loading' : metricRedQ.isError ? 'error' : 'ready')
+    : (latencyQ.isLoading ? 'loading' : latencyQ.isError ? 'error' : 'ready');
   // What the RED panel is actually measuring — the KPI tiles, the scope badge
   // and (v0.9.483) the chart titles all read this ONE string. v0.9.253: it
   // describes throughput and failure rate too, not just latency; all three
   // read the same series. v0.9.483 — metin charts/scopeTitle.ts'e taşındı:
   // başlık eki ve açıklama tek yerden gelsin (ikisi ayrı yazılınca biri
   // güncellenip diğeri bayatlıyordu).
-  const latScopeNote = scopeTitleTip(usingAllSpans);
+  const latScopeNote = metricMode
+    ? (metricRedQ.data?.note ?? (metricRedQ.isError ? 'Kaynak: METRİK — okunamadı' : 'Kaynak: METRİK — yükleniyor'))
+    : scopeTitleTip(usingAllSpans);
 
   // v0.9.844 — v0.9.484'ün "Response time · operasyon kırılımı" görünümü ve
   // onu taşıyan ?rtops URL parametresi SİLİNDİ (v0.9.736 operatör düzeninin
@@ -513,7 +546,9 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     return [okLine, errLine];
   }, [lat]);
   // v0.10.316 — Failure rate hayaleti: aynı band matematiği, kaydırılmış pencere.
-  const latGhost = ghostEnabled ? (usingAllSpans ? seriesGhostQ.data : latencyGhostQ.data) : undefined;
+  const latGhost: Record<string, SpanMetricSeries[] | null | undefined> | undefined = ghostEnabled
+    ? (metricMode ? metricRedGhostQ.data?.series : (usingAllSpans ? seriesGhostQ.data : latencyGhostQ.data))
+    : undefined;
   const failureGhost = useMemo(() => {
     const r = latGhost?.rate?.[0]?.points ?? [];
     const e = latGhost?.error_rate?.[0]?.points ?? [];
@@ -786,9 +821,11 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           rozete indi — beş karo ve üç grafik aynı rozete bakar; fallback
           amber'e döner. */}
       <div className="dtl-sech">Altın sinyaller
-        <span className={`badge ${usingAllSpans ? 'b-warn' : 'b-gray'}`}
+        <span className={`badge ${metricMode ? 'b-info' : usingAllSpans ? 'b-warn' : 'b-gray'}`}
           style={{ textTransform: 'none', letterSpacing: 0 }} title={latScopeNote}>
-          {usingAllSpans ? 'kapsam: tüm span\u2019ler' : 'kapsam: giriş span\u2019leri'}
+          {metricMode
+            ? `kaynak: metrik (${metricRedQ.data?.source ?? '…'})`
+            : usingAllSpans ? 'kapsam: tüm span\u2019ler' : 'kapsam: giriş span\u2019leri'}
         </span>
       </div>
       {/* KPI row — golden signals + full-bleed trend sparklines. Each tile is
@@ -811,7 +848,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             // v0.9.798 — İKİNCİL SATIR (tek commit'le geri alınabilir):
             // büyük sayı metrik AVG olunca kuyruk görünürlüğü kaybolmasın.
             // Değer ZATEN çekiliyor (latencyQ) — ek sorgu yok.
-            sub={rtFromMetric && p99Now != null ? `P99 (span) · ${p99Ms.toFixed(0)} ms` : undefined}
+            sub={rtFromMetric && p99Now != null ? `P99 (${metricMode ? 'metrik' : 'span'}) · ${p99Ms.toFixed(0)} ms` : undefined}
           />
         </MetricPanel>
         <MetricPanel compact menuOnly title={tputLabel} metricQuery={mkThroughput('stat')}>
@@ -830,7 +867,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             düşüyor. v0.9.798'de kaynağı DEĞİŞMEDİ: hata oranı span türevli
             (giriş-span ilkesi) ve metrik tarafında karşılığı yok. */}
         <MetricPanel compact menuOnly title="Failure rate" metricQuery={mkFailureRate('stat')}>
-          <KpiTile lab="Failure rate" val={`${errorRatePct.toFixed(2)}%`} accent="var(--err)" spark={vals(lat?.error_rate)} delta={computeDelta(vals(lat?.error_rate))} goodWhenUp={false} note={latScopeNote} />
+          <KpiTile lab="Failure rate" val={metricErrorsUnknown ? '—' : `${errorRatePct.toFixed(2)}%`} accent="var(--err)" spark={vals(lat?.error_rate)} delta={computeDelta(vals(lat?.error_rate))} goodWhenUp={false} note={latScopeNote} />
         </MetricPanel>
         {/* v0.9.483 (operatör: "bence response time mediana da gerek yok") —
             "Response time · median" karosu kaldırıldı; P99 karo olarak kalıyor.
@@ -853,8 +890,26 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
       {/* v0.10.316 — Compare to: (?compare=, Details/Pod ile aynı). Hayalet
           yalnız Failure rate · trace paneline biner; not bunu söyler. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, fontSize: 11, color: 'var(--text2)', flexWrap: 'wrap', rowGap: 6 }}>
+        <select value={metricMode ? 'metric' : 'span'}
+          onChange={e => setMetricMode(e.target.value === 'metric')}
+          style={{ fontSize: 11 }} aria-label="RED kaynağı"
+          title={metricMode
+            ? 'Kaynak: metrik — OTel HTTP server histogramı (VM ya da ClickHouse): P50/P95/P99 histogram_quantile, Failure rate 5xx; örneklemeden bağımsız'
+            : 'Kaynak: span — giriş span\u2019lerinden (server/consumer) türetilmiş RED; collector örnekliyorsa eksik sayar'}>
+          <option value="span">Kaynak: span</option>
+          <option value="metric">Kaynak: metrik</option>
+        </select>
         <CompareToggle value={compare} onChange={setCompare} />
-        {ghostEnabled && <span style={{ color: 'var(--text3)' }}>· hayalet yalnız Failure rate · trace panelinde</span>}
+        {ghostEnabled && <span style={{ color: 'var(--text3)' }}>· hayalet yalnız Failure rate panelinde</span>}
+        {metricMode && metricRedQ.isError && <span className="badge b-err" title={metricRedQ.error instanceof Error ? metricRedQ.error.message : ''}>metrik RED okunamadı</span>}
+        {metricMode && metricRedQ.data && !metricRedQ.data.metricExists && <span className="badge b-warn" title={metricRedQ.data.note}>metrik bulunamadı — karolar span\u2019a düştü</span>}
+        {metricMode && metricRedQ.data?.metricExists && (metricRedQ.data.errorsUnknown || !metricRedQ.data.latencyUnitKnown || metricRedQ.data.envAmbiguous) && (
+          <span className="badge b-warn" title={metricRedQ.data.note}>eksik: {[
+            metricRedQ.data.errorsUnknown ? 'failure rate (durum etiketi yok)' : null,
+            !metricRedQ.data.latencyUnitKnown ? 'P50/P95/P99 (birim bilinmiyor)' : null,
+            metricRedQ.data.envAmbiguous ? 'env daraltması' : null,
+          ].filter(Boolean).join(', ')}</span>
+        )}
         {ghostEnabled && (seriesGhostQ.isError || latencyGhostQ.isError) && <span className="badge b-warn">önceki dönem yüklenemedi</span>}
       </div>
       <div className="ov-grid ov-charts-3 ov-mb">
@@ -1023,7 +1078,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                eşiğini geri isteyen operatör için ayrı bir dilim. */
             <Suspense key="failure-rate-v2" fallback={<Spinner />}>
               <CorePanelMultiLazy
-                title={scopedChartTitle('Failure rate · trace', usingAllSpans)}
+                title={metricMode ? 'Failure rate · metrik' : scopedChartTitle('Failure rate · trace', usingAllSpans)}
                 menuExtra={doorway}
                 storageKey="ov-throughput-failure-v2" height={200} unit="reqps" xRange={xRange}
                 loading={latStatus === 'loading'}

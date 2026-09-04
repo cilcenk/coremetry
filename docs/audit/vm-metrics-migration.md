@@ -451,6 +451,7 @@ Alt-dilimler (her biri kendi release'i):
 ## Açık sorular (operatöre)
 
 1. **Downsampling:** VM Enterprise mi, open-source mu? 13 aylık `rollup_metrics_1h` ufkunun VM karşılığı bu cevaba bağlı. **Dilim 2 öncesi.**
+   **CEVAP (operatör, 2026-09-04): OSS.** Downsampling ve çoklu retention Enterprise; OSS'de tek `-retentionPeriod`. Sonuç: 13 aylık saatlik ufuk VM'de doğrudan yok. Seçenekler (Dilim 5 kararı): (a) `rollup_metrics_*` CH'de yalnız uzun-ufuk okuması için kalır (CH metrik yazımı kapanınca beslenmez — yani ufuk dondurulur); (b) ikinci, uzun retention'lı VM örneği + OSS `-streamAggr.config` ile 1h toplamları oraya (Coremetry tek endpoint modeli kırılır, `vmetrics/client.go:61-63`); (c) ufuk 13 aydan VM retention'ına iner ve bu Settings'te ilan edilir. Öneri: (c) + retention'ı VM'de uzun tutmak (ham seri, downsampling'siz disk bedeliyle).
 2. **Exemplar:** VM'de saklanmıyorsa `/api/exemplars` + `exemplars` tablosu CH'de kalsın mı (önerim: EVET), yoksa özellik emekliye mi ayrılsın?
 3. **`spanmetrics_calls/hist/duration_5m`** — `/clickhouse-schema` §11.2'nin açık sorusu: okuyucusuz, kalıcı 0 satır. **Bu geçiş onları silmek için doğal fırsat.**
 4. **`/api/metrics/resolve`:** rollup-kademe sözleşmesi VM'de ifade edilemiyor. VM-only'de bu uç ne yapsın — 400 mü (dürüst), yoksa düz `query_range`'e mi düşsün (kademe garantisi olmadan)?

@@ -2790,6 +2790,32 @@ export type SpanAgg =
 // Cevap boş bir seriyle YETİNMİYOR: metrik kurulumda var mı, hangi `job`
 // değerleri mevcut, hangi desen denendi — hepsi dönüyor. Boş bir grafik
 // "metrik yok" ile "desen tutmadı"yı aynı gösterirdi.
+// ServiceMetricRED — v0.10.337: /api/services/{name}/metric-red. Overview'un
+// RED üçlüsü METRİKTEN (VM | CH, dikiş). `series` anahtarları spanMetricBatch
+// ile aynı (rate · error_rate · p50 · p95 · p99 · avg) — aynı tüketiciler.
+// error_rate YÜZDE; süreler ms. Etiket/birim bilinmiyorsa ilgili seri HİÇ
+// gelmez ve bayrak + not söyler; istemci tahmin etmez.
+export interface ServiceMetricRED {
+  service: string;
+  source: string;
+  metric?: string;
+  rtMetric?: string;
+  instrument?: string;
+  matchedBy?: string;
+  metricExists: boolean;
+  stepSeconds: number;
+  statusKey?: string;
+  errorsUnknown?: boolean;
+  latencyUnit?: string;
+  latencyUnitKnown: boolean;
+  latencyUnitFrom?: string;
+  envAmbiguous?: boolean;
+  tried?: string[];
+  partial?: string[];
+  note: string;
+  series: Record<string, SpanMetricSeries[] | undefined>;
+}
+
 export interface ServiceMetricThroughput {
   service: string;
   metric: string;

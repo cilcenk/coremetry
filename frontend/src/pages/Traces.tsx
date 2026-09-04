@@ -1346,11 +1346,21 @@ function TracesPageInner() {
           <TracesEmpty service={filter.service} search={filter.search} range={range} onSwitchView={() => setView('aggregate')}
             explainHref={explainHref ?? undefined}
             matchingSpans={data?.emptyDiag?.matchingSpans}
+            promotedDiag={data?.emptyDiag}
             narrowedFromNs={data?.narrowedFromNs} />
         )}
         {view === 'list' && data && traces.length > 0 && (
           <div style={{ opacity: refreshing ? 0.55 : 1, transition: 'opacity 120ms' }}
             aria-busy={refreshing}>
+            {/* v0.10.339 — Operator-reported: terfi kolonu uyuşmazlığı. Bu
+                satırlar dizi yolundan geldi (sunucu kolonun yalan söylediğini
+                ölçtü ve haritayı askıya aldı); host = onarım hedefi. */}
+            {data.emptyDiag?.promotedFallback && (
+              <div style={{ marginBottom: 6, padding: '6px 10px', fontSize: 11.5, border: '1px solid var(--border)', borderLeft: '3px solid var(--warn)', borderRadius: 6, background: 'var(--bg2)', color: 'var(--text2)' }}>
+                <b>Terfi kolonu uyuşmazlığı:</b> {(data.emptyDiag.promotedKeys ?? []).join(', ')} filtresi kolon yolunda 0 span buldu, dizi yolunda{' '}
+                {(data.emptyDiag.promotedHosts ?? []).map(h => `${h.host}: ${h.arr.toLocaleString()}`).join(' · ')}. Liste dizi yoluyla cevaplandı (doğru, yavaş); sunucu haritayı askıya aldı — ilgili replikada kolon şemasını / takılı mutasyonu kontrol et.
+              </div>
+            )}
             {/* Column toolbar — attribute columns are added via "+ Column"
                 (ColumnManager) and removed by their chips. VirtualTable's shared
                 header auto-renders the sortable/resizable data columns, so the
@@ -1682,8 +1692,10 @@ export default function TracesPage() {
 
 // TracesEmpty — distinguishes "aged out of raw spans (MV still has it)" from
 // "search matched nothing" so the operator gets the right next step.
-function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, explainHref, matchingSpans }: {
+function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, explainHref, matchingSpans, promotedDiag }: {
   service: string; search: string; range: TimeRange; onSwitchView: () => void;
+  // v0.10.339 — terfi kolonu probu (host başına kolon/dizi sayımı) — boş kaldıysa da göster.
+  promotedDiag?: TracesResponse['emptyDiag'];
   // v0.10.307 — arka uç pencereyi daralttıysa (kaynak bütçesi) "yok" değil "bakılamadı".
   narrowedFromNs?: number;
   // v0.10.328 — admin: aynı sorgunun ?explain=1 çıktısı (yol + SQL + süre) yeni sekmede.
@@ -1726,6 +1738,17 @@ function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, exp
           <>Try widening the time range, dropping the service or search filter, or turning off the "Root traces" chip. If even an unfiltered query is empty, check ingest health at <Link to="/system/stats" style={{ color: 'var(--accent2)' }}>system stats</Link>.</>
         )}
       </div>
+      {promotedDiag?.promotedKeys && (
+        <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text3)' }}>
+          Terfi kolonu probu ({promotedDiag.promotedKeys.join(', ')}):{' '}
+          {promotedDiag.promotedProbeError
+            ? <span style={{ color: 'var(--err)' }}>{promotedDiag.promotedProbeError}</span>
+            : (promotedDiag.promotedHosts ?? []).length === 0
+              ? 'hiçbir host satır döndürmedi'
+              : (promotedDiag.promotedHosts ?? []).map(h => `${h.host}: kolon ${h.col.toLocaleString()} / dizi ${h.arr.toLocaleString()}`).join(' · ')}
+          {promotedDiag.promotedFallbackError && <> · dizi yolu da başarısız: <span style={{ color: 'var(--err)' }}>{promotedDiag.promotedFallbackError}</span></>}
+        </div>
+      )}
       {matchingSpans !== undefined && (
         <div style={{ marginTop: 10, fontSize: 11, color: matchingSpans > 0 ? 'var(--warn)' : 'var(--text3)' }}>
           {matchingSpans > 0

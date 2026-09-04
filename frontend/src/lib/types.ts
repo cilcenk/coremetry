@@ -2472,7 +2472,18 @@ export interface TraceRow {
 
 export interface TracesResponse {
   // v0.10.329 — boş liste öz-teşhisi: aynı filtreyle eşleşen SPAN sayısı (yalnız boş sonuçta).
-  emptyDiag?: { matchingSpans: number; error?: string };
+  emptyDiag?: {
+    matchingSpans: number; error?: string;
+    // v0.10.339 — terfi kolonu uyuşmazlığı: filtre terfi kolonuna derlenmiş
+    // ama kolon bu değeri taşımıyor (host = replika). promotedFallback: aynı
+    // istek dizi yoluyla yeniden koştu ve satırlar ondan geldi; sunucu
+    // haritayı askıya aldı.
+    promotedKeys?: string[];
+    promotedHosts?: { host: string; col: number; arr: number }[];
+    promotedFallback?: boolean;
+    promotedProbeError?: string;
+    promotedFallbackError?: string;
+  };
   // Absent in the default ("skip") count mode — clients should treat
   // missing-or-undefined as "unknown" and rely on `hasMore` for paging.
   total?: number;

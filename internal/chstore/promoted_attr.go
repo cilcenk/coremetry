@@ -456,3 +456,103 @@ func (s *Store) probePromotedAttrs(ctx context.Context) map[string]string {
 	}
 	return out
 }
+
+// ── v0.10.339 — terfi kolonu "var ama bu değeri taşımıyor" onarımı ────────
+//
+// Operator-reported (prod, 2026-09-04): /traces'te `channel_code = 060203`
+// çipi eklenince liste boş; aynı pencerede aynı span'ler çipsiz listede
+// CHANNEL_CODE=060203 ile görünüyor. Explain: filtre `attr_channel_code = ?`
+// terfi kolonuna derlenmiş, sayım 23 ms'de 0. Yani boot probe'u (50k örnek,
+// rastgele replika) kolonu doğrulamış ama SORGUNUN gittiği replikada/part'ta
+// kolon değeri taşımıyor — dağıtık prod'da replikalar arası şema/mutasyon
+// farkı bu sınıfın bilinen sebebi (DROP+ADD onarımı bir replikada takılı
+// kalır; v0.9.621/623 "Cannot apply mutation" olayı).
+//
+// Ürün tarafı iki şey yapar, ikisi de yalnız BOŞ sonuçta (ucuz):
+//   1. Uyuşmazlık probu — aynı WHERE'i bir kez terfi kolonuyla, bir kez dizi
+//      yoluyla, host (replika) başına sayar. Dizi > kolon ise kolon yalan
+//      söylüyor; hangi host olduğu zarfa ve loga yazılır (onarım hedefi).
+//   2. Dizi yoluna DÜŞER: aynı istek NoPromoted ile yeniden koşar (doğru ama
+//      yavaş), harita o anahtarlar için ASKIYA alınır (bir sonraki boot /
+//      ertelenmiş-DDL probe'u yeniden doğrulayana dek). Yanlış-boş yerine
+//      doğru-yavaş: v0.9.621'in kendi ilkesi.
+
+// PromotedHostCount — bir host'ta (Distributed'da replika) kolon ve dizi
+// yüklemiyle eşleşen span sayısı.
+type PromotedHostCount struct {
+	Host string `json:"host"`
+	Col  uint64 `json:"col"`
+	Arr  uint64 `json:"arr"`
+}
+
+// PromotedFilterKeys — filtre yan tümcelerinden terfi haritasına düşenler
+// (kök grup dahil). Boş = bu istekte terfi kolonu kullanılmıyor.
+func PromotedFilterKeys(f TraceFilter) []string {
+	pm := promotedCols()
+	if len(pm) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(k string) {
+		key := strings.TrimPrefix(k, "span.")
+		if _, ok := pm[key]; ok && !seen[key] {
+			seen[key] = true
+			out = append(out, key)
+		} else if _, ok := pm[k]; ok && !seen[k] { // resource.<k> yazımı
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	for _, fe := range f.Filters {
+		add(fe.Key)
+	}
+	if f.FilterRoot != nil {
+		for _, fe := range f.FilterRoot.leaves() {
+			add(fe.Key)
+		}
+	}
+	return out
+}
+
+// promotedMismatchSQL — host başına sayım. hostName() Distributed'da uzak
+// replikada değerlenir: satır = cevaplayan replika.
+func promotedMismatchSQL(whereSQL string) string {
+	return `SELECT hostName() AS h, count() FROM spans ` + whereSQL + ` GROUP BY h ORDER BY h SETTINGS max_execution_time = 10`
+}
+
+// PromotedMismatchDetected — SAF: herhangi bir host'ta dizi yolu kolon
+// yolundan FAZLA span buluyorsa kolon o değeri taşımıyor demektir.
+func PromotedMismatchDetected(hosts []PromotedHostCount) bool {
+	for _, h := range hosts {
+		if h.Arr > h.Col {
+			return true
+		}
+	}
+	return false
+}
+
+// SuspendPromotedKeys — haritayı bu anahtarlar OLMADAN yeniden yayınlar
+// (copy-on-write; okuyucular kilitsiz). Kalıcı değil: bir sonraki boot ya
+// da ertelenmiş-DDL probe'u kolonu veriyle yeniden doğrularsa geri gelir.
+func (s *Store) SuspendPromotedKeys(keys []string) { unregisterTraceAttrMaterialized(keys) }
+
+func unregisterTraceAttrMaterialized(keys []string) {
+	if len(keys) == 0 {
+		return
+	}
+	drop := map[string]bool{}
+	for _, k := range keys {
+		drop[k] = true
+		drop["span."+k] = true
+		drop["resource."+k] = true
+	}
+	next := map[string]string{}
+	for k, v := range promotedCols() {
+		if !drop[k] {
+			next[k] = v
+		}
+	}
+	promotedColsPtr.Store(&next)
+	log.Printf("[chstore] terfi kolonu haritası askıya alındı: %v — bu anahtarlar dizi yolunda (doğru ama yavaş); yeniden doğrulama bir sonraki boot/probe'da", keys)
+}

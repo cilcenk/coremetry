@@ -11,6 +11,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -102,4 +103,62 @@ func (s *Store) CountMatchingSpans(ctx context.Context, f TraceFilter) (uint64, 
 	err := s.telemetryReadConn().QueryRow(ctx, sql, wc.args...).Scan(&n)
 	f.Explain.step("empty-diag-count", sql, wc.args, t0, int(n), err)
 	return n, err
+}
+
+// v0.10.339 — terfi kolonu uyuşmazlık probu (promoted_attr.go §v0.10.339).
+// Burada, çünkü telemetri SELECT'i okuma havuzundan gider ve o çağrı yüzeyi
+// dosya bazında kapılı (conn_strategy_test.go); CountMatchingSpans ile aynı
+// dosya, aynı havuz.
+// PromotedMismatch — kolon yolu vs dizi yolu, host başına.
+func (s *Store) PromotedMismatch(ctx context.Context, f TraceFilter) ([]PromotedHostCount, error) {
+	byHost := map[string]*PromotedHostCount{}
+	run := func(noPromoted bool, name string, set func(c *PromotedHostCount, n uint64)) error {
+		lf := f
+		lf.CandidateIDs = nil
+		lf.NoPromoted = noPromoted
+		wc := buildGetTracesWhere(lf, s.clusterExpr())
+		if pred, pargs := searchPredicate(f.Search); pred != "" {
+			wc.add(pred, pargs...)
+		}
+		if f.HasError && !hasErrorSpanLocal(f) {
+			wc.add("status_code = 'error'")
+		}
+		sql := promotedMismatchSQL(wc.sql())
+		t0 := time.Now()
+		rows, err := s.telemetryReadConn().Query(ctx, sql, wc.args...)
+		if err != nil {
+			f.Explain.step(name, sql, wc.args, t0, 0, err)
+			return err
+		}
+		defer rows.Close()
+		n := 0
+		for rows.Next() {
+			var h string
+			var c uint64
+			if err := rows.Scan(&h, &c); err != nil {
+				return err
+			}
+			hc := byHost[h]
+			if hc == nil {
+				hc = &PromotedHostCount{Host: h}
+				byHost[h] = hc
+			}
+			set(hc, c)
+			n++
+		}
+		f.Explain.step(name, sql, wc.args, t0, n, rows.Err())
+		return rows.Err()
+	}
+	if err := run(false, "promoted-col-count", func(c *PromotedHostCount, n uint64) { c.Col = n }); err != nil {
+		return nil, err
+	}
+	if err := run(true, "promoted-arr-count", func(c *PromotedHostCount, n uint64) { c.Arr = n }); err != nil {
+		return nil, err
+	}
+	out := make([]PromotedHostCount, 0, len(byHost))
+	for _, hc := range byHost {
+		out = append(out, *hc)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Host < out[j].Host })
+	return out, nil
 }

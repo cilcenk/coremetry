@@ -1854,10 +1854,14 @@ type TraceFilter struct {
 	CandidateIDs []string
 	// Explain — v0.10.326: ?explain=1 teşhis kaydı (trace_explain.go); nil = kapalı.
 	Explain *TraceExplain
-	MinMs   float64
-	MaxMs   float64
-	AttrKey string
-	AttrVal string
+	// NoPromoted — v0.10.339: bu istekte terfi kolonu haritası YOK SAYILIR,
+	// filtreler dizi yoluna derlenir (promoted_attr.go §v0.10.339: kolon
+	// "var ama bu değeri taşımıyor" onarımı — boş sonuçta dizi yoluna düşüş).
+	NoPromoted bool
+	MinMs      float64
+	MaxMs      float64
+	AttrKey    string
+	AttrVal    string
 	// ExtraAttrs is the user-selected list of attribute keys whose
 	// values should be projected into TraceRow.Extras. Each key picks
 	// up the first non-empty value among span-attributes and resource-
@@ -2103,10 +2107,16 @@ func buildGetTracesWhere(f TraceFilter, clusterExpr string) whereClause {
 	// ApplyFilters inside ApplyFilterGroup, so the legacy path stays
 	// byte-identical; an OR / nested group emits a single parenthesised
 	// conjunct.
+	// v0.10.339 — NoPromoted: terfi kolonu haritası yok sayılır (dizi yolu;
+	// promoted_attr.go §v0.10.339 uyuşmazlık düşüşü).
+	pm := promotedCols()
+	if f.NoPromoted {
+		pm = nil
+	}
 	if f.FilterRoot != nil {
-		ApplyFilterGroup(&wc, *f.FilterRoot)
+		ApplyFilterGroupWith(&wc, *f.FilterRoot, pm)
 	} else {
-		ApplyFilters(&wc, f.Filters)
+		ApplyFiltersWith(&wc, f.Filters, pm)
 	}
 	return wc
 }

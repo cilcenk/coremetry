@@ -7668,6 +7668,11 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 		if items == nil {
 			items = []chstore.ExceptionGroup{}
 		}
+		// v0.10.364 — öncelik (P1/P2/P3) + gerekçe satır başına: Triage
+		// Inbox ile AYNI kural (exceptionPriorityAt), kural ekranda görünür.
+		for i := range items {
+			items[i].Priority, items[i].PriorityReason = exceptionPriority(items[i])
+		}
 		return map[string]any{
 			"items":  items,
 			"total":  total,
@@ -12064,4 +12069,3 @@ func identityFromTraceIDParam(rawTraceID, search string) (string, string) {
 	}
 	return search, ""
 }
-

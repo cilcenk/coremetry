@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { PriorityBadge } from '@/components/ui/PriorityBadge';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Button, Chip, SearchField } from '@/components/ui';
@@ -1076,17 +1077,6 @@ export default function InboxPage() {
         />
       )}
     </>
-  );
-}
-
-// PriorityBadge — shared .badge tokens so operators read the same
-// colour code as the Problems page (P1 err / P2 warn / P3 gray).
-function PriorityBadge({ p, reason }: { p: 'P1' | 'P2' | 'P3'; reason?: string }) {
-  const cls = p === 'P1' ? 'b-err' : p === 'P2' ? 'b-warn' : 'b-gray';
-  return (
-    <span className={`badge ${cls}`} title={reason ? `${p} — ${reason}` : p}>
-      {p}
-    </span>
   );
 }
 

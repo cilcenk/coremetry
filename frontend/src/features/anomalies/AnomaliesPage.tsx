@@ -8,6 +8,7 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
 import { ChevronRight, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { PriorityBadge } from '@/components/ui/PriorityBadge';
 import { Pager } from '@/components/Pager';
 import { useServicesMetadata, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
@@ -63,13 +64,13 @@ const DEFAULT_EXC_SORT = { id: 'lastSeen' as SortKey, dir: 'desc' as const };
 // ordering (worst at top) stays server-side — see
 // exceptionGroupsOrderBy's multiIf.
 const EXC_COLS: DataTableColumn<ExceptionGroup>[] = [
-  { id: 'state',       label: 'State',       sortValue: g => g.state,       naturalDir: 'desc', width: 100 },
+  { id: 'state',       label: 'State',       sortValue: g => g.state,       naturalDir: 'desc', width: 132 },
   { id: 'type',        label: 'Exception',   sortValue: g => g.type,        naturalDir: 'asc', flex: true },
   { id: 'service',     label: 'Service',     sortValue: g => g.service,     naturalDir: 'asc',  width: 150 },
   { id: 'occurrences', label: 'Occurrences', sortValue: g => g.occurrences, numeric: true,      width: 100 },
-  { id: 'firstSeen',   label: 'First seen',  sortValue: g => g.firstSeen,   width: 150 },
-  { id: 'lastSeen',    label: 'Last seen',   sortValue: g => g.lastSeen,    width: 150 },
-  { id: 'assignee',    label: 'Assignee',    sortValue: g => g.assignee,    naturalDir: 'asc',  width: 160 },
+  { id: 'firstSeen',   label: 'First seen',  sortValue: g => g.firstSeen,   width: 124 },
+  { id: 'lastSeen',    label: 'Last seen',   sortValue: g => g.lastSeen,    width: 124 },
+  { id: 'assignee',    label: 'Assignee',    sortValue: g => g.assignee,    naturalDir: 'asc',  width: 120 },
 ];
 
 export default function ProblemsPage() {
@@ -533,10 +534,10 @@ export default function ProblemsPage() {
             style={{ opacity: refreshing ? 0.55 : 1, transition: 'opacity 120ms' }}
             aria-busy={refreshing}>
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
-              <DataTableColgroup dt={dt} leading={[24]} trailing={isAdmin ? [240] : undefined} />
+              <DataTableColgroup dt={dt} leading={[24]} trailing={isAdmin ? [208] : undefined} />
               <DataTableHead dt={dt}
                 leading={<th style={{ width: 24 }}></th>}
-                trailing={isAdmin ? <th style={{ width: 240 }}>Actions</th> : undefined} />
+                trailing={isAdmin ? <th style={{ width: 208 }}>Actions</th> : undefined} />
               <tbody>
                 {filtered.map(g => {
                   const open = expanded.has(g.fingerprint);
@@ -567,7 +568,7 @@ export default function ProblemsPage() {
                             ? <ChevronDown size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />
                             : <ChevronRight size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />}
                         </td>
-                        <td className="row-cell"><Link to={excHref} replace className="row-link" onClick={e => e.stopPropagation()}><StateBadge s={g.state} /></Link></td>
+                        <td className="row-cell"><Link to={excHref} replace className="row-link" onClick={e => e.stopPropagation()}><StateBadge s={g.state} />{g.priority && <>{' '}<PriorityBadge p={g.priority} reason={g.priorityReason} /></>}</Link></td>
                         <td className="row-cell">
                           <Link to={excHref} replace className="row-link" onClick={e => e.stopPropagation()}>
                           <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 11.5, color: 'var(--err)' }}>

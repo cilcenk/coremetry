@@ -92,3 +92,4 @@ export { SectionUnavailable } from './SectionUnavailable';
 // v0.9.1365 — kart başlığı + dürüstlük yuvası. İki nüsha BAYT BAYT DEĞİLDİ
 // (sayfa kopyası `right` yuvasını kaybetmişti); terfi `right`lı sürüme.
 export { PanelTitle } from './PanelTitle';
+export { PriorityBadge } from './PriorityBadge';

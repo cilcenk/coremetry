@@ -43,32 +43,54 @@ func TestIdentityFirstEligible(t *testing.T) {
 	}
 }
 
-func TestIdentityKeysAreSpanScopedPromotedAndFacets(t *testing.T) {
-	keys := identityKeys()
-	has := func(k string) bool {
-		for _, x := range keys {
-			if x == k {
-				return true
-			}
-		}
-		return false
-	}
-	for _, want := range []string{"function_id", "FUNCTION_ID", "channel_code", "function_code"} {
-		if !has(want) {
-			t.Fatalf("%q kimlik anahtarı olmalı: %v", want, keys)
-		}
-	}
-	for _, no := range []string{"k8s.pod.name", "k8s.namespace.name", "container.image.name"} {
-		if has(no) {
-			t.Fatalf("resource kapsamı kimlik değil: %q", no)
-		}
-	}
-	seen := map[string]bool{}
+func TestIdentityKeysIndexedOnlyAndDeduped(t *testing.T) {
+	// v0.10.343 — Operator-reported (prod 342): OR içindeki dizi-yolu yazımları
+	// indeksi öldürüp zaman aşımına düşürüyordu. Yalnız indeksli yüklemler
+	// kullanılır; aynı kolona derlenen yazımlar tek sorgu.
+	prevIdx := attrIndexReady.Load()
+	attrIndexReady.Store(false)
+	t.Cleanup(func() { attrIndexReady.Store(prevIdx) })
+	withPromoted(t, "function_id", "attr_function_id")
+	keys := identityKeys("060203AFD10049A1B2")
+	var indexed, skipped []string
 	for _, k := range keys {
-		if seen[k] {
-			t.Fatalf("tekrar: %q", k)
+		if k.indexed {
+			indexed = append(indexed, k.key)
+		} else {
+			skipped = append(skipped, k.key)
 		}
-		seen[k] = true
+	}
+	if len(indexed) != 1 || indexed[0] != "function_id" {
+		t.Fatalf("kvh yokken yalnız terfi haritasındaki yazım indeksli: %v (atlanan %v)", indexed, skipped)
+	}
+	for _, k := range keys {
+		if k.key == "function_id" && !strings.Contains(k.sql, "attr_function_id = ?") {
+			t.Fatalf("terfi yüklemi: %s", k.sql)
+		}
+		if k.key == "FUNCTION_ID" && !strings.Contains(k.sql, "indexOf(attr_keys") {
+			t.Fatalf("haritasız yazım dizi yolu: %s", k.sql)
+		}
+		if strings.HasPrefix(k.key, "k8s.") {
+			t.Fatalf("resource kapsamı kimlik değil: %q", k.key)
+		}
+	}
+	// Aynı kolona derlenen iki yazım tek yüklem: harita ikisini de kaydettiyse.
+	registerTraceAttrMaterialized(map[string]string{"FUNCTION_ID": "attr_function_id"})
+	n := 0
+	for _, k := range identityKeys("x") {
+		if strings.Contains(k.sql, "attr_function_id") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("aynı kolon tek sorgu olmalı, %d", n)
+	}
+	// kvh varken haritasız yazımlar da indeksli (bloom).
+	attrIndexReady.Store(true)
+	for _, k := range identityKeys("x") {
+		if !k.indexed {
+			t.Fatalf("kvh açıkken her yazım indeksli olmalı: %+v", k)
+		}
 	}
 }
 
@@ -77,37 +99,23 @@ func TestIdentityFirstQueryShape(t *testing.T) {
 	to := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	f := TraceFilter{Service: "svc", Search: "060203AFD10049A1B2", From: to.Add(-time.Hour), To: to,
 		Filters: []FilterExpr{{Key: "channel_code", Op: "=", Values: []string{"060203"}}}, HasError: true}
-	sql, args, ok := identityFirstQuery(f, []string{"function_id", "channel_code"}, "060203AFD10049A1B2", "", 100)
-	if !ok {
-		t.Fatal("sorgu üretilmeli")
+	var fk identityKey
+	for _, k := range identityKeys("060203AFD10049A1B2") {
+		if k.key == "function_id" {
+			fk = k
+		}
 	}
-	for _, w := range []string{"SELECT trace_id, multiIf(", "attr_function_id = ?", "'function_id'", "indexOf(attr_keys, ?)", "'channel_code'",
-		"service_name = ?", " OR ", "ORDER BY time DESC", "LIMIT ?", "max_execution_time = 10"} {
+	sql, args := identityFirstQuery(f, fk, "", 100)
+	for _, w := range []string{"SELECT trace_id", "attr_function_id = ?", "service_name = ?", "ORDER BY time DESC", "LIMIT ?", "max_execution_time = 5"} {
 		if !strings.Contains(sql, w) {
 			t.Fatalf("%q yok: %s", w, sql)
 		}
 	}
-	// Çipler/arama/hata aday sorgusuna GİRMEZ (errorFirstFilter): tek daraltma pencere+servis+kimlik.
-	if strings.Contains(sql, "attr_channel_code = ?") && strings.Count(sql, "channel_code") > 2 {
-		t.Fatalf("çip aday sorgusuna sızmış: %s", sql)
+	// Çip/arama/hata aday sorgusuna GİRMEZ: tek daraltma pencere+servis+kimlik.
+	if strings.Contains(sql, "attr_channel_code") || strings.Contains(sql, "status_code") || strings.Contains(sql, "multiSearch") || strings.Contains(sql, " OR ") {
+		t.Fatalf("yabancı yüklem sızmış: %s", sql)
 	}
-	if strings.Contains(sql, "status_code") || strings.Contains(sql, "multiSearch") {
-		t.Fatalf("hata/arama yüklemi aday sorgusuna sızmış: %s", sql)
-	}
-	// args: SELECT (multiIf) → WHERE → LIMIT; son arg bütçe.
-	if args[len(args)-1] != 100 {
-		t.Fatalf("son arg bütçe olmalı: %v", args)
-	}
-	n := 0
-	for _, a := range args {
-		if a == "060203AFD10049A1B2" {
-			n++
-		}
-	}
-	if n < 4 { // 2 anahtar × (SELECT + WHERE)
-		t.Fatalf("kimlik değeri her anahtar için SELECT ve WHERE'de bağlanmalı: %v", args)
-	}
-	if _, _, ok := identityFirstQuery(f, nil, "x", "", 1); ok {
-		t.Fatal("anahtar yoksa sorgu yok")
+	if args[len(args)-1] != 100 || args[len(args)-2] != "060203AFD10049A1B2" {
+		t.Fatalf("args: WHERE → kimlik değeri → bütçe: %v", args)
 	}
 }

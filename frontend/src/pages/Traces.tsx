@@ -524,12 +524,18 @@ function TracesPageInner() {
     // list still renders; a complete id navigates away via apply().
     const tid = filter.traceId.trim().toLowerCase();
     const traceIdExact = /^[0-9a-f]{32}$/.test(tid) ? tid : undefined;
+    // v0.10.343 — Operator-reported: "Trace ID…" kutusuna function_id yazdı,
+    // kutu 32-hex dışını yok sayıp filtresiz liste gösterdi. 32-hex olmayan
+    // bir değer KİMLİKTİR (function_id gibi): arama terimi olarak gider,
+    // sunucu kimlik-önce yolunu (v0.10.342) koşar. Ham hâli — eşitlik
+    // büyük/küçük harf duyarlı, o yüzden lowercase edilmiş `tid` değil.
+    const identityTerm = !traceIdExact && filter.traceId.trim() ? filter.traceId.trim() : undefined;
     const useTimeRange = !traceIdExact;
     const { from, to } = useTimeRange ? listRangeNs : { from: undefined, to: undefined };
     const listParams: TracesParams = {
       limit: 50, offset: page * 50, from, to, sort, order,
       service: filter.service || undefined,
-      search: filter.search || undefined,
+      search: filter.search || identityTerm || undefined,
       traceId: traceIdExact,
       minMs: filter.minMs || undefined,
       maxMs: filter.maxMs || undefined,
@@ -1031,7 +1037,7 @@ function TracesPageInner() {
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
             <div className="trace-lookup">
               <span className="tl-icon" aria-hidden><IconSearch size={14} /></span>
-              <input placeholder="Trace ID…" title="Paste a full 32-character trace ID"
+              <input placeholder="Trace ID veya kimlik (function_id)…" title="32 karakterlik trace ID doğrudan trace'e gider; başka bir kimlik değeri (function_id gibi) terfi/facet anahtarlarında eşitlikle aranır"
                 value={draft.traceId}
                 onChange={e => setDraft({ ...draft, traceId: e.target.value })}
                 onKeyDown={e => e.key === 'Enter' && apply()} />
@@ -1751,7 +1757,10 @@ function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, exp
       {identity && (
         <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text3)' }}>
           Kimlik araması: <span className="mono">{search}</span> şu anahtarlarda eşitlikle denendi — {identity.keys.join(', ') || '—'}:{' '}
-          {identity.hits > 0 ? `${identity.hits} trace (${identity.matchedKey})` : 'eşleşme yok; alt-dize araması da boş döndü'}.
+          {identity.error
+            ? <span style={{ color: 'var(--err)' }}>hata: {identity.error}</span>
+            : identity.hits > 0 ? `${identity.hits} trace (${identity.matchedKey})` : 'eşleşme yok; alt-dize araması da boş döndü'}.
+          {(identity.skipped?.length ?? 0) > 0 && <> İndeksli yolu olmadığı için atlanan yazımlar: {identity.skipped!.join(', ')} (terfi kolonu doğrulanmamış / attr_kvh yok).</>}
         </div>
       )}
       {promotedDiag?.promotedKeys && (

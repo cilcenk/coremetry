@@ -47,7 +47,12 @@ export function verdictLine(text: string | null | undefined): string | null {
   if (!sentence) return null;
   const whole = lines.join(' ').trim();
   if (whole === sentence) return null; // bölüm = tek cümle → kopya olur
-  return sentence.length > 220 ? sentence.slice(0, 219) + '…' : sentence;
+  // v0.10.358 — Operator-reported: "kod incelemesinde kök neden kesilmiş".
+  // 220 karakterlik kesim cümleyi ortadan kırpıyordu ve dropVerdictSentence
+  // cümleyi gövdeden de düşürdüğü için kalan yarısı HİÇBİR yerde
+  // görünmüyordu. Karar cümlesi bütün gösterilir; yalnız patolojik (>1000)
+  // çıktıya karşı tavan.
+  return sentence.length > 1000 ? sentence.slice(0, 999) + '…' : sentence;
 }
 
 /**

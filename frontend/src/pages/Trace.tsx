@@ -278,7 +278,9 @@ function TraceDetailInner() {
   // the span list identity changes (i.e., when a new trace
   // is loaded). Operator can hide the highlight via the
   // toolbar toggle.
-  const [showCritical, setShowCritical] = useState(true);
+  // v0.10.354 (operatör) — kritik yol kutusu KALDIRILDI: vurgu hep açık,
+  // odaklama alttaki "Critical path focus" düğmesinde.
+  const showCritical = true;
   const criticalPath = useMemo(() => {
     if (!spans || spans.length === 0) return null;
     return computeCriticalPath(spans.map(s => ({
@@ -379,48 +381,19 @@ function TraceDetailInner() {
 
   return (
     <>
-      <Topbar title="Trace Detail" range={range} onRangeChange={setRange} />
-      <PageShell>
-        {/* v0.10.219 (mockup onayı 2026-09-01, D4) — "← Back" (navigate(-1))
-            yerine breadcrumb: Traces › <kök işlem>. Liste halkası, satırın
-            Link state'iyle gelen liste URL'sini korur; tarayıcı geçmişi
-            olmayan yeni sekmede de çalışır. Altında özet şeridi: servis
-            rozeti, durum (+hatalı span sayısı), span · servis sayısı, süre,
-            başlangıç, id — Dynatrace trace başlığı düzeni. */}
-        <nav className="crumbs" aria-label="Breadcrumb">
-          <Link to={traceBackHref(location.state)}>Traces</Link>
-          <span className="crumbs__sep" aria-hidden="true">›</span>
-          <span className="crumbs__cur" title={root ? displaySpanName(root) : id}>{root ? displaySpanName(root) : 'Trace'}</span>
-        </nav>
-        <div className="trace-summary">
-          {root && <SvcBadge name={root.serviceName} />}
-          <code style={{ fontSize: 11, color: 'var(--text2)', background: 'var(--bg2)', padding: '2px 6px', borderRadius: 4 }}>
-            {id}<CopyButton value={id} title="Copy trace ID" />
-          </code>
-          {spans && spans.length > 0 && (
-            <>
-              <span className={`badge ${hasErr ? 'b-err' : 'b-ok'}`}>{hasErr ? 'ERROR' : 'OK'}</span>
-              {errSpans > 0 && <span className="cell-hint">{errSpans} error span{errSpans === 1 ? '' : 's'}</span>}
-              <span style={{ color: 'var(--text2)', fontSize: 12 }}>{spans.length} spans · {svcCount} service{svcCount === 1 ? '' : 's'} · {fmtNs(totalNs)}</span>
-              {/* v0.10.347 (operatör: "en üstteki tarih daha belirgin olabilir") —
-                  trace zamanı ikincil gri yazı değil, şeridin okunan sayısı. */}
-              {root && <span style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }} title="Trace başlangıcı (kök span)">{tsLong(root.startTime)}</span>}
-              <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+      <Topbar title="Trace Detail" range={range} onRangeChange={setRange}
+        actions={spans && spans.length > 0 ? (
+              <>
                 {/* Critical path summary — when computed, the
                     chain's total duration tells the operator
                     how much of the trace's wall-clock time
                     happens on the dominant path. Toggle hides
                     the highlight without recomputing. */}
                 {criticalPath && criticalPath.ids.size > 0 && (
-                  <label style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 6,
-                    fontSize: 11, color: 'var(--text2)', marginRight: 4,
-                  }} title={`${criticalPath.ids.size} spans summing to ${fmtNs(criticalPath.totalNs)}. The synchronous longest chain through the trace's DAG.`}>
-                    <input type="checkbox"
-                           checked={showCritical}
-                           onChange={e => setShowCritical(e.target.checked)} />
+                  <span style={{ fontSize: 11, color: 'var(--text2)', marginRight: 4, whiteSpace: 'nowrap' }}
+                    title={`${criticalPath.ids.size} spans summing to ${fmtNs(criticalPath.totalNs)}. Odaklamak için alttaki "Critical path focus" düğmesi.`}>
                     Critical path · {fmtNs(criticalPath.totalNs)}
-                  </label>
+                  </span>
                 )}
                 {/* Compare button — bumped to primary-accent in
                     v0.4.96 because the secondary-style version
@@ -464,7 +437,36 @@ function TraceDetailInner() {
                   leftIcon={<IconDownload />}>
                   <span>Export JSON</span>
                 </Button>
-              </span>
+              </>
+        ) : undefined} />
+      <PageShell>
+        {/* v0.10.219 (mockup onayı 2026-09-01, D4) — "← Back" (navigate(-1))
+            yerine breadcrumb: Traces › <kök işlem>. Liste halkası, satırın
+            Link state'iyle gelen liste URL'sini korur; tarayıcı geçmişi
+            olmayan yeni sekmede de çalışır. Altında özet şeridi: servis
+            rozeti, durum (+hatalı span sayısı), span · servis sayısı, süre,
+            başlangıç, id — Dynatrace trace başlığı düzeni. */}
+        <nav className="crumbs" aria-label="Breadcrumb">
+          <Link to={traceBackHref(location.state)}>Traces</Link>
+          <span className="crumbs__sep" aria-hidden="true">›</span>
+          <span className="crumbs__cur" title={root ? displaySpanName(root) : id}>{root ? displaySpanName(root) : 'Trace'}</span>
+        </nav>
+        <div className="trace-summary">
+          {root && <SvcBadge name={root.serviceName} />}
+          <code style={{ fontSize: 11, color: 'var(--text2)', background: 'var(--bg2)', padding: '2px 6px', borderRadius: 4 }}>
+            {id}<CopyButton value={id} title="Copy trace ID" />
+          </code>
+          {spans && spans.length > 0 && (
+            <>
+              <span className={`badge ${hasErr ? 'b-err' : 'b-ok'}`}>{hasErr ? 'ERROR' : 'OK'}</span>
+              {errSpans > 0 && <span className="cell-hint">{errSpans} error span{errSpans === 1 ? '' : 's'}</span>}
+              <span style={{ color: 'var(--text2)', fontSize: 12 }}>{spans.length} spans · {svcCount} service{svcCount === 1 ? '' : 's'} · {fmtNs(totalNs)}</span>
+              {/* v0.10.347 (operatör: "en üstteki tarih daha belirgin olabilir") —
+                  trace zamanı ikincil gri yazı değil, şeridin okunan sayısı. */}
+              {root && <span style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }} title="Trace başlangıcı (kök span)">{tsLong(root.startTime)}</span>}
+              {/* v0.10.354 (operatör) — Compare / Logs / Share / Export JSON ve kritik
+                  yol özeti beyaz şeritten çıktı: Topbar'daki gri alana (actions). */}
+
             </>
           )}
         </div>

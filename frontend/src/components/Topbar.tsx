@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { TimeRangePicker } from './TimeRangePicker';
 import { EnvPicker } from './EnvPicker';
 import { LangToggle } from './LangToggle';
@@ -20,8 +21,12 @@ import { ContextBar, type ContextBarProps } from './ContextBar';
 // envApplies: bu sayfa env filtresini GERÇEKTEN uyguluyor mu? Varsayılan
 // false; picker uygulamayan sayfada devre dışı + dürüst ipuçlu görünür.
 // Gerekçe ve neden gizlemek yerine devre dışı: EnvPicker.tsx.
-export function Topbar({ title, range, onRangeChange, showEnv, envApplies, context }: {
+export function Topbar({ title, range, onRangeChange, showEnv, envApplies, context, actions }: {
   title: string;
+  /** v0.10.354 (operatör: Trace eylemleri "sağ üstte gri alana") — sayfa
+   *  eylemleri; arama kutusu ile env/zaman seçicisi ARASINDA. Zaman seçici
+   *  en sağda kalır (v0.10.255 kuralı). */
+  actions?: ReactNode;
   range?: TimeRange;
   onRangeChange?: (r: TimeRange) => void;
   showEnv?: boolean;
@@ -41,6 +46,7 @@ export function Topbar({ title, range, onRangeChange, showEnv, envApplies, conte
           arama yalnız gezinme. Bir operatörün yanlışlıkla pencereyi
           daraltması, arama kutusunu kaybetmesinden pahalı. */}
       <TopbarSearch />
+      {actions && <div className="topbar-actions">{actions}</div>}
       {context ? <ContextBar {...context} /> : (
         <>
           {showEnv && !(range && onRangeChange) && <EnvPicker applies={envApplies} />}

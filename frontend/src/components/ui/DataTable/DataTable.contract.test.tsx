@@ -121,3 +121,18 @@ describe('VirtualTable', () => {
     expect(td.getAttribute('colspan')).toBe(String(COLS.length));
   });
 });
+
+// v0.10.357 — Operator-reported (Traces: "sağa sola kaydırma olmasın, bir türlü
+// düzeltemedik"): sığdırma ölçümü yalnız `.table-wrap` kabını arıyordu; sanal
+// tablonun kabı `.vt-scroll` → fitColumnWidths VirtualTable'da hiç ulaşılmıyordu
+// (v0.9.1334'ün ikizi: saf çekirdek yeşil, çağrıldığı yer pinli değil).
+describe('DataTableColgroup sığdırma sanal tabloya da ulaşır (v0.10.357)', () => {
+  it("closest('.table-wrap, .vt-scroll')", async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const src = readFileSync(resolve(__dirname, 'DataTable.tsx'), 'utf8');
+    expect(src).toContain("closest('.table-wrap, .vt-scroll')");
+    expect(src).not.toContain("closest('.table-wrap')");
+  });
+});
+

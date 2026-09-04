@@ -254,3 +254,16 @@ küçüldü; hata saatte bir loga yazıldı, kimse okumadı.
 Ders: builder testi girdinin GERÇEK üreticisiyle beslenmeli — "isim sözleşme
 ilan eder, kimse zorlamaz" (feedback-names-assert-contracts). Düzeltme:
 builder adı kendisi backtick'ler, `partition_id` + `DROP PARTITION ID '…'`.
+
+### v0.10.357 — Traces yatay kaydırma: sığdırma sanal tabloya hiç ulaşmadı
+
+Operator-reported ("bir türlü düzeltemedik"): /traces tablosu yatayda
+kayıyor. `fitColumnWidths` (v0.9.1030) ve "muhafaza kaldırıldı" (v0.9.1334)
+düzeltmeleri `DataTableColgroup`'ta kabı `closest('.table-wrap')` ile
+arıyordu; sanal tablonun (`VirtualTable`, Traces) kabı `.vt-scroll` →
+closest null → ölçüm yok → sığdırma sanal tabloda HİÇ devreye girmedi.
+Saf çekirdek testi yeşildi, çağrıldığı yer pinli değildi — v0.9.1334'ün
+kendi dersinin (tested-but-unreachable) ikinci örneği, üstelik aynı satırda.
+Düzeltme: `closest('.table-wrap, .vt-scroll')` + kaynak pini
+(DataTable.contract.test.tsx). Kural: bir düzeltme "kap" seçiyorsa
+her kap türü için ulaşılabilirlik pini yaz.

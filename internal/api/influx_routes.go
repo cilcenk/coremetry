@@ -127,7 +127,11 @@ type influxStatusSource struct {
 type influxStatusPayload struct {
 	Sources         []influxStatusSource `json:"sources"`
 	WorkerOnThisPod bool                 `json:"workerOnThisPod"`
-	GeneratedAt     int64                `json:"generatedAt"`
+	// v0.10.333 — işçi başka pod'daysa paylaşılan durumdan (system_settings).
+	WorkerRemote    bool   `json:"workerRemote,omitempty"`
+	WorkerPod       string `json:"workerPod,omitempty"`
+	WorkerUpdatedAt int64  `json:"workerUpdatedAt,omitempty"`
+	GeneratedAt     int64  `json:"generatedAt"`
 }
 
 // influxStatusKey — SAF: TÜM girdiler (kaynak adları, sıralı) anahtarda.
@@ -163,14 +167,29 @@ func (s *Server) getInfluxStatus(w http.ResponseWriter, r *http.Request) {
 			byName[row.Source] = row
 		}
 		var wst map[string]influx.SourceStatus
+		out := influxStatusPayload{Sources: make([]influxStatusSource, 0, len(snap.Sources)),
+			WorkerOnThisPod: s.influxWorker != nil, GeneratedAt: time.Now().UnixMilli()}
 		if s.influxWorker != nil {
 			wst = map[string]influx.SourceStatus{}
 			for _, st := range s.influxWorker.Status() {
 				wst[st.SourceID] = st
 			}
+		} else if s.store != nil {
+			// v0.10.333 — işçi bu pod'da değil: worker liderinin yayınladığı
+			// paylaşılan durum (system_settings). Yayın hiç yoksa işçi hiç
+			// koşmamış demektir; kart bunu söyler.
+			if raw, err := s.store.GetSetting(ctx, influx.WorkerStatusKey); err == nil {
+				if snapW, ok := influx.DecodeWorkerStatus(raw); ok {
+					wst = map[string]influx.SourceStatus{}
+					for _, st := range snapW.Sources {
+						wst[st.SourceID] = st
+					}
+					out.WorkerRemote = true
+					out.WorkerPod = snapW.Pod
+					out.WorkerUpdatedAt = snapW.UpdatedAt
+				}
+			}
 		}
-		out := influxStatusPayload{Sources: make([]influxStatusSource, 0, len(snap.Sources)),
-			WorkerOnThisPod: s.influxWorker != nil, GeneratedAt: time.Now().UnixMilli()}
 		for _, src := range snap.Sources {
 			row := influxStatusSource{ID: src.ID, Name: src.Name, Enabled: src.Enabled}
 			if ir, ok := byName[src.Name]; ok {

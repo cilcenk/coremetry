@@ -172,6 +172,15 @@ export function InfluxTab() {
                   {st.lastPointAt
                     ? <>Son veri <b>{fmtDateTime(st.lastPointAt)}</b> · 1 saatte {st.points1h} nokta / {st.series1h} seri</>
                     : <span className="is-quiet">Son 1 saatte metric_points'e veri gelmedi.</span>}
+                  {/* v0.10.333 — işçi bu pod'da değilse paylaşılan durum (worker
+                      lideri yayınlar); hiç yayın yoksa işçi hiç koşmamış demektir —
+                      operatöre nereye bakacağını söyle. */}
+                  {!st.worker && r.enabled && (
+                    <span className="is-quiet"> · işçi durumu yok — poll işçisi henüz hiç koşmamış (worker rolü / lider); worker pod logu: <code>[influx]</code></span>
+                  )}
+                  {st.worker && status?.workerRemote && (
+                    <span className="is-quiet"> · işçi pod: <code>{status.workerPod}</code>{status.workerUpdatedAt ? ` (${fmtDateTime(status.workerUpdatedAt)})` : ''}</span>
+                  )}
                   {st.worker && (
                     <> · işçi: {st.worker.lastError
                       ? <span className="is-err">{st.worker.lastError}</span>

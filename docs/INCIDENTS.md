@@ -217,3 +217,22 @@ dizi yoluyla yeniden koşar (doğru ama yavaş), haritayı askıya alır ve
 hangi host'un yalan söylediğini zarfa+loga yazar (`[traces] PROMOTED
 COLUMN MISMATCH`). Onarım hedefi o host: `system.mutations` takılı mı,
 `spans_local` kolon ifadesi iki yazımı da okuyor mu.
+
+### v0.10.341 — Arama + attribute çipi: aynı span tuzağı (v0.10.258'in çip hâli)
+
+Operator-reported: "channel_code bir örnekti; servis + operasyon seçildikten
+sonra HERHANGİ bir attribute eklendiğinde aynı sorun." Arama HAVING'de
+TRACE düzeyi (`countIf(arama) > 0`), çip WHERE'de SPAN düzeyi: liste ancak
+aynı span hem aranan adı hem attribute'u taşıyorsa doluyor. Tablo ise
+attribute kolonunu trace'in HERHANGİ bir span'inden gösteriyor
+(`traceExtrasProjection` anyIf) — operatör "işte değer orada" diye
+bakıyordu, filtre başka span'e soruyordu. v0.10.339'un replika teşhisi
+bu vakada tetiklenmez (kolon da dizi de 0: span düzeyinde gerçekten yok).
+
+v0.10.258 aynı tuzağı Errors için çözmüştü (WHERE→HAVING). Şimdi çipler
+de arama varken HAVING'e taşınır (`filtersTraceLevel` /
+`traceLevelFilterHaving`: çip başına `countIf(<yüklem>) > 0`, OR kökü tek
+countIf); arama yokken WHERE'de kalır (terfi kolonu / kvh indeksi budar).
+Teşhis sayımı da trace düzeyi. Ders: **bir yüzeyde gösterilen değer hangi
+düzeydense filtre de o düzeyde sorulmalı**; aksi hâlde ekran "var" der,
+sorgu "yok" der ve ikisi de haklıdır.

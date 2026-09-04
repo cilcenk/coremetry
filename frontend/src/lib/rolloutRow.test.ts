@@ -1,6 +1,6 @@
 // rolloutRow.test.ts — v0.10.201 sözleşmesi (rolloutRow.ts başlığı).
 import { describe, it, expect } from 'vitest';
-import { rolloutKey, upsertRollouts, statusTone, rolloutDurationSec, shortRevision, imageDiff, rolloutTracesFilters, rolloutEvidenceHref, decodeRolloutParam } from './rolloutRow';
+import { rolloutKey, upsertRollouts, statusTone, rolloutDurationSec, shortRevision, imageDiff, rolloutTracesFilters, rolloutEvidenceHref, decodeRolloutParam, rolloutPlaceLabel } from './rolloutRow';
 import type { WorkloadRollout } from './types';
 
 const base: WorkloadRollout = {
@@ -106,3 +106,17 @@ describe('rolloutEvidenceHref (v0.10.243)', () => {
     expect(dec).toEqual({ clusterId: 'c-1', namespace: 'pay', workload: 'api', revision: 'api-7fb7dffckb', startedAt: 1700000000123 });
   });
 });
+
+// v0.10.338 — Operator-reported: çekmecede cluster yoktu (aynı workload iki
+// cluster'da). Yer satırı ad çözülünce adı, çözülmeyince ID'yi taşır; asla boş.
+describe('rolloutPlaceLabel (v0.10.338)', () => {
+  it('küme adı · namespace · tür', () => {
+    expect(rolloutPlaceLabel(base, 'ocp-prod-a')).toBe('ocp-prod-a · pay · Deployment');
+  });
+  it('ad çözülemezse cluster ID; tür yoksa Deployment; namespace yoksa ?', () => {
+    expect(rolloutPlaceLabel(base)).toBe('c-1 · pay · Deployment');
+    expect(rolloutPlaceLabel({ clusterId: '', namespace: '', kind: '' })).toBe('? · ? · Deployment');
+    expect(rolloutPlaceLabel({ clusterId: 'c-2', namespace: 'x', kind: 'StatefulSet' }, '  ')).toBe('c-2 · x · StatefulSet');
+  });
+});
+

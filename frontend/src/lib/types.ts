@@ -2496,6 +2496,10 @@ export interface TracesResponse {
   // window — the UI shows a "ranked within newest N" hint. Absent =
   // exact/global ordering.
   rankedWithinRecent?: number;
+  // v0.10.342 — kimlik-önce arama: arama terimi tek parçalı bir kimlikse
+  // (function_id, trace id) önce terfi/facet anahtarlarında eşitlik denendi.
+  // hits>0 → liste o trace'ler; 0 → alt-dize araması eskisi gibi koştu.
+  identity?: { keys: string[]; matchedKey?: string; hits: number; bounded?: boolean; traceId?: boolean };
   /** v0.10.124 — pencere trace_summary_5m'de boş bir güne değiyor; liste
    *  ham span'lerden okundu (daha yavaş). Tarihçe sihirbazı doldurunca
    *  kaybolur. */

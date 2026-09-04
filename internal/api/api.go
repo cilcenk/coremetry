@@ -4286,6 +4286,9 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 		// when it actually moved, exactly like rankedWithinRecent.
 		var narrowedFrom time.Time
 		f.NarrowedFrom = &narrowedFrom
+		// v0.10.342 — kimlik-önce arama (function_id / trace id) sonucu.
+		var identity chstore.IdentityHit
+		f.IdentityHit = &identity
 		traces, total, hasMore, err := s.store.GetTraces(ctx, f)
 		if err != nil {
 			return nil, err
@@ -4348,6 +4351,9 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 		}
 		if rankedWithin > 0 {
 			resp["rankedWithinRecent"] = rankedWithin
+		}
+		if identity.Keys != nil {
+			resp["identity"] = identity
 		}
 		// Only emit `total` when the caller actually computed one — clients
 		// distinguish "unknown total" from "zero total" by the field's

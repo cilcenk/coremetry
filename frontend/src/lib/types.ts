@@ -1478,6 +1478,12 @@ export interface InfluxQueryProbe {
   sample?: Record<string, string>[];
   latencyMs: number;
   error?: string;
+  /** v0.10.335 — sıfır satırda ikinci deneme (24h); wideWindow doluysa koştu. */
+  wideWindow?: string;
+  wideRows?: number;
+  wideNewest?: string;
+  wideError?: string;
+  hint?: string;
 }
 /** influx.TestResult — 200 + ok:false başarısızlıkta (test ucu sözleşmesi). */
 export interface InfluxTestResult {

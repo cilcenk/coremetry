@@ -312,6 +312,19 @@ export function InfluxTab() {
                       {p.error
                         ? <span style={{ color: 'var(--err)' }}>{p.error}</span>
                         : <span style={{ color: 'var(--text2)' }}>{p.rows} satır · {p.latencyMs} ms · kolonlar: {p.columns.join(', ') || '—'}</span>}
+                      {!p.error && p.wideWindow && (
+                        <div style={{ marginTop: 4 }}>
+                          <span style={{ color: 'var(--text2)' }}>
+                            Son {p.wideWindow}:{' '}
+                            {p.wideError
+                              ? <span style={{ color: 'var(--err)' }}>{p.wideError}</span>
+                              : <>{p.wideRows ?? 0} satır{p.wideNewest ? ` · en yeni _time ${p.wideNewest}` : ''}</>}
+                          </span>
+                          {p.hint && (
+                            <div style={{ marginTop: 4, color: (p.wideRows ?? 0) > 0 ? 'var(--warn)' : 'var(--err)' }}>{p.hint}</div>
+                          )}
+                        </div>
+                      )}
                       {!p.error && (p.sample?.length ?? 0) > 0 && (
                         <div style={{ overflowX: 'auto', marginTop: 4 }}>
                           <table>

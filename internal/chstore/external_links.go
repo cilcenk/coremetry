@@ -44,6 +44,10 @@ const (
 type ExternalLink struct {
 	Label       string `json:"label"`
 	URLTemplate string `json:"urlTemplate"`
+	// Color — v0.10.346 (operatör: "Log İzleme düğmesi kırmızı, içi beyaz
+	// yazı, aracın renklerine uygun"): düğme dolgu rengi (#rrggbb); boş =
+	// ikincil düğme. Yazı rengi --on-accent (beyaz), araç başına marka rengi.
+	Color string `json:"color,omitempty"`
 	// Requires — türetilmiş: şablondaki attribute anahtarları (attr.* ve
 	// attrTime.*); istemci hepsi çözülmeden düğmeyi etkinleştirmez.
 	Requires []string `json:"requires,omitempty"`
@@ -58,8 +62,9 @@ var externalLinksPtr atomic.Pointer[[]ExternalLink]
 
 var (
 	// Anahtar sınıfında ':' YOK: {{attrTime.function_id:ddMM}} — ':' biçim ayracı.
-	externalLinkVarRe = regexp.MustCompile(`\{\{\s*([A-Za-z]+)(?:\.([A-Za-z0-9_.-]+))?(?::([A-Za-z]+))?\s*\}\}`)
-	externalLinkFmtRe = regexp.MustCompile(`^(dd|MM|yyyy|yy|HH|mm|ss)+$`)
+	externalLinkVarRe   = regexp.MustCompile(`\{\{\s*([A-Za-z]+)(?:\.([A-Za-z0-9_.-]+))?(?::([A-Za-z]+))?\s*\}\}`)
+	externalLinkFmtRe   = regexp.MustCompile(`^(dd|MM|yyyy|yy|HH|mm|ss)+$`)
+	externalLinkColorRe = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 )
 
 // ExternalLinkVars — SAF: şablondaki değişkenler → gerekli attribute
@@ -127,7 +132,11 @@ func NormalizeExternalLinks(in ExternalLinkSettings) (ExternalLinkSettings, erro
 		if err != nil {
 			return out, fmt.Errorf("link %d (%s): %v", i+1, label, err)
 		}
-		out.Links = append(out.Links, ExternalLink{Label: label, URLTemplate: tpl, Requires: req})
+		color := strings.ToLower(strings.TrimSpace(l.Color))
+		if color != "" && !externalLinkColorRe.MatchString(color) {
+			return out, fmt.Errorf("link %d (%s): renk #rrggbb biçiminde olmalı", i+1, label)
+		}
+		out.Links = append(out.Links, ExternalLink{Label: label, URLTemplate: tpl, Requires: req, Color: color})
 	}
 	return out, nil
 }

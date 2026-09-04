@@ -2838,7 +2838,7 @@ export interface ServiceMetricRED {
 }
 
 // v0.10.345 — trace sayfası dış link şablonları (system_settings['external_links']).
-export interface ExternalLink { label: string; urlTemplate: string; requires?: string[] }
+export interface ExternalLink { label: string; urlTemplate: string; requires?: string[]; color?: string } // color: #rrggbb dolgu (v0.10.346)
 export interface ExternalLinkSettings { links: ExternalLink[] }
 
 export interface ServiceMetricThroughput {

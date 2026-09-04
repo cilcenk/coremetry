@@ -21,7 +21,7 @@ const PREVIEW_CTX = {
 
 export function ExternalLinksTab() {
   const [links, setLinks] = useState<ExternalLink[]>([]);
-  const [draft, setDraft] = useState<{ label: string; urlTemplate: string }>({ label: '', urlTemplate: '' });
+  const [draft, setDraft] = useState<{ label: string; urlTemplate: string; color: string }>({ label: '', urlTemplate: '', color: '' });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   useEffect(() => {
@@ -51,13 +51,16 @@ export function ExternalLinksTab() {
         ? <div className="field-hint">Henüz link yok.</div>
         : (
           <table style={{ width: '100%' }}>
-            <thead><tr><th style={{ textAlign: 'left' }}>Etiket</th><th style={{ textAlign: 'left' }}>Şablon</th><th style={{ textAlign: 'left' }}>Gerekli</th><th></th></tr></thead>
+            <thead><tr><th style={{ textAlign: 'left' }}>Etiket</th><th style={{ textAlign: 'left' }}>Şablon</th><th style={{ textAlign: 'left' }}>Gerekli</th><th style={{ textAlign: 'left' }}>Renk</th><th></th></tr></thead>
             <tbody>
               {links.map((l, i) => (
                 <tr key={l.label}>
                   <td>{l.label}</td>
                   <td className="td-full mono" style={{ fontSize: 12 }}>{l.urlTemplate} <CopyButton value={l.urlTemplate} title="Şablonu kopyala" /></td>
                   <td className="field-hint">{(l.requires ?? []).join(', ') || '—'}</td>
+                  <td>{l.color
+                    ? <span className="mono" style={{ fontSize: 12 }}><span aria-hidden style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: l.color, verticalAlign: 'middle', marginRight: 4 }} />{l.color}</span>
+                    : <span className="field-hint">ikincil</span>}</td>
                   <td><Button variant="ghost-danger" size="sm" disabled={busy} onClick={() => save(links.filter((_, j) => j !== i))}>Sil</Button></td>
                 </tr>
               ))}
@@ -67,8 +70,11 @@ export function ExternalLinksTab() {
       <Row gap={3} wrap style={{ alignItems: 'flex-end' }}>
         <Field label="Etiket" value={draft.label} onChange={e => setDraft({ ...draft, label: e.target.value })} placeholder="Log İzleme" style={{ width: 180 }} />
         <Field label="URL şablonu" value={draft.urlTemplate} onChange={e => setDraft({ ...draft, urlTemplate: e.target.value })} placeholder={EXAMPLE} className="mono" style={{ width: 620 }} />
+        {/* v0.10.346 — düğme dolgu rengi (aracın marka rengi); boş = ikincil düğme. */}
+        <Field label="Renk (#rrggbb)" value={draft.color} onChange={e => setDraft({ ...draft, color: e.target.value })} placeholder="#d32f2f" className="mono" style={{ width: 110 }}
+          hint={draft.color ? <span aria-hidden style={{ display: 'inline-block', width: 40, height: 10, borderRadius: 3, background: draft.color }} /> : 'boş = gri'} />
         <Button variant="primary" size="sm" disabled={busy || !draft.label.trim() || !draft.urlTemplate.trim() || (preview?.missing.length ?? 0) > 0}
-          onClick={() => save([...links, { label: draft.label.trim(), urlTemplate: draft.urlTemplate.trim() }]).then(() => setDraft({ label: '', urlTemplate: '' }))}>
+          onClick={() => save([...links, { label: draft.label.trim(), urlTemplate: draft.urlTemplate.trim(), color: draft.color.trim() || undefined }]).then(() => setDraft({ label: '', urlTemplate: '', color: '' }))}>
           Ekle
         </Button>
         <Button variant="secondary" size="sm" onClick={() => setDraft({ ...draft, urlTemplate: EXAMPLE })}>Örneği doldur</Button>

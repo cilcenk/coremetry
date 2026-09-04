@@ -379,10 +379,11 @@ function TraceDetailInner() {
   const errSpans = spans ? spans.filter(s => spanHasError(s)).length : 0;
 
 
-  return (
-    <>
-      <Topbar title="Trace Detail" range={range} onRangeChange={setRange}
-        actions={spans && spans.length > 0 ? (
+  // v0.10.360 (operatör: "en yukarı koy demedim") — Compare / Logs / Share /
+  // Export JSON + kritik yol özeti breadcrumb satırının SAĞINDA, gri alanda;
+  // v0.10.354'ün topbar yuvası geri alındı.
+  const traceActions = spans && spans.length > 0 ? (
+
               <>
                 {/* Critical path summary — when computed, the
                     chain's total duration tells the operator
@@ -438,7 +439,11 @@ function TraceDetailInner() {
                   <span>Export JSON</span>
                 </Button>
               </>
-        ) : undefined} />
+  ) : null;
+
+  return (
+    <>
+      <Topbar title="Trace Detail" range={range} onRangeChange={setRange} />
       <PageShell>
         {/* v0.10.219 (mockup onayı 2026-09-01, D4) — "← Back" (navigate(-1))
             yerine breadcrumb: Traces › <kök işlem>. Liste halkası, satırın
@@ -446,11 +451,14 @@ function TraceDetailInner() {
             olmayan yeni sekmede de çalışır. Altında özet şeridi: servis
             rozeti, durum (+hatalı span sayısı), span · servis sayısı, süre,
             başlangıç, id — Dynatrace trace başlığı düzeni. */}
-        <nav className="crumbs" aria-label="Breadcrumb">
-          <Link to={traceBackHref(location.state)}>Traces</Link>
-          <span className="crumbs__sep" aria-hidden="true">›</span>
-          <span className="crumbs__cur" title={root ? displaySpanName(root) : id}>{root ? displaySpanName(root) : 'Trace'}</span>
-        </nav>
+        <div className="crumbs-row">
+          <nav className="crumbs" aria-label="Breadcrumb">
+            <Link to={traceBackHref(location.state)}>Traces</Link>
+            <span className="crumbs__sep" aria-hidden="true">›</span>
+            <span className="crumbs__cur" title={root ? displaySpanName(root) : id}>{root ? displaySpanName(root) : 'Trace'}</span>
+          </nav>
+          {traceActions && <span className="crumbs-actions">{traceActions}</span>}
+        </div>
         <div className="trace-summary">
           {root && <SvcBadge name={root.serviceName} />}
           <code style={{ fontSize: 11, color: 'var(--text2)', background: 'var(--bg2)', padding: '2px 6px', borderRadius: 4 }}>

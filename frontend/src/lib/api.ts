@@ -1591,6 +1591,13 @@ export const api = {
   // badge reads `source` off the /api/metrics/names body, so a viewer
   // (who gets 403 here) still sees which store answered.
   // v0.10.303 — trace facet kaydı (admin).
+  // v0.10.345 — dış link şablonları: admin GET/PUT, her rol için GET.
+  getExternalLinks: () => get<import('./types').ExternalLinkSettings>(`/api/settings/external-links`),
+  putExternalLinks: (links: import('./types').ExternalLink[]) =>
+    request<import('./types').ExternalLinkSettings>(`/api/settings/external-links`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ links }),
+    }),
+  externalLinks: () => get<import('./types').ExternalLinkSettings>(`/api/external-links`),
   getTraceFacets: () => get<TraceFacetsResponse>(`/api/settings/trace-facets`),
   putTraceFacets: (facets: TraceFacet[]) =>
     request<TraceFacetsResponse>(`/api/settings/trace-facets`, {

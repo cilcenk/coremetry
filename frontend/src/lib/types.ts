@@ -2837,6 +2837,10 @@ export interface ServiceMetricRED {
   series: Record<string, SpanMetricSeries[] | undefined>;
 }
 
+// v0.10.345 — trace sayfası dış link şablonları (system_settings['external_links']).
+export interface ExternalLink { label: string; urlTemplate: string; requires?: string[] }
+export interface ExternalLinkSettings { links: ExternalLink[] }
+
 export interface ServiceMetricThroughput {
   service: string;
   metric: string;

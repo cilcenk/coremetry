@@ -117,6 +117,12 @@ func (f FilterExpr) SQL() (string, []any, error) {
 	return f.sql("", wellKnown, wellKnownResource, promotedCols(), AttrIndexAvailable())
 }
 
+// SQLWithPromoted — v0.10.339: terfi haritası ÇAĞIRANDAN. nil = dizi yolu
+// (TraceFilter.NoPromoted; promoted_attr.go §v0.10.339 uyuşmazlık düşüşü).
+func (f FilterExpr) SQLWithPromoted(promoted map[string]string) (string, []any, error) {
+	return f.sql("", wellKnown, wellKnownResource, promoted, AttrIndexAvailable())
+}
+
 // SQLForMetricPoints resolves against metric_points' column set
 // (v0.8.381): only service/host typed columns exist there, so every
 // other wellKnown key falls to the attr/res array lookups instead of
@@ -408,8 +414,13 @@ func (f FilterExpr) sql(alias string, wellKnown, resourceWellKnown, promoted map
 // would take down every caller for one malformed clause. But it must not be
 // invisible.
 func ApplyFilters(wc *whereClause, filters []FilterExpr) {
+	ApplyFiltersWith(wc, filters, promotedCols())
+}
+
+// ApplyFiltersWith — v0.10.339: terfi haritası parametre (nil = dizi yolu).
+func ApplyFiltersWith(wc *whereClause, filters []FilterExpr, promoted map[string]string) {
 	for _, f := range filters {
-		sql, args, err := f.SQL()
+		sql, args, err := f.SQLWithPromoted(promoted)
 		if err != nil || sql == "" {
 			log.Printf("[filter] DROPPED span filter key=%q op=%q values=%d: %v — "+
 				"result is UNFILTERED for this clause", f.Key, f.Op, len(f.Values), err)
@@ -568,11 +579,16 @@ func joinOp(j string) string {
 // Returns ("", nil) when the group yields no compilable terms, so the
 // caller can omit it entirely.
 func buildGroupFragment(g FilterGroup, nested bool) (string, []any) {
+	return buildGroupFragmentWith(g, nested, promotedCols())
+}
+
+// buildGroupFragmentWith — v0.10.339: terfi haritası parametre (nil = dizi yolu).
+func buildGroupFragmentWith(g FilterGroup, nested bool, promoted map[string]string) (string, []any) {
 	op := joinOp(g.Join)
 	var parts []string
 	var args []any
 	for _, f := range g.Filters {
-		sql, fargs, err := f.SQL()
+		sql, fargs, err := f.SQLWithPromoted(promoted)
 		if err != nil || sql == "" {
 			continue // silently skip — UI validates first
 		}
@@ -631,15 +647,30 @@ func BuildFilterGroupSQL(g FilterGroup) (string, []any) {
 //     group's internal boolean structure is preserved against the
 //     surrounding (always-AND) time / service / error predicates.
 func ApplyFilterGroup(wc *whereClause, g FilterGroup) {
+	ApplyFilterGroupWith(wc, g, promotedCols())
+}
+
+// ApplyFilterGroupWith — v0.10.339: terfi haritası parametre (nil = dizi yolu).
+func ApplyFilterGroupWith(wc *whereClause, g FilterGroup, promoted map[string]string) {
 	if g.isFlatAnd() {
-		ApplyFilters(wc, g.Filters)
+		ApplyFiltersWith(wc, g.Filters, promoted)
 		return
 	}
-	sql, args := BuildFilterGroupSQL(g)
+	sql, args := buildGroupFragmentWith(g, false, promoted)
 	if sql == "" {
 		return
 	}
 	wc.add(sql, args...)
+}
+
+// leaves — v0.10.339: kök + bir seviye alt grupların yaprak filtreleri
+// (buildGroupFragment'ın gezdiği derinlikle aynı).
+func (g FilterGroup) leaves() []FilterExpr {
+	out := append([]FilterExpr(nil), g.Filters...)
+	for _, sub := range g.Groups {
+		out = append(out, sub.Filters...)
+	}
+	return out
 }
 
 // ── v0.10.118 — SINIRDA DOĞRULAMA ──────────────────────────────────────

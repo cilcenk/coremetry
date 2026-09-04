@@ -4302,6 +4302,33 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 			if cerr != nil {
 				diag["error"] = cerr.Error()
 			}
+			// v0.10.339 — Operator-reported (prod): `channel_code = …` çipiyle
+			// liste boş, aynı span'ler çipsiz listede o değerle görünüyor.
+			// Filtre terfi kolonuna derlenmişti ve kolon o replikada değeri
+			// taşımıyordu. Boş sonuçta kolon/dizi sayımı host başına
+			// karşılaştırılır; dizi fazlaysa aynı istek dizi yoluyla yeniden
+			// koşar (doğru ama yavaş) ve harita askıya alınır.
+			if pk := chstore.PromotedFilterKeys(f); len(pk) > 0 && cerr == nil && n == 0 {
+				diag["promotedKeys"] = pk
+				if hosts, perr := s.store.PromotedMismatch(ctx, f); perr != nil {
+					diag["promotedProbeError"] = perr.Error()
+				} else {
+					diag["promotedHosts"] = hosts
+					if chstore.PromotedMismatchDetected(hosts) {
+						f2 := f
+						f2.NoPromoted = true
+						if t2, _, hm2, err2 := s.store.GetTraces(ctx, f2); err2 == nil {
+							traces, hasMore = t2, hm2
+							resp["traces"], resp["hasMore"] = traces, hasMore
+							diag["promotedFallback"] = true
+						} else {
+							diag["promotedFallbackError"] = err2.Error()
+						}
+						s.store.SuspendPromotedKeys(pk)
+						log.Printf("[traces] PROMOTED COLUMN MISMATCH keys=%v hosts=%+v — dizi yoluna düşüldü (%d satır), harita askıya alındı; replika şemasını kontrol et (system.mutations / DROP+ADD onarımı)", pk, hosts, len(traces))
+					}
+				}
+			}
 			resp["emptyDiag"] = diag
 			if ej, jerr := json.Marshal(f.Explain); jerr == nil {
 				log.Printf("[traces] EMPTY list (window=%s→%s service=%q search=%q filters=%d hasError=%v sort=%s) matchingSpans=%d explain=%s",

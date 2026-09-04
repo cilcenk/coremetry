@@ -197,3 +197,23 @@ hiçbir etkisi yoktu. Ders: "kırpma" pitfall'ının üçüncü şekli — sın�
 `<td>` her çekmecede 320 px'e kilitli. Okunması gereken tam metin taşıyan
 hücre `.td-full` alır (sarar, kırpmaz) ve yanına kopyalama düğmesi konur;
 `RolloutDrawer.pins.test.ts` hücreleri ve CSS kuralını pinler.
+
+### v0.10.339 — Terfi kolonu "var ama bu değeri taşımıyor" (prod, replika farkı)
+
+Operator-reported: /traces'te `channel_code = 060203` çipi eklenince liste
+boş; aynı pencerede aynı span'ler çipsiz listede CHANNEL_CODE=060203 ile
+görünüyor. Explain (v0.10.326-329): filtre `attr_channel_code = ?` TERFİ
+kolonuna derlenmiş, sayım 23 ms'de 0. Boot probe'u (v0.9.621: 50k örnek,
+kolon == dizi) geçmişti; yani kolonu doğrulayan örnek ile sorgunun gittiği
+replika/part farklı — dağıtık prod'da DROP+ADD onarımının bir replikada
+takılı kalması (v0.9.623 "Cannot apply mutation" sınıfı) bu tabloyu verir.
+Aynı sebep "6 saat geliyor, 30 dakika gelmiyor" şikâyetini de açıklar:
+hangi replikanın cevapladığı isteğe göre değişir.
+
+Ders: **var ≠ dolu ≠ HER REPLİKADA dolu.** Boot'taki tek-örnek doğrulama
+yetmez; doğruluk sorgu anında ölçülmeli. Ürün artık boş sonuçta kolon/dizi
+sayımını host (replika) başına karşılaştırır, dizi fazlaysa aynı isteği
+dizi yoluyla yeniden koşar (doğru ama yavaş), haritayı askıya alır ve
+hangi host'un yalan söylediğini zarfa+loga yazar (`[traces] PROMOTED
+COLUMN MISMATCH`). Onarım hedefi o host: `system.mutations` takılı mı,
+`spans_local` kolon ifadesi iki yazımı da okuyor mu.

@@ -473,6 +473,14 @@ export const api = {
   // Servis throughput'u METRİKTEN (v0.9.665). `metric` boş bırakılırsa
   // ayardaki ad kullanılıyor; operatör doğru adı ararken her denemede
   // ayar kaydetmek zorunda kalmasın diye sorgudan da geçilebiliyor.
+  // v0.10.337 — Overview RED'i metrikten (?src=metric). withMetricSource:
+  // ?metricsrc= deneme modu diğer metrik uçlarıyla aynı depoya gitsin.
+  serviceMetricRED: (svc: string, fromNs: number, toNs: number, mdp?: number, opts?: { rateWindow?: number; env?: string }) =>
+    get<import('./types').ServiceMetricRED>(withMetricSource(
+      `/api/services/${encodeURIComponent(svc)}/metric-red?from=${fromNs}&to=${toNs}`
+      + (mdp ? `&maxDataPoints=${mdp}` : '')
+      + (opts?.rateWindow ? `&rateWindow=${opts.rateWindow}` : '')
+      + (opts?.env ? `&env=${encodeURIComponent(opts.env)}` : ''))),
   serviceMetricThroughput: (svc: string, fromNs: number, toNs: number, metric?: string, mdp?: number, opts?: { breakdown?: 'route'; rateWindow?: number; env?: string }) =>
     get<import('./types').ServiceMetricThroughput>(
       `/api/services/${encodeURIComponent(svc)}/metric-throughput?from=${fromNs}&to=${toNs}`

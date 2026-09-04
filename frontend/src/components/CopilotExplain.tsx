@@ -494,7 +494,10 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
               )}
               {code.files.map(f => (
                 <div key={`${f.path}:${f.fromLine}`} style={{ fontFamily: 'var(--mono, monospace)' }}>
-                  {f.path}:{f.fromLine}-{f.toLine}
+                  {/* v0.10.353 (operatör) — dosya+satır DevOps'ta açılır (url sunucudan, FileURL). */}
+                  {f.url
+                    ? <a href={f.url} target="_blank" rel="noreferrer" title={`DevOps'ta aç: ${f.path}${f.line ? ` satır ${f.line}` : ''}`}>{f.path}:{f.fromLine}-{f.toLine} ↗</a>
+                    : <>{f.path}:{f.fromLine}-{f.toLine}</>}
                   {/* v0.9.1254 — modelin ">>>" ile işaretlendiği satır;
                       içerik tarayıcıya gitmez, numara yeter. */}
                   {!!f.line && <span style={{ color: 'var(--text3)' }}> · hata satırı {f.line}</span>}
@@ -563,7 +566,9 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
               {code.reason && <div style={{ color: 'var(--warn, var(--text3))' }}>{code.reason}</div>}
               {code.files.map(f => (
                 <div key={`${f.path}:${f.fromLine}`} style={{ fontFamily: 'var(--mono, monospace)' }}>
-                  {f.path}:{f.fromLine}-{f.toLine}{!!f.line && <span style={{ color: 'var(--text3)' }}> · hata satırı {f.line}</span>}
+                  {f.url
+                    ? <a href={f.url} target="_blank" rel="noreferrer" title={`DevOps'ta aç: ${f.path}${f.line ? ` satır ${f.line}` : ''}`}>{f.path}:{f.fromLine}-{f.toLine} ↗</a>
+                    : <>{f.path}:{f.fromLine}-{f.toLine}</>}{!!f.line && <span style={{ color: 'var(--text3)' }}> · hata satırı {f.line}</span>}
                 </div>
               ))}
             </div>

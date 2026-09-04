@@ -48,6 +48,7 @@ type devopsSettingsInput struct {
 	// ve kod çekme deneme tavanı; gerekçe devops.Settings'te.
 	AppPrefixes     []string `json:"appPrefixes"`
 	CodeLookupLimit int      `json:"codeLookupLimit"`
+	CodeSearchLimit int      `json:"codeSearchLimit"` // v0.10.353
 }
 
 // mergeDevOpsSettings validates the input and folds it over the
@@ -78,6 +79,7 @@ func mergeDevOpsSettings(in devopsSettingsInput, cur devops.Settings) (devops.Se
 		BranchOrder:        cleanConventionList(in.BranchOrder),
 		AppPrefixes:        cleanConventionList(in.AppPrefixes),
 		CodeLookupLimit:    devops.ClampCodeLookupLimit(in.CodeLookupLimit),
+		CodeSearchLimit:    devops.ClampCodeSearchLimit(in.CodeSearchLimit),
 	}
 	if cfg.Flavor == "" {
 		cfg.Flavor = devops.FlavorAuto

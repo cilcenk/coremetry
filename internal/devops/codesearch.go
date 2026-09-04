@@ -238,7 +238,9 @@ func SearchQueryForFrame(f stackparse.Frame) string {
 // konvansiyon deposundan gelen pencerelerdir. İki arama, "hata başka bir
 // bileşende" durumunu yakalamaya yetiyor; daha fazlası açıklamayı
 // bekletir.
-const codeSearchLimit = 2
+// v0.10.353 — sabit 2 yerine ayar (Settings.searchLimit); bu sabit yalnız
+// eski testlerin okuduğu varsayılan.
+const codeSearchLimit = DefaultCodeSearchLimit
 
 // codeSearchTop — arama motorundan istenen sonuç sayısı.
 //
@@ -373,10 +375,14 @@ func searchResolveProjectRepo(
 	preferRepo string,
 	branchOrder []string,
 	search func(context.Context, string) ([]CodeSearchHit, error),
+	limit int,
 ) (project, repo, note string, ok bool) {
 	tried := 0
+	if limit <= 0 {
+		limit = DefaultCodeSearchLimit
+	}
 	for _, f := range targets {
-		if tried >= codeSearchLimit || ctx.Err() != nil {
+		if tried >= limit || ctx.Err() != nil {
 			break
 		}
 		q := SearchQueryForFrame(f)
@@ -427,12 +433,16 @@ func huntSearchWindows(
 	radius int,
 	search func(context.Context, string) ([]CodeSearchHit, error),
 	fetchIn func(ctx context.Context, project, repo, branch, path string) (string, error),
+	limit int,
 ) ([]CodeWindow, []string) {
 	var out []CodeWindow
 	var notes []string
 	tried := 0
+	if limit <= 0 {
+		limit = DefaultCodeSearchLimit
+	}
 	for _, f := range missed {
-		if tried >= codeSearchLimit || ctx.Err() != nil {
+		if tried >= limit || ctx.Err() != nil {
 			break
 		}
 		q := SearchQueryForFrame(f)
@@ -468,6 +478,7 @@ func huntSearchWindows(
 		// Depo adı yola yazılıyor: pencere BAŞKA bir depodan geliyor ve
 		// operatör bunu görmeli, yoksa yolu kendi deposunda arar.
 		w.Path = h.Repository + ":" + h.Path
+		w.Project, w.Repo, w.Branch = h.Project, h.Repository, h.Branch // v0.10.353 — dosya linki için
 		out = append(out, w)
 	}
 	if len(out) > 0 {
@@ -479,7 +490,7 @@ func huntSearchWindows(
 // errCodeSearchLimit — hata-kodu token'ı başına değil TOPLAM arama tavanı.
 // Frame aramasıyla aynı gerekçe (codeSearchLimit): arama pahalı, asıl
 // kanıt pencereleri başka yoldan da geliyor.
-const errCodeSearchLimit = 2
+const errCodeSearchLimit = DefaultCodeSearchLimit // v0.10.353 — ayar (searchLimit) yönetir
 
 // huntErrorCodeWindows — hata-kodu token'larıyla DİL-BAĞIMSIZ organizasyon
 // araması (v0.10.100). Frame aramasından farkı: sorgu bir sınıf.metot değil
@@ -493,12 +504,16 @@ func huntErrorCodeWindows(
 	radius int,
 	search func(context.Context, string) ([]CodeSearchHit, error),
 	fetchIn func(ctx context.Context, project, repo, branch, path string) (string, error),
+	limit int,
 ) ([]CodeWindow, []string) {
 	var out []CodeWindow
 	var notes []string
 	tried := 0
+	if limit <= 0 {
+		limit = DefaultCodeSearchLimit
+	}
 	for _, tok := range tokens {
-		if tried >= errCodeSearchLimit || ctx.Err() != nil {
+		if tried >= limit || ctx.Err() != nil {
 			break
 		}
 		tried++
@@ -534,6 +549,7 @@ func huntErrorCodeWindows(
 		w.Line = line
 		w.Frame = "hata kodu: " + tok
 		w.Path = h.Repository + ":" + h.Path
+		w.Project, w.Repo, w.Branch = h.Project, h.Repository, h.Branch // v0.10.353 — dosya linki için
 		out = append(out, w)
 	}
 	if len(out) > 0 {

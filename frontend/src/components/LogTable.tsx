@@ -502,10 +502,11 @@ function LogRow({
           <td className="mono">
             {l.traceId ? (
               <>
-                {/* v0.8.332 (pivot Phase 3) — log→trace pivot lands on the
-                    exact span: ?span= seeds the waterfall selection and
-                    Trace.tsx scrolls the row into view. */}
-                <Link to={traceHref(l.traceId, { span: l.spanId })}
+                {/* v0.8.332 (pivot Phase 3) — log→trace pivot ?span= ile
+                    çekmeceyi açıyordu. v0.10.352 (operatör): "trace açılırken
+                    direkt drawer da açılıyor, bunu istemiyoruz" — link artık
+                    yalnız trace'e gider; span çekmecesi operatörün tıkına kalır. */}
+                <Link to={traceHref(l.traceId)}
                   onClick={e => e.stopPropagation()}>
                   {l.traceId.slice(0, 8)}…
                 </Link>

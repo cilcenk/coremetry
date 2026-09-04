@@ -4214,6 +4214,25 @@ export interface EndpointsListResponse {
    * kaldırmak için var olduğu sessiz yanlışın aynısı olurdu.
    */
   poolCapped?: boolean;
+  // v0.10.336 — "Kaynak: metrik" kipi (/api/endpoints/metric). Aynı satır
+  // tipi, metrikten (CH | VM) doldurulur; aşağıdakiler yalnız o kipte gelir.
+  // `note` sunucunun yazdığı dürüstlük metni: hata tanımı, birim, adım,
+  // env/cluster daraltmasının uygulanıp uygulanmadığı, eksik alt sorgular.
+  source?: 'metric';
+  backend?: string;
+  metric?: string;
+  metricExists?: boolean;
+  matchedBy?: string;
+  statusKey?: string;
+  errorsUnknown?: boolean;
+  latencyUnit?: string;
+  latencyUnitKnown?: boolean;
+  envAmbiguous?: boolean;
+  clusterIgnored?: boolean;
+  stepSeconds?: number;
+  tried?: string[];
+  partial?: string[];
+  note?: string;
 }
 
 // EndpointWhereTheTimeGoes — v0.9.311 (brief N4). Where one route's

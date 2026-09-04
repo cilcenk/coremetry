@@ -251,6 +251,18 @@ export default function EndpointsPage() {
     if (v === 'rpc') next.set('entry', 'rpc'); else next.delete('entry');
     return next;
   }, { replace: true });
+  // v0.10.336 — "Kaynak: metrik" (operatör: "Endpoint metriklerine vmden
+  // okuyabilir miyiz"). Aynı tablo, /api/endpoints/metric'ten: OTel HTTP
+  // server histogramı (VM ya da CH, metricsource dikişi). Varsayılan span
+  // türevli kalır; ?src=metric URL'de (Copy link / saved view aynı kipi
+  // açar). Metrik kipi HTTP yüzeyine özgü (http_route etiketi): RPC sekmesi
+  // kapalı, cluster filtresi sunucuda "uygulanmadı" diye ilan edilir.
+  const src: 'span' | 'metric' = params.get('src') === 'metric' ? 'metric' : 'span';
+  const setSrc = (v: 'span' | 'metric') => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v === 'metric') { next.set('src', 'metric'); next.delete('entry'); } else next.delete('src');
+    return next;
+  }, { replace: true });
 
   // v0.5.406 — row expansion + per-service dependency cache.
   // Clicking the "▶" chevron on a row reveals a strip showing
@@ -407,11 +419,14 @@ export default function EndpointsPage() {
       // AYNI değeri taşıyor; bilgi zaten filtrenin kendisinde duruyor.
       // 150px, tablonun en geniş ikinci kolonu.
       .filter(c => !(c.id === 'service' && service !== ''))
+      // v0.10.336 — metrik kipinde p90 yok (dikiş p50/p95/p99 üretir);
+      // sıfır göstermek "0 ms" diye okunurdu.
+      .filter(c => !(c.id === 'p90Ms' && src === 'metric'))
       // v0.9.313 — "Path" is http.route; on the RPC surface the same
       // column carries the span NAME, and calling a gRPC method a path
       // would be a small lie repeated on every row.
       .map(c => (c.id === 'path' && entry === 'rpc' ? { ...c, label: 'Operation' } : c)),
-    [visibleCols, entry, service]);
+    [visibleCols, entry, service, src]);
   // onOpen + searchRef wire the app-wide keyboard nav: j/k select a
   // row, Enter/o open its service detail, "/" focuses the path filter.
   const dt = useDataTable<EndpointRow>({
@@ -448,7 +463,8 @@ export default function EndpointsPage() {
     groupBy: bySignature ? 'signature' : undefined,
     sort: sortBy,
     dir: sortDir,
-    entry: entry === 'rpc' ? 'rpc' : undefined, // v0.9.313
+    entry: entry === 'rpc' && src !== 'metric' ? 'rpc' : undefined, // v0.9.313
+    src: src === 'metric' ? 'metric' : undefined, // v0.10.336
   });
   // v0.9.812 — zarf: satırlar + sıralama havuzunun gerçeği.
   // v0.9.818 — MEMO. Üçlü koşul her render'da YENİ bir dizi kimliği
@@ -474,6 +490,9 @@ export default function EndpointsPage() {
   // Kaynak notu: env/cluster seçiliyken okuma MV'den ham spans'e düşer
   // ve POPÜLASYON değişir (endpointHonesty.endpointsSourceNote).
   const sourceNote = useMemo(() => endpointsSourceNote(cluster, env), [cluster, env]);
+  // v0.10.336 — metrik kipinde not SUNUCUDAN gelir (hata tanımı, birim,
+  // adım, env/cluster daraltması, eksik alt sorgular): istemci tahmin etmez.
+  const metricNote = src === 'metric' ? (rowsQ.data?.note ?? null) : null;
 
   return (
     <>
@@ -501,9 +520,12 @@ export default function EndpointsPage() {
             title="Inbound requests carrying an http.route — the table as it has always been.">
             HTTP
           </button>
-          <button className={entry === 'rpc' ? 'active' : ''}
+          <button className={entry === 'rpc' && src !== 'metric' ? 'active' : ''}
             onClick={() => setEntry('rpc')}
-            title="Inbound spans WITHOUT an http.route: gRPC servers and message consumers, keyed on the span name. These never appeared on this page before.">
+            disabled={src === 'metric'}
+            title={src === 'metric'
+              ? 'Metrik kipi HTTP yüzeyine özgü (http_route etiketi) — RPC & Messaging için Kaynak: span seç.'
+              : 'Inbound spans WITHOUT an http.route: gRPC servers and message consumers, keyed on the span name. These never appeared on this page before.'}>
             RPC &amp; Messaging
           </button>
         </div>
@@ -535,6 +557,16 @@ export default function EndpointsPage() {
               ))}
             </select>
           )}
+          <select value={src}
+            onChange={e => setSrc(e.target.value === 'metric' ? 'metric' : 'span')}
+            style={{ fontSize: 12 }}
+            aria-label="Veri kaynağı"
+            title={src === 'metric'
+              ? 'Kaynak: metrik — OTel HTTP server histogramı (VM ya da ClickHouse), örneklemeden bağımsız tam sayım; ⚡/✖ exemplar yok, p90 yok'
+              : 'Kaynak: span — spanmetrics_1m (izlerden türetilmiş); collector örnekliyorsa eksik sayar'}>
+            <option value="span">Kaynak: span</option>
+            <option value="metric">Kaynak: metrik</option>
+          </select>
           <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
             {rows && (
               <>
@@ -930,14 +962,21 @@ export default function EndpointsPage() {
                 kaybolduğunu tahmin etmek zorundaydı. Not YALNIZ gerçekten
                 ham yoldayken çıkar — her sayfada duran bir uyarı, hiçbir
                 sayfada okunmayan bir uyarıdır. */}
-            {sourceNote && (
+            {(metricNote ?? sourceNote) && (
               <div style={{
                 marginTop: 10, padding: '7px 11px', fontSize: 11.5,
                 border: '1px solid var(--border)', borderLeft: '3px solid var(--accent)',
                 borderRadius: 6, background: 'var(--bg2)', color: 'var(--text2)',
                 lineHeight: 1.5,
-              }}>{sourceNote}</div>
+              }}>{metricNote ?? sourceNote}</div>
             )}
+            {src === 'metric' ? (
+              <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>
+                Path = <code>http_route</code> etiketi (OTel HTTP server histogramı).
+                Çağrı/hata adım toplamı; avg/p50/p95/p99 adım değerlerinin
+                çağrı-ağırlıklı ortalaması — ayrıntı yukarıdaki notta.
+              </div>
+            ) : (
             <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>
               {/* v0.8.356 — the default read rides the spanmetrics_1m MV,
                   whose route dimension is filled from http.route with an
@@ -951,6 +990,7 @@ export default function EndpointsPage() {
               the callee's row. P50/P95/P99 are true window quantiles
               (tdigest).
             </div>
+            )}
           </>
         )}
       </PageShell>

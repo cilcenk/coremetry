@@ -5,6 +5,9 @@ import { traceColumnOrder, FIXED_COLS, DEFAULT_TRACE_COLUMNS } from './traceColu
 
 // traceColumns.test.ts — v0.9.841. Pins the /traces column order.
 //
+//   v0.10.340 (operatör: "Start time'dan sonra Service sonra Name"):
+//   Start time(time) · Service · Name(operation) · <attributes> ·
+//   Duration · Status · Spans
 //   v0.10.220 (operatör: "Start time en solda"):
 //   Start time(time) · Name(operation) · Service · <attributes> ·
 //   Duration · Status · Spans
@@ -24,13 +27,13 @@ describe('traceColumnOrder', () => {
     [
       'no extras — the six fixed columns in canonical order',
       [],
-      ['time', 'operation', 'service', 'duration', 'status', 'spans'],
+      ['time', 'service', 'operation', 'duration', 'status', 'spans'],
     ],
     [
       'the operator default set lands between Service and Duration',
       ['openshift.cluster.name', 'channel_code', 'function_code', 'http.status_code'],
       [
-        'time', 'operation', 'service',
+        'time', 'service', 'operation',
         'openshift.cluster.name', 'channel_code', 'function_code', 'http.status_code',
         'duration', 'status', 'spans',
       ],
@@ -38,12 +41,12 @@ describe('traceColumnOrder', () => {
     [
       'one extra',
       ['pod'],
-      ['time', 'operation', 'service', 'pod', 'duration', 'status', 'spans'],
+      ['time', 'service', 'operation', 'pod', 'duration', 'status', 'spans'],
     ],
     [
       'extras keep the order they were added in',
       ['z', 'a', 'm'],
-      ['time', 'operation', 'service', 'z', 'a', 'm', 'duration', 'status', 'spans'],
+      ['time', 'service', 'operation', 'z', 'a', 'm', 'duration', 'status', 'spans'],
     ],
   ];
   for (const [name, extras, want] of cases) {

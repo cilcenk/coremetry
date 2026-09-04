@@ -91,8 +91,9 @@ export const DEFAULT_TRACE_COLUMNS: string[] = [
  * dedupes on add and caps at 8); this function only orders.
  */
 export function traceColumnOrder(extraCols: string[]): string[] {
+  // v0.10.340 — operatör: "start time'dan sonra service sonra name gelsin".
   return [
-    'time', 'operation', 'service',
+    'time', 'service', 'operation',
     ...extraCols,
     ...FIXED_COLS.filter(c => c !== 'time' && c !== 'service' && c !== 'operation'),
   ];

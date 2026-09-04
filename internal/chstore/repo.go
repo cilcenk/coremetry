@@ -1861,6 +1861,9 @@ type TraceFilter struct {
 	// forceFiltersInWhere — v0.10.341: yalnız span-düzeyi problar (terfi kolonu
 	// uyuşmazlığı) için; arama varken de çipleri WHERE'de tutar.
 	forceFiltersInWhere bool
+	// IdentityHit — v0.10.342 OUT param: kimlik-önce aday yolu denendiyse
+	// sonucu (anahtarlar, tutan anahtar, trace sayısı). nil = ilgilenmiyor.
+	IdentityHit *IdentityHit
 	MinMs               float64
 	MaxMs               float64
 	AttrKey             string
@@ -2357,6 +2360,26 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		}
 	}
 
+	// v0.10.342 — KİMLİK-ÖNCE (trace_identity_first.go): arama terimi tek
+	// parçalı bir kimlikse (function_id, trace id) önce indeksli eşitlik;
+	// bulunursa liste o trace'lerle sınırlı. Bulunmazsa/hata → eski yol.
+	if identityFirstEligible(f) {
+		ids, hit, err := s.identityFirstCandidates(ctx, f)
+		if err != nil {
+			log.Printf("[chstore] identity-first atlandı (%v) — alt-dize araması koşuyor", err)
+		} else if len(ids) > 0 {
+			f.CandidateIDs = ids
+			if hit.TraceID {
+				f.Search = "" // trace id haystack'te yok; HAVING onu elemesin
+			}
+			if hit.Bounded && f.RankedWithin != nil {
+				*f.RankedWithin = len(ids)
+			}
+		}
+		if f.IdentityHit != nil {
+			*f.IdentityHit = hit
+		}
+	}
 	// v0.10.307 — Operator-reported: Errors + attribute filtresi + servis ham
 	// yolda tam taramayla 25 s bütçesini aşıyor, pencere yarılanıyor, sonuç
 	// "boş" görünüyordu. Önce servisin hatalı trace id'leri (ucuz), sonra her

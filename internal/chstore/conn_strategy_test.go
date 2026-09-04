@@ -206,6 +206,8 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// id'leri, status_code='error' + PK). State okumaz; repo.go'nun
 		// GetTraces yardımcısı, aynı havuz doğru adres.
 		"trace_error_first.go": true,
+		// v0.10.342 — kimlik-önce aday sorgusu: spans üzerinde telemetri SELECT'i.
+		"trace_identity_first.go": true,
 		// v0.10.329 — SAF telemetri: boş liste öz-teşhisi, tek FROM'u spans
 		// (count). State okumaz; liste sorgusuyla aynı havuz doğru adres.
 		"trace_explain.go": true,

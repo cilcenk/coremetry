@@ -1254,7 +1254,7 @@ function TracesPageInner() {
                 placeholder="Filter by service…" width={170} onEnter={(v) => apply(v)} shortcutSearch />
               <OperationPicker service={draft.service} value={draft.search}
                 onChange={v => setDraft({ ...draft, search: v })}
-                placeholder="Filter by operation…" width={240} onEnter={() => apply()} />
+                placeholder="Operation, or an id (function_id / trace ID)…" width={240} onEnter={() => apply()} />
               <input placeholder="Min ms" value={draft.minMs}
                 onChange={e => setDraft({ ...draft, minMs: e.target.value })} type="number" style={{ width: 72 }} />
               <input placeholder="Max ms" value={draft.maxMs}
@@ -1347,6 +1347,7 @@ function TracesPageInner() {
             explainHref={explainHref ?? undefined}
             matchingSpans={data?.emptyDiag?.matchingSpans}
             promotedDiag={data?.emptyDiag}
+            identity={data?.identity}
             narrowedFromNs={data?.narrowedFromNs} />
         )}
         {view === 'list' && data && traces.length > 0 && (
@@ -1494,6 +1495,13 @@ function TracesPageInner() {
                     <span className="badge b-err" style={{ marginLeft: 6 }}
                       title={'This query ran out of memory or time over the range you selected, so the backend answered over a shorter, more recent window instead of failing.\nThe list below is NOT your full range — narrow the range or add a filter for an answer that covers it.'}>
                       ⚠ shortened to {tsLong(data.narrowedFromNs)} →
+                    </span>
+                  ) : null}
+                  {/* v0.10.342 — kimlik-önce arama tuttu: liste o trace'ler. */}
+                  {data?.identity?.hits ? (
+                    <span className="badge b-info" style={{ marginLeft: 6, textTransform: 'none', letterSpacing: 0 }}
+                      title={`Arama terimi kimlik olarak eşleşti: ${data.identity.matchedKey ?? '?'} = ${filter.search} · ${data.identity.hits.toLocaleString()} trace${data.identity.bounded ? ' (tavan)' : ''}. Denenen anahtarlar: ${data.identity.keys.join(', ')}`}>
+                      kimlik: {data.identity.matchedKey ?? '?'}{data.identity.traceId ? '' : ` (${data.identity.hits.toLocaleString()})`}
                     </span>
                   ) : null}
                   {data?.rankedWithinRecent ? (
@@ -1692,10 +1700,12 @@ export default function TracesPage() {
 
 // TracesEmpty — distinguishes "aged out of raw spans (MV still has it)" from
 // "search matched nothing" so the operator gets the right next step.
-function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, explainHref, matchingSpans, promotedDiag }: {
+function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, explainHref, matchingSpans, promotedDiag, identity }: {
   service: string; search: string; range: TimeRange; onSwitchView: () => void;
   // v0.10.339 — terfi kolonu probu (host başına kolon/dizi sayımı) — boş kaldıysa da göster.
   promotedDiag?: TracesResponse['emptyDiag'];
+  // v0.10.342 — kimlik-önce arama denendiyse (tek parçalı terim) sonucu.
+  identity?: TracesResponse['identity'];
   // v0.10.307 — arka uç pencereyi daralttıysa (kaynak bütçesi) "yok" değil "bakılamadı".
   narrowedFromNs?: number;
   // v0.10.328 — admin: aynı sorgunun ?explain=1 çıktısı (yol + SQL + süre) yeni sekmede.
@@ -1738,6 +1748,12 @@ function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, exp
           <>Try widening the time range, dropping the service or search filter, or turning off the "Root traces" chip. If even an unfiltered query is empty, check ingest health at <Link to="/system/stats" style={{ color: 'var(--accent2)' }}>system stats</Link>.</>
         )}
       </div>
+      {identity && (
+        <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text3)' }}>
+          Kimlik araması: <span className="mono">{search}</span> şu anahtarlarda eşitlikle denendi — {identity.keys.join(', ') || '—'}:{' '}
+          {identity.hits > 0 ? `${identity.hits} trace (${identity.matchedKey})` : 'eşleşme yok; alt-dize araması da boş döndü'}.
+        </div>
+      )}
       {promotedDiag?.promotedKeys && (
         <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text3)' }}>
           Terfi kolonu probu ({promotedDiag.promotedKeys.join(', ')}):{' '}

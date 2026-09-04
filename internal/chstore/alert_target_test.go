@@ -1,6 +1,7 @@
 package chstore
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -64,4 +65,28 @@ func TestStatementSQLContracts(t *testing.T) {
 			t.Errorf("search SQL: %q yok", s)
 		}
 	}
+}
+
+// v0.10.334 — kolon yokken kayıt reddetmeden önce yeniden probe eder (kaynak pini);
+// bayrak atomic.
+func TestUpsertReprobesTargetColumn(t *testing.T) {
+	b, err := readRepoFile("problem.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b, "!s.hasAlertRuleTargetCol.Load() && !s.probeAlertRuleTargetCol(ctx)") {
+		t.Error("UpsertAlertRule reddetmeden önce yeniden probe etmeli")
+	}
+	st, err := readRepoFile("store.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st, "hasAlertRuleTargetCol atomic.Bool") {
+		t.Error("bayrak atomic olmalı (kayıt yolunda yazılıyor)")
+	}
+}
+
+func readRepoFile(name string) (string, error) {
+	b, err := os.ReadFile(name)
+	return string(b), err
 }

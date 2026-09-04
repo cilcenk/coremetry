@@ -824,13 +824,15 @@ func (s *Store) UpsertAlertRule(ctx context.Context, r AlertRule) error {
 	// upgraded installs.
 	// v0.10.331 — hedefli kural: kolon yoksa (küme kipi, ertelenmiş DDL) kayıt
 	// REDDEDİLİR; hedefsiz kurallar eski INSERT şekliyle yazılmaya devam eder.
-	if r.Target != nil && !s.hasAlertRuleTargetCol {
+	// v0.10.334 — kolon boot probunda yoktu ama ertelenmiş DDL bu arada
+	// inmiş olabilir: reddetmeden önce BİR kez yeniden probe (tek restart).
+	if r.Target != nil && !s.hasAlertRuleTargetCol.Load() && !s.probeAlertRuleTargetCol(ctx) {
 		return ErrRuleTargetColumnMissing
 	}
 	cols := `(id, name, service, metric, comparator, threshold, window_sec,
 		 severity, enabled, built_in, runbook_url, for_sec, min_samples,
 		 cooldown_sec, log_query, watcher_json, created_at, version)`
-	if s.hasAlertRuleTargetCol {
+	if s.hasAlertRuleTargetCol.Load() {
 		cols = `(id, name, service, metric, comparator, threshold, window_sec,
 		 severity, enabled, built_in, runbook_url, for_sec, min_samples,
 		 cooldown_sec, log_query, watcher_json, target_json, created_at, version)`
@@ -843,7 +845,7 @@ func (s *Store) UpsertAlertRule(ctx context.Context, r AlertRule) error {
 		r.Threshold, r.WindowSec, r.Severity, enabled, builtIn,
 		r.RunbookURL, r.ForSec, r.MinSamples, r.CooldownSec, r.LogQuery,
 		r.WatcherJSON}
-	if s.hasAlertRuleTargetCol {
+	if s.hasAlertRuleTargetCol.Load() {
 		args = append(args, encodeRuleTarget(r.Target))
 	}
 	args = append(args, time.Now().UTC(), uint64(time.Now().UnixNano()))
@@ -1896,8 +1898,19 @@ func (s *Store) ListProblemWindowEvents(ctx context.Context, service string, fro
 // alertRuleTargetSelect — v0.10.331: kolon henüz yoksa (ertelenmiş DDL) SELECT
 // sabit ” okur; okuma yolu hiçbir boot'ta kırılmaz (iki-boot sözleşmesi).
 func (s *Store) alertRuleTargetSelect() string {
-	if s.hasAlertRuleTargetCol {
+	if s.hasAlertRuleTargetCol.Load() {
 		return "target_json"
 	}
 	return "''"
+}
+
+// probeAlertRuleTargetCol — v0.10.334: alert_rules.target_json var mı? Boot'ta
+// ve (kolon yokken) hedefli kural kaydında çağrılır; sonuç atomic bayrağa.
+// Küme kipinde ertelenmiş DDL boot'tan sonra iner → tek restart yeter.
+func (s *Store) probeAlertRuleTargetCol(ctx context.Context) bool {
+	rows, err := s.conn.Query(ctx, `SELECT target_json FROM alert_rules LIMIT 1 SETTINGS max_execution_time = 3`)
+	maybeCloseRows(rows, err)
+	ok := err == nil
+	s.hasAlertRuleTargetCol.Store(ok)
+	return ok
 }

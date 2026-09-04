@@ -564,7 +564,11 @@ function TraceDetailInner() {
               {/* v0.10.345 — dış link düğmeleri (Settings → Dış linkler): şablon
                   trace'in span attribute'larından çözülürse etkin, değilse eksikleri
                   söyleyen pasif düğme. Yeni sekmede açılır. */}
-              <ExternalLinkButtons spans={spans ?? []} />
+              {/* v0.10.346 (operatör) — dış linkler satırın EN SAĞINDA; renk ayardan
+                  (aracın marka rengi), yazı --on-accent. */}
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <ExternalLinkButtons spans={spans ?? []} />
+              </span>
             </div>
 
             {/* Trace vs Logs (Uptrace-style) — uses the shared
@@ -1425,10 +1429,12 @@ function ExternalLinkButtons({ spans }: { spans: SpanRow[] }) {
       {links.map(l => {
         const r = ctx ? renderExternalLink(l.urlTemplate, ctx) : { missing: ['span yok'] as string[] };
         const ok = !!r.url;
+        // Renk AYARDAN gelir (veri), token değil: marka rengi araca özgü; yazı --on-accent.
+        const fill = l.color ? { background: l.color, borderColor: l.color, color: 'var(--on-accent)' } : undefined;
         return ok
-          ? <Button key={l.label} variant="secondary" size="sm" title={`${l.label} — yeni sekmede: ${r.url}`}
+          ? <Button key={l.label} variant="secondary" size="sm" title={`${l.label} — yeni sekmede: ${r.url}`} style={fill}
               onClick={() => window.open(r.url, '_blank', 'noopener,noreferrer')}>{l.label} ↗</Button>
-          : <Button key={l.label} variant="secondary" size="sm" disabled
+          : <Button key={l.label} variant="secondary" size="sm" disabled style={fill ? { ...fill, opacity: 0.55 } : undefined}
               title={`${l.label}: bu trace'te çözülemeyen alanlar — ${r.missing.join(', ')}`}>{l.label} ↗</Button>;
       })}
     </>

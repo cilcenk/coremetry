@@ -35,7 +35,12 @@ func TestNormalizeExternalLinks(t *testing.T) {
 	if cfg.Links[0].Label != "Log İzleme" || len(cfg.Links[0].Requires) != 2 {
 		t.Fatalf("normalize: %+v", cfg.Links[0])
 	}
+	// v0.10.346 — renk: #rrggbb, küçük harfe indirilir; bozuk renk reddedilir.
+	if c, err := NormalizeExternalLinks(ExternalLinkSettings{Links: []ExternalLink{{Label: "a", URLTemplate: "https://x", Color: " #D32F2F "}}}); err != nil || c.Links[0].Color != "#d32f2f" {
+		t.Fatalf("renk normalize: %+v %v", c, err)
+	}
 	bad := []ExternalLinkSettings{
+		{Links: []ExternalLink{{Label: "a", URLTemplate: "https://x", Color: "red"}}},
 		{Links: []ExternalLink{{Label: "", URLTemplate: "https://x"}}},
 		{Links: []ExternalLink{{Label: "a", URLTemplate: "ftp://x"}}},
 		{Links: []ExternalLink{{Label: "a", URLTemplate: "https://x/{{nope}}"}}},

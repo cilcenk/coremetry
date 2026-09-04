@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -39,6 +40,48 @@ type IdentityHit struct {
 	Bounded    bool     `json:"bounded,omitempty"`
 	TraceID    bool     `json:"traceId,omitempty"`
 	Error      string   `json:"error,omitempty"`
+	// v0.10.344 — kimlik değerinin içindeki zaman (yyyyMMddHHmmss, operatör:
+	// function_id "2026 09 04 153319" taşıyor). Varsa arama seçili aralığa
+	// değil bu zamanın ±12 saatine bakar (saat dilimi bilinmediği için geniş)
+	// ve kimlik bulunamazsa alt-dize taramasına DÜŞÜLMEZ (id'nin zamanı
+	// belli, tam tarama yalnız bellek yakar — prod 3.73 GiB olayı).
+	AnchorMs     int64 `json:"anchorMs,omitempty"`
+	WindowFromNs int64 `json:"windowFromNs,omitempty"`
+	WindowToNs   int64 `json:"windowToNs,omitempty"`
+}
+
+// identityAnchorRe — 14 haneli yyyyMMddHHmmss (2000-2099).
+var identityAnchorRe = regexp.MustCompile(`20\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])([01]\d|2[0-3])[0-5]\d[0-5]\d`)
+
+// identityAnchor — SAF: kimlik değerinin içindeki ilk geçerli zaman (UTC
+// olarak yorumlanır; dilim belirsizliğini pencere genişliği karşılar).
+func identityAnchor(token string) (time.Time, bool) {
+	m := identityAnchorRe.FindString(token)
+	if m == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse("20060102150405", m)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t.UTC(), true
+}
+
+// identityAnchorHalfWindow — çapanın iki yanı: en uzak saat dilimi ±12 s.
+const identityAnchorHalfWindow = 12 * time.Hour
+
+// identityWindow — SAF: çapa varsa ±12 s, yoksa seçili aralık.
+func identityWindow(token string, from, to time.Time) (time.Time, time.Time, bool) {
+	if a, ok := identityAnchor(token); ok {
+		return a.Add(-identityAnchorHalfWindow), a.Add(identityAnchorHalfWindow), true
+	}
+	return from, to, false
+}
+
+// identityStopsFallback — SAF: çapalı kimlik bulunamadıysa alt-dize
+// taramasına düşülmez (cevap BOŞ ve dürüst); çapasızda eski davranış.
+func identityStopsFallback(hit IdentityHit, hits int) bool {
+	return hit.AnchorMs != 0 && hits == 0 && hit.Error == ""
 }
 
 // identityToken — SAF: arama terimi kimlik adayı mı. Tek parça, ≥8,
@@ -76,7 +119,9 @@ func identityFirstEligible(f TraceFilter) bool {
 }
 
 // identityKey — bir yazım ve derlenmiş yüklemi. indexed=false → dizi yolu
-// (tam tarama): kimlik sorgusunda KULLANILMAZ, `Skipped`e yazılır.
+// (WHERE eşitliği, bellek hafif ama doğrusal tarama): v0.10.344'ten beri
+// indekslilerden SONRA ve yalnız çapa/seçili pencerede denenir; `Skipped`
+// yalnız hiç derlenemeyeni taşır.
 //
 // v0.10.343 — Operator-reported (prod 342): kimlik araması bulamadı. İlk
 // sürüm tüm yazımları TEK OR'da birleştiriyordu; haritada olmayan yazımlar
@@ -117,9 +162,11 @@ func identityKeys(token string) []identityKey {
 
 // identityFirstQuery — SAF: TEK anahtarın aday sorgusu (pencere + servis +
 // env/cluster + eşitlik; çip/arama/hata sızmaz). args: WHERE → LIMIT.
-func identityFirstQuery(f TraceFilter, k identityKey, clusterExpr string, budget int) (string, []any) {
+// from/to: çapalı pencere ya da seçili aralık (identityWindow).
+func identityFirstQuery(f TraceFilter, k identityKey, clusterExpr string, budget int, from, to time.Time) (string, []any) {
 	base := errorFirstFilter(f)
 	base.Search = ""
+	base.From, base.To = from, to
 	wc := buildGetTracesWhere(base, clusterExpr)
 	wc.add(k.sql, k.args...)
 	sql := `
@@ -144,13 +191,29 @@ func (s *Store) identityFirstCandidates(ctx context.Context, f TraceFilter) ([]s
 		return []string{strings.ToLower(token)}, hit, nil
 	}
 	budget := traceStage2MaxIDs * errorFirstOverfetch
-	for _, k := range identityKeys(token) {
-		if !k.indexed {
-			hit.Skipped = append(hit.Skipped, k.key)
-			continue
+	from, to, anchored := identityWindow(token, f.From, f.To)
+	if anchored {
+		a, _ := identityAnchor(token)
+		hit.AnchorMs = a.UnixMilli()
+	}
+	hit.WindowFromNs, hit.WindowToNs = from.UnixNano(), to.UnixNano()
+	// İndeksliler önce (ucuz), dizi yolu sonra (doğrusal ama bellek hafif —
+	// çip yolunun bugün yaptığı tarama). v0.10.344.
+	keys := identityKeys(token)
+	ordered := make([]identityKey, 0, len(keys))
+	for _, k := range keys {
+		if k.indexed {
+			ordered = append(ordered, k)
 		}
+	}
+	for _, k := range keys {
+		if !k.indexed {
+			ordered = append(ordered, k)
+		}
+	}
+	for _, k := range ordered {
 		hit.Keys = append(hit.Keys, k.key)
-		sql, args := identityFirstQuery(f, k, s.clusterExpr(), budget)
+		sql, args := identityFirstQuery(f, k, s.clusterExpr(), budget, from, to)
 		t0 := time.Now()
 		rows, err := s.telemetryReadConn().Query(ctx, sql, args...)
 		if err != nil {

@@ -2499,7 +2499,13 @@ export interface TracesResponse {
   // v0.10.342 — kimlik-önce arama: arama terimi tek parçalı bir kimlikse
   // (function_id, trace id) önce terfi/facet anahtarlarında eşitlik denendi.
   // hits>0 → liste o trace'ler; 0 → alt-dize araması eskisi gibi koştu.
-  identity?: { keys: string[]; skipped?: string[]; matchedKey?: string; hits: number; bounded?: boolean; traceId?: boolean; error?: string };
+  identity?: {
+    keys: string[]; skipped?: string[]; matchedKey?: string; hits: number; bounded?: boolean; traceId?: boolean; error?: string;
+    // v0.10.344 — kimlik değerindeki zaman (yyyyMMddHHmmss) çapa: arama ±12 s
+    // penceresinde koştu (seçili aralıktan bağımsız); bulunamadıysa alt-dize
+    // taramasına düşülmedi.
+    anchorMs?: number; windowFromNs?: number; windowToNs?: number;
+  };
   /** v0.10.124 — pencere trace_summary_5m'de boş bir güne değiyor; liste
    *  ham span'lerden okundu (daha yavaş). Tarihçe sihirbazı doldurunca
    *  kaybolur. */

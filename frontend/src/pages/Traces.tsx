@@ -1508,6 +1508,7 @@ function TracesPageInner() {
                     <span className="badge b-info" style={{ marginLeft: 6, textTransform: 'none', letterSpacing: 0 }}
                       title={`Arama terimi kimlik olarak eşleşti: ${data.identity.matchedKey ?? '?'} = ${filter.search} · ${data.identity.hits.toLocaleString()} trace${data.identity.bounded ? ' (tavan)' : ''}. Denenen anahtarlar: ${data.identity.keys.join(', ')}`}>
                       kimlik: {data.identity.matchedKey ?? '?'}{data.identity.traceId ? '' : ` (${data.identity.hits.toLocaleString()})`}
+                      {data.identity.anchorMs ? ` · kimlikteki zaman ${tsLong(data.identity.anchorMs * 1e6)} ±12 s` : ''}
                     </span>
                   ) : null}
                   {data?.rankedWithinRecent ? (
@@ -1760,7 +1761,10 @@ function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, exp
           {identity.error
             ? <span style={{ color: 'var(--err)' }}>hata: {identity.error}</span>
             : identity.hits > 0 ? `${identity.hits} trace (${identity.matchedKey})` : 'eşleşme yok; alt-dize araması da boş döndü'}.
-          {(identity.skipped?.length ?? 0) > 0 && <> İndeksli yolu olmadığı için atlanan yazımlar: {identity.skipped!.join(', ')} (terfi kolonu doğrulanmamış / attr_kvh yok).</>}
+          {(identity.skipped?.length ?? 0) > 0 && <> Derlenemeyen yazımlar: {identity.skipped!.join(', ')}.</>}
+          {identity.anchorMs
+            ? <> Kimliğin içindeki zaman <b>{tsLong(identity.anchorMs * 1e6)}</b> (UTC okundu) çapa alındı: ±12 saat penceresinde arandı, seçili aralık kullanılmadı; bulunamadığı için alt-dize taraması yapılmadı. Değerin doğru olduğundan ve verinin saklama süresi içinde olduğundan emin ol.</>
+            : <> Çapa yok (değer yyyyMMddHHmmss taşımıyor): seçili aralıkta arandı.</>}
         </div>
       )}
       {promotedDiag?.promotedKeys && (

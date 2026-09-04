@@ -11,6 +11,7 @@ import { traceRepeatGroups, type TraceRepeatGroup } from '@/lib/traceRepeats';
 import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
 import { AIExplainButton } from '@/components/ai/AIExplainButton';
+import { renderExternalLink, collectLinkCtx } from '@/lib/externalLinks';
 import { useAiEvidence, useAiFocus } from '@/components/ai/aiEvents';
 import { IconLink, IconCheck, IconDownload, IconSparkles } from '@/components/icons';
 import { Button } from '@/components/ui/Button';
@@ -560,6 +561,10 @@ function TraceDetailInner() {
               <AIExplainButton subject={{ kind: 'trace', id }} emphasis="strong"
                 label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain this trace</span></>} />
               <CompareTracesButton aId={id} />
+              {/* v0.10.345 — dış link düğmeleri (Settings → Dış linkler): şablon
+                  trace'in span attribute'larından çözülürse etkin, değilse eksikleri
+                  söyleyen pasif düğme. Yeni sekmede açılır. */}
+              <ExternalLinkButtons spans={spans ?? []} />
             </div>
 
             {/* Trace vs Logs (Uptrace-style) — uses the shared
@@ -1407,3 +1412,26 @@ function KPI({ label, value, tone }: {
     </div>
   );
 }
+
+// ExternalLinkButtons — v0.10.345. Şablonlar 5 dk taze (admin değiştirince
+// sayfa yenilemesi yeter); render saf (lib/externalLinks.ts, test).
+function ExternalLinkButtons({ spans }: { spans: SpanRow[] }) {
+  const q = useQuery({ queryKey: ['external-links'], queryFn: () => api.externalLinks(), staleTime: 5 * 60_000 });
+  const links = q.data?.links ?? [];
+  if (links.length === 0) return null;
+  const ctx = collectLinkCtx(spans);
+  return (
+    <>
+      {links.map(l => {
+        const r = ctx ? renderExternalLink(l.urlTemplate, ctx) : { missing: ['span yok'] as string[] };
+        const ok = !!r.url;
+        return ok
+          ? <Button key={l.label} variant="secondary" size="sm" title={`${l.label} — yeni sekmede: ${r.url}`}
+              onClick={() => window.open(r.url, '_blank', 'noopener,noreferrer')}>{l.label} ↗</Button>
+          : <Button key={l.label} variant="secondary" size="sm" disabled
+              title={`${l.label}: bu trace'te çözülemeyen alanlar — ${r.missing.join(', ')}`}>{l.label} ↗</Button>;
+      })}
+    </>
+  );
+}
+

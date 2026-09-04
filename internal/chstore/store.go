@@ -3227,6 +3227,11 @@ func (s *Store) migrate(ctx context.Context) error {
 	// kabul edilemez.
 	// v0.10.302 — operatör facet kaydı (system_settings) yerleşik listeye
 	// katılır; DDL/probe aynı makineden geçer. Bozuk blob boot'u durdurmaz.
+	// v0.10.345 — dış link şablonları (trace sayfası düğmeleri); bozuk blob
+	// boot'u durdurmaz.
+	if err := s.LoadExternalLinks(ctx); err != nil {
+		log.Printf("[chstore] external_links yüklenemedi (boş liste ile devam): %v", err)
+	}
 	if err := s.LoadTraceFacets(ctx); err != nil {
 		log.Printf("[chstore] trace facets yüklenemedi (yerleşik liste ile devam): %v", err)
 	}

@@ -25,6 +25,7 @@ import { KnowledgeTab } from './settings/KnowledgeTab';
 import { TempoTab } from './settings/TempoTab';
 import { MetricsBackendTab } from './settings/MetricsBackendTab';
 import { TraceFacetsTab } from './settings/TraceFacetsTab';
+import { ExternalLinksTab } from './settings/ExternalLinksTab';
 import { DevOpsTab } from './settings/DevOpsTab';
 import { McpServersTab } from './settings/McpServersTab';
 import { ClustersTab } from './settings/ClustersTab';
@@ -68,6 +69,7 @@ const TAB_COMPS: Record<string, ComponentType> = {
   'tempo': TempoTab,
   'metrics-backend': MetricsBackendTab,
   'trace-facets': TraceFacetsTab,
+  'external-links': ExternalLinksTab,
   'clusters': ClustersTab,
   'influx': InfluxTab,
   'entities': EntitiesTab,

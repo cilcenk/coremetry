@@ -267,3 +267,17 @@ kendi dersinin (tested-but-unreachable) ikinci örneği, üstelik aynı satırda
 Düzeltme: `closest('.table-wrap, .vt-scroll')` + kaynak pini
 (DataTable.contract.test.tsx). Kural: bir düzeltme "kap" seçiyorsa
 her kap türü için ulaşılabilirlik pini yaz.
+
+### v0.10.362 — Endpoints metrik kipi servissizde süre aşımı: sırala-sonra-ayrıntı
+
+Operator-reported (prod, varsayılan metrik 361'den bir saat sonra): /endpoints
+servissiz + 30 dk + compare → "çok yavaş… Failed to load endpoints". Metrik kipi
+ALTI aralık sorgusunu tüm servislerin tüm route'ları için 60 adımla koşuyordu
+(compare ile 12): VM'de binlerce seri × 60 nokta × histogram_quantile → süre
+aşımı. Operatörün önerdiği sayfalama çözmezdi: sıralama için her route yine
+hesaplanmalı. Çare iki aşama — (1) tek kaba sorgu (çağrı, 12 adım) tüm
+route'ları sıralar, (2) hata/avg/p50/p95/p99/sparkline yalnız ilk N route için
+(`http.route =~ r1|…|rN`; ≤300). Diğer sıralamalar bu havuz içinde; zarf
+`pool`/`poolCapped`. Ders: "her seri için her şey" sorgusu N ile değil
+seri sayısıyla ölçeklenir; listeleme = ucuz sıralama + pahalı ayrıntı yalnız
+görünen küme için (error-first / identity-first aday deseninin aynısı).

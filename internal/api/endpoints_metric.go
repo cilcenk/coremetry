@@ -232,8 +232,40 @@ func newEPAcc(n int) *epMetricAcc {
 	return &epMetricAcc{countAt: make([]float64, n), errAt: make([]float64, n), p99At: make([]float64, n)}
 }
 
+// endpointsMetricDetailMax — 2. aşamaya (ayrıntı sorguları) giren route
+// sayısı tavanı: regex alternation uzunluğu ve VM seri sayısı sınırı.
+const endpointsMetricDetailMax = 300
+
+// endpointsMetricRankSlots — 1. aşama (sıralama) adım sayısı: yalnız çağrı
+// toplamı gerekir, 12 kaba adım yeter (60'ın beşte biri).
+const endpointsMetricRankSlots = 12
+
+// endpointsMetricRouteRegex — SAF: route listesinden `=~` alternation'ı
+// (QuoteMeta; iki uç da kalıbı tam-eşleşme olarak çapalar).
+func endpointsMetricRouteRegex(vals []string) string {
+	parts := make([]string, 0, len(vals))
+	for _, v := range vals {
+		parts = append(parts, regexp.QuoteMeta(v))
+	}
+	return strings.Join(parts, "|")
+}
+
 // buildEndpointsMetric — SAF (kaynak arayüz): sorgular → satırlar.
 // Sıralama/limit ÇAĞIRANDA (prior birleşiminden sonra: p99Delta).
+//
+// v0.10.362 — Operator-reported (prod, servissiz + 30 dk + compare): "çok
+// yavaş, Failed to load endpoints". Eski şekil ALTI aralık sorgusunu tüm
+// servislerin tüm route'ları için 60 adımla koşuyordu (compare ile 12) —
+// VM'de binlerce seri × 60 nokta, süre aşımı. Sayfalama çözmez: sıralama
+// için yine her route hesaplanmalı. İKİ AŞAMA:
+//  1. SIRALAMA — tek sorgu, çağrı toplamı, 12 kaba adım, tüm route'lar →
+//     arama süzgeci → çağrıya göre ilk N (N = limit, ≤ 300).
+//  2. AYRINTI — hata / avg / p50 / p95 / p99 / sparkline (60 adım) YALNIZ o
+//     route'lar için (`http.route =~ r1|…|rN`, servissizde `service.name`
+//     de daraltılır; superset satırlar Go'da elenir).
+//
+// Diğer sıralamalar (p99, hata…) bu N içinde uygulanır; zarf `pool` /
+// `poolCapped` bunu ilan eder (span yolunun p99Delta havuz sözleşmesi).
 func buildEndpointsMetric(ctx context.Context, src metricSource, id endpointsMetricIdentity, p endpointsMetricPlan) (endpointsMetricResponse, error) {
 	resp := endpointsMetricResponse{
 		endpointsListResponse: endpointsListResponse{Rows: []chstore.EndpointRow{}},
@@ -284,35 +316,6 @@ func buildEndpointsMetric(ctx context.Context, src metricSource, id endpointsMet
 	if id.Instrument == "histogram" {
 		rate = src.QueryMetricCountRate
 	}
-	nSlots := int(p.To.Sub(p.From).Seconds()) / step
-	if nSlots < 1 {
-		nSlots = 1
-	}
-	if nSlots > endpointsMetricSlots*2 {
-		nSlots = endpointsMetricSlots * 2
-	}
-	// Damga sözleşmesi depoya göre: VM `query_range` noktayı DEĞERLENDİRME
-	// anına damgalar — increase(x[step]) @t = (t-step, t] penceresi, yani
-	// pencere SONU; CH kova BAŞINA (toStartOfInterval). Izgara kova başına
-	// göre; VM noktası bir saniye geri alınarak kapsadığı kovaya düşer.
-	// Bu olmadan VM'de ilk slot boş, son slot çift sayılır ve ağırlıklı
-	// ortalamalar kayar (test: TestBuildEndpointsMetric_Reduce).
-	endStamped := src.Name() == metricSourceVM
-	slotOf := func(tNs int64) int {
-		off := tNs/1e9 - p.From.Unix()
-		if endStamped {
-			off--
-		}
-		sl := int(off / int64(step))
-		if sl < 0 {
-			return 0
-		}
-		if sl >= nSlots {
-			return nSlots - 1
-		}
-		return sl
-	}
-	acc := map[epKey]*epMetricAcc{}
 	keyOf := func(gk []string) (epKey, bool) {
 		svc, path := p.Service, ""
 		if allServices {
@@ -330,6 +333,125 @@ func buildEndpointsMetric(ctx context.Context, src metricSource, id endpointsMet
 		}
 		return epKey{svc, path}, true
 	}
+	search := strings.ToLower(strings.TrimSpace(p.Search))
+
+	// ── 1. AŞAMA: sıralama (kaba adım, yalnız çağrı) ──────────────────────
+	rankStep := int(p.To.Sub(p.From).Seconds()) / endpointsMetricRankSlots
+	if rankStep < endpointsMetricMinStep {
+		rankStep = endpointsMetricMinStep
+	}
+	rankF := base
+	rankF.StepSeconds, rankF.RateWindowSec = rankStep, rankStep
+	rankSer, err := rate(ctx, rankF, "increase")
+	if err != nil {
+		return resp, err
+	}
+	rankCalls := map[epKey]float64{}
+	rawRoutes := map[string]bool{} // ham route (sinyatür öncesi) — 2. aşama regex'i
+	rawSvcs := map[string]bool{}
+	for _, ser := range rankSer {
+		k, ok := keyOf(ser.GroupKey)
+		if !ok {
+			continue
+		}
+		if search != "" && !strings.Contains(strings.ToLower(k.path), search) {
+			continue
+		}
+		for _, pt := range ser.Points {
+			if pt.Value > 0 && !math.IsNaN(pt.Value) && !math.IsInf(pt.Value, 0) {
+				rankCalls[k] += pt.Value
+			}
+		}
+		if len(ser.GroupKey) > 0 {
+			rawRoutes[ser.GroupKey[len(ser.GroupKey)-1]] = true
+			if allServices && len(ser.GroupKey) >= 2 {
+				rawSvcs[ser.GroupKey[0]] = true
+			}
+		}
+	}
+	if len(rankCalls) == 0 {
+		return resp, nil
+	}
+	ranked := make([]epKey, 0, len(rankCalls))
+	for k := range rankCalls {
+		ranked = append(ranked, k)
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if rankCalls[ranked[i]] == rankCalls[ranked[j]] {
+			return ranked[i].path < ranked[j].path
+		}
+		return rankCalls[ranked[i]] > rankCalls[ranked[j]]
+	})
+	pool := p.Limit
+	if pool <= 0 || pool > endpointsMetricDetailMax {
+		pool = endpointsMetricDetailMax
+	}
+	resp.PoolCapped = len(ranked) > pool
+	if len(ranked) > pool {
+		ranked = ranked[:pool]
+	}
+	resp.Pool = len(ranked)
+	keep := make(map[epKey]bool, len(ranked))
+	for _, k := range ranked {
+		keep[k] = true
+	}
+	// 2. aşama daraltması: seçilen anahtarların HAM route'ları (sinyatür
+	// modunda birden çok ham route bir anahtara düşer → hepsi).
+	var detailRoutes, detailSvcs []string
+	for r := range rawRoutes {
+		path := r
+		if p.BySignature {
+			path = endpointPathSignature(r)
+		}
+		for _, k := range ranked {
+			if k.path == path {
+				detailRoutes = append(detailRoutes, r)
+				break
+			}
+		}
+	}
+	for s := range rawSvcs {
+		for _, k := range ranked {
+			if k.service == s {
+				detailSvcs = append(detailSvcs, s)
+				break
+			}
+		}
+	}
+	sort.Strings(detailRoutes)
+	sort.Strings(detailSvcs)
+	detail := base
+	detail.Filters = append(append([]chstore.FilterExpr(nil), base.Filters...),
+		chstore.FilterExpr{Key: "http.route", Op: "=~", Values: []string{endpointsMetricRouteRegex(detailRoutes)}})
+	if allServices && len(detailSvcs) > 0 {
+		detail.Filters = append(detail.Filters,
+			chstore.FilterExpr{Key: "service.name", Op: "=~", Values: []string{endpointsMetricRouteRegex(detailSvcs)}})
+	}
+
+	// ── 2. AŞAMA: ayrıntı (yalnız ilk N) ───────────────────────────────────
+	nSlots := int(p.To.Sub(p.From).Seconds()) / step
+	if nSlots < 1 {
+		nSlots = 1
+	}
+	if nSlots > endpointsMetricSlots*2 {
+		nSlots = endpointsMetricSlots * 2
+	}
+	endStamped := src.Name() == metricSourceVM
+	slotOf := func(tNs int64) int {
+		off := tNs/1e9 - p.From.Unix()
+		if endStamped {
+			off--
+		}
+		sl := int(off / int64(step))
+		if sl < 0 {
+			return 0
+		}
+		if sl >= nSlots {
+			return nSlots - 1
+		}
+		return sl
+	}
+	acc := map[epKey]*epMetricAcc{}
 	get := func(k epKey) *epMetricAcc {
 		a := acc[k]
 		if a == nil {
@@ -338,15 +460,13 @@ func buildEndpointsMetric(ctx context.Context, src metricSource, id endpointsMet
 		}
 		return a
 	}
-
-	// 1) ÇAĞRI — tek zorunlu sorgu; düşerse cevap yok.
-	callsSer, err := rate(ctx, base, "increase")
+	callsSer, err := rate(ctx, detail, "increase")
 	if err != nil {
 		return resp, err
 	}
 	for _, ser := range callsSer {
 		k, ok := keyOf(ser.GroupKey)
-		if !ok {
+		if !ok || !keep[k] {
 			continue
 		}
 		a := get(k)
@@ -358,10 +478,9 @@ func buildEndpointsMetric(ctx context.Context, src metricSource, id endpointsMet
 			a.countAt[slotOf(pt.Time)] += pt.Value
 		}
 	}
-	// 2) HATA — yalnız durum-kodu etiketi varsa; düşerse bilinmiyor.
 	if resp.StatusKey != "" {
-		ef := base
-		ef.Filters = append(append([]chstore.FilterExpr(nil), base.Filters...),
+		ef := detail
+		ef.Filters = append(append([]chstore.FilterExpr(nil), detail.Filters...),
 			chstore.FilterExpr{Key: resp.StatusKey, Op: "=~", Values: []string{"^5[0-9][0-9]$"}})
 		errSer, eerr := rate(ctx, ef, "increase")
 		if eerr != nil {
@@ -371,7 +490,7 @@ func buildEndpointsMetric(ctx context.Context, src metricSource, id endpointsMet
 		} else {
 			for _, ser := range errSer {
 				k, ok := keyOf(ser.GroupKey)
-				if !ok {
+				if !ok || !keep[k] {
 					continue
 				}
 				a := get(k)
@@ -385,10 +504,9 @@ func buildEndpointsMetric(ctx context.Context, src metricSource, id endpointsMet
 			}
 		}
 	}
-	// 3) SÜRE — avg/p50/p95/p99; her biri bağımsız, düşen sütun boş kalır.
 	aggs := []string{"avg", "p50", "p95", "p99"}
 	for i, ag := range aggs {
-		vf := base
+		vf := detail
 		vf.Name = id.RTMetric
 		vf.Aggregation = ag
 		ser, verr := src.QueryMetric(ctx, vf)
@@ -398,7 +516,7 @@ func buildEndpointsMetric(ctx context.Context, src metricSource, id endpointsMet
 		}
 		for _, sr := range ser {
 			k, ok := keyOf(sr.GroupKey)
-			if !ok {
+			if !ok || !keep[k] {
 				continue
 			}
 			a := get(k)
@@ -409,7 +527,7 @@ func buildEndpointsMetric(ctx context.Context, src metricSource, id endpointsMet
 				sl := slotOf(pt.Time)
 				w := a.countAt[sl]
 				if w <= 0 {
-					w = 1 // ağırlık bilinmiyor: eşit
+					w = 1
 				}
 				a.v[i] += pt.Value * w
 				a.w[i] += w
@@ -424,11 +542,12 @@ func buildEndpointsMetric(ctx context.Context, src metricSource, id endpointsMet
 	if minutes <= 0 {
 		minutes = 1
 	}
-	search := strings.ToLower(strings.TrimSpace(p.Search))
-	rows := make([]chstore.EndpointRow, 0, len(acc))
-	for k, a := range acc {
-		if search != "" && !strings.Contains(strings.ToLower(k.path), search) {
-			continue
+	rows := make([]chstore.EndpointRow, 0, len(ranked))
+	for _, k := range ranked {
+		a := acc[k]
+		if a == nil {
+			a = newEPAcc(nSlots) // ayrıntı gelmediyse sıralama sayısı kalır
+			a.calls = rankCalls[k]
 		}
 		mean := func(i int) float64 {
 			if a.w[i] <= 0 {

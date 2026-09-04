@@ -35,7 +35,7 @@ type RuleTarget struct {
 
 // ErrRuleTargetColumnMissing — küme kipinde iki-boot sözleşmesi: kolon
 // ertelenmiş DDL ile gelir; gelene dek hedefli kural KAYDEDİLEMEZ (409).
-var ErrRuleTargetColumnMissing = errors.New("alert_rules.target_json column not yet available — restart once after this upgrade (deferred DDL)")
+var ErrRuleTargetColumnMissing = errors.New("alert_rules.target_json column not yet available — the deferred DDL has not landed yet; retry in a minute (a restart is not required once it lands)")
 
 func IsDBStatementMetric(m string) bool {
 	switch m {

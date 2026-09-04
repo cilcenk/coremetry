@@ -220,8 +220,10 @@ type Store struct {
 	// v0.8.186 class) and routes GetSlowQueriesGlobal between the MV read
 	// and the raw-spans fallback.
 	hasDBStmtHashCol bool
-	// hasAlertRuleTargetCol — v0.10.331: alert_rules.target_json probu (iki-boot).
-	hasAlertRuleTargetCol bool
+	// hasAlertRuleTargetCol — v0.10.331: alert_rules.target_json probu. v0.10.334:
+	// atomic — ertelenmiş DDL boot'tan sonra indiğinde UpsertAlertRule yeniden
+	// probe eder (tek restart yeter); okuma/yazma yarışsız.
+	hasAlertRuleTargetCol atomic.Bool
 	// v0.9.1097 — db_statement_summary_5m exemplar state kolonları var mı?
 	// (0.5 Alternatif-B; okuma MV-önce, yoksa ham fallback.)
 	hasDBStmtExemplarCols bool
@@ -3162,11 +3164,8 @@ func (s *Store) migrate(ctx context.Context) error {
 	// v0.10.331 — alert_rules.target_json probu: küme kipinde kolon ertelenmiş
 	// DDL ile bir sonraki boot'ta gelir; gelene dek hedefli kural kaydı 409,
 	// okumalar '' ile sürer (iki-boot sözleşmesi, CLAUDE.md §3).
-	trRows, trErr := s.conn.Query(ctx, `SELECT target_json FROM alert_rules LIMIT 1 SETTINGS max_execution_time = 3`)
-	maybeCloseRows(trRows, trErr)
-	s.hasAlertRuleTargetCol = trErr == nil
-	if !s.hasAlertRuleTargetCol {
-		log.Printf("[chstore] alert_rules.target_json not yet present (%v) — DB-statement alert rules cannot be saved until the next restart (deferred DDL)", trErr)
+	if !s.probeAlertRuleTargetCol(ctx) {
+		log.Printf("[chstore] alert_rules.target_json not yet present — DB-statement alert rules re-probe on save once the deferred DDL lands")
 	}
 	if !s.hasDBStmtHashCol {
 		log.Printf("[chstore] `db_stmt_hash` column not resolvable on spans (%v) — db_statement_summary_5m MV disabled, /slow-queries reads stay on the raw-spans path (expected on an external Distributed cluster with cluster_name unset)", dhErr)

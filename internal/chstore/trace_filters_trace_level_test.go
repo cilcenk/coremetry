@@ -93,3 +93,21 @@ func TestTraceLevelHavingForGroups(t *testing.T) {
 		t.Fatalf("trace sayım SQL: %s", sql)
 	}
 }
+
+// v0.10.349 — Aggregated sekmesi: aynı tuzak (çip WHERE, arama iç HAVING).
+func TestAggregateChipsMoveToInnerHavingWithSearch(t *testing.T) {
+	withPromoted(t, "channel_code", "attr_channel_code")
+	chip := FilterExpr{Key: "channel_code", Op: "=", Values: []string{"060203"}}
+	lvl, having, args := aggregateChipHaving(AggregateFilter{Filters: []FilterExpr{chip}})
+	if lvl || having != "" || args != nil {
+		t.Fatalf("arama yokken WHERE kalır: %v %q %v", lvl, having, args)
+	}
+	lvl, having, args = aggregateChipHaving(AggregateFilter{Search: "POST /x", Filters: []FilterExpr{chip}})
+	if !lvl || having != " AND countIf(attr_channel_code = ?) > 0" || len(args) != 1 || args[0] != "060203" {
+		t.Fatalf("arama + çip → iç HAVING: %v %q %v", lvl, having, args)
+	}
+	lvl, having, _ = aggregateChipHaving(AggregateFilter{Search: "x", FilterRoot: &FilterGroup{Join: "OR", Filters: []FilterExpr{chip, {Key: "channel_code", Op: "=", Values: []string{"b"}}}}})
+	if !lvl || !strings.Contains(having, " OR ") || strings.Count(having, "countIf(") != 1 {
+		t.Fatalf("OR kök tek countIf: %q", having)
+	}
+}

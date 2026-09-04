@@ -255,12 +255,26 @@ export default function EndpointsPage() {
   // okuyabilir miyiz"). Aynı tablo, /api/endpoints/metric'ten: OTel HTTP
   // server histogramı (VM ya da CH, metricsource dikişi). Varsayılan span
   // türevli kalır; ?src=metric URL'de (Copy link / saved view aynı kipi
-  // açar). Metrik kipi HTTP yüzeyine özgü (http_route etiketi): RPC sekmesi
-  // kapalı, cluster filtresi sunucuda "uygulanmadı" diye ilan edilir.
-  const src: 'span' | 'metric' = params.get('src') === 'metric' ? 'metric' : 'span';
+  // açar). Metrik kipi HTTP yüzeyine özgü (http_route etiketi): cluster
+  // filtresi sunucuda "uygulanmadı" diye ilan edilir.
+  // v0.10.361 (operatör: "2 olsun") — VARSAYILAN METRİK, Overview (359) ile
+  // aynı kural: ?src yoksa metrik denenir; metrik çözülemezse (metricExists
+  // =false) span'a düşülür ve not söyler; ?src=span eski görünüm, ?src=metric
+  // zorlar. RPC & Messaging sekmesi (entry=rpc) metrikte yok → o sekme
+  // seçiliyken kaynak kendiliğinden span (sekme kapatılmaz).
+  const srcParam = params.get('src');
+  const explicitSrc: 'metric' | 'span' | null = srcParam === 'metric' ? 'metric' : srcParam === 'span' ? 'span' : null;
+  const [autoSpan, setAutoSpan] = useState(false);
+  const [autoNote, setAutoNote] = useState<string | null>(null);
+  useEffect(() => { setAutoSpan(false); setAutoNote(null); }, [service, srcParam]);
+  const src: 'span' | 'metric' = entry === 'rpc' ? 'span'
+    : explicitSrc === 'metric' ? 'metric'
+    : explicitSrc === 'span' ? 'span'
+    : autoSpan ? 'span' : 'metric';
   const setSrc = (v: 'span' | 'metric') => setParams(prev => {
     const next = new URLSearchParams(prev);
-    if (v === 'metric') { next.set('src', 'metric'); next.delete('entry'); } else next.delete('src');
+    next.set('src', v);
+    if (v === 'metric') next.delete('entry');
     return next;
   }, { replace: true });
 
@@ -463,7 +477,7 @@ export default function EndpointsPage() {
     groupBy: bySignature ? 'signature' : undefined,
     sort: sortBy,
     dir: sortDir,
-    entry: entry === 'rpc' && src !== 'metric' ? 'rpc' : undefined, // v0.9.313
+    entry: entry === 'rpc' ? 'rpc' : undefined, // v0.9.313 (entry=rpc → src zaten span, v0.10.361)
     src: src === 'metric' ? 'metric' : undefined, // v0.10.336
   });
   // v0.9.812 — zarf: satırlar + sıralama havuzunun gerçeği.
@@ -492,7 +506,16 @@ export default function EndpointsPage() {
   const sourceNote = useMemo(() => endpointsSourceNote(cluster, env), [cluster, env]);
   // v0.10.336 — metrik kipinde not SUNUCUDAN gelir (hata tanımı, birim,
   // adım, env/cluster daraltması, eksik alt sorgular): istemci tahmin etmez.
-  const metricNote = src === 'metric' ? (rowsQ.data?.note ?? null) : null;
+  const metricNote = src === 'metric'
+    ? (rowsQ.data?.note ?? null)
+    : autoSpan ? `Metrik bulunamadı, span gösteriliyor${autoNote ? ` — ${autoNote}` : ''}` : null;
+  // v0.10.361 — otomatik kipte metrik yoksa span'a düş (bir kez; servis/src
+  // değişince sıfırlanır).
+  useEffect(() => {
+    if (explicitSrc !== null || src !== 'metric') return;
+    const d = rowsQ.data;
+    if (d && d.source === 'metric' && d.metricExists === false) { setAutoNote(d.note ?? null); setAutoSpan(true); }
+  }, [rowsQ.data, explicitSrc, src]);
 
   return (
     <>
@@ -520,12 +543,9 @@ export default function EndpointsPage() {
             title="Inbound requests carrying an http.route — the table as it has always been.">
             HTTP
           </button>
-          <button className={entry === 'rpc' && src !== 'metric' ? 'active' : ''}
+          <button className={entry === 'rpc' ? 'active' : ''}
             onClick={() => setEntry('rpc')}
-            disabled={src === 'metric'}
-            title={src === 'metric'
-              ? 'Metrik kipi HTTP yüzeyine özgü (http_route etiketi) — RPC & Messaging için Kaynak: span seç.'
-              : 'Inbound spans WITHOUT an http.route: gRPC servers and message consumers, keyed on the span name. These never appeared on this page before.'}>
+            title="Inbound spans WITHOUT an http.route: gRPC servers and message consumers, keyed on the span name. Bu sekme span türevlidir (metrikte http_route dışı giriş yok); kaynak kendiliğinden span olur.">
             RPC &amp; Messaging
           </button>
         </div>

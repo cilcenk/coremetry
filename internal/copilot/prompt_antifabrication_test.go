@@ -110,3 +110,15 @@ func TestExplainPromptsCarryEvidenceBoundary(t *testing.T) {
 		}
 	}
 }
+
+// v0.10.406 — CoSRE denetimi P5: 17 niyet + 5 slot yalnız tarifle
+// verilmişti; küçük model şekli görmeli (kardeş prompt'ların few-shot
+// gerekçesi). Özellikle `none` örneği: yanlış niyet none'dan kötüdür.
+func TestIntentPromptCarriesExamples(t *testing.T) {
+	p := SystemPromptIntentClassify()
+	for _, want := range []string{"Örnekler", `"intent":"none"`, `"intent":"service_health","service":"checkout"`, `"rangeS":3600`} {
+		if !strings.Contains(p, want) {
+			t.Errorf("niyet prompt'u %q içermiyor", want)
+		}
+	}
+}

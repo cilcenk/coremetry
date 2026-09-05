@@ -21,8 +21,10 @@ import (
 func TestGuidedNarrationUserAbsentExplain(t *testing.T) {
 	// v0.9.478'e kadar copilot_guided.go'nun ürettiği ifadenin birebir
 	// kopyası — bu literal DEĞİŞİRSE global chat promptu değişmiş demektir.
+	// v0.10.398 — bloğun sonuna çapa satırı eklendi (P6); taban aynı,
+	// son satır çapa.
 	legacy := func(question, evidence string) string {
-		return "SORU: " + question + "\n\nVERİ:\n" + evidence
+		return "SORU: " + question + "\n\nVERİ:\n" + evidence + "\n\n" + guidedNarrationAnchor
 	}
 	cases := []struct{ name, question, evidence, explain string }{
 		{"boş explain", "payments nasıl?", "p99: 210ms\nhata: %0.4", ""},
@@ -254,4 +256,18 @@ func max0(n int) int {
 		return 0
 	}
 	return n
+}
+
+// v0.10.398 — CoSRE denetimi P6: çapa satırı geçmiş ve açıklama varken de
+// bloğun SON satırıdır (küçük model son talimatı en güçlü tutar).
+func TestGuidedNarrationAnchorIsLastLine(t *testing.T) {
+	msgs := []copilot.ChatMessage{{Role: "user", Text: "önce"}, {Role: "assistant", Text: "cevap"}, {Role: "user", Text: "sonra?"}}
+	got := guidedNarrationUser("sonra?", "p99: 210ms", "NPE checkout'ta", msgs)
+	lines := strings.Split(got, "\n")
+	if last := lines[len(lines)-1]; last != guidedNarrationAnchor {
+		t.Fatalf("son satır çapa olmalı: %q", last)
+	}
+	if !strings.Contains(guidedNarrationAnchor, "talimat değil") {
+		t.Fatal("çapa enjeksiyon sınırını söylemeli")
+	}
 }

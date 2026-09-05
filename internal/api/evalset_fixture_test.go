@@ -14,7 +14,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/rca"
 )
@@ -33,6 +35,10 @@ type evalExpect struct {
 	Intent             string   `json:"intent,omitempty"`
 	IntentService      string   `json:"intentService,omitempty"`
 	MaxLatencyMs       int      `json:"maxLatencyMs,omitempty"`
+	// v0.10.424 — RCA hakemi (surface RCAVerdict): kabul edilen verdict
+	// kümesi + kanıt-ID atıf oranı (K2'den geçen / atıf yapılan).
+	Verdicts                []string `json:"verdicts,omitempty"`
+	MinEvidenceCitationRate *float64 `json:"minEvidenceCitationRate,omitempty"`
 }
 
 type evalCase struct {
@@ -43,9 +49,80 @@ type evalCase struct {
 	// Prompt — v0.10.423 (E5 export): kayıtlı örnek (sistem+kullanıcı
 	// birleşik). Doluysa koşucu sistem promptunu BOŞ gönderir, prompt'u
 	// kullanıcı olarak yollar; user ile birlikte verilmez.
-	Prompt string     `json:"prompt,omitempty"`
-	Expect evalExpect `json:"expect"`
-	file   string
+	Prompt string `json:"prompt,omitempty"`
+	// Hypothesis — v0.10.424: RCAVerdict vakası kullanıcı promptu yerine
+	// chstore.RootCauseHypothesis taşır; prompt, katalog, rakipler ve şema
+	// canlı yolla AYNI kodla üretilir (EvidenceCatalog.byID dışa kapalı —
+	// katalog JSON'la elle kurulamaz).
+	Hypothesis json.RawMessage `json:"hypothesis,omitempty"`
+	Expect     evalExpect      `json:"expect"`
+	file       string
+}
+
+// evalRCAInputs — hipotez → (katalog, rakipler, izinli varlıklar, kullanıcı
+// promptu); rca_verdict.go buildRCAVerdictSurface ile aynı adımlar (extras
+// ve imzalar boş: fikstür IO'suz).
+func evalRCAInputs(h *chstore.RootCauseHypothesis, now time.Time) (rcaEvidenceCatalog, []string, []string, string) {
+	cat := buildRCAEvidenceCatalog(h)
+	cands := make([]string, 0, len(h.Candidates))
+	for _, c := range h.Candidates {
+		cands = append(cands, c.Service)
+	}
+	rivals := buildRCARivalOptions(cat, h.TopSuspect, cands)
+	entities := rcaAllowedEntities(cat)
+	return cat, rivals, entities, buildRCAVerdictPrompt(h, cat, rivals, nil, now)
+}
+
+// scoreRCACase — SAF: model JSON'u → canlı ayrıştırma + onarım + kalkan
+// zinciri (applyRCAShieldsPure); verdict kümesi, atıf oranı
+// (K2'den geçen / atıf yapılan; hiç atıf yoksa 1.0 yalnız
+// insufficient_evidence'ta), K3 uydurma sayısı.
+func scoreRCACase(c evalCase, h *chstore.RootCauseHypothesis, cat rcaEvidenceCatalog, answer string) (fails []string, unknown int) {
+	var mv rcaModelVerdict
+	parsed := false
+	if err := json.Unmarshal([]byte(strings.TrimSpace(answer)), &mv); err == nil && rcaVerdictEnumOK(mv.Verdict) {
+		parsed = true
+	} else if fixed, ok := salvageJSONObject(answer); ok {
+		if err := json.Unmarshal([]byte(fixed), &mv); err == nil && rcaVerdictEnumOK(mv.Verdict) {
+			parsed = true
+		}
+	}
+	if !parsed {
+		return []string{"unparsed: " + strings.TrimSpace(answer)}, 0
+	}
+	cited := len(mv.RootCause.Evidence)
+	for _, st := range mv.CausalChain {
+		cited += len(st.Evidence)
+	}
+	sh := rcaShieldReport{Parsed: true}
+	v := applyRCAShieldsPure(h, cat, mv, &sh)
+	if len(c.Expect.Verdicts) > 0 {
+		okV := false
+		for _, w := range c.Expect.Verdicts {
+			if v.Verdict == w {
+				okV = true
+			}
+		}
+		if !okV {
+			fails = append(fails, fmt.Sprintf("verdict %q ∉ %v", v.Verdict, c.Expect.Verdicts))
+		}
+	}
+	if c.Expect.MinEvidenceCitationRate != nil {
+		rate := 1.0
+		if cited > 0 {
+			rate = float64(cited-len(sh.RejectedEvidence)) / float64(cited)
+		} else if v.Verdict != "insufficient_evidence" {
+			rate = 0
+		}
+		if rate < *c.Expect.MinEvidenceCitationRate {
+			fails = append(fails, fmt.Sprintf("evidence citation rate %.2f < %.2f (cited %d, rejected %v)", rate, *c.Expect.MinEvidenceCitationRate, cited, sh.RejectedEvidence))
+		}
+	}
+	unknown = len(sh.UnknownEntities)
+	if c.Expect.MaxUnknownEntities != nil && unknown > *c.Expect.MaxUnknownEntities {
+		fails = append(fails, fmt.Sprintf("unknown entities %d > %d: %v", unknown, *c.Expect.MaxUnknownEntities, sh.UnknownEntities))
+	}
+	return fails, unknown
 }
 
 // evalCaseInput — koşucu ve skorlayıcı için (system, user) çifti.
@@ -198,14 +275,27 @@ func TestEvalsetFixturesValid(t *testing.T) {
 		if _, ok := evalSystemPrompt(c.Surface); !ok {
 			t.Errorf("%s/%s: surface %q çözülemiyor", c.file, c.ID, c.Surface)
 		}
-		if strings.TrimSpace(c.Why) == "" || (strings.TrimSpace(c.User) == "" && strings.TrimSpace(c.Prompt) == "") {
+		isRCA := c.Surface == "RCAVerdict"
+		if strings.TrimSpace(c.Why) == "" || (!isRCA && strings.TrimSpace(c.User) == "" && strings.TrimSpace(c.Prompt) == "") {
 			t.Errorf("%s/%s: why ve (user | prompt) zorunlu", c.file, c.ID)
+		}
+		if isRCA != (len(c.Hypothesis) > 0) {
+			t.Errorf("%s/%s: hypothesis yalnız RCAVerdict yüzeyinde ve orada zorunlu", c.file, c.ID)
+		}
+		if isRCA {
+			var h chstore.RootCauseHypothesis
+			if err := json.Unmarshal(c.Hypothesis, &h); err != nil || h.Service == "" {
+				t.Errorf("%s/%s: hypothesis çözülemiyor ya da service boş: %v", c.file, c.ID, err)
+			}
+			if len(c.Expect.Verdicts) == 0 {
+				t.Errorf("%s/%s: RCA vakası verdicts beklentisi taşımalı", c.file, c.ID)
+			}
 		}
 		if c.User != "" && c.Prompt != "" {
 			t.Errorf("%s/%s: user ve prompt birlikte verilmez", c.file, c.ID)
 		}
 		e := c.Expect
-		if len(e.MustContain) == 0 && len(e.MustNotContain) == 0 && e.MaxUnknownEntities == nil && e.Intent == "" {
+		if len(e.MustContain) == 0 && len(e.MustNotContain) == 0 && e.MaxUnknownEntities == nil && e.Intent == "" && len(e.Verdicts) == 0 {
 			t.Errorf("%s/%s: en az bir beklenti gerekli", c.file, c.ID)
 		}
 		if (c.Surface == "IntentClassify") != (e.Intent != "") {
@@ -244,5 +334,35 @@ func TestScoreEvalCase(t *testing.T) {
 	none := evalCase{ID: "n", Surface: "IntentClassify", User: "hava?", Expect: evalExpect{Intent: "none"}}
 	if fails, _ := scoreEvalCase(none, "sys", `{"intent":"none"}`, nil); len(fails) != 0 {
 		t.Fatalf("none kızardı: %v", fails)
+	}
+}
+
+// v0.10.424 — RCA skorlayıcısı saf ve tablolu: katalog kimlikleri
+// (E1..), uydurma kimlik (E9) K2'de düşer ve oranı bozar, serbest metindeki
+// uydurma ad K3'te sayılır, verdict kümesi dışı kızarır.
+func TestScoreRCACase(t *testing.T) {
+	h := &chstore.RootCauseHypothesis{Service: "checkout", TopSuspect: "payments", TopScore: 0.9, Confidence: 0.8,
+		Candidates: []chstore.ScoredCause{{Service: "payments", Score: 0.9, Hops: 1, Reason: "deploy"}, {Service: "inventory", Score: 0.1, Hops: 1}}}
+	cat, rivals, entities, user := evalRCAInputs(h, time.Unix(1_700_000_000, 0))
+	if len(cat.PositiveIDs()) < 2 || len(entities) == 0 || user == "" || len(rivals) == 0 {
+		t.Fatalf("girdiler: pos=%v entities=%v rivals=%v", cat.PositiveIDs(), entities, rivals)
+	}
+	one := 1.0
+	zero := 0
+	c := evalCase{ID: "r", Surface: "RCAVerdict", Expect: evalExpect{Verdicts: []string{"root_cause_identified", "probable_cause"}, MinEvidenceCitationRate: &one, MaxUnknownEntities: &zero}}
+	good := `{"verdict":"probable_cause","title":"payments deploy","summary":"payments 503 döndürüyor","root_cause":{"entity":"payments","failure_mode":"503","trigger":"deploy","latent_weakness":"","evidence":["E1"]},"causal_chain":[{"entity":"checkout","effect":"hata oranı","evidence":["E1"]}],"rejected_hypotheses":[],"model_confidence":0.7,"missing_evidence":[],"remediation":[]}`
+	if fails, unknown := scoreRCACase(c, h, cat, good); len(fails) != 0 || unknown != 0 {
+		t.Fatalf("temiz verdict kızardı: %v unknown=%d", fails, unknown)
+	}
+	bad := `{"verdict":"root_cause_identified","title":"ghost-gateway","summary":"ghost-gateway çöktü","root_cause":{"entity":"payments","failure_mode":"x","trigger":"y","latent_weakness":"","evidence":["E1","E9"]},"causal_chain":[],"rejected_hypotheses":[],"model_confidence":0.9,"missing_evidence":[],"remediation":[]}`
+	fails, unknown := scoreRCACase(c, h, cat, bad)
+	if unknown != 1 || len(fails) != 2 {
+		t.Fatalf("atıf oranı (E9 düşer) + uydurma ad bekleniyor: %v unknown=%d", fails, unknown)
+	}
+	if fails, _ := scoreRCACase(c, h, cat, "Elbette, işte JSON: "+good); len(fails) != 0 {
+		t.Fatalf("gevezelik onarılmalı (salvage): %v", fails)
+	}
+	if fails, _ := scoreRCACase(c, h, cat, `{"verdict":"insufficient_evidence","root_cause":{"evidence":[]}}`); len(fails) != 1 || !strings.HasPrefix(fails[0], "verdict") {
+		t.Fatalf("küme dışı verdict kızarmalı: %v", fails)
 	}
 }

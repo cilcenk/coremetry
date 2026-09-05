@@ -57,7 +57,7 @@ Her bulgu dosya:satır kanıtlı; uygulamadan önce ±10 satır bağlam okunur.
 - Deterministik kalkanlar (LLM self-critique yerine sunucu doğrulaması); 👍 → `ConfirmedRCASignatures`; 20 yüzeyin hepsi `ai_calls`'a tek satır.
 - MCP şema kalitesi: 36 tool, 98/98 property açıklamalı, `rangeWindow` zorlaması testli, 5 sınıflık hata sözleşmesi telde ve sohbette aynı.
 
-## PLAN (onaylandı 2026-09-05; Faz 0 GEMİDE v0.10.397-402; Faz 1 GEMİDE v0.10.403-408; Faz 2 dilim 1 (E2+O3+O4) GEMİDE v0.10.409; E4 GEMİDE v0.10.410; E8 GEMİDE v0.10.411; E6 GEMİDE v0.10.421 — Faz 2 TAMAM; Faz 3: E1+E7 GEMİDE v0.10.422, E5 GEMİDE v0.10.423)
+## PLAN (onaylandı 2026-09-05; Faz 0 GEMİDE v0.10.397-402; Faz 1 GEMİDE v0.10.403-408; Faz 2 dilim 1 (E2+O3+O4) GEMİDE v0.10.409; E4 GEMİDE v0.10.410; E8 GEMİDE v0.10.411; E6 GEMİDE v0.10.421 — Faz 2 TAMAM; Faz 3: E1+E7 GEMİDE v0.10.422, E5 GEMİDE v0.10.423, RCA replay v0.10.424 — Faz 3 TAMAM)
 
 | Faz | Kapsam | Toplam | Ne zaman görünür |
 |---|---|---|---|

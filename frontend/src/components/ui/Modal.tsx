@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { useFocusTrap } from './useFocusTrap';
 import { useEscLayer } from '@/lib/escLayer';
 import { createPortal } from 'react-dom';
 
@@ -49,55 +50,14 @@ export function Modal({
 
   // v0.9.950 (E2/Ö28) — Esc katmanı; yalnız AÇIKKEN yığında.
   useEscLayer(open, onClose);
+  useFocusTrap(dialogRef, open);
 
   useEffect(() => {
     if (!open) return;
     lastFocusRef.current = document.activeElement;
 
-    const onKey = (e: KeyboardEvent) => {
-      // v0.9.950 (E2/Ö28) — Esc BURADA DEĞİL, katman yığınında
-      // (useEscLayer, aşağıda). stopPropagation bir yamaydı: yalnız
-      // BU dinleyiciden SONRA kayıtlı olanları susturuyordu, yani sıra
-      // kayıt sırasına kalmıştı. Katman modeli sırayı açılıştan alır.
-      // mK2 (v0.9.924) — Tab hapsi. `aria-modal="true"` bugüne kadar
-      // YALAN söylüyordu: rol "arkadaki her şey inert" diye duyuruyordu
-      // ama Tab diyaloğun son öğesinden çıkıp altındaki sayfaya
-      // geçiyordu. Odak görünmez bir yere kayınca kullanıcı hangi
-      // öğede olduğunu kaybediyor ve diyaloğa dönüş yolu kalmıyor —
-      // yanlış duyurulan bir rolün klasik bedeli.
-      if (e.key !== 'Tab') return;
-      const root = dialogRef.current;
-      if (!root) return;
-      // Liste HER Tab'da YENİDEN toplanıyor. Bir kere toplanıp
-      // saklanırsa koşullu render'lı formlarda (bir seçim yeni alanlar
-      // açıyor, bir hata satırı beliriyor) bayat liste üzerinden
-      // sarılır ve odak var olmayan bir öğeye gönderilir.
-      const items = [...root.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
-        // Görünürlük süzgeci `offsetParent`la YAPILAMAZ: o düzen
-        // gerektirir, jsdom'da her zaman null döner ve testte hapis
-        // tamamen ölür — yani kapıyı kuramazdık. Öznitelik tabanlı
-        // süzgeç hem tarayıcıda hem testte aynı sonucu verir.
-        // Bilinen sınır: CSS ile gizlenmiş (visibility/display) bir
-        // odaklanabilir öğe listede kalır. Tarayıcıda o öğe zaten
-        // odaklanamaz, dolayısıyla hapis SIZDIRMAZ — en kötü ihtimalle
-        // Tab bir tur yerinde sayar.
-        .filter(el => !el.hasAttribute('disabled')
-          && !el.hidden
-          && el.getAttribute('aria-hidden') !== 'true');
-      if (items.length === 0) { e.preventDefault(); root.focus(); return; }
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement;
-      if (e.shiftKey && (active === first || active === root)) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener('keydown', onKey);
+    // v0.10.389 — Tab hapsi useFocusTrap'a taşındı (Drawer ile ortak);
+    // sözleşme ve pinler aynen (Modal.contract.test).
 
     // Defer the focus call to the next tick — without this the
     // portal hasn't mounted into the DOM yet on the first render
@@ -122,7 +82,6 @@ export function Modal({
 
     return () => {
       clearTimeout(t);
-      document.removeEventListener('keydown', onKey);
       document.body.style.overflow = prevOverflow;
       // Restore focus to whatever owned it before the modal opened
       // (typically the button that triggered the open).

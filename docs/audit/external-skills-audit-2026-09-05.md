@@ -32,17 +32,17 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
 | B1 | Summary quantile'ları sessizce düşüyor (yalnız avg) | `internal/otlp/convert.go:403-412` | quantile'ları attr'a yaz ya da sayaç | ~2 saat |
-| B2 | Exponential histogram 4 dalda sessiz degrade, sayaç yok | `internal/otlp/exp_histogram.go:41-51` | sebep etiketli sayaç + /admin/stats | ~1 saat |
+| B2 | **GEMİDE v0.10.388** — Exponential histogram 4 dalda sessiz degrade, sayaç yok | `internal/otlp/exp_histogram.go:41-51` | sebep etiketli sayaç + /admin/stats | ~1 saat |
 | B3 | Delta temporality VM forward'da bakılmıyor (VM rate kümülatif varsayar) | `internal/otlp/forward_filter.go`, `convert.go:345` | delta Sum sayacı + Settings uyarısı | ~2 saat |
 | B4 | `usePrometheusNaming` yazımda doğrulanmıyor; yanlış bayrakta her VM paneli boş | `internal/vmetrics/write.go:41` | Test() probe + rozet | ~yarım gün |
-| B5 | `anyValStr` bilinmeyen tipte sessiz `""` | `internal/otlp/convert.go:538` | rate-limited sayaç | ~30 dk |
+| B5 | **GEMİDE v0.10.388** — `anyValStr` bilinmeyen tipte sessiz `""` | `internal/otlp/convert.go:538` | rate-limited sayaç | ~30 dk |
 | B6 | `async_insert_deduplicate` Distributed sarmalayıcıda etkisiz; MV kaskadı dedup dışı (v0.10.240 çift-span açık) | `internal/chstore/repo.go:85` | `insert_deduplication_token` + `deduplicate_blocks_in_dependent_materialized_views` | ~1 saat, kademeli roll |
 
 ## C. Maliyet / performans (ClickHouse + React)
 
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
-| C1 | Sunucu `max_execution_time` (60/180 s) istemci `ReadTimeout` (30 s)'un 2-6× — istemci kopar, sunucu yakmaya devam eder | `store.go:654-659`, `topology.go:660,1133` | bütçeleri ≤25 s; uzun işler ayrı bağlantı | ~1 saat |
+| C1 | ⏳ ölçüm ister (query_log: istemci kopuşu sonrası sunucuda süren sorgu var mı; progress paketleri ReadTimeout'u tazeliyor olabilir) — Sunucu `max_execution_time` (60/180 s) istemci `ReadTimeout` (30 s)'un 2-6× — istemci kopar, sunucu yakmaya devam eder | `store.go:654-659`, `topology.go:660,1133` | bütçeleri ≤25 s; uzun işler ayrı bağlantı | ~1 saat |
 | C2 | **GEMİDE v0.10.381** — spans/logs/metric_points `ttl_only_drop_parts` yok (rollup'larda var) | `store.go:1051,1073,1923` | MODIFY SETTING | ~30 dk |
 | C3 | **GEMİDE v0.10.381** — `metric_points` skip index yok; `service_name` opsiyonelken PK budamaz | `store.go:1921`, `metricrate.go:354` | `set(0)` index on `metric` | ~30 dk |
 | C4 | `logs` env/pod filtresi dizi taraması; 0014 yalnız spans'e | `repo.go:4750-4764` | `res_kvh` + bloom logs_local'a | ~1 saat |
@@ -51,7 +51,7 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 | C7 | **GEMİDE v0.10.381** — `logs.attr_values/res_values` kodeksiz (spans ZSTD(3)) | `store.go:1063-1065` | MODIFY COLUMN CODEC | ~30 dk |
 | C8 | Traces'te her tuş vuruşu 1370 satırlık gövde + memo'suz `AggregateTable` (200 satır) | `pages/Traces.tsx:318,1262,1636` | `memo` + `useDeferredValue` | ~3 saat |
 | C9 | 112 effect-fetch'in 67'si yarış korumasız (216 `useQuery` varken) | ör. `AnomaliesPage.tsx:302`, Traces 7, PanelRenderer 7 | `useQuery`'ye taşı (ilk dilim) | ~yarım gün |
-| C10 | `DataTableColgroup` fit memo'su 20 sitede hiç isabet etmiyor (satır içi dizi) | `DataTable.tsx:448-459` | sabit diziler / primitif dep | ~30 dk |
+| C10 | **GEMİDE v0.10.387** — `DataTableColgroup` fit memo'su 20 sitede hiç isabet etmiyor (satır içi dizi) | `DataTable.tsx:448-459` | sabit diziler / primitif dep | ~30 dk |
 | C11 | **GEMİDE v0.10.377** — Endpoints satır anahtarı `rowKey\|i` → sıralamada tüm tbody remount | `pages/Endpoints.tsx:747` | `key={rowKey}` | ~10 dk |
 | C12 | Traces 31 useState / 0 useCallback; `startResize` her pointermove'da yeniden | `Traces.tsx`, `DataTable.tsx:224-243` | reducer + useCallback; ref | ~yarım gün |
 
@@ -60,7 +60,7 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
 | D1 | `--text3` dark 2.90:1, light 3.24:1 (AA 4.5), 1250 kullanım | `styles/globals.css:38,205` | iki token değeri — **görsel değişiklik, sorulur** | ~10 dk |
-| D2 | `Drawer` role/aria-modal yok, Tab hapsi yok (Modal'da var) | `components/ui/Drawer.tsx:103` | ortak `useFocusTrap` | ~yarım gün |
+| D2 | **GEMİDE v0.10.389** — `Drawer` role/aria-modal yok, Tab hapsi yok (Modal'da var) | `components/ui/Drawer.tsx:103` | ortak `useFocusTrap` | ~yarım gün |
 | D3 | 42 tıklanabilir `<tr>`'nin 37'si klavyeye kapalı; `getRowHref` 0 tüketici | `pages/Traces.tsx:1656`, `DataTable.tsx:81` | AnomaliesPage kalıbı / row-link | ~yarım gün |
 | D4 | `CommandPalette` diyalog değil; ham renkler | `components/CommandPalette.tsx:553-583` | Modal kabuğu + listbox + token | ~2-3 saat |
 | D5 | 18 sekme şeridi, 0 `role="tablist"` | `.tab-strip` siteleri | `TabStrip` atomu | ~3-4 saat |

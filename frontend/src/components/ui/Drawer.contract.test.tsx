@@ -91,3 +91,49 @@ describe('Drawer — inceleme kipi (backdrop=true) modal davranıyor', () => {
     expect(scrims.length).toBe(1);
   });
 });
+
+// v0.10.389 — dış skill denetimi D2: Drawer rolünü duyurur ve perde
+// açıkken Tab'ı hapseder (Modal'ın v0.9.924 sözleşmesi, ortak kanca).
+function tabKey(shift = false) {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: shift, bubbles: true }));
+}
+describe('Drawer — diyalog rolü ve Tab hapsi (v0.10.389)', () => {
+  it('perde açıkken role=dialog + aria-modal + aria-label beyan edilir', () => {
+    render(<Drawer onClose={() => {}} header="H" ariaLabel="Trace çekmecesi">x</Drawer>);
+    const panel = document.querySelector('.drawer-panel') as HTMLElement;
+    expect(panel.getAttribute('role')).toBe('dialog');
+    expect(panel.getAttribute('aria-modal')).toBe('true');
+    expect(panel.getAttribute('aria-label')).toBe('Trace çekmecesi');
+  });
+  it('sohbet kipinde (backdrop=false) aria-modal YOK — arka plan canlı', () => {
+    render(<Drawer onClose={() => {}} header="H" backdrop={false}>x</Drawer>);
+    const panel = document.querySelector('.drawer-panel') as HTMLElement;
+    expect(panel.getAttribute('role')).toBe('dialog');
+    expect(panel.hasAttribute('aria-modal')).toBe(false);
+  });
+  it('perde açıkken son öğeden Tab çekmecenin başına DÖNER', () => {
+    render(
+      <Drawer onClose={() => {}} header="H">
+        <button id="a">A</button>
+        <button id="b">B</button>
+      </Drawer>,
+    );
+    const b = document.getElementById('b') as HTMLElement;
+    b.focus();
+    act(() => { tabKey(); });
+    // Çekmecenin ilk odaklanabilir öğesi kapatma düğmesi (aria-label="Close").
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Close');
+  });
+  it('sohbet kipinde Tab hapsedilmez', () => {
+    render(
+      <Drawer onClose={() => {}} header="H" backdrop={false}>
+        <button id="a">A</button>
+        <button id="b">B</button>
+      </Drawer>,
+    );
+    const b = document.getElementById('b') as HTMLElement;
+    b.focus();
+    act(() => { tabKey(); });
+    expect(document.activeElement).toBe(b); // jsdom Tab'ı taşımaz; hapis olsaydı Close'a atlardı
+  });
+});

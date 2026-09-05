@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useFocusTrap } from './useFocusTrap';
 import { useEscLayer } from '@/lib/escLayer';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
@@ -10,7 +11,7 @@ import { Sparkline } from '@/components/Sparkline';
 // olup Drawer'da eksik kalan ayağı. İçerik (bölümler, tablolar,
 // trendler) çağıranda kalır. İlk migrasyon External + Hosts (bayt-bayt
 // aynı kopyalar); kalan 5 çekmece yüzeyi kendi sürümlerinde taşınır.
-export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyle, children }: {
+export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyle, children, ariaLabel = 'Detay çekmecesi' }: {
   onClose: () => void;
   // Başlık satırının sol tarafı (ad + rozetler); ✕ butonunu kabuk koyar.
   header: React.ReactNode;
@@ -30,6 +31,8 @@ export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyl
   // bodyStyle — gövde düzenini çağıran devralabilir (sohbet kendi
   // dikey flex'ini kuruyor: kaydıran tur listesi + sabit composer).
   bodyStyle?: React.CSSProperties;
+  /** v0.10.389 — ekran okuyucu diyalog adı; başlık ReactNode olduğu için ayrı. */
+  ariaLabel?: string;
   children: React.ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -40,6 +43,9 @@ export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyl
   // paleti Esc'le kapatan operatör çekmeceyi de kaybediyordu. Yığın LIFO,
   // yani "en son açılan en üstte".
   useEscLayer(true, onClose);
+  // v0.10.389 (dış skill denetimi D2) — perde açıkken Tab çekmecede kalır
+  // (Modal ile ortak kanca); sohbet kipi (backdrop=false) serbest.
+  useFocusTrap(panelRef, backdrop);
 
   // mK1 (v0.9.927) — odak taşıma + kaydırma kilidi YALNIZ perde kipinde.
   //
@@ -100,7 +106,9 @@ export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyl
           altında). Sınıfın MASAÜSTÜ kuralı YOK — yalnız `@media
           (max-width: 640px)` bloğunda tanımlı, dolayısıyla geniş ekranda
           tek piksel değişmiyor. */}
-      <div ref={panelRef} tabIndex={-1} className="drawer-panel" style={{
+      <div ref={panelRef} tabIndex={-1} className="drawer-panel"
+        role="dialog" aria-modal={backdrop ? true : undefined} aria-label={ariaLabel}
+        style={{
         position: 'fixed', right: 0, top: 0, bottom: 0,
         width: `min(${width}px, 100vw)`,
         background: 'var(--bg)', borderLeft: '1px solid var(--border)',

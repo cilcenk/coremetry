@@ -36,7 +36,7 @@ import { getRaw, setRaw } from '@/lib/storage';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
 import { logsBucketSec } from '@/lib/chartStep';
-import { tsShort, timeRangeToNs, sevName, sevClass, rangeToSince } from '@/lib/utils';
+import { tsShort, timeRangeToNs, sevName, sevClass, rangeToSince, fmtClock } from '@/lib/utils';
 import { severityBandOf } from '@/lib/severityBand';
 import { accumulatePage, narrowLoaded } from '@/lib/logAccumulate';
 import { logsToCSV, logsToNDJSON, downloadText, exportFilename } from '@/lib/logsExport';
@@ -177,6 +177,16 @@ function LogsInner() {
   // top in this browsing session. Surfaced, never silent.
   const [accDropped, setAccDropped] = useState(0);
   const resetPaging = () => { setCursor(''); setAccRows([]); setAccDropped(0); };
+  // v0.10.440 (log arama denetimi B3) — sayfa-yerel ↻. Göreli preset'in
+  // penceresi timeRangeToNs ile SON range değişiminde donuyor ("son 30 dk"
+  // bir saat sonra bir saat önceki 30 dakikayı sorguluyordu, ekranda hiçbir
+  // şey bunu söylemiyordu). Sayaç memo bağımlılığında: bir tık pencereyi
+  // şimdiye taşır, her from/to tüketicisi (liste, çipler, histogram —
+  // histogram React Query değil, o yüzden invalidate yetmezdi) yeniden
+  // sorgular. NEDEN setRange değil: preset range'in kimliği değişmez
+  // (Dashboard.tsx gerekçesi) ve setRange zoom yığınını siler. Otomatik
+  // aralık YOK (ES maliyet disiplini, lib/queries/logs.ts) — yalnız tık.
+  const [nowTick, setNowTick] = useState(0);
   const [filter, setFilter] = useState({
     service: '', cluster: '', search: '', severity: 0, traceId: '', spanId: '',
     // hasTrace (v0.8.406 — operator ask): keep only rows with a trace
@@ -415,7 +425,9 @@ function LogsInner() {
   const useTimeRange = !filter.traceId;
   const { from, to } = useMemo(
     () => useTimeRange ? timeRangeToNs(range) : { from: undefined, to: undefined },
-    [useTimeRange, range],
+    // nowTick: ↻ tıkı göreli pencereyi şimdiye taşır (v0.10.440, B3).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [useTimeRange, range, nowTick],
   );
   // Pills + free text → the single query string every consumer
   // (table, facets, histogram, live tail, Kibana link) sends to the
@@ -902,6 +914,17 @@ function LogsInner() {
           </Button>
           <Button variant="primary" onClick={apply}>Search</Button>
           <Button variant="secondary" onClick={reset}>Reset</Button>
+          {/* v0.10.440 (B3) — ↻ + tazelik: etiket PENCERE SONU (sorgulanan an),
+              fetch zamanı değil (cevap 15 sn sunucu önbelleğinden gelebilir).
+              Özel aralıkta pencere sabittir → yalnız yeniden sorgular. Canlı
+              kuyrukta pencere yok → çizilmez. */}
+          {!live && (
+            <Button variant="secondary" aria-label="Yenile"
+              onClick={() => { resetPaging(); if (range.preset === 'custom') void staticQ.refetch(); else setNowTick(t => t + 1); }}
+              title={to ? `Veri penceresi ${fmtClock(to / 1e6)} anında bitiyor — ↻ pencereyi şimdiye taşır ve yeniden sorgular` : 'Yeniden sorgula'}>
+              ↻{to ? ` ${fmtClock(to / 1e6)}` : ''}
+            </Button>
+          )}
           <ShareButton label="Copy link" copiedLabel="Copied" title={LOG_SHARE_TITLE} />
           <Button variant={live ? 'primary' : 'secondary'}
             className={live ? 'live-on' : undefined}

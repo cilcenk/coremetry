@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -169,6 +170,11 @@ func guidedSuggestions(route guidedRoute) []string {
 			return []string{svc + " en yavaş trace'ler?", svc + " hata logları?", svc + " sağlığı nasıl?"}
 		}
 		return []string{"En yavaş trace'ler?", "Açık problemler?"}
+	case guidedWindowCompare: // v0.10.437 (D6)
+		if svc != "" {
+			return []string{svc + " sağlığı nasıl?", svc + " en yavaş trace'ler?", svc + " son deploy etkisi?"}
+		}
+		return []string{"Açık problemler?"}
 	case guidedFamilyHealth:
 		return []string{"Açık problemler?", "En yavaş trace'ler?", "Son 1 saatteki log hataları?"}
 	case guidedMyServices:
@@ -385,6 +391,19 @@ func guidedAnswerLinkTargets(route guidedRoute) []guidedAnswerLink {
 			href += "&service=" + svcQ
 		}
 		return []guidedAnswerLink{{Label: "Trace'ler (arama)", Href: href}}
+	case guidedWindowCompare: // v0.10.437 (D6) — her pencere kendi range'iyle (applyAll dokunmaz)
+		if svc == "" || len(route.Windows) == 0 {
+			return nil
+		}
+		loc := route.Windows[0].From.Location()
+		var out []guidedAnswerLink
+		for i, w := range route.Windows {
+			out = append(out, guidedAnswerLink{
+				Label: fmt.Sprintf("Pencere %d · %s", i+1, absWindowLabel(w, loc)),
+				Href:  fmt.Sprintf("/service?name=%s&range=custom:%d-%d", svcQ, w.From.UnixMilli(), w.To.UnixMilli()),
+			})
+		}
+		return out
 	case guidedLogField: // v0.10.433 (D5) — bundle'ın koştuğu sorgu; yoksa backend'siz şekil
 		q := route.LogQuery
 		if q == "" {
@@ -577,6 +596,8 @@ func askServiceChipFor(route guidedRoute) []string {
 			}
 		case guidedTraceSearch:
 			out = append(out, opt+" servisinde içinde \""+route.SearchText+"\" geçen trace'ler")
+		case guidedWindowCompare: // v0.10.437 (D6) — çip pencere metnini aynen taşır
+			out = append(out, opt+" "+route.WindowText+" arası kıyas")
 		default:
 			out = append(out, askServiceChip(route.AskIntent, opt))
 		}

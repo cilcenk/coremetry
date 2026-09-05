@@ -549,6 +549,11 @@ function LogsInner() {
       if (compiledSearch) p.set('search', compiledSearch);
       if (filter.severity > 0) p.set('severity', String(filter.severity));
       if (filter.hasTrace) p.set('hasTrace', '1'); // v0.8.406 — trace-only filter
+      // v0.10.416 (log arama denetimi B2) — trace kilidi canlı kuyruğa da
+      // taşınır; eskiden "Filtered to trace" şeridi dururken kuyruk tüm
+      // servisi akıtıyordu. Sunucu zaten okuyor (streamLogs traceId/spanId).
+      if (filter.traceId) p.set('traceId', filter.traceId);
+      if (filter.spanId) p.set('spanId', filter.spanId);
       if (newestNsRef.current) p.set('since', String(newestNsRef.current)); // reconnect catch-up
       es = new EventSource('/api/logs/stream?' + p.toString(), { withCredentials: true });
       es.addEventListener('log', (e) => {
@@ -577,7 +582,7 @@ function LogsInner() {
       es?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live, filter.service, filter.cluster, env, compiledSearch, filter.severity, filter.hasTrace]);
+  }, [live, filter.service, filter.cluster, env, compiledSearch, filter.severity, filter.hasTrace, filter.traceId, filter.spanId]); // v0.10.416 — kilit değişince akış yeniden açılır
 
   // When live, the table renders the SSE buffer; otherwise the static
   // windowed query. Live has no loading/error gate — rows fill in as they
@@ -1236,7 +1241,15 @@ function LogsInner() {
           </Empty>
         )}
         {data && logs.length === 0 && (live || !staticQ.data?.degraded) && (
-          filter.traceId ? (
+          filter.traceId && live ? (
+            /* v0.10.416 (B2) — canlı kuyruk ileri-yönlü: tamamlanmış bir trace
+               yeni satır üretmez; "backend'de kaydı yok" teşhisi burada yalan olurdu. */
+            <Empty icon="≡" title="Canlı kuyruk bu trace'e kilitli — yalnız YENİ satırlar akar">
+              <div style={{ marginTop: 6, color: 'var(--text2)' }}>
+                Trace'in geçmiş logları için canlı kuyruğu kapat; tamamlanmış bir trace yeni satır üretmez.
+              </div>
+            </Empty>
+          ) : filter.traceId ? (
             <Empty icon="≡" title="No logs match this trace">
               The trace exists in Coremetry, but the logs backend has no
               record of it. Two common reasons:

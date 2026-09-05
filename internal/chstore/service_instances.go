@@ -27,9 +27,9 @@ type ServiceInstance struct {
 // (JVM does; Go's runtime does not, so MemPct stays 0 and the UI gauges
 // memory relative to the busiest pod instead).
 var (
-	instCPUSources = []string{"jvm.cpu.recent_utilization", "process.runtime.cpu.utilization", "process.cpu.utilization"}
-	instMemSources = []string{"jvm.memory.used", "process.runtime.memory.rss", "process.memory.usage"}
-	instLimSources = []string{"jvm.memory.limit", "k8s.pod.memory.limit", "container.memory.limit"}
+	InstCPUSources = []string{"jvm.cpu.recent_utilization", "process.runtime.cpu.utilization", "process.cpu.utilization"}
+	InstMemSources = []string{"jvm.memory.used", "process.runtime.memory.rss", "process.memory.usage"}
+	InstLimSources = []string{"jvm.memory.limit", "k8s.pod.memory.limit", "container.memory.limit"}
 )
 
 // ServiceInstances returns one row per host_name emitting metrics for the
@@ -40,16 +40,16 @@ func (s *Store) ServiceInstances(ctx context.Context, service string, from, to t
 	if service == "" {
 		return nil, fmt.Errorf("service required")
 	}
-	all := append(append(append([]string{}, instCPUSources...), instMemSources...), instLimSources...)
+	all := append(append(append([]string{}, InstCPUSources...), InstMemSources...), InstLimSources...)
 	holders := make([]string, len(all))
 	args := []any{service, from, to}
 	for i, n := range all {
 		holders[i] = "?"
 		args = append(args, n)
 	}
-	cpuIn := inList(instCPUSources)
-	memIn := inList(instMemSources)
-	limIn := inList(instLimSources)
+	cpuIn := inList(InstCPUSources)
+	memIn := inList(InstMemSources)
+	limIn := inList(InstLimSources)
 
 	rows, err := s.conn.Query(ctx, `
 		SELECT

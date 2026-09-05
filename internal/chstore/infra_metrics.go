@@ -32,13 +32,13 @@ type Point struct {
 //
 // Adding a new runtime is just appending to the list; the
 // detector picks whatever the service actually emits.
-type infraSlot struct {
+type InfraSlot struct {
 	Slot    string   // "cpu" | "memory" | "rps" | "runtime"
 	Sources []string // metric_name candidates in fallback order
 	Unit    string
 }
 
-var infraSlots = []infraSlot{
+var infraSlots = []InfraSlot{
 	{"cpu", []string{
 		"k8s.pod.cpu.usage",
 		"container.cpu.usage",
@@ -91,6 +91,12 @@ var infraSlots = []infraSlot{
 //   - Picks the single most-specific source per slot via a
 //     priority-ordered IN list — the per-row `metric` is then
 //     stitched back to its slot in Go.
+//
+// InfraSlotCatalog exposes the slot → candidate-metric table so the
+// metricSource seam (VictoriaMetrics-primary installs, v0.10.365) walks
+// the SAME fallback order as the ClickHouse reader below.
+func InfraSlotCatalog() []InfraSlot { return infraSlots }
+
 func (s *Store) GetInfraMetrics(ctx context.Context, service string, since, bucket time.Duration) ([]InfraMetricSeries, error) {
 	if service == "" {
 		return nil, fmt.Errorf("service required")

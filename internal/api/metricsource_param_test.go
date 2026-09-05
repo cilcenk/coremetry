@@ -502,6 +502,7 @@ func TestMetricHandlersResolveSourcePerRequest(t *testing.T) {
 		"func (s *Server) dashboardsData",
 		// v0.9.1157 — Faz 2 brought the histogram in.
 		"func (s *Server) getMetricHistogram",
+		"func (s *Server) getServiceInfraMetrics",
 	} {
 		if !strings.Contains(src, marker) {
 			t.Fatalf("comment stripping ate real code — %q is missing, so this scan proves nothing", marker)
@@ -522,9 +523,12 @@ func TestMetricHandlersResolveSourcePerRequest(t *testing.T) {
 	// s.store directly for three releases while every OTHER metric surface
 	// honoured ?metricsrc=, and nothing failed — the page rendered, from the
 	// wrong store.
-	if got := len(regexp.MustCompile(`s\.metricSourceFor\(r\)`).FindAllString(src, -1)); got != 6 {
-		t.Errorf("found %d s.metricSourceFor(r) call sites in api.go+dashboards_data.go, want 6 "+
-			"(names, query, labels, attr-keys, dashboards bundle, histogram)", got)
+	//
+	// v0.10.365 — 6 → 7 (service infra sparklines joined the seam, VM
+	// dilim 3a; /hosts resolves in hosts.go and is pinned there).
+	if got := len(regexp.MustCompile(`s\.metricSourceFor\(r\)`).FindAllString(src, -1)); got != 7 {
+		t.Errorf("found %d s.metricSourceFor(r) call sites in api.go+dashboards_data.go, want 7 "+
+			"(names, query, labels, attr-keys, dashboards bundle, histogram, infra)", got)
 	}
 
 	// Every resolution must be error-checked. An ignored error would pair

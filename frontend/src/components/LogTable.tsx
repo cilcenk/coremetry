@@ -197,9 +197,13 @@ export function LogTable({
   onTracePeek,
   onContextOpen,
   permalink,
+  wrap = false,
 }: {
   logs: LogRow[];
   hideTraceColumn?: boolean;
+  // v0.10.417 (log arama denetimi B5) — mesaj hücresi sarılsın mı; varsayılan
+  // KAPALI (tek satır + …), yalnız /logs araç çubuğu açar.
+  wrap?: boolean;
   // Dynamic middle columns (Discover revamp step 3). Omitted →
   // DEFAULT_LOG_COLUMNS, which preserves the classic anatomy. Ids
   // are well-known (level/service/cluster/pod) or raw attribute /
@@ -336,6 +340,7 @@ export function LogTable({
                 onTracePeek={onTracePeek}
                 onContextOpen={onContextOpen}
                 permalink={permalink}
+                wrap={wrap}
               />
             );
           })}
@@ -347,7 +352,7 @@ export function LogTable({
 
 function LogRow({
   l, idx, tableId, cols, colIds, highlightTerms, hideTraceColumn, selected, expanded, onClick, extraExpanded,
-  onFilterAdd, onFilterExclude, onToggleColumn, onTracePeek, onContextOpen, permalink,
+  onFilterAdd, onFilterExclude, onToggleColumn, onTracePeek, onContextOpen, permalink, wrap,
 }: {
   l: LogRow;
   idx: number;
@@ -366,6 +371,7 @@ function LogRow({
   onTracePeek?: (traceId: string) => void;
   onContextOpen?: (pivot: LogRow) => void;
   permalink?: (l: LogRow) => string;
+  wrap?: boolean;
 }) {
   const attrs = Object.entries(l.attributes ?? {});
   const res = Object.entries(l.resourceAttributes ?? {});
@@ -408,7 +414,7 @@ function LogRow({
         {colIds.map(id => {
           if (id === 'message') {
             return (
-              <td key={id} style={{ maxWidth: 480 }} title={l.body}>
+              <td key={id} className={wrap ? 'lt-wrap' : undefined} style={{ maxWidth: 480 }} title={wrap ? undefined : l.body}>
                 {/* v0.8.407 — span-event pseudo rows (exceptions / log-bridge
                     records riding the trace's spans) are visibly distinct from
                     backend log rows so the merged trace Logs tab stays honest. */}

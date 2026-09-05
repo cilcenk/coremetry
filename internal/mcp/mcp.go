@@ -1075,7 +1075,13 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 		return resp
 	}
 
-	out, err := tool.Handler(ctx, p.Arguments)
+	// v0.10.401 (CoSRE denetimi M2) — tel üzerindeki tools/call da uygulama
+	// içi döngüyle (runChatTool) aynı bütçeyi taşır; deadline
+	// classifyToolErrorClass'ta ToolErrTimeout'a düşer, model yapılandırılmış
+	// "pencereyi daralt" öğüdünü alır.
+	tctx, cancel := context.WithTimeout(ctx, ToolCallBudget)
+	defer cancel()
+	out, err := tool.Handler(tctx, p.Arguments)
 	if err != nil {
 		// v0.9.1234 — ham sürücü metni yerine YAPISAL hata: modelin
 		// cevaplaması gereken soru "şimdi ne yapayım", ham

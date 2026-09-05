@@ -701,7 +701,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 // per-tool clampLimit caps (in mcptools) already bound result size;
 // the timeout guards a slow CH query from stalling the whole chat.
 func runChatTool(ctx context.Context, h func(context.Context, json.RawMessage) (any, error), args json.RawMessage) (string, error) {
-	tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	tctx, cancel := context.WithTimeout(ctx, mcp.ToolCallBudget) // v0.10.401 — telle aynı bütçe
 	defer cancel()
 	out, err := h(tctx, args)
 	if err != nil {

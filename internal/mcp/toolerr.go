@@ -54,6 +54,7 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"time"
 )
 
 // Tool hata sınıfları. BEŞ tane, bilerek: her biri modelin
@@ -185,6 +186,11 @@ func ToolErrorJSON(err error) string {
 // tek tek sarmalamak 50+ dosyaya dokunmak demekti ve her yeni tool
 // aynı sarmalamayı unutabilirdi. Merkezî tahmin + testli sinyal
 // listesi, dağıtılmış disiplinden daha dayanıklı.
+// ToolCallBudget — tek bir araç çağrısının süre tavanı (v0.10.401): hem
+// uygulama içi sohbet döngüsü (api.runChatTool) hem tel üzerindeki
+// tools/call aynı sayıyı taşır; aşan çağrı ToolErrTimeout olur.
+const ToolCallBudget = 20 * time.Second
+
 func classifyToolErrorClass(err error) string {
 	if err == nil {
 		return ToolErrInternal

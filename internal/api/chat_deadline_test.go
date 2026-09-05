@@ -126,7 +126,8 @@ func TestHandlerAppliesTheDeadline(t *testing.T) {
 	}
 	// Tool bağlamı deadline'lı ctx'ten türemeli.
 	iDeadline := strings.Index(src, "context.WithTimeout(r.Context(), exchangeMax)")
-	iTool := strings.Index(src, "context.WithTimeout(ctx, 20*time.Second)")
+	// v0.10.401 — araç bütçesi mcp.ToolCallBudget (telle aynı sayı).
+	iTool := strings.Index(src, "context.WithTimeout(ctx, mcp.ToolCallBudget)")
 	if iDeadline < 0 || iTool < 0 {
 		t.Fatal("deadline ya da tool timeout'u bulunamadı")
 	}

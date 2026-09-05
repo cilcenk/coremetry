@@ -840,6 +840,7 @@ func podHealthPayload(data PodHealthData, windowS int) map[string]any {
 		"heap_count":     len(data.Heap),
 		"heap_total":     data.HeapTotal,
 		"heap_truncated": data.HeapTruncated,
+		"has_more":       data.HeapTruncated, // v0.10.407 — sayfa doluysa "hepsi bu" değil (CoSRE denetimi M3)
 		"restart_note":   podHealthRestartNote,
 	}
 	if data.Service == "" {

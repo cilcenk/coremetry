@@ -467,6 +467,7 @@ func silentTeamServices(resolved []string, rows []chstore.ServiceSummary, max in
 func teamServicesPayload(data TeamServicesData, windowS, limit int) map[string]any {
 	rows := teamServiceRows(data.Rows)
 	truncated := false
+	hasMore := limit > 0 && len(rows) > limit // v0.10.407 — sayfa doluysa "hepsi bu" değil (CoSRE denetimi M3)
 	if limit > 0 && len(rows) > limit {
 		rows = rows[:limit]
 		truncated = true
@@ -477,6 +478,7 @@ func teamServicesPayload(data TeamServicesData, windowS, limit int) map[string]a
 		"window_s":         windowS,
 		"services":         rows,
 		"count":            len(rows),
+		"has_more":         hasMore,
 		"matched_services": len(data.Services) + data.Trimmed,
 		"read_services":    len(data.Services),
 		"trimmed_services": data.Trimmed,

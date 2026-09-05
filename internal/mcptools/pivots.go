@@ -164,6 +164,7 @@ func getLogsForTraceTool(d Deps) mcp.Tool {
 				"logs":     page.Logs,
 				"count":    len(page.Logs),
 				"total":    page.Total,
+				"has_more": len(page.Logs) >= limit || page.NextCursor != "", // v0.10.407 — sayfa doluysa "hepsi bu" değil (CoSRE denetimi M3)
 			}, nil
 		},
 	}
@@ -238,7 +239,7 @@ func getExemplarTracesTool(d Deps) mcp.Tool {
 					"span_id":  e.SpanID,
 				})
 			}
-			return map[string]any{"items": items, "count": len(items)}, nil
+			return map[string]any{"items": items, "count": len(items), "has_more": len(items) >= limit}, nil // v0.10.407 — sayfa doluysa "hepsi bu" değil (CoSRE denetimi M3)
 		},
 	}
 }

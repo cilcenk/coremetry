@@ -66,7 +66,7 @@ func listMetricNamesTool(d Deps) mcp.Tool {
 			if err != nil {
 				return nil, err
 			}
-			return map[string]any{"metrics": names, "count": len(names), "total": total}, nil
+			return map[string]any{"metrics": names, "count": len(names), "total": total, "has_more": total > len(names)}, nil // v0.10.407 — sayfa doluysa "hepsi bu" değil (CoSRE denetimi M3)
 		},
 	}
 }

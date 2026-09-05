@@ -315,6 +315,7 @@ func topologyPayload(focus string, windowS int, rows []topologyEdgeRow, trimmed 
 		"window_s":        windowS,
 		"window_bucket_s": topoBucketS,
 		"count":           len(rows),
+		"has_more":        trimmed, // v0.10.407 — sayfa doluysa "hepsi bu" değil (CoSRE denetimi M3)
 		"truncated":       trimmed,
 	}
 	if focus == "" {

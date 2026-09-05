@@ -24,16 +24,40 @@ package mcp
 // hâlde iptal-döngüsü 60/dk sınırını aşar).
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 )
 
 // canonicalID — JSON-RPC id'sinin kanonik yazımı; çözülemezse ham metin.
+//
+// v0.10.430 — sayılar json.Number ile okunur: `any` yolu her sayıyı
+// float64'e indiriyordu ve 2^53 üstü tam sayılar (nanosaniye zaman
+// damgası, 64-bit rastgele id — ikisi de geçerli JSON-RPC id) aynı
+// anahtara çöküyordu: B'nin kaydı A'nınkini eziyor, A iptal edilemiyor,
+// A'nın iptali B'yi öldürüyordu. Tam sayı literali AYNEN kalır; kesirli/
+// üslü yazım (`7.0`, `1e2`) float üzerinden `7`/`100`'e katlanır (spec
+// kesir önermez, istemciler yine de yolluyor — M4 testi 7.0 gönderir).
 func canonicalID(raw json.RawMessage) string {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
 	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
+	if err := dec.Decode(&v); err != nil {
 		return string(raw)
+	}
+	if n, ok := v.(json.Number); ok {
+		s := string(n)
+		if !strings.ContainsAny(s, ".eE") {
+			return s
+		}
+		f, err := n.Float64()
+		if err != nil {
+			return s
+		}
+		b, _ := json.Marshal(f)
+		return string(b)
 	}
 	b, err := json.Marshal(v)
 	if err != nil {

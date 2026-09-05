@@ -4,10 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/cilcenk/coremetry/internal/auth"
+	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/mcp"
 )
 
@@ -39,6 +45,65 @@ func TestMCPObserveSpan(t *testing.T) {
 	}
 	if b := attrMap(spans[1].Attributes); b["coremetry.mcp.result_bytes"].AsInt64() != 42 || b["coremetry.mcp.status"].AsString() != "ok" {
 		t.Fatalf("kaynak span'ı: %v", b)
+	}
+	// v0.10.430 — otelhttp SERVER span'ının çocuğu: INTERNAL, giriş-span
+	// nüfusuna girmez; ad attribute'u türe göre (URI mcp.tool'a girmez).
+	for _, sp := range spans {
+		if sp.SpanKind != trace.SpanKindInternal {
+			t.Fatalf("%s kind %v, want INTERNAL", sp.Name, sp.SpanKind)
+		}
+	}
+	if b := attrMap(spans[1].Attributes); b["mcp.resource"].AsString() != "coremetry://services" || b["mcp.tool"].AsString() != "" {
+		t.Fatalf("kaynak adı mcp.resource'ta olmalı, mcp.tool boş: %v", b)
+	}
+	if mcpNameAttr("prompt") != "mcp.prompt" || mcpNameAttr("tool") != "mcp.tool" || mcpNameAttr("x") != "mcp.tool" {
+		t.Fatal("mcpNameAttr")
+	}
+}
+
+// v0.10.430 — M1'in audit yarısı DAVRANIŞLA: ctx'teki istek + kimlik →
+// mcp.tool.call satırı auditQ'ya düşer; kaynak okuması satır üretmez;
+// kimliksiz istek sessizce yazmaz (s.audit sözleşmesi) ama span kalır.
+func TestMCPObserveAuditRow(t *testing.T) {
+	s, exp := bareSpanServer(t)
+	s.auditQ = make(chan chstore.AuditEntry, 4)
+	req := httptest.NewRequest("POST", "/api/mcp", nil)
+	req.RemoteAddr = "10.1.2.3:4444"
+	req = req.WithContext(auth.ContextWithClaims(req.Context(), &auth.Claims{UserID: "token:cmk_1", Email: "agent@example.test", Role: auth.RoleViewer}))
+	var got *http.Request
+	withMCPRequest(func(_ http.ResponseWriter, r *http.Request) { got = r })(httptest.NewRecorder(), req)
+	ctx, done := s.mcpObserve(got.Context(), "tool", "search_traces", json.RawMessage(`{"service":"checkout"}`))
+	done(mcp.CallOutcome{ResultBytes: 9})
+	_, done2 := s.mcpObserve(ctx, "resource", "coremetry://services", nil)
+	done2(mcp.CallOutcome{ResultBytes: 1})
+	select {
+	case e := <-s.auditQ:
+		if e.Action != "mcp.tool.call" || e.TargetKind != "mcp_tool" || e.TargetID != "search_traces" || e.ActorID != "token:cmk_1" || !strings.HasPrefix(e.IP, "10.1.2.3") {
+			t.Fatalf("audit satırı: %+v", e)
+		}
+		var d map[string]any
+		if err := json.Unmarshal([]byte(e.Details), &d); err != nil || d["ok"] != true || d["resultBytes"] != float64(9) || d["transport"] != "mcp-inbound" {
+			t.Fatalf("detay: %s (%v)", e.Details, err)
+		}
+	default:
+		t.Fatal("araç çağrısı audit satırı üretmeli")
+	}
+	select {
+	case e := <-s.auditQ:
+		t.Fatalf("kaynak okuması audit üretmemeli: %+v", e)
+	default:
+	}
+	// Kimliksiz: span var, audit yok.
+	anon := httptest.NewRequest("POST", "/api/mcp", nil)
+	_, done3 := s.mcpObserve(context.WithValue(anon.Context(), mcpRequestKey{}, anon), "tool", "list_services", nil)
+	done3(mcp.CallOutcome{})
+	select {
+	case e := <-s.auditQ:
+		t.Fatalf("kimliksiz çağrı audit üretmemeli: %+v", e)
+	default:
+	}
+	if n := len(exp.GetSpans()); n != 3 {
+		t.Fatalf("üç span: %d", n)
 	}
 }
 

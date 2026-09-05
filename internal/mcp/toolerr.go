@@ -57,9 +57,11 @@ import (
 	"time"
 )
 
-// Tool hata sınıfları. BEŞ tane, bilerek: her biri modelin
-// yapabileceği FARKLI bir eyleme karşılık gelir. Altıncı bir sınıf
-// ancak altıncı bir eylem varsa eklenmeli.
+// Tool hata sınıfları. ALTI tane, bilerek: her biri modelin
+// yapabileceği FARKLI bir eyleme karşılık gelir. Yedinci bir sınıf
+// ancak yedinci bir eylem varsa eklenmeli. (Altıncı — cancelled —
+// v0.10.430'da geldi: M4 istemci iptali ile "iptal = bütçe doldu"
+// varsayımı düştü; eylem "tekrar deneme, kullanıcı vazgeçti".)
 const (
 	// ToolErrTimeout — okuma bütçeyi aştı (ctx deadline, CH 159,
 	// max_execution_time). Eylem: pencereyi daralt, tekrar dene.
@@ -78,6 +80,12 @@ const (
 	// ToolErrInternal — sınıflandırılamayan. Eylem: tekrarlama,
 	// eksikliği cevapta söyle.
 	ToolErrInternal = "internal"
+	// ToolErrCancelled — çağıran vazgeçti (context.Canceled: MCP
+	// notifications/cancelled, kopan HTTP bağlantısı, kapanan sohbet).
+	// Arka uç hatası DEĞİL: /traces ve audit'te timeout gibi
+	// görünmemeli, tool-timeout oranını şişirmemeli (v0.10.430). Eylem:
+	// tekrar deneme; cevap zaten beklenmiyor.
+	ToolErrCancelled = "cancelled"
 )
 
 // toolErrDetailMaxRunes — ham hata metninin modele giden tavanı.
@@ -136,6 +144,9 @@ var toolErrPolicy = map[string]struct {
 	ToolErrInternal: {false,
 		"beklenmeyen hata — aynı çağrıyı tekrarlama; aynı kanıta başka bir tool ile ulaşmayı dene " +
 			"ve cevabında bu adımın eksik kaldığını SÖYLE"},
+	ToolErrCancelled: {false,
+		"çağrı istemci tarafından iptal edildi (notifications/cancelled ya da kopan bağlantı) — " +
+			"aynı tool'u tekrar çağırma; cevap beklenmiyor"},
 }
 
 // ClassifyToolError — bir handler hatasını sözleşmeye çevirir. SAF:
@@ -195,10 +206,15 @@ func classifyToolErrorClass(err error) string {
 	if err == nil {
 		return ToolErrInternal
 	}
-	// context.Canceled da timeout sınıfına giriyor: modelin yapacağı
-	// şey aynı (pencereyi daralt, tekrar dene) ve iptal pratikte hep
-	// üst bütçenin dolmasından geliyor.
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	// v0.10.430 — iptal ayrı sınıf. Eskiden timeout'a giriyordu ("iptal
+	// pratikte hep üst bütçenin dolmasından geliyor") — M4 (v0.10.427)
+	// istemci iptali getirince bu varsayım düştü: Esc'e basan operatör
+	// audit'te ve span'da ClickHouse timeout'u gibi görünüyordu. Bütçe
+	// dolması DeadlineExceeded'dir, o hâlâ timeout.
+	if errors.Is(err, context.Canceled) {
+		return ToolErrCancelled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
 		return ToolErrTimeout
 	}
 	var nerr net.Error

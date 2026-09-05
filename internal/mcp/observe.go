@@ -21,11 +21,35 @@ import (
 )
 
 // CallOutcome — yürütmenin sonucu. ErrorClass toolerr sınıflarından
-// (timeout/…); ResultBytes başarılı sonucun ham boyu.
+// (timeout/cancelled/…), ÜÇ türde de dolu (v0.10.430 — eskiden yalnız
+// tool çıkışı sınıf taşıyordu, kaynak/prompt hatası error_class="" ile
+// düşüyordu); ResultBytes başarılı sonucun ham boyu — tool'da JSON gövde,
+// kaynakta metin, prompt'ta mesaj metinlerinin toplamı (v0.10.430 —
+// eskiden MESAJ SAYISI yazılıyordu, bayt adlı attribute 2 okuyordu).
 type CallOutcome struct {
 	Err         error
 	ErrorClass  string
 	ResultBytes int
+}
+
+// outcomeErrorClass — nil hata boş sınıf; aksi toolerr sınıfı. Tek yerden:
+// dört çıkış da aynı sınıflandırıcıdan geçer (v0.10.430).
+func outcomeErrorClass(err error) string {
+	if err == nil {
+		return ""
+	}
+	return classifyToolErrorClass(err)
+}
+
+// promptMessagesBytes — prompts/get sonucunun ham boyu: mesaj metinlerinin
+// bayt toplamı (rol/tip zarfı sayılmaz — tool'daki JSON gövdesiyle aynı
+// mertebede, "hangi ajan bütçeyi yaktı" sorusu için yeterli).
+func promptMessagesBytes(msgs []PromptMessage) int {
+	n := 0
+	for _, m := range msgs {
+		n += len(m.Content.Text)
+	}
+	return n
 }
 
 // Observer — kind "tool" | "resource" | "prompt"; name araç adı / URI /

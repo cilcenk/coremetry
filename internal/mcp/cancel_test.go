@@ -16,7 +16,12 @@ import (
 // initialize kaydedilmez; streamable yok sayılır (oturumsuz).
 
 func TestCanonicalID(t *testing.T) {
-	cases := map[string]string{`1`: `1`, ` 1 `: `1`, `1.0`: `1`, `"1"`: `"1"`, `"a b"`: `"a b"`, `{`: `{`}
+	cases := map[string]string{`1`: `1`, ` 1 `: `1`, `1.0`: `1`, `"1"`: `"1"`, `"a b"`: `"a b"`, `{`: `{`,
+		// v0.10.430 — 2^53 üstü tam sayılar ayrı kalır (float64'e çökmez).
+		`9007199254740993`: `9007199254740993`, `1735689600123456789`: `1735689600123456789`, `1e2`: `100`}
+	if canonicalID(json.RawMessage(`9007199254740992`)) == canonicalID(json.RawMessage(`9007199254740993`)) {
+		t.Fatal("komşu 64-bit id'ler aynı anahtara çökmemeli")
+	}
 	for in, want := range cases {
 		if got := canonicalID(json.RawMessage(in)); got != want {
 			t.Errorf("%q → %q, want %q", in, got, want)

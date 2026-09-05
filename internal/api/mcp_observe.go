@@ -2,7 +2,13 @@ package api
 
 // mcp_observe.go — v0.10.426 (CoSRE denetimi M1): gelen MCP yürütmeleri
 // için span + audit. Span adı türe göre (mcp.tool.call / mcp.resource.read
-// / mcp.prompt.get), otelhttp'nin "POST /api/mcp" span'ının çocuğu;
+// / mcp.prompt.get), otelhttp'nin "POST /api/mcp" span'ının çocuğu — bu
+// yüzden kind INTERNAL (v0.10.430): SERVER kind'ı giriş-span ilkesi
+// (kind IN server,consumer) yüzünden coremetry-monolithic'in RED/SLO
+// nüfusuna ikinci bir "giriş" ekliyor, /endpoints RPC sekmesinde
+// mcp.tool.call bir uç gibi listeleniyordu. Ad attribute'u türe göre:
+// mcp.tool / mcp.resource / mcp.prompt — "hangi araç bütçeyi yaktı"
+// gruplaması URI ve prompt adlarını araç sanmasın (v0.10.430).
 // handler'ın clickhouse.query span'ları bunun altında — "hangi dış ajan
 // bütçeyi yaktı" /traces'te cevaplanır. Audit yalnız TOOL çağrısında
 // (kaynak/prompt okuması ucuz ve gürültü olur); satır giden çağrının
@@ -54,6 +60,17 @@ func mcpSpanName(kind string) string {
 	return "mcp.call"
 }
 
+// mcpNameAttr — türe göre ad attribute'u (v0.10.430).
+func mcpNameAttr(kind string) string {
+	switch kind {
+	case "resource":
+		return "mcp.resource"
+	case "prompt":
+		return "mcp.prompt"
+	}
+	return "mcp.tool"
+}
+
 // mcpToolAuditDetails — sırsız iz: araç, kırpık arg önizlemesi, süre,
 // sonuç. Tam arg gövdesi bilinçli yazılmaz (sorgu metni hassas olabilir).
 func mcpToolAuditDetails(tool string, args json.RawMessage, dur time.Duration, o mcp.CallOutcome) string {
@@ -75,10 +92,10 @@ func (s *Server) mcpObserve(ctx context.Context, kind, name string, args json.Ra
 		actor = claims.UserID
 	}
 	ctx, span := s.tracerOrDefault().Start(ctx, mcpSpanName(kind),
-		trace.WithSpanKind(trace.SpanKindServer),
+		trace.WithSpanKind(trace.SpanKindInternal), // v0.10.430 — otelhttp SERVER span'ının çocuğu
 		trace.WithAttributes(
 			attribute.String("mcp.kind", kind),
-			attribute.String("mcp.tool", name),
+			attribute.String(mcpNameAttr(kind), name),
 			attribute.String("coremetry.mcp.actor", actor),
 			attribute.String("coremetry.mcp.direction", "inbound"),
 		))

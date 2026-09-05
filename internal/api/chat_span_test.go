@@ -9,6 +9,7 @@ import (
 
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cilcenk/coremetry/internal/copilot"
 )
@@ -41,6 +42,12 @@ func TestChatSpanTreeShape(t *testing.T) {
 	cs.end()
 
 	spans := exp.GetSpans()
+	// v0.10.430 — hiçbir ai.* span'ı SERVER değil (giriş-span nüfusu).
+	for _, sp := range exp.GetSpans() {
+		if sp.SpanKind == trace.SpanKindServer || sp.SpanKind == trace.SpanKindConsumer {
+			t.Fatalf("%s giriş kind'ı taşımamalı: %v", sp.Name, sp.SpanKind)
+		}
+	}
 	byName := map[string][]tracetest.SpanStub{}
 	for _, sp := range spans {
 		byName[sp.Name] = append(byName[sp.Name], sp)

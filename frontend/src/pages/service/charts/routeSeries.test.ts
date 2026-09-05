@@ -2,8 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  ROUTE_TOP_N, routeMoreNote, topRoutesByArea, metricUnitToGrafana, metricAvgToMs,
-} from './routeSeries';
+  ROUTE_TOP_N, routeMoreNote, topRoutesByArea, metricUnitToGrafana, metricAvgToMs, ROUTE_UNLABELLED } from './routeSeries';
 import type { SpanMetricSeries } from '@/lib/types';
 
 // v0.9.774 — panelin iki saf kararı: kırpma notu + birim eşlemesi.
@@ -87,7 +86,7 @@ describe('topRoutesByArea', () => {
 
   it('adsız groupKey lejantta görünmez satır bırakmaz', () => {
     const { items } = topRoutesByArea([{ groupKey: [''], points: [{ time: 1, value: 1 }] }]);
-    expect(items[0].name).toBe('(adsız)');
+    expect(items[0].name).toBe(ROUTE_UNLABELLED);
   });
 });
 
@@ -221,5 +220,19 @@ describe('birim haritası tek sözlük (AS-4)', () => {
     const src = readFileSync(resolve(__dirname, './routeSeries.ts'), 'utf8');
     expect(src).toContain('export const metricUnitToGrafana = durationUnitToGrafana');
     expect(src).not.toMatch(/case 'seconds'/);
+  });
+});
+
+// v0.10.369 — operator-reported: Response time (by route) tooltip'inde
+// "(adsız)" satırı. Boş groupKey = http.route etiketi taşımayan gözlemler;
+// etiket bunu söyler, "isim kayboldu" değil. Throughput aynı yoldan geçer.
+describe('route kırılımında boş anahtar (v0.10.369)', () => {
+  it('etiketsiz seri "(http.route etiketi yok)" adını alır, adlı seri kendi adını', () => {
+    const items = topRoutesByArea([
+      { groupKey: ['/BSAWEB/loan/assessment'], points: [{ time: 1, value: 1.29 }] },
+      { groupKey: [''], points: [{ time: 1, value: 0.0135 }] },
+    ]).items;
+    expect(items.map(i => i.name)).toEqual(['/BSAWEB/loan/assessment', ROUTE_UNLABELLED]);
+    expect(ROUTE_UNLABELLED).toBe('(http.route etiketi yok)');
   });
 });

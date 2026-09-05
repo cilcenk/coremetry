@@ -313,3 +313,17 @@ ucu aynı okuma-politikasını taşımalı; digest anahtarda olup filtre sorguda
 yoksa "uygulanıyor" yanılsaması. Kaynak-pin: `v.svc.Query*(ctx, f` çıplak
 geçiş yasak. Bilinen boşluk: `dropAtIngest` VM forward'ında uygulanmıyor
 (ham OTLP gövdesi aynen gider) — okuma filtresi görünümü kapatır.
+
+### v0.10.370 — Overview → Explore kapısı `_count` sayacını `avg` ile açıyordu
+
+Operator-reported (prod, VM): Throughput · metrik grafiği artan trend
+gösterirken üstüne basınca açılan Explore grafiği dümdüz, eksen "4.63 days".
+Kapı (`metricsHref`) iki paneli de throughput'un `_count` adıyla ve /metrics
+sayfasının varsayılan `avg`'ıyla açıyordu: kümülatif sayacın ORTALAMASI —
+saniye birimli ad yüzünden gün eksenli düz çizgi. Response time paneli de
+aynı `_count` adını taşıyordu (rtMetric değil). v0.9.1274 dersinin kapı
+hâli: bir metrik adı SORUYA göre çözülür — Throughput = `_count` + rate,
+Response time = `rtMetric` + avg. Çare: `metricsHref({metric, agg, by})`,
+panel başına ayrı kapı; `/metrics?agg=` zaten taşınıyordu. Ders: bir
+"doorway" grafiğin GERÇEK sorgusunu taşımalı (ad + aggregation + kırılım);
+ad tek başına yarım sözleşmedir. Pin: Throughput kapısı `agg: 'rate'`.

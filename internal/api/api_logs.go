@@ -401,7 +401,8 @@ func (s *Server) serveLogsSearch(w http.ResponseWriter, r *http.Request, q url.V
 	if s.rejectLogQuerySyntax(w, f.Search) {
 		return
 	}
-	key := logsSearchKey(f, q.Get("from"), q.Get("to"))
+	keyFrom, keyTo := logsKeyWindow(f.From, f.To, q.Get("from"), q.Get("to")) // v0.10.442 (A6-V1)
+	key := logsSearchKey(f, keyFrom, keyTo)
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.330 (pivot Phase 2) — the TRACE-LOGS branch (?traceId=, the
 		// Trace Logs tab) must never block or 5xx the trace view on a slow/
@@ -936,7 +937,8 @@ func (s *Server) getLogsFieldStats(w http.ResponseWriter, r *http.Request) {
 	if q.Get("size") == "20" {
 		size = 20
 	}
-	key := logsFieldStatsKey(field, f, q.Get("from"), q.Get("to"), size)
+	keyFrom, keyTo := logsKeyWindow(f.From, f.To, q.Get("from"), q.Get("to")) // v0.10.442 (A6-V1)
+	key := logsFieldStatsKey(field, f, keyFrom, keyTo, size)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
@@ -1030,7 +1032,8 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 	// and saved views from a wider range.
 	bucketSec = floorBucketByWindow(bucketSec, f.From, f.To)
 	groupBy := normalizeLogsGroupBy(q.Get("groupBy"))
-	key := logsTimeseriesKey(f, q.Get("from"), q.Get("to"), bucketSec, groupBy)
+	keyFrom, keyTo := logsKeyWindow(f.From, f.To, q.Get("from"), q.Get("to")) // v0.10.442 (A6-V1)
+	key := logsTimeseriesKey(f, keyFrom, keyTo, bucketSec, groupBy)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.3 — bound the Go goroutine on BOTH backends. CH already
 		// self-caps at 30s (max_execution_time); this gives the ES path

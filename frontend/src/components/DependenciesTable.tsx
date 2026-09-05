@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { rowActivation } from '@/lib/a11y';
 import { messagingTracesHref, dbTracesHref } from '@/lib/pivotHref';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Empty } from './Spinner';
@@ -469,9 +470,9 @@ export function DependenciesTable({
               const isOpen = !onRowNavigate && openKey === rowKey;
               return (
                 <Fragment key={`${rowKey}|${i}`}>
-                  <tr onClick={() => (onRowNavigate
+                  <tr {...rowActivation(() => (onRowNavigate
                         ? onRowNavigate(r)
-                        : setOpen(isOpen ? null : r, isOpen ? null : rowKey))}
+                        : setOpen(isOpen ? null : r, isOpen ? null : rowKey)))}
                       style={{ cursor: 'pointer',
                                // scale-audit v0.8.203 — skip off-screen rows
                                // (matches the instance table below); at a bank

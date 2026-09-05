@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { rowActivation } from '@/lib/a11y';
 import { Link } from 'react-router-dom';
 import { CopyButton } from './CopyButton';
 import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/ui/DataTable';
@@ -394,7 +395,7 @@ function LogRow({
   );
   return (
     <>
-      <tr onClick={onClick}
+      <tr {...rowActivation(onClick)}
           data-row-idx={idx}
           data-table-id={tableId}
           className={`${selected ? 'row-selected ' : ''}${l.severity >= 17 ? 'log-error' : l.severity >= 13 ? 'log-warn' : ''}`.trim() || undefined}

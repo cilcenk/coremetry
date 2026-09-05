@@ -23,7 +23,7 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 | A7 | **GEMİDE v0.10.385+386** — Sparkline'da "trafik yok" ile "%0 hata" aynı: null yerine 0 | `pages/Services.tsx:756,871` | `(number\|null)[]`, null'da path kes | ~2 saat |
 | A8 | **GEMİDE v0.10.384** — Eşik çizgisi y-ölçeği dışındaysa sessizce yok (alarm önizlemesi, pod CPU limiti) | `lib/chart/overlays.ts:63`, `CorePanel.tsx:815` | eşiği `softMin/softMax`'a kat, sığmazsa kenar işareti | ~2 saat |
 | A9 | Yığılmış alanda sıfır taban yok — **v0.9.811 sözleşmesiyle çelişir** (`CorePanel.smoke.test`: "area ve stacked dokunulmadan kalır"); operatör kararı olmadan uygulanmaz | `components/chart/CorePanel.tsx:634` | `(bars \|\| stacked) ? 0` | ~10 dk |
-| A10 | Pasta/yığın `isAdditiveUnit`'e sormuyor ("p99'un payı %31") | `pages/explore/SummaryViz.tsx:56` | rail düğmelerini kapıla, top-6+diğer | ~2 saat |
+| A10 | **GEMİDE v0.10.393** — Pasta/yığın `isAdditiveUnit`'e sormuyor ("p99'un payı %31") | `pages/explore/SummaryViz.tsx:56` | rail düğmelerini kapıla, top-6+diğer | ~2 saat |
 | A11 | **GEMİDE v0.10.380** — `http.target` ham hâliyle LowCardinality `http_route`'a (query string dahil) | `internal/otlp/convert.go:142`, `store.go:1031` | `NormalizePathTemplate`'ten geçir | ~1 saat |
 | A12 | RED paneli `rateWindow=180` varsayılanı Settings tabanını (300 s) atlıyor; 120 s export'ta delikli rate | `internal/api/service_metric_red.go:274`, `promql.go:1088` | varsayılan 0 ya da `max(180, taban)` — **davranış değişikliği, sorulur** | ~10 dk |
 
@@ -31,7 +31,7 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
-| B1 | Summary quantile'ları sessizce düşüyor (yalnız avg) | `internal/otlp/convert.go:403-412` | quantile'ları attr'a yaz ya da sayaç | ~2 saat |
+| B1 | **GEMİDE v0.10.392** — Summary quantile'ları sessizce düşüyor (yalnız avg) | `internal/otlp/convert.go:403-412` | quantile'ları attr'a yaz ya da sayaç | ~2 saat |
 | B2 | **GEMİDE v0.10.388** — Exponential histogram 4 dalda sessiz degrade, sayaç yok | `internal/otlp/exp_histogram.go:41-51` | sebep etiketli sayaç + /admin/stats | ~1 saat |
 | B3 | **GEMİDE v0.10.390 (sayaç; Settings uyarısı sonraki dilim)** — Delta temporality VM forward'da bakılmıyor (VM rate kümülatif varsayar) | `internal/otlp/forward_filter.go`, `convert.go:345` | delta Sum sayacı + Settings uyarısı | ~2 saat |
 | B4 | `usePrometheusNaming` yazımda doğrulanmıyor; yanlış bayrakta her VM paneli boş | `internal/vmetrics/write.go:41` | Test() probe + rozet | ~yarım gün |
@@ -61,7 +61,7 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 |---|---|---|---|---|
 | D1 | `--text3` dark 2.90:1, light 3.24:1 (AA 4.5), 1250 kullanım | `styles/globals.css:38,205` | iki token değeri — **görsel değişiklik, sorulur** | ~10 dk |
 | D2 | **GEMİDE v0.10.389** — `Drawer` role/aria-modal yok, Tab hapsi yok (Modal'da var) | `components/ui/Drawer.tsx:103` | ortak `useFocusTrap` | ~yarım gün |
-| D3 | 42 tıklanabilir `<tr>`'nin 37'si klavyeye kapalı; `getRowHref` 0 tüketici | `pages/Traces.tsx:1656`, `DataTable.tsx:81` | AnomaliesPage kalıbı / row-link | ~yarım gün |
+| D3 | **KISMEN v0.10.394** (ortak `rowActivation`; Traces/LogTable/Dependencies; kalan siteler aynı kalıpla) — 42 tıklanabilir `<tr>`'nin 37'si klavyeye kapalı; `getRowHref` 0 tüketici | `pages/Traces.tsx:1656`, `DataTable.tsx:81` | AnomaliesPage kalıbı / row-link | ~yarım gün |
 | D4 | `CommandPalette` diyalog değil; ham renkler | `components/CommandPalette.tsx:553-583` | Modal kabuğu + listbox + token | ~2-3 saat |
 | D5 | 18 sekme şeridi, 0 `role="tablist"` | `.tab-strip` siteleri | `TabStrip` atomu | ~3-4 saat |
 | D6 | **GEMİDE v0.10.378** — `FlashBox` aria-live yok — ayar kaydı ekran okuyucuya ulaşmıyor | `pages/settings/shared.tsx:40` | `role=status/alert` | ~10 dk |

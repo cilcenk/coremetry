@@ -151,6 +151,12 @@ function DrawerBody({ item, onClose, onOpenSource }: {
             title="Bu pencerede servisin logları">
             Logs
           </Link>
+          {/* v0.10.419 (C2) — hata pivotu; "Logs" tüm seviyeler kalır. */}
+          <Link className="sec" style={{ textDecoration: 'none' }}
+            to={logsHref({ window: w, service: item.service, severity: 17 })}
+            title="Bu pencerede servisin ERROR+ logları">
+            Error logs
+          </Link>
           <Link className="sec" style={{ textDecoration: 'none' }}
             to={tracesPivotHref({ window: w, service: item.service, hasError: true })}
             title="Bu pencerede servisin hatalı trace'leri">

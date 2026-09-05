@@ -715,6 +715,11 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
   // hata yok); `service=x` → 535. Yani bu link sessizce boş dönüyordu ve
   // operatör "log yok" okuyordu. ClickHouse VARSAYILAN arka uç.
   const logsLink = logsHref({ window: probWindow, service: problem.service });
+  // v0.10.419 (log arama denetimi C2) — hata pivotu: trace linki hasError
+  // taşırken log linki seviye süzgeci taşımıyordu. EK link; mevcut "tüm
+  // loglar" linki olduğu gibi kalır (davranış değişmez). 17 = ERROR+
+  // (OTel severity-number tabanı, copilot_followup ile aynı sözleşme).
+  const logsErrorLink = logsHref({ window: probWindow, service: problem.service, severity: 17 });
   const isExternal = subjectKind(problem.service, problem.kind) === 'external';
 
   return (
@@ -914,6 +919,7 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
               </div>
             ) : (<>
             <SignalLink to={logsLink} label="≡ Logs" sub="service, problem window" />
+            <SignalLink to={logsErrorLink} label="≡ Logs (yalnız hatalar)" sub="service, problem window, severity ≥ ERROR" />
             {/* v0.8.512 (perf raporu #12) — pivot problem penceresini
                 taşır: logs ile aynı custom range, yoksa /traces global
                 range'iyle açılıp problemle ilgisiz trace gösteriyordu. */}

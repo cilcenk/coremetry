@@ -68,7 +68,19 @@ function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onP
     }}>
       {q.isLoading && <div style={{ fontSize: 11, color: 'var(--text3)' }}>Loading top values…</div>}
       {q.isError && <div style={{ fontSize: 11, color: 'var(--err)' }}>Top values unavailable</div>}
-      {d && d.values.length === 0 && (
+      {/* v0.10.415 (B1) — degraded {total:0, values:[]} "No values" değil;
+          v0.10.413 (A5) partial: üst değerler ve payda alt küme. */}
+      {d?.degraded && (
+        <div style={{ fontSize: 11, color: 'var(--warn)' }}>
+          ⚠ {d.reason ?? 'log backend slow/unreachable'} — top values could not be computed
+        </div>
+      )}
+      {d?.partial && (
+        <div style={{ fontSize: 11, color: 'var(--warn)' }}>
+          ⚠ kısmi cevap — üst değerler ve payda alt küme{d.shardsFailed ? ` (${d.shardsFailed} shard cevapsız)` : ''}
+        </div>
+      )}
+      {d && !d.degraded && d.values.length === 0 && (
         <div style={{ fontSize: 11, color: 'var(--text3)' }}>No values in this window</div>
       )}
       {/* v0.9.1217 — kapsama: alanın pencerede eşleşen dokümanların

@@ -23,7 +23,7 @@ bağlam okunur.
 
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
-| B1 | Ana liste `degraded` bayrağını okumuyor → yavaş ES "No logs found" görünüyor (FieldsPanel/ContextModal aynı) | `Logs.tsx` grep 0; `api_logs.go:448-454,1049` | `:970` partial rozetinin ikizi, üç yüzey | ~30 dk |
+| B1 | **GEMİDE v0.10.415** — Ana liste `degraded` bayrağını okumuyor → yavaş ES "No logs found" görünüyor (FieldsPanel/ContextModal aynı) | `Logs.tsx` grep 0; `api_logs.go:448-454,1049` | `:970` partial rozetinin ikizi, üç yüzey | ~30 dk |
 | B2 | Live tail traceId/spanId'yi SSE URL'ine yazmıyor; "Filtered to trace" şeridi yalan | `Logs.tsx:544-553,788`; BE okuyor `api_logs.go:122` | iki `p.set` + pin | ~10 dk |
 | B3 | Göreli pencere donuyor; sayfa-yerel ↻ yok; Search yeniden fetch atmıyor | `Logs.tsx:409`, `queries/logs.ts:31` | ↻ + `nowTick` + "veri: HH:mm:ss" | ~30 dk |
 | B4 | Filter-for/out yalnız pod hücresinde; service/cluster/attr hücrelerinde yok | `LogTable.tsx:437,450,458-500` | `.lt-pivot` kalıbı | ~1-2 saat |

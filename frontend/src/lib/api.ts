@@ -1109,11 +1109,7 @@ export const api = {
   // v0.9.1249 — pod: bağlamı tek podun satırlarına daraltır (boş =
   // tüm podlar). Sunucu hem ES hem CH tarafında yapısal clause uygular.
   logsContext: (params: { ts: number; service?: string; env?: string; pod?: string; n?: number; search?: string }) =>
-    get<{
-      pivotTs: number; service: string;
-      before: import('./types').LogRow[];
-      after:  import('./types').LogRow[];
-    }>(`/api/logs/context?${qs(params)}`),
+    get<import('./types').LogsContextResponse>(`/api/logs/context?${qs(params)}`), // v0.10.415 — degraded/reason da telde
 
 
   // Recent deploys + impact deltas for a service (v0.5.189).

@@ -18,12 +18,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
 )
 
@@ -73,10 +75,28 @@ func TestEvalsetReplay(t *testing.T) {
 			}
 		}
 		sys, user := evalCaseInput(c, system) // v0.10.423 — export vakaları ham prompt taşır
+		// v0.10.424 — RCA hakemi: hipotezden canlı yolla aynı prompt/şema.
+		var rcaH *chstore.RootCauseHypothesis
+		var rcaCat rcaEvidenceCatalog
+		if len(c.Hypothesis) > 0 {
+			rcaH = &chstore.RootCauseHypothesis{}
+			if err := json.Unmarshal(c.Hypothesis, rcaH); err != nil {
+				t.Fatalf("%s: hypothesis: %v", c.ID, err)
+			}
+			var rivals, entities []string
+			rcaCat, rivals, entities, user = evalRCAInputs(rcaH, time.Now())
+			ctx = copilot.WithJSONSchema(ctx, "rootcause-verdict", rcaVerdictSchema(entities, rivals))
+		}
 		t0 := time.Now()
 		answer, err := svc.Explain(ctx, sys, user)
 		lat := time.Since(t0).Milliseconds()
-		fails, unknown := scoreEvalCase(c, system, answer, err)
+		var fails []string
+		var unknown int
+		if rcaH != nil && err == nil {
+			fails, unknown = scoreRCACase(c, rcaH, rcaCat, answer)
+		} else {
+			fails, unknown = scoreEvalCase(c, system, answer, err)
+		}
 		okS := "ok"
 		if len(fails) > 0 {
 			okS = "FAIL"

@@ -51,6 +51,12 @@ DAVRANIŞ (must-contain / must-not-contain / uydurma ad sayısı / niyet).
 }
 ```
 
+RCA hakemi vakaları (v0.10.424): `surface: "RCAVerdict"` + `user` yerine
+`hypothesis` (chstore.RootCauseHypothesis JSON); prompt, katalog, rakipler ve
+şema canlı yolla aynı kodla üretilir. Beklenti: `verdicts` (kabul kümesi),
+`minEvidenceCitationRate` (K2'den geçen atıf / toplam atıf),
+`maxUnknownEntities` (K3). Kalkan raporu (rcaShieldReport) skor satırıdır.
+
 Vaka kaynağı: elle yazılmış sentetik (demo sözlüğü: checkout, payments,
 inventory). Prod 👎 satırları müşteri adı taşıyabilir ve repoya GİRMEZ;
 `GET /api/ai/evalset/export` (E5) indirilen dosya repoya elle ve

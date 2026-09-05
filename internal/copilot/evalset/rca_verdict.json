@@ -1,0 +1,68 @@
+{
+  "schema": "coremetry.evalset/1",
+  "cases": [
+    {
+      "id": "rca-clear-deploy-suspect",
+      "surface": "RCAVerdict",
+      "why": "baş şüpheli + deploy gerekçesi: hakem kanıt kimliklerine atıf yapmalı, verdict insufficient OLMAMALI",
+      "hypothesis": {
+        "anchorKind": "problem",
+        "anchorId": "prob-eval-1",
+        "service": "checkout",
+        "topSuspect": "payments",
+        "topScore": 0.91,
+        "confidence": 0.78,
+        "candidates": [
+          { "service": "payments", "score": 0.91, "hops": 1, "path": ["checkout", "payments"], "reason": "fresh deploy v3.2.1 4m before onset; 503 on POST /v1/charge" },
+          { "service": "inventory", "score": 0.12, "hops": 1, "path": ["checkout", "inventory"], "reason": "no change; latency flat" }
+        ]
+      },
+      "expect": {
+        "verdicts": ["root_cause_identified", "probable_cause"],
+        "minEvidenceCitationRate": 1.0,
+        "maxUnknownEntities": 0,
+        "maxLatencyMs": 40000
+      }
+    },
+    {
+      "id": "rca-thin-evidence",
+      "surface": "RCAVerdict",
+      "why": "şüpheli yok, güven 0.1: hakem 'insufficient_evidence' demeli, neden uydurmamalı",
+      "hypothesis": {
+        "anchorKind": "problem",
+        "anchorId": "prob-eval-2",
+        "service": "checkout",
+        "topSuspect": "",
+        "topScore": 0,
+        "confidence": 0.1,
+        "candidates": []
+      },
+      "expect": {
+        "verdicts": ["insufficient_evidence"],
+        "maxUnknownEntities": 0
+      }
+    },
+    {
+      "id": "rca-rival-candidates",
+      "surface": "RCAVerdict",
+      "why": "iki yakın aday: hangi verdict olursa olsun atıflar katalogdan (K2) ve serbest metinde uydurma ad yok (K3)",
+      "hypothesis": {
+        "anchorKind": "anomaly",
+        "anchorId": "anom-eval-3",
+        "service": "checkout",
+        "topSuspect": "payments",
+        "topScore": 0.55,
+        "confidence": 0.42,
+        "candidates": [
+          { "service": "payments", "score": 0.55, "hops": 1, "path": ["checkout", "payments"], "reason": "p99 +300% same minute" },
+          { "service": "inventory", "score": 0.51, "hops": 1, "path": ["checkout", "inventory"], "reason": "connection pool exhausted log pattern x70" }
+        ]
+      },
+      "expect": {
+        "verdicts": ["root_cause_identified", "probable_cause", "insufficient_evidence"],
+        "minEvidenceCitationRate": 0.8,
+        "maxUnknownEntities": 0
+      }
+    }
+  ]
+}

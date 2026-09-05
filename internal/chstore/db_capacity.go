@@ -62,6 +62,25 @@ const instanceExpr = `coalesce(
 // the same "latest over the window" semantics the dashboards use.
 const capacityWindow = 10 * time.Minute
 
+// CapacityWindow — the freshness window every capacity reader uses
+// (exported for the VictoriaMetrics reader, v0.10.366, so both backends
+// look at the same 10 minutes).
+const CapacityWindow = capacityWindow
+
+// CapacityReader — the five reads behind the evaluator's DB capacity
+// checks (v0.10.366, VM dilim 3b-1). *Store answers from ClickHouse
+// `metric_points`; *vmetrics.Service answers the same questions through
+// PromQL so a VictoriaMetrics-primary install gets tablespace / session
+// / connection / eviction Problems at all. The evaluator picks one per
+// sweep (evaluator.capacityReader) — never both.
+type CapacityReader interface {
+	UsageLimit(ctx context.Context, usageMetric, limitMetric string) ([]CapacitySample, error)
+	DimensionedUsageLimit(ctx context.Context, usageMetric, limitMetric, attrKey string) ([]CapacitySample, error)
+	RateGauge(ctx context.Context, metric string) ([]CapacitySample, error)
+	UsageTrend(ctx context.Context, usageMetric, attrKey string, window time.Duration) (map[string][]CapacityTrendPoint, error)
+	MetricExists(ctx context.Context, metric string) (bool, error)
+}
+
 // UsageLimit reads a set of (usage-metric, limit-metric) gauge pairs
 // per instance, latest value over the window. Returns one CapacitySample
 // per instance that has BOTH gauges present (a usage with no limit can't

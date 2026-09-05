@@ -141,7 +141,7 @@ type capacityCheck struct {
 	// receiver never sees spurious Problems). Empty = always run (the
 	// Oracle checks — the primary banking-DB integration).
 	probe string
-	read  func(ctx context.Context, st *chstore.Store) ([]chstore.CapacitySample, error)
+	read  func(ctx context.Context, st chstore.CapacityReader) ([]chstore.CapacitySample, error)
 	// trendMetric/trendAttr (v0.9.1065) — ETA tahmininin okuyacağı
 	// doluluk gauge'u. Boş = tahmin yok (rate check'leri: eğimden dolma
 	// süresi türetilemez).
@@ -159,20 +159,20 @@ var capacityChecks = []capacityCheck{
 	// reason an Oracle instance falls over.
 	{id: "oracle-tablespace", label: "tablespace", dbsys: "ORACLE",
 		trendMetric: "oracledb.tablespace_size.usage", trendAttr: "tablespace_name",
-		read: func(ctx context.Context, st *chstore.Store) ([]chstore.CapacitySample, error) {
+		read: func(ctx context.Context, st chstore.CapacityReader) ([]chstore.CapacitySample, error) {
 			return st.DimensionedUsageLimit(ctx,
 				"oracledb.tablespace_size.usage", "oracledb.tablespace_size.limit", "tablespace_name")
 		}},
 	// Oracle sessions usage/limit.
 	{id: "oracle-sessions", label: "sessions", dbsys: "ORACLE",
 		trendMetric: "oracledb.sessions.usage",
-		read: func(ctx context.Context, st *chstore.Store) ([]chstore.CapacitySample, error) {
+		read: func(ctx context.Context, st chstore.CapacityReader) ([]chstore.CapacitySample, error) {
 			return st.UsageLimit(ctx, "oracledb.sessions.usage", "oracledb.sessions.limit")
 		}},
 	// Oracle processes usage/limit.
 	{id: "oracle-processes", label: "processes", dbsys: "ORACLE",
 		trendMetric: "oracledb.processes.usage",
-		read: func(ctx context.Context, st *chstore.Store) ([]chstore.CapacitySample, error) {
+		read: func(ctx context.Context, st chstore.CapacityReader) ([]chstore.CapacitySample, error) {
 			return st.UsageLimit(ctx, "oracledb.processes.usage", "oracledb.processes.limit")
 		}},
 
@@ -180,19 +180,19 @@ var capacityChecks = []capacityCheck{
 	// Postgres backends / max_connections.
 	{id: "postgres-connections", label: "connections", dbsys: "POSTGRES", probe: "postgresql.backends",
 		trendMetric: "postgresql.backends",
-		read: func(ctx context.Context, st *chstore.Store) ([]chstore.CapacitySample, error) {
+		read: func(ctx context.Context, st chstore.CapacityReader) ([]chstore.CapacitySample, error) {
 			return st.UsageLimit(ctx, "postgresql.backends", "postgresql.connection.max")
 		}},
 	// MySQL connections / max_used_connections.
 	{id: "mysql-connections", label: "connections", dbsys: "MYSQL", probe: "mysql.connection.count",
 		trendMetric: "mysql.connection.count",
-		read: func(ctx context.Context, st *chstore.Store) ([]chstore.CapacitySample, error) {
+		read: func(ctx context.Context, st chstore.CapacityReader) ([]chstore.CapacitySample, error) {
 			return st.UsageLimit(ctx, "mysql.connection.count", "mysql.max_used_connections")
 		}},
 	// Redis eviction rate — raw rate, breaches when > 0 (maxmemory-policy
 	// is actively evicting keys → memory pressure).
 	{id: "redis-evictions", label: "key evictions", dbsys: "REDIS", rate: true, probe: "redis.keys.evicted",
-		read: func(ctx context.Context, st *chstore.Store) ([]chstore.CapacitySample, error) {
+		read: func(ctx context.Context, st chstore.CapacityReader) ([]chstore.CapacitySample, error) {
 			return st.RateGauge(ctx, "redis.keys.evicted")
 		}},
 }
@@ -332,6 +332,10 @@ func (e *Evaluator) evaluateDBCapacity(ctx context.Context) {
 	// state tablosu olduğu için hepsi in-order ana bağlantıdan ilk CH
 	// node'una gidiyordu). Hata halinde tik ATLANIR — boş kabul etmek açık
 	// problemleri yeniden açtırırdı.
+	// v0.10.366 — VM dilim 3b-1: the five capacity reads go through
+	// chstore.CapacityReader; VictoriaMetrics when configured (the JVM GC
+	// turn's rule, runtime_pods.go), ClickHouse otherwise.
+	rd := e.capacityReader()
 	snap, err := e.store.OpenProblemsSnapshot(ctx)
 	if err != nil {
 		log.Printf("[evaluator] db-capacity: açık problem anlık görüntüsü alınamadı, tik atlanıyor: %v", err)
@@ -341,7 +345,7 @@ func (e *Evaluator) evaluateDBCapacity(ctx context.Context) {
 		// Defensive checks: skip cleanly unless the receiver is
 		// actually publishing. Oracle checks have no probe → always run.
 		if c.probe != "" {
-			present, err := e.store.MetricExists(ctx, c.probe)
+			present, err := rd.MetricExists(ctx, c.probe)
 			if err != nil {
 				log.Printf("[evaluator] db-capacity probe %s: %v", c.probe, err)
 				continue
@@ -350,7 +354,7 @@ func (e *Evaluator) evaluateDBCapacity(ctx context.Context) {
 				continue
 			}
 		}
-		samples, err := c.read(ctx, e.store)
+		samples, err := c.read(ctx, rd)
 		if err != nil {
 			log.Printf("[evaluator] db-capacity read %s: %v", c.id, err)
 			continue
@@ -362,7 +366,7 @@ func (e *Evaluator) evaluateDBCapacity(ctx context.Context) {
 		if c.trendMetric != "" && !c.rate {
 			for _, s := range samples {
 				if s.Limit > 0 && s.Usage/s.Limit*100 >= capacityEtaMinPct {
-					if tr, terr := e.store.UsageTrend(ctx, c.trendMetric, c.trendAttr, capacityEtaWindow); terr == nil {
+					if tr, terr := rd.UsageTrend(ctx, c.trendMetric, c.trendAttr, capacityEtaWindow); terr == nil {
 						trend = tr
 					} else {
 						log.Printf("[evaluator] db-capacity trend %s: %v", c.id, terr)
@@ -487,4 +491,14 @@ func capacityThreshold(c capacityCheck, severity string) float64 {
 		return capacityCritPct
 	}
 	return capacityWarnPct
+}
+
+// capacityReader — which backend answers this sweep's capacity reads.
+// Mirrors runtime_pods.go's vmActive rule so an install never reads
+// JVM GC from VictoriaMetrics and DB capacity from an empty ClickHouse.
+func (e *Evaluator) capacityReader() chstore.CapacityReader {
+	if e.vmetrics != nil && e.vmetrics.Configured() {
+		return e.vmetrics
+	}
+	return e.store
 }

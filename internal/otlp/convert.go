@@ -353,6 +353,7 @@ func convertMetric(m *metricspb.Metric, svcName, svcInstance, hostName string, r
 			p := base("sum", dp.StartTimeUnixNano, dp.TimeUnixNano,
 				numberVal(dp), 0, 0, 0, 0, dp.Attributes)
 			p.Temporality = temporalityStr(d.Sum.AggregationTemporality)
+			countDeltaTemporality(p.Temporality)
 			// v0.9.106 (F2) — monotonic counter mı (rate-valid) UpDownCounter mı.
 			if !d.Sum.IsMonotonic {
 				p.IsMonotonic = 0
@@ -372,6 +373,7 @@ func convertMetric(m *metricspb.Metric, svcName, svcInstance, hostName string, r
 			p := base("histogram", dp.StartTimeUnixNano, dp.TimeUnixNano,
 				avg, dp.Count, sum, mn, mx, dp.Attributes)
 			p.Temporality = temporalityStr(d.Histogram.AggregationTemporality)
+			countDeltaTemporality(p.Temporality)
 			// v0.5.358 — preserve the explicit bucket layout so
 			// the read path can estimate quantiles. dp.BucketCounts
 			// has len(ExplicitBounds)+1 elements (one per bucket,
@@ -399,6 +401,7 @@ func convertMetric(m *metricspb.Metric, svcName, svcInstance, hostName string, r
 			p := base("exp_histogram", dp.StartTimeUnixNano, dp.TimeUnixNano,
 				avg, dp.Count, sum, derefF64(dp.Min), derefF64(dp.Max), dp.Attributes)
 			p.Temporality = temporalityStr(d.ExponentialHistogram.AggregationTemporality)
+			countDeltaTemporality(p.Temporality)
 			// Materialize the exponential buckets as EXPLICIT bounds into
 			// the existing bucket_bounds/bucket_counts columns — no new
 			// schema, and the read path (percentileFromBuckets /

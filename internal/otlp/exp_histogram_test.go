@@ -1,6 +1,7 @@
 package otlp
 
 import (
+	metricscollpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	"math"
 	"testing"
 
@@ -155,5 +156,28 @@ func TestExpHistogramDegradeCounters(t *testing.T) {
 	}
 	if after["anyvalue_unknown_type"] != before["anyvalue_unknown_type"] {
 		t.Fatal("anyvalue counter must not move here")
+	}
+}
+
+// v0.10.390 — dış skill denetimi B3: delta temporality sayılır (VM
+// forward'ı kümülatif varsayan rate() için görünür sinyal).
+func TestDeltaTemporalityCounted(t *testing.T) {
+	before := ConvertDegradeCounts()["delta_temporality_points"]
+	req := &metricscollpb.ExportMetricsServiceRequest{ResourceMetrics: []*metricspb.ResourceMetrics{{
+		ScopeMetrics: []*metricspb.ScopeMetrics{{Metrics: []*metricspb.Metric{
+			{Name: "req_total", Data: &metricspb.Metric_Sum{Sum: &metricspb.Sum{
+				AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA,
+				DataPoints:             []*metricspb.NumberDataPoint{{TimeUnixNano: 1, Value: &metricspb.NumberDataPoint_AsInt{AsInt: 3}}, {TimeUnixNano: 2, Value: &metricspb.NumberDataPoint_AsInt{AsInt: 4}}},
+			}}},
+			{Name: "cum_total", Data: &metricspb.Metric_Sum{Sum: &metricspb.Sum{
+				AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
+				DataPoints:             []*metricspb.NumberDataPoint{{TimeUnixNano: 1, Value: &metricspb.NumberDataPoint_AsInt{AsInt: 3}}},
+			}}},
+		}}},
+	}}}
+	ConvertMetrics(req)
+	after := ConvertDegradeCounts()["delta_temporality_points"]
+	if after-before != 2 {
+		t.Fatalf("delta points counted = %d, want 2 (cumulative not counted)", after-before)
 	}
 }

@@ -13,7 +13,10 @@ import type { ExternalLink } from '@/lib/types';
 import { renderExternalLink } from '@/lib/externalLinks';
 import { FlashBox } from './shared';
 
-const EXAMPLE = 'https://log-platformu.example/masterlog?date={{endTime:ddMMyyyyHHmm}}&functionId={{attr.function_id}}&channelCode={{attr.channel_code}}';
+// v0.10.372 — operatör: "şablona ihtiyacım yok, date'i trace'in olduğu dakika
+// ilet" → örnek trace başlangıç dakikasını ({{time}}) taşır; kimlik içindeki
+// zaman (attrTime) isteğin üretim anıdır ve trace'ten önce kalabilir.
+const EXAMPLE = 'https://log-platformu.example/masterlog?date={{time:ddMMyyyyHHmm}}&functionId={{attr.function_id}}&channelCode={{attr.channel_code}}';
 const PREVIEW_CTX = {
   traceId: '0fcd70a94ba1f695ea079750e71a7c10', service: 'ornek-servis', startMs: Date.now(), endMs: Date.now() + 1_000,
   attrs: { function_id: '060201abcd00136801642026090416144424810', channel_code: '060201' },
@@ -44,7 +47,7 @@ export function ExternalLinksTab() {
         Trace sayfasında "Explain this trace" yanında düğme olarak görünür; şablondaki attribute'lar trace'in
         span'lerinde çözülürse etkin, çözülmezse eksikleri söyleyerek pasif. Değişkenler:{' '}
         <code>{'{{attr.KEY}}'}</code> · <code>{'{{attrTime.KEY:FMT}}'}</code> (değerin içindeki yyyyMMddHHmmss, yeniden biçimlenir) ·{' '}
-        <code>{'{{time:FMT}}'}</code> (trace başlangıcı, tarayıcı saati) · <code>{'{{endTime:FMT}}'}</code> (trace bitişi — dakika pencereli log platformları için bunu kullanın; kimlik içindeki zaman isteğin üretim anıdır, trace daha geç biter) · <code>{'{{traceId}}'}</code> · <code>{'{{service}}'}</code>. FMT: dd MM yyyy yy HH mm ss.
+        <code>{'{{time:FMT}}'}</code> (trace başlangıcı, tarayıcı saati — dakika pencereli log platformları için bunu kullanın; kimlik içindeki zaman isteğin üretim anıdır, trace'ten önce kalabilir) · <code>{'{{endTime:FMT}}'}</code> (trace bitişi) · <code>{'{{traceId}}'}</code> · <code>{'{{service}}'}</code>. FMT: dd MM yyyy yy HH mm ss.
       </div>
       {msg && <FlashBox kind={msg.kind}>{msg.text}</FlashBox>}
       {links.length === 0

@@ -17,7 +17,7 @@ package chstore
 //	{{endTime:FMT}}         trace bitişi (en geç span sonu), FMT — v0.10.371
 //	{{traceId}} {{service}} kimlik
 //
-// Örnek (log platformu): .../masterlog?date={{endTime:ddMMyyyyHHmm}}
+// Örnek (log platformu): .../masterlog?date={{time:ddMMyyyyHHmm}}
 //   &functionId={{attr.function_id}}&channelCode={{attr.channel_code}}
 //
 // Doğrulama burada (sınırda): yalnız http(s), bilinmeyen değişken/format

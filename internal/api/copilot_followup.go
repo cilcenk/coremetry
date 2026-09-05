@@ -92,6 +92,7 @@ var followUpFillable = map[guidedIntent]bool{
 	guidedLogErrors:    true,
 	guidedPodHealth:    true,
 	guidedLogField:     true, // v0.10.433 (D5)
+	guidedOpenPage:     true, // v0.10.434 (D7b)
 }
 
 // guidedSuggestions (v0.9.411) — cevap sonrası konuya-duyarlı takip
@@ -151,6 +152,11 @@ func guidedSuggestions(route guidedRoute) []string {
 	case guidedLogField: // v0.10.433 (D5)
 		if svc != "" {
 			return []string{svc + " hata logları?", svc + " sağlığı nasıl?", svc + " en yavaş trace'ler?"}
+		}
+		return []string{"Açık problemler?", "En yavaş trace'ler?"}
+	case guidedOpenPage: // v0.10.434 (D7b)
+		if svc != "" {
+			return []string{svc + " sağlığı nasıl?", svc + " problemleri?", svc + " hata logları?"}
 		}
 		return []string{"Açık problemler?", "En yavaş trace'ler?"}
 	case guidedFamilyHealth:
@@ -326,6 +332,27 @@ func guidedAnswerLinkTargets(route guidedRoute) []guidedAnswerLink {
 			return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?service=" + svcQ + "&severity=17"}}
 		}
 		return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?severity=17"}}
+	case guidedOpenPage: // v0.10.434 (D7b) — sayfa türüne göre; overview özne ister
+		withSvc := func(base string) string {
+			if svc != "" {
+				return base + "?service=" + svcQ
+			}
+			return base
+		}
+		switch route.Page {
+		case "problems":
+			return []guidedAnswerLink{{Label: "Problemler", Href: withSvc("/problems")}}
+		case "logs":
+			return []guidedAnswerLink{{Label: "Loglar", Href: withSvc("/logs")}}
+		case "traces":
+			return []guidedAnswerLink{{Label: "Trace'ler", Href: withSvc("/traces")}}
+		case "endpoints":
+			return []guidedAnswerLink{{Label: "Endpoint'ler", Href: withSvc("/endpoints")}}
+		}
+		if svc == "" {
+			return nil
+		}
+		return []guidedAnswerLink{{Label: svc + " · Overview", Href: "/service?name=" + svcQ}}
 	case guidedLogField: // v0.10.433 (D5) — bundle'ın koştuğu sorgu; yoksa backend'siz şekil
 		q := route.LogQuery
 		if q == "" {
@@ -513,6 +540,8 @@ func askServiceChip(intent guidedIntent, svc string) string {
 		return svc + " son deploy etkisi?"
 	case guidedLogErrors:
 		return svc + " hata logları?"
+	case guidedOpenPage: // v0.10.434 (D7b)
+		return svc + " sayfasını aç"
 	case guidedPodHealth:
 		return svc + " pod'ları nasıl?"
 	case guidedDBHealth:

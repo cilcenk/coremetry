@@ -36,6 +36,8 @@ import {
 // hatası yutulur (sonraki tur zaten tüm geçmişi yeniden yazacak).
 
 export interface ChatThreadOpts {
+  /** v0.10.434 (D7b) — sunucu `open` verdiğinde (uygulama-içi href) çağrılır. */
+  onOpen?: (href: string) => void;
   // Context-awareness (v0.9.164/184) — bulunulan sayfanın servisi ve
   // seçili operasyonu; sunucudaki guided router varsayılan alır.
   service?: string;
@@ -200,6 +202,8 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
           patchLast(t => ({ ...t, text: (t.text ?? '') + e.text }));
         } else if (e.kind === 'answer') {
           patchLast(t => ({ ...t, text: e.text, exchangeId: e.exchangeId, sources: e.sources, suggestions: e.suggestions, links: e.links, pending: false }));
+          // v0.10.434 (D7b) — yalnız uygulama-içi (kök-göreli) href; dış adres asla.
+          if (e.open && e.open.startsWith('/') && !e.open.startsWith('//')) o.onOpen?.(e.open);
         } else if (e.kind === 'error') {
           patchLast(t => ({ ...t, error: e.error, pending: false }));
         } else if (e.kind === 'done') {

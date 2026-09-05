@@ -550,8 +550,11 @@ func TestRouteGuidedIntentContext(t *testing.T) {
 		{"slow no-entity → ctx svc", "neden yavaş", "checkout-service", guidedRootCause, "checkout-service"},
 		{"error no-entity + ctx → health", "hataları var mı", "checkout-service", guidedServiceHealth, "checkout-service"},
 		{"explicit svc wins over ctx", "payment-service hataları", "checkout-service", guidedServiceHealth, "payment-service"},
-		{"invalid ctx ignored", "neden yavaş", "nonexistent-service", guidedSlowTraces, ""}, // servis çözülmezse kök-nedene GİRMEZ
-		{"no ctx unchanged", "neden yavaş", "", guidedSlowTraces, ""},
+		// v0.10.434 (D7a) — SÖZLEŞME DEĞİŞİKLİĞİ (spec onayı 2026-09-06): öznesiz
+		// "neden yavaş" artık filo geneli en-yavaş listesine ÇÖKMEZ, hangi
+		// servis diye SORAR (kök-nedene yine girmez — servis şart).
+		{"invalid ctx → ask", "neden yavaş", "nonexistent-service", guidedAskService, ""},
+		{"no ctx → ask", "neden yavaş", "", guidedAskService, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -67,6 +67,8 @@ const (
 	// guidedLogField (v0.10.433, CoSRE router boşlukları D5) — alan süzgeçli
 	// log araması: "url.full alanında \"/x\" geçen loglar" (log_field_search.go).
 	guidedLogField guidedIntent = "log_field"
+	// guidedOpenPage (v0.10.434, D7b) — "X sayfasını aç": LLM'siz link + open.
+	guidedOpenPage guidedIntent = "open_page"
 	// guidedFamilyHealth (v0.9.192) — a family-of-services ask:
 	// "mobile bff'lerde hangisinde hata var". No single service
 	// resolves, but the message's name-fragments (mobile + bff) match
@@ -222,6 +224,8 @@ type guidedRoute struct {
 	LogValue    string
 	LogContains bool
 	LogQuery    string
+	// Page (v0.10.434, D7b) — open_page hedefi: overview|problems|logs|traces|endpoints.
+	Page string
 }
 
 // normalizeGuidedMsg lowercases for matching. Go's ToLower maps the
@@ -976,6 +980,14 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 					opts = opts[:guidedServiceAskMax]
 				}
 				return guidedRoute{Intent: guidedAskService, AskIntent: ask, ServiceOptions: opts, Env: env}
+			case ask == guidedRootCause && (hasHealthSignal(toks) || hasSlowTraceSignal(msg)) &&
+				!hasErrorSignal(toks) && !hasProblemSignal(toks) && !hasMessagingSignal(toks) && !hasDBSignal(toks) && !hasPodSignal(toks):
+				// v0.10.434 (D7a) — "yavaşlığın sebebi ne?" / "neden yavaş?":
+				// özne yok, aday yok, sayfa bağlamı yok. Eskiden filo geneli
+				// en-yavaş listesine çöküyordu (nedensellik sessizce düşüyordu);
+				// şimdi sorar, adayları bundle açık problemlerden doldurur.
+				// "neden hata alıyoruz" filo-geneli problems yolunda kalır.
+				return guidedRoute{Intent: guidedAskService, AskIntent: guidedRootCause, Env: env}
 			}
 		}
 	}
@@ -1021,6 +1033,11 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 	// v0.10.433 (D5) — alan süzgeçli log araması, "yavaş"/"hata" gibi
 	// içerik sözcükleri taşıyabilen tırnaklı değerlerden ÖNCE: "message
 	// alanında 'slow' geçen loglar" slow_traces'a kaçmasın.
+	// v0.10.434 (D7b) — "sayfasını aç": sayfa türü + özne; overview özne
+	// ister (yoksa copilotChatGuided önceki turdan devralır ya da sorar),
+	// problems/logs/traces/endpoints filo geneli de açılabilir.
+	case hasOpenPageSignal(toks):
+		return guidedRoute{Intent: guidedOpenPage, Service: svc, Env: env, Page: openPageKind(toks)}
 	case lfOK:
 		return guidedRoute{Intent: guidedLogField, Service: svc, Env: env, LogField: lfField, LogValue: lfValue, LogContains: lfContains}
 	// v0.9.514 — kök-neden, spesifik sinyallerden ÖNCE. "neden checkout
@@ -1268,6 +1285,13 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// v0.9.1134 — ÇIPLAK takım adı hiçbir guided kelime taşımaz ("hangi
 	// takım?" çipinin gönderdiği tur), o yüzden kısa + ad-şekilli mesajlar
 	// da katalog okumasını hak eder (mayNameTeam; üç okuma da 60sn cache'li).
+	// v0.10.434 (D7c) — sözlük, sinyal kapısından ÖNCE: "p95 ne demek" sağlık
+	// sinyali taşır (ask_service'e savrulurdu), "requestid nedir" hiçbir
+	// sinyal taşımaz (RAG'a düşerdi). LLM yok, exchangeId yok (glossary.go).
+	if _, entry, ok := glossaryLookup(norm); ok {
+		emit("answer", glossaryAnswer(entry))
+		return true, true
+	}
 	if !hasGuidedSignal(norm) && !followCue && !mayNameTeam(norm) {
 		return false, false // zero-cost fast path: no catalogue read
 	}
@@ -1329,6 +1353,14 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 			emitGuidedContextStep(emit, "bağlam: "+scope+" (önceki sorudan)")
 		}
 	}
+	// v0.10.434 (D7b) — "sayfasını aç" öznesiz: takip ipucu olmasa da
+	// önceki turun servisi devralınır; o da yoksa runGuidedRoute sorar.
+	if route.Intent == guidedOpenPage && route.Service == "" && route.Page == "overview" {
+		if p := newestPriorService(prior, svcNames, envNames); p != "" {
+			route.Service = p
+			emitGuidedContextStep(emit, "bağlam: "+p+" (önceki sorudan)")
+		}
+	}
 	if route.Intent == guidedNone {
 		return false, false
 	}
@@ -1366,6 +1398,21 @@ func (s *Server) runGuidedRoute(ctx context.Context, emit func(string, any), rou
 		to = time.Now()
 	}
 	from := to.Add(-time.Duration(rangeS) * time.Second)
+
+	// v0.10.434 (D7b) — open_page: overview özne ister; yoksa "hangisini
+	// kastettin?" (çip: "X sayfasını aç"). Deterministik cevap, LLM yok.
+	if route.Intent == guidedOpenPage && route.Service == "" && route.Page == "overview" {
+		route.Intent, route.AskIntent = guidedAskService, guidedOpenPage
+	}
+	if route.Intent == guidedOpenPage {
+		links := dedupLinksByHref(guidedAnswerLinks(route, linkWindowBetween(from, to)))
+		ans := map[string]any{"text": openPageAnswerTR(route), "suggestions": guidedSuggestions(route), "links": links}
+		if len(links) > 0 {
+			ans["open"] = links[0].Href
+		}
+		emit("answer", ans)
+		return true, true
+	}
 
 	var evidence, sources string
 	var err error

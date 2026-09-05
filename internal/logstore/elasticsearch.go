@@ -2177,8 +2177,10 @@ func (s *ESStore) CountPatterns(
 	// (identical size:0 agg shape). track_total_hits:false skips the
 	// all-shard exact doc count the detector never needs. Computed once.
 	patTimeout := esTimeoutFromEnv("10s")
-	// One narrowed index list for the whole batch — every per-pattern
-	// query is bounded by [baseStart, now] (v0.8.109).
+	// One narrowed index list for the whole batch (v0.8.109). Index-level
+	// narrowing alone did NOT bound the scan on undated/rollover indices —
+	// since v0.10.412 every per-pattern body also carries the window as a
+	// query range (patternCountBody), so the token scan is bounded twice.
 	// No Filter.Service here on purpose: patterns are evaluated across
 	// ALL services, so the template short-circuit must not apply.
 	msearchIdx := s.queryIndices(ctx, Filter{From: baseStart, To: now})
@@ -2326,13 +2328,26 @@ func patternCountBody(tokenQuery, bodyField, tsField, svcField, baseFrom, curFro
 		"size":             0,
 		"track_total_hits": false,
 		"timeout":          timeout,
+		// v0.10.412 (log arama denetimi A1) — zaman yüklemi SORGUDA: eskiden
+		// yalnız agg'lerde vardı, token taraması indeks listesinin
+		// tamamını (tarihsiz/rollover indekste tüm saklama süresi) geziyor,
+		// pencere dışı dokümanları agg içinde atıyordu. [baseFrom, curEnd)
+		// iki agg penceresinin tam birleşimi → sayılar bit-bit aynı, yalnız
+		// taranan doküman azalır. CH ikizi WHERE'de zaten taşıyordu.
 		"query": map[string]any{
-			"query_string": map[string]any{
-				"query":                  tokenQuery,
-				"default_field":          bodyField,
-				"default_operator":       "OR",
-				"allow_leading_wildcard": false,
-				"lenient":                true,
+			"bool": map[string]any{
+				"filter": []any{
+					map[string]any{"range": map[string]any{tsField: map[string]any{"gte": baseFrom, "lt": curEnd}}},
+					map[string]any{
+						"query_string": map[string]any{
+							"query":                  tokenQuery,
+							"default_field":          bodyField,
+							"default_operator":       "OR",
+							"allow_leading_wildcard": false,
+							"lenient":                true,
+						},
+					},
+				},
 			},
 		},
 		"aggs": map[string]any{

@@ -1,6 +1,6 @@
 // ExternalLinksTab — v0.10.345: trace sayfası dış link şablonları (operatör:
 // function_id + channel_code ile içerideki log izleme platformuna tek tıkla).
-// Şablon değişkenleri: {{attr.KEY}} · {{attrTime.KEY:FMT}} · {{time:FMT}} ·
+// Şablon değişkenleri: {{attr.KEY}} · {{attrTime.KEY:FMT}} · {{time:FMT}} · {{endTime:FMT}} ·
 // {{traceId}} · {{service}} (FMT: dd MM yyyy yy HH mm ss). Host adı burada
 // yaşar, repoda değil. Önizleme örnek değerlerle saf render'ı gösterir.
 import { useEffect, useState } from 'react';
@@ -13,9 +13,9 @@ import type { ExternalLink } from '@/lib/types';
 import { renderExternalLink } from '@/lib/externalLinks';
 import { FlashBox } from './shared';
 
-const EXAMPLE = 'https://log-platformu.example/masterlog?date={{attrTime.function_id:ddMMyyyyHHmm}}&functionId={{attr.function_id}}&channelCode={{attr.channel_code}}';
+const EXAMPLE = 'https://log-platformu.example/masterlog?date={{endTime:ddMMyyyyHHmm}}&functionId={{attr.function_id}}&channelCode={{attr.channel_code}}';
 const PREVIEW_CTX = {
-  traceId: '0fcd70a94ba1f695ea079750e71a7c10', service: 'ornek-servis', startMs: Date.now(),
+  traceId: '0fcd70a94ba1f695ea079750e71a7c10', service: 'ornek-servis', startMs: Date.now(), endMs: Date.now() + 1_000,
   attrs: { function_id: '060201abcd00136801642026090416144424810', channel_code: '060201' },
 };
 
@@ -44,7 +44,7 @@ export function ExternalLinksTab() {
         Trace sayfasında "Explain this trace" yanında düğme olarak görünür; şablondaki attribute'lar trace'in
         span'lerinde çözülürse etkin, çözülmezse eksikleri söyleyerek pasif. Değişkenler:{' '}
         <code>{'{{attr.KEY}}'}</code> · <code>{'{{attrTime.KEY:FMT}}'}</code> (değerin içindeki yyyyMMddHHmmss, yeniden biçimlenir) ·{' '}
-        <code>{'{{time:FMT}}'}</code> (trace başlangıcı, tarayıcı saati) · <code>{'{{traceId}}'}</code> · <code>{'{{service}}'}</code>. FMT: dd MM yyyy yy HH mm ss.
+        <code>{'{{time:FMT}}'}</code> (trace başlangıcı, tarayıcı saati) · <code>{'{{endTime:FMT}}'}</code> (trace bitişi — dakika pencereli log platformları için bunu kullanın; kimlik içindeki zaman isteğin üretim anıdır, trace daha geç biter) · <code>{'{{traceId}}'}</code> · <code>{'{{service}}'}</code>. FMT: dd MM yyyy yy HH mm ss.
       </div>
       {msg && <FlashBox kind={msg.kind}>{msg.text}</FlashBox>}
       {links.length === 0

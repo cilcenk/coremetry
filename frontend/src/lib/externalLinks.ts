@@ -4,6 +4,10 @@
 //   {{attr.KEY}}          attribute (kök span önce, sonra öteki span'ler), URL-kodlu
 //   {{attrTime.KEY:FMT}}  attribute içindeki yyyyMMddHHmmss → FMT (dd MM yyyy yy HH mm ss)
 //   {{time:FMT}}          trace başlangıcı, TARAYICI YEREL SAATİ → FMT
+//   {{endTime:FMT}}       trace BİTİŞİ (en geç span sonu), tarayıcı saati → FMT
+//                         (v0.10.371 — operatör: log platformu dakika penceresi
+//                         function_id'nin gömülü zamanından (istek üretimi) sonra
+//                         biten trace'in loglarını kaçırıyordu)
 //   {{traceId}} {{service}}
 // Eksik/çözülemeyen değişken → `missing` dolar, url yok; düğme pasif ve
 // sebebini söyler. Çözülen değerler encodeURIComponent ile kodlanır.
@@ -12,6 +16,8 @@ export interface ExternalLinkCtx {
   traceId: string;
   service: string;
   startMs: number;
+  /** Trace bitişi (ms). Süre bilinmiyorsa startMs. */
+  endMs: number;
   attrs: Record<string, string>;
 }
 
@@ -67,6 +73,9 @@ export function renderExternalLink(template: string, ctx: ExternalLinkCtx): { ur
       case 'time':
         if (!fmt) { missing.push('time'); return ''; }
         return encodeURIComponent(formatParts(localParts(ctx.startMs), fmt));
+      case 'endTime':
+        if (!fmt) { missing.push('endTime'); return ''; }
+        return encodeURIComponent(formatParts(localParts(ctx.endMs), fmt));
       case 'traceId': return encodeURIComponent(ctx.traceId);
       case 'service': return encodeURIComponent(ctx.service);
     }
@@ -77,7 +86,7 @@ export function renderExternalLink(template: string, ctx: ExternalLinkCtx): { ur
 }
 
 /** Span'lerden attribute bağlamı: kök span (parentId boş) önce, sonra sırayla; ilk dolu değer kazanır. */
-export function collectLinkCtx(spans: { traceId: string; serviceName: string; startTime: number; parentId?: string; attributes?: Record<string, string> }[]): ExternalLinkCtx | null {
+export function collectLinkCtx(spans: { traceId: string; serviceName: string; startTime: number; durationMs?: number; parentId?: string; attributes?: Record<string, string> }[]): ExternalLinkCtx | null {
   if (!spans.length) return null;
   const root = spans.find(s => !s.parentId || s.parentId === '0000000000000000') ?? spans[0];
   const ordered = [root, ...spans.filter(s => s !== root)];
@@ -88,5 +97,10 @@ export function collectLinkCtx(spans: { traceId: string; serviceName: string; st
     }
   }
   const startNs = Math.min(...spans.map(s => s.startTime));
-  return { traceId: root.traceId, service: root.serviceName, startMs: Math.round(startNs / 1e6), attrs };
+  // Bitiş = en geç (start + durationMs); süre taşımayan span kendi başlangıcı.
+  const endNs = Math.max(...spans.map(s => s.startTime + (s.durationMs ?? 0) * 1e6));
+  return {
+    traceId: root.traceId, service: root.serviceName,
+    startMs: Math.round(startNs / 1e6), endMs: Math.round(Math.max(startNs, endNs) / 1e6), attrs,
+  };
 }

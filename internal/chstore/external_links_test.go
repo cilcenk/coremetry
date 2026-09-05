@@ -65,3 +65,21 @@ func TestNormalizeExternalLinks(t *testing.T) {
 		t.Fatalf("boş kayıt: %v", got)
 	}
 }
+
+// v0.10.371 — {{endTime:FMT}}: trace bitişi. Operatör: log platformunun
+// dakika penceresi function_id'nin gömülü zamanından sonra biten trace'in
+// loglarını kaçırıyordu; şablon artık bitişi taşıyabilir.
+func TestExternalLinkVarsEndTime(t *testing.T) {
+	req, err := ExternalLinkVars("https://x/?date={{endTime:ddMMyyyyHHmm}}&f={{attr.function_id}}")
+	if err != nil {
+		t.Fatalf("endTime:FMT kabul edilmeli: %v", err)
+	}
+	if len(req) != 1 || req[0] != "function_id" {
+		t.Fatalf("endTime attribute gerektirmez; req = %v", req)
+	}
+	for _, bad := range []string{"{{endTime}}", "{{endTime:xx}}", "{{endTime.k:HHmm}}"} {
+		if _, err := ExternalLinkVars(bad); err == nil {
+			t.Fatalf("%s reddedilmeli", bad)
+		}
+	}
+}

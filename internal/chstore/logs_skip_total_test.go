@@ -21,10 +21,20 @@ func TestGetLogsSkipsCountOnSkipTotal(t *testing.T) {
 	if end := strings.Index(body, "\n}\n"); end > 0 {
 		body = body[:end]
 	}
-	if !strings.Contains(body, "if !f.SkipTotal {") || !strings.Contains(body, "SELECT count() FROM (SELECT 1 FROM logs") {
-		t.Fatal("GetLogs count() sorgusu !f.SkipTotal dalında olmalı")
+	// v0.10.420 — KAPSAMA: dalın gövdesi (aynı girintideki kapanış
+	// süslüsüne dek) count() sorgusunu içermeli; sıralama yetmezdi.
+	i = strings.Index(body, "\tif !f.SkipTotal {")
+	if i < 0 {
+		t.Fatal("GetLogs'ta `if !f.SkipTotal {` yok")
 	}
-	if strings.Index(body, "if !f.SkipTotal {") > strings.Index(body, "SELECT count() FROM (SELECT 1 FROM logs") {
-		t.Fatal("SkipTotal dalı count() sorgusunu sarmalamıyor")
+	block := body[i:]
+	if end := strings.Index(block, "\n\t}\n"); end > 0 {
+		block = block[:end]
+	}
+	if !strings.Contains(block, "SELECT count() FROM (SELECT 1 FROM logs") {
+		t.Fatal("count() sorgusu !f.SkipTotal dalının İÇİNDE değil")
+	}
+	if strings.Count(body, "SELECT count() FROM (SELECT 1 FROM logs") != 1 {
+		t.Fatal("count() sorgusu dal dışında da var")
 	}
 }

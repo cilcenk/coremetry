@@ -414,7 +414,7 @@ function LogRow({
         {colIds.map(id => {
           if (id === 'message') {
             return (
-              <td key={id} className={wrap ? 'lt-wrap' : undefined} style={{ maxWidth: 480 }} title={wrap ? undefined : l.body}>
+              <td key={id} className={wrap ? 'lt-wrap' : undefined} style={wrap ? undefined : { maxWidth: 480 }} title={wrap ? undefined : l.body}>
                 {/* v0.8.407 — span-event pseudo rows (exceptions / log-bridge
                     records riding the trace's spans) are visibly distinct from
                     backend log rows so the merged trace Logs tab stays honest. */}

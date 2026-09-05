@@ -68,6 +68,13 @@ export const STORAGE_KEYS = {
   // false kalır (v0.9.831'in bilinçli maliyet kararı — kod okumak bir
   // depo listelemesi + dosya çekmesi demek).
   aiIncludeCode:    'cm.ai.includeCode',
+  // v0.10.432 (CoSRE router boşlukları D8) — trace ilk açılış baloncuğu
+  // ("Bu trace'i açıklamamı ister misin?"). declined = kalıcı ret
+  // (localStorage: "Sağol, gerek yok" bir daha sormaz); asked =
+  // sekme oturumu (sessionStorage): tab başına bir kez sorulur, cevapsız
+  // bırakılsa da tekrar çıkmaz.
+  aiTraceNudgeDeclined: 'cm.ai.traceNudge.declined',
+  aiTraceNudgeAsked:    'cm.ai.traceNudge.asked',
 } as const;
 
 /** DataTable persistence family: sort + column widths per table. */

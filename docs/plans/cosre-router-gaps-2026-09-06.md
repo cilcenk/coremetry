@@ -38,7 +38,7 @@ Kapsam dışı (bilinçli `none`): genel bilgi soruları.
 | Dilim | Sürüm | Not |
 |---|---|---|
 | D1 belirsizlik + takım | v0.10.429 GEMİDE | `nearNames`/`serviceCandidates`; `guidedAskService` ("hangisini kastettin?" çipleri tam kılavuz cümle); sağlık/hata şekli + parça adı → aile rotası korunur (v0.9.192), neden/yavaş/deploy/log şekli + aile → SORAR (eskiden filo geneline çöküyordu); takım kodu jeton eşi, `team` slotu, `team_services` niyeti; sınıflandırıcı prompt'u yaklaşık adı AYNEN verir |
-| D8 trace baloncuğu | — | |
+| D8 trace baloncuğu | v0.10.432 GEMİDE | `TraceExplainNudge` FAB'ın üstünde (CopilotChat içinde; sohbet açıkken/copilot kapalıyken/public trace'te yok); karar `shouldNudgeExplain` saf; Evet → çekmece `?ai=trace:<id>&aisrc=nudge` → istek `?src=nudge` → yüzey `explain-trace:nudge` (whitelist'li sonek, yalnız explain-*); Sağol → localStorage kalıcı ret; sekme başına bir kez (sessionStorage). Not: explain önbelleği isabet ederse ai_calls satırı yazılmaz (deliverExplain kısa devresi) |
 | D5 log alan süzgeci | — | |
 | D7 eksik özne / sayfa / sözlük | — | |
 | D2 A→B + attribute araması | — | |

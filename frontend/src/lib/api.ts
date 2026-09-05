@@ -110,6 +110,9 @@ export interface ExplainStreamOpts {
    *  operatörün AÇIK "Yeniden sor" tıkı bunu geçer; otomatik koşular
    *  önbellekten faydalanır. */
   fresh?: boolean;
+  /** v0.10.432 (D8) — açılış kaynağı (`?src=nudge`): sunucu yüzey etiketini
+   *  "explain-trace:nudge" yapar; /ai baloncuk tıklarını ayrı sayar. */
+  src?: string;
 }
 
 /**
@@ -182,6 +185,7 @@ async function explainStream<T>(path: string, init: RequestInit, opts: ExplainSt
 function explainCall<T>(path: string, init: RequestInit, opts?: ExplainStreamOpts): Promise<T> {
   // v0.10.83 — taze istek önbelleği atlar (sunucu ?refresh=1 okur).
   if (opts?.fresh) path += (path.includes('?') ? '&' : '?') + 'refresh=1';
+  if (opts?.src) path += (path.includes('?') ? '&' : '?') + 'src=' + encodeURIComponent(opts.src); // v0.10.432 (D8)
   if (!opts?.onDelta) return request<T>(path, opts?.signal ? { ...init, signal: opts.signal } : init);
   return explainStream<T>(path, init, opts);
 }

@@ -134,7 +134,7 @@ func (s *Server) explainCallCtx(r *http.Request) context.Context {
 	if c != nil {
 		uid, email = c.UserID, c.Email
 	}
-	surface := aiSurfaceFromPath(r.URL.Path)
+	surface := aiSurfaceFromRequest(r)
 	return copilot.WithMeta(r.Context(), copilot.CallMeta{
 		Surface:    surface,
 		UserID:     uid,
@@ -176,7 +176,7 @@ func (s *Server) copilotExplainMasked(r *http.Request, system, user, logUser str
 	if c != nil {
 		uid, email = c.UserID, c.Email
 	}
-	surface := aiSurfaceFromPath(r.URL.Path)
+	surface := aiSurfaceFromRequest(r)
 	meta := copilot.CallMeta{
 		Surface:   surface,
 		UserID:    uid,
@@ -208,7 +208,7 @@ func (s *Server) copilotExplainMasked(r *http.Request, system, user, logUser str
 // kilitlenir (bkz. copilot_schemas.go). nil geçmek eski davranıştır;
 // şema desteklemeyen uç zaten kendiliğinden json_object'e düşer.
 func (s *Server) copilotExplainJSON(r *http.Request, system, user string, schema map[string]any) (string, error) {
-	surface := aiSurfaceFromPath(r.URL.Path)
+	surface := aiSurfaceFromRequest(r)
 	c := auth.FromContext(r.Context())
 	uid, email := "", ""
 	if c != nil {
@@ -289,6 +289,23 @@ func (s *Server) copilotStreamSurface(ctx context.Context, surface, system, user
 // span", `/api/copilot/explain-slo/{id}` → "explain-slo", etc.
 // Unknown paths collapse to "other" so the /ai breakdown stays
 // finite.
+// aiSurfaceSrcAllowed — v0.10.432 (CoSRE router boşlukları D8): `?src=`
+// ile yüzey etiketine eklenen SONEK ("explain-trace:nudge"). Whitelist'li
+// ki /ai kırılımı sonlu kalsın (insight türü whitelist'iyle aynı gerekçe);
+// yalnız explain-* yüzeylerinde. "nudge" = trace ilk açılış baloncuğundan
+// tetiklenen explain — operatör "kendiliğinden önerilen açıklama ne kadar
+// tıklanıyor, kaça mal oluyor"u /ai'da ayrı görsün.
+var aiSurfaceSrcAllowed = map[string]bool{"nudge": true}
+
+// aiSurfaceFromRequest — path'ten türeyen etiket + whitelist'li src soneki.
+func aiSurfaceFromRequest(r *http.Request) string {
+	base := aiSurfaceFromPath(r.URL.Path)
+	if src := r.URL.Query().Get("src"); src != "" && aiSurfaceSrcAllowed[src] && strings.HasPrefix(base, "explain-") {
+		return base + ":" + src
+	}
+	return base
+}
+
 func aiSurfaceFromPath(p string) string {
 	// v0.9.1067 (Faz 3.6 / Q8) — /api/copilot/* dışındaki tek AI ucu:
 	// CH sorgu optimizasyonu /api/admin/clickhouse/optimize-query'de

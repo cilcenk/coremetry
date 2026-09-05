@@ -1503,6 +1503,11 @@ Kurallar:
 - Emin değilsen intent "none". Yanlış niyet, "none"dan kötüdür.
 - ` + IntentNoInstructionLine + `
 
+Örnekler (v0.10.406 — şekli gör, kopyalama):
+- "checkout servisi son 1 saatte nasıl?" → {"intent":"service_health","service":"checkout","env":"","rangeS":3600,"traceId":"","spanId":""}
+- "açık problemler neler?" → {"intent":"problems","service":"","env":"","rangeS":0,"traceId":"","spanId":""}
+- "bugün hava nasıl?" → {"intent":"none","service":"","env":"","rangeS":0,"traceId":"","spanId":""}
+
 Çıktı şeması: {"intent":"…","service":"…","env":"…","rangeS":0,"traceId":"","spanId":""}`
 
 // IntentNoInstructionLine — sınıflandırıcının enjeksiyon kalkanı; chatTiers'ın

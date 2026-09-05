@@ -14,9 +14,10 @@ package chstore
 //	{{attrTime.KEY:FMT}}    attribute değerinin içindeki yyyyMMddHHmmss zamanı,
 //	                        FMT ile yeniden biçimlenir (dd MM yyyy yy HH mm ss)
 //	{{time:FMT}}            trace başlangıcı (tarayıcı yerel saati), FMT
+//	{{endTime:FMT}}         trace bitişi (en geç span sonu), FMT — v0.10.371
 //	{{traceId}} {{service}} kimlik
 //
-// Örnek (log platformu): .../masterlog?date={{attrTime.function_id:ddMMyyyyHHmm}}
+// Örnek (log platformu): .../masterlog?date={{endTime:ddMMyyyyHHmm}}
 //   &functionId={{attr.function_id}}&channelCode={{attr.channel_code}}
 //
 // Doğrulama burada (sınırda): yalnız http(s), bilinmeyen değişken/format
@@ -83,9 +84,12 @@ func ExternalLinkVars(tpl string) ([]string, error) {
 			if key == "" || format == "" || !externalLinkFmtRe.MatchString(format) {
 				return nil, fmt.Errorf("{{attrTime.KEY:FMT}} bekleniyor (FMT: dd MM yyyy yy HH mm ss): %s", m[0])
 			}
-		case "time":
+		case "time", "endTime":
+			// endTime — v0.10.371: trace bitişi; log platformunun dakika
+			// penceresi başlangıçtan/kimlik zamanından sonra biten trace'i
+			// kaçırıyordu.
 			if key != "" || format == "" || !externalLinkFmtRe.MatchString(format) {
-				return nil, fmt.Errorf("{{time:FMT}} bekleniyor (FMT: dd MM yyyy yy HH mm ss): %s", m[0])
+				return nil, fmt.Errorf("{{%s:FMT}} bekleniyor (FMT: dd MM yyyy yy HH mm ss): %s", kind, m[0])
 			}
 		case "traceId", "service":
 			if key != "" || format != "" {

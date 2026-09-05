@@ -134,3 +134,26 @@ func TestConvertExpHistogramFidelity(t *testing.T) {
 		t.Fatalf("bounds/counts = %d/%d, want 3/4", len(p.BucketBounds), len(p.BucketCounts))
 	}
 }
+
+// v0.10.388 — dış skill denetimi B2: dört degrade dalı sayılır.
+func TestExpHistogramDegradeCounters(t *testing.T) {
+	before := ConvertDegradeCounts()
+	expBucketsToExplicit(&metricspb.ExponentialHistogramDataPoint{Scale: 0})
+	expBucketsToExplicit(&metricspb.ExponentialHistogramDataPoint{Scale: 0,
+		Positive: &metricspb.ExponentialHistogramDataPoint_Buckets{BucketCounts: []uint64{1}},
+		Negative: &metricspb.ExponentialHistogramDataPoint_Buckets{BucketCounts: []uint64{1}}})
+	expBucketsToExplicit(&metricspb.ExponentialHistogramDataPoint{Scale: 25,
+		Positive: &metricspb.ExponentialHistogramDataPoint_Buckets{BucketCounts: []uint64{1}}})
+	expBucketsToExplicit(&metricspb.ExponentialHistogramDataPoint{Scale: 0,
+		Positive: &metricspb.ExponentialHistogramDataPoint_Buckets{BucketCounts: make([]uint64, maxExpBuckets+1)}})
+	expBucketsToExplicit(nil) // sayılmaz
+	after := ConvertDegradeCounts()
+	for _, k := range []string{"exp_histogram_empty", "exp_histogram_negative", "exp_histogram_scale", "exp_histogram_cap"} {
+		if after[k]-before[k] != 1 {
+			t.Fatalf("%s: %d → %d, want +1", k, before[k], after[k])
+		}
+	}
+	if after["anyvalue_unknown_type"] != before["anyvalue_unknown_type"] {
+		t.Fatal("anyvalue counter must not move here")
+	}
+}

@@ -8988,8 +8988,8 @@ func (s *Server) copilotExplainProblem(w http.ResponseWriter, r *http.Request) {
 		[]chstore.Problem{*p}, 30*time.Minute)
 	p = &enriched[0]
 	user := fmt.Sprintf(
-		"Service: %s\nMetric: %s\nValue: %.2f (threshold %.2f)\nSeverity: %s\nRule: %s\nDescription: %s",
-		p.Service, p.Metric, p.Value, p.Threshold, p.Severity, p.RuleName, p.Description,
+		"Service: %s\nMetric: %s\nValue: %.2f%s (threshold %.2f%s)\nSeverity: %s\nRule: %s\nDescription: %s",
+		p.Service, p.Metric, p.Value, problemMetricUnitTR(p.Metric), p.Threshold, problemMetricUnitTR(p.Metric), p.Severity, p.RuleName, p.Description,
 	)
 	if p.RecentDeploy != nil {
 		user += fmt.Sprintf(
@@ -9370,8 +9370,8 @@ func (s *Server) copilotRunbook(w http.ResponseWriter, r *http.Request) {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Current problem (status %s):\n", p.Status)
 	fmt.Fprintf(&sb,
-		"  Service: %s\n  Metric: %s\n  Value: %.2f (threshold %.2f)\n  Severity: %s\n  Rule: %s\n  Description: %s\n",
-		p.Service, p.Metric, p.Value, p.Threshold, p.Severity, p.RuleName, p.Description)
+		"  Service: %s\n  Metric: %s\n  Value: %.2f%s (threshold %.2f%s)\n  Severity: %s\n  Rule: %s\n  Description: %s\n",
+		p.Service, p.Metric, p.Value, problemMetricUnitTR(p.Metric), p.Threshold, problemMetricUnitTR(p.Metric), p.Severity, p.RuleName, p.Description)
 	if p.RecentDeploy != nil {
 		fmt.Fprintf(&sb,
 			"\nRecent deploy: service.version=%q first seen %d seconds before this problem opened — strong signal that step 1 should be \"check / roll back this deploy\".\n",

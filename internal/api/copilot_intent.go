@@ -52,6 +52,8 @@ var intentAllowed = map[string]guidedIntent{
 	// v0.10.429 (D1) — adı geçen takımın servisleri; `team` slotu canlı
 	// takım kataloğuyla doğrulanır (uydurma takım → none).
 	"team_services": guidedTeamServices,
+	// v0.10.433 (D5) — alan süzgeçli log araması; logField/logValue slotları.
+	"log_field": guidedLogField,
 }
 
 // intentNeedsService — servissiz anlamsız şekiller: model servis vermediyse
@@ -70,7 +72,8 @@ func intentClassifySchema() map[string]any {
 		"intent":  map[string]any{"type": "string", "enum": names},
 		"service": strProp(), "env": strProp(), "rangeS": numProp(),
 		"traceId": strProp(), "spanId": strProp(),
-		"team": strProp(), // v0.10.429 (D1)
+		"team":     strProp(),                        // v0.10.429 (D1)
+		"logField": strProp(), "logValue": strProp(), // v0.10.433 (D5)
 	})
 }
 
@@ -82,6 +85,9 @@ type intentJSON struct {
 	TraceID string  `json:"traceId"`
 	SpanID  string  `json:"spanId"`
 	Team    string  `json:"team"` // v0.10.429 (D1)
+	// v0.10.433 (D5)
+	LogField string `json:"logField"`
+	LogValue string `json:"logValue"`
 }
 
 var (
@@ -181,6 +187,13 @@ func parseIntentJSON(raw string, services, envs, teams []string, ctxService stri
 			return guidedRoute{}, 0, false
 		}
 	}
+	if intent == guidedLogField { // v0.10.433 (D5) — alan adı şekil kapısı, değer boş olamaz
+		f, v := strings.TrimSpace(in.LogField), strings.TrimSpace(in.LogValue)
+		if !logFieldNameOK(f) || v == "" || len(v) > 256 {
+			return guidedRoute{}, 0, false
+		}
+		route.LogField, route.LogValue, route.LogContains = f, v, true
+	}
 	switch intent {
 	case guidedTraceByID:
 		id := strings.TrimSpace(in.TraceID)
@@ -221,6 +234,9 @@ func intentSummary(route guidedRoute, rangeS int64, matched bool) string {
 	}
 	if route.SpanID != "" {
 		parts = append(parts, "span: "+route.SpanID)
+	}
+	if route.LogField != "" {
+		parts = append(parts, fmt.Sprintf("alan: %s=%q", route.LogField, route.LogValue))
 	}
 	return strings.Join(parts, " · ")
 }

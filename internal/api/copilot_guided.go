@@ -64,6 +64,9 @@ const (
 	guidedSlowTraces    guidedIntent = "slow_traces"
 	guidedDeployImpact  guidedIntent = "deploy_impact"
 	guidedLogErrors     guidedIntent = "log_errors"
+	// guidedLogField (v0.10.433, CoSRE router boşlukları D5) — alan süzgeçli
+	// log araması: "url.full alanında \"/x\" geçen loglar" (log_field_search.go).
+	guidedLogField guidedIntent = "log_field"
 	// guidedFamilyHealth (v0.9.192) — a family-of-services ask:
 	// "mobile bff'lerde hangisinde hata var". No single service
 	// resolves, but the message's name-fragments (mobile + bff) match
@@ -212,6 +215,13 @@ type guidedRoute struct {
 	// kılavuz cümle ("<svc> sağlığı nasıl?") — çıplak ad kapıdan geçmez.
 	ServiceOptions []string
 	AskIntent      guidedIntent
+	// LogField / LogValue / LogContains (v0.10.433, D5) — alan süzgeçli log
+	// araması; LogQuery bundle'ın KOŞTUĞU sorgu (backend'e göre şekil), link
+	// aynı sorguyu taşır (ReqWindowFromMs deseni: rota alanı bundle çıktısı).
+	LogField    string
+	LogValue    string
+	LogContains bool
+	LogQuery    string
 }
 
 // normalizeGuidedMsg lowercases for matching. Go's ToLower maps the
@@ -939,7 +949,20 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 	// TEK servis isteyen şekillerde aile eskiden sessizce düşüp soru filo
 	// geneline çöküyordu ("login neden yavaş" → servissiz slow_traces) —
 	// şimdi aile üyeleri aday olarak sorulur.
-	if svc == "" && team == "" {
+	//
+	// v0.10.433 (D5) — alan süzgeçli log araması ÖNCE çıkarılır: "message
+	// alanında 'x' geçen loglar" cümlesindeki "message" jetonu aday üreticide
+	// bir servisin parçasına oturup soruyu sessizce o servise daraltabilirdi;
+	// alan sorgusu varken aday aranmaz (servis yalnız açık eşleşmeyle).
+	lfField, lfValue, lfContains, lfOK := extractLogFieldQuery(raw, toks)
+	if lfOK {
+		// Alan adı ve tırnaklı değer servis eşleştiricisinden GİZLENİR:
+		// "message alanında 'timeout' geçen loglar" cümlesindeki "message"
+		// önek eşleşmesiyle message-broker'a çözülüyordu.
+		cleaned := strings.NewReplacer(strings.ToLower(lfField), " ", strings.ToLower(lfValue), " ").Replace(msg)
+		svc = extractServiceEntity(cleaned, services, envs)
+	}
+	if svc == "" && team == "" && !lfOK {
 		if ask := serviceIntentFor(msg, toks); ask != guidedNone && (len(family) == 0 || ask != guidedServiceHealth) {
 			opts := family
 			if len(opts) == 0 {
@@ -995,6 +1018,11 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 	case team != "" && (isBareTeamAsk(msg, team) || hasTeamWord(toks) ||
 		(svc == "" && (hasServiceListWord(toks) || hasHealthSignal(toks) || hasErrorSignal(toks)))):
 		return guidedRoute{Intent: guidedTeamServices, Team: team, Env: env}
+	// v0.10.433 (D5) — alan süzgeçli log araması, "yavaş"/"hata" gibi
+	// içerik sözcükleri taşıyabilen tırnaklı değerlerden ÖNCE: "message
+	// alanında 'slow' geçen loglar" slow_traces'a kaçmasın.
+	case lfOK:
+		return guidedRoute{Intent: guidedLogField, Service: svc, Env: env, LogField: lfField, LogValue: lfValue, LogContains: lfContains}
 	// v0.9.514 — kök-neden, spesifik sinyallerden ÖNCE. "neden checkout
 	// yavaşladı" hem why hem slow sinyali taşır; slow yolu kazanırsa soru
 	// "yavaş mı"ya çöker ve NEDENSELLİK sessizce düşer. Servis şart:
@@ -1370,6 +1398,8 @@ func (s *Server) runGuidedRoute(ctx context.Context, emit func(string, any), rou
 		evidence, sources, err = s.guidedDeployBundle(ctx, emit, route.Service, route.Env, rangeS, anchorTo)
 	case guidedLogErrors:
 		evidence, sources, err = s.guidedLogErrorsBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
+	case guidedLogField: // v0.10.433 (D5)
+		evidence, sources, err = s.guidedLogFieldBundle(ctx, emit, &route, from, to, rangeS)
 	case guidedMyServices:
 		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "health", &route, from, to, rangeS)
 	case guidedMyProblems:

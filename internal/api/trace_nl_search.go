@@ -170,9 +170,9 @@ func extractTraceSearch(raw string, toks []string) (frag string, isSQL bool, ok 
 	if !hasCue {
 		return "", false, false
 	}
-	cleaned := logFieldSuffixApostropheRe.ReplaceAllString(raw, "$1$2")
-	if q := logFieldQuotedRe.FindStringSubmatch(cleaned); q != nil && strings.TrimSpace(q[1]) != "" {
-		frag = strings.TrimSpace(q[1])
+	quoted := false
+	if q, ok := findQuotedValue(raw); ok {
+		frag, quoted = q, true
 	} else {
 		lw := strings.ToLower(raw)
 		start := -1
@@ -198,7 +198,19 @@ func extractTraceSearch(raw string, toks []string) (frag string, isSQL bool, ok 
 	if frag == "" || len([]rune(frag)) > 256 {
 		return "", false, false
 	}
+	// v0.10.443 — tırnaksız parça değer ŞEKLİNDE olmalı (host/yol/sorgu:
+	// nokta, /, :, =, -, _ ya da rakam taşır, ya da SQL); "içinde hata olan
+	// trace'ler" gibi düz sözcükler literal arama olmasın.
+	if !quoted && !traceSearchValueOK(frag) {
+		return "", false, false
+	}
 	return frag, sqlLikeRe.MatchString(frag), true
+}
+
+var traceSearchValueRe = regexp.MustCompile(`[./:=_\-0-9]`)
+
+func traceSearchValueOK(frag string) bool {
+	return traceSearchValueRe.MatchString(frag) || sqlLikeRe.MatchString(frag)
 }
 
 // traceSearchFilter — SAF: parça → TraceFilter (SQL parçası db.statement

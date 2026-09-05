@@ -26,6 +26,11 @@ func TestExtractAbsoluteWindows(t *testing.T) {
 		{"08/08/2026 04-08 ile 09/08/2026 04-08 kıyas", []absWindow{{at(2026, 8, 8, 4, 0), at(2026, 8, 8, 8, 0)}, {at(2026, 8, 9, 4, 0), at(2026, 8, 9, 8, 0)}}},
 		{"son 2 saatte checkout nasıl", nil},
 		{"checkout p95 nedir", nil},
+		// v0.10.443 — çıplak sayı çiftleri pencere değil.
+		{"son 1-2 saatte checkout nasıl", nil},
+		{"5-10 dakika içinde toparlandı mı", nil},
+		{"3-4 istek gelmiş", nil},
+		{"saat 4-8 arası neler oldu", []absWindow{{at(2026, 9, 6, 4, 0), at(2026, 9, 6, 8, 0)}}},
 	}
 	for _, c := range cases {
 		got, ok := extractAbsoluteWindows(c.msg, now, ist)
@@ -43,7 +48,7 @@ func TestExtractAbsoluteWindows(t *testing.T) {
 			}
 		}
 	}
-	if !looksLikeAbsoluteWindow("08/08/2026 04-08") || looksLikeAbsoluteWindow("checkout nasıl") {
+	if !looksLikeAbsoluteWindow("08/08/2026 04-08") || looksLikeAbsoluteWindow("checkout nasıl") || looksLikeAbsoluteWindow("son 1-2 saatte checkout nasıl") {
 		t.Fatal("kapı")
 	}
 	if chatLocation(180).String() != "UTC+3" || chatLocation(0) != time.UTC || chatLocation(9999) != time.UTC {

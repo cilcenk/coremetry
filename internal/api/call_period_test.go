@@ -74,6 +74,20 @@ func TestRouteCallPeriod(t *testing.T) {
 	if !hasGuidedSignal("checkout every 5 minutes pattern?") || !hasPeriodSignal(guidedTokens("her 5 dakikada bir")) || hasPeriodSignal(guidedTokens("checkout nasıl")) {
 		t.Fatal("periyot sinyali/kapı")
 	}
+	// v0.10.443 — periyot dalı hata/log/deploy/problem şekillerini yutmaz;
+	// öznesiz ve istek sözcüksüz cümle sormaz (düşer).
+	if r := routeGuidedIntent("cron loglarında hata var mı", services, nil, nil, ""); r.Intent != guidedLogErrors {
+		t.Fatalf("log_errors korunmalı: %+v", r)
+	}
+	if r := routeGuidedIntent("checkout-service'ta düzenli olarak hata alıyoruz", services, nil, nil, ""); r.Intent == guidedCallPeriod || r.Intent == guidedAskService {
+		t.Fatalf("sağlık/hata yolu korunmalı: %+v", r)
+	}
+	if r := routeGuidedIntent("her gün saat 09:00'da deploy oluyor mu", services, nil, nil, ""); r.Intent != guidedDeployImpact {
+		t.Fatalf("deploy korunmalı: %+v", r)
+	}
+	if r := routeGuidedIntent("periyodik bir şey var mı", services, nil, nil, ""); r.Intent == guidedAskService {
+		t.Fatalf("istek sözcüksüz öznesiz periyot sormaz: %+v", r)
+	}
 	links := guidedAnswerLinkTargets(guidedRoute{Intent: guidedCallPeriod, PairFrom: "checkout-service", PairTo: "payment-service", PairToKind: "service"})
 	if len(links) != 3 || links[0].Href != "/service-map?focus=checkout-service" {
 		t.Fatalf("linkler: %+v", links)

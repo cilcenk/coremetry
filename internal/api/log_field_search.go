@@ -38,6 +38,12 @@ var (
 	logFieldKQLRe = regexp.MustCompile(`(?:^|\s)([a-zA-Z_][\w.-]*):(?:"([^"]{1,256})"|([^\s"]{1,256}))`)
 	// logFieldSuffixApostropheRe — iki harf arasındaki apostrof (Türkçe ek).
 	logFieldSuffixApostropheRe = regexp.MustCompile(`(\pL)['‘’](\pL)`)
+	// logFieldDoubleQuotedRe / logFieldSingleQuotedRe — v0.10.443: tırnaklı
+	// değer HAM metinden okunur (ek apostrofu içerik bozmasın: "/api/x'y"
+	// aynen kalır). Tek tırnak yalnız sözcük sınırında açılır/kapanır —
+	// "field'ında" bir tırnak değildir.
+	logFieldDoubleQuotedRe = regexp.MustCompile("[\"“”]([^\"“”]{1,256})[\"“”]")
+	logFieldSingleQuotedRe = regexp.MustCompile("(?:^|[\\s(,:=])['‘`]([^'‘’`]{1,256})['’`](?:$|[\\s),.;!?])")
 	// logFieldNameRe — sınıflandırıcıdan gelen alan adı (uydurma/enjeksiyon kapısı).
 	logFieldNameRe = regexp.MustCompile(`^[A-Za-z_][\w.-]{0,63}$`)
 	// logFieldBareValueRe — CH'de tırnaksız joker olarak güvenli değer:
@@ -52,6 +58,24 @@ var logFieldKnownBare = map[string]bool{
 	"path": true, "route": true, "status": true, "level": true, "severity": true, "service": true,
 	"trace": true, "span": true, "container": true, "namespace": true, "cluster": true, "env": true,
 	"logger": true, "thread": true, "exception": true, "user": true, "client": true, "request": true,
+}
+
+// findQuotedValue — v0.10.443: ham metindeki tırnaklı değer (çift tırnak
+// önce, sonra sınırlı tek tırnak). İçerikteki apostrof korunur.
+func findQuotedValue(raw string) (string, bool) {
+	if m := logFieldDoubleQuotedRe.FindStringSubmatch(raw); m != nil && strings.TrimSpace(m[1]) != "" {
+		return strings.TrimSpace(m[1]), true
+	}
+	if m := logFieldSingleQuotedRe.FindStringSubmatch(raw); m != nil && strings.TrimSpace(m[1]) != "" {
+		return strings.TrimSpace(m[1]), true
+	}
+	return "", false
+}
+
+// cueTokensWithout — v0.10.443: eşleşme-türü ipuçları (geçen/eşit/olan)
+// DEĞERİN dışından okunur; "olan" değerin içindeyse tam eşleşme sanılmasın.
+func cueTokensWithout(raw, value string) []string {
+	return guidedTokens(normalizeGuidedMsg(strings.Replace(raw, value, " ", 1)))
 }
 
 func logFieldNameOK(f string) bool {
@@ -96,7 +120,7 @@ func extractLogFieldQuery(raw string, toks []string) (field, value string, conta
 			v = m[3]
 		}
 		if v = strings.TrimSpace(v); v != "" {
-			contains = logFieldContainsCue(toks)
+			contains = logFieldContainsCue(cueTokensWithout(raw, v))
 			if strings.HasPrefix(v, "*") && strings.HasSuffix(v, "*") && len(v) > 2 {
 				v, contains = strings.Trim(v, "*"), true
 			}
@@ -107,13 +131,13 @@ func extractLogFieldQuery(raw string, toks []string) (field, value string, conta
 	if m == nil || !logFieldNameOK(m[1]) {
 		return "", "", false, false
 	}
-	// Türkçe ek apostrofu ("field'ında", "attribute'unda") tırnak değil:
-	// harfler arasındaki apostrof silinir, yoksa değer "ında" çıkardı.
-	q := logFieldQuotedRe.FindStringSubmatch(logFieldSuffixApostropheRe.ReplaceAllString(raw, "$1$2"))
-	if q == nil || strings.TrimSpace(q[1]) == "" {
+	// v0.10.443 — tırnaklı değer ham metinden, sözcük-sınırlı tek tırnak:
+	// "field'ında" tırnak değil, "/api/x'y" içindeki apostrof korunur.
+	v, ok := findQuotedValue(raw)
+	if !ok {
 		return "", "", false, false
 	}
-	return m[1], strings.TrimSpace(q[1]), logFieldContainsCue(toks), true
+	return m[1], v, logFieldContainsCue(cueTokensWithout(raw, v)), true
 }
 
 // logFieldSearchQuery — (alan, değer, içeren, backend) → logstore.Search

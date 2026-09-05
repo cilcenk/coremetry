@@ -19,6 +19,10 @@ func TestSplitFanoutFragments(t *testing.T) {
 		{"checkout servisinden payment servisine giden isteklerin tamamı ledger servisine gidiyor mu", "checkout", "payment", "ledger", true},
 		{"from checkout to payment requests all go to ledger too?", "checkout", "payment", "ledger", true},
 		{"checkout'tan payment'a giden istekler", "", "", "", false},
+		// v0.10.443 — "to" sonrası istek sözcüğü şekilli C: panik yok, ad şekli kapısı.
+		{"from checkout to payment requests all go to trace-collector too?", "checkout", "payment", "trace-collector", true},
+		{"from checkout to payment requests all go to traces too?", "", "", "", false},
+		{"checkout'tan payment'a gidenlerin hepsi mu'ya gidiyor", "", "", "", false},
 	}
 	for _, c := range cases {
 		a, b, cc, ok := splitFanoutFragments(c.msg)

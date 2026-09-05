@@ -629,6 +629,12 @@ func askServiceChipFor(route guidedRoute) []string {
 			}
 		case guidedTraceSearch:
 			out = append(out, opt+" servisinde içinde \""+route.SearchText+"\" geçen trace'ler")
+		case guidedLogField: // v0.10.443 — alan/değer çipe biner (eskiden varsayılan "sağlığı nasıl?")
+			mode := "geçen"
+			if !route.LogContains {
+				mode = "olan"
+			}
+			out = append(out, opt+" loglarında "+route.LogField+" alanında \""+route.LogValue+"\" "+mode+" loglar")
 		case guidedWindowCompare: // v0.10.437 (D6) — çip pencere metnini aynen taşır
 			out = append(out, opt+" "+route.WindowText+" arası kıyas")
 		case guidedCallPeriod: // v0.10.438 (D3)

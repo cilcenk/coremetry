@@ -31,6 +31,10 @@ func TestExtractLogFieldQuery(t *testing.T) {
 		// tırnaklı değer yok
 		{`url.full alanında bir şeyler geçen loglar`, "", "", false, false},
 		{`log hataları neler`, "", "", false, false},
+		// v0.10.443 — tırnak içindeki apostrof korunur; ipuçları değerin dışından.
+		{`url.full alanında "/api/x'y" geçen loglar`, "url.full", "/api/x'y", true, true},
+		{`message alanında "olan" geçen loglar`, "message", "olan", true, true},
+		{`message alanında "timeout geçen" olan loglar`, "message", "timeout geçen", false, true},
 	}
 	for _, c := range cases {
 		f, v, contains, ok := extractLogFieldQuery(c.msg, guidedTokens(normalizeGuidedMsg(c.msg)))

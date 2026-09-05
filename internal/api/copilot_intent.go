@@ -166,17 +166,37 @@ func parseIntentJSON(raw string, services, envs, teams []string, ctxService stri
 		return guidedRoute{}, 0, false
 	}
 	route := guidedRoute{Intent: intent}
+	// v0.10.443 — slotlar ÖNCE: "hangisini kastettin?" rotası parçayı/alanı
+	// taşımalı, yoksa çip boş sorguyla dönüp serbest döngüye düşüyordu.
+	if intent == guidedTraceSearch { // v0.10.436 (D2b) — parça boş olamaz
+		st := strings.TrimSpace(in.SearchText)
+		if st == "" || len(st) > 256 {
+			return guidedRoute{}, 0, false
+		}
+		route.SearchText, route.SearchSQL = st, sqlLikeRe.MatchString(st)
+	}
+	if intent == guidedLogField { // v0.10.433 (D5) — alan adı şekil kapısı, değer boş olamaz
+		f, v := strings.TrimSpace(in.LogField), strings.TrimSpace(in.LogValue)
+		if !logFieldNameOK(f) || v == "" || len(v) > 256 {
+			return guidedRoute{}, 0, false
+		}
+		route.LogField, route.LogValue, route.LogContains = f, v, true
+	}
+	ask := func(opts []string) guidedRoute {
+		return guidedRoute{Intent: guidedAskService, AskIntent: intent, ServiceOptions: opts,
+			SearchText: route.SearchText, SearchSQL: route.SearchSQL, LogField: route.LogField, LogValue: route.LogValue, LogContains: route.LogContains}
+	}
 	if strings.TrimSpace(in.Service) != "" {
 		if route.Service = matchLiveName(in.Service, services); route.Service == "" {
 			if opts := nearNames(in.Service, services, guidedServiceAskMax); len(opts) > 0 {
-				return guidedRoute{Intent: guidedAskService, AskIntent: intent, ServiceOptions: opts}, 0, true
+				return ask(opts), 0, true
 			}
 			return guidedRoute{}, 0, false // katalogda yakın ad bile yok: uydurulmuş
 		}
 	}
 	if route.Service == "" && intentNeedsService[intent] {
 		if ctxService == "" {
-			return guidedRoute{Intent: guidedAskService, AskIntent: intent}, 0, true
+			return ask(nil), 0, true
 		}
 		route.Service = ctxService
 	}
@@ -191,20 +211,6 @@ func parseIntentJSON(raw string, services, envs, teams []string, ctxService stri
 		if route.Env = matchLiveName(in.Env, envs); route.Env == "" {
 			return guidedRoute{}, 0, false
 		}
-	}
-	if intent == guidedTraceSearch { // v0.10.436 (D2b) — parça boş olamaz
-		st := strings.TrimSpace(in.SearchText)
-		if st == "" || len(st) > 256 {
-			return guidedRoute{}, 0, false
-		}
-		route.SearchText, route.SearchSQL = st, sqlLikeRe.MatchString(st)
-	}
-	if intent == guidedLogField { // v0.10.433 (D5) — alan adı şekil kapısı, değer boş olamaz
-		f, v := strings.TrimSpace(in.LogField), strings.TrimSpace(in.LogValue)
-		if !logFieldNameOK(f) || v == "" || len(v) > 256 {
-			return guidedRoute{}, 0, false
-		}
-		route.LogField, route.LogValue, route.LogContains = f, v, true
 	}
 	switch intent {
 	case guidedTraceByID:

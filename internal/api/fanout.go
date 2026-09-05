@@ -13,6 +13,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -51,13 +52,24 @@ func splitFanoutFragments(raw string) (a, b, c string, ok bool) {
 		}
 		switch {
 		case expectC:
-			return a, b, cleanPairFragment(cutAtRequestWord([]string{w})[0]), cleanPairFragment(w) != ""
+			// v0.10.443 — "to" sonrası sözcük kendisi istek sözcüğüyse
+			// (trace-collector, call-center) cutAtRequestWord boş döner:
+			// eskiden [0] panikliyordu (SSE akışı ölüyordu). Ad şekli kapısı.
+			cut := cutAtRequestWord([]string{w})
+			cc := cleanPairFragment(w)
+			if len(cut) > 0 {
+				cc = cleanPairFragment(cut[0])
+			}
+			if !nodeNameShapeOK(cc) || strings.EqualFold(cc, b) {
+				return "", "", "", false
+			}
+			return a, b, cc, true
 		case hit:
-			if cc := cleanPairFragment(base); cc != "" && !strings.EqualFold(cc, b) {
+			if cc := cleanPairFragment(base); nodeNameShapeOK(cc) && !strings.EqualFold(cc, b) {
 				return a, b, cc, true
 			}
 		case lw == "servisine" || lw == "servise":
-			if cc := cleanPairFragment(prev); cc != "" && !strings.EqualFold(cc, b) {
+			if cc := cleanPairFragment(prev); nodeNameShapeOK(cc) && !strings.EqualFold(cc, b) {
 				return a, b, cc, true
 			}
 		case lw == "to":
@@ -67,6 +79,18 @@ func splitFanoutFragments(raw string) (a, b, c string, ok bool) {
 	}
 	return "", "", "", false
 }
+
+// nodeNameShapeOK — v0.10.443: C adı servis/düğüm biçimli olmalı (ASCII
+// harf-rakam ile başlar, ≥3, [A-Za-z0-9._:-]), stopword değil — "B'ye de
+// gidiyor mu" cümlesindeki "de"/"mu" gibi ekler C sanılmasın.
+func nodeNameShapeOK(s string) bool {
+	if len(s) < 3 || guidedStopwords[strings.ToLower(s)] {
+		return false
+	}
+	return nodeNameRe.MatchString(s)
+}
+
+var nodeNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{2,}$`)
 
 // fanoutStats — SAF.
 type fanoutStats struct {

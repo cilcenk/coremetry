@@ -49,10 +49,34 @@ func chatLocation(tzOffsetMin int) *time.Location {
 	return time.FixedZone(fmt.Sprintf("UTC%+d", tzOffsetMin/60), tzOffsetMin*60)
 }
 
-// looksLikeAbsoluteWindow — ucuz kapı (kılavuz sinyal kapısına ek): tarih
-// ya da saat aralığı şekli var mı.
+// looksLikeAbsoluteWindow — kapı (kılavuz sinyal kapısına ek): gerçekten
+// bir mutlak pencere çıkıyor mu (v0.10.443 — çıplak "1-2"/"5-10" sayı
+// çiftleri artık pencere değil; aynı kabul kuralı).
 func looksLikeAbsoluteWindow(raw string) bool {
-	return absDateSlashRe.MatchString(raw) || absDateISORe.MatchString(raw) || absDateTRRe.MatchString(raw) || absHourRangeRe.MatchString(raw)
+	_, ok := extractAbsoluteWindows(raw, time.Now(), time.UTC)
+	return ok
+}
+
+var absUnitWordRe = regexp.MustCompile(`(?i)^(saat|sa|dakika|dk|gün|gun|g|min|minute|minutes|hour|hours|day|days|sn|saniye|sec|seconds)`)
+
+// hourRangeAccepted — v0.10.443: "son 1-2 saatte", "5-10 dakika", "3-4
+// istek" gibi çıplak sayı çiftleri mutlak saat penceresi DEĞİL. Kabul:
+// tarih var, ya da dakika yazımı var (04:00-08:30), ya da önünde saat/at
+// sözcüğü, ya da iki taraf da iki haneli (04-08, 22-02) — ve arkasında
+// birim sözcüğü yok.
+func hourRangeAccepted(rest string, m []string, loc []int, hasDate bool) bool {
+	after := strings.TrimLeft(rest[loc[1]:], " ,")
+	if absUnitWordRe.MatchString(after) {
+		return false
+	}
+	if hasDate || m[2] != "" || m[4] != "" {
+		return true
+	}
+	before := strings.ToLower(strings.TrimSpace(rest[:loc[0]]))
+	if strings.HasSuffix(before, "saat") || strings.HasSuffix(before, " at") || before == "at" || strings.HasSuffix(before, "between") {
+		return true
+	}
+	return len(m[1]) == 2 && len(m[3]) == 2
 }
 
 type absDate struct {
@@ -102,7 +126,11 @@ func absDates(raw string, now time.Time, loc *time.Location) (dates []absDate, s
 func extractAbsoluteWindows(raw string, now time.Time, loc *time.Location) ([]absWindow, bool) {
 	dates, rest := absDates(raw, now, loc)
 	var ranges [][4]int // h1,m1,h2,m2
-	for _, m := range absHourRangeRe.FindAllStringSubmatch(rest, -1) {
+	locs := absHourRangeRe.FindAllStringSubmatchIndex(rest, -1)
+	for i, m := range absHourRangeRe.FindAllStringSubmatch(rest, -1) {
+		if !hourRangeAccepted(rest, m, locs[i], len(dates) > 0) {
+			continue
+		}
 		h1, _ := strconv.Atoi(m[1])
 		h2, _ := strconv.Atoi(m[3])
 		if h1 > 24 || h2 > 24 {

@@ -10,6 +10,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
+	"github.com/cilcenk/coremetry/internal/rca"
 )
 
 // ProblemExplainer is a background goroutine that fills the
@@ -217,6 +218,10 @@ func (e *ProblemExplainer) explain(ctx context.Context, p chstore.Problem, bundl
 		Surface:   "problem-auto-explain",
 		UserID:    "system",
 		UserEmail: "",
+		// v0.10.421 (E6) — sayaç; ⚠ satırını shieldNarrative ayrıca ekler.
+		Shield: func(prompt, answer string) uint8 {
+			return rca.CountUnknownEntities(rca.LowerKnownSet(p.Service), prompt, answer)
+		},
 	})
 	return e.copilot.Explain(ctx, copilot.SystemPromptProblem(), buildProblemPrompt(p, bundle, hyp))
 }

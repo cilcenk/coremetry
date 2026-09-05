@@ -248,7 +248,11 @@ type AIStats struct {
 	// yalnız genişletilmiş kolonlar varken dolar (AICallsExtended).
 	ByErrorClass []AIErrorClassStat `json:"byErrorClass,omitempty"`
 	AvgTTFTMs    float64            `json:"avgTtftMs,omitempty"`
-	Extended     bool               `json:"extended"`
+	// v0.10.421 (E6) — kalkan isabeti: en az bir uydurma ad taşıyan çağrı
+	// sayısı ve toplam ad sayısı (yalnız genişletilmiş kolonlar varken).
+	ShieldHitCalls uint64 `json:"shieldHitCalls,omitempty"`
+	ShieldHits     uint64 `json:"shieldHits,omitempty"`
+	Extended       bool   `json:"extended"`
 }
 
 type AISurfaceStat struct {
@@ -423,6 +427,15 @@ func (s *Store) ComputeAIStats(ctx context.Context, from, to time.Time) (*AIStat
 			  AND created_at <  toDateTime64(?, 9, 'UTC')`,
 			chDateTime64Arg(from), chDateTime64Arg(to)).Scan(&ttft); err == nil {
 			st.AvgTTFTMs = ttft
+		}
+		// v0.10.421 (E6) — kalkan isabeti.
+		if err := s.conn.QueryRow(ctx, `
+			SELECT toUInt64(countIf(shield_hits > 0)), toUInt64(sum(shield_hits))
+			FROM ai_calls
+			WHERE created_at >= toDateTime64(?, 9, 'UTC')
+			  AND created_at <  toDateTime64(?, 9, 'UTC')`,
+			chDateTime64Arg(from), chDateTime64Arg(to)).Scan(&st.ShieldHitCalls, &st.ShieldHits); err != nil {
+			log.Printf("[ai_calls] kalkan isabeti okunamadı: %v", err)
 		}
 	}
 	return &st, nil

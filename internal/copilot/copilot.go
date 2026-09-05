@@ -260,6 +260,14 @@ type CallMeta struct {
 	// Explain span'ına yazar. Recorder yokken de çalışır — span, ai_calls
 	// tablosundan bağımsız bir gözlemlenebilirlik yolu.
 	Observe func(Usage)
+	// Shield (v0.10.421, CoSRE denetimi E6) — cevap kalkanı SAYACI: çağrı
+	// bitince SENKRON çağrılır (kayıt goroutine'inden önce), dönen sayı
+	// ai_calls.shield_hits'e yazılır. Tanımı çağıran verir (api/anomaly:
+	// rca.CountUnknownEntities); copilot alan bilgisi taşımaz. nil = 0.
+	// Yalnız TAM prompt'un bilindiği Explain yolunda (recordNarration)
+	// çağrılır; sohbet döngüsü (RecordUsage) yalnız son kullanıcı metnini
+	// görür — orada sayım fazla sayardı, 0 kalır. Hata cevabında çağrılmaz.
+	Shield func(prompt, answer string) uint8
 }
 
 // Usage — bir LLM çağrısının ölçülmüş maliyeti (CallMeta.Observe girdisi).
@@ -820,6 +828,9 @@ func (s *Service) recordNarration(ctx context.Context, started time.Time,
 	rec.ProfileID = s.profileID(ctx)
 	if st := streamStatsFromContext(ctx); st != nil {
 		rec.TTFTMs, rec.StreamFallback = st.ttftMs(), st.fallbackSet()
+	}
+	if meta.Shield != nil && err == nil {
+		rec.ShieldHits = meta.Shield(fullPrompt, out) // v0.10.421 (E6)
 	}
 	// Fire-and-forget recording so the user gets their response
 	// the moment the LLM returns — CH ingest can take 5-20ms.

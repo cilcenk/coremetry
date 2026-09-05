@@ -2262,6 +2262,9 @@ export interface AIStats {
   /** v0.10.409 — hata sınıfı kırılımı + TTFT; yalnız genişletilmiş kolonlar varken (extended). */
   byErrorClass?: Array<{ class: string; calls: number }>;
   avgTtftMs?: number;
+  /** v0.10.421 — kalkan isabeti: en az bir uydurma ad taşıyan çağrı sayısı + toplam ad. */
+  shieldHitCalls?: number;
+  shieldHits?: number;
   extended: boolean;
 }
 

@@ -102,3 +102,21 @@ func AddShownTokens(known map[string]bool, texts ...string) {
 		}
 	}
 }
+
+// CountUnknownEntities — v0.10.421 (CoSRE denetimi E6): ai_calls.shield_hits
+// üreticisi. Tanım TEK (E6/E7 aynı sayaç): cevapta geçen, modele
+// GÖSTERİLMEMİŞ ve bilinen kümede olmayan servis-biçimli ad sayısı;
+// UInt8'e kıstırılır. Saf; kalkanların (shieldNarrative, checkRCAEntities)
+// aynı makinesi. `known` mutasyona uğrar (gösterilen jetonlar eklenir) —
+// çağıran taze küme verir.
+func CountUnknownEntities(known map[string]bool, shownPrompt, answer string) uint8 {
+	if known == nil {
+		known = map[string]bool{}
+	}
+	AddShownTokens(known, shownPrompt)
+	n := len(ScanUnknownEntities(known, answer))
+	if n > 255 {
+		return 255
+	}
+	return uint8(n)
+}

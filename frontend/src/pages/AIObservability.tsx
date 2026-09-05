@@ -169,6 +169,14 @@ export default function AIObservabilityPage() {
               <KPI label="Output tokens" value={fmtNum(stats.outputTokens)} />
               <KPI label="Est cost" value={totalCostLabel} />
               <KPI label="Bütçe (24 sa)" value={bv.text} cls={budgetCls(bv)} />
+              {/* v0.10.421 (E6) — uydurma oranı; v0.10.409'un ilk-token karosu da burada. */}
+              {stats.extended && (
+                <KPI label="Kalkan isabeti" value={`${fmtNum(stats.shieldHitCalls ?? 0)} çağrı · ${fmtNum(stats.shieldHits ?? 0)} ad`}
+                  cls={(stats.shieldHitCalls ?? 0) > 0 ? 'warn' : 'ok'} />
+              )}
+              {stats.extended && (stats.avgTtftMs ?? 0) > 0 && (
+                <KPI label="Ort. ilk token" value={`${(stats.avgTtftMs ?? 0).toFixed(0)} ms`} />
+              )}
               <KPI label="Users" value={fmtNum(stats.distinctUsers)} />
             </div>
 

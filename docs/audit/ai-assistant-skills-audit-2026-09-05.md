@@ -28,7 +28,7 @@ Her bulgu dosya:satır kanıtlı; uygulamadan önce ±10 satır bağlam okunur.
 | E3 | **GEMİDE v0.10.400** — Model başına kalite/gecikme/hata yok — çok-model seçici ölçülemiyor | `ai_calls.go:202-208` | aynı GROUP BY'a `countIf(error)`, `avg/p95(duration_ms)`, 👍 oranı | ~1 saat |
 | E4 | **GEMİDE v0.10.410** — Güven kalibre edilmiyor (`0.5*breadth+0.5*TopScore` elle) | `correlator/hypothesis.go:536`, `rca_verdict_store.go:275` | 3 güven kovası × 👍/👎 reliability satırı | ~2 saat |
 | E5 | 👎 etikete dönüşüyor ama regresyon kümesine dönüşmüyor | `chstore/ai_feedback.go` `ListNegativeFeedbackCalls` yalnız panelde | "vakaya çevir" + `GET /api/ai/evalset/export` → E1 fixture | ~2 saat |
-| E6 | Uydurma oranı sayılmıyor — kalkan var, sayaç yok (20 prose yüzeyinde kalkan da yok) | `anomaly/narrative_shield.go:29`, `problem_explainer.go:196` | `shieldNarrative` `unknown []string` → `ai_calls.shield_hits` | ~3 saat |
+| E6 | **GEMİDE v0.10.421** — Uydurma oranı sayılmıyor — kalkan var, sayaç yok (20 prose yüzeyinde kalkan da yok) | `anomaly/narrative_shield.go:29`, `problem_explainer.go:196` | `shieldNarrative` `unknown []string` → `ai_calls.shield_hits` | ~3 saat |
 | E7 | Altın küme metne pinli, davranışa değil | `prompt_antifabrication_test.go:63`, `prompt_language_test.go:135` | E1 koşumunda prompt başına davranış vakası | E1 ile |
 | E8 | **GEMİDE v0.10.411** — Maliyet/gecikme bütçesi yok; `SamplePromptCap 4 KiB` replay sadakatini kırpıyor | `pages/AIObservability.tsx:133`, `api/ai_observability.go:23`, `ai_calls.go:43` | yüzey p95 + `ai.budget` eşiği → rozet | ~1-2 saat |
 
@@ -57,7 +57,7 @@ Her bulgu dosya:satır kanıtlı; uygulamadan önce ±10 satır bağlam okunur.
 - Deterministik kalkanlar (LLM self-critique yerine sunucu doğrulaması); 👍 → `ConfirmedRCASignatures`; 20 yüzeyin hepsi `ai_calls`'a tek satır.
 - MCP şema kalitesi: 36 tool, 98/98 property açıklamalı, `rangeWindow` zorlaması testli, 5 sınıflık hata sözleşmesi telde ve sohbette aynı.
 
-## PLAN (onaylandı 2026-09-05; Faz 0 GEMİDE v0.10.397-402; Faz 1 GEMİDE v0.10.403-408; Faz 2 dilim 1 (E2+O3+O4) GEMİDE v0.10.409; E4 GEMİDE v0.10.410; E8 GEMİDE v0.10.411)
+## PLAN (onaylandı 2026-09-05; Faz 0 GEMİDE v0.10.397-402; Faz 1 GEMİDE v0.10.403-408; Faz 2 dilim 1 (E2+O3+O4) GEMİDE v0.10.409; E4 GEMİDE v0.10.410; E8 GEMİDE v0.10.411; E6 GEMİDE v0.10.421 — Faz 2 TAMAM)
 
 | Faz | Kapsam | Toplam | Ne zaman görünür |
 |---|---|---|---|

@@ -18,6 +18,7 @@
 // only ever runs inside a useMemo([range]) (the v0.5.184 trap).
 
 import { useEffect, useMemo, useRef, useState, Suspense, Fragment } from 'react';
+import { rowActivation } from '@/lib/a11y';
 import { attrKeyWindowParams } from '@/lib/attrKeyWindow';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
@@ -1653,7 +1654,7 @@ function AggregateTable({ agg, groupBy, dt, onDrill }: {
               const drillable = a.withRawAvailable ?? a.traceCount;
               const missingRaw = a.traceCount - drillable;
               return (
-                <tr key={`${a.groupKey}|${a.groupExtra}`} onClick={() => onDrill(a)} style={{ cursor: 'pointer' }}>
+                <tr key={`${a.groupKey}|${a.groupExtra}`} {...rowActivation(() => onDrill(a))} style={{ cursor: 'pointer' }}>
                   <td><b>{a.groupKey || '—'}</b></td>
                   {groupBy !== 'service' && <td><SvcBadge name={a.groupExtra ?? ''} /></td>}
                   <td className="mono" style={{ textAlign: 'right' }}>

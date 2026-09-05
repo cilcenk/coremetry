@@ -37,7 +37,7 @@ Her bulgu dosya:satır kanıtlı; uygulamadan önce ±10 satır bağlam okunur.
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
 | O1 | **GEMİDE v0.10.397** — Sohbet satırlarının `duration_ms`'i 0 → /ai gecikme KPI'ları düşük | `copilot/chat.go:90` (ikizi `copilot.go:795` yazıyor) | `t0` + `RecordUsage` süre parametresi | ~30 dk |
-| O2 | Ajan döngüsünün araç zinciri hiçbir yere düşmüyor (yalnız SSE); `ai.explain` span'i 4 sarmalayıcıda | `api/copilot_chat.go:597-614`, `ai_observability.go:97-233` | `ai.chat` / `ai.chat.turn` / `ai.tool` span'leri (mcpclient deseni) | ~yarım gün |
+| O2 | **GEMİDE v0.10.425** — Ajan döngüsünün araç zinciri hiçbir yere düşmüyor (yalnız SSE); `ai.explain` span'i 4 sarmalayıcıda | `api/copilot_chat.go:597-614`, `ai_observability.go:97-233` | `ai.chat` / `ai.chat.turn` / `ai.tool` span'leri (mcpclient deseni) | ~yarım gün |
 | O3 | **GEMİDE v0.10.409** — Hata sınıfı ve refusal boyut değil (`status` + serbest metin) | `chstore/store.go:1687`, `ai/provider/anthropic.go:139` | `error_class LowCardinality` (+ `prompt_hash` aynı ALTER; dağıtık-güvenli, iki-boot) | ~yarım gün |
 | O4 | **GEMİDE v0.10.409** — TTFT ölçülmüyor; akış→buffered geri düşüşü sayılmıyor | `copilot/stream.go:28,110` | ilk delta damgası → `ttft_ms`, `stream_fallback` | ~yarım gün |
 | O5 | **GEMİDE v0.10.400** — Model başına gecikme/hata oranı yok (UI: Provider/Calls/tok/cost) | `ai_calls.go:292`, `AIObservability.tsx:190` | GROUP BY'a `avg/p95`, `countIf(error)` + iki kolon (E3 ile aynı) | ~20 dk |
@@ -57,7 +57,7 @@ Her bulgu dosya:satır kanıtlı; uygulamadan önce ±10 satır bağlam okunur.
 - Deterministik kalkanlar (LLM self-critique yerine sunucu doğrulaması); 👍 → `ConfirmedRCASignatures`; 20 yüzeyin hepsi `ai_calls`'a tek satır.
 - MCP şema kalitesi: 36 tool, 98/98 property açıklamalı, `rangeWindow` zorlaması testli, 5 sınıflık hata sözleşmesi telde ve sohbette aynı.
 
-## PLAN (onaylandı 2026-09-05; Faz 0 GEMİDE v0.10.397-402; Faz 1 GEMİDE v0.10.403-408; Faz 2 dilim 1 (E2+O3+O4) GEMİDE v0.10.409; E4 GEMİDE v0.10.410; E8 GEMİDE v0.10.411; E6 GEMİDE v0.10.421 — Faz 2 TAMAM; Faz 3: E1+E7 GEMİDE v0.10.422, E5 GEMİDE v0.10.423, RCA replay v0.10.424 — Faz 3 TAMAM)
+## PLAN (onaylandı 2026-09-05; Faz 0 GEMİDE v0.10.397-402; Faz 1 GEMİDE v0.10.403-408; Faz 2 dilim 1 (E2+O3+O4) GEMİDE v0.10.409; E4 GEMİDE v0.10.410; E8 GEMİDE v0.10.411; E6 GEMİDE v0.10.421 — Faz 2 TAMAM; Faz 3: E1+E7 GEMİDE v0.10.422, E5 GEMİDE v0.10.423, RCA replay v0.10.424 — Faz 3 TAMAM; Faz 4: O2 GEMİDE v0.10.425)
 
 | Faz | Kapsam | Toplam | Ne zaman görünür |
 |---|---|---|---|

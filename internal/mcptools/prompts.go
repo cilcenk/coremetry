@@ -210,14 +210,18 @@ func registerPrompts(srv *mcp.Server, d Deps) {
 		Description: "Coremetry SRE: explain a deploy's RED-metric impact — before/after windows around the named deploy time, anchored to the named service. Returns a 'clean / minor regression / rollback candidate' verdict + the biggest delta.",
 		Arguments: []mcp.PromptArgument{
 			{Name: "service", Description: "Service that was deployed.", Required: true},
-			{Name: "deploy_time_ms", Description: "Deploy time as ms since epoch.", Required: true},
+			// v0.10.408 (CoSRE denetimi M5) — modelden epoch matematiği
+			// istemek /mcp-tools anti-pattern'i; list_deploys zaten RFC3339
+			// veriyor. ISO tercih edilir, ms geriye-uyum için kalır.
+			{Name: "deploy_time_iso8601", Description: "Deploy time as RFC3339 (e.g. 2026-09-05T08:16:00Z) — preferred; take it from list_deploys.", Required: false},
+			{Name: "deploy_time_ms", Description: "Deploy time as ms since epoch (legacy; use deploy_time_iso8601).", Required: false},
 			{Name: "window_s", Description: "Half-window seconds before+after deploy. Default 600 (10min).", Required: false},
 			{Name: "version", Description: "Optional version label.", Required: false},
 		},
 		Renderer: func(ctx context.Context, args map[string]string) ([]mcp.PromptMessage, error) {
-			deployMs, err := parseInt64(args["deploy_time_ms"])
+			deployT, err := parseDeployTime(args, nowOrAnchor(ctx)) // v0.10.408 — çıpa (anchor_test) korunur
 			if err != nil {
-				return nil, fmt.Errorf("deploy_time_ms: %w", err)
+				return nil, err
 			}
 			win := 600
 			if s := args["window_s"]; s != "" {
@@ -228,7 +232,6 @@ func registerPrompts(srv *mcp.Server, d Deps) {
 			if win > 6*3600 {
 				win = 6 * 3600
 			}
-			deployT := time.UnixMilli(deployMs)
 			before := deployT.Add(-time.Duration(win) * time.Second)
 			after := deployT.Add(time.Duration(win) * time.Second)
 			befRows, err := d.Store.GetServicesFiltered(ctx, 0, before, deployT, args["service"], "rps", "desc", 1, 0)
@@ -392,4 +395,38 @@ func pair(system, user string) []mcp.PromptMessage {
 		{Role: "system", Content: mcp.PromptContent{Type: "text", Text: system}},
 		{Role: "user", Content: mcp.PromptContent{Type: "text", Text: user}},
 	}
+}
+
+// deployTimeSanity — deploy zamanı makullük penceresi (v0.10.408): saklama
+// süresinin çok gerisinde ya da gelecekteki bir damga modelin epoch
+// matematiği hatasıdır; "boş before/after" yerine hata döner.
+const (
+	deployTimePastMax   = 90 * 24 * time.Hour
+	deployTimeFutureMax = time.Hour
+)
+
+// parseDeployTime — deploy_time_iso8601 (RFC3339) tercih, deploy_time_ms
+// geriye uyum; ikisi de yoksa ya da pencere dışıysa hata.
+func parseDeployTime(args map[string]string, now time.Time) (time.Time, error) {
+	var t time.Time
+	switch {
+	case args["deploy_time_iso8601"] != "":
+		p, err := time.Parse(time.RFC3339, args["deploy_time_iso8601"])
+		if err != nil {
+			return time.Time{}, fmt.Errorf("deploy_time_iso8601: RFC3339 bekleniyor (örn. 2026-09-05T08:16:00Z): %w", err)
+		}
+		t = p
+	case args["deploy_time_ms"] != "":
+		ms, err := parseInt64(args["deploy_time_ms"])
+		if err != nil {
+			return time.Time{}, fmt.Errorf("deploy_time_ms: %w", err)
+		}
+		t = time.UnixMilli(ms)
+	default:
+		return time.Time{}, fmt.Errorf("deploy_time_iso8601 gerekli (list_deploys'tan alın)")
+	}
+	if t.Before(now.Add(-deployTimePastMax)) || t.After(now.Add(deployTimeFutureMax)) {
+		return time.Time{}, fmt.Errorf("deploy zamanı makul pencere dışında (%s): son 90 gün içinde ve gelecekte olmamalı — list_deploys'tan RFC3339 alın", t.UTC().Format(time.RFC3339))
+	}
+	return t, nil
 }

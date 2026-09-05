@@ -47,6 +47,38 @@ func TestDetectPeriod(t *testing.T) {
 	}
 }
 
+// v0.10.444 — boşluk doldurma: 30 dk'da bir ateşlenen cron, GROUP BY'dan
+// yalnız 48 kova olarak gelir (hepsi ≈N → sabit seri, periyot yok);
+// ızgaraya oturtulunca 288 nokta ve 1800 sn periyot.
+func TestFillSeriesRevealsSparseCron(t *testing.T) {
+	from := time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)
+	to := from.Add(24 * time.Hour)
+	var ts []int64
+	var vs []float64
+	for i := 0; i < 48; i++ {
+		ts = append(ts, from.Add(time.Duration(i)*30*time.Minute).UnixNano())
+		vs = append(vs, 12)
+	}
+	if r := detectPeriod(vs, 300); r.OK {
+		t.Fatalf("boşluksuz seri sabit görünmeli (hata sınıfı): %+v", r)
+	}
+	ft, fv := fillSeries(ts, vs, 300, from, to)
+	if len(ft) != 288 || len(fv) != 288 || fv[0] != 12 || fv[1] != 0 || fv[6] != 12 {
+		t.Fatalf("ızgara: n=%d v0=%v v1=%v v6=%v", len(ft), fv[0], fv[1], fv[6])
+	}
+	if r := detectPeriod(fv, 300); !r.OK || r.PeriodS != 1800 {
+		t.Fatalf("30 dk cron bulunmalı: %+v", r)
+	}
+	// Hizasız damgalar aynı kovaya toplanır; pencere dışı düşer; boş girdi aynen.
+	ft2, fv2 := fillSeries([]int64{from.Add(10 * time.Second).UnixNano(), from.Add(20 * time.Second).UnixNano(), to.Add(time.Hour).UnixNano()}, []float64{1, 2, 99}, 300, from, to)
+	if len(ft2) != 288 || fv2[0] != 3 {
+		t.Fatalf("toplama/pencere dışı: %v", fv2[:2])
+	}
+	if t3, v3 := fillSeries(nil, nil, 0, from, to); t3 != nil || v3 != nil {
+		t.Fatal("adım 0 → aynen")
+	}
+}
+
 func TestRouteCallPeriod(t *testing.T) {
 	services := []string{"checkout-service", "payment-service"}
 	r := routeGuidedIntent("checkout-service'den payment-service'e atılan isteklerde her 5 dk gibi bir periyot var mı", services, nil, nil, "")

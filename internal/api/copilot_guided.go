@@ -3441,15 +3441,19 @@ func (s *Server) guidedWindowCompareBundle(ctx context.Context, emit func(string
 	loc := route.Windows[0].From.Location()
 	reds := make([]aiRED, 0, 2)
 	for i, w := range route.Windows {
-		n := emitGuidedStep(emit, "service_context", fmt.Sprintf(`{"service":%q,"window":%q}`, route.Service, absWindowLabel(w, loc)))
-		cx := s.buildServiceContext(ctx, route.Service, w.From, w.To)
-		if cx == nil {
-			err := fmt.Errorf("servis bağlamı kurulamadı")
-			emitGuidedStepResult(emit, n, "service_context", "", err)
+		// v0.10.444 — yalnız RED (service_summary_5m): buildServiceContext
+		// pencere başına 8 okuma yapıyordu (exception ham tarama, komşu
+		// örnekleme, deploy…) ve 7'si atılıyordu — 24 saatlik iki pencere
+		// için iki tam-gün ham spans taraması.
+		n := emitGuidedStep(emit, "service_red", fmt.Sprintf(`{"service":%q,"window":%q}`, route.Service, absWindowLabel(w, loc)))
+		rows, err := s.store.GetServiceSummary5m(ctx, route.Service, w.From, w.To)
+		if err != nil {
+			emitGuidedStepResult(emit, n, "service_red", "", err)
 			return "", "", err
 		}
-		reds = append(reds, cx.Current)
-		emitGuidedStepResult(emit, n, "service_context", fmt.Sprintf("pencere %d: %d span", i+1, cx.Current.Spans), nil)
+		red := aggRED(rows, w.To.Sub(w.From).Seconds())
+		reds = append(reds, red)
+		emitGuidedStepResult(emit, n, "service_red", fmt.Sprintf("pencere %d: %d span", i+1, red.Spans), nil)
 	}
 	src := fmt.Sprintf("service_summary_5m (iki pencere: %s ↔ %s, %s)", absWindowLabel(route.Windows[0], loc), absWindowLabel(route.Windows[1], loc), loc.String())
 	return renderWindowCompareTR(route.Service, route.Windows, reds, loc), src, nil

@@ -46,7 +46,17 @@ func chatLocation(tzOffsetMin int) *time.Location {
 	if tzOffsetMin > 14*60 || tzOffsetMin < -12*60 {
 		return time.UTC
 	}
-	return time.FixedZone(fmt.Sprintf("UTC%+d", tzOffsetMin/60), tzOffsetMin*60)
+	// v0.10.444 — yarım saatlik ofsetler (+5:30, +5:45) dakikayla etiketlenir.
+	sign := "+"
+	abs := tzOffsetMin
+	if abs < 0 {
+		sign, abs = "-", -abs
+	}
+	name := fmt.Sprintf("UTC%s%d", sign, abs/60)
+	if abs%60 != 0 {
+		name = fmt.Sprintf("UTC%s%d:%02d", sign, abs/60, abs%60)
+	}
+	return time.FixedZone(name, tzOffsetMin*60)
 }
 
 // looksLikeAbsoluteWindow — kapı (kılavuz sinyal kapısına ek): gerçekten

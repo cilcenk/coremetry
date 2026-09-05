@@ -543,6 +543,15 @@ function NegativeFeedbackPanel() {
       <div className="ov-card-h">
         <h3>👎 alan cevaplar</h3>
         <span className="ov-sub">son 7 gün — yeni guided-intent adayları buradan çıkar</span>
+        {/* v0.10.423 (CoSRE denetimi E5) — evalset vakası olarak indir;
+            prompt gövdeleri sistemi terk eder (audit'li), repoya ELLE alınır. */}
+        {rows && rows.length > 0 && (
+          <Button variant="secondary" size="sm" style={{ marginLeft: 'auto' }}
+            onClick={() => { api.aiEvalsetExport().catch(() => { /* hata: indirme olmaz, sayfa bozulmaz */ }); }}
+            title="Bu 👎 satırlarını coremetry.evalset/1 JSON'u olarak indir (internal/copilot/evalset/ için ham malzeme)">
+            ↓ Evalset (JSON)
+          </Button>
+        )}
       </div>
       <div className="ov-card-b">
         {rows === undefined && <Spinner />}

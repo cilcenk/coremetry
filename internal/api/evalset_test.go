@@ -72,8 +72,9 @@ func TestEvalsetReplay(t *testing.T) {
 				ctx = copilot.WithJSONSchema(ctx, "chat-intent", intentClassifySchema())
 			}
 		}
+		sys, user := evalCaseInput(c, system) // v0.10.423 — export vakaları ham prompt taşır
 		t0 := time.Now()
-		answer, err := svc.Explain(ctx, system, c.User)
+		answer, err := svc.Explain(ctx, sys, user)
 		lat := time.Since(t0).Milliseconds()
 		fails, unknown := scoreEvalCase(c, system, answer, err)
 		okS := "ok"

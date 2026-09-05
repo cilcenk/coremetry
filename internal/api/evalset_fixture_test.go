@@ -36,12 +36,24 @@ type evalExpect struct {
 }
 
 type evalCase struct {
-	ID      string     `json:"id"`
-	Surface string     `json:"surface"`
-	Why     string     `json:"why"`
-	User    string     `json:"user"`
-	Expect  evalExpect `json:"expect"`
-	file    string
+	ID      string `json:"id"`
+	Surface string `json:"surface"`
+	Why     string `json:"why"`
+	User    string `json:"user"`
+	// Prompt — v0.10.423 (E5 export): kayıtlı örnek (sistem+kullanıcı
+	// birleşik). Doluysa koşucu sistem promptunu BOŞ gönderir, prompt'u
+	// kullanıcı olarak yollar; user ile birlikte verilmez.
+	Prompt string     `json:"prompt,omitempty"`
+	Expect evalExpect `json:"expect"`
+	file   string
+}
+
+// evalCaseInput — koşucu ve skorlayıcı için (system, user) çifti.
+func evalCaseInput(c evalCase, system string) (string, string) {
+	if c.Prompt != "" {
+		return "", c.Prompt
+	}
+	return system, c.User
 }
 
 type evalFile struct {
@@ -151,7 +163,8 @@ func scoreEvalCase(c evalCase, system, answer string, err error) (fails []string
 			fails = append(fails, "forbidden: "+m)
 		}
 	}
-	unknown = int(rca.CountUnknownEntities(rca.LowerKnownSet(c.Expect.KnownEntities...), system+"\n"+c.User, answer))
+	sys, user := evalCaseInput(c, system)
+	unknown = int(rca.CountUnknownEntities(rca.LowerKnownSet(c.Expect.KnownEntities...), sys+"\n"+user, answer))
 	if c.Expect.MaxUnknownEntities != nil && unknown > *c.Expect.MaxUnknownEntities {
 		fails = append(fails, fmt.Sprintf("unknown entities %d > %d", unknown, *c.Expect.MaxUnknownEntities))
 	}
@@ -185,8 +198,11 @@ func TestEvalsetFixturesValid(t *testing.T) {
 		if _, ok := evalSystemPrompt(c.Surface); !ok {
 			t.Errorf("%s/%s: surface %q çözülemiyor", c.file, c.ID, c.Surface)
 		}
-		if strings.TrimSpace(c.Why) == "" || strings.TrimSpace(c.User) == "" {
-			t.Errorf("%s/%s: why ve user zorunlu", c.file, c.ID)
+		if strings.TrimSpace(c.Why) == "" || (strings.TrimSpace(c.User) == "" && strings.TrimSpace(c.Prompt) == "") {
+			t.Errorf("%s/%s: why ve (user | prompt) zorunlu", c.file, c.ID)
+		}
+		if c.User != "" && c.Prompt != "" {
+			t.Errorf("%s/%s: user ve prompt birlikte verilmez", c.file, c.ID)
 		}
 		e := c.Expect
 		if len(e.MustContain) == 0 && len(e.MustNotContain) == 0 && e.MaxUnknownEntities == nil && e.Intent == "" {

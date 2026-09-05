@@ -44,7 +44,7 @@ import { downsampleXY } from '@/lib/perf/lttb';
 // downsampleBuckets for the reducer semantics.
 
 interface Props {
-  values: number[];      // y-values; index = time bucket
+  values: (number | null)[]; // y-values; index = time bucket; null = veri yok (v0.10.385)
   width?: number;        // default 80
   height?: number;       // default 22
   color?: string;        // default --accent2
@@ -136,8 +136,11 @@ export function Sparkline({
   // (min-normalize bar büyüklük konusunda yalan söyler). Ölçek drawn
   // üzerinden — count-modunda merge toplamları raw max'ı aşabilir,
   // threshold çizgisi çizilen barlarla aynı eksende kalmalı.
-  const max = domainMax !== undefined ? domainMax : Math.max(...drawn);
-  const min = domainMax !== undefined || barMode ? 0 : Math.min(...drawn);
+  // v0.10.385 (dış skill denetimi A7) — null kova ölçeğe ve çizgiye
+  // girmez; çizgi delikte KESİLİR ("trafik yok" ile "%0" aynı görünmesin).
+  const finiteDrawn = drawn.filter((v): v is number => v != null && Number.isFinite(v));
+  const max = domainMax !== undefined ? domainMax : (finiteDrawn.length ? Math.max(...finiteDrawn) : 0);
+  const min = domainMax !== undefined || barMode ? 0 : (finiteDrawn.length ? Math.min(...finiteDrawn) : 0);
   // Avoid a divide-by-zero (perfectly flat series) by collapsing the
   // range to 1 — flat lines render along the bottom, which reads as
   // "stable, low" at a glance and matches the eye's expectation.
@@ -152,6 +155,7 @@ export function Sparkline({
   // would hide a fresh dip; we report the window's health, not just
   // the trailing edge. Bar modes colour per-bucket instead.
   const crossed = !barMode && threshold !== undefined && values.some(v => {
+    if (v == null) return false;
     switch (thresholdComparator) {
       case '>':  return v >  threshold;
       case '>=': return v >= threshold;
@@ -168,23 +172,35 @@ export function Sparkline({
   // tespiti de (crossed) ham seride: seyreltme bir spike'ı elerse
   // renk sinyali kaybolmamalı.
   const lineBudget = maxLinePointsForWidth(width);
-  let px: number[] = values.map((_, i) => i);
-  let py: number[] = values;
-  if (!barMode && lineBudget > 0 && values.length > lineBudget) {
-    const ds = downsampleXY(px, values, lineBudget);
+  // v0.10.385 — yalnız dolu kovalar çizilir; seyreltme yoksa ardışık
+  // olmayan indeksler arasında yol KESİLİR (delik = veri yok).
+  let px: number[] = [];
+  let py: number[] = [];
+  values.forEach((v, i) => { if (v != null && Number.isFinite(v)) { px.push(i); py.push(v); } });
+  const thinned = !barMode && lineBudget > 0 && py.length > lineBudget;
+  if (thinned) {
+    const ds = downsampleXY(px, py, lineBudget);
     px = ds.xs;
     py = ds.ys as number[];
   }
 
   // SVG path — line then close back along the baseline for the area fill.
-  const linePoints = py.map((v, i) => `${px[i] * step},${yOf(v)}`).join(' L ');
-  const linePath = `M ${linePoints}`;
-  const areaPath = `${linePath} L ${(values.length - 1) * step},${height} L 0,${height} Z`;
+  const segments: string[] = [];
+  let seg: string[] = [];
+  for (let k = 0; k < py.length; k++) {
+    if (!thinned && k > 0 && px[k] - px[k - 1] > 1 && seg.length) { segments.push('M ' + seg.join(' L ')); seg = []; }
+    seg.push(`${px[k] * step},${yOf(py[k])}`);
+  }
+  if (seg.length) segments.push('M ' + seg.join(' L '));
+  const linePath = segments.join(' ');
+  const lastX = px.length ? px[px.length - 1] * step : 0;
+  const firstX = px.length ? px[0] * step : 0;
+  const areaPath = `${linePath} L ${lastX},${height} L ${firstX},${height} Z`;
 
   // Bar-mode geometry (pure helper, vitest-pinned). Values past a
   // shared domainMax clamp to full height rather than overflowing.
   // Runs on the budget-capped `drawn` series (v0.9.207 review-fix).
-  const bars = barMode ? barGeometry(drawn, width, height, { domainMax, pad }) : [];
+  const bars = barMode ? barGeometry(drawn.map(v => v ?? 0), width, height, { domainMax, pad }) : [];
   const barFill = (v: number): { fill: string; opacity: number } => {
     if (mode === 'bars' && threshold !== undefined) {
       const cls = classifyThreshold(v, threshold);
@@ -207,8 +223,8 @@ export function Sparkline({
   // Inline delta chip — first non-zero to last non-zero.
   const deltaPct: number | null = (() => {
     if (!showDelta) return null;
-    const firstNZ = values.find(v => v !== 0);
-    const lastNZ = [...values].reverse().find(v => v !== 0);
+    const firstNZ = values.find(v => v != null && v !== 0);
+    const lastNZ = [...values].reverse().find(v => v != null && v !== 0);
     if (firstNZ == null || lastNZ == null || firstNZ === 0) return null;
     return ((lastNZ - firstNZ) / Math.abs(firstNZ)) * 100;
   })();
@@ -245,6 +261,14 @@ export function Sparkline({
     : title || 'sparkline';
 
   const lastIdx = values.length - 1;
+  // v0.10.385 — uç-nokta vurgusu son DOLU kovada (son kova null olabilir).
+  const lastFilled = (() => {
+    for (let i = lastIdx; i >= 0; i--) {
+      const v = values[i];
+      if (v != null && Number.isFinite(v)) return { i, v };
+    }
+    return null;
+  })();
   const wrapped = (
     <svg
       ref={svgRef}
@@ -297,12 +321,14 @@ export function Sparkline({
           {/* M4 — uç-nokta vurgusu: son bucket'ın dot'u "şu an nerede"
               sorusunu tablo satırında okutur. Hover aynı noktadaysa
               hover halkası üstte kalır. */}
-          <circle cx={lastIdx * step} cy={yOf(values[lastIdx])} r={2}
-            fill={stroke} />
+          {lastFilled != null && (
+            <circle cx={lastFilled.i * step} cy={yOf(lastFilled.v)} r={2}
+              fill={stroke} />
+          )}
         </>
       )}
-      {!barMode && hoverIdx != null && step > 0 && (
-        <circle cx={hoverIdx * step} cy={yOf(values[hoverIdx])} r={2}
+      {!barMode && hoverIdx != null && step > 0 && values[hoverIdx] != null && (
+        <circle cx={hoverIdx * step} cy={yOf(values[hoverIdx] as number)} r={2}
           fill={stroke} stroke="var(--bg)" strokeWidth={0.75} />
       )}
     </svg>

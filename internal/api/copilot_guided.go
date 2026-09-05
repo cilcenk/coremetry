@@ -74,6 +74,8 @@ const (
 	guidedTraceSearch  guidedIntent = "trace_search"
 	// v0.10.437 (D6) — iki mutlak pencerenin RED kıyası.
 	guidedWindowCompare guidedIntent = "window_compare"
+	// v0.10.438 (D3) — çağrı periyodu (A→B ya da tek servis).
+	guidedCallPeriod guidedIntent = "call_period"
 	// guidedFamilyHealth (v0.9.192) — a family-of-services ask:
 	// "mobile bff'lerde hangisinde hata var". No single service
 	// resolves, but the message's name-fragments (mobile + bff) match
@@ -431,7 +433,7 @@ func hasGuidedSignal(msg string) bool {
 		hasProblemSignal(toks) || hasHealthSignal(toks) ||
 		hasTeamSelfSignal(toks) || hasPodSignal(toks) ||
 		hasShiftSignal(msg, toks) || hasDBSignal(toks) || hasMessagingSignal(toks) ||
-		hasWhySignal(toks) ||
+		hasWhySignal(toks) || hasPeriodSignal(toks) || // v0.10.438 (D3)
 		// v0.9.537 — açık trace ID'si ya da "trace" kökü (prefix:
 		// Türkçe ekli hâlleri de yakalar — "tracei", "trace'in";
 		// ekrandaki trace'e bağlamdan gitmek için, ctxTrace çözümü
@@ -929,6 +931,34 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 	svc := extractServiceEntity(msg, services, envs)
 	env := extractEnvEntity(msg, envs)
 	team := extractTeamEntity(msg, teams)
+	// v0.10.438 (D3) — periyot sorusu: çift varsa A→B, yoksa tek servis;
+	// hiçbiri yoksa sor. D2 çift dalından ÖNCE (aynı cümle istek sözcüğü
+	// de taşır).
+	if hasPeriodSignal(toks) {
+		if fromFrag, toFrag, ok := splitPairFragments(raw); ok {
+			fromOpts, toOpts := resolvePairSide(fromFrag, services, envs), resolvePairSide(toFrag, services, envs)
+			switch {
+			case len(fromOpts) == 1 && len(toOpts) == 1:
+				return guidedRoute{Intent: guidedCallPeriod, Service: fromOpts[0], Env: env, PairFrom: fromOpts[0], PairTo: toOpts[0], PairToKind: "service"}
+			case len(fromOpts) == 1 && len(toOpts) == 0 && toFrag != "":
+				return guidedRoute{Intent: guidedCallPeriod, Service: fromOpts[0], Env: env, PairFrom: fromOpts[0], PairTo: toFrag, PairToKind: "node"}
+			case len(fromOpts) > 1:
+				return guidedRoute{Intent: guidedAskService, AskIntent: guidedCallPeriod, ServiceOptions: fromOpts, Env: env}
+			}
+		}
+		if svc != "" {
+			return guidedRoute{Intent: guidedCallPeriod, Service: svc, Env: env}
+		}
+		if opts := serviceCandidates(msg, services, envs, guidedServiceAskMax); len(opts) == 1 {
+			return guidedRoute{Intent: guidedCallPeriod, Service: opts[0], Env: env}
+		} else if len(opts) > 1 {
+			return guidedRoute{Intent: guidedAskService, AskIntent: guidedCallPeriod, ServiceOptions: opts, Env: env}
+		}
+		if ctxService != "" {
+			return guidedRoute{Intent: guidedCallPeriod, Service: ctxService, Env: env}
+		}
+		return guidedRoute{Intent: guidedAskService, AskIntent: guidedCallPeriod, Env: env}
+	}
 	// v0.10.436 (D2a) — "A'dan B'ye giden istekler": çift, aile/kıyas
 	// dallarından ÖNCE (iki ad + istek sözcüğü aileye düşmesin). Kaynak
 	// servis şart; hedef servis ya da dış düğüm parçası.
@@ -1529,6 +1559,8 @@ func (s *Server) runGuidedRoute(ctx context.Context, emit func(string, any), rou
 		evidence, sources, err = s.guidedTraceSearchBundle(ctx, emit, &route, from, to, rangeS)
 	case guidedWindowCompare: // v0.10.437 (D6)
 		evidence, sources, err = s.guidedWindowCompareBundle(ctx, emit, &route)
+	case guidedCallPeriod: // v0.10.438 (D3)
+		evidence, sources, err = s.guidedCallPeriodBundle(ctx, emit, &route, to)
 	case guidedMyServices:
 		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "health", &route, from, to, rangeS)
 	case guidedMyProblems:

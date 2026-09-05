@@ -97,6 +97,7 @@ var followUpFillable = map[guidedIntent]bool{
 	guidedLogField:     true, // v0.10.433 (D5)
 	guidedOpenPage:     true, // v0.10.434 (D7b)
 	guidedTraceSearch:  true, // v0.10.436 (D2b)
+	guidedCallPeriod:   true, // v0.10.438 (D3)
 }
 
 // guidedSuggestions (v0.9.411) — cevap sonrası konuya-duyarlı takip
@@ -173,6 +174,14 @@ func guidedSuggestions(route guidedRoute) []string {
 	case guidedWindowCompare: // v0.10.437 (D6)
 		if svc != "" {
 			return []string{svc + " sağlığı nasıl?", svc + " en yavaş trace'ler?", svc + " son deploy etkisi?"}
+		}
+		return []string{"Açık problemler?"}
+	case guidedCallPeriod: // v0.10.438 (D3)
+		if route.PairFrom != "" && route.PairTo != "" {
+			return []string{route.PairFrom + "'dan " + route.PairTo + "'ye giden istekler", route.PairFrom + " sağlığı nasıl?"}
+		}
+		if svc != "" {
+			return []string{svc + " sağlığı nasıl?", svc + " en yavaş trace'ler?"}
 		}
 		return []string{"Açık problemler?"}
 	case guidedFamilyHealth:
@@ -391,6 +400,19 @@ func guidedAnswerLinkTargets(route guidedRoute) []guidedAnswerLink {
 			href += "&service=" + svcQ
 		}
 		return []guidedAnswerLink{{Label: "Trace'ler (arama)", Href: href}}
+	case guidedCallPeriod: // v0.10.438 (D3)
+		a := route.PairFrom
+		if a == "" {
+			a = svc
+		}
+		if a == "" {
+			return nil
+		}
+		out := []guidedAnswerLink{{Label: "Servis haritası · " + a, Href: "/service-map?focus=" + url.QueryEscape(a)}, {Label: a + " · Overview", Href: "/service?name=" + url.QueryEscape(a)}}
+		if route.PairToKind == "service" && route.PairTo != "" {
+			out = append(out, guidedAnswerLink{Label: route.PairTo + " · Overview", Href: "/service?name=" + url.QueryEscape(route.PairTo)})
+		}
+		return out
 	case guidedWindowCompare: // v0.10.437 (D6) — her pencere kendi range'iyle (applyAll dokunmaz)
 		if svc == "" || len(route.Windows) == 0 {
 			return nil
@@ -598,6 +620,8 @@ func askServiceChipFor(route guidedRoute) []string {
 			out = append(out, opt+" servisinde içinde \""+route.SearchText+"\" geçen trace'ler")
 		case guidedWindowCompare: // v0.10.437 (D6) — çip pencere metnini aynen taşır
 			out = append(out, opt+" "+route.WindowText+" arası kıyas")
+		case guidedCallPeriod: // v0.10.438 (D3)
+			out = append(out, opt+" isteklerinde periyot var mı")
 		default:
 			out = append(out, askServiceChip(route.AskIntent, opt))
 		}

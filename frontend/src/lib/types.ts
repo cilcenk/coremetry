@@ -2275,6 +2275,8 @@ export interface AIStats {
 // NegativeFeedbackCall (v0.9.423) — 👎 madenciliği satırı: düşük
 // puanlı cevabın yüzeyi + soru/cevap örnekleri.
 export interface NegativeFeedbackCall {
+  /** v0.10.423 — satır kimliği (evalset export / vakaya çevir). */
+  exchangeId?: string;
   surface: string;
   createdAt: number; // unix ns
   userEmail?: string;

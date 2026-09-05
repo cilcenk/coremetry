@@ -52,3 +52,22 @@ func TestAICallsProbeTargetsInsertTable(t *testing.T) {
 		t.Fatal("probe `table = 'ai_calls'` yüklemini taşımalı")
 	}
 }
+
+// v0.10.423 — E5 nokta okuması da iki-boot sözleşmesine uyar: genişletilmiş
+// kolonlar yalnız bayrakla; SQL kolon sayısı == Scan hedefi sayısı.
+func TestAICallEvalSelectBranches(t *testing.T) {
+	base := aiCallEvalSelect(false)
+	ext := aiCallEvalSelect(true)
+	if strings.Contains(base, "prompt_version") || !strings.Contains(ext, "prompt_version, profile_id, error_class") {
+		t.Fatalf("dallar yanlış: base=%q ext=%q", base, ext)
+	}
+	for _, q := range []string{base, ext} {
+		if !strings.Contains(q, "WHERE exchange_id = ?") || !strings.Contains(q, "LIMIT 1") || !strings.Contains(q, "max_execution_time") {
+			t.Fatalf("nokta okuma sınırları eksik: %q", q)
+		}
+	}
+	inner := ext[len("SELECT "):strings.Index(ext, " FROM")]
+	if n := len(strings.Split(inner, ",")); n != 11 {
+		t.Fatalf("ext 11 kolon (8 + 3) olmalı, %d", n)
+	}
+}

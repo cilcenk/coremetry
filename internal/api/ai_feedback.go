@@ -143,7 +143,7 @@ func (s *Server) listNegativeAIFeedback(w http.ResponseWriter, r *http.Request) 
 			rangeS = int64(n)
 		}
 	}
-	key := fmt.Sprintf("ai:negfb:v1:range=%d", rangeS)
+	key := fmt.Sprintf("ai:negfb:v2:range=%d", rangeS) // v0.10.423 — satır exchangeId kazandı
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		to := time.Now()
 		from := to.Add(-time.Duration(rangeS) * time.Second)

@@ -118,11 +118,14 @@ func (s *Store) aiFeedbackBySurface(ctx context.Context, from, to time.Time) (ma
 
 // NegativeFeedbackCall — 👎 alan bir cevabın madencilik satırı (v0.9.423).
 type NegativeFeedbackCall struct {
-	Surface   string `json:"surface"`
-	CreatedAt int64  `json:"createdAt"` // unix ns
-	UserEmail string `json:"userEmail,omitempty"`
-	Prompt    string `json:"prompt"`
-	Response  string `json:"response,omitempty"`
+	// ExchangeID — v0.10.423 (E5): satırın kimliği; "vakaya çevir" ve
+	// evalset export bu kimlikle KAYNAKTAN okur (liste bayat olabilir).
+	ExchangeID string `json:"exchangeId"`
+	Surface    string `json:"surface"`
+	CreatedAt  int64  `json:"createdAt"` // unix ns
+	UserEmail  string `json:"userEmail,omitempty"`
+	Prompt     string `json:"prompt"`
+	Response   string `json:"response,omitempty"`
 	// Comment (v0.9.1193) — operatörün 👎'ye eklediği neden. Madenciliğin
 	// asıl sinyali: prompt neyin SORULDUĞUNU, yorum neyin EKSİK olduğunu
 	// söyler.
@@ -139,7 +142,7 @@ func (s *Store) ListNegativeFeedbackCalls(ctx context.Context, from, to time.Tim
 		limit = 100
 	}
 	rows, err := s.conn.Query(ctx, `
-		SELECT f.surface, toUnixTimestamp64Nano(f.created_at), f.user_email,
+		SELECT f.exchange_id, f.surface, toUnixTimestamp64Nano(f.created_at), f.user_email,
 		       c.prompt_sample, c.response_sample, f.comment
 		FROM ai_feedback AS f FINAL
 		LEFT JOIN ai_calls AS c ON c.exchange_id = f.exchange_id
@@ -154,7 +157,7 @@ func (s *Store) ListNegativeFeedbackCalls(ctx context.Context, from, to time.Tim
 	var out []NegativeFeedbackCall
 	for rows.Next() {
 		var r NegativeFeedbackCall
-		if err := rows.Scan(&r.Surface, &r.CreatedAt, &r.UserEmail, &r.Prompt, &r.Response, &r.Comment); err != nil {
+		if err := rows.Scan(&r.ExchangeID, &r.Surface, &r.CreatedAt, &r.UserEmail, &r.Prompt, &r.Response, &r.Comment); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

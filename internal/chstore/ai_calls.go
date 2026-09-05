@@ -502,3 +502,55 @@ func boolU8(b bool) uint8 {
 	}
 	return 0
 }
+
+// AICallEvalRow — v0.10.423 (CoSRE denetimi E5): bir 👎 satırının evalset
+// vakasına dönüşmesi için KAYNAKTAN okunan çağrı. Genişletilmiş kolonlar
+// (prompt_version/profile_id/error_class) yalnız probe gördüyse okunur —
+// iki-boot sözleşmesi (küme kipinde ilk boot'ta kolon yok).
+type AICallEvalRow struct {
+	Surface       string
+	Provider      string
+	Model         string
+	CreatedAt     time.Time
+	PromptChars   uint32
+	ResponseChars uint32
+	Prompt        string
+	Response      string
+	PromptVersion string
+	ProfileID     string
+	ErrorClass    string
+}
+
+// aiCallEvalSelect — saf: kolon listesi bayrağa göre (ai_calls_insert_test kardeşi).
+func aiCallEvalSelect(extended bool) string {
+	cols := "surface, provider, model, created_at, prompt_chars, response_chars, prompt_sample, response_sample"
+	if extended {
+		cols += ", prompt_version, profile_id, error_class"
+	}
+	return "SELECT " + cols + " FROM ai_calls WHERE exchange_id = ? ORDER BY created_at DESC LIMIT 1 SETTINGS max_execution_time = 5"
+}
+
+// AICallForEvalset — exchange kimliğiyle nokta okuma; yoksa nil, nil.
+func (s *Store) AICallForEvalset(ctx context.Context, exchangeID string) (*AICallEvalRow, error) {
+	if exchangeID == "" {
+		return nil, nil
+	}
+	ext := aiCallsExtended.Load()
+	rows, err := s.conn.Query(ctx, aiCallEvalSelect(ext), exchangeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	var r AICallEvalRow
+	dest := []any{&r.Surface, &r.Provider, &r.Model, &r.CreatedAt, &r.PromptChars, &r.ResponseChars, &r.Prompt, &r.Response}
+	if ext {
+		dest = append(dest, &r.PromptVersion, &r.ProfileID, &r.ErrorClass)
+	}
+	if err := rows.Scan(dest...); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}

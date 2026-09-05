@@ -1182,6 +1182,22 @@ export const api = {
   aiNegativeFeedback: (rangeS?: number) =>
     get<{ rows: import('./types').NegativeFeedbackCall[]; rangeS: number }>(
       `/api/ai/feedback/negative${rangeS ? `?rangeS=${rangeS}` : ''}`),
+  // v0.10.423 — 👎 → evalset (JSON ek dosya; sunucu dosya yazmaz, operatör
+  // indirir ve internal/copilot/evalset/ altına elle alır). exportConfig deseni.
+  aiEvalsetExport: async (rangeS?: number): Promise<void> => {
+    const r = await fetch(API_BASE + `/api/ai/evalset/export${rangeS ? `?rangeS=${rangeS}` : ''}`, { credentials: 'include' });
+    if (r.status === 401) { onUnauthorized?.(); throw new UnauthorizedError(); }
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    const blob = await r.blob();
+    let fname = 'coremetry-evalset.json';
+    const m = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') ?? '');
+    if (m) fname = m[1];
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fname;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
+  },
   aiRates: () =>
     get<Record<string, import('./types').AIRate>>(`/api/ai/rates`),
   putAIRates: (rates: Record<string, import('./types').AIRate>) =>

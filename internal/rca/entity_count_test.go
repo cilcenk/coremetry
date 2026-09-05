@@ -20,6 +20,9 @@ func TestCountUnknownEntities(t *testing.T) {
 		"teknik terim":       {nil, "", "error-rate ve root-cause yüksek", 0},
 		"aynı ad bir kez":    {nil, "", "ghost-a ghost-a ghost-b", 2},
 		"prompt gösterdiyse": {nil, "CHANNEL_CODE=internet-banking", "internet-banking kanalı", 0},
+		// v0.10.431 — genel tireli terimler ve yüzdelik aralıkları sayılmaz.
+		"teknik terimler 431": {nil, "", "rate-limiting devrede, p95-p99 farkı büyük, circuit-breaker açık, x-request-id yok", 0},
+		"aralık + uydurma":    {nil, "", "p50-p95-p99 sapması ghost-gateway kaynaklı", 1},
 	}
 	for name, c := range cases {
 		if got := CountUnknownEntities(LowerKnownSet(c.known...), c.prompt, c.answer); got != c.want {

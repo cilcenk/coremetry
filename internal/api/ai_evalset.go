@@ -10,7 +10,12 @@ package api
 // `prompt` (kayıtlı örnek sistem+kullanıcı birleşik, 4 KiB kırpık olabilir)
 // ve boş `expect` — 👎 vakası KÖTÜ cevabı negatif çapa, operatör yorumunu
 // `why` olarak taşır; "doğru cevabı" sunucu uyduramaz. provenance.truncated
-// true ise koşucu vakayı kırpık prompt'la puanlamaz (E8 SamplePromptCap).
+// true ise koşucu vakayı kırpık prompt'la puanlamaz (E8 SamplePromptCap;
+// evalCaseSkipReason, v0.10.431'de uygulandı).
+//
+// ?exchangeId= (v0.10.431): NOKTA okuma — pencere ve 200 satır tavanı
+// uygulanmaz; 👎 yoksa 404 (boş "cases: []" ile "hiç 👎 yok" ayırt
+// edilemiyordu).
 
 import (
 	"encoding/json"
@@ -152,10 +157,25 @@ func (s *Server) exportAIEvalset(w http.ResponseWriter, r *http.Request) {
 	}
 	to := time.Now()
 	from := to.Add(-time.Duration(rangeS) * time.Second)
-	rows, err := s.store.ListNegativeFeedbackCalls(r.Context(), from, to, 200)
-	if err != nil {
-		writeErr(w, err)
-		return
+	var rows []chstore.NegativeFeedbackCall
+	if only != "" {
+		row, err := s.store.NegativeFeedbackCallByExchange(r.Context(), only) // v0.10.431 nokta okuma
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if row == nil {
+			http.Error(w, "exchange has no thumbs-down feedback", http.StatusNotFound)
+			return
+		}
+		rows = []chstore.NegativeFeedbackCall{*row}
+	} else {
+		var err error
+		rows, err = s.store.ListNegativeFeedbackCalls(r.Context(), from, to, 200)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
 	}
 	out := evalsetExportPayload{
 		Schema: evalsetExportSchema, Source: "thumbs-down",
@@ -163,9 +183,6 @@ func (s *Server) exportAIEvalset(w http.ResponseWriter, r *http.Request) {
 		RangeS: rangeS, Cases: []evalsetExportCase{},
 	}
 	for _, fb := range rows {
-		if only != "" && fb.ExchangeID != only {
-			continue
-		}
 		call, err := s.store.AICallForEvalset(r.Context(), fb.ExchangeID)
 		if err != nil {
 			writeErr(w, err)

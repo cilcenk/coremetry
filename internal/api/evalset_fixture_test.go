@@ -57,7 +57,25 @@ type evalCase struct {
 	// katalog JSON'la elle kurulamaz).
 	Hypothesis json.RawMessage `json:"hypothesis,omitempty"`
 	Expect     evalExpect      `json:"expect"`
+	// Provenance — v0.10.431: export vakasının kaynağı; truncated=true
+	// (prompt_sample 4 KiB'de kırpıldı) ise koşucu vakayı PUANLAMAZ —
+	// kırpık prompt'la alınan cevap ne pass ne fail kanıtıdır. ai_evalset.go
+	// başlığı bunu v0.10.423'ten beri vaat ediyordu, koşucu okumuyordu.
+	Provenance *evalProvenance `json:"provenance,omitempty"`
 	file       string
+}
+
+type evalProvenance struct {
+	ExchangeID string `json:"exchangeId,omitempty"`
+	Truncated  bool   `json:"truncated"`
+}
+
+// evalCaseSkipReason — SAF: koşucunun atlama kararı (boş = koş).
+func evalCaseSkipReason(c evalCase) string {
+	if c.Provenance != nil && c.Provenance.Truncated {
+		return "provenance.truncated — kırpık prompt puanlanmaz"
+	}
+	return ""
 }
 
 // evalRCAInputs — hipotez → (katalog, rakipler, izinli varlıklar, kullanıcı
@@ -94,6 +112,13 @@ func scoreRCACase(c evalCase, h *chstore.RootCauseHypothesis, cat rcaEvidenceCat
 	cited := len(mv.RootCause.Evidence)
 	for _, st := range mv.CausalChain {
 		cited += len(st.Evidence)
+	}
+	// v0.10.431 — çürütme atıfları da paydada: applyRCAShieldsPure
+	// filterRefutationIDs'in reddettiklerini de RejectedEvidence'a yazar;
+	// payda yalnız destek atıflarını sayınca geçerli bir verdict katalog
+	// dışı tek bir refuted_by yüzünden 1.0 eşiğinin altına düşüyordu.
+	for _, rej := range mv.RejectedHypotheses {
+		cited += len(rej.RefutedBy)
 	}
 	sh := rcaShieldReport{Parsed: true}
 	v := applyRCAShieldsPure(h, cat, mv, &sh)
@@ -362,6 +387,22 @@ func TestScoreRCACase(t *testing.T) {
 	}
 	if fails, _ := scoreRCACase(c, h, cat, "Elbette, işte JSON: "+good); len(fails) != 0 {
 		t.Fatalf("gevezelik onarılmalı (salvage): %v", fails)
+	}
+	// v0.10.431 — çürütme atıfları paydada: 2 destek + 1 katalog dışı
+	// çürütme = 3 atıf, 1 red → 0.67 (eskiden (2-1)/2 = 0.5, aynı sonuç
+	// ama sebep yanlıştı); geçerli çürütme atfı oranı düşürmez.
+	half := 0.6
+	c2 := evalCase{ID: "r2", Surface: "RCAVerdict", Expect: evalExpect{MinEvidenceCitationRate: &half}}
+	withRef := `{"verdict":"probable_cause","title":"t","summary":"s","root_cause":{"entity":"payments","failure_mode":"503","trigger":"deploy","latent_weakness":"","evidence":["E1"]},"causal_chain":[{"entity":"checkout","effect":"hata","evidence":["E1"]}],"rejected_hypotheses":[{"hypothesis":"inventory","refuted_by":["E9"]}],"model_confidence":0.7,"missing_evidence":[],"remediation":[]}`
+	if fails, _ := scoreRCACase(c2, h, cat, withRef); len(fails) != 0 {
+		t.Fatalf("katalog dışı çürütme atfı paydaya girmeli (2/3 ≥ 0.6): %v", fails)
+	}
+	validRef := strings.Replace(withRef, `"refuted_by":["E9"]`, `"refuted_by":["`+cat.PositiveIDs()[1]+`"]`, 1)
+	if fails, _ := scoreRCACase(c, h, cat, validRef); len(fails) != 0 {
+		t.Fatalf("geçerli çürütme atfı oranı düşürmemeli: %v", fails)
+	}
+	if evalCaseSkipReason(evalCase{Provenance: &evalProvenance{Truncated: true}}) == "" || evalCaseSkipReason(evalCase{}) != "" {
+		t.Fatal("kırpık vaka atlanır, diğerleri koşar")
 	}
 	if fails, _ := scoreRCACase(c, h, cat, `{"verdict":"insufficient_evidence","root_cause":{"evidence":[]}}`); len(fails) != 1 || !strings.HasPrefix(fails[0], "verdict") {
 		t.Fatalf("küme dışı verdict kızarmalı: %v", fails)

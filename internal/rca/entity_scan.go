@@ -36,6 +36,29 @@ var nonServiceHyphenated = map[string]bool{
 	"root-cause": true, "status-code": true, "time-range": true, "real-time": true,
 	"end-to-end": true, "two-phase": true, "p99-latency": true, "p50-latency": true,
 	"baseline-window": true, "trace-id": true, "span-id": true,
+	// v0.10.431 — sayaç ~20 prose yüzeyine yayılınca (E6) sık görülen
+	// tireli teknik terimler "uydurma servis" sayılıyordu.
+	"rate-limiting": true, "rate-limit": true, "rate-limited": true, "read-only": true, "write-only": true,
+	"time-out": true, "request-id": true, "span-kind": true, "error-budget": true, "slow-query": true,
+	"fan-out": true, "fan-in": true, "in-memory": true, "on-call": true, "auto-scale": true, "auto-scaling": true,
+	"non-blocking": true, "roll-back": true, "roll-out": true, "warm-up": true, "cold-start": true,
+	"health-check": true, "circuit-breaker": true, "dead-letter": true, "connection-pool": true,
+	"thread-pool": true, "garbage-collection": true, "stop-the-world": true, "out-of-memory": true,
+	"io-wait": true, "cpu-throttling": true, "memory-limit": true, "x-request-id": true,
+	"x-forwarded-for": true, "content-type": true, "user-agent": true, "utf-8": true, "n-plus-one": true,
+	"long-running": true, "high-cardinality": true, "low-cardinality": true, "best-effort": true,
+	"retry-after": true, "back-off": true, "backoff-retry": true, "hot-path": true, "cold-path": true,
+	"first-byte": true, "last-byte": true, "keep-alive": true, "cache-miss": true, "cache-hit": true,
+	"ana-sayfa": true, "veri-tabanı": true, "veri-tabani": true, "kök-neden": true, "kok-neden": true,
+}
+
+// percentileRangeRe — "p95-p99", "p50-p95-p99" gibi yüzdelik aralıkları:
+// her parça p<sayı>. Servis adı değildir (v0.10.431).
+var percentileRangeRe = regexp.MustCompile(`^p\d+(?:-p\d+)+$`)
+
+// genericHyphenated — beyaz liste ya da yüzdelik aralığı: sayılmaz.
+func genericHyphenated(tok string) bool {
+	return nonServiceHyphenated[tok] || percentileRangeRe.MatchString(tok)
 }
 
 // ScanUnknownEntities — verilen metinlerde, bilinen küme DIŞINDA kalan
@@ -48,7 +71,7 @@ func ScanUnknownEntities(known map[string]bool, texts ...string) []string {
 	var unknown []string
 	for _, text := range texts {
 		for _, m := range serviceTokenRe.FindAllString(strings.ToLower(text), -1) {
-			if known[m] || seen[m] || nonServiceHyphenated[m] {
+			if known[m] || seen[m] || genericHyphenated(m) {
 				continue
 			}
 			seen[m] = true

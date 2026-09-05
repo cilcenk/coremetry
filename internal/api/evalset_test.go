@@ -60,9 +60,14 @@ func TestEvalsetReplay(t *testing.T) {
 	svc.SetRecorder(rec)
 
 	cases := loadEvalset(t)
-	pass, fail := 0, 0
+	pass, fail, skipped := 0, 0, 0
 	t.Logf("id\tsurface\tok\tlatency_ms\tunknown_entities\tfails")
 	for _, c := range cases {
+		if why := evalCaseSkipReason(c); why != "" { // v0.10.431
+			skipped++
+			t.Logf("%s\t%s\tSKIP\t-\t-\t%s", c.ID, c.Surface, why)
+			continue
+		}
 		system, ok := evalSystemPrompt(c.Surface)
 		if !ok {
 			t.Fatalf("%s: surface %q çözülemiyor", c.ID, c.Surface)
@@ -122,6 +127,6 @@ func TestEvalsetReplay(t *testing.T) {
 	}
 	n := len(rec.recs)
 	rec.mu.Unlock()
-	t.Logf("prompt_version=%s model=%s n=%d pass=%d fail=%d recorded=%d shield_hits_total=%d",
-		copilot.PromptVersion(), model, len(cases), pass, fail, n, shield)
+	t.Logf("prompt_version=%s model=%s n=%d pass=%d fail=%d skipped=%d recorded=%d shield_hits_total=%d",
+		copilot.PromptVersion(), model, len(cases), pass, fail, skipped, n, shield)
 }

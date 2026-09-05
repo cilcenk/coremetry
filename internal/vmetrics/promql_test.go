@@ -54,7 +54,7 @@ func TestPromAggregator(t *testing.T) {
 		"increase": {Op: "sum", Rollup: "increase"},
 		// v0.9.1157 (Faz 2) — the percentiles translate. The rollup is rate
 		// and the set-aggregation is sum, because histogram_quantile reads
-		// `sum by (le) (rate(<bucket>[W]))`; the φ rides in Quantile and is
+		// `sum by (le, vmrange) (rate(<bucket>[W]))`; the φ rides in Quantile and is
 		// what makes the shape a quantile rather than a plain sum.
 		"p50":   {Op: "sum", Rollup: "rate", Quantile: 0.50},
 		"p95":   {Op: "sum", Rollup: "rate", Quantile: 0.95},
@@ -125,50 +125,50 @@ func TestBuildPromQLPercentileShapes(t *testing.T) {
 		{
 			name: "p99, no group-by — le is STILL the by-clause",
 			f:    chstore.MetricQueryFilter{Name: "http.server.request.duration", Aggregation: "p99"},
-			want: `histogram_quantile(0.99, sum by (le) (rate({` + mcHTTPDurBucket + `}[` + w + `])))`,
+			want: `histogram_quantile(0.99, sum by (le, vmrange) (rate({` + mcHTTPDurBucket + `}[` + w + `])))`,
 		},
 		{
 			name: "p50 renders φ as 0.5, not 0.500000",
 			f:    chstore.MetricQueryFilter{Name: "m", Aggregation: "p50"},
-			want: `histogram_quantile(0.5, sum by (le) (rate({` + mcMBucket + `}[` + w + `])))`,
+			want: `histogram_quantile(0.5, sum by (le, vmrange) (rate({` + mcMBucket + `}[` + w + `])))`,
 		},
 		{
 			name: "p95",
 			f:    chstore.MetricQueryFilter{Name: "m", Aggregation: "p95"},
-			want: `histogram_quantile(0.95, sum by (le) (rate({` + mcMBucket + `}[` + w + `])))`,
+			want: `histogram_quantile(0.95, sum by (le, vmrange) (rate({` + mcMBucket + `}[` + w + `])))`,
 		},
 		{
 			name: "group-by joins le, le FIRST",
 			f: chstore.MetricQueryFilter{
 				Name: "m", Aggregation: "p99", GroupBy: []string{"pod"},
 			},
-			want: `histogram_quantile(0.99, sum by (le, pod) (rate({` + mcMBucket + `}[` + w + `])))`,
+			want: `histogram_quantile(0.99, sum by (le, vmrange, pod) (rate({` + mcMBucket + `}[` + w + `])))`,
 		},
 		{
 			name: "two group-by keys, dotted one sanitized",
 			f: chstore.MetricQueryFilter{
 				Name: "m", Aggregation: "p95", GroupBy: []string{"pod", "host.name"},
 			},
-			want: `histogram_quantile(0.95, sum by (le, pod, host_name) (rate({` + mcMBucket + `}[` + w + `])))`,
+			want: `histogram_quantile(0.95, sum by (le, vmrange, pod, host_name) (rate({` + mcMBucket + `}[` + w + `])))`,
 		},
 		{
 			name: "an explicit le group-by is deduped, not printed twice",
 			f: chstore.MetricQueryFilter{
 				Name: "m", Aggregation: "p99", GroupBy: []string{"le", "pod"},
 			},
-			want: `histogram_quantile(0.99, sum by (le, pod) (rate({` + mcMBucket + `}[` + w + `])))`,
+			want: `histogram_quantile(0.99, sum by (le, vmrange, pod) (rate({` + mcMBucket + `}[` + w + `])))`,
 		},
 		{
 			name: "already-suffixed name is NOT double-suffixed",
 			f: chstore.MetricQueryFilter{
 				Name: "http_server_request_duration_bucket", Aggregation: "p99",
 			},
-			want: `histogram_quantile(0.99, sum by (le) (rate({__name__="http_server_request_duration_bucket"}[` + w + `])))`,
+			want: `histogram_quantile(0.99, sum by (le, vmrange) (rate({__name__="http_server_request_duration_bucket"}[` + w + `])))`,
 		},
 		{
 			name: "_sum is left alone — the suffix rule never GUESSES a sibling",
 			f:    chstore.MetricQueryFilter{Name: "m_sum", Aggregation: "p99"},
-			want: `histogram_quantile(0.99, sum by (le) (rate({__name__="m_sum_bucket"}[` + w + `])))`,
+			want: `histogram_quantile(0.99, sum by (le, vmrange) (rate({__name__="m_sum_bucket"}[` + w + `])))`,
 		},
 		{
 			name: "service + filters land on the BUCKET selector",
@@ -176,21 +176,21 @@ func TestBuildPromQLPercentileShapes(t *testing.T) {
 				Name: "m", Aggregation: "p99", Service: "cart",
 				Filters: []chstore.FilterExpr{{Key: "http.route", Op: "=", Values: []string{"/api"}}},
 			},
-			want: `histogram_quantile(0.99, sum by (le) (rate({` + mcMBucket + `, service_name="cart", http_route="/api"}[` + w + `])))`,
+			want: `histogram_quantile(0.99, sum by (le, vmrange) (rate({` + mcMBucket + `, service_name="cart", http_route="/api"}[` + w + `])))`,
 		},
 		{
 			name: "explicit step drives the rate window, unfloored when > floor",
 			f: chstore.MetricQueryFilter{
 				Name: "m", Aggregation: "p99", StepSeconds: 600,
 			},
-			want: `histogram_quantile(0.99, sum by (le) (rate({` + mcMBucket + `}[600s])))`,
+			want: `histogram_quantile(0.99, sum by (le, vmrange) (rate({` + mcMBucket + `}[600s])))`,
 		},
 		{
 			name: "an explicit rate window wins over the floor",
 			f: chstore.MetricQueryFilter{
 				Name: "m", Aggregation: "p99", StepSeconds: 60, RateWindowSec: 180,
 			},
-			want: `histogram_quantile(0.99, sum by (le) (rate({` + mcMBucket + `}[180s])))`,
+			want: `histogram_quantile(0.99, sum by (le, vmrange) (rate({` + mcMBucket + `}[180s])))`,
 		},
 	}
 	for _, tc := range tests {

@@ -16,7 +16,7 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 |---|---|---|---|---|
 | A1 | **GEMİDE v0.10.376** — JVM GC penceresi ×2: `step=win` ile 2 nokta döner, ilk noktanın `increase`'i pencere DIŞI; `seriesWindowTotal` ikisini toplar | `internal/vmetrics/runtime_pods.go:69,126` | `lastValue` (capacity.go:57 kalıbı) | ~10 dk |
 | A2 | **GEMİDE v0.10.383** — Yığılmış alanda karşılaştırma hayaleti yığına katılıyor → pod throughput ~2× | `components/chart/corePanelEntry.tsx:130-139`, `lib/chart/stacking.ts:34` | `stackData`'ya `excludeIdx`; hayalet ham çizgi | ~2 saat |
-| A3 | Yüzdelik dalında `vmrange` korumasız: exponential histogramda `le=""` tek kova → sessiz yanlış p95 | `internal/vmetrics/promql.go:741,1211` | sonuçta `le` yoksa `vmrange` / not | ~yarım gün |
+| A3 | **GEMİDE v0.10.391** — Yüzdelik dalında `vmrange` korumasız: exponential histogramda `le=""` tek kova → sessiz yanlış p95 | `internal/vmetrics/promql.go:741,1211` | sonuçta `le` yoksa `vmrange` / not | ~yarım gün |
 | A4 | **GEMİDE v0.10.379** — `attrInt` yalnız IntValue: string/double `http.status_code` → 0, 5xx sınıflandırması eksik | `internal/otlp/convert.go:554` | string/double dalları + test tip ekseni | ~1 saat |
 | A5 | ~~`MetricPresentKeys` RTMetric, rate sorgusu Metric okuyor~~ — **bulgu değil**: iki ad aynı ailenin (`_count` ↔ taban) etiketlerini paylaşır, `labelNames` discovery adaylarıyla çözer | `internal/api/service_metric_red.go:157-177` | ikisi de `id.RTMetric` | ~10 dk |
 | A6 | VM uç-damgası kaynakta değil 3 çağrı yerinde telafi ediliyor; diğer tüketicilerde x ekseni kayık (7g'de ~34 dk) | `internal/vmetrics/throughput.go:107`, `endpoints_metric.go:439`, `hosts_metric.go:314`, `capacity.go:205` | kaymayı `runRangeQuery`'de bir kez uygula, 3 telafiyi kaldır | ~yarım gün |
@@ -33,7 +33,7 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 |---|---|---|---|---|
 | B1 | Summary quantile'ları sessizce düşüyor (yalnız avg) | `internal/otlp/convert.go:403-412` | quantile'ları attr'a yaz ya da sayaç | ~2 saat |
 | B2 | **GEMİDE v0.10.388** — Exponential histogram 4 dalda sessiz degrade, sayaç yok | `internal/otlp/exp_histogram.go:41-51` | sebep etiketli sayaç + /admin/stats | ~1 saat |
-| B3 | Delta temporality VM forward'da bakılmıyor (VM rate kümülatif varsayar) | `internal/otlp/forward_filter.go`, `convert.go:345` | delta Sum sayacı + Settings uyarısı | ~2 saat |
+| B3 | **GEMİDE v0.10.390 (sayaç; Settings uyarısı sonraki dilim)** — Delta temporality VM forward'da bakılmıyor (VM rate kümülatif varsayar) | `internal/otlp/forward_filter.go`, `convert.go:345` | delta Sum sayacı + Settings uyarısı | ~2 saat |
 | B4 | `usePrometheusNaming` yazımda doğrulanmıyor; yanlış bayrakta her VM paneli boş | `internal/vmetrics/write.go:41` | Test() probe + rozet | ~yarım gün |
 | B5 | **GEMİDE v0.10.388** — `anyValStr` bilinmeyen tipte sessiz `""` | `internal/otlp/convert.go:538` | rate-limited sayaç | ~30 dk |
 | B6 | `async_insert_deduplicate` Distributed sarmalayıcıda etkisiz; MV kaskadı dedup dışı (v0.10.240 çift-span açık) | `internal/chstore/repo.go:85` | `insert_deduplication_token` + `deduplicate_blocks_in_dependent_materialized_views` | ~1 saat, kademeli roll |

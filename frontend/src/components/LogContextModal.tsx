@@ -42,6 +42,9 @@ export function LogContextModal({
 }) {
   const [before, setBefore] = useState<LogRow[] | null | undefined>(undefined);
   const [after,  setAfter]  = useState<LogRow[] | null | undefined>(undefined);
+  // v0.10.415 (log arama denetimi B1) — sunucu 200 {degraded, reason} dönerse
+  // boş yarılar "0 log before · 0 after" yalanı olurdu (TracePeekDrawer deseni).
+  const [degraded, setDegraded] = useState<string | null>(null);
   // v0.9.1218 (Kibana paritesi, dilim 2) — artımlı pencere + kapsam.
   // n yalnız TIKLAMAYLA büyür (sunucu tavanı 200; her (n, kapsam) kendi
   // 15 sn'lik sunucu cache anahtarı — ES disiplini korunur, otomatik
@@ -76,11 +79,11 @@ export function LogContextModal({
 
   useEffect(() => {
     if (!pivot) {
-      setBefore(undefined); setAfter(undefined);
+      setBefore(undefined); setAfter(undefined); setDegraded(null);
       return;
     }
     let cancelled = false;
-    setBefore(undefined); setAfter(undefined);
+    setBefore(undefined); setAfter(undefined); setDegraded(null);
     api.logsContext({
       ts: pivot.timestamp,
       service: scopeService ? (pivot.serviceName || undefined) : undefined,
@@ -93,10 +96,11 @@ export function LogContextModal({
         if (cancelled) return;
         setBefore(r?.before ?? []);
         setAfter(r?.after ?? []);
+        setDegraded(r?.degraded ? (r?.reason || 'log backend slow/unreachable') : null);
       })
       .catch(() => {
         if (cancelled) return;
-        setBefore(null); setAfter(null);
+        setBefore(null); setAfter(null); setDegraded(null);
       });
     return () => { cancelled = true; };
   }, [pivot, env, n, scopeService, keepQuery, search, scopePod, pivotPod]);
@@ -141,6 +145,11 @@ export function LogContextModal({
       {(before === null || after === null) && (
         <div style={{ fontSize: 12, color: 'var(--err)' }}>
           Failed to load surrounding context.
+        </div>
+      )}
+      {degraded && (
+        <div style={{ fontSize: 12, color: 'var(--warn)', marginBottom: 8 }}>
+          ⚠ {degraded} — bağlam eksik olabilir; sonuç 15 sn önbellekte, sonra yeniden dene.
         </div>
       )}
       {rows && (

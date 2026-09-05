@@ -130,3 +130,26 @@ func TestGetLogsTimeseries_DegradesToEmptyArray(t *testing.T) {
 		t.Errorf("series = %d, want empty", len(series))
 	}
 }
+
+// v0.10.415 — B1: /logs/context de aynı sözleşmeyi taşır (A7 paralel
+// yarılarından sonra da): yavaş backend → 200 {degraded, reason} + boş yarılar.
+func TestGetLogsContext_DegradesOn200(t *testing.T) {
+	s := degradeTestServer(dialRefused())
+	w := httptest.NewRecorder()
+	s.getLogsContext(w, httptest.NewRequest("GET", "/api/logs/context?ts=1700000000000000000&service=checkout", nil))
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200 (degrade contract) — body: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Before   []logstore.LogRecord `json:"before"`
+		After    []logstore.LogRecord `json:"after"`
+		Degraded bool                 `json:"degraded"`
+		Reason   string               `json:"reason"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !body.Degraded || body.Reason == "" || len(body.Before) != 0 || len(body.After) != 0 {
+		t.Errorf("degraded=%v reason=%q before=%d after=%d", body.Degraded, body.Reason, len(body.Before), len(body.After))
+	}
+}

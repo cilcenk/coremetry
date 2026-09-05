@@ -977,6 +977,20 @@ function LogsInner() {
             </span>
           </div>
         )}
+        {/* v0.10.415 (log arama denetimi B1) — yavaş/erişilemeyen backend 200
+            {degraded} döner; eskiden liste "No logs found" gibi görünüyordu.
+            Sonuç 15 sn sunucu önbelleğinde (ES disiplini) → otomatik tekrar
+            yok, aşağıdaki boş durumda ↻ Retry var. Canlı kuyruk bu bayrağı
+            taşımaz (kardeş rozetler gibi !live). */}
+        {!live && !!staticQ.data?.degraded && (
+          <div style={{ marginBottom: 10 }}>
+            <span className="badge b-warn"
+              title={'Log backend zaman aşımı/erişilemezlik nedeniyle cevap vermedi; sunucu 5xx yerine boş liste + bu bayrakla döndü.\nBu SAYFADAKİ hiçbir sayı gerçek değil — satır sayısı, seviye çipleri, histogram.'}>
+              ⚠ log backend yavaş/erişilemez — bu liste eksik
+              {staticQ.data.reason ? ` (${staticQ.data.reason})` : ''}
+            </span>
+          </div>
+        )}
 
         {/* Filter pill bar (Discover revamp step 1). One pill per
             structured field filter; free text stays in the search
@@ -1209,7 +1223,19 @@ function LogsInner() {
             </div>
           </Empty>
         )}
-        {data && logs.length === 0 && (
+        {/* v0.10.415 (B1) — degraded boş durum: "No logs found" YALAN olurdu. */}
+        {data && logs.length === 0 && !live && !!staticQ.data?.degraded && (
+          <Empty icon="⚠" title="Log backend yavaş — bu liste eksik">
+            <div style={{ marginTop: 6, color: 'var(--text2)' }}>
+              {staticQ.data.reason ?? 'log backend slow/unreachable'}. Sonuç 15 sn önbellekte —
+              pencereyi daralt, servis filtresi ekle ya da yeniden dene.
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <Button variant="secondary" size="sm" onClick={() => staticQ.refetch()}>↻ Retry</Button>
+            </div>
+          </Empty>
+        )}
+        {data && logs.length === 0 && (live || !staticQ.data?.degraded) && (
           filter.traceId ? (
             <Empty icon="≡" title="No logs match this trace">
               The trace exists in Coremetry, but the logs backend has no

@@ -2727,6 +2727,16 @@ export interface LogFieldStats {
   shardsFailed?: number;
 }
 
+/** v0.10.415 — GET /api/logs/context. degraded: yavaş/erişilemeyen backend → 200 + boş yarılar (api_logs.go). */
+export interface LogsContextResponse {
+  pivotTs: number;
+  service: string;
+  before: LogRow[];
+  after: LogRow[];
+  degraded?: boolean;
+  reason?: string;
+}
+
 export interface MetricInfo {
   name: string;
   description: string;

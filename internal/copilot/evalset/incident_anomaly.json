@@ -1,0 +1,40 @@
+{
+  "schema": "coremetry.evalset/1",
+  "cases": [
+    {
+      "id": "incident-blast-radius-from-evidence",
+      "surface": "Incident",
+      "why": "P1 (v0.10.403): etki alanı KANITTAKİ servislerden; pod/komut uydurma yok",
+      "user": "Incident: checkout ödeme hataları\nOpened: 12 dk önce\nAttached problems:\n- [P1] checkout — hata oranı (critical): değer 14.00% / eşik 5.00%\n- [P2] payments — gecikme (warning): değer 1900.00 ms / eşik 800.00 ms\nRecent deploys: payments v3.2.1 (8 dk önce)",
+      "expect": {
+        "mustContain": ["checkout", "payments"],
+        "mustNotContain": ["kubectl", "grafana", "kibana"],
+        "knownEntities": ["checkout", "payments"],
+        "maxUnknownEntities": 0,
+        "maxLatencyMs": 30000
+      }
+    },
+    {
+      "id": "anomaly-soft-signal",
+      "surface": "Anomaly",
+      "why": "anomali yumuşak sinyal: 'bir şey değişti' — arıza varsaymamalı, uydurma servis/dashboard yok",
+      "user": "Anomaly kind: log_pattern\nService: inventory\nPattern: \"connection pool exhausted (size=<N>)\"\nBaseline: 2/saat → now: 140/saat (x70)\nFirst seen: 25 dk önce\nStatus: active",
+      "expect": {
+        "mustNotContain": ["grafana", "kubectl"],
+        "knownEntities": ["inventory"],
+        "maxUnknownEntities": 0
+      }
+    },
+    {
+      "id": "anomaly-trace-op",
+      "surface": "Anomaly",
+      "why": "trace-op anomalisi: operasyon adı ve sayılar kanıttan; başka servis adı uydurulmamalı",
+      "user": "Anomaly kind: trace_op\nService: checkout\nOperation: POST /cart/checkout\nBaseline p95: 310 ms → now: 1450 ms\nThroughput: unchanged (~40 req/s)\nError rate: unchanged (0.3%)",
+      "expect": {
+        "mustContain": ["/cart/checkout"],
+        "knownEntities": ["checkout"],
+        "maxUnknownEntities": 0
+      }
+    }
+  ]
+}

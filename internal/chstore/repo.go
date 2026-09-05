@@ -4983,6 +4983,11 @@ func logsWhere(f LogFilter) whereClause {
 	return wc
 }
 
+// LogsCountCap — GetLogs'un toplam sayacının tavanı (v0.10.382). Dönen
+// total == LogsCountCap ise gerçek sayı en az bu kadardır; çağıran
+// (logstore.CHStore) TotalIsLowerBound'u bundan türetir.
+const LogsCountCap = 100000
+
 func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, string, error) {
 	wc := logsWhere(f)
 	if f.Limit <= 0 {
@@ -5040,9 +5045,14 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 	// Total covers the full match window (independent of the cursor)
 	// so the UI's "N matches" stays stable while paging. Bounded by
 	// max_execution_time so a heavy window can't stall the request.
+	// v0.10.382 (dış skill denetimi C5) — sınırsız count() her sayfa
+	// açılışında eşleşen tüm pencereyi (2×2'de dört replikaya fan-out)
+	// tarıyordu. GetTraces'in CountMode tavanı gibi: LogsCountCap+1'e kadar
+	// sayılır; tavana çarpan sonuç "en az" demektir ve logstore sarmalayıcı
+	// bunu TotalIsLowerBound ile ilan eder (UI "100k+" basar).
 	var total uint64
 	if err := s.telemetryReadConn().QueryRow(ctx,
-		"SELECT count() FROM logs "+wc.sql()+" SETTINGS max_execution_time = 25",
+		"SELECT count() FROM (SELECT 1 FROM logs "+wc.sql()+" LIMIT "+strconv.Itoa(LogsCountCap)+") SETTINGS max_execution_time = 25",
 		wc.args...).Scan(&total); err != nil {
 		return nil, 0, "", err
 	}

@@ -95,7 +95,9 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	if !f.WantCursor {
 		next = ""
 	}
-	return &Page{Total: int(total), Logs: out, NextCursor: next}, nil
+	// v0.10.382 — GetLogs sayacı LogsCountCap'e kadar sayar; tavana çarpan
+	// toplam "en az" demektir (ES'in track_total_hits tavanıyla aynı ilan).
+	return &Page{Total: int(total), TotalIsLowerBound: total >= chstore.LogsCountCap, Logs: out, NextCursor: next}, nil
 }
 
 // ── logs-table attribute lookups (v0.8.400) ─────────────────────────────────

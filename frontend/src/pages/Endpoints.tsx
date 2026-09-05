@@ -747,7 +747,10 @@ export default function EndpointsPage() {
                     const rowKey = endpointRowKey(r.service, r.path);
                     const isExpanded = expandedRows.has(rowKey);
                     return (
-                      <React.Fragment key={`${rowKey}|${i}`}>
+                      // v0.10.378 (dış skill denetimi C11) — anahtar YALNIZ rowKey:
+                      // `|${i}` eki sıralamada her satırın anahtarını değiştirip
+                      // tüm tbody'yi remount ediyordu (açık şerit + odak kaybı).
+                      <React.Fragment key={rowKey}>
                       <tr {...dt.rowProps(i)}
                         onMouseEnter={() => dt.nav.setSelected(i)}
                         onClick={e => {

@@ -66,12 +66,17 @@ func GCDerive(sumSec, cnt, windowSec float64) (pauseMs, sharePct, ratePerMin flo
 	return pauseMs, sharePct, ratePerMin
 }
 
+// seriesWindowTotal — the window's increase is the LAST bucket, not the
+// sum of buckets. v0.10.376 (dış skill denetimi A1): the stats query runs
+// query_range(start=from, end=to, step=win), which returns TWO points; the
+// `increase` stamped at `from` covers [from-win, from] — the window BEFORE
+// ours. Summing both doubled GC share and rate (pause ms survived because
+// it is a ratio). Same rule as capacity.go lastValue.
 func seriesWindowTotal(s chstore.SpanMetricSeries) float64 {
-	t := 0.0
-	for _, p := range s.Points {
-		t += p.Value
+	if len(s.Points) == 0 {
+		return 0
 	}
-	return t
+	return s.Points[len(s.Points)-1].Value
 }
 
 // JoinGCSeries — the sum/count join keyed by (service, pod).

@@ -17,10 +17,12 @@ export interface TraceNudgeInput {
   aiOpen: boolean;
   declined: boolean;
   askedThisTab: boolean;
+  /** v0.10.445 — `?span=` açıkken sağ alttaki span paneli baloncukla çakışır; çizilmez. */
+  spanOpen?: boolean;
 }
 
 export const TRACE_PAGE_PATH = '/trace';
 
 export function shouldNudgeExplain(i: TraceNudgeInput): boolean {
-  return i.pathname === TRACE_PAGE_PATH && i.traceId !== '' && !i.aiOpen && !i.declined && !i.askedThisTab;
+  return i.pathname === TRACE_PAGE_PATH && i.traceId !== '' && !i.aiOpen && !i.declined && !i.askedThisTab && !i.spanOpen;
 }

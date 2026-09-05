@@ -54,6 +54,17 @@ func TestExtractAbsoluteWindows(t *testing.T) {
 	if chatLocation(180).String() != "UTC+3" || chatLocation(0) != time.UTC || chatLocation(9999) != time.UTC {
 		t.Fatal("konum")
 	}
+	// v0.10.445 — IANA adı DST'yi bilir: Berlin'de 8 Ağustos 04:00 = 02:00Z (CEST), ofset +60 olsaydı 03:00Z olurdu.
+	berlin := chatLocationNamed("Europe/Berlin", 60)
+	if berlin.String() != "Europe/Berlin" {
+		t.Fatalf("IANA konumu: %s", berlin)
+	}
+	if wins, ok := extractAbsoluteWindows("08/08/2026 04-08 arası", now, berlin); !ok || wins[0].From.UTC().Hour() != 2 {
+		t.Fatalf("DST: %+v", wins)
+	}
+	if chatLocationNamed("Not/AZone", 180).String() != "UTC+3" || chatLocationNamed("../etc", 0) != time.UTC || chatLocationNamed("", 330).String() != "UTC+5:30" {
+		t.Fatal("geçersiz/boş ad ofsete düşer")
+	}
 	// v0.10.444 — yarım saatlik ofsetler dakikayla etiketlenir.
 	if chatLocation(330).String() != "UTC+5:30" || chatLocation(-210).String() != "UTC-3:30" || chatLocation(345).String() != "UTC+5:45" {
 		t.Fatalf("yarım saat etiketi: %s %s", chatLocation(330), chatLocation(-210))

@@ -2078,10 +2078,15 @@ export const api = {
     // ("08/08/2026 04-08 arası") operatörün yerel saatinde yorumlanır.
     // getTimezoneOffset UTC'nin GERİSİNİ verir (İstanbul −180) → işaret çevrilir.
     const tzOffsetMin = -new Date().getTimezoneOffset();
+    // v0.10.445 — IANA adı da gider: sabit ofset DST'yi bilmez (kışın
+    // sorulan yaz tarihi bir saat kayıyordu); sunucu adı çözebilirse onu kullanır.
+    let tz = '';
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? ''; } catch { tz = ''; }
     const context =
-      contextService || contextOperation || contextExplain || contextSubject || contextRangeS || contextTrace || contextEnv || contextToMs || contextProfile || tzOffsetMin !== 0
+      contextService || contextOperation || contextExplain || contextSubject || contextRangeS || contextTrace || contextEnv || contextToMs || contextProfile || tzOffsetMin !== 0 || tz
         ? {
             ...(tzOffsetMin !== 0 ? { tzOffsetMin } : {}),
+            ...(tz ? { tz } : {}),
             ...(contextService ? { service: contextService } : {}),
             ...(contextOperation ? { operation: contextOperation } : {}),
             ...(contextExplain ? { explain: contextExplain } : {}),

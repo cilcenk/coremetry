@@ -16,6 +16,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	_ "time/tzdata" // v0.10.445 — tarayıcı IANA saat dilimi (DST) konteynerde zoneinfo olmasa da çözülsün
 
 	"github.com/cilcenk/coremetry/internal/acache"
 	agentpkg "github.com/cilcenk/coremetry/internal/agent"

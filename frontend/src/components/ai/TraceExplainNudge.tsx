@@ -19,17 +19,18 @@ export function TraceExplainNudge() {
   const [searchParams] = useSearchParams();
   const [subject, setAi] = useAiSubject();
   const traceId = pathname === '/trace' ? (searchParams.get('id') ?? '') : '';
+  const spanOpen = searchParams.has('span'); // v0.10.445 — span paneli (z-nav) baloncuğun altında kalıyordu
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
     const show = shouldNudgeExplain({
-      pathname, traceId, aiOpen: subject !== null,
+      pathname, traceId, aiOpen: subject !== null, spanOpen,
       declined: getRaw(STORAGE_KEYS.aiTraceNudgeDeclined) === '1',
       askedThisTab: getSessionRaw(STORAGE_KEYS.aiTraceNudgeAsked) === '1',
     });
     if (show) setSessionRaw(STORAGE_KEYS.aiTraceNudgeAsked, '1');
     setVisible(show);
-  }, [pathname, traceId, subject]);
+  }, [pathname, traceId, subject, spanOpen]);
 
   if (!visible) return null;
   const accept = () => { setVisible(false); setAi({ kind: 'trace', id: traceId }, 'nudge'); };

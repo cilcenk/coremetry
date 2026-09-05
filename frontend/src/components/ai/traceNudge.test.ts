@@ -15,6 +15,7 @@ describe('shouldNudgeExplain', () => {
     ['drawer already open', { aiOpen: true }],
     ['declined forever', { declined: true }],
     ['asked this tab', { askedThisTab: true }],
+    ['span panel open (v0.10.445)', { spanOpen: true }],
   ])('%s → hidden', (_name, patch) => {
     expect(shouldNudgeExplain({ ...base, ...patch })).toBe(false);
   });

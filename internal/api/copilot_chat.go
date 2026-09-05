@@ -113,6 +113,10 @@ type chatRequest struct {
 		// ("08/08/2026 04-08 arası") operatörün yerel saatinde yorumlanır;
 		// yoksa UTC (eski istemci).
 		TzOffsetMin int `json:"tzOffsetMin,omitempty"`
+		// Tz (v0.10.445) — tarayıcının IANA saat dilimi adı ("Europe/Istanbul").
+		// Sabit ofset DST'yi bilmez: kışın sorulan yaz tarihi bir saat kayıyordu;
+		// ad varsa time.LoadLocation (tzdata gömülü), yoksa ofset.
+		Tz string `json:"tz,omitempty"`
 	} `json:"context,omitempty"`
 }
 
@@ -256,7 +260,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain, req.Context.RangeS, req.Context.Trace, req.Context.Env, anchorTo, req.Context.TzOffsetMin); handled {
+	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain, req.Context.RangeS, req.Context.Trace, req.Context.Env, anchorTo, req.Context.TzOffsetMin, req.Context.Tz); handled {
 		cspan.tier("guided", gok)
 		emit("done", map[string]bool{"ok": gok})
 		return

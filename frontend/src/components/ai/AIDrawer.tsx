@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Drawer, DrawerSection } from '@/components/ui/Drawer';
 import { CopilotExplain } from '@/components/CopilotExplain';
 import { Button } from '@/components/ui/Button';
@@ -228,8 +229,10 @@ function AIDrawerChat({ subject, explainText, spanIds, traceIds }: {
   // yaşar (URL/kalıcılık yok — operatör: "kalıcı olmasın" sınıfı).
   const cfgP = useCopilotConfig(true);
   const [profile, setProfile] = useState('');
+  const navigate = useNavigate(); // v0.10.445 — "sayfasını aç" çekmece sohbetinde de gezer
   const { turns, busy, send, last, showFollowups } = useChatThread({
     explain, seed, subject: subjectParam,
+    onOpen: href => navigate(href),
     service: subject.kind === 'service-health' ? subject.id : undefined,
     profile: profile || undefined,
     // persist (v0.10.55, operatör ürün kararı) — çekmece sohbeti artık

@@ -125,6 +125,12 @@ type Filter struct {
 	// `>`) so a log ingested late at the boundary ns is re-read, not
 	// silently dropped (the v0.7.15 silent-drop failure).
 	SinceNs int64
+	// SkipTotal (v0.10.414, log arama denetimi A7) — çağıran Page.Total'ı
+	// OKUMAYACAĞINI ilan eder (Context modalının iki yarısı gibi): ES
+	// track_total_hits:false, CH count() sorgusu hiç koşmaz. İki backend
+	// de uyar; dönen Page.Total = 0 ve TotalIsLowerBound = false —
+	// "sıfır eşleşme" değil "sayılmadı" (çağıran zaten sormadı).
+	SkipTotal bool
 
 	// envField (v0.8.400, ES-internal) — the resolved document field
 	// the Env term filter targets, stamped by ESStore.applyEnvResolution

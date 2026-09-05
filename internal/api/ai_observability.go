@@ -254,7 +254,10 @@ func (s *Server) copilotExplainSurface(ctx context.Context, surface, system, use
 	if meta.Shield == nil {
 		meta.Shield = aiShield // v0.10.421 (E6)
 	}
-	return s.copilot.Explain(copilot.WithMeta(ctx, meta), system, user)
+	sctx, done := s.beginExplainSpanCtx(copilot.WithMeta(ctx, meta)) // v0.10.425 (O2)
+	out, err := s.copilot.Explain(sctx, system, user)
+	done(err)
+	return out, err
 }
 
 // copilotStreamSurface (v0.8.404) — streaming twin of
@@ -271,7 +274,10 @@ func (s *Server) copilotStreamSurface(ctx context.Context, surface, system, user
 	if meta.Shield == nil {
 		meta.Shield = aiShield // v0.10.421 (E6)
 	}
-	return s.copilot.StreamText(copilot.WithMeta(ctx, meta), system, user, onDelta)
+	sctx, done := s.beginExplainSpanCtx(copilot.WithMeta(ctx, meta)) // v0.10.425 (O2)
+	out, err := s.copilot.StreamText(sctx, system, user, onDelta)
+	done(err)
+	return out, err
 }
 
 // aiSurfaceFromPath maps the request path to a short stable
@@ -484,5 +490,8 @@ func (s *Server) copilotExplainJSONSurface(ctx context.Context, surface, system,
 	if meta.Shield == nil {
 		meta.Shield = aiShield // v0.10.421 (E6)
 	}
-	return s.copilot.Explain(copilot.WithMeta(jctx, meta), system, user)
+	sctx, done := s.beginExplainSpanCtx(copilot.WithMeta(jctx, meta)) // v0.10.425 (O2)
+	out, err := s.copilot.Explain(sctx, system, user)
+	done(err)
+	return out, err
 }

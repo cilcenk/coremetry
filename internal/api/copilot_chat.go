@@ -213,6 +213,11 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	ctx := copilot.WithMeta(dctx, copilot.CallMeta{
 		Surface: "chat", UserID: uid, UserEmail: email, ExchangeID: exchangeID,
 	})
+	// v0.10.425 (CoSRE denetimi O2) — alışverişin kök span'ı (chat_span.go):
+	// kademeler, turlar, araçlar ve CH sorguları bunun altında iç içe geçer.
+	// defer: dört erken-dönüş kademesi var, aksi hâlde span sızar.
+	ctx, cspan := s.beginChatSpan(ctx, exchangeID)
+	defer cspan.end()
 	if p := strings.TrimSpace(req.Context.Profile); p != "" {
 		// v0.10.183 — seçilen profil bütün alışverişe (guided/intent/loop) uygulanır;
 		// yüzey eşlemesini ezer (operatörün açık seçimi). Bilinmeyen id → varsayılan.
@@ -247,6 +252,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain, req.Context.RangeS, req.Context.Trace, req.Context.Env, anchorTo); handled {
+		cspan.tier("guided", gok)
 		emit("done", map[string]bool{"ok": gok})
 		return
 	}
@@ -263,6 +269,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// HAM KANITINI da yeniden kurup anlatıma katar; kanıt çekilemezse
 	// v0.9.479'un metin-tabanlı anlatımı aynen sürer (soft-fail).
 	if handled, dok := s.copilotChatDrawer(ctx, emit, req.Messages, req.Context.Explain, req.Context.Subject, req.Context.Service); handled {
+		cspan.tier("drawer", dok)
 		emit("done", map[string]bool{"ok": dok})
 		return
 	}
@@ -272,6 +279,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// (skor tabanı) tek narration çağrısıyla kaynak atıflı cevap.
 	// Sıra bilinçli: telemetri şekilleri > dokümanlar > serbest döngü.
 	if handled, rok := s.ragChatAnswer(ctx, emit, req.Messages, req.Context.Service); handled {
+		cspan.tier("rag", rok)
 		emit("done", map[string]bool{"ok": rok})
 		return
 	}
@@ -283,6 +291,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// ayara göre öneri çipleri (on_no_loop, prod varsayılanı) ya da aşağıdaki
 	// serbest döngü (on). Sınıflandırıcı hatası sessizce düşer — döngü sürer.
 	if handled, iok := s.copilotChatIntent(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain, req.Context.RangeS, req.Context.Env, anchorTo); handled {
+		cspan.tier("intent", iok)
 		emit("done", map[string]bool{"ok": iok})
 		return
 	}
@@ -330,6 +339,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// (ToolErrorJSON) yolları değişmeden işler. Katalog Registry'nin
 	// 5 dk TTL'li önbelleğinden gelir; sunucu erişilemezse katalog boş
 	// düşer ve sohbet YERLİ tool'larla aynen sürer (soft-fail).
+	extNames := map[string]bool{} // v0.10.425 — ai.tool köken etiketi (native | external)
 	if s.mcpClient != nil && s.mcpClient.Configured() {
 		ext := externalChatTools(
 			s.mcpClient.Registry().Tools(ctx),
@@ -341,6 +351,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 				s.audit(r, "mcp.call", "mcp_server", server, mcpCallAuditDetails(tool, args))
 			})
 		for _, t := range toolsForRole(ext, role) {
+			extNames[t.Name] = true
 			byName[t.Name] = t.Handler
 			specs = append(specs, copilot.ToolSpec{
 				Name: t.Name, Description: t.ChatDescription(), InputSchema: t.InputSchema,
@@ -440,7 +451,9 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	seenToolCalls := map[string]bool{}
 
 	for round := 0; round < chatMaxToolRounds; round++ {
-		turn, err := s.copilot.ChatWithTools(ctx, loopPrompt, conv, specs)
+		tctx, endTurn := cspan.turn(ctx, round, overflowRetried) // v0.10.425 — ai.chat.turn
+		turn, err := s.copilot.ChatWithTools(tctx, loopPrompt, conv, specs)
+		endTurn(turn.InputTokens, turn.OutputTokens, err)
 		totalIn += turn.InputTokens
 		totalOut += turn.OutputTokens
 		// v0.10.26 — BAĞLAM TAŞMASI. isContextOverflowErr yazılı ve
@@ -559,8 +572,9 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			// bundan; alan yoksa frontend «—» çizer (guided ön-yüklemeleri
 			// ölçülmez). Ölçüm yalnız gerçekten çalışan araç için — bilinmeyen
 			// araç / tekrar koruması yürütülmez, süre yazılmaz.
+			tctx, endTool := cspan.tool(ctx, tc.Name, extNames[tc.Name]) // v0.10.425 — ai.tool
 			toolT0 := time.Now()
-			out, herr := runChatTool(ctx, h, tc.Input)
+			out, herr := runChatTool(tctx, h, tc.Input)
 			toolDur := time.Since(toolT0)
 			// CoSRE Faz-2 — intercept render_chart: parse the handler's
 			// validated output (never tc.Input — the model's raw args may
@@ -594,6 +608,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			// özetlenmiş kanıt kanıt değildir — operatörün sınayacağı şey
 			// modelin okuduğu şey olmalı. `bytes` kırpılmamış gerçek boy,
 			// yani "ne kadarını görmüyorum" cevaplanabilir.
+			endTool(len(tr.Content), tr.IsError) // v0.10.425 — bayt + ok; gövde yok
 			preview, truncated := clipStepPreview(tr.Content)
 			stepEv := map[string]any{
 				"i": stepN, "tool": tc.Name, "ok": !tr.IsError,
@@ -639,7 +654,9 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		// accessor'lardan türediğinden bu ek artık dil kapısının kapsamında.
 		if round == chatMaxToolRounds-1 {
 			capPrompt := withAddressee(addressee, copilot.SystemPromptChatRoundCap())
-			turn2, err2 := s.copilot.ChatWithTools(ctx, capPrompt, conv, nil)
+			tctx2, endTurn2 := cspan.turn(ctx, round, false) // v0.10.425 — tur tavanı da bir tur
+			turn2, err2 := s.copilot.ChatWithTools(tctx2, capPrompt, conv, nil)
+			endTurn2(turn2.InputTokens, turn2.OutputTokens, err2)
 			totalIn += turn2.InputTokens
 			totalOut += turn2.OutputTokens
 			if err2 != nil {
@@ -691,6 +708,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	if lastErr != nil {
 		status, errMsg = "error", lastErr.Error()
 	}
+	cspan.finish(totalIn, totalOut, lastErr) // v0.10.425 — span ve satır aynı toplamlar
 	s.copilot.RecordUsage(ctx, chatT0, totalIn, totalOut, status, errMsg, lastUserText(req.Messages), finalText)
 
 	emit("done", map[string]bool{"ok": lastErr == nil})

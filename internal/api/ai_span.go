@@ -40,6 +40,16 @@ import (
 //	coremetry.ai.context.types      "code,sql" — modele giden kanıt türleri
 //	coremetry.ai.context.trimmed    bütçe kırpması/düşmesi oldu mu
 //
+// v0.10.425 (O2) — sohbet ağacı (chat_span.go):
+//
+//	ai.chat        coremetry.ai.exchange_id, .chat.tier (guided|drawer|rag|
+//	               intent|loop), .chat.rounds, .chat.tools, gen_ai.usage.*
+//	ai.chat.turn   coremetry.ai.turn.round, .turn.retry, gen_ai.usage.*
+//	ai.tool        coremetry.ai.tool.name, .tool.origin (native|external),
+//	               .tool.bytes, .tool.ok — arg/çıktı gövdesi YOK
+//	ai.explain     ctx tabanlı ikiz (beginExplainSpanCtx): kademelerin ve
+//	               SWR tazelemesinin model çağrısı, kanıt paketi yok
+//
 // Kod GÖVDESİ hiçbir attribute'a girmez (ai_calls maskesiyle aynı
 // sözleşme): yalnız sayılar ve sınıflar.
 

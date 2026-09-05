@@ -128,7 +128,7 @@ Okuma tarafı: `internal/chstore/metric_rollup_read.go:48-50` (kademe tablosu) +
 | 17 | `/admin/cardinality` | **CH-çakılı** | `chstore/cardinality.go:74` | ❌ (VM'in kendi `/api/v1/status/tsdb`'si var — **doğrulanmalı**) |
 | 18 | Metrik export aralığı probu (`clampStepToExport`) | **CH-çakılı** | `chstore/metric_export_interval.go:205,217` | ❌ VM'de probe YOK; yerine 300s pencere tabanı (`vmetrics` `promLookbehindFloorSec`) |
 | 19 | DQL değerlendirici | **CH-çakılı, bilinçli** | `internal/dql/dql.go:475` (`FROM metric_points`) | ❌ — seam yorumu bunu "backend farklı cevaplayamaz" sınıfında sayıyor |
-| 20 | Alarm evaluator — DB kapasite | **CH-çakılı** | `internal/evaluator/db_capacity.go:51` | ❌ |
+| 20 | Alarm evaluator — DB kapasite | **Seam** (v0.10.366) | `chstore.CapacityReader`; VM: `internal/vmetrics/capacity.go`; seçim `evaluator.capacityReader()` | ✅ dilim 3b-1 (trend kovası VM'de max, avg muhafıza takılır) |
 | 21 | Alarm evaluator — JVM GC | **VM-ONLY** (v0.9.1213) | `internal/evaluator/runtime_vm.go:1-27`, `:109,113`; kapı `runtime_pods.go:162` | ✅ zaten VM'den |
 | 22 | Anomaly — dış (Influx) seri | **CH-çakılı** | `internal/anomaly/external.go:6,98,132` | ❌ (§5) |
 | 23 | Anomaly — mevsimsel baseline | **CH-çakılı** | `chstore/external_seasonal.go:68` | ❌ |

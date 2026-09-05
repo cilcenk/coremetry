@@ -17,15 +17,19 @@ const VIZ_META: Record<ExploreViz, { icon: string; label: string; hint: string }
   heatmap: { icon: '▦', label: 'Heatmap', hint: 'Latency density (time × log-duration) — uses query A' },
 };
 
-export function VizRail({ value, onChange }: {
+export function VizRail({ value, onChange, disabled }: {
   value: ExploreViz;
   onChange: (v: ExploreViz) => void;
+  /** v0.10.393 — viz → sebep; kapalı düğme sebebi title'da söyler (model.vizDisabledFor). */
+  disabled?: Partial<Record<ExploreViz, string>>;
 }) {
   return (
     <div className="segmented">
       {EXPLORE_VIZ.map(v => (
-        <button key={v} type="button" title={VIZ_META[v].hint}
+        <button key={v} type="button" title={disabled?.[v] ?? VIZ_META[v].hint}
           className={value === v ? 'active' : ''}
+          disabled={!!disabled?.[v] && value !== v}
+          aria-disabled={!!disabled?.[v] || undefined}
           onClick={() => onChange(v)}>
           {VIZ_META[v].icon} {VIZ_META[v].label}
         </button>

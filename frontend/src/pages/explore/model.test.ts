@@ -3,8 +3,7 @@ import {
   blankQuery, exemplarDescriptor, pinnedService, pinnedOperation,
   seriesGroupLabel, queryUnit, compareOffsetNs, compareLabel,
   duplicateQueryAt, MAX_QUERIES,
-  type BuilderQuery, type ExploreCompare,
-} from './model';
+  type BuilderQuery, type ExploreCompare, vizDisabledFor } from './model';
 import type { FilterExpr } from '@/lib/types';
 
 // explore-v2 Phase-3 — pins the exemplar-eligibility gate and the SLO/deploy
@@ -330,5 +329,18 @@ describe('duplicateQueryAt (v0.9.847)', () => {
     expect(before).toHaveLength(1);
     expect(after).not.toBe(before);
     expect(after).toHaveLength(2);
+  });
+});
+
+// v0.10.393 — dış skill denetimi A10: pay/yığın toplanamaz birimde kapalı.
+describe('vizDisabledFor', () => {
+  it('toplanabilir birimlerde hiçbir şey kapanmaz', () => {
+    expect(vizDisabledFor(['', 'rps', 'By'])).toEqual({});
+  });
+  it('ms ya da % varsa pie ve stacked sebebiyle kapanır', () => {
+    const d = vizDisabledFor(['rps', 'ms']);
+    expect(Object.keys(d).sort()).toEqual(['pie', 'stacked']);
+    expect(d.pie).toContain('ms');
+    expect(vizDisabledFor(['%']).stacked).toContain('%');
   });
 });

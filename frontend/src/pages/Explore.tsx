@@ -37,8 +37,7 @@ import {
   type BuilderState, type PivotPair, defaultBuilderState, blankQuery, nextLetter,
   duplicateQueryAt,
   produces, effectiveFilters, builderDesc, MAX_QUERIES,
-  PANEL_SERIES_CAP, TOP_N_OPTIONS, EXPLORE_COMPARE, compareLabel,
-} from './explore/model';
+  PANEL_SERIES_CAP, TOP_N_OPTIONS, EXPLORE_COMPARE, compareLabel, vizDisabledFor, queryUnit } from './explore/model';
 import { encodeBuilder, seedFromLegacyParams } from './explore/urlCodec';
 import {
   hasMeaningfulParams, exploreQuerySig, nextExploreKey, type ExploreKeyState,
@@ -814,7 +813,8 @@ function ExploreInner({ onSelfWrite }: {
             {resultMode === 'metric' && (
               <>
                 <span style={VDIV} />
-                <VizRail value={builder.viz} onChange={v => setBuilder(b => ({ ...b, viz: v }))} />
+                <VizRail value={builder.viz} onChange={v => setBuilder(b => ({ ...b, viz: v }))}
+                  disabled={vizDisabledFor(builder.queries.map(queryUnit))} />
                 <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 4 }}>Step:</span>
                 <select value={builder.step}
                   onChange={e => setBuilder(b => ({ ...b, step: Number(e.target.value) }))}

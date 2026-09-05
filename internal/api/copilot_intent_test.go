@@ -27,14 +27,18 @@ func TestParseIntentJSON(t *testing.T) {
 		{name: "düz JSON, tam servis", raw: `{"intent":"log_errors","service":"payment-service","env":"prod","rangeS":3600}`, wantOK: true, intent: guidedLogErrors, service: "payment-service", env: "prod", rangeS: 3600},
 		{name: "çitli + önsöz", raw: "Tabii:\n```json\n{\"intent\":\"slow_traces\",\"service\":\"\",\"env\":\"\",\"rangeS\":0}\n```", wantOK: true, intent: guidedSlowTraces},
 		{name: "harfe duyarsız + benzersiz alt-dize", raw: `{"intent":"problems","service":"Payment"}`, wantOK: true, intent: guidedProblems, service: "payment-service"},
-		{name: "belirsiz önek (ledger ×2) → none", raw: `{"intent":"problems","service":"ledger"}`, wantOK: false},
-		{name: "önek sınırı: 'check' checkout-service'i alamaz → none", raw: `{"intent":"problems","service":"check"}`, wantOK: false},
+		// v0.10.429 (D1) — belirsiz önek artık none değil: "hangisini kastettin?" (ask_service, adaylar).
+		{name: "belirsiz önek (ledger ×2) → ask_service", raw: `{"intent":"problems","service":"ledger"}`, wantOK: true, intent: guidedAskService},
+		// v0.10.429 (D1) — önek sınırı hâlâ ROTALAMAZ (Service boş); ama aday olarak SORULUR.
+		{name: "önek sınırı: 'check' checkout-service'i alamaz → ask_service", raw: `{"intent":"problems","service":"check"}`, wantOK: true, intent: guidedAskService},
 		{name: "2 karakter önek → none", raw: `{"intent":"problems","service":"ap"}`, wantOK: false},
 		{name: "'api' → api-gateway (sınır '-')", raw: `{"intent":"problems","service":"api"}`, wantOK: true, intent: guidedProblems, service: "api-gateway"},
 		{name: "env tek harf → none (prod'a düşmez)", raw: `{"intent":"problems","env":"p"}`, wantOK: false},
 		{name: "pod_health servissiz = filo geneli (izinli)", raw: `{"intent":"pod_health"}`, wantOK: true, intent: guidedPodHealth},
-		{name: "uydurulmuş servis → none (yanlış kapsam yerine sus)", raw: `{"intent":"log_errors","service":"checkout-svc"}`, wantOK: false},
-		{name: "servis gerektiren şekil, servissiz, bağlamsız → none", raw: `{"intent":"service_health"}`, wantOK: false},
+		// v0.10.429 (D1) — yakın ad varsa sor ("checkout-svc" → checkout-service adayı).
+		{name: "yakın ad → ask_service", raw: `{"intent":"log_errors","service":"checkout-svc"}`, wantOK: true, intent: guidedAskService},
+		{name: "katalogda yakın ad bile yok → none", raw: `{"intent":"log_errors","service":"zzqx"}`, wantOK: false},
+		{name: "servis gerektiren şekil, servissiz, bağlamsız → ask_service (adayları bundle doldurur)", raw: `{"intent":"service_health"}`, wantOK: true, intent: guidedAskService},
 		{name: "servis gerektiren şekil, bağlam servisi devralır", raw: `{"intent":"root_cause"}`, ctxSvc: "api-gateway", wantOK: true, intent: guidedRootCause, service: "api-gateway"},
 		{name: "bilinmeyen niyet → none", raw: `{"intent":"family_health","service":"api-gateway"}`, wantOK: false},
 		{name: "none → none", raw: `{"intent":"none"}`, wantOK: false},
@@ -47,7 +51,7 @@ func TestParseIntentJSON(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			route, rangeS, ok := parseIntentJSON(tc.raw, services, envs, tc.ctxSvc)
+			route, rangeS, ok := parseIntentJSON(tc.raw, services, envs, nil, tc.ctxSvc)
 			if ok != tc.wantOK {
 				t.Fatalf("ok=%v, want %v (route=%+v)", ok, tc.wantOK, route)
 			}
@@ -63,7 +67,7 @@ func TestParseIntentJSON(t *testing.T) {
 		})
 	}
 	// 3600 basamağa AYNEN oturur (snapRangeS)
-	if _, r, _ := parseIntentJSON(`{"intent":"problems","rangeS":3600}`, services, envs, ""); r != 3600 {
+	if _, r, _ := parseIntentJSON(`{"intent":"problems","rangeS":3600}`, services, envs, nil, ""); r != 3600 {
 		t.Fatalf("rangeS 3600 → %d", r)
 	}
 }

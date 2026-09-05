@@ -1,11 +1,13 @@
 package api
 
 import (
+	"encoding/json"
 	"net/url"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
 )
 
@@ -93,6 +95,7 @@ var followUpFillable = map[guidedIntent]bool{
 	guidedPodHealth:    true,
 	guidedLogField:     true, // v0.10.433 (D5)
 	guidedOpenPage:     true, // v0.10.434 (D7b)
+	guidedTraceSearch:  true, // v0.10.436 (D2b)
 }
 
 // guidedSuggestions (v0.9.411) — cevap sonrası konuya-duyarlı takip
@@ -115,11 +118,7 @@ func guidedSuggestions(route guidedRoute) []string {
 	// v0.10.429 (D1) — "hangi servis?" turu: çip = adayın TAM kılavuz cümlesi
 	// (askServiceChip), sorulan niyetle; çıplak ad kapıdan geçmezdi.
 	if len(route.ServiceOptions) > 0 {
-		out := make([]string, 0, len(route.ServiceOptions))
-		for _, svc := range route.ServiceOptions {
-			out = append(out, askServiceChip(route.AskIntent, svc))
-		}
-		return out
+		return askServiceChipFor(route) // v0.10.436 (D2) — çift/arama çipleri diğer yarıyı taşır
 	}
 	switch route.Intent {
 	case guidedServiceHealth:
@@ -159,6 +158,17 @@ func guidedSuggestions(route guidedRoute) []string {
 			return []string{svc + " sağlığı nasıl?", svc + " problemleri?", svc + " hata logları?"}
 		}
 		return []string{"Açık problemler?", "En yavaş trace'ler?"}
+	case guidedPairRequests: // v0.10.436 (D2a)
+		out := []string{route.PairFrom + " sağlığı nasıl?", route.PairFrom + " en yavaş trace'ler?"}
+		if route.PairToKind == "service" && route.PairTo != "" {
+			out = append(out, route.PairTo+" sağlığı nasıl?")
+		}
+		return out
+	case guidedTraceSearch: // v0.10.436 (D2b)
+		if svc != "" {
+			return []string{svc + " en yavaş trace'ler?", svc + " hata logları?", svc + " sağlığı nasıl?"}
+		}
+		return []string{"En yavaş trace'ler?", "Açık problemler?"}
 	case guidedFamilyHealth:
 		return []string{"Açık problemler?", "En yavaş trace'ler?", "Son 1 saatteki log hataları?"}
 	case guidedMyServices:
@@ -353,6 +363,28 @@ func guidedAnswerLinkTargets(route guidedRoute) []guidedAnswerLink {
 			return nil
 		}
 		return []guidedAnswerLink{{Label: svc + " · Overview", Href: "/service?name=" + svcQ}}
+	case guidedPairRequests: // v0.10.436 (D2a) — eş-görünüm linki (etiket "birlikte içeren")
+		a, b := url.QueryEscape(route.PairFrom), url.QueryEscape(route.PairTo)
+		if route.PairToKind == "service" {
+			return []guidedAnswerLink{
+				{Label: "Trace'ler (" + route.PairFrom + " ve " + route.PairTo + "'ı birlikte içeren)", Href: "/traces?services=" + a + "," + b + "&view=list&rootOnly=false"},
+				{Label: "Servis haritası · " + route.PairFrom, Href: "/service-map?focus=" + a},
+			}
+		}
+		return []guidedAnswerLink{
+			{Label: "Trace'ler (" + route.PairFrom + ", " + route.PairTo + ")", Href: "/traces?service=" + a + "&search=" + b},
+			{Label: "Servis haritası · " + route.PairFrom, Href: "/service-map?focus=" + a},
+		}
+	case guidedTraceSearch: // v0.10.436 (D2b)
+		href := "/traces?search=" + url.QueryEscape(route.SearchText)
+		if route.SearchSQL {
+			fe, _ := json.Marshal([]chstore.FilterExpr{{Key: "db.statement", Op: "LIKE", Values: []string{route.SearchText}}})
+			href = "/traces?filters=" + url.QueryEscape(string(fe))
+		}
+		if svc != "" {
+			href += "&service=" + svcQ
+		}
+		return []guidedAnswerLink{{Label: "Trace'ler (arama)", Href: href}}
 	case guidedLogField: // v0.10.433 (D5) — bundle'ın koştuğu sorgu; yoksa backend'siz şekil
 		q := route.LogQuery
 		if q == "" {
@@ -530,6 +562,28 @@ func applyFollowUpContext(route guidedRoute, question string, prior []string, se
 // askServiceChip — v0.10.429 (D1): aday servis + sorulan niyet → router'ın
 // DETERMİNİSTİK olarak aynı niyete çözdüğü tam cümle (near_names_test
 // gidiş-dönüşü pinler: çipe tıklamak serbest döngüye düşmez).
+// askServiceChipFor — v0.10.436 (D2): çift/arama sorularının çipleri
+// sorulan tarafın dışındaki yarıyı da taşır ki çip yeniden AYNI rotaya
+// çözülsün ("checkout-service'dan payment-service'ye giden istekler").
+func askServiceChipFor(route guidedRoute) []string {
+	var out []string
+	for _, opt := range route.ServiceOptions {
+		switch route.AskIntent {
+		case guidedPairRequests:
+			if route.PairMissing == "to" {
+				out = append(out, route.PairFrom+"'dan "+opt+"'ye giden istekler")
+			} else {
+				out = append(out, opt+"'dan "+route.PairTo+"'ye giden istekler")
+			}
+		case guidedTraceSearch:
+			out = append(out, opt+" servisinde içinde \""+route.SearchText+"\" geçen trace'ler")
+		default:
+			out = append(out, askServiceChip(route.AskIntent, opt))
+		}
+	}
+	return out
+}
+
 func askServiceChip(intent guidedIntent, svc string) string {
 	switch intent {
 	case guidedRootCause:
@@ -542,6 +596,8 @@ func askServiceChip(intent guidedIntent, svc string) string {
 		return svc + " hata logları?"
 	case guidedOpenPage: // v0.10.434 (D7b)
 		return svc + " sayfasını aç"
+	case guidedTraceSearch: // v0.10.436 (D2b) — parça route'tan (askServiceChipFor)
+		return svc + " servisinde içinde \"…\" geçen trace'ler"
 	case guidedPodHealth:
 		return svc + " pod'ları nasıl?"
 	case guidedDBHealth:

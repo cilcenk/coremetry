@@ -18,7 +18,8 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/
 import type { DataTableColumn } from '@/lib/dataTable';
 import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from '@/components/Spinner';
-import { sevClass, sevName, tsLong } from '@/lib/utils';
+import { sevClass, sevName, tsLong, tsShort } from '@/lib/utils';
+import type { LogPatternsResult } from '@/lib/types';
 import { getRaw, setRaw } from '@/lib/storage';
 
 export function agoLabel(ns: number, nowMs = Date.now()): string {
@@ -27,6 +28,19 @@ export function agoLabel(ns: number, nowMs = Date.now()): string {
   if (s < 3600) return `${Math.round(s / 60)} dk önce`;
   if (s < 86400) return `${Math.round(s / 3600)} sa önce`;
   return `${Math.round(s / 86400)} g önce`;
+}
+
+// coveredLabel — v0.10.441 (log arama denetimi C4): tavan dolduysa
+// örneklemenin GERÇEKTEN kapsadığı alt pencere. Kapı sampled >= cap
+// (truncated değil — Total güvenilmez olabilir, sunucu clamp'i truncated'ı
+// false bırakır). Tavan dolmadıysa null: aralık yalnız veri yayılımıdır,
+// "daraltılmış tarama" diye göstermek yeni bir yalan olurdu. Eski
+// önbellek gövdesinde alanlar yok → null.
+export function coveredLabel(d: Pick<LogPatternsResult, 'sampled' | 'cap' | 'coveredFromNs' | 'coveredToNs'> | null | undefined): string | null {
+  if (!d || !d.coveredFromNs || !d.coveredToNs || d.cap <= 0 || d.sampled < d.cap) return null;
+  const spanS = Math.max(0, Math.round((d.coveredToNs - d.coveredFromNs) / 1e9));
+  const span = spanS < 60 ? `${spanS} sn` : spanS < 3600 ? `${Math.round(spanS / 60)} dk` : `${(spanS / 3600).toFixed(1)} sa`;
+  return `kapsanan: ${tsShort(d.coveredFromNs).slice(0, 8)}–${tsShort(d.coveredToNs).slice(0, 8)} (${span}, en yeni uç)`;
 }
 
 // templatesSinceRung — v0.10.310: /api/logs/templates `since` sunucu cache
@@ -117,6 +131,7 @@ export function LogPatternsPanel({ params, open, onSearch }: {
             <>
               {d.sampled.toLocaleString()} örnek satır{d.truncated ? ` (tavan ${d.cap.toLocaleString()})` : ''}
               {' · '}pencere toplamı {d.total.toLocaleString()}{' · '}{d.distinct} desen
+              {coveredLabel(d) && <span title="Tavan doldu: sayımlar yalnız bu alt pencereyi anlatır, seçili pencerenin tamamını değil (v0.10.441)">{' · '}{coveredLabel(d)}</span>}
               {d.degraded && <span className="badge b-warn" style={{ marginLeft: 6 }}>{d.reason ?? 'degraded'}</span>}
             </>
           ) : 'sayımlar en yeni örnek satırlara göredir') : (

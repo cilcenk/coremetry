@@ -58,6 +58,11 @@ func TestGroupBySignatureGroupsAndSorts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// v0.10.441 (C4) — kapsanan uç okunan satırları izler (boş gövdeli ts=5
+	// satırı da dahil), gruplanan satırları değil.
+	if res.CoveredFromNs != 5 || res.CoveredToNs != 30 {
+		t.Errorf("kapsanan pencere %d..%d; 5..30 bekleniyordu", res.CoveredFromNs, res.CoveredToNs)
+	}
 	if res.Sampled != 5 || res.Total != 5 || res.Truncated || res.Distinct != 2 {
 		t.Errorf("sampled=%d total=%d trunc=%v distinct=%d", res.Sampled, res.Total, res.Truncated, res.Distinct)
 	}
@@ -112,6 +117,13 @@ func TestGroupBySignatureSamplesUpToCapWithCursor(t *testing.T) {
 	}
 	if res.Distinct != 1 {
 		t.Errorf("distinct %d", res.Distinct)
+	}
+	// v0.10.441 (C4) — tavan dolunca kapsanan uç YALNIZ okunan 2000 satır
+	// (ts 0..1999), 2700 satırlık tüm küme değil (min/max; sahte mağaza
+	// artan sıralı döndürür, gerçek backend en yeni-önce — sıraya bağlı
+	// iddia yok). ts=0 satırı 1970 çekmesin diye ts>0 kapısı → 1.
+	if res.CoveredFromNs != 1 || res.CoveredToNs != int64(PatternsSampleCap-1) {
+		t.Errorf("kapsanan pencere %d..%d; 1..%d bekleniyordu", res.CoveredFromNs, res.CoveredToNs, PatternsSampleCap-1)
 	}
 }
 

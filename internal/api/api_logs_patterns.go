@@ -79,6 +79,7 @@ func (s *Server) getLogsPatterns(w http.ResponseWriter, r *http.Request) {
 				return map[string]any{
 					"groups": []logstore.SignatureGroup{}, "sampled": 0, "total": 0,
 					"cap": logstore.PatternsSampleCap, "truncated": false, "distinct": 0,
+					"coveredFromNs": 0, "coveredToNs": 0, // v0.10.441 (C4) — sağlıklı gövdeyle aynı şekil
 					"degraded": true, "reason": "log backend slow/unreachable",
 				}, nil
 			}

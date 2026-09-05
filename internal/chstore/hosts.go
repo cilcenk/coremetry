@@ -57,9 +57,9 @@ type HostDetail struct {
 	Trend    []HostTrendPoint `json:"trend"`
 }
 
-// clampHostWindow bounds the scan the page can trigger — the
+// ClampHostWindow bounds the scan the page can trigger — the
 // inventory question is "what runs where NOW", not archaeology.
-func clampHostWindow(from, to time.Time) (time.Time, time.Time) {
+func ClampHostWindow(from, to time.Time) (time.Time, time.Time) {
 	if to.IsZero() {
 		to = time.Now()
 	}
@@ -72,7 +72,7 @@ func clampHostWindow(from, to time.Time) (time.Time, time.Time) {
 // hostMetricArgs renders the shared "metric IN (…)" holder list +
 // args for the union of CPU/mem/limit source metrics.
 func hostMetricArgs() (string, []any) {
-	all := append(append(append([]string{}, instCPUSources...), instMemSources...), instLimSources...)
+	all := append(append(append([]string{}, InstCPUSources...), InstMemSources...), InstLimSources...)
 	holders := make([]string, len(all))
 	args := make([]any, len(all))
 	for i, n := range all {
@@ -95,7 +95,7 @@ func hostMetricArgs() (string, []any) {
 // service's usage with its OWN limit: only limit-reporting services
 // count in the numerator.
 func (s *Store) GetHosts(ctx context.Context, from, to time.Time) ([]HostRow, error) {
-	from, to = clampHostWindow(from, to)
+	from, to = ClampHostWindow(from, to)
 	holders, metricArgs := hostMetricArgs()
 	args := append([]any{from, to}, metricArgs...)
 
@@ -112,9 +112,9 @@ func (s *Store) GetHosts(ctx context.Context, from, to time.Time) ([]HostRow, er
 		FROM (
 		  SELECT
 		    host_name, service_name,
-		    argMaxIf(value, time, metric IN (`+inList(instCPUSources)+`)) AS cpu_s,
-		    argMaxIf(value, time, metric IN (`+inList(instMemSources)+`)) AS mem_s,
-		    argMaxIf(value, time, metric IN (`+inList(instLimSources)+`)) AS lim_s,
+		    argMaxIf(value, time, metric IN (`+inList(InstCPUSources)+`)) AS cpu_s,
+		    argMaxIf(value, time, metric IN (`+inList(InstMemSources)+`)) AS mem_s,
+		    argMaxIf(value, time, metric IN (`+inList(InstLimSources)+`)) AS lim_s,
 		    anyLast(res_values[indexOf(res_keys, 'cloud.availability_zone')]) AS zone_s,
 		    max(time) AS last_seen_s
 		  FROM metric_points
@@ -161,7 +161,7 @@ func (s *Store) GetHosts(ctx context.Context, from, to time.Time) ([]HostRow, er
 // breakdown + per-minute CPU/mem trend. Both queries carry the
 // host_name filter, so they touch a sliver of the window.
 func (s *Store) GetHostDetail(ctx context.Context, host string, from, to time.Time) (*HostDetail, error) {
-	from, to = clampHostWindow(from, to)
+	from, to = ClampHostWindow(from, to)
 	holders, metricArgs := hostMetricArgs()
 	d := &HostDetail{Host: host}
 
@@ -169,8 +169,8 @@ func (s *Store) GetHostDetail(ctx context.Context, host string, from, to time.Ti
 	rows, err := s.conn.Query(ctx, `
 		SELECT
 		  service_name,
-		  argMaxIf(value, time, metric IN (`+inList(instCPUSources)+`)) AS cpu_raw,
-		  argMaxIf(value, time, metric IN (`+inList(instMemSources)+`)) AS mem_raw,
+		  argMaxIf(value, time, metric IN (`+inList(InstCPUSources)+`)) AS cpu_raw,
+		  argMaxIf(value, time, metric IN (`+inList(InstMemSources)+`)) AS mem_raw,
 		  anyLast(res_values[indexOf(res_keys, 'cloud.availability_zone')]) AS zone,
 		  max(time) AS last_seen
 		FROM metric_points
@@ -211,7 +211,7 @@ func (s *Store) GetHostDetail(ctx context.Context, host string, from, to time.Ti
 	}
 
 	// Per-minute trend. v0.8.449 review-fix: the cross-service sum
-	// happens in Go (sumHostTrend), not SQL — CPU/RSS are GAUGES, and
+	// happens in Go (SumHostTrend), not SQL — CPU/RSS are GAUGES, and
 	// a (service, minute) bucket that merely missed a sample (60s
 	// export aralığının dakika sınırı jitter'ı) SQL toplamında 0
 	// sayılıp sahte testere-dişi düşüşler çiziyordu. Go tarafı boş
@@ -221,10 +221,10 @@ func (s *Store) GetHostDetail(ctx context.Context, host string, from, to time.Ti
 	trows, err := s.conn.Query(ctx, `
 		SELECT service_name,
 		       toStartOfMinute(time) AS b,
-		       avgIf(value, metric IN (`+inList(instCPUSources)+`)) AS cpu_s,
-		       countIf(metric IN (`+inList(instCPUSources)+`)) AS cpu_n,
-		       argMaxIf(value, time, metric IN (`+inList(instMemSources)+`)) AS mem_s,
-		       countIf(metric IN (`+inList(instMemSources)+`)) AS mem_n
+		       avgIf(value, metric IN (`+inList(InstCPUSources)+`)) AS cpu_s,
+		       countIf(metric IN (`+inList(InstCPUSources)+`)) AS cpu_n,
+		       argMaxIf(value, time, metric IN (`+inList(InstMemSources)+`)) AS mem_s,
+		       countIf(metric IN (`+inList(InstMemSources)+`)) AS mem_n
 		FROM metric_points
 		WHERE host_name = ?
 		  AND time >= ? AND time <= ?
@@ -237,10 +237,10 @@ func (s *Store) GetHostDetail(ctx context.Context, host string, from, to time.Ti
 		return nil, err
 	}
 	defer trows.Close()
-	var samples []hostTrendSample
+	var samples []HostTrendSample
 	for trows.Next() {
 		var (
-			sm     hostTrendSample
+			sm     HostTrendSample
 			bucket time.Time
 			cpuN   uint64
 			memN   uint64
@@ -255,14 +255,14 @@ func (s *Store) GetHostDetail(ctx context.Context, host string, from, to time.Ti
 	if err := trows.Err(); err != nil {
 		return nil, err
 	}
-	d.Trend = sumHostTrend(samples)
+	d.Trend = SumHostTrend(samples)
 	return d, nil
 }
 
-// hostTrendSample is one (service, minute) reading from the drawer
+// HostTrendSample is one (service, minute) reading from the drawer
 // trend query. HasCPU/HasMem distinguish "no sample this minute" from
 // a genuine zero (avgIf yields nan, argMaxIf yields 0 on no match).
-type hostTrendSample struct {
+type HostTrendSample struct {
 	Service string
 	Minute  int64 // unix minutes
 	CPU     float64
@@ -276,16 +276,16 @@ type hostTrendSample struct {
 // gone, not jittered). One 60s export interval + slack.
 const trendCarryMinutes = 3
 
-// sumHostTrend sums per-service gauge series into the host trend,
+// SumHostTrend sums per-service gauge series into the host trend,
 // forward-filling per-service gaps ≤ trendCarryMinutes. Pure —
 // table-tested in hosts_trend_test.go (v0.8.449 review-fix: SQL-side
 // summing counted missing gauge samples as 0 → false sawtooth dips).
-func sumHostTrend(samples []hostTrendSample) []HostTrendPoint {
+func SumHostTrend(samples []HostTrendSample) []HostTrendPoint {
 	if len(samples) == 0 {
 		return []HostTrendPoint{}
 	}
 	lo, hi := samples[0].Minute, samples[0].Minute
-	perSvc := map[string]map[int64]hostTrendSample{}
+	perSvc := map[string]map[int64]HostTrendSample{}
 	for _, sm := range samples {
 		if sm.Minute < lo {
 			lo = sm.Minute
@@ -295,7 +295,7 @@ func sumHostTrend(samples []hostTrendSample) []HostTrendPoint {
 		}
 		m := perSvc[sm.Service]
 		if m == nil {
-			m = map[int64]hostTrendSample{}
+			m = map[int64]HostTrendSample{}
 			perSvc[sm.Service] = m
 		}
 		m[sm.Minute] = sm

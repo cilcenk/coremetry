@@ -119,8 +119,8 @@ Okuma tarafı: `internal/chstore/metric_rollup_read.go:48-50` (kademe tablosu) +
 | 8 | Servis Overview throughput + "Response time" | **Seam** (v0.9.1268) | `internal/api/service_metric_throughput.go:1-40`; FE `frontend/src/pages/service/Overview.tsx:522` (`rtMetric \|\| metric`) | ✅ (`MetricExists`/`MetricInstrument`/`QueryMetricRate`/`LatencyMetricName`) |
 | 9 | MCP `query_metric`, `list_metric_names` | **Seam** (Deps.Metrics) | `internal/mcptools/tools.go:200-201`, `:297`, `:1071-1119` | ✅ — ama `metricSource()`, param GÖRMEZ (bilinçli istisna) |
 | 10 | Diğer ~30 MCP tool'u (`guided_parity.go:613` pod envanteri dahil) | **CH-çakılı** | `internal/mcptools/guided_parity.go:613-626` | ❌ ham `metric_points` taraması |
-| 11 | `/hosts` (host + pod envanteri) | **CH-çakılı** | `internal/api/hosts.go:16-17` → `chstore/hosts.go:97,163` | ❌ sabit-adlı okuyucu |
-| 12 | Infra panelleri (`GetInfraMetrics`) | **CH-çakılı** | `chstore/infra_metrics.go:94` | ❌ |
+| 11 | `/hosts` (host + pod envanteri) | **Seam** (v0.10.365) | `internal/api/hosts_metric.go`; CH yolu `chstore/hosts.go:97,163` aynen | ✅ dilim 3a |
+| 12 | Infra panelleri (`GetInfraMetrics`) | **Seam** (v0.10.365) | `internal/api/infra_metric.go`; CH yolu `chstore/infra_metrics.go` aynen | ✅ dilim 3a |
 | 13 | JVM heap / GC pod panelleri | **CH-çakılı** | `chstore/runtime_pods.go:50,106,157` | ❌ (alarm tarafı VM'e döndü — satır 21) |
 | 14 | `/databases` receiver blend + DB kapasite/horizon/topsql | **CH-çakılı** | `chstore/dependencies.go:1035,1195,1555`; `db_capacity.go:75-280`; `db_horizon.go`, `db_topsql.go`; `oracle.go` (13 atıf), `postgres.go` (7), `mysql.go` (5), `redis.go` (4) | ❌ **en büyük tek blok** |
 | 15 | Pod ↔ servis köprüsü | **CH-çakılı** | `chstore/podservice.go:50`; `internal/api/thanos_handlers.go:137` | ❌ |

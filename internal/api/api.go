@@ -2645,9 +2645,18 @@ func (s *Server) getServiceInfraMetrics(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	since := parseDuration(r.URL.Query().Get("since"), 15*time.Minute)
-	key := fmt.Sprintf("infra-metrics:svc=%s:since=%s", name, since)
+	// v0.10.365 — metricSource seam (infra_metric.go); CH path verbatim.
+	src, err := s.metricSourceFor(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	key := fmt.Sprintf("infra-metrics:%s:svc=%s:since=%s", src.Name(), name, since)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.GetInfraMetrics(ctx, name, since, 0)
+		if src.Name() == metricSourceCH {
+			return s.store.GetInfraMetrics(ctx, name, since, 0)
+		}
+		return buildInfraMetric(ctx, src, name, since, time.Now())
 	})
 }
 

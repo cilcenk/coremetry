@@ -19,9 +19,21 @@ func (s *Server) registerHostRoutes(mux *http.ServeMux) {
 
 func (s *Server) getHosts(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, time.Hour)
-	key := "hosts:" + cacheBucket(from, to)
+	// v0.10.365 — metricSource seam: ClickHouse keeps its one-query SQL
+	// path; VictoriaMetrics-primary installs assemble the same rows
+	// through QueryMetric (hosts_metric.go). Backend name in the key —
+	// the cross-poisoning class of v0.5.187.
+	src, err := s.metricSourceFor(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	key := "hosts:" + src.Name() + ":" + cacheBucket(from, to)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.GetHosts(ctx, from, to)
+		if src.Name() == metricSourceCH {
+			return s.store.GetHosts(ctx, from, to)
+		}
+		return buildHostsMetric(ctx, src, from, to)
 	})
 }
 
@@ -32,8 +44,16 @@ func (s *Server) getHostDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from, to := parseFromTo(r, time.Hour)
-	key := fmt.Sprintf("hosts-detail:%s:%s", host, cacheBucket(from, to))
+	src, err := s.metricSourceFor(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	key := fmt.Sprintf("hosts-detail:%s:%s:%s", src.Name(), host, cacheBucket(from, to))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.GetHostDetail(ctx, host, from, to)
+		if src.Name() == metricSourceCH {
+			return s.store.GetHostDetail(ctx, host, from, to)
+		}
+		return buildHostDetailMetric(ctx, src, host, from, to)
 	})
 }

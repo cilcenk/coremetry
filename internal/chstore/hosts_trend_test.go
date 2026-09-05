@@ -1,6 +1,6 @@
 package chstore
 
-// v0.8.449 review-fix regression tests — sumHostTrend: gauge series
+// v0.8.449 review-fix regression tests — SumHostTrend: gauge series
 // sum with per-service forward-fill. The pre-fix SQL sum counted a
 // (service, minute) bucket that merely missed a sample as 0, so
 // 60s-export jitter drew false sawtooth dips in the host drawer.
@@ -11,19 +11,19 @@ import (
 )
 
 func TestSumHostTrend(t *testing.T) {
-	s := func(svc string, min int64, cpu float64, hasCPU bool, mem float64, hasMem bool) hostTrendSample {
-		return hostTrendSample{Service: svc, Minute: min, CPU: cpu, HasCPU: hasCPU, Mem: mem, HasMem: hasMem}
+	s := func(svc string, min int64, cpu float64, hasCPU bool, mem float64, hasMem bool) HostTrendSample {
+		return HostTrendSample{Service: svc, Minute: min, CPU: cpu, HasCPU: hasCPU, Mem: mem, HasMem: hasMem}
 	}
 
 	t.Run("empty input → empty slice, not nil", func(t *testing.T) {
-		out := sumHostTrend(nil)
+		out := SumHostTrend(nil)
 		if out == nil || len(out) != 0 {
 			t.Fatalf("want empty slice, got %#v", out)
 		}
 	})
 
 	t.Run("two services sum per minute", func(t *testing.T) {
-		out := sumHostTrend([]hostTrendSample{
+		out := SumHostTrend([]HostTrendSample{
 			s("a", 100, 0.10, true, 1000, true),
 			s("b", 100, 0.30, true, 3000, true),
 		})
@@ -41,7 +41,7 @@ func TestSumHostTrend(t *testing.T) {
 	t.Run("sample gap ≤3 dk forward-fill edilir — testere dişi yok", func(t *testing.T) {
 		// b servisi 101. dakikada örnek KAÇIRIYOR (jitter); pre-fix
 		// davranış o dakikayı cpu=10 mem=1000'e düşürürdü.
-		out := sumHostTrend([]hostTrendSample{
+		out := SumHostTrend([]HostTrendSample{
 			s("a", 100, 0.10, true, 1000, true),
 			s("b", 100, 0.30, true, 3000, true),
 			s("a", 101, 0.10, true, 1000, true),
@@ -58,14 +58,14 @@ func TestSumHostTrend(t *testing.T) {
 	})
 
 	t.Run("staleness cap: >3 dk sessiz servis düşer", func(t *testing.T) {
-		samples := []hostTrendSample{
+		samples := []HostTrendSample{
 			s("a", 100, 0.10, true, 1000, true),
 			s("b", 100, 0.30, true, 3000, true),
 		}
 		for m := int64(101); m <= 106; m++ {
 			samples = append(samples, s("a", m, 0.10, true, 1000, true))
 		}
-		out := sumHostTrend(samples)
+		out := SumHostTrend(samples)
 		// dk 100..103: b taşınır (cap dahil); 104+: yalnız a.
 		if len(out) != 7 {
 			t.Fatalf("want 7 points, got %d", len(out))
@@ -80,7 +80,7 @@ func TestSumHostTrend(t *testing.T) {
 
 	t.Run("cpu'suz mem örneği: mem toplanır, cpu 0 sayılmaz", func(t *testing.T) {
 		// avgIf no-match nan üretir; HasCPU=false + nan CPU asla toplama girmez.
-		out := sumHostTrend([]hostTrendSample{
+		out := SumHostTrend([]HostTrendSample{
 			s("a", 100, math.NaN(), false, 2000, true),
 		})
 		if len(out) != 1 || out[0].CPUPct != 0 || out[0].MemBytes != 2000 {
@@ -89,7 +89,7 @@ func TestSumHostTrend(t *testing.T) {
 	})
 
 	t.Run("tam boş dakika atlanır — 0 çizilmez", func(t *testing.T) {
-		out := sumHostTrend([]hostTrendSample{
+		out := SumHostTrend([]HostTrendSample{
 			s("a", 100, 0.10, true, 1000, true),
 			// 101-104 tamamen boş (cap aşımı sonrası nokta yok)
 			s("a", 105, 0.10, true, 1000, true),

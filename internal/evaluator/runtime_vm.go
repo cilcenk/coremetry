@@ -34,126 +34,34 @@ import (
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/vmetrics"
 )
 
 // runtimeVMGroupBy — seri kimliği: servis + pod coalesce zinciri.
 // Sıra vmPodFromTuple'ın okuduğu konumlarla ÇAKILI.
-var runtimeVMGroupBy = []string{"service.name", "k8s.pod.name", "host.name", "service.instance.id"}
+// v0.10.374 — the pure pieces moved to vmetrics/runtime_pods.go so the
+// anomaly investigation and the MCP pod-health tool read JVM pods from
+// the SAME translation; the names below stay as thin delegations (the
+// evaluator's tests pin them).
+var runtimeVMGroupBy = vmetrics.RuntimePodGroupBy
 
-// vmPodFromTuple — chstore.runtimePodExpr'in (k8s.pod.name → host.name →
-// service.instance.id[:8]) istemci-taraflı ikizi. SAF.
-func vmPodFromTuple(groupKey []string) string {
-	get := func(i int) string {
-		if i < len(groupKey) {
-			return groupKey[i]
-		}
-		return ""
-	}
-	if p := get(1); p != "" {
-		return p
-	}
-	if h := get(2); h != "" {
-		return h
-	}
-	if id := get(3); id != "" {
-		r := []rune(id)
-		if len(r) > 8 {
-			return string(r[:8])
-		}
-		return id
-	}
-	return ""
-}
+func vmPodFromTuple(groupKey []string) string { return vmetrics.PodFromTuple(groupKey) }
 
-// vmGCDerive — iki pencere-toplamından üç metrik. SAF.
 func vmGCDerive(sumSec, cnt, windowSec float64) (pauseMs, sharePct, ratePerMin float64) {
-	if windowSec <= 0 || cnt <= 0 || sumSec < 0 {
-		return 0, 0, 0
-	}
-	pauseMs = sumSec / cnt * 1000
-	sharePct = sumSec / windowSec * 100
-	ratePerMin = cnt / (windowSec / 60)
-	return pauseMs, sharePct, ratePerMin
+	return vmetrics.GCDerive(sumSec, cnt, windowSec)
 }
 
-// seriesWindowTotal — increase serisinin pencere toplamı: nokta
-// değerlerinin toplamı (step=pencere iken tek nokta; VM adım kaydırırsa
-// birden çok nokta gelebilir, toplamak iki durumda da doğru).
-func seriesWindowTotal(s chstore.SpanMetricSeries) float64 {
-	t := 0.0
-	for _, p := range s.Points {
-		t += p.Value
-	}
-	return t
+func joinVMGCSeries(sums, cnts []chstore.SpanMetricSeries, windowSec float64) ([]chstore.CapacitySample, []chstore.GCActivitySample, error) {
+	return vmetrics.JoinGCSeries(sums, cnts, windowSec)
 }
 
-// vmGCSamples — iki VM sorgusu → reconcile makinelerinin beklediği
-// örnek şekilleri. Hata = VM erişilemez: tik atlanır, sessiz boş YOK
-// (boş kabul etmek tüm açık GC problemlerini yanlışlıkla çözerdi).
 func (e *Evaluator) vmGCSamples(ctx context.Context) ([]chstore.CapacitySample, []chstore.GCActivitySample, error) {
 	now := time.Now()
-	win := chstore.RuntimePodWindow
-	base := chstore.MetricQueryFilter{
-		GroupBy:       runtimeVMGroupBy,
-		Aggregation:   "increase",
-		From:          now.Add(-win),
-		To:            now,
-		StepSeconds:   int(win.Seconds()),
-		MaxDataPoints: 2,
-	}
-	sumF := base
-	sumF.Name = "jvm_gc_duration_seconds_sum"
-	cntF := base
-	cntF.Name = "jvm_gc_duration_seconds_count"
-
-	sums, err := e.vmetrics.QueryMetric(ctx, sumF)
-	if err != nil {
-		return nil, nil, fmt.Errorf("vm gc sum: %w", err)
-	}
-	cnts, err := e.vmetrics.QueryMetric(ctx, cntF)
-	if err != nil {
-		return nil, nil, fmt.Errorf("vm gc count: %w", err)
-	}
-	return joinVMGCSeries(sums, cnts, win.Seconds())
+	return e.vmetrics.JVMGCPodStats(ctx, now.Add(-chstore.RuntimePodWindow), now)
 }
 
 // joinVMGCSeries — SAF birleşim: (servis, pod) anahtarında sum×cnt.
 // Karşılığı olmayan seri atlanır (yarım veri sample üretmez).
-func joinVMGCSeries(sums, cnts []chstore.SpanMetricSeries, windowSec float64) ([]chstore.CapacitySample, []chstore.GCActivitySample, error) {
-	type key struct{ svc, pod string }
-	cntBy := map[key]float64{}
-	for _, s := range cnts {
-		svc := ""
-		if len(s.GroupKey) > 0 {
-			svc = s.GroupKey[0]
-		}
-		pod := vmPodFromTuple(s.GroupKey)
-		if svc == "" || pod == "" {
-			continue
-		}
-		cntBy[key{svc, pod}] += seriesWindowTotal(s)
-	}
-	var pauses []chstore.CapacitySample
-	var acts []chstore.GCActivitySample
-	for _, s := range sums {
-		svc := ""
-		if len(s.GroupKey) > 0 {
-			svc = s.GroupKey[0]
-		}
-		pod := vmPodFromTuple(s.GroupKey)
-		if svc == "" || pod == "" {
-			continue
-		}
-		cnt := cntBy[key{svc, pod}]
-		pauseMs, sharePct, ratePerMin := vmGCDerive(seriesWindowTotal(s), cnt, windowSec)
-		if cnt <= 0 {
-			continue
-		}
-		pauses = append(pauses, chstore.CapacitySample{Instance: svc, Subkey: pod, Usage: pauseMs})
-		acts = append(acts, chstore.GCActivitySample{Service: svc, Pod: pod, SharePct: sharePct, RatePerMin: ratePerMin})
-	}
-	return pauses, acts, nil
-}
 
 // ── Reconcile makineleri — v0.9.1074'ten geri (v0.9.1213) ──────────────
 //

@@ -121,7 +121,7 @@ Okuma tarafı: `internal/chstore/metric_rollup_read.go:48-50` (kademe tablosu) +
 | 10 | Diğer ~30 MCP tool'u (`guided_parity.go:613` pod envanteri dahil) | **CH-çakılı** | `internal/mcptools/guided_parity.go:613-626` | ❌ ham `metric_points` taraması |
 | 11 | `/hosts` (host + pod envanteri) | **Seam** (v0.10.365) | `internal/api/hosts_metric.go`; CH yolu `chstore/hosts.go:97,163` aynen | ✅ dilim 3a |
 | 12 | Infra panelleri (`GetInfraMetrics`) | **Seam** (v0.10.365) | `internal/api/infra_metric.go`; CH yolu `chstore/infra_metrics.go` aynen | ✅ dilim 3a |
-| 13 | JVM heap / GC pod panelleri | **CH-çakılı** | `chstore/runtime_pods.go:50,106,157` | ❌ (alarm tarafı VM'e döndü — satır 21) |
+| 13 | JVM heap / GC pod okuyucuları (anomaly kanıtı + MCP pod-health) | **Seam** (v0.10.374) | `chstore.RuntimePodReader`; VM: `internal/vmetrics/runtime_pods.go`; `vmetrics.RuntimePodsOr` main.go | ✅ dilim 3c (evaluator aynı saf parçaları paylaşır) |
 | 14 | `/databases` receiver blend + DB kapasite/horizon/topsql | **CH-çakılı** | `chstore/dependencies.go:1035,1195,1555`; `db_capacity.go:75-280`; `db_horizon.go`, `db_topsql.go`; `oracle.go` (13 atıf), `postgres.go` (7), `mysql.go` (5), `redis.go` (4) | ❌ **en büyük tek blok** |
 | 15 | Pod ↔ servis köprüsü | **CH-çakılı** | `chstore/podservice.go:50`; `internal/api/thanos_handlers.go:137` | ❌ |
 | 16 | `ServiceInstances` (servis örnekleri) | **CH-çakılı** | `api.go:2693` → `chstore/service_instances.go:39` | ❌ |

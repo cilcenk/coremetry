@@ -178,6 +178,10 @@ import (
 type Deps struct {
 	Store    *chstore.Store
 	LogStore logstore.Store
+	// RuntimePods — v0.10.374 (VM dilim 3c): JVM heap / GC pod reads;
+	// nil → Store. main.go hands vmetrics.RuntimePodsOr so a
+	// VictoriaMetrics-primary install's pod-health tool is not empty.
+	RuntimePods chstore.RuntimePodReader
 	// Metrics — v0.9.1150. The METRIC read router (ClickHouse or an
 	// external VictoriaMetrics), for the two tools whose reads the
 	// operator can repoint from Settings: query_metric and
@@ -1310,4 +1314,12 @@ func splitCSV(s string) []string {
 		out = append(out, s[start:])
 	}
 	return out
+}
+
+// runtimePods — the JVM pod reader, Store when none was injected.
+func (d Deps) runtimePods() chstore.RuntimePodReader {
+	if d.RuntimePods != nil {
+		return d.RuntimePods
+	}
+	return d.Store
 }

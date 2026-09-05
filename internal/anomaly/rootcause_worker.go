@@ -112,11 +112,14 @@ const (
 type AutoVerdictFunc func(ctx context.Context, anchorKind string, h *chstore.RootCauseHypothesis, anchorStartNs int64) error
 
 type RootCauseSynthesizer struct {
-	store    *chstore.Store
-	lock     cache.Lock
-	leader   *cache.LeaderHolder
-	interval time.Duration
-	batch    int
+	store *chstore.Store
+	// runtimePods — v0.10.374 (VM dilim 3c): JVM heap / GC evidence
+	// reader; nil → store. Set by main.go (vmetrics.RuntimePodsOr).
+	runtimePods chstore.RuntimePodReader
+	lock        cache.Lock
+	leader      *cache.LeaderHolder
+	interval    time.Duration
+	batch       int
 	// autoVerdict — bkz. AutoVerdictFunc. Start() öncesinde SetAutoVerdict
 	// ile kuruluyor; tick'ler tek goroutine'de koştuğu için yarış yok.
 	autoVerdict AutoVerdictFunc
@@ -134,6 +137,10 @@ func (s *RootCauseSynthesizer) SetAutoVerdict(fn AutoVerdictFunc) {
 	}
 	s.autoVerdict = fn
 }
+
+// SetRuntimePods — v0.10.374: the JVM heap / GC reader the saturation
+// evidence uses; nil keeps the store.
+func (s *RootCauseSynthesizer) SetRuntimePods(r chstore.RuntimePodReader) { s.runtimePods = r }
 
 func NewRootCauseSynthesizer(store *chstore.Store, lock cache.Lock) *RootCauseSynthesizer {
 	interval := 30 * time.Second
@@ -275,7 +282,7 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 			deep := shouldDeepInvestigate(isP1, bundle.Deploy != nil)
 			if deep {
 				if plan := investigationPlan(p); len(plan) > 0 {
-					d := gatherDeepEvidence(ctx, s.store, p, plan, now.Add(-evidenceWindow), now)
+					d := gatherDeepEvidence(ctx, s.store, s.runtimePods, p, plan, now.Add(-evidenceWindow), now)
 					h.Deep = &d
 				}
 			}

@@ -13,7 +13,7 @@ import (
 // (deploys.go instanceIdExpr emsali): k8s.pod.name (collector
 // k8sattributes'a bağlı, her ortamda yok) → host.name (container
 // hostname = k8s pod adı, javaagent default; podservice.go:11) →
-// service.instance.id ilk 8 (UUID son çare) → '' (aggregate; problem
+// service.instance.id ilk 8 (UUID son çare) → ” (aggregate; problem
 // yine servis düzeyinde açılır, kırılmaz).
 //
 // Distributed-güvenli: yalnız metric_points'in HER kurulumda var olan
@@ -35,6 +35,15 @@ const runtimeWindow = 10 * time.Minute
 // kurarken kullandığı dışa açık eş (v0.9.1053 — JVM okumaları pencere
 // parametresi aldı; "şimdi" semantiği artık çağıranda kurulur).
 const RuntimePodWindow = runtimeWindow
+
+// RuntimePodReader — the two JVM pod reads the anomaly investigation and
+// the MCP pod-health tool need (v0.10.374, VM dilim 3c). *Store answers
+// from metric_points; *vmetrics.Service answers from PromQL so a
+// VictoriaMetrics-primary install still gets heap / GC evidence.
+type RuntimePodReader interface {
+	JVMHeapPodUsage(ctx context.Context, from, to time.Time) ([]CapacitySample, error)
+	JVMGCPodPause(ctx context.Context, from, to time.Time) ([]CapacitySample, error)
+}
 
 // JVMHeapPodUsage returns per-(service, pod) heap saturation samples:
 // Usage = 10-dk ortalaması toplam heap kullanımı (byte), Limit = -Xmx.

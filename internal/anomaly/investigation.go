@@ -117,7 +117,16 @@ const deepEvidenceLimit = 5
 // gatherDeepEvidence — plandaki her aile için BİR sınırlı okuma. Best-effort:
 // bir okuma patlarsa o aile "bakılamadı" olarak ize girer ve soruşturma
 // devam eder; kısmi kanıt hiç kanıttan iyidir ve iz dürüst kalır.
-func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Problem, plan []signalFamily, from, to time.Time) chstore.DeepEvidence {
+// runtimePodsOrStore — v0.10.374: nil reader → the store itself.
+func runtimePodsOrStore(rt chstore.RuntimePodReader, store *chstore.Store) chstore.RuntimePodReader {
+	if rt != nil {
+		return rt
+	}
+	return store
+}
+
+func gatherDeepEvidence(ctx context.Context, store *chstore.Store, rt chstore.RuntimePodReader, p chstore.Problem, plan []signalFamily, from, to time.Time) chstore.DeepEvidence {
+	pods := runtimePodsOrStore(rt, store) // v0.10.374 — VM dilim 3c
 	var d chstore.DeepEvidence
 	for _, f := range plan {
 		switch f {
@@ -155,11 +164,11 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Pro
 			// ANKİ heap yazılıyor, denetim izi Found:true diyordu — pozitif
 			// tarafta yanlış-kanıt (rca_evidence'ın negatif-kanıt uyarısının
 			// tersi).
-			heap, herr := store.JVMHeapPodUsage(ctx, from, to)
+			heap, herr := pods.JVMHeapPodUsage(ctx, from, to)
 			heap = samplesForService(heap, p.Service, true)
 			// v0.9.1206 — GC tavan istemez: JVMGCPodPause Limit doldurmaz,
 			// eski koşulsuz Limit>0 filtresi GC'nin tamamını eliyordu.
-			gc, gerr := store.JVMGCPodPause(ctx, from, to)
+			gc, gerr := pods.JVMGCPodPause(ctx, from, to)
 			gc = samplesForService(gc, p.Service, false)
 			err := herr
 			if err == nil {

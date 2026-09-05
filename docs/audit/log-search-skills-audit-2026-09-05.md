@@ -37,7 +37,7 @@ bağlam okunur.
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
 | C1 | Problem panelinde log kanıtı toplanıyor ama çizilmiyor (`templates?: unknown[]`) | `types.ts:914`, `RootCausePanel.tsx:282` | "Log kanıtı" Section + `logsHref(q: PatternSearchQuery)` | ~2 saat |
-| C2 | Problem→Logs pivotu hata süzgeci taşımıyor (trace linki taşıyor) | `ProblemDetail.tsx:717,932`, `InboxTriageDrawer.tsx:150` | `severity: 17` + "tüm loglar" linki | ~10 dk |
+| C2 | **GEMİDE v0.10.419** — Problem→Logs pivotu hata süzgeci taşımıyor (trace linki taşıyor) | `ProblemDetail.tsx:717,932`, `InboxTriageDrawer.tsx:150` | `severity: 17` + "tüm loglar" linki | ~10 dk |
 | C3 | `familyLogs` kanıtı filo sıralı + ömür-boyu sayım (Service alanı geçilmiyor, TotalCount kümülatif) | `anomaly/investigation.go:152,408`, `log_templates.go:17` | `Service` geç + pencere sayımı (`GroupBySignature`) | ~yarım gün |
 | C4 | Desenler örneklemesi en-yeni-2000; panel kapsanan alt pencereyi söylemiyor | `patterns.go:75`, `LogPatternsPanel.tsx:122` | `coveredFromNs/ToNs` + altbilgi | ~1 saat |
 | C5 | "Hatalıyı ayıran alan" log tarafında yok (BubbleUp yalnız span) | `bubbleup.go:86`, `api_logs.go:914` | fieldstats `baseline=1` + lift rozeti | ~yarım gün |

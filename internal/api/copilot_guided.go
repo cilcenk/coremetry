@@ -2738,10 +2738,15 @@ func renderProblemsEvidenceTR(probs []chstore.Problem, service, env string, now 
 		name := p.RuleName
 		if name == "" {
 			name = p.Metric
+		} else if p.Metric != "" && p.Metric != p.RuleName {
+			// v0.10.405 (CoSRE denetimi P4) — kural adı varken METRİK adı
+			// düşüyordu; model "değer 4.20"nin neyin değeri olduğunu bilmiyordu.
+			name += " [" + p.Metric + "]"
 		}
-		fmt.Fprintf(&b, "- [%s] %s — %s (%s, %s önce): değer %.2f / eşik %.2f",
+		unit := problemMetricUnitTR(p.Metric)
+		fmt.Fprintf(&b, "- [%s] %s — %s (%s, %s önce): değer %.2f%s / eşik %.2f%s",
 			p.Priority, p.Service, name, p.Severity,
-			fmtAgoTR(now.UnixNano()/1e9-p.StartedAt/1e9), p.Value, p.Threshold)
+			fmtAgoTR(now.UnixNano()/1e9-p.StartedAt/1e9), p.Value, unit, p.Threshold, unit)
 		if p.RootCause != nil && p.RootCause.TopSuspect != "" {
 			fmt.Fprintf(&b, " | kök-neden şüphelisi: %s (güven %.2f)",
 				p.RootCause.TopSuspect, p.RootCause.Confidence)
@@ -3022,4 +3027,22 @@ func evidenceAsOf(anchorTo time.Time) time.Time {
 		return time.Now()
 	}
 	return anchorTo
+}
+
+// problemMetricUnitTR — v0.10.405 (CoSRE denetimi P4): problem kanıt
+// satırındaki sayının BİRİMİ. error_rate yüzde (anomaly.go "error_rate(%)"),
+// gecikme aileleri ms, throughput req/s; tanınmayan metrik birimsiz kalır
+// (tahmin yok — yanlış birim birimsizden kötü).
+func problemMetricUnitTR(metric string) string {
+	m := strings.ToLower(metric)
+	switch {
+	case strings.Contains(m, "error_rate") || strings.HasSuffix(m, "_pct") || strings.Contains(m, "percent"):
+		return "%"
+	case strings.Contains(m, "p50") || strings.Contains(m, "p95") || strings.Contains(m, "p99") ||
+		strings.Contains(m, "latency") || strings.Contains(m, "duration"):
+		return " ms"
+	case m == "rps" || strings.Contains(m, "throughput") || strings.Contains(m, "req_per_s"):
+		return " req/s"
+	}
+	return ""
 }

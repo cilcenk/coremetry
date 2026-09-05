@@ -187,7 +187,7 @@ Rule: Yüksek hata oranı
 Service: checkout
 Severity: critical
 Metric: error_rate
-Value: 0.14 (threshold 0.05)
+Value: 14.00% (threshold 5.00%)
 
 KÖK-NEDEN HİPOTEZİ (deterministik korelasyon motoru — BİRİNCİL kanıt):
 - Baş şüpheli: payment-db (skor 0.78, güven 0.71) — fresh deploy 4m before onset

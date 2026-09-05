@@ -1384,7 +1384,7 @@ func fmtAgoTR(seconds int64) string {
 // ctxRangeS (v0.9.529) — operatörün EKRANDAKİ zaman aralığı, saniye.
 // 0 = bilgi yok (eski istemci); o hâlde davranış bayt-bayt eskisidir.
 // ctxTrace (v0.9.537) — ekrandaki trace ID'si (/trace?id=), "" = yok.
-func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation, explain string, ctxRangeS int64, ctxTrace, ctxEnv string, anchorTo time.Time, tzOffsetMin int) (handled, ok bool) {
+func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation, explain string, ctxRangeS int64, ctxTrace, ctxEnv string, anchorTo time.Time, tzOffsetMin int, tzName string) (handled, ok bool) {
 	question := strings.TrimSpace(lastUserText(msgs))
 	if question == "" {
 		return false, false
@@ -1474,7 +1474,7 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// ezer (hangi rota olursa olsun), iki pencere window_compare olur.
 	// Rota none olsa da geçerli ("… arası servis süreleri" sinyalsiz).
 	if absShape {
-		loc := chatLocation(tzOffsetMin)
+		loc := chatLocationNamed(tzName, tzOffsetMin)
 		if wins, ok := extractAbsoluteWindows(question, time.Now(), loc); ok {
 			var label string
 			route, anchorTo, rangeS, label = applyAbsoluteWindows(route, wins, ctxService, anchorTo, rangeS, loc, absWindowText(question))

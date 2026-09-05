@@ -59,6 +59,20 @@ func chatLocation(tzOffsetMin int) *time.Location {
 	return time.FixedZone(name, tzOffsetMin*60)
 }
 
+var tzNameRe = regexp.MustCompile(`^[A-Za-z_]+(?:/[A-Za-z0-9_+-]+){0,3}$`)
+
+// chatLocationNamed — v0.10.445: IANA adı (DST doğru) önce; geçersiz/boş
+// ad → sabit ofset (chatLocation). Ad istemciden gelir: şekil kapısı +
+// LoadLocation başarısızlığı sessizce ofsete düşer.
+func chatLocationNamed(tzName string, tzOffsetMin int) *time.Location {
+	if tzName != "" && len(tzName) <= 64 && tzNameRe.MatchString(tzName) {
+		if loc, err := time.LoadLocation(tzName); err == nil {
+			return loc
+		}
+	}
+	return chatLocation(tzOffsetMin)
+}
+
 // looksLikeAbsoluteWindow — kapı (kılavuz sinyal kapısına ek): gerçekten
 // bir mutlak pencere çıkıyor mu (v0.10.443 — çıplak "1-2"/"5-10" sayı
 // çiftleri artık pencere değil; aynı kabul kuralı).

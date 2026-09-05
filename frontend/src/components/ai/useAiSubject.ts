@@ -1,17 +1,17 @@
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AI_CODE_PARAM, AI_PARAM, formatAiParam, parseAiParam, type AISubject } from '@/lib/aiSubject';
+import { AI_CODE_PARAM, AI_PARAM, AI_SRC_PARAM, formatAiParam, parseAiParam, type AISrc, type AISubject } from '@/lib/aiSubject';
 
 // useAiSubject — AI çekmecesinin açık öznesi, ADRESTEN okunur/yazılır
 // (v0.9.477). Ev kuralı: her operatör seçimi `setSearchParams(prev => …,
 // { replace: true })` ile yazılır, yabancı parametreler KORUNUR ve seçim
 // history'ye durak eklemez.
-export function useAiSubject(): [AISubject | null, (s: AISubject | null) => void] {
+export function useAiSubject(): [AISubject | null, (s: AISubject | null, src?: AISrc) => void] {
   const [searchParams, setSearchParams] = useSearchParams();
   const raw = searchParams.get(AI_PARAM);
   const subject = useMemo(() => parseAiParam(raw), [raw]);
 
-  const setSubject = useCallback((s: AISubject | null) => {
+  const setSubject = useCallback((s: AISubject | null, src?: AISrc) => {
     setSearchParams(prev => {
       // `prev` router'ın konumundan gelir; Trace sayfası ?span= / ?tab='ı
       // ham history.replaceState ile yazdığı için router BAYAT kalabilir —
@@ -29,6 +29,9 @@ export function useAiSubject(): [AISubject | null, (s: AISubject | null) => void
       // işaretlenen kutu SONRAKİ öznelere de sızardı ve v0.10.60'ın
       // "her açılışta kapalı" kararı arka kapıdan geri dönerdi.
       next.delete(AI_CODE_PARAM);
+      // v0.10.432 (D8) — açılış kaynağı da yalnız o açılışta yaşar.
+      if (s && src) next.set(AI_SRC_PARAM, src);
+      else next.delete(AI_SRC_PARAM);
       return next;
     }, { replace: true });
   }, [setSearchParams]);

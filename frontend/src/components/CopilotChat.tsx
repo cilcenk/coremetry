@@ -14,6 +14,7 @@ import { contextStarter, serviceFromRoute } from '@/lib/chatContext';
 import { syncChatParam } from '@/lib/chatUrl';
 import { Empty, Spinner } from './Spinner';
 import { ChatBubble } from './ai/ChatBubble';
+import { TraceExplainNudge } from './ai/TraceExplainNudge';
 import { useChatThread } from './ai/useChatThread';
 import { greetHello, greetStatus } from './ai/greeting';
 import type { AiConversationSummary } from '@/lib/types';
@@ -292,6 +293,7 @@ export function CopilotChat() {
     <>
       {/* Launcher — markalı animasyonlu sparkline (varyant B). Yuvarlak FAB
           kendi anatomisi; shared <Button> atomu uygulanmaz (U1 batch-2 kararı). */}
+      {!open && <TraceExplainNudge />}{/* v0.10.432 (D8) — FAB'ın üstündeki baloncuk */}
       {!open && (
         <button
           className="cm-ai-fab"

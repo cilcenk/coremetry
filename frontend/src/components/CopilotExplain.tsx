@@ -11,7 +11,7 @@ import type { AICodeContext } from '@/lib/types';
 import { IconSparkles } from './icons';
 import { ExplainBody, type ExplainEvidence } from '@/components/ai/ExplainBody';
 import type { IdLink } from '@/components/ai/inlineIdLinks';
-import { readAiCodeParam, writeAiCodeParam } from '@/lib/aiSubject';
+import { readAiCodeParam, readAiSrcParam, writeAiCodeParam } from '@/lib/aiSubject';
 import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
 import { shouldAskForCode, type CodeAskState } from './codeAsk';
 
@@ -179,7 +179,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
-    const opts = { ...streamOpts(ac), fresh };
+    const opts = { ...streamOpts(ac), fresh, src: readAiSrcParam() ?? undefined }; // v0.10.432 (D8) kaynak etiketi
 
     setUsed(true);
     setBusy(true); setError(null); setText(null); setMeta(null); setCode(null); setEvidence({ spans: 0, traces: 0 });
@@ -260,7 +260,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
     // artık tek turda kodlu koşar; URL'e de yazılır (deep link).
     setIncludeCode(true);
     writeAiCodeParam(true);
-    const opts = { onDelta: (d: string) => setCodeText(prev => (prev ?? '') + d), signal: ac.signal, fresh: false };
+    const opts = { onDelta: (d: string) => setCodeText(prev => (prev ?? '') + d), signal: ac.signal, fresh: false, src: readAiSrcParam() ?? undefined };
     try {
       const finish = (r: { explanation: string; links?: IdLink[]; exchangeId?: string; code?: AICodeContext; evidenceSpanIds?: string[] }) => {
         // kod geçişi listeyi değiştirirse Kanıt sayısı da onu izler (trace: liste çizilir)

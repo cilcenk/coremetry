@@ -52,6 +52,26 @@ export function writeAiCodeParam(on: boolean): void {
   window.history.replaceState(window.history.state, '', url.toString());
 }
 
+// AI_SRC_PARAM (v0.10.432, CoSRE router boşlukları D8) — çekmecenin
+// hangi AFFORDANS'tan açıldığı: "nudge" = trace ilk açılış baloncuğu.
+// Explain isteğine `?src=` olarak taşınır, sunucu yüzey etiketini
+// "explain-trace:nudge" yapar (/ai ayrı sayar). Beyaz listeli: bilinmeyen
+// değer HİÇ gönderilmez. aicode gibi yalnız o açılışta yaşar — useAiSubject
+// her özne değişimi/kapanışta siler.
+export const AI_SRC_PARAM = 'aisrc';
+export const AI_SRC_VALUES = ['nudge'] as const;
+export type AISrc = typeof AI_SRC_VALUES[number];
+
+export function parseAiSrc(raw: string | null | undefined): AISrc | null {
+  return raw && (AI_SRC_VALUES as readonly string[]).includes(raw) ? (raw as AISrc) : null;
+}
+
+// readAiSrcParam — readAiCodeParam'ın ikizi: CANLI adres çubuğundan.
+export function readAiSrcParam(): AISrc | null {
+  if (typeof window === 'undefined') return null;
+  return parseAiSrc(new URLSearchParams(window.location.search).get(AI_SRC_PARAM));
+}
+
 export const AI_KINDS = [
   'trace', 'span', 'problem', 'incident', 'anomaly',
   'service-health', 'runbook', 'exception', 'charts',

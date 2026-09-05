@@ -3393,6 +3393,14 @@ thead th:hover .th-remove { opacity: 1; }
 .cm-ai-cursor { display: inline-block; width: 6px; height: 13px; background: var(--accent2); vertical-align: -2px; border-radius: 1px; margin-left: 1px; animation: cm-ai-blink 1s steps(2) infinite; }
 .cm-ai-fab { transition: transform .18s, box-shadow .18s; }
 .cm-ai-fab:hover { transform: scale(1.08); }
+/* v0.10.432 (D8) — trace ilk açılış CoSRE baloncuğu: FAB'a bağlı callout
+   (18px kenar + 48px FAB + 12px boşluk = bottom 78px), FAB katmanında. */
+.cm-ai-nudge { position: fixed; right: 18px; bottom: 78px; z-index: var(--z-fab); max-width: 320px;
+  display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-5) var(--sp-6);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg1)); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: var(--radius); box-shadow: var(--shadow-pop); font-size: var(--fs-md); color: var(--text); }
+.cm-ai-nudge-text { display: flex; align-items: center; gap: var(--sp-3); }
+.cm-ai-nudge-actions { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
 @media (prefers-reduced-motion: reduce) { .cm-ai-spark, .cm-ai-cursor { animation: none; } .cm-ai-spark { stroke-dashoffset: 0; } }
 
 /* ── Sohbet balonu markdown blokları (v0.9.1148, AI Faz 4.2) ─────────

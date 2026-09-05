@@ -445,6 +445,10 @@ export function DataTableColgroup<T>({ dt, leading, trailing }: { dt: DataTable<
     ro.observe(wrap);
     return () => ro.disconnect();
   }, []);
+  // v0.10.387 (dış skill denetimi C10) — çağıran satır içi dizi geçiyor
+  // (`leading={[24]}`), yani her render yeni referans ve memo hiç isabet
+  // etmiyordu; bağımlılık PRİMİTİF toplam (rerender-memo-with-default-value).
+  const fixedPx = (leading ?? []).reduce((s, w) => s + w, 0) + (trailing ?? []).reduce((s, w) => s + w, 0);
   const fitted = useMemo(() => {
     if (!fitPx) return null;
     return fitColumnWidths(
@@ -453,10 +457,10 @@ export function DataTableColgroup<T>({ dt, leading, trailing }: { dt: DataTable<
         px: dt.colWidths[c.id] ?? (c.flex ? null : c.width ?? DEFAULT_W),
         min: c.minWidth ?? DEFAULT_MIN,
       })),
-      (leading ?? []).reduce((s, w) => s + w, 0) + (trailing ?? []).reduce((s, w) => s + w, 0),
+      fixedPx,
       fitPx,
     );
-  }, [fitPx, dt.visibleColumns, dt.colWidths, leading, trailing]);
+  }, [fitPx, dt.visibleColumns, dt.colWidths, fixedPx]);
   return (
     <colgroup ref={ref}>
       {(leading ?? []).map((w, i) => <col key={`lead-${i}`} style={{ width: w }} />)}

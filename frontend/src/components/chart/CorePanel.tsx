@@ -401,9 +401,16 @@ export function CorePanel({
   // Gizleme = YENİDEN HESAP: bir katman kapanınca üsttekiler gerçekten
   // aşağı iner. Bu bir VERİ memo'su, config değil — ' vis,' config
   // bağımlılığına girmez (corePanelContracts 🟠 pini korunur).
+  // v0.10.383 (dış skill denetimi A2) — kesikli (hayalet/karşılaştırma)
+  // seriler yığının evrenine ait değil: toplama katılmaz, ham çizilir.
+  const rawIdx = useMemo(() => {
+    const s = new Set<number>();
+    dashed?.forEach((d, i) => { if (d) s.add(i); });
+    return s;
+  }, [dashed]);
   const stackedData = useMemo(
-    () => (stacked ? stackData(aligned.data, hiddenIdx) : aligned.data),
-    [stacked, aligned, hiddenIdx]);
+    () => (stacked ? stackData(aligned.data, hiddenIdx, rawIdx) : aligned.data),
+    [stacked, aligned, hiddenIdx, rawIdx]);
   // ÇİZİM SIRASI (v0.9.808). uPlot sonraki seriyi ÜSTE boyar ve bars path
   // builder her çubuğu TABANDAN çizer: kümülatifte en üst katman en uzun
   // olduğundan mantıksal sırada çizmek alttakileri tamamen örter. Ters
@@ -428,8 +435,8 @@ export function CorePanel({
   // dolgu üretirdi (ve uPlot'un "bir seri en fazla bir bandın üst kenarı"
   // kuralına gereksizce yüklenirdi).
   const stackedBands = useMemo(
-    () => (stacked && !stackedBars ? stackBands(aligned.names.length, hiddenIdx) : null),
-    [stacked, stackedBars, aligned.names.length, hiddenIdx]);
+    () => (stacked && !stackedBars ? stackBands(aligned.names.length, hiddenIdx, rawIdx) : null),
+    [stacked, stackedBars, aligned.names.length, hiddenIdx, rawIdx]);
   // v0.9.788 — bant imzası: yalnız yığın bantları (prop bands v0.10.284'te
   // silindi); imzada tutmak sahte rebuild üretirdi.
   const overlaySig = JSON.stringify([

@@ -221,7 +221,8 @@ describe('CorePanel yığılmış alan (v0.9.788)', () => {
   it('🔴 HAM VERİ KANALI: kümülatif matris aligned\'a yazılmaz', () => {
     // drawData ayrı bir türetme; uPlot ONU alır, aligned ham kalır.
     expect(src).toMatch(/const drawData = useMemo\(/);
-    expect(src).toMatch(/stacked \? stackData\(aligned\.data, hiddenIdx\) : aligned\.data/);
+    // v0.10.383 — rawIdx: hayalet (kesikli) seriler yığın dışı, ham çizilir.
+    expect(src).toMatch(/stacked \? stackData\(aligned\.data, hiddenIdx, rawIdx\) : aligned\.data/);
     expect(src).toMatch(/<UPlotChart data=\{drawData\}/);
     // CSV + lejant istatistikleri HÂLÂ ham matristen.
     expect(src).toMatch(/alignedToCsv\(aligned\.names, aligned\.data/);
@@ -241,7 +242,7 @@ describe('CorePanel yığılmış alan (v0.9.788)', () => {
   });
 
   it('bant listesi saf çekirdekten; stacked iken prop bands YOK SAYILIR', () => {
-    expect(src).toMatch(/stackBands\(aligned\.names\.length, hiddenIdx\)/);
+    expect(src).toMatch(/stackBands\(aligned\.names\.length, hiddenIdx, rawIdx\)/);
     expect(src).toMatch(/if \(stacked\) \{[\s\S]*?b\.addBand\(\{ series: sb\.series \}\)/);
     // Fill VERİLMEZ: uPlot üst serinin kendi dolgusuna düşer.
     expect(src).not.toMatch(/addBand\(\{ series: sb\.series, fill/);
@@ -265,7 +266,7 @@ describe('CorePanel yığılmış alan (v0.9.788)', () => {
     // hiddenIdx bir VERİ memo'su besler; ' vis,' pini (v0.9.704) yukarıdaki
     // testte zaten tüm dizilerde taranıyor — burada kaynağını çiviliyoruz.
     expect(src).toMatch(/const hiddenIdx = useMemo\(/);
-    expect(src).toMatch(/\[stacked, aligned, hiddenIdx\]\)/);
+    expect(src).toMatch(/\[stacked, aligned, hiddenIdx, rawIdx\]\)/);
   });
 });
 
@@ -327,7 +328,7 @@ describe('CorePanel yığılmış çubuk (v0.9.808)', () => {
 
   it('çubukta BANT YOK — bant iki çizgi arasını doldurur, çubuk zaten dolu', () => {
     expect(src).toMatch(
-      /stacked && !stackedBars \? stackBands\(aligned\.names\.length, hiddenIdx\) : null/);
+      /stacked && !stackedBars \? stackBands\(aligned\.names\.length, hiddenIdx, rawIdx\) : null/);
   });
 
   it('exemplar ◆ yığın AİLESİNDE bastırılır (stacked her iki markı kapsar)', () => {

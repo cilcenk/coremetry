@@ -23,6 +23,8 @@ import type { AlignedData } from 'uplot';
 // yüzden girdi tipi daraltılır — dallanma yerine sözleşme.
 export type SeriesMatrix = [number[], ...(number | null)[][]];
 
+const EMPTY_IDX: Set<number> = new Set();
+
 // stackData — ham matristen kümülatif (çizim) matrisi.
 //
 // hiddenIdx: 0-tabanlı GİZLİ seri indeksleri. Gizli katman toplama
@@ -31,12 +33,22 @@ export type SeriesMatrix = [number[], ...(number | null)[][]];
 // koşan toplamın kopyasıdır: uPlot onu zaten çizmez (show:false) ama
 // y-ölçeği hesabı ve bir sonraki config kurulumuna kadarki tek kare
 // için nötr kalması gerekir. Hiç görünür katman yoksa sıfır satırı.
-export function stackData(data: SeriesMatrix, hiddenIdx: Set<number>): AlignedData {
+//
+// rawIdx (v0.10.383, dış skill denetimi A2): 0-tabanlı HAM çizilecek seri
+// indeksleri — karşılaştırma hayaleti ("önceki pencere") gibi yığının
+// evrenine AİT OLMAYAN seriler. Toplama katılmaz ve satırı AYNEN geçer
+// (gizliden farkı: gizli nötr kopya, ham ise gerçek değer). Eskiden hayalet
+// yığına katılıp pod throughput'unu compare açıkken ~2× gösteriyordu.
+export function stackData(data: SeriesMatrix, hiddenIdx: Set<number>, rawIdx: Set<number> = EMPTY_IDX): AlignedData {
   const t = data[0];
   const ys = data.slice(1) as (number | null)[][];
   const out: (number | null)[][] = [];
   let below: number[] | null = null;
   for (let i = 0; i < ys.length; i++) {
+    if (rawIdx.has(i)) {
+      out.push(ys[i].slice());
+      continue;
+    }
     if (hiddenIdx.has(i)) {
       out.push(below ? below.slice() : ys[i].map(() => 0));
       continue;
@@ -62,9 +74,12 @@ export function stackData(data: SeriesMatrix, hiddenIdx: Set<number>): AlignedDa
 export function stackBands(
   seriesCount: number,
   hiddenIdx: Set<number>,
+  rawIdx: Set<number> = EMPTY_IDX,
 ): { series: [number, number] }[] {
   const vis: number[] = [];
-  for (let i = 0; i < seriesCount; i++) if (!hiddenIdx.has(i)) vis.push(i);
+  // Ham (hayalet) seri zincire GİRMEZ: bandı olsaydı yığının bir katmanı
+  // gibi dolardı (v0.10.383).
+  for (let i = 0; i < seriesCount; i++) if (!hiddenIdx.has(i) && !rawIdx.has(i)) vis.push(i);
   const out: { series: [number, number] }[] = [];
   for (let k = 1; k < vis.length; k++) {
     out.push({ series: [vis[k] + 1, vis[k - 1] + 1] });

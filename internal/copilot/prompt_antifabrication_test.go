@@ -92,3 +92,21 @@ func TestAntiFabricationRulesNotDuplicatedInBody(t *testing.T) {
 		}
 	}
 }
+
+// v0.10.403 — CoSRE denetimi P1: üç explain prompt'unda kanıt sınırı yoktu
+// (systemRunbook "name the actual dashboard/command" diye somut ad
+// istiyor, systemIncident "blast radius" tahmini). Kardeşi systemTrace'in
+// "Use ONLY facts present in the evidence" kuralı üçüne de taşındı.
+func TestExplainPromptsCarryEvidenceBoundary(t *testing.T) {
+	for name, p := range map[string]string{
+		"incident": SystemPromptIncident(),
+		"anomaly":  SystemPromptAnomaly(),
+		"runbook":  SystemPromptRunbook(),
+	} {
+		for _, want := range []string{"Evidence boundary", "ONLY", "kanıt yetersiz", "Never\ninvent"} {
+			if !strings.Contains(p, want) {
+				t.Errorf("%s prompt'u %q içermiyor — kanıt sınırı kayıp", name, want)
+			}
+		}
+	}
+}

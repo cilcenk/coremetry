@@ -2476,6 +2476,12 @@ var esPodFields = []string{
 }
 
 func (s *ESStore) buildQuery(f Filter) map[string]any {
+	// v0.10.428 (log arama denetimi A3) — FİLTRE BAĞLAMI: zaman, trace/span
+	// kimliği, servis/küme/pod/env terimleri ve seviye aralığı `bool.filter`
+	// altında (skor hesaplanmaz, filtre önbelleğine girer); yalnız serbest
+	// metin query_string `must`ta kalır. Hiçbir okuma _score kullanmıyor
+	// (sıralama zaman damgası) → sonuç kümesi bit-bit aynı, saf maliyet.
+	filter := []any{}
 	must := []any{}
 
 	// v0.5.223 — v0.5.219 used to auto-cap unbounded trace_id
@@ -2494,7 +2500,7 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		if !f.To.IsZero() {
 			rng["lte"] = f.To.UTC().Format(time.RFC3339Nano)
 		}
-		must = append(must, map[string]any{
+		filter = append(filter, map[string]any{
 			"range": map[string]any{s.fields.Timestamp: rng},
 		})
 	}
@@ -2517,7 +2523,7 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 	// `s.fields.TraceID` configured override is included too so
 	// a fully custom field still works.
 	if f.TraceID != "" {
-		must = append(must, traceTermsAny(s.fields.TraceID, s.fields.Body,
+		filter = append(filter, traceTermsAny(s.fields.TraceID, s.fields.Body,
 			strings.ToLower(f.TraceID), "trace"))
 	}
 	// v0.5.271 — multi-trace filter for the DQL cross-signal
@@ -2545,7 +2551,7 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 				"terms": map[string]any{fld: ids},
 			})
 		}
-		must = append(must, map[string]any{
+		filter = append(filter, map[string]any{
 			"bool": map[string]any{
 				"should":               shouldClauses,
 				"minimum_should_match": 1,
@@ -2553,7 +2559,7 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		})
 	}
 	if f.SpanID != "" {
-		must = append(must, traceTermsAny(s.fields.SpanID, s.fields.Body,
+		filter = append(filter, traceTermsAny(s.fields.SpanID, s.fields.Body,
 			strings.ToLower(f.SpanID), "span"))
 	}
 	// v0.8.406 — trace-only filter (operator ask: "sadece trace'i olan
@@ -2574,7 +2580,7 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 				"exists": map[string]any{"field": fld},
 			})
 		}
-		must = append(must, map[string]any{
+		filter = append(filter, map[string]any{
 			"bool": map[string]any{
 				"should":               htShould,
 				"minimum_should_match": 1,
@@ -2643,7 +2649,7 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 				svcShould = append(svcShould, exactTermsBothShapes(fld, val)...)
 			}
 		}
-		must = append(must, map[string]any{
+		filter = append(filter, map[string]any{
 			"bool": map[string]any{
 				"should":               svcShould,
 				"minimum_should_match": 1,
@@ -2680,7 +2686,7 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		for _, fld := range esClusterFields {
 			clShould = append(clShould, exactTermsBothShapes(fld, f.Cluster)...)
 		}
-		must = append(must, map[string]any{
+		filter = append(filter, map[string]any{
 			"bool": map[string]any{
 				"should":               clShould,
 				"minimum_should_match": 1,
@@ -2700,7 +2706,7 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		for _, fld := range esPodFields {
 			podShould = append(podShould, exactTermsBothShapes(fld, f.Pod)...)
 		}
-		must = append(must, map[string]any{
+		filter = append(filter, map[string]any{
 			"bool": map[string]any{
 				"should":               podShould,
 				"minimum_should_match": 1,
@@ -2718,7 +2724,7 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 	// so the backend reports Page.EnvUnapplied instead (honesty over
 	// a fake empty result).
 	if f.Env != "" && f.envField != "" {
-		must = append(must, map[string]any{
+		filter = append(filter, map[string]any{
 			"bool": map[string]any{
 				"should":               exactTermsBothShapes(f.envField, f.Env),
 				"minimum_should_match": 1,
@@ -2766,15 +2772,22 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		})
 	}
 	if f.SeverityMin > 0 && s.fields.SeverityNo != "" {
-		must = append(must, map[string]any{
+		filter = append(filter, map[string]any{
 			"range": map[string]any{s.fields.SeverityNo: map[string]any{"gte": f.SeverityMin}},
 		})
 	}
 
-	if len(must) == 0 {
+	if len(filter) == 0 && len(must) == 0 {
 		return map[string]any{"match_all": map[string]any{}}
 	}
-	return map[string]any{"bool": map[string]any{"must": must}}
+	b := map[string]any{}
+	if len(filter) > 0 {
+		b["filter"] = filter
+	}
+	if len(must) > 0 {
+		b["must"] = must
+	}
+	return map[string]any{"bool": b}
 }
 
 // shorthandRe matches `<token>:<value>` (quoted or unquoted) in a Lucene

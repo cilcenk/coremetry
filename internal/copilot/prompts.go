@@ -1491,12 +1491,14 @@ Niyetler:
 - messaging_health: kuyruk / Kafka / consumer gecikmesi
 - shift_summary: vardiya özeti, "bugün/gece ne oldu"
 - my_services / my_problems / my_exceptions: "benim" ya da "takımımın" servisleri, problemleri, exception'ları
+- team_services: ADI ya da KODU geçen bir takımın servisleri ("SY-XYZ'e ait servisleri listele")
 - self_meta: Coremetry'nin kendisi hakkında ("sen kimsin", "neler yapabilirsin")
 - trace_by_id / span_by_id: mesajda 32 ya da 16 haneli hex kimlik varsa
 - none: hiçbiri — telemetriyle cevaplanamayacak, muğlak ya da konu dışı soru
 
 Kurallar:
-- service: mesajda AÇIKÇA geçen servis adı, aksi hâlde "". Asla uydurma, tahmin etme, "muhtemelen" deme.
+- service: mesajda geçen servis adı ya da ad PARÇASI, mesajdaki yazımıyla AYNEN ("login external" → "login external"); mesajda yoksa "". Sunucu canlı katalogla eşleştirir, bulamazsa kullanıcıya adayları sorar — sen tamamlama, uydurma, "muhtemelen" deme.
+- team: mesajda geçen takım adı ya da kodu aynen (yalnız team_services için), yoksa "".
 - env: mesajda açıkça geçen ortam adı (prod, uat, test…), yoksa "".
 - rangeS: mesajdaki zaman penceresi saniye olarak (1 saat=3600, 24 saat=86400, 7 gün=604800); belirtilmemişse 0.
 - traceId / spanId: mesajdaki hex kimlik; yoksa "".
@@ -1506,9 +1508,12 @@ Kurallar:
 Örnekler (v0.10.406 — şekli gör, kopyalama):
 - "checkout servisi son 1 saatte nasıl?" → {"intent":"service_health","service":"checkout","env":"","rangeS":3600,"traceId":"","spanId":""}
 - "açık problemler neler?" → {"intent":"problems","service":"","env":"","rangeS":0,"traceId":"","spanId":""}
-- "bugün hava nasıl?" → {"intent":"none","service":"","env":"","rangeS":0,"traceId":"","spanId":""}
+- "bugün hava nasıl?" → {"intent":"none","service":"","env":"","rangeS":0,"traceId":"","spanId":"","team":""}
+- "login external servisinde hata var mı?" → {"intent":"service_health","service":"login external","env":"","rangeS":0,"traceId":"","spanId":"","team":""}
+- "SY-XYZ takımına ait servisleri listele" → {"intent":"team_services","service":"","env":"","rangeS":0,"traceId":"","spanId":"","team":"SY-XYZ"}
+- "yavaşlığın sebebi ne?" → {"intent":"root_cause","service":"","env":"","rangeS":0,"traceId":"","spanId":"","team":""}
 
-Çıktı şeması: {"intent":"…","service":"…","env":"…","rangeS":0,"traceId":"","spanId":""}`
+Çıktı şeması: {"intent":"…","service":"…","env":"…","rangeS":0,"traceId":"","spanId":"","team":""}`
 
 // IntentNoInstructionLine — sınıflandırıcının enjeksiyon kalkanı; chatTiers'ın
 // DataNotInstruction'ının TERSİ (orada talimat operatörün sorusundan gelir,

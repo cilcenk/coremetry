@@ -146,6 +146,12 @@ const (
 	// eşleşen kaydın trace_id'si → v0.9.537'nin trace kanıt paketi.
 	// İkinci bir montaj YOK.
 	guidedRequestID guidedIntent = "request_id"
+	// guidedAskService (v0.10.429, D1) — servis adı ÇÖZÜLEMEDİ ya da
+	// BELİRSİZ: sessizce none yerine "hangisini kastettin?" — adaylar
+	// route.ServiceOptions, sorulan asıl niyet route.AskIntent (çipler o
+	// niyetin tam kılavuz cümlesi olur). Router-içi; sınıflandırıcı
+	// beyaz listesinde değil (parseIntentJSON kendisi üretir).
+	guidedAskService guidedIntent = "ask_service"
 )
 
 type guidedRoute struct {
@@ -200,6 +206,12 @@ type guidedRoute struct {
 	// ns yazan çip ÖLÜ paramdı (v0.9.853 K3 dersi).
 	ReqWindowFromMs int64
 	ReqWindowToMs   int64
+	// ServiceOptions / AskIntent (v0.10.429, D1) — guidedAskService rotası:
+	// operatöre sunulacak canlı servis adayları ve çiplerin taşıyacağı
+	// niyet. TeamOptions'ın servis ikizi; çip metni ÇIPLAK ad DEĞİL, tam
+	// kılavuz cümle ("<svc> sağlığı nasıl?") — çıplak ad kapıdan geçmez.
+	ServiceOptions []string
+	AskIntent      guidedIntent
 }
 
 // normalizeGuidedMsg lowercases for matching. Go's ToLower maps the
@@ -656,7 +668,50 @@ func extractTeamEntity(msg string, teams []string) string {
 			best, bestLen = t, len(ft)
 		}
 	}
-	return best
+	if best != "" {
+		return best
+	}
+	// v0.10.429 (D1) — takım KODU tireli bir ifadenin parçası olabilir
+	// ("SY-XYZ takımı" ↔ katalog "SY", ya da katalog "SY-XYZ" ↔ mesaj
+	// "sy xyz"): '-' ad karakteri olduğundan sınırlı arama kaçırıyordu.
+	// Jeton eşi (tire/boşluk/noktalama ayırıcı), yalnız TEK takım eşleşirse.
+	toks := nameTokens(folded)
+	match, n := "", 0
+	for _, t := range teams {
+		ft := chstore.NormTeamName(t)
+		if utf8.RuneCountInString(ft) < 2 || guidedStopwords[ft] {
+			continue
+		}
+		fts := nameTokens(ft)
+		// Yalnız ÇOK-JETONLU takım adı ("sy-xyz" ↔ "sy xyz"): tek jetonlu ad
+		// tireli daha uzun bir adın içinde eşleşemez ("avengersy" ↛
+		// "avengersy-legacy" — sınır kuralı, copilot_team_services_test).
+		if len(fts) < 2 {
+			continue
+		}
+		// takımın tüm jetonları mesajda ardışık geçmeli
+		for i := 0; i+len(fts) <= len(toks); i++ {
+			ok := true
+			for j := range fts {
+				if toks[i+j] != fts[j] {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				n++
+				match = t
+				break
+			}
+		}
+		if n > 1 {
+			return ""
+		}
+	}
+	if n == 1 {
+		return match
+	}
+	return ""
 }
 
 // isBareTeamAsk — mesaj SADECE takım adından mı oluşuyor ("avengersy",
@@ -709,11 +764,18 @@ func hasServiceListWord(tokens []string) bool {
 // 60sn-cache'li katalog okumasıdır. Uzun cümleler zaten guided sinyaliyle
 // gelir, taşımıyorsa serbest döngü doğru yerdir.
 func mayNameTeam(norm string) bool {
-	if utf8.RuneCountInString(strings.TrimSpace(norm)) > 40 {
+	toks := guidedTokens(norm)
+	// v0.10.429 (D1) — takım/servis kökü taşıyan biraz daha uzun cümleler
+	// de kapıdan geçer ("SY-XYZ takımına ait servisleri listeler misin" 6
+	// jeton / 45 rune); sinyalsiz kısa mesaj sınırı 40 rune + 5 jeton kalır.
+	maxRunes, maxToks := 40, 5
+	if hasTeamWord(toks) || hasServiceListWord(toks) {
+		maxRunes, maxToks = 80, 8
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(norm)) > maxRunes {
 		return false
 	}
-	toks := guidedTokens(norm)
-	if len(toks) == 0 || len(toks) > 5 {
+	if len(toks) == 0 || len(toks) > maxToks {
 		return false
 	}
 	for _, t := range toks {
@@ -864,6 +926,33 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 			if s == ctxService {
 				svc = ctxService
 				break
+			}
+		}
+	}
+	// v0.10.429 (D1) — servis-şekilli soru, çözülmemiş ad: mesajın
+	// jetonları canlı adların parçalarına oturuyorsa TEK aday doğrudan
+	// yönlenir ("mobile commercial bff" → mobile-commercial-bff-prod),
+	// 2+ aday "hangisini kastettin?" olur (sessiz none yerine). Takım
+	// çözüldüyse takım dalı önce (aşağıda) — buraya girmez. Aile (2+
+	// parça-eşi) yakalandıysa ve soru sağlık/hata şekliyse aile rotası
+	// (v0.9.192, yan yana RED) korunur; ama neden/yavaş/deploy/log gibi
+	// TEK servis isteyen şekillerde aile eskiden sessizce düşüp soru filo
+	// geneline çöküyordu ("login neden yavaş" → servissiz slow_traces) —
+	// şimdi aile üyeleri aday olarak sorulur.
+	if svc == "" && team == "" {
+		if ask := serviceIntentFor(msg, toks); ask != guidedNone && (len(family) == 0 || ask != guidedServiceHealth) {
+			opts := family
+			if len(opts) == 0 {
+				opts = serviceCandidates(msg, services, envs, guidedServiceAskMax)
+			}
+			switch {
+			case len(opts) == 1:
+				svc = opts[0]
+			case len(opts) > 1:
+				if len(opts) > guidedServiceAskMax {
+					opts = opts[:guidedServiceAskMax]
+				}
+				return guidedRoute{Intent: guidedAskService, AskIntent: ask, ServiceOptions: opts, Env: env}
 			}
 		}
 	}
@@ -1308,6 +1397,10 @@ func (s *Server) runGuidedRoute(ctx context.Context, emit func(string, any), rou
 		// yani sohbetin from/to'su bilinçli olarak geçilmiyor. Bundle
 		// çözdüğü trace'i ve pencereyi rotaya YAZAR (derin linkler için).
 		evidence, sources, err = s.guidedRequestIDBundle(ctx, emit, &route)
+	case guidedAskService:
+		// v0.10.429 (D1) — "hangisini kastettin?": adaylar rotada (router/
+		// sınıflandırıcı) ya da buradan (açık problemi olan servisler).
+		evidence, sources, err = s.guidedAskServiceEvidence(ctx, &route, question)
 	}
 	if err != nil {
 		// Prefetch failed hard → let the free loop try; its tools may
@@ -3045,4 +3138,75 @@ func problemMetricUnitTR(metric string) string {
 		return " req/s"
 	}
 	return ""
+}
+
+// serviceIntentFor — v0.10.429 (D1): mesaj servis-kapsamlı bir kılavuz
+// niyet taşıyor mu ve hangisi (router switch'inin servisli dallarıyla AYNI
+// öncelik). guidedNone ⇒ servis sorusu değil, aday aranmaz.
+func serviceIntentFor(msg string, toks []string) guidedIntent {
+	switch {
+	case hasWhySignal(toks):
+		return guidedRootCause
+	case hasSlowTraceSignal(msg):
+		return guidedSlowTraces
+	case hasDeploySignal(toks):
+		return guidedDeployImpact
+	case hasLogSignal(toks) && hasErrorSignal(toks):
+		return guidedLogErrors
+	case hasPodSignal(toks):
+		return guidedPodHealth
+	case hasMessagingSignal(toks):
+		return guidedMessagingHealth
+	case hasDBSignal(toks):
+		return guidedDBHealth
+	case hasHealthSignal(toks) || hasErrorSignal(toks) || hasProblemSignal(toks):
+		return guidedServiceHealth
+	}
+	return guidedNone
+}
+
+// guidedAskServiceEvidence — v0.10.429 (D1): guidedAskTeamEvidence'in
+// servis ikizi. Adaylar rotada yoksa (sınıflandırıcı "servis gerekli ama
+// yok" dedi) açık problemi olan servisler sunulur; o da yoksa katalogun
+// ilk adları. Çipler guidedSuggestions'ta tam kılavuz cümle olur.
+func (s *Server) guidedAskServiceEvidence(ctx context.Context, route *guidedRoute, question string) (string, string, error) {
+	src := "canlı servis kataloğu (ad eşleşmedi)"
+	if len(route.ServiceOptions) == 0 {
+		src = "açık problemli servisler"
+		seen := map[string]bool{}
+		if probs, err := s.store.ListProblems(ctx, chstore.ProblemFilter{Status: "open"}); err == nil {
+			for _, p := range probs {
+				if p.Service == "" || seen[p.Service] {
+					continue
+				}
+				seen[p.Service] = true
+				route.ServiceOptions = append(route.ServiceOptions, p.Service)
+				if len(route.ServiceOptions) >= guidedServiceAskMax {
+					break
+				}
+			}
+		}
+		if len(route.ServiceOptions) == 0 {
+			src = "servis kataloğu"
+			names := s.guidedServiceNames(ctx)
+			if len(names) > guidedServiceAskMax {
+				names = names[:guidedServiceAskMax]
+			}
+			route.ServiceOptions = append(route.ServiceOptions, names...)
+		}
+	}
+	if route.AskIntent == guidedNone {
+		route.AskIntent = guidedServiceHealth
+	}
+	var b strings.Builder
+	b.WriteString("Operatörün sorusu bir SERVİS gerektiriyor ama adı çözülemedi ya da birden çok servise oturuyor.\n")
+	fmt.Fprintf(&b, "Soru: %q\n", strings.TrimSpace(question))
+	if len(route.ServiceOptions) == 0 {
+		b.WriteString("Katalogda aday yok. KULLANICIYA SÖYLE: servis adını yazsın (Servisler sayfasından kopyalayabilir).\n")
+		return b.String(), src, nil
+	}
+	fmt.Fprintf(&b, "KULLANICIYA SOR: şu servislerden hangisini kastettin? (%d aday): %s\n", len(route.ServiceOptions), strings.Join(route.ServiceOptions, ", "))
+	b.WriteString("Bu adlar cevabın altında ÇİP olarak duruyor — tıklaması yeter; listede yoksa adı yazabileceğini de söyle.\n")
+	b.WriteString("KURAL: servis adı UYDURMA, yalnız yukarıdaki listeyi say; veri anlatma (henüz seçilmedi).\n")
+	return b.String(), src, nil
 }

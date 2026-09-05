@@ -110,6 +110,15 @@ func guidedSuggestions(route guidedRoute) []string {
 	if len(route.TeamOptions) > 0 {
 		return route.TeamOptions
 	}
+	// v0.10.429 (D1) — "hangi servis?" turu: çip = adayın TAM kılavuz cümlesi
+	// (askServiceChip), sorulan niyetle; çıplak ad kapıdan geçmezdi.
+	if len(route.ServiceOptions) > 0 {
+		out := make([]string, 0, len(route.ServiceOptions))
+		for _, svc := range route.ServiceOptions {
+			out = append(out, askServiceChip(route.AskIntent, svc))
+		}
+		return out
+	}
 	switch route.Intent {
 	case guidedServiceHealth:
 		return []string{
@@ -473,4 +482,29 @@ func applyFollowUpContext(route guidedRoute, question string, prior []string, se
 		return pr, rangeS, p, true
 	}
 	return route, 0, "", false
+}
+
+// askServiceChip — v0.10.429 (D1): aday servis + sorulan niyet → router'ın
+// DETERMİNİSTİK olarak aynı niyete çözdüğü tam cümle (near_names_test
+// gidiş-dönüşü pinler: çipe tıklamak serbest döngüye düşmez).
+func askServiceChip(intent guidedIntent, svc string) string {
+	switch intent {
+	case guidedRootCause:
+		return svc + " neden yavaş?"
+	case guidedSlowTraces:
+		return svc + " en yavaş trace'ler?"
+	case guidedDeployImpact:
+		return svc + " son deploy etkisi?"
+	case guidedLogErrors:
+		return svc + " hata logları?"
+	case guidedPodHealth:
+		return svc + " pod'ları nasıl?"
+	case guidedDBHealth:
+		return svc + " db sorguları nasıl?"
+	case guidedMessagingHealth:
+		return svc + " kafka gecikmesi nasıl?"
+	case guidedProblems:
+		return svc + " problemleri?"
+	}
+	return svc + " sağlığı nasıl?"
 }

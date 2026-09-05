@@ -31,6 +31,7 @@ type evalExpect struct {
 	MustContain        []string `json:"mustContain,omitempty"`
 	MustNotContain     []string `json:"mustNotContain,omitempty"`
 	KnownEntities      []string `json:"knownEntities,omitempty"`
+	KnownTeams         []string `json:"knownTeams,omitempty"` // v0.10.429 — team slotu için canlı takım listesi
 	MaxUnknownEntities *int     `json:"maxUnknownEntities,omitempty"`
 	Intent             string   `json:"intent,omitempty"`
 	IntentService      string   `json:"intentService,omitempty"`
@@ -246,7 +247,7 @@ func scoreEvalCase(c evalCase, system, answer string, err error) (fails []string
 		fails = append(fails, fmt.Sprintf("unknown entities %d > %d", unknown, *c.Expect.MaxUnknownEntities))
 	}
 	if c.Expect.Intent != "" {
-		route, _, matched := parseIntentJSON(answer, c.Expect.KnownEntities, nil, "")
+		route, _, matched := parseIntentJSON(answer, c.Expect.KnownEntities, nil, c.Expect.KnownTeams, "")
 		got := "none"
 		if matched {
 			got = string(route.Intent)

@@ -36,6 +36,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
 )
 
@@ -48,6 +49,9 @@ var intentAllowed = map[string]guidedIntent{
 	"shift_summary": guidedShiftSummary, "my_services": guidedMyServices, "my_problems": guidedMyProblems,
 	"my_exceptions": guidedMyExceptions, "self_meta": guidedSelfMeta, "trace_by_id": guidedTraceByID,
 	"span_by_id": guidedSpanByID,
+	// v0.10.429 (D1) — adı geçen takımın servisleri; `team` slotu canlı
+	// takım kataloğuyla doğrulanır (uydurma takım → none).
+	"team_services": guidedTeamServices,
 }
 
 // intentNeedsService — servissiz anlamsız şekiller: model servis vermediyse
@@ -66,6 +70,7 @@ func intentClassifySchema() map[string]any {
 		"intent":  map[string]any{"type": "string", "enum": names},
 		"service": strProp(), "env": strProp(), "rangeS": numProp(),
 		"traceId": strProp(), "spanId": strProp(),
+		"team": strProp(), // v0.10.429 (D1)
 	})
 }
 
@@ -76,6 +81,7 @@ type intentJSON struct {
 	RangeS  float64 `json:"rangeS"`
 	TraceID string  `json:"traceId"`
 	SpanID  string  `json:"spanId"`
+	Team    string  `json:"team"` // v0.10.429 (D1)
 }
 
 var (
@@ -134,8 +140,12 @@ func matchLiveName(v string, live []string) string {
 }
 
 // parseIntentJSON — SAF: model çıktısı → rota + pencere (0 = belirtilmedi).
-// ok=false ⇒ none. Adlandırılmış ama canlıda eşleşmeyen servis/env → none.
-func parseIntentJSON(raw string, services, envs []string, ctxService string) (guidedRoute, int64, bool) {
+// ok=false ⇒ none. Eşleşmeyen env → none. v0.10.429 (D1): eşleşmeyen /
+// belirsiz servis adı artık none DEĞİL — canlı katalogdan yakın adlar
+// (nearNames) bulunursa guidedAskService rotası ("hangisini kastettin?");
+// hiç yakın ad yoksa none (uydurma ad). Servis gerektiren niyet servissiz
+// ve bağlamsızsa da sorar (adayları bundle doldurur).
+func parseIntentJSON(raw string, services, envs, teams []string, ctxService string) (guidedRoute, int64, bool) {
 	var in intentJSON
 	if err := json.Unmarshal([]byte(stripJSONFence(raw)), &in); err != nil {
 		return guidedRoute{}, 0, false
@@ -147,14 +157,24 @@ func parseIntentJSON(raw string, services, envs []string, ctxService string) (gu
 	route := guidedRoute{Intent: intent}
 	if strings.TrimSpace(in.Service) != "" {
 		if route.Service = matchLiveName(in.Service, services); route.Service == "" {
-			return guidedRoute{}, 0, false // uydurulmuş/eşleşmeyen servis: yanlış kapsam yerine sus
+			if opts := nearNames(in.Service, services, guidedServiceAskMax); len(opts) > 0 {
+				return guidedRoute{Intent: guidedAskService, AskIntent: intent, ServiceOptions: opts}, 0, true
+			}
+			return guidedRoute{}, 0, false // katalogda yakın ad bile yok: uydurulmuş
 		}
 	}
 	if route.Service == "" && intentNeedsService[intent] {
 		if ctxService == "" {
-			return guidedRoute{}, 0, false
+			return guidedRoute{Intent: guidedAskService, AskIntent: intent}, 0, true
 		}
 		route.Service = ctxService
+	}
+	if intent == guidedTeamServices {
+		team := matchLiveTeam(in.Team, teams)
+		if team == "" {
+			return guidedRoute{}, 0, false // takım kataloğunda yok: uydurma
+		}
+		route.Team = team
 	}
 	if strings.TrimSpace(in.Env) != "" {
 		if route.Env = matchLiveName(in.Env, envs); route.Env == "" {
@@ -301,7 +321,7 @@ func (s *Server) copilotChatIntent(ctx context.Context, emit func(string, any), 
 		emitStepEvidence(emit, i, tool, "", err) // panelde görünür; cevap kesilmez
 		return false, false
 	}
-	route, rangeS, matched := parseIntentJSON(raw, svcNames, s.guidedEnvNames(ctx), ctxService)
+	route, rangeS, matched := parseIntentJSON(raw, svcNames, s.guidedEnvNames(ctx), s.guidedTeamNames(ctx), ctxService)
 	if i > 0 {
 		// Özet + modelin HAM JSON'u: yanlış-ama-geçerli niyette operatör
 		// modelin ne dediğini görür (#10); süre 161 panel sözleşmesi.
@@ -380,4 +400,22 @@ func (s *Server) copilotChatIntent(ctx context.Context, emit func(string, any), 
 		}
 	}
 	return s.runGuidedRoute(ctx, emit, route, rangeS, question, msgs, explain, ctxService, ctxOperation, "", anchorTo)
+}
+
+// matchLiveTeam — v0.10.429 (D1): takım adı/kodu canlı katalogla; katlanmış
+// tam eş (NormTeamName — 2 harfli kodlar geçerli) ya da jeton eşi
+// (extractTeamEntity ile aynı tolerans). matchLiveName'in ≥3 önek tabanı
+// burada YOK: "SY" gerçek bir koddur.
+func matchLiveTeam(v string, teams []string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	fv := chstore.NormTeamName(v)
+	for _, t := range teams {
+		if chstore.NormTeamName(t) == fv {
+			return t
+		}
+	}
+	return extractTeamEntity(v, teams)
 }

@@ -52,7 +52,7 @@ import {
 } from '@/lib/chart/legendVisibility';
 import { resolveVar } from '@/lib/chart/resolveVar';
 import {
-  drawThresholds, drawTimeRegions, drawExemplars, exemplarAt, regionAt, fmtRegionSpan,
+  drawThresholds, drawTimeRegions, drawExemplars, exemplarAt, regionAt, fmtRegionSpan, thresholdSoftRange,
   type ChartThreshold, type ChartTimeRegion, type ChartExemplar,
 } from '@/lib/chart/overlays';
 import {
@@ -544,7 +544,10 @@ export function CorePanel({
   const yAxisPlan = useMemo((): { px: number; dec: number } => {
     const none = { px: 0, dec: 0 };
     if (data.state !== 'ready' || frames.length === 0) return none;
-    const ext = seriesExtent(drawData.slice(1) as (number | null)[][]);
+    // v0.10.384 — oluk planı da eşiği görsün (ölçek eşiğe uzayınca tick
+    // etiketleri eşiğin basamağında ölçülür).
+    const thrRow = (thresholds ?? []).map(t => t.value).filter(v => Number.isFinite(v));
+    const ext = seriesExtent([...(drawData.slice(1) as (number | null)[][]), ...(thrRow.length ? [thrRow] : [])]);
     if (!ext) return none;
     // Log ölçekte dolgu yok (decade'ler zaten sınırları kapsıyor).
     const [lo, hi] = effLog ? ext : paddedExtent(ext);
@@ -573,7 +576,7 @@ export function CorePanel({
     return { px, dec };
     // themeTick: font ailesi temayla değişebilir → ölçüm tazelenir.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.state, frames, drawData, effLog, height, width, themeTick]);
+  }, [data.state, frames, drawData, effLog, height, width, themeTick, thresholds]);
 
   const yTickDecimals = yAxisPlan.dec;
   const yGutterNeeded = yAxisPlan.px;
@@ -639,6 +642,10 @@ export function CorePanel({
       // veride soft limit yok sayılır. Log ölçekte de güvenli: builder
       // softMin ≤ 0'ı Log dağılımında null'lar (sıfır log'da tanımsız).
       softMin: bars ? 0 : undefined,
+      // v0.10.384 (dış skill denetimi A8) — eşik ölçeğe girer; aksi hâlde
+      // seri eşiğin altındayken thresholdVisible çizgiyi eler ve panel
+      // "eşik yok" gibi görünür (alarm önizlemesi, pod CPU limiti).
+      ...thresholdSoftRange(thresholds, { log: effLog, bars }),
     });
     b.addAxis({ scaleKey: 'x', isTime: true, placement: AxisPlacement.Bottom, theme });
     b.addAxis({

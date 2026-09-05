@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { clampRegion, fitLabel, thresholdVisible, regionsToScale, assignLanes, mergeIntervals, regionLaneHit, fmtRegionSpan, LANE_H } from './overlays';
+import { clampRegion, fitLabel, thresholdVisible, thresholdSoftRange, regionsToScale, assignLanes, mergeIntervals, regionLaneHit, fmtRegionSpan, LANE_H } from './overlays';
 
 // overlays.test.ts (Grafana-parite M3) — paylaşımlı threshold/bölge çizim
 // çekirdeğinin SAF yardımcılarını sabitler. Çizim fonksiyonlarının kendisi
@@ -143,5 +143,21 @@ describe('regionLaneHit — şerit satırı isabeti', () => {
     expect(fmtRegionSpan(12600)).toBe('3.5 sa');
     expect(fmtRegionSpan(180000)).toBe('2.1 g');
     expect(fmtRegionSpan(0)).toBe('—');
+  });
+});
+
+// v0.10.384 — eşik y ölçeğini kapsar (dış skill denetimi A8).
+describe('thresholdSoftRange — eşik ölçeğe girer', () => {
+  it('seriden büyük eşik softMax olur; pozitif eşik softMin vermez', () => {
+    expect(thresholdSoftRange([{ value: 500 }, { value: 800 }], { log: false, bars: false })).toEqual({ softMax: 800 });
+  });
+  it('negatif eşik line/area\'da softMin, çubukta değil (taban 0 kalır)', () => {
+    expect(thresholdSoftRange([{ value: -5 }], { log: false, bars: false })).toEqual({ softMax: -5, softMin: -5 });
+    expect(thresholdSoftRange([{ value: -5 }], { log: false, bars: true })).toEqual({ softMax: -5 });
+  });
+  it('log ölçek, eşiksiz ve sonlu-olmayan eşik → boş (ölçek seriden)', () => {
+    expect(thresholdSoftRange([{ value: 500 }], { log: true, bars: false })).toEqual({});
+    expect(thresholdSoftRange([], { log: false, bars: false })).toEqual({});
+    expect(thresholdSoftRange([{ value: NaN }], { log: false, bars: false })).toEqual({});
   });
 });

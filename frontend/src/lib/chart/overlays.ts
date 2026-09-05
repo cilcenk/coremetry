@@ -63,6 +63,26 @@ export function thresholdVisible(value: number, yMin: number, yMax: number): boo
   return value >= yMin && value <= yMax;
 }
 
+// thresholdSoftRange — v0.10.384 (dış skill denetimi A8): eşik, y ölçeğini
+// KAPSAMAK zorunda. Eskiden ölçek yalnız seriden türüyor, seri eşiğin
+// altında kaldığında thresholdVisible çizgiyi eliyor ve panel eşiği hiç
+// göstermiyordu (alarm önizlemesi, pod CPU limiti). Soft limit: uPlot
+// yalnız veri o yöne ulaşmıyorsa ölçeği eşiğe uzatır; veri eşiği aşarsa
+// ölçek yine veriden gelir. Log ölçekte dokunulmaz (decade'ler),
+// çubuklarda taban 0 kalır (negatif eşik softMin'i ezmez).
+export function thresholdSoftRange(
+  thresholds: ReadonlyArray<{ value: number }> | null | undefined,
+  opts: { log: boolean; bars: boolean },
+): { softMin?: number; softMax?: number } {
+  if (opts.log || !thresholds?.length) return {};
+  const vals = thresholds.map(t => t.value).filter(v => Number.isFinite(v));
+  if (!vals.length) return {};
+  const out: { softMin?: number; softMax?: number } = { softMax: Math.max(...vals) };
+  const lo = Math.min(...vals);
+  if (lo < 0 && !opts.bars) out.softMin = lo;
+  return out;
+}
+
 // clampRegion — bölgeyi canlı x-penceresine kırpar; pencereyle kesişmiyorsa /
 // ters-bozuksa null (çizilmez). Zoom sonrası kısmi görünürlük buradan çıkar.
 export function clampRegion(

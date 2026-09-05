@@ -192,14 +192,16 @@ describe('Service Overview — Toplam çizgisi ve karo kaynak birliği (v0.9.799
   });
 
   it('🔴 Response time karosu: değer + sparkline + delta AYNI metrik serisinden', () => {
-    expect(src).toMatch(/val=\{rtFromMetric \? \(rtAvgMsNow as number\)\.toFixed\(0\) : p99Ms\.toFixed\(0\)\}/);
-    expect(src).toMatch(/spark=\{rtFromMetric \? rtAvgMsSeries : vals\(lat\?\.p99\)\}/);
-    expect(src).toMatch(/delta=\{computeDelta\(rtFromMetric \? rtAvgMsSeries : vals\(lat\?\.p99\)\)\}/);
+    // v0.10.368 — metrik kipinde yükleme anında karo bekler (metricTilesPending);
+    // üç değer yine AYNI seriden, önek yalnız bekleme kapısı.
+    expect(src).toMatch(/val=\{metricTilesPending \? '…' : rtFromMetric \? \(rtAvgMsNow as number\)\.toFixed\(0\) : p99Ms\.toFixed\(0\)\}/);
+    expect(src).toMatch(/spark=\{metricTilesPending \? undefined : rtFromMetric \? rtAvgMsSeries : vals\(lat\?\.p99\)\}/);
+    expect(src).toMatch(/delta=\{metricTilesPending \? null : computeDelta\(rtFromMetric \? rtAvgMsSeries : vals\(lat\?\.p99\)\)\}/);
   });
 
   it('🔴 Throughput karosu: değer + sparkline + delta AYNI metrik serisinden', () => {
-    expect(src).toMatch(/spark=\{tputFromMetric \? metricRpsSeries : vals\(lat\?\.rate\)\}/);
-    expect(src).toMatch(/delta=\{computeDelta\(tputFromMetric \? metricRpsSeries : vals\(lat\?\.rate\)\)\}/);
+    expect(src).toMatch(/spark=\{metricTilesPending \? undefined : tputFromMetric \? metricRpsSeries : vals\(lat\?\.rate\)\}/);
+    expect(src).toMatch(/delta=\{metricTilesPending \? null : computeDelta\(tputFromMetric \? metricRpsSeries : vals\(lat\?\.rate\)\)\}/);
     // Değer de aynı seriden (son nokta).
     expect(src).toMatch(/const metricRpsNow = metricRpsSeries\.slice\(-1\)\[0\];/);
   });

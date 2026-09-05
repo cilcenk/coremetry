@@ -773,8 +773,16 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // span'e düşerdi.
   const rtFromMetric = rtAvgMsNow != null;
   const tputFromMetric = metricRpsNow != null;
-  const rtLabel = rtFromMetric ? 'Response time · avg' : 'Response time · P99 (span)';
-  const tputLabel = tputFromMetric ? 'Throughput' : 'Throughput (span)';
+  // v0.10.368 (operatör: "yüklenirken önce başka response time çıkıyor,
+  // sayfa yüklendikten sonra başka") — metrik kipinde karolar metrik
+  // sorgusu gelene dek SPAN sayısını basıyor, sonra metriğe atlıyordu
+  // (206 ms P99 span → 16 ms avg metrik). Kaynak kararı sorgu sonucuna
+  // bağlı olduğundan yükleme anında "henüz yok" = "span" okunuyordu.
+  // Metrik kipinde metrik gelene dek karo BEKLER: etiket metrik, değer
+  // "…"; span'e yalnız metrik gerçekten yoksa düşülür.
+  const metricTilesPending = metricMode && metricTputQ.isLoading;
+  const rtLabel = rtFromMetric || metricTilesPending ? 'Response time · avg' : 'Response time · P99 (span)';
+  const tputLabel = tputFromMetric || metricTilesPending ? 'Throughput' : 'Throughput (span)';
   // Karo tooltip'i kaynağı TAM yazar — kapsam rozeti span kapsamını
   // anlatıyor ve metrik karosunda o rozet geçerli DEĞİL.
   const rtTileNote = rtFromMetric
@@ -850,25 +858,25 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             uygulanmış hâli. */}
         <MetricPanel compact title={rtLabel} metricQuery={rtFromMetric ? mkMetricResponseTimeTotal() : mkLatency('p99', 'stat')}>
           <KpiTile lab={rtLabel}
-            val={rtFromMetric ? (rtAvgMsNow as number).toFixed(0) : p99Ms.toFixed(0)}
+            val={metricTilesPending ? '…' : rtFromMetric ? (rtAvgMsNow as number).toFixed(0) : p99Ms.toFixed(0)}
             unit=" ms" accent="var(--orange)"
-            spark={rtFromMetric ? rtAvgMsSeries : vals(lat?.p99)}
-            delta={computeDelta(rtFromMetric ? rtAvgMsSeries : vals(lat?.p99))}
+            spark={metricTilesPending ? undefined : rtFromMetric ? rtAvgMsSeries : vals(lat?.p99)}
+            delta={metricTilesPending ? null : computeDelta(rtFromMetric ? rtAvgMsSeries : vals(lat?.p99))}
             goodWhenUp={false} note={rtTileNote}
             // v0.9.798 — İKİNCİL SATIR (tek commit'le geri alınabilir):
             // büyük sayı metrik AVG olunca kuyruk görünürlüğü kaybolmasın.
             // Değer ZATEN çekiliyor (latencyQ) — ek sorgu yok.
-            sub={rtFromMetric && p99Now != null ? `P99 (${metricMode ? 'metrik' : 'span'}) · ${p99Ms.toFixed(0)} ms` : undefined}
+            sub={!metricTilesPending && rtFromMetric && p99Now != null ? `P99 (${metricMode ? 'metrik' : 'span'}) · ${p99Ms.toFixed(0)} ms` : undefined}
           />
         </MetricPanel>
         <MetricPanel compact menuOnly title={tputLabel} metricQuery={mkThroughput('stat')}>
           <KpiTile lab={tputLabel}
-            val={tputFromMetric
+            val={metricTilesPending ? '…' : tputFromMetric
               ? (metricRpsNow as number).toFixed((metricRpsNow as number) < 10 ? 1 : 0)
               : rps.toFixed(rps < 10 ? 1 : 0)}
             unit=" req/s" accent="var(--accent)"
-            spark={tputFromMetric ? metricRpsSeries : vals(lat?.rate)}
-            delta={computeDelta(tputFromMetric ? metricRpsSeries : vals(lat?.rate))}
+            spark={metricTilesPending ? undefined : tputFromMetric ? metricRpsSeries : vals(lat?.rate)}
+            delta={metricTilesPending ? null : computeDelta(tputFromMetric ? metricRpsSeries : vals(lat?.rate))}
             goodWhenUp note={tputTileNote} />
         </MetricPanel>
         {/* v0.9.631 (operatör: "failure rate yüzdesi grafiğin üzerinde olsun,

@@ -140,7 +140,16 @@ func convertSpan(sp *tracepb.Span, svcName, hostName, deployEnv, scopeName strin
 	dbSystem := attrFirst(sp.Attributes, spanAttrAliases["db_system"]...)
 	dbStmt := attrFirst(sp.Attributes, spanAttrAliases["db_statement"]...)
 	httpMethod := attrFirst(sp.Attributes, spanAttrAliases["http_method"]...)
-	httpRoute := attrStr(sp.Attributes, "http.route", attrStr(sp.Attributes, "http.target", ""))
+	httpRoute := attrStr(sp.Attributes, "http.route", "")
+	// v0.10.380 (dış skill denetimi A11) — eski semconv'un http.target'ı
+	// HAM path + query string taşır; LowCardinality http_route'a ham
+	// girmesi kardinalite patlatır (aşağıdaki url.path notunun aynısı).
+	// Şablona indirilir: /api/accounts/12345?x=1 → /api/accounts/:id.
+	if httpRoute == "" {
+		if t := attrStr(sp.Attributes, "http.target", ""); t != "" {
+			httpRoute = templater.NormalizePathTemplate(t)
+		}
+	}
 	// v0.9.71 (operatör: "url.path'ler /endpoints'te görünmüyor") —
 	// yeni semconv http.target'ı url.path/url.query'ye böldü; route
 	// templating'i olmayan enstrümantasyonlar yalnız url.path basar,

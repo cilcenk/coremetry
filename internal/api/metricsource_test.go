@@ -251,7 +251,7 @@ func TestUpstreamErrorIs502(t *testing.T) {
 // their VictoriaMetrics is broken and send them to check a healthy
 // cluster — a wrong diagnosis is worse than a blunt one.
 func TestUntranslatableQueryIs400Not502(t *testing.T) {
-	v := vmMetricSource{vmetrics.New()}
+	v := vmMetricSource{svc: vmetrics.New()}
 	v.svc.Configure(vmetrics.Settings{Enabled: true, BaseURL: "http://vm:8428"})
 
 	// agg=p90 is refused by the translator BEFORE any HTTP happens, so this
@@ -344,7 +344,7 @@ func TestVMSourceTagsEveryError(t *testing.T) {
 	// Unconfigured service → every read returns its own "not configured"
 	// error, which is the cheapest way to exercise all four paths without
 	// a live VM.
-	v := vmMetricSource{vmetrics.New()}
+	v := vmMetricSource{svc: vmetrics.New()}
 	ctx := context.Background()
 
 	_, _, errNames := v.ListMetricNames(ctx, "", "", 10, 0)

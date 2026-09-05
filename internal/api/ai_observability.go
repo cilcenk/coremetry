@@ -390,7 +390,9 @@ func (s *Server) aiStats(w http.ResponseWriter, r *http.Request) {
 // Aynı 30sn önbellek + admin kapısı: kardeş uçlarla tek davranış.
 func (s *Server) aiRCAQuality(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, 24*time.Hour)
-	key := fmt.Sprintf("ai-rca-quality:from=%d:to=%d",
+	// v0.10.410 — şekil sürümü (calibration alanı): deploy sonrası bayat
+	// alan-sız JSON önbellekten servis edilmez.
+	key := fmt.Sprintf("ai-rca-quality:v410:from=%d:to=%d",
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		return s.store.RCAVerdictQualityStats(ctx, from, to)

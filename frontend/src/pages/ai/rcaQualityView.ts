@@ -8,7 +8,7 @@
 // "hiç veri yok" ile "%0" ekranda aynı görünürse, motor daha hiç
 // çalışmamışken operatör "hiç kök neden bulamıyor" okur. Aynı hata
 // sınıfı v0.9.560'ta etki rakamlarında düzeltildi ("ölçülemedi" ≠ 0).
-import type { RCAVerdictQuality } from '@/lib/types';
+import type { RCAVerdictQuality, RCAConfidenceBucket } from '@/lib/types';
 
 /**
  * Yüzde — payda sıfırsa null.
@@ -58,4 +58,38 @@ export function rcaSatisfactionText(q: RCAVerdictQuality): string {
   const votes = q.thumbsUp + q.thumbsDown;
   if (votes <= 0) return 'oy yok';
   return `%${((q.thumbsUp / votes) * 100).toFixed(0)} (${votes} oy)`;
+}
+
+/**
+ * v0.10.410 — güven kovası etiketi; sınırlar SUNUCUDAN gelir (tek kaynak),
+ * burada yalnız yazım kuralı: low üstü hariç, mid iki ucu dahil, high altı hariç.
+ */
+export function rcaBucketLabel(b: RCAConfidenceBucket): string {
+  const f = (x: number) => x.toFixed(2);
+  switch (b.bucket) {
+    case 'low': return `düşük (<${f(b.hi)})`;
+    case 'mid': return `orta (${f(b.lo)}–${f(b.hi)})`;
+    default: return `yüksek (>${f(b.lo)})`;
+  }
+}
+
+/** Kova memnuniyeti — oy yoksa "oy yok" (rcaSatisfactionText ile aynı kural). */
+export function rcaBucketSatisfaction(b: RCAConfidenceBucket): string {
+  const votes = b.thumbsUp + b.thumbsDown;
+  if (votes <= 0) return 'oy yok';
+  return `%${((b.thumbsUp / votes) * 100).toFixed(0)} (${votes} oy)`;
+}
+
+/**
+ * Kalibrasyon notu — "yüksek güven" kovası yeterli oyla (≥5) çoğunlukla
+ * 👎 aldıysa güven sayısı güvenilir değildir; operatöre bunu söyle.
+ * Aksi hâlde null: az oyla hüküm vermek oylamayı cezalandırır.
+ */
+export function rcaCalibrationNote(buckets: RCAConfidenceBucket[]): string | null {
+  const high = buckets.find(b => b.bucket === 'high');
+  if (!high) return null;
+  const votes = high.thumbsUp + high.thumbsDown;
+  if (votes < 5) return null;
+  if (high.thumbsUp / votes < 0.5) return 'yüksek güven kovası çoğunlukla 👎 — güven sayısı kalibre değil';
+  return null;
 }

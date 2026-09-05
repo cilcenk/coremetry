@@ -4,7 +4,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { Button, Drawer, DrawerSection } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
-import { rcaPctText, rcaEngineTone, rcaSatisfactionText } from './ai/rcaQualityView';
+import { rcaPctText, rcaEngineTone, rcaSatisfactionText, rcaBucketLabel, rcaBucketSatisfaction, rcaCalibrationNote } from './ai/rcaQualityView';
 import type { RCAVerdictQuality } from '@/lib/types';
 import { timeRangeToNs, tsLong, fmtNum } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
@@ -386,6 +386,34 @@ function RCAQualityPanel({ range }: { range: TimeRange }) {
               value={`${fmtNum(q.repaired)} · ${rcaPctText(q.repaired, q.total)}`} />
             <KPI label="Ortalama güven" value={q.avgConfidence.toFixed(2)} />
             <KPI label="Operatör memnuniyeti" value={rcaSatisfactionText(q)} />
+          </div>
+        )}
+        {/* v0.10.410 (CoSRE denetimi E4) — güven kalibrasyonu: "0.8 dediğinde
+            haklı mı?" Sabit 3 satır → ham tablo meşru (tasarım sistemi §5). */}
+        {q && q.total > 0 && q.calibration?.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div className="ov-sub" style={{ marginBottom: 6 }}>
+              Güven kalibrasyonu — kova başına operatör yargısı (yalnız çözümlenmiş verdict'ler)
+              {rcaCalibrationNote(q.calibration) && (
+                <span className="badge b-warn" style={{ marginLeft: 8 }}>{rcaCalibrationNote(q.calibration)}</span>
+              )}
+            </div>
+            <table style={{ width: "auto", minWidth: 420 }}>
+              <thead>
+                <tr><th>Güven kovası</th><th>Verdict</th><th>👍</th><th>👎</th><th>Memnuniyet</th></tr>
+              </thead>
+              <tbody>
+                {q.calibration.map(b => (
+                  <tr key={b.bucket}>
+                    <td>{rcaBucketLabel(b)}</td>
+                    <td>{fmtNum(b.total)}</td>
+                    <td>{fmtNum(b.thumbsUp)}</td>
+                    <td>{fmtNum(b.thumbsDown)}</td>
+                    <td>{rcaBucketSatisfaction(b)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

@@ -3064,6 +3064,18 @@ export interface RCAVerdictQuality {
   avgConfidence: number;
   thumbsUp: number;
   thumbsDown: number;
+  /** v0.10.410 — güven kovası × 👍/👎 (yalnız çözümlenmiş verdict'ler); sınırlar sunucudan. */
+  calibration: RCAConfidenceBucket[];
+}
+
+/** v0.10.410 — bir güven aralığındaki verdict ve oy sayıları. `hi` yalnız high'da dahil (1.0). */
+export interface RCAConfidenceBucket {
+  bucket: 'low' | 'mid' | 'high';
+  lo: number;
+  hi: number;
+  total: number;
+  thumbsUp: number;
+  thumbsDown: number;
 }
 
 /** v0.9.613 — dağıtık DDL kuyruğu teşhisi (GET /api/admin/clickhouse/ddl-queue).

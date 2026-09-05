@@ -92,6 +92,7 @@ func (s *Server) registerAIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/settings/ai", auth.RequireRole(auth.RoleAdmin, s.getAISettings))
 	mux.HandleFunc("PUT /api/settings/ai", auth.RequireRole(auth.RoleAdmin, s.putAISettings))
 	s.registerAISettingsProfileRoutes(mux) // v0.10.175 — model profilleri, ai_settings_profiles.go
+	s.registerAIBudgetRoutes(mux)          // v0.10.411 — maliyet/gecikme bütçesi, ai_budget.go
 
 	// ── AI Copilot ──
 	mux.HandleFunc("GET    /api/copilot/config", s.copilotConfig)

@@ -1193,6 +1193,13 @@ export const api = {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(rates),
     }),
+  // v0.10.411 — AI bütçesi: tavanlar + son 24 saat kullanımı.
+  aiBudget: () => get<import('./types').AIBudgetStatus>(`/api/ai/budget`),
+  putAIBudget: (b: import('./types').AIBudget) =>
+    request<import('./types').AIBudget>(`/api/ai/budget`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(b),
+    }),
 
   // AI konuşma arşivi (v0.9.1139, Faz 4.1) — gövde
   // saved_views(page='ai-chat') blob'unda; rol kapısı yok (kişisel

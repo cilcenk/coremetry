@@ -5,7 +5,8 @@ import { Button, Drawer, DrawerSection } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { rcaPctText, rcaEngineTone, rcaSatisfactionText, rcaBucketLabel, rcaBucketSatisfaction, rcaCalibrationNote } from './ai/rcaQualityView';
-import type { RCAVerdictQuality } from '@/lib/types';
+import type { RCAVerdictQuality, AIBudgetStatus } from '@/lib/types';
+import { budgetVerdict, budgetCls } from './ai/aiBudgetView';
 import { timeRangeToNs, tsLong, fmtNum } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -31,6 +32,7 @@ import { PageShell } from '@/components/ui/PageShell';
 export default function AIObservabilityPage() {
   const [range, setRange] = useUrlRange('24h');
   const [stats, setStats] = useState<AIStats | null | undefined>(undefined);
+  const [budget, setBudget] = useState<AIBudgetStatus | null>(null); // v0.10.411
   const [series, setSeries] = useState<AICallsTimePoint[] | undefined>(undefined);
   const [calls, setCalls] = useState<AICall[] | null | undefined>(undefined);
   const [surface, setSurface] = useState('');
@@ -84,6 +86,7 @@ export default function AIObservabilityPage() {
       const { from, to } = timeRangeToNs(range);
       api.aiStats({ from, to }).then(s => { if (!cancelled) setStats(s); }).catch(() => { if (!cancelled) setStats(null); });
       api.aiSeries({ from, to }).then(s => { if (!cancelled) setSeries(s ?? []); }).catch(() => { if (!cancelled) setSeries([]); });
+      api.aiBudget().then(b => { if (!cancelled) setBudget(b); }).catch(() => { if (!cancelled) setBudget(null); }); // v0.10.411 — sabit 24 sa pencere
     };
     tick();
     // v0.5.248 — skip the refresh when the tab is hidden so
@@ -140,6 +143,17 @@ export default function AIObservabilityPage() {
             }
           }
           const totalCostLabel = anyKnown ? fmtCost(totalCost) : '—';
+          // v0.10.411 — bütçe: SON 24 SAAT (seçici penceresi değil); dolar
+          // aynı fiyat tablosuyla, bilinmeyen model varsa null (yargılanmaz).
+          let dayCost: number | null = 0;
+          if (budget) {
+            for (const m of budget.usage.byModel) {
+              const c = costForCall(rates, m.model, m.inputTokens, m.outputTokens);
+              if (c === null) { dayCost = null; break; }
+              dayCost += c;
+            }
+          }
+          const bv = budgetVerdict(budget, dayCost);
           return (
           <>
             <div style={{
@@ -154,6 +168,7 @@ export default function AIObservabilityPage() {
               <KPI label="Input tokens" value={fmtNum(stats.inputTokens)} />
               <KPI label="Output tokens" value={fmtNum(stats.outputTokens)} />
               <KPI label="Est cost" value={totalCostLabel} />
+              <KPI label="Bütçe (24 sa)" value={bv.text} cls={budgetCls(bv)} />
               <KPI label="Users" value={fmtNum(stats.distinctUsers)} />
             </div>
 

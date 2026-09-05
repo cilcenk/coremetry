@@ -72,6 +72,8 @@ const (
 	// v0.10.436 (D2) — "A'dan B'ye giden istekler" / "X servisinde içinde … geçen trace'ler".
 	guidedPairRequests guidedIntent = "pair_requests"
 	guidedTraceSearch  guidedIntent = "trace_search"
+	// v0.10.437 (D6) — iki mutlak pencerenin RED kıyası.
+	guidedWindowCompare guidedIntent = "window_compare"
 	// guidedFamilyHealth (v0.9.192) — a family-of-services ask:
 	// "mobile bff'lerde hangisinde hata var". No single service
 	// resolves, but the message's name-fragments (mobile + bff) match
@@ -239,6 +241,10 @@ type guidedRoute struct {
 	PairMissing string
 	SearchText  string
 	SearchSQL   bool
+	// v0.10.437 (D6) — window_compare: iki mutlak pencere; WindowText
+	// mesajdaki tarih/saat parçaları (ask çipleri aynı pencereyi taşır).
+	Windows    []absWindow
+	WindowText string
 }
 
 // normalizeGuidedMsg lowercases for matching. Go's ToLower maps the
@@ -1321,7 +1327,7 @@ func fmtAgoTR(seconds int64) string {
 // ctxRangeS (v0.9.529) — operatörün EKRANDAKİ zaman aralığı, saniye.
 // 0 = bilgi yok (eski istemci); o hâlde davranış bayt-bayt eskisidir.
 // ctxTrace (v0.9.537) — ekrandaki trace ID'si (/trace?id=), "" = yok.
-func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation, explain string, ctxRangeS int64, ctxTrace, ctxEnv string, anchorTo time.Time) (handled, ok bool) {
+func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation, explain string, ctxRangeS int64, ctxTrace, ctxEnv string, anchorTo time.Time, tzOffsetMin int) (handled, ok bool) {
 	question := strings.TrimSpace(lastUserText(msgs))
 	if question == "" {
 		return false, false
@@ -1342,7 +1348,11 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		emit("answer", glossaryAnswer(entry))
 		return true, true
 	}
-	if !hasGuidedSignal(norm) && !followCue && !mayNameTeam(norm) {
+	// v0.10.437 (D6) — mutlak tarih/saat şekli de katalog okumasını hak
+	// eder ("08/08/2026 04-08 ile 08-09 arası servis süreleri" başka
+	// hiçbir sinyal taşımıyor).
+	absShape := looksLikeAbsoluteWindow(question)
+	if !hasGuidedSignal(norm) && !followCue && !mayNameTeam(norm) && !absShape {
 		return false, false // zero-cost fast path: no catalogue read
 	}
 	svcNames, envNames := s.guidedServiceNames(ctx), s.guidedEnvNames(ctx)
@@ -1401,6 +1411,22 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 				scope = route.Service
 			}
 			emitGuidedContextStep(emit, "bağlam: "+scope+" (önceki sorudan)")
+		}
+	}
+	// v0.10.437 (D6) — mutlak pencere(ler): tek pencere çıpayı ve uzunluğu
+	// ezer (hangi rota olursa olsun), iki pencere window_compare olur.
+	// Rota none olsa da geçerli ("… arası servis süreleri" sinyalsiz).
+	if absShape {
+		loc := chatLocation(tzOffsetMin)
+		if wins, ok := extractAbsoluteWindows(question, time.Now(), loc); ok {
+			var label string
+			route, anchorTo, rangeS, label = applyAbsoluteWindows(route, wins, ctxService, anchorTo, rangeS, loc, absWindowText(question))
+			if label != "" {
+				emitGuidedContextStep(emit, label)
+			}
+			if len(wins) == 1 && route.Intent == guidedNone && route.Service == "" && ctxService != "" {
+				route = guidedRoute{Intent: guidedServiceHealth, Service: ctxService, Env: route.Env}
+			}
 		}
 	}
 	// v0.10.434 (D7b) — "sayfasını aç" öznesiz: takip ipucu olmasa da
@@ -1501,6 +1527,8 @@ func (s *Server) runGuidedRoute(ctx context.Context, emit func(string, any), rou
 		evidence, sources, err = s.guidedPairBundle(ctx, emit, &route, from, to, rangeS)
 	case guidedTraceSearch: // v0.10.436 (D2b)
 		evidence, sources, err = s.guidedTraceSearchBundle(ctx, emit, &route, from, to, rangeS)
+	case guidedWindowCompare: // v0.10.437 (D6)
+		evidence, sources, err = s.guidedWindowCompareBundle(ctx, emit, &route)
 	case guidedMyServices:
 		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "health", &route, from, to, rangeS)
 	case guidedMyProblems:
@@ -3340,4 +3368,28 @@ func (s *Server) guidedAskServiceEvidence(ctx context.Context, route *guidedRout
 	b.WriteString("Bu adlar cevabın altında ÇİP olarak duruyor — tıklaması yeter; listede yoksa adı yazabileceğini de söyle.\n")
 	b.WriteString("KURAL: servis adı UYDURMA, yalnız yukarıdaki listeyi say; veri anlatma (henüz seçilmedi).\n")
 	return b.String(), src, nil
+}
+
+// guidedWindowCompareBundle — v0.10.437 (D6): aynı servisin iki mutlak
+// penceredeki RED'i (buildServiceContext → service_summary_5m). Konum
+// rotadaki pencerelerin kendi konumu (tarayıcı ofseti).
+func (s *Server) guidedWindowCompareBundle(ctx context.Context, emit func(string, any), route *guidedRoute) (string, string, error) {
+	if len(route.Windows) != 2 || route.Service == "" {
+		return "", "", fmt.Errorf("window_compare: iki pencere ve servis gerekli")
+	}
+	loc := route.Windows[0].From.Location()
+	reds := make([]aiRED, 0, 2)
+	for i, w := range route.Windows {
+		n := emitGuidedStep(emit, "service_context", fmt.Sprintf(`{"service":%q,"window":%q}`, route.Service, absWindowLabel(w, loc)))
+		cx := s.buildServiceContext(ctx, route.Service, w.From, w.To)
+		if cx == nil {
+			err := fmt.Errorf("servis bağlamı kurulamadı")
+			emitGuidedStepResult(emit, n, "service_context", "", err)
+			return "", "", err
+		}
+		reds = append(reds, cx.Current)
+		emitGuidedStepResult(emit, n, "service_context", fmt.Sprintf("pencere %d: %d span", i+1, cx.Current.Spans), nil)
+	}
+	src := fmt.Sprintf("service_summary_5m (iki pencere: %s ↔ %s, %s)", absWindowLabel(route.Windows[0], loc), absWindowLabel(route.Windows[1], loc), loc.String())
+	return renderWindowCompareTR(route.Service, route.Windows, reds, loc), src, nil
 }

@@ -2074,9 +2074,14 @@ export const api = {
     contextToMs?: number,
     contextProfile?: string, // v0.10.183 — istek başına model profili (çoklu model dilim C)
   ): Promise<void> => {
+    // v0.10.437 (D6) — tarayıcı saat dilimi: mutlak tarih/saat soruları
+    // ("08/08/2026 04-08 arası") operatörün yerel saatinde yorumlanır.
+    // getTimezoneOffset UTC'nin GERİSİNİ verir (İstanbul −180) → işaret çevrilir.
+    const tzOffsetMin = -new Date().getTimezoneOffset();
     const context =
-      contextService || contextOperation || contextExplain || contextSubject || contextRangeS || contextTrace || contextEnv || contextToMs || contextProfile
+      contextService || contextOperation || contextExplain || contextSubject || contextRangeS || contextTrace || contextEnv || contextToMs || contextProfile || tzOffsetMin !== 0
         ? {
+            ...(tzOffsetMin !== 0 ? { tzOffsetMin } : {}),
             ...(contextService ? { service: contextService } : {}),
             ...(contextOperation ? { operation: contextOperation } : {}),
             ...(contextExplain ? { explain: contextExplain } : {}),

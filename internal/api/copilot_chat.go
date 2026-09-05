@@ -108,6 +108,11 @@ type chatRequest struct {
 		// (/trace?id=). "bu trace neden yavaş" gibi ID'siz sorular
 		// bununla çözülür; mesajda açık 32-hex varsa o kazanır.
 		Trace string `json:"trace,omitempty"`
+		// TzOffsetMin (v0.10.437, D6) — tarayıcının UTC'den dakika ofseti
+		// (doğu pozitif; İstanbul +180). Mutlak tarih/saat soruları
+		// ("08/08/2026 04-08 arası") operatörün yerel saatinde yorumlanır;
+		// yoksa UTC (eski istemci).
+		TzOffsetMin int `json:"tzOffsetMin,omitempty"`
 	} `json:"context,omitempty"`
 }
 
@@ -251,7 +256,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain, req.Context.RangeS, req.Context.Trace, req.Context.Env, anchorTo); handled {
+	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain, req.Context.RangeS, req.Context.Trace, req.Context.Env, anchorTo, req.Context.TzOffsetMin); handled {
 		cspan.tier("guided", gok)
 		emit("done", map[string]bool{"ok": gok})
 		return

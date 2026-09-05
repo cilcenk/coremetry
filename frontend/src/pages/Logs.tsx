@@ -1063,6 +1063,19 @@ function LogsInner() {
             </Button>
           </div>
         )}
+        {/* v0.10.418 (log arama denetimi B7) — UYGULANAN arama cümlesi:
+            compileSearch çıktısı, backend'e giden `search=` parametresinin
+            kendisi (servis/env/seviye/trace ayrı parametre — bu yalnız
+            arama cümlesi). Kutudaki taslak değil: Enter/Search'e dek
+            gecikir. Canlı kuyrukta da çizilir (aynı dize SSE'ye gider).
+            Pill barının DIŞINDA: yalnız serbest metinle de görünsün. */}
+        {compiledSearch && (
+          <div className="trace-lock" style={{ marginBottom: 10 }}>
+            <span>Uygulanan arama</span>
+            <code title={compiledSearch}>{compiledSearch}</code>
+            <CopyButton value={compiledSearch} title="Arama cümlesini kopyala (KQL/Lucene alt kümesi)" />
+          </div>
+        )}
 
         {/* Level facet chips (prototype LogsView .logbar/.facet/.lvl).
             Each chip drives the EXISTING min-severity filter

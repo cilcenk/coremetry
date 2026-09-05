@@ -17,14 +17,14 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 | A1 | **GEMİDE v0.10.376** — JVM GC penceresi ×2: `step=win` ile 2 nokta döner, ilk noktanın `increase`'i pencere DIŞI; `seriesWindowTotal` ikisini toplar | `internal/vmetrics/runtime_pods.go:69,126` | `lastValue` (capacity.go:57 kalıbı) | ~10 dk |
 | A2 | Yığılmış alanda karşılaştırma hayaleti yığına katılıyor → pod throughput ~2× | `components/chart/corePanelEntry.tsx:130-139`, `lib/chart/stacking.ts:34` | `stackData`'ya `excludeIdx`; hayalet ham çizgi | ~2 saat |
 | A3 | Yüzdelik dalında `vmrange` korumasız: exponential histogramda `le=""` tek kova → sessiz yanlış p95 | `internal/vmetrics/promql.go:741,1211` | sonuçta `le` yoksa `vmrange` / not | ~yarım gün |
-| A4 | `attrInt` yalnız IntValue: string/double `http.status_code` → 0, 5xx sınıflandırması eksik | `internal/otlp/convert.go:554` | string/double dalları + test tip ekseni | ~1 saat |
+| A4 | **GEMİDE v0.10.379** — `attrInt` yalnız IntValue: string/double `http.status_code` → 0, 5xx sınıflandırması eksik | `internal/otlp/convert.go:554` | string/double dalları + test tip ekseni | ~1 saat |
 | A5 | ~~`MetricPresentKeys` RTMetric, rate sorgusu Metric okuyor~~ — **bulgu değil**: iki ad aynı ailenin (`_count` ↔ taban) etiketlerini paylaşır, `labelNames` discovery adaylarıyla çözer | `internal/api/service_metric_red.go:157-177` | ikisi de `id.RTMetric` | ~10 dk |
 | A6 | VM uç-damgası kaynakta değil 3 çağrı yerinde telafi ediliyor; diğer tüketicilerde x ekseni kayık (7g'de ~34 dk) | `internal/vmetrics/throughput.go:107`, `endpoints_metric.go:439`, `hosts_metric.go:314`, `capacity.go:205` | kaymayı `runRangeQuery`'de bir kez uygula, 3 telafiyi kaldır | ~yarım gün |
 | A7 | Sparkline'da "trafik yok" ile "%0 hata" aynı: null yerine 0 | `pages/Services.tsx:756,871` | `(number\|null)[]`, null'da path kes | ~2 saat |
 | A8 | Eşik çizgisi y-ölçeği dışındaysa sessizce yok (alarm önizlemesi, pod CPU limiti) | `lib/chart/overlays.ts:63`, `CorePanel.tsx:815` | eşiği `softMin/softMax`'a kat, sığmazsa kenar işareti | ~2 saat |
 | A9 | Yığılmış alanda sıfır taban yok — **v0.9.811 sözleşmesiyle çelişir** (`CorePanel.smoke.test`: "area ve stacked dokunulmadan kalır"); operatör kararı olmadan uygulanmaz | `components/chart/CorePanel.tsx:634` | `(bars \|\| stacked) ? 0` | ~10 dk |
 | A10 | Pasta/yığın `isAdditiveUnit`'e sormuyor ("p99'un payı %31") | `pages/explore/SummaryViz.tsx:56` | rail düğmelerini kapıla, top-6+diğer | ~2 saat |
-| A11 | `http.target` ham hâliyle LowCardinality `http_route`'a (query string dahil) | `internal/otlp/convert.go:142`, `store.go:1031` | `NormalizePathTemplate`'ten geçir | ~1 saat |
+| A11 | **GEMİDE v0.10.380** — `http.target` ham hâliyle LowCardinality `http_route`'a (query string dahil) | `internal/otlp/convert.go:142`, `store.go:1031` | `NormalizePathTemplate`'ten geçir | ~1 saat |
 | A12 | RED paneli `rateWindow=180` varsayılanı Settings tabanını (300 s) atlıyor; 120 s export'ta delikli rate | `internal/api/service_metric_red.go:274`, `promql.go:1088` | varsayılan 0 ya da `max(180, taban)` — **davranış değişikliği, sorulur** | ~10 dk |
 
 ## B. Eksik/sessiz düşen veri
@@ -43,12 +43,12 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
 | C1 | Sunucu `max_execution_time` (60/180 s) istemci `ReadTimeout` (30 s)'un 2-6× — istemci kopar, sunucu yakmaya devam eder | `store.go:654-659`, `topology.go:660,1133` | bütçeleri ≤25 s; uzun işler ayrı bağlantı | ~1 saat |
-| C2 | spans/logs/metric_points `ttl_only_drop_parts` yok (rollup'larda var) | `store.go:1051,1073,1923` | MODIFY SETTING | ~30 dk |
-| C3 | `metric_points` skip index yok; `service_name` opsiyonelken PK budamaz | `store.go:1921`, `metricrate.go:354` | `set(0)` index on `metric` | ~30 dk |
+| C2 | **GEMİDE v0.10.381** — spans/logs/metric_points `ttl_only_drop_parts` yok (rollup'larda var) | `store.go:1051,1073,1923` | MODIFY SETTING | ~30 dk |
+| C3 | **GEMİDE v0.10.381** — `metric_points` skip index yok; `service_name` opsiyonelken PK budamaz | `store.go:1921`, `metricrate.go:354` | `set(0)` index on `metric` | ~30 dk |
 | C4 | `logs` env/pod filtresi dizi taraması; 0014 yalnız spans'e | `repo.go:4750-4764` | `res_kvh` + bloom logs_local'a | ~1 saat |
-| C5 | `GetLogs` sınırsız `count()` her sayfada | `repo.go:5045` | traces'teki tavanlı count | ~30 dk |
+| C5 | **GEMİDE v0.10.382** — `GetLogs` sınırsız `count()` her sayfada | `repo.go:5045` | traces'teki tavanlı count | ~30 dk |
 | C6 | `parallel_view_processing=1` 19 MV'de tepe belleği çarpıyor (spool olayı) | `repo.go:90` | `parallel_view_processing_max_threads`, ölç | ~2 saat |
-| C7 | `logs.attr_values/res_values` kodeksiz (spans ZSTD(3)) | `store.go:1063-1065` | MODIFY COLUMN CODEC | ~30 dk |
+| C7 | **GEMİDE v0.10.381** — `logs.attr_values/res_values` kodeksiz (spans ZSTD(3)) | `store.go:1063-1065` | MODIFY COLUMN CODEC | ~30 dk |
 | C8 | Traces'te her tuş vuruşu 1370 satırlık gövde + memo'suz `AggregateTable` (200 satır) | `pages/Traces.tsx:318,1262,1636` | `memo` + `useDeferredValue` | ~3 saat |
 | C9 | 112 effect-fetch'in 67'si yarış korumasız (216 `useQuery` varken) | ör. `AnomaliesPage.tsx:302`, Traces 7, PanelRenderer 7 | `useQuery`'ye taşı (ilk dilim) | ~yarım gün |
 | C10 | `DataTableColgroup` fit memo'su 20 sitede hiç isabet etmiyor (satır içi dizi) | `DataTable.tsx:448-459` | sabit diziler / primitif dep | ~30 dk |

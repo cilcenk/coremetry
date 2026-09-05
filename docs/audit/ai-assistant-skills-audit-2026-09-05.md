@@ -13,11 +13,11 @@ Her bulgu dosya:satır kanıtlı; uygulamadan önce ±10 satır bağlam okunur.
 |---|---|---|---|---|
 | P1 | Üç explain prompt'unda kanıt sınırı yok; `systemRunbook` somut dashboard/komut adı istiyor, `systemIncident` "blast radius" tahmini istiyor | `internal/copilot/prompts.go:266,281,342` (kardeşi `:75` "Use ONLY facts…") | tek satır kanıt sınırı + "kanıt yetersiz" izni; `prompt_antifabrication_test` 2→5 prompt | ~1 saat |
 | P2 | Ham telemetri kod çitinin içine giriyor; içindeki ``` çiti erken kapatıp talimat düzlemine çıkar (`DataNotInstruction` bu yüzeylerde yok) | `anomaly/exception_context.go:535`, `explain_trace_input.go:250,311`, `api.go:8956` | prompt kopyasında ``` → ˋˋˋ kaçışı (redaksiyon değil, biçim); çit-kırma testi | ~1 saat |
-| P3 | İki katı-JSON yüzeyi yalnız `TrimPrefix("```json")` ile ayıklıyor; kardeşleri `salvageJSONObject` | `api/copilot_nl_query.go:159`, `copilot_ch_optimize.go:65` vs `rca_verdict.go:268` | tek `salvageJSONObject`, beş yüzey; "İşte JSON: {…}" tablo testi | ~30 dk |
+| P3 | **GEMİDE v0.10.399** — İki katı-JSON yüzeyi yalnız `TrimPrefix("```json")` ile ayıklıyor; kardeşleri `salvageJSONObject` | `api/copilot_nl_query.go:159`, `copilot_ch_optimize.go:65` vs `rca_verdict.go:268` | tek `salvageJSONObject`, beş yüzey; "İşte JSON: {…}" tablo testi | ~30 dk |
 | P4 | Problem kanıtında sayı birimsiz, metrik adı basılmıyor; few-shot 0.14/0.05 derken üretim error_rate yüzde | `api/copilot_guided.go:2743`, `prompts.go:190`, `anomaly/anomaly.go:115` | `metrik + birim` satırı, few-shot yüzde ölçeğine; tablo testi | ~1 saat |
 | P5 | Niyet sınıflandırıcısında hiç örnek yok (17 niyet + 5 slot) | `prompts.go:1462-1490` | 3 örnek (servisli, servissiz, `none`); varlık kapısı | ~30 dk |
-| P6 | Anlatım bloğunda talimat son konumda değil; en son gelen şey telemetri | `api/copilot_drawer.go:362` (doktrin `prompts.go:888`) | blok sonuna çapa satırı; tablo testinde son satır pini | ~10 dk |
-| P7 | Türkçe üründe İngilizce `explain` örnekleri (katı-JSON, dil yalnız örnekten) | `prompts.go:678,681,684` | üç örneğin `explain` değeri Türkçe | ~10 dk |
+| P6 | **GEMİDE v0.10.398** — Anlatım bloğunda talimat son konumda değil; en son gelen şey telemetri | `api/copilot_drawer.go:362` (doktrin `prompts.go:888`) | blok sonuna çapa satırı; tablo testinde son satır pini | ~10 dk |
+| P7 | **GEMİDE v0.10.402** — Türkçe üründe İngilizce `explain` örnekleri (katı-JSON, dil yalnız örnekten) | `prompts.go:678,681,684` | üç örneğin `explain` değeri Türkçe | ~10 dk |
 
 ## E. Değerlendirme döngüsü
 
@@ -25,7 +25,7 @@ Her bulgu dosya:satır kanıtlı; uygulamadan önce ±10 satır bağlam okunur.
 |---|---|---|---|---|
 | E1 | Model ÇIKTISI hiç ölçülmüyor; replay eval koşumu yok (golden testler yalnız metin) | `anomaly/prompt_golden_test.go:14-19` | `internal/copilot/evalset/*.json` 20-30 donmuş vaka + `go test -tags evalset` (yerel model yanı başında); skor: verdict eşleşmesi, kanıt-ID atıf oranı, `rca.ScanUnknownEntities` uydurma sayımı | ~yarım gün |
 | E2 | `ai_calls` prompt sürümü/profil taşımıyor → prompt değişikliği ölçülemez | `chstore/ai_calls.go:16-35`, `copilot/copilot.go:225` | `prompt_version` (prompts.go FNV) + `profile_id` kolonu; stats group-by | ~2-3 saat |
-| E3 | Model başına kalite/gecikme/hata yok — çok-model seçici ölçülemiyor | `ai_calls.go:202-208` | aynı GROUP BY'a `countIf(error)`, `avg/p95(duration_ms)`, 👍 oranı | ~1 saat |
+| E3 | **GEMİDE v0.10.400** — Model başına kalite/gecikme/hata yok — çok-model seçici ölçülemiyor | `ai_calls.go:202-208` | aynı GROUP BY'a `countIf(error)`, `avg/p95(duration_ms)`, 👍 oranı | ~1 saat |
 | E4 | Güven kalibre edilmiyor (`0.5*breadth+0.5*TopScore` elle) | `correlator/hypothesis.go:536`, `rca_verdict_store.go:275` | 3 güven kovası × 👍/👎 reliability satırı | ~2 saat |
 | E5 | 👎 etikete dönüşüyor ama regresyon kümesine dönüşmüyor | `chstore/ai_feedback.go` `ListNegativeFeedbackCalls` yalnız panelde | "vakaya çevir" + `GET /api/ai/evalset/export` → E1 fixture | ~2 saat |
 | E6 | Uydurma oranı sayılmıyor — kalkan var, sayaç yok (20 prose yüzeyinde kalkan da yok) | `anomaly/narrative_shield.go:29`, `problem_explainer.go:196` | `shieldNarrative` `unknown []string` → `ai_calls.shield_hits` | ~3 saat |
@@ -36,18 +36,18 @@ Her bulgu dosya:satır kanıtlı; uygulamadan önce ±10 satır bağlam okunur.
 
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
-| O1 | Sohbet satırlarının `duration_ms`'i 0 → /ai gecikme KPI'ları düşük | `copilot/chat.go:90` (ikizi `copilot.go:795` yazıyor) | `t0` + `RecordUsage` süre parametresi | ~30 dk |
+| O1 | **GEMİDE v0.10.397** — Sohbet satırlarının `duration_ms`'i 0 → /ai gecikme KPI'ları düşük | `copilot/chat.go:90` (ikizi `copilot.go:795` yazıyor) | `t0` + `RecordUsage` süre parametresi | ~30 dk |
 | O2 | Ajan döngüsünün araç zinciri hiçbir yere düşmüyor (yalnız SSE); `ai.explain` span'i 4 sarmalayıcıda | `api/copilot_chat.go:597-614`, `ai_observability.go:97-233` | `ai.chat` / `ai.chat.turn` / `ai.tool` span'leri (mcpclient deseni) | ~yarım gün |
 | O3 | Hata sınıfı ve refusal boyut değil (`status` + serbest metin) | `chstore/store.go:1687`, `ai/provider/anthropic.go:139` | `error_class LowCardinality` (+ `prompt_hash` aynı ALTER; dağıtık-güvenli, iki-boot) | ~yarım gün |
 | O4 | TTFT ölçülmüyor; akış→buffered geri düşüşü sayılmıyor | `copilot/stream.go:28,110` | ilk delta damgası → `ttft_ms`, `stream_fallback` | ~yarım gün |
-| O5 | Model başına gecikme/hata oranı yok (UI: Provider/Calls/tok/cost) | `ai_calls.go:292`, `AIObservability.tsx:190` | GROUP BY'a `avg/p95`, `countIf(error)` + iki kolon (E3 ile aynı) | ~20 dk |
+| O5 | **GEMİDE v0.10.400** — Model başına gecikme/hata oranı yok (UI: Provider/Calls/tok/cost) | `ai_calls.go:292`, `AIObservability.tsx:190` | GROUP BY'a `avg/p95`, `countIf(error)` + iki kolon (E3 ile aynı) | ~20 dk |
 
 ## M. MCP sunucu/istemci
 
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
 | M1 | Gelen MCP araç çağrıları gözlemsiz (span/audit/ai_calls yok); giden çağrılar hem audit'li hem span'li | `mcp/mcp.go:1078`, `api/mcp_gate.go:35` | `mcp.tool` span + `source=mcp` audit | ~yarım gün |
-| M2 | Tel üzerindeki `tools/call`'un süre tavanı yok (uygulama içi 20 sn) | `mcp.go:1078` vs `copilot_chat.go:703` | `WithTimeout` + `ToolErrTimeout` eşlemesi | ~30 dk |
+| M2 | **GEMİDE v0.10.401** — Tel üzerindeki `tools/call`'un süre tavanı yok (uygulama içi 20 sn) | `mcp.go:1078` vs `copilot_chat.go:703` | `WithTimeout` + `ToolErrTimeout` eşlemesi | ~30 dk |
 | M3 | Limit'li 10 tool sessiz kırpıyor (`has_more` yok) → model "tam liste" sanıyor | `mcptools/tools.go:566,850` + 8 tool | `limit+1` oku, `has_more`+`limit` döndür | ~yarım gün |
 | M4 | `notifications/cancelled` yok sayılıyor; ağır CH okuması sonuna kadar koşar | `mcp.go:944` | request-id → cancelFunc | ~yarım gün |
 | M5 | `deploy_impact` modelden epoch ms istiyor (skill anti-pattern'i) | `mcptools/prompts.go:213,230` | `deploy_time_iso8601` + retention dışı ret; ms geriye-uyum | ~1 saat |
@@ -57,7 +57,7 @@ Her bulgu dosya:satır kanıtlı; uygulamadan önce ±10 satır bağlam okunur.
 - Deterministik kalkanlar (LLM self-critique yerine sunucu doğrulaması); 👍 → `ConfirmedRCASignatures`; 20 yüzeyin hepsi `ai_calls`'a tek satır.
 - MCP şema kalitesi: 36 tool, 98/98 property açıklamalı, `rangeWindow` zorlaması testli, 5 sınıflık hata sözleşmesi telde ve sohbette aynı.
 
-## PLAN (onay bekliyor)
+## PLAN (onaylandı 2026-09-05; Faz 0 GEMİDE v0.10.397-402)
 
 | Faz | Kapsam | Toplam | Ne zaman görünür |
 |---|---|---|---|

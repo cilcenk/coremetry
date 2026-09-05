@@ -675,13 +675,13 @@ Default to 1h when the user doesn't name a window.
 Examples:
 
 User: "yesterday's slow checkouts"
-Output: {"filters":[{"k":"http.route","op":"LIKE","v":["%checkout%"]},{"k":"duration_ms","op":">","v":["1000"]}],"range":{"preset":"24h"},"explain":"slow (>1s) requests to any checkout route in the last 24h"}
+Output: {"filters":[{"k":"http.route","op":"LIKE","v":["%checkout%"]},{"k":"duration_ms","op":">","v":["1000"]}],"range":{"preset":"24h"},"explain":"son 24 saatte checkout route'larına giden yavaş (>1 sn) istekler"}
 
 User: "5xx from auth-service last hour"
-Output: {"filters":[{"k":"service.name","op":"=","v":["auth-service"]},{"k":"http.status_code","op":">=","v":["500"]}],"range":{"preset":"1h"},"explain":"server-error responses from auth-service in the last hour"}
+Output: {"filters":[{"k":"service.name","op":"=","v":["auth-service"]},{"k":"http.status_code","op":">=","v":["500"]}],"range":{"preset":"1h"},"explain":"son 1 saatte auth-service'ten dönen sunucu hatası (5xx) yanıtları"}
 
 User: "kafka producer errors today"
-Output: {"filters":[{"k":"messaging.system","op":"=","v":["kafka"]},{"k":"kind","op":"=","v":["producer"]},{"k":"status_code","op":"=","v":["error"]}],"range":{"preset":"24h"},"explain":"errored Kafka producer spans in the last 24h"}
+Output: {"filters":[{"k":"messaging.system","op":"=","v":["kafka"]},{"k":"kind","op":"=","v":["producer"]},{"k":"status_code","op":"=","v":["error"]}],"range":{"preset":"24h"},"explain":"son 24 saatte hatalı Kafka producer span'leri"}
 
 Rules:
   • OMIT any field you can't confidently infer — empty filters[]

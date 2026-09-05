@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/logstore"
+	"github.com/cilcenk/coremetry/internal/promptfmt"
 	"github.com/cilcenk/coremetry/internal/stackparse"
 )
 
@@ -247,7 +248,7 @@ func (s *Server) buildTraceExplainInput(ctx context.Context, id string) (traceEx
 				ll = append(ll, e)
 			}
 			if lp, e := json.Marshal(ll); e == nil {
-				logsBlock = fmt.Sprintf("\n\nBu trace'in ilişkili LOGLARI (log store; stacktrace burada span event'lerinden zengin olabilir), yüksek severity önce:\n```json\n%s\n```\n\nTrace waterfall'ı VE logları BİRLİKTE yorumla — hata/stacktrace varsa kök nedeni logdaki stacktrace + exception.type'a dayandır ve ilgili span'ın StatusMsg'ıyla eşleştir.", string(lp))
+				logsBlock = fmt.Sprintf("\n\nBu trace'in ilişkili LOGLARI (log store; stacktrace burada span event'lerinden zengin olabilir), yüksek severity önce:\n```json\n%s\n```\n\nTrace waterfall'ı VE logları BİRLİKTE yorumla — hata/stacktrace varsa kök nedeni logdaki stacktrace + exception.type'a dayandır ve ilgili span'ın StatusMsg'ıyla eşleştir.", promptfmt.FenceSafe(string(lp)))
 			}
 		}
 		cancel()
@@ -308,7 +309,7 @@ func traceExplainUser(id string, analyzed, total int, payload, logsBlock string)
 	if total > analyzed {
 		analyzedNote = fmt.Sprintf(" (trace'in tamamı %d span; hatalar + en yavaşlar öncelikli %d span analiz edildi)", total, analyzed)
 	}
-	return fmt.Sprintf("Trace %s with %d spans%s:\n```json\n%s\n```%s", id, analyzed, analyzedNote, payload, logsBlock)
+	return fmt.Sprintf("Trace %s with %d spans%s:\n```json\n%s\n```%s", id, analyzed, analyzedNote, promptfmt.FenceSafe(payload), logsBlock) // v0.10.404 — çit kaçışı
 }
 
 // truncRunesN — rune-güvenli baş kesme (v0.10.115).

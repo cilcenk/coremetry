@@ -62,9 +62,12 @@ func (s *Server) copilotOptimizeCHQuery(w http.ResponseWriter, r *http.Request) 
 	out = strings.TrimSpace(out)
 	// Strip ```json / ``` fences if the model wrapped them
 	// despite the strict-output instruction.
-	out = strings.TrimPrefix(out, "```json")
-	out = strings.TrimPrefix(out, "```")
-	out = strings.TrimSuffix(out, "```")
+	// v0.10.399 (CoSRE denetimi P3) — gevezelik küçük modelde beklenen
+	// hâl ("İşte JSON: {…} umarım yardımcı olur"); çit kırpmak yetmez.
+	// Kardeş yüzeylerle aynı ayıklayıcı: ilk `{` … son `}`.
+	if obj, ok := salvageJSONObject(out); ok {
+		out = obj
+	}
 	out = strings.TrimSpace(out)
 
 	var parsed chOptimizeResponse

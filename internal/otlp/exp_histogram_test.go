@@ -181,3 +181,26 @@ func TestDeltaTemporalityCounted(t *testing.T) {
 		t.Fatalf("delta points counted = %d, want 2 (cumulative not counted)", after-before)
 	}
 }
+
+// v0.10.392 — dış skill denetimi B1: Summary quantile'ları attr olarak taşınır.
+func TestSummaryQuantilesCarriedAsAttrs(t *testing.T) {
+	req := &metricscollpb.ExportMetricsServiceRequest{ResourceMetrics: []*metricspb.ResourceMetrics{{
+		ScopeMetrics: []*metricspb.ScopeMetrics{{Metrics: []*metricspb.Metric{
+			{Name: "rpc_latency", Data: &metricspb.Metric_Summary{Summary: &metricspb.Summary{DataPoints: []*metricspb.SummaryDataPoint{{
+				TimeUnixNano: 1, Count: 10, Sum: 50,
+				QuantileValues: []*metricspb.SummaryDataPoint_ValueAtQuantile{{Quantile: 0.5, Value: 4}, {Quantile: 0.99, Value: 12.5}, nil},
+			}}}}},
+		}}},
+	}}}
+	pts, _ := ConvertMetrics(req)
+	if len(pts) != 1 || pts[0].Instrument != "summary" || pts[0].Value != 5 {
+		t.Fatalf("summary point: %+v", pts)
+	}
+	got := map[string]string{}
+	for i, k := range pts[0].AttrKeys {
+		got[k] = pts[0].AttrValues[i]
+	}
+	if got["summary.quantile.0.5"] != "4" || got["summary.quantile.0.99"] != "12.5" {
+		t.Fatalf("quantiles not carried: %v", got)
+	}
+}

@@ -421,8 +421,22 @@ func convertMetric(m *metricspb.Metric, svcName, svcInstance, hostName string, r
 			if dp.Count > 0 {
 				avg = dp.Sum / float64(dp.Count)
 			}
-			out = append(out, base("summary", dp.StartTimeUnixNano, dp.TimeUnixNano,
-				avg, dp.Count, dp.Sum, 0, 0, dp.Attributes))
+			p := base("summary", dp.StartTimeUnixNano, dp.TimeUnixNano,
+				avg, dp.Count, dp.Sum, 0, 0, dp.Attributes)
+			// v0.10.392 (dış skill denetimi B1) — quantile değerleri eskiden
+			// sessizce düşüyordu (yalnız avg/Count/Sum): Prometheus
+			// federasyonundan gelen Summary'de p50/p95/p99 kayboluyordu.
+			// A sınıfı taşıma: attr olarak (`summary.quantile.0.99` = değer).
+			// base() seri parmak izini dp.Attributes'tan kurdu; sonradan
+			// eklenen bu çiftler kimliğe GİRMEZ (nokta başına değişirler).
+			for _, q := range dp.QuantileValues {
+				if q == nil {
+					continue
+				}
+				p.AttrKeys = append(p.AttrKeys, "summary.quantile."+strconv.FormatFloat(q.Quantile, 'f', -1, 64))
+				p.AttrValues = append(p.AttrValues, strconv.FormatFloat(q.Value, 'f', -1, 64))
+			}
+			out = append(out, p)
 		}
 	}
 	return out, exs

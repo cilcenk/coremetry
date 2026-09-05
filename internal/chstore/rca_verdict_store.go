@@ -26,6 +26,7 @@ package chstore
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -283,6 +284,63 @@ type RCAVerdictQuality struct {
 	AvgConfidence float64 `json:"avgConfidence"`
 	ThumbsUp      uint64  `json:"thumbsUp"`
 	ThumbsDown    uint64  `json:"thumbsDown"`
+	// Calibration — v0.10.410 (CoSRE denetimi E4): güven kovası × 👍/👎.
+	// "Güven 0.8 dediğinde gerçekten haklı mı?" sorusunun veri cevabı;
+	// yalnız ÇÖZÜMLENMİŞ verdict'ler (parsed=1 — çözümlenemeyenler 0
+	// güvenle yazılır ve en alt kovayı yapay olarak çürütürdü). Kovalar
+	// rcaConfidenceBuckets ile TEK yerden: SQL yüklemi ve JSON aynı
+	// sınırları taşır, üçü daima toplam parsed'a eşittir.
+	Calibration []RCAConfidenceBucket `json:"calibration"`
+}
+
+// RCAConfidenceBucket — bir güven aralığındaki verdict ve oy sayıları.
+type RCAConfidenceBucket struct {
+	Bucket     string  `json:"bucket"` // low | mid | high
+	Lo         float64 `json:"lo"`     // dahil
+	Hi         float64 `json:"hi"`     // high için dahil (1.0), diğerlerinde hariç
+	Total      uint64  `json:"total"`
+	ThumbsUp   uint64  `json:"thumbsUp"`
+	ThumbsDown uint64  `json:"thumbsDown"`
+}
+
+// Kova sınırları — 0.6 = rcaNoRefutationCap (api/rca_shields.go): geçerli
+// çürütme olmadan güven 0.6'yı aşamaz, yani "high" kovası yalnız
+// çürütme-destekli verdict'leri tutar. Sınır burada değişirse SQL ve
+// JSON birlikte değişir (rcaConfidenceBuckets tek kaynak).
+const (
+	rcaConfBucketLow  = 0.4
+	rcaConfBucketHigh = 0.6
+)
+
+// rcaConfidenceBuckets — sıralı, bitişik, [0,1]'i kapsar
+// (rca_calibration_test pinler). sqlPred: v.confidence üzerinde yüklem.
+func rcaConfidenceBuckets() []struct {
+	RCAConfidenceBucket
+	sqlPred string
+} {
+	type b = struct {
+		RCAConfidenceBucket
+		sqlPred string
+	}
+	lo := fmt.Sprintf("%.2f", rcaConfBucketLow)
+	hi := fmt.Sprintf("%.2f", rcaConfBucketHigh)
+	return []b{
+		{RCAConfidenceBucket{Bucket: "low", Lo: 0, Hi: rcaConfBucketLow}, "v.confidence < " + lo},
+		{RCAConfidenceBucket{Bucket: "mid", Lo: rcaConfBucketLow, Hi: rcaConfBucketHigh}, "v.confidence >= " + lo + " AND v.confidence <= " + hi},
+		{RCAConfidenceBucket{Bucket: "high", Lo: rcaConfBucketHigh, Hi: 1}, "v.confidence > " + hi},
+	}
+}
+
+// rcaCalibrationSelect — her kova için üç sütun (toplam, 👍, 👎); yalnız
+// parsed=1. Sütun sırası rcaConfidenceBuckets sırasıyla aynı (Scan).
+func rcaCalibrationSelect() string {
+	var sb strings.Builder
+	for _, bk := range rcaConfidenceBuckets() {
+		fmt.Fprintf(&sb, ",\n\t\t\ttoUInt64(countIf(v.parsed = 1 AND %s)) AS cal_%s_n", bk.sqlPred, bk.Bucket)
+		fmt.Fprintf(&sb, ",\n\t\t\ttoUInt64(countIf(v.parsed = 1 AND %s AND f.verdict = 1)) AS cal_%s_up", bk.sqlPred, bk.Bucket)
+		fmt.Fprintf(&sb, ",\n\t\t\ttoUInt64(countIf(v.parsed = 1 AND %s AND f.verdict = -1)) AS cal_%s_down", bk.sqlPred, bk.Bucket)
+	}
+	return sb.String()
 }
 
 // RCAVerdictQualityStats — pencere içindeki verdict kalitesi.
@@ -313,7 +371,7 @@ func (s *Store) RCAVerdictQualityStats(ctx context.Context, from, to time.Time) 
 			-- kaynağında kes — bu okuma başka çağıranlara da açık).
 			ifNotFinite(toFloat64(avg(v.confidence)), 0)               AS avg_conf,
 			toUInt64(countIf(f.verdict = 1))                           AS up,
-			toUInt64(countIf(f.verdict = -1))                          AS down
+			toUInt64(countIf(f.verdict = -1))                          AS down`+rcaCalibrationSelect()+`
 		FROM rca_verdicts AS v FINAL
 		LEFT JOIN (
 			SELECT exchange_id, verdict FROM ai_feedback FINAL
@@ -323,8 +381,15 @@ func (s *Store) RCAVerdictQualityStats(ctx context.Context, from, to time.Time) 
 		chDateTime64Arg(from), chDateTime64Arg(to))
 
 	var avg float64
-	if err := row.Scan(&q.Total, &q.RootCause, &q.Probable, &q.Insufficient,
-		&q.Unparsed, &q.Repaired, &q.Shielded, &avg, &q.ThumbsUp, &q.ThumbsDown); err != nil {
+	buckets := rcaConfidenceBuckets()
+	q.Calibration = make([]RCAConfidenceBucket, len(buckets))
+	dest := []any{&q.Total, &q.RootCause, &q.Probable, &q.Insufficient,
+		&q.Unparsed, &q.Repaired, &q.Shielded, &avg, &q.ThumbsUp, &q.ThumbsDown}
+	for i, bk := range buckets {
+		q.Calibration[i] = bk.RCAConfidenceBucket
+		dest = append(dest, &q.Calibration[i].Total, &q.Calibration[i].ThumbsUp, &q.Calibration[i].ThumbsDown)
+	}
+	if err := row.Scan(dest...); err != nil {
 		return q, err
 	}
 	q.AvgConfidence = avg

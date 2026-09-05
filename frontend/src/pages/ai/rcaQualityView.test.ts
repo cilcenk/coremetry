@@ -4,12 +4,14 @@
 // çıkarabilir mi? "Hiç veri yok" ile "%0" aynı görünürse, motor daha
 // hiç çalışmamışken "hiç kök neden bulamıyor" okunur.
 import { describe, it, expect } from 'vitest';
-import { rcaPct, rcaPctText, rcaEngineTone, rcaSatisfactionText } from './rcaQualityView';
+import { rcaPct, rcaPctText, rcaEngineTone, rcaSatisfactionText, rcaBucketLabel, rcaBucketSatisfaction, rcaCalibrationNote } from './rcaQualityView';
+import type { RCAConfidenceBucket } from '@/lib/types';
 import type { RCAVerdictQuality } from '@/lib/types';
 
 const base: RCAVerdictQuality = {
   total: 0, rootCauseIdentified: 0, probableCause: 0, insufficientEvidence: 0,
   unparsed: 0, repaired: 0, shielded: 0, avgConfidence: 0, thumbsUp: 0, thumbsDown: 0,
+  calibration: [],
 };
 
 describe('rcaPct', () => {
@@ -66,5 +68,29 @@ describe('rcaSatisfactionText', () => {
 
   it('oy varsa oran + sayı', () => {
     expect(rcaSatisfactionText({ ...base, total: 40, thumbsUp: 3, thumbsDown: 1 })).toBe('%75 (4 oy)');
+  });
+});
+
+// v0.10.410 — güven kalibrasyonu kovaları (CoSRE denetimi E4).
+describe('calibration', () => {
+  const bk = (bucket: RCAConfidenceBucket['bucket'], lo: number, hi: number, up = 0, down = 0): RCAConfidenceBucket =>
+    ({ bucket, lo, hi, total: up + down, thumbsUp: up, thumbsDown: down });
+
+  it('etiket sınırları sunucudan, yazım kuralı burada', () => {
+    expect(rcaBucketLabel(bk('low', 0, 0.4))).toBe('düşük (<0.40)');
+    expect(rcaBucketLabel(bk('mid', 0.4, 0.6))).toBe('orta (0.40–0.60)');
+    expect(rcaBucketLabel(bk('high', 0.6, 1))).toBe('yüksek (>0.60)');
+  });
+
+  it('oy yoksa "oy yok", varsa oran + sayı', () => {
+    expect(rcaBucketSatisfaction(bk('mid', 0.4, 0.6))).toBe('oy yok');
+    expect(rcaBucketSatisfaction(bk('mid', 0.4, 0.6, 3, 1))).toBe('%75 (4 oy)');
+  });
+
+  it('not yalnız yeterli oyla (≥5) ve çoğunluk 👎 iken', () => {
+    expect(rcaCalibrationNote([])).toBeNull();
+    expect(rcaCalibrationNote([bk('high', 0.6, 1, 1, 3)])).toBeNull(); // 4 oy — hüküm yok
+    expect(rcaCalibrationNote([bk('high', 0.6, 1, 4, 1)])).toBeNull(); // kalibre
+    expect(rcaCalibrationNote([bk('high', 0.6, 1, 2, 3)])).toMatch(/kalibre değil/);
   });
 });

@@ -110,7 +110,10 @@ func (s *Service) RecordUsage(ctx context.Context, started time.Time, inTok, out
 	}
 	if status == "error" {
 		rec.ErrorMsg = truncErr(errMsg)
+		rec.ErrorClass = ClassifyAIErrorText(errMsg) // v0.10.409
 	}
+	rec.PromptVersion = PromptVersion() // v0.10.409
+	rec.ProfileID = s.profileID(ctx)
 	go func(r Recorder, rec CallRecord) {
 		rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

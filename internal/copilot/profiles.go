@@ -240,6 +240,16 @@ func (s *Service) clientForLocked(rt *profileRuntime) *http.Client {
 }
 
 // profileIdentity — çağrının gideceği profilin (provider, model, baseURL) üçlüsü.
+// profileID — v0.10.409: ai_calls.profile_id (çözülen profilin kimliği).
+func (s *Service) profileID(ctx context.Context) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if rt := s.resolveProfileLocked(ctx); rt != nil {
+		return rt.cfg.ID
+	}
+	return ""
+}
+
 func (s *Service) profileIdentity(ctx context.Context) (provider, model, baseURL string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

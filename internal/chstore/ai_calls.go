@@ -3,7 +3,9 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -32,6 +34,38 @@ type AICall struct {
 	UserEmail      string `json:"userEmail,omitempty"`
 	PromptSample   string `json:"promptSample,omitempty"`
 	ResponseSample string `json:"responseSample,omitempty"`
+	// v0.10.409 (CoSRE denetimi E2/O3/O4) — prompt sürümü (prompts.go
+	// sabitlerinin FNV'si), kullanılan profil, hata SINIFI (timeout /
+	// quota / refusal / context_overflow / http_4xx / http_5xx /
+	// unavailable / other), ilk token gecikmesi, akış→buffered düşüşü ve
+	// (E6 için hazır) kalkan isabeti. Kolonlar boot ALTER'ıyla gelir;
+	// INSERT probe görene dek eski kolon listesini kullanır (iki-boot).
+	PromptVersion  string `json:"promptVersion,omitempty"`
+	ProfileID      string `json:"profileId,omitempty"`
+	ErrorClass     string `json:"errorClass,omitempty"`
+	TTFTMs         uint32 `json:"ttftMs,omitempty"`
+	StreamFallback bool   `json:"streamFallback,omitempty"`
+	ShieldHits     uint8  `json:"shieldHits,omitempty"`
+}
+
+// aiCallsExtended — v0.10.409 kolonları bu kurulumda var mı (boot probe;
+// küme kipinde DDL ertelenir, ilk boot false okur → eski INSERT).
+var aiCallsExtended atomic.Bool
+
+// AICallsExtended — /admin/stats + stats sorguları için.
+func AICallsExtended() bool { return aiCallsExtended.Load() }
+
+// probeAICallsColumns — INSERT hedefi olan ai_calls'ta (küme kipinde
+// Distributed) error_class var mı. Yalnız INSERT hedefine bakılır: yerel
+// parçada olup Distributed'da henüz olmayan kolon INSERT'i kırar.
+func (s *Store) probeAICallsColumns(ctx context.Context) bool {
+	var n uint64
+	err := s.conn.QueryRow(ctx,
+		`SELECT count() FROM system.columns
+		 WHERE database = currentDatabase() AND table = 'ai_calls' AND name = 'error_class'`).Scan(&n)
+	ok := err == nil && n > 0
+	aiCallsExtended.Store(ok)
+	return ok
 }
 
 // SamplePromptCap is the byte limit applied to prompt_sample /
@@ -44,6 +78,38 @@ const SamplePromptCap = 4 * 1024
 // InsertAICall writes one row. Sync (single-row INSERT) — the
 // recording happens on a goroutine in copilot.Service so the
 // user-facing latency isn't impacted by CH ingest time.
+// aiCallsBaseCols — v0.10.409 öncesi kolon listesi. aiCallsExtCols yalnız
+// boot probe'u kolonları GÖRDÜYSE eklenir (iki-boot sözleşmesi): küme
+// kipinde ertelenen ALTER inene dek INSERT bu altı adı ANMAZ — Distributed
+// tablo tanımadığı kolonu reddeder ve her AI çağrısı kaydı kaybolurdu.
+const aiCallsBaseCols = `id, created_at, surface, exchange_id, provider, model, base_url,
+		 duration_ms, input_tokens, output_tokens, status,
+		 error_msg, prompt_chars, response_chars,
+		 user_id, user_email, prompt_sample, response_sample`
+
+const aiCallsExtCols = `prompt_version, profile_id, error_class, ttft_ms, stream_fallback, shield_hits`
+
+// aiCallsInsertSQL — saf: kolon listesi bayrağa göre (ai_calls_insert_test).
+func aiCallsInsertSQL(extended bool) string {
+	cols := aiCallsBaseCols
+	if extended {
+		cols += ",\n\t\t " + aiCallsExtCols
+	}
+	return "INSERT INTO ai_calls (" + cols + ")"
+}
+
+// aiCallsInsertArgs — saf: aiCallsInsertSQL kolon sırasıyla birebir.
+func aiCallsInsertArgs(c AICall, created time.Time, extended bool) []any {
+	args := []any{c.ID, created, c.Surface, c.ExchangeID, c.Provider, c.Model, c.BaseURL,
+		c.DurationMs, c.InputTokens, c.OutputTokens, c.Status,
+		c.ErrorMsg, c.PromptChars, c.ResponseChars,
+		c.UserID, c.UserEmail, c.PromptSample, c.ResponseSample}
+	if extended {
+		args = append(args, c.PromptVersion, c.ProfileID, c.ErrorClass, c.TTFTMs, boolU8(c.StreamFallback), c.ShieldHits)
+	}
+	return args
+}
+
 func (s *Store) InsertAICall(ctx context.Context, c AICall) error {
 	if c.ID == "" {
 		c.ID = randHex(12)
@@ -58,18 +124,13 @@ func (s *Store) InsertAICall(ctx context.Context, c AICall) error {
 	if len(c.ResponseSample) > SamplePromptCap {
 		c.ResponseSample = c.ResponseSample[:SamplePromptCap]
 	}
-	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO ai_calls
-		(id, created_at, surface, exchange_id, provider, model, base_url,
-		 duration_ms, input_tokens, output_tokens, status,
-		 error_msg, prompt_chars, response_chars,
-		 user_id, user_email, prompt_sample, response_sample)`)
+	// v0.10.409 — tek dal, bayrak yalnız kolon listesini seçer.
+	ext := aiCallsExtended.Load()
+	batch, err := s.conn.PrepareBatch(ctx, aiCallsInsertSQL(ext))
 	if err != nil {
 		return err
 	}
-	if err := batch.Append(c.ID, created, c.Surface, c.ExchangeID, c.Provider, c.Model, c.BaseURL,
-		c.DurationMs, c.InputTokens, c.OutputTokens, c.Status,
-		c.ErrorMsg, c.PromptChars, c.ResponseChars,
-		c.UserID, c.UserEmail, c.PromptSample, c.ResponseSample); err != nil {
+	if err := batch.Append(aiCallsInsertArgs(c, created, ext)...); err != nil {
 		return err
 	}
 	return batch.Send()
@@ -183,6 +244,11 @@ type AIStats struct {
 	DistinctUsers uint64           `json:"distinctUsers"`
 	BySurface     []AISurfaceStat  `json:"bySurface"`
 	ByProvider    []AIProviderStat `json:"byProvider"`
+	// v0.10.409 — hata sınıfı kırılımı ve ortalama ilk-token gecikmesi;
+	// yalnız genişletilmiş kolonlar varken dolar (AICallsExtended).
+	ByErrorClass []AIErrorClassStat `json:"byErrorClass,omitempty"`
+	AvgTTFTMs    float64            `json:"avgTtftMs,omitempty"`
+	Extended     bool               `json:"extended"`
 }
 
 type AISurfaceStat struct {
@@ -197,6 +263,12 @@ type AISurfaceStat struct {
 	// old payload shape for unrated surfaces).
 	FeedbackCount uint64  `json:"feedbackCount,omitempty"`
 	ThumbsUpRate  float64 `json:"thumbsUpRate,omitempty"` // 0..1 over rated exchanges
+}
+
+// AIErrorClassStat — v0.10.409: hata sınıfı kırılımı (kolon varken).
+type AIErrorClassStat struct {
+	Class string `json:"class"`
+	Calls uint64 `json:"calls"`
 }
 
 type AIProviderStat struct {
@@ -318,6 +390,41 @@ func (s *Store) ComputeAIStats(ctx context.Context, from, to time.Time) (*AIStat
 		st.ByProvider = append(st.ByProvider, row)
 	}
 	pRows.Close()
+	// v0.10.409 — hata sınıfı + TTFT (kolonlar varsa).
+	if aiCallsExtended.Load() {
+		st.Extended = true
+		eRows, err := s.conn.Query(ctx, `
+			SELECT error_class, toUInt64(count())
+			FROM ai_calls
+			WHERE created_at >= toDateTime64(?, 9, 'UTC')
+			  AND created_at <  toDateTime64(?, 9, 'UTC')
+			  AND status = 'error'
+			GROUP BY error_class ORDER BY count() DESC LIMIT 12`,
+			chDateTime64Arg(from), chDateTime64Arg(to))
+		if err != nil {
+			log.Printf("[ai_calls] hata sınıfı kırılımı okunamadı: %v", err)
+		} else {
+			for eRows.Next() {
+				var row AIErrorClassStat
+				if err := eRows.Scan(&row.Class, &row.Calls); err == nil {
+					if row.Class == "" {
+						row.Class = "unclassified"
+					}
+					st.ByErrorClass = append(st.ByErrorClass, row)
+				}
+			}
+			eRows.Close()
+		}
+		var ttft float64
+		if err := s.conn.QueryRow(ctx, `
+			SELECT ifNotFinite(toFloat64(avgIf(ttft_ms, ttft_ms > 0)), 0)
+			FROM ai_calls
+			WHERE created_at >= toDateTime64(?, 9, 'UTC')
+			  AND created_at <  toDateTime64(?, 9, 'UTC')`,
+			chDateTime64Arg(from), chDateTime64Arg(to)).Scan(&ttft); err == nil {
+			st.AvgTTFTMs = ttft
+		}
+	}
 	return &st, nil
 }
 
@@ -374,4 +481,11 @@ func (s *Store) AICallsTimeseries(ctx context.Context, from, to time.Time, bucke
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+func boolU8(b bool) uint8 {
+	if b {
+		return 1
+	}
+	return 0
 }

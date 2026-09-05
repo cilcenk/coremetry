@@ -155,6 +155,12 @@ func (s *Store) reprobePromotedAttrs() {
 		if !AttrIndexAvailable() && s.probeAttrIndex(ctx) {
 			registerAttrIndex(true)
 		}
+		// v0.10.409 — ai_calls genişletilmiş kolonları da ertelenen DDL ile
+		// iner; görünür görünmez INSERT yeni listeye geçer (ikinci boot
+		// gerekmez — gerekirse hâlâ güvenli).
+		if !AICallsExtended() {
+			s.probeAICallsColumns(ctx)
+		}
 		cancel()
 		if len(found) == 0 {
 			continue

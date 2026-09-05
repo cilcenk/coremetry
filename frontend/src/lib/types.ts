@@ -2259,6 +2259,10 @@ export interface AIStats {
   bySurface: Array<{ surface: string; calls: number; errorRate: number; avgMs: number; feedbackCount?: number; thumbsUpRate?: number }>;
   // v0.10.400 — model başına hata sayısı ve gecikme (ms) (CoSRE denetimi O5/E3).
   byProvider: Array<{ provider: string; model: string; calls: number; inputTokens: number; outputTokens: number; errors: number; avgMs: number; p95Ms: number }>;
+  /** v0.10.409 — hata sınıfı kırılımı + TTFT; yalnız genişletilmiş kolonlar varken (extended). */
+  byErrorClass?: Array<{ class: string; calls: number }>;
+  avgTtftMs?: number;
+  extended: boolean;
 }
 
 // AI cost rates (v0.5.167). USD per 1M tokens, per model.

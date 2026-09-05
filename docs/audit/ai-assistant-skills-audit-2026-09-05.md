@@ -24,7 +24,7 @@ Her bulgu dosya:satır kanıtlı; uygulamadan önce ±10 satır bağlam okunur.
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
 | E1 | Model ÇIKTISI hiç ölçülmüyor; replay eval koşumu yok (golden testler yalnız metin) | `anomaly/prompt_golden_test.go:14-19` | `internal/copilot/evalset/*.json` 20-30 donmuş vaka + `go test -tags evalset` (yerel model yanı başında); skor: verdict eşleşmesi, kanıt-ID atıf oranı, `rca.ScanUnknownEntities` uydurma sayımı | ~yarım gün |
-| E2 | `ai_calls` prompt sürümü/profil taşımıyor → prompt değişikliği ölçülemez | `chstore/ai_calls.go:16-35`, `copilot/copilot.go:225` | `prompt_version` (prompts.go FNV) + `profile_id` kolonu; stats group-by | ~2-3 saat |
+| E2 | **GEMİDE v0.10.409** — `ai_calls` prompt sürümü/profil taşımıyor → prompt değişikliği ölçülemez | `chstore/ai_calls.go:16-35`, `copilot/copilot.go:225` | `prompt_version` (prompts.go FNV) + `profile_id` kolonu; stats group-by | ~2-3 saat |
 | E3 | **GEMİDE v0.10.400** — Model başına kalite/gecikme/hata yok — çok-model seçici ölçülemiyor | `ai_calls.go:202-208` | aynı GROUP BY'a `countIf(error)`, `avg/p95(duration_ms)`, 👍 oranı | ~1 saat |
 | E4 | Güven kalibre edilmiyor (`0.5*breadth+0.5*TopScore` elle) | `correlator/hypothesis.go:536`, `rca_verdict_store.go:275` | 3 güven kovası × 👍/👎 reliability satırı | ~2 saat |
 | E5 | 👎 etikete dönüşüyor ama regresyon kümesine dönüşmüyor | `chstore/ai_feedback.go` `ListNegativeFeedbackCalls` yalnız panelde | "vakaya çevir" + `GET /api/ai/evalset/export` → E1 fixture | ~2 saat |
@@ -38,8 +38,8 @@ Her bulgu dosya:satır kanıtlı; uygulamadan önce ±10 satır bağlam okunur.
 |---|---|---|---|---|
 | O1 | **GEMİDE v0.10.397** — Sohbet satırlarının `duration_ms`'i 0 → /ai gecikme KPI'ları düşük | `copilot/chat.go:90` (ikizi `copilot.go:795` yazıyor) | `t0` + `RecordUsage` süre parametresi | ~30 dk |
 | O2 | Ajan döngüsünün araç zinciri hiçbir yere düşmüyor (yalnız SSE); `ai.explain` span'i 4 sarmalayıcıda | `api/copilot_chat.go:597-614`, `ai_observability.go:97-233` | `ai.chat` / `ai.chat.turn` / `ai.tool` span'leri (mcpclient deseni) | ~yarım gün |
-| O3 | Hata sınıfı ve refusal boyut değil (`status` + serbest metin) | `chstore/store.go:1687`, `ai/provider/anthropic.go:139` | `error_class LowCardinality` (+ `prompt_hash` aynı ALTER; dağıtık-güvenli, iki-boot) | ~yarım gün |
-| O4 | TTFT ölçülmüyor; akış→buffered geri düşüşü sayılmıyor | `copilot/stream.go:28,110` | ilk delta damgası → `ttft_ms`, `stream_fallback` | ~yarım gün |
+| O3 | **GEMİDE v0.10.409** — Hata sınıfı ve refusal boyut değil (`status` + serbest metin) | `chstore/store.go:1687`, `ai/provider/anthropic.go:139` | `error_class LowCardinality` (+ `prompt_hash` aynı ALTER; dağıtık-güvenli, iki-boot) | ~yarım gün |
+| O4 | **GEMİDE v0.10.409** — TTFT ölçülmüyor; akış→buffered geri düşüşü sayılmıyor | `copilot/stream.go:28,110` | ilk delta damgası → `ttft_ms`, `stream_fallback` | ~yarım gün |
 | O5 | **GEMİDE v0.10.400** — Model başına gecikme/hata oranı yok (UI: Provider/Calls/tok/cost) | `ai_calls.go:292`, `AIObservability.tsx:190` | GROUP BY'a `avg/p95`, `countIf(error)` + iki kolon (E3 ile aynı) | ~20 dk |
 
 ## M. MCP sunucu/istemci
@@ -57,7 +57,7 @@ Her bulgu dosya:satır kanıtlı; uygulamadan önce ±10 satır bağlam okunur.
 - Deterministik kalkanlar (LLM self-critique yerine sunucu doğrulaması); 👍 → `ConfirmedRCASignatures`; 20 yüzeyin hepsi `ai_calls`'a tek satır.
 - MCP şema kalitesi: 36 tool, 98/98 property açıklamalı, `rangeWindow` zorlaması testli, 5 sınıflık hata sözleşmesi telde ve sohbette aynı.
 
-## PLAN (onaylandı 2026-09-05; Faz 0 GEMİDE v0.10.397-402; Faz 1 GEMİDE v0.10.403-408)
+## PLAN (onaylandı 2026-09-05; Faz 0 GEMİDE v0.10.397-402; Faz 1 GEMİDE v0.10.403-408; Faz 2 dilim 1 (E2+O3+O4) GEMİDE v0.10.409)
 
 | Faz | Kapsam | Toplam | Ne zaman görünür |
 |---|---|---|---|

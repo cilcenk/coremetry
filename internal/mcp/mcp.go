@@ -445,6 +445,9 @@ type Server struct {
 	// bilgisi api katmanında, buraya yalnız "geçir/RED" fonksiyonu
 	// iner. nil = kapısız.
 	gate CallGate
+	// observe (v0.10.426, M1) — yürütme gözlem kancası (observe.go); span +
+	// audit api katmanında. nil = gözlemsiz.
+	observe Observer
 }
 
 // GateCall — kapıya inen çağrının tanımı. Kind kapının hata metnini
@@ -1079,10 +1082,16 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 	// içi döngüyle (runChatTool) aynı bütçeyi taşır; deadline
 	// classifyToolErrorClass'ta ToolErrTimeout'a düşer, model yapılandırılmış
 	// "pencereyi daralt" öğüdünü alır.
-	tctx, cancel := context.WithTimeout(ctx, ToolCallBudget)
+	// v0.10.426 (M1) — gözlem kancası kapıdan SONRA, bütçeden ÖNCE: bütçe
+	// span'ın içinde; handler hatası JSON-RPC BAŞARI + isError döndüğünden
+	// done() üç çıkışta da çağrılır (yalnız taşıma hatasında olsaydı %0
+	// hata görünürdü).
+	octx, done := s.beginObserve(ctx, "tool", p.Name, p.Arguments)
+	tctx, cancel := context.WithTimeout(octx, ToolCallBudget)
 	defer cancel()
 	out, err := tool.Handler(tctx, p.Arguments)
 	if err != nil {
+		done(CallOutcome{Err: err, ErrorClass: classifyToolErrorClass(err)})
 		// v0.9.1234 — ham sürücü metni yerine YAPISAL hata: modelin
 		// cevaplaması gereken soru "şimdi ne yapayım", ham
 		// `err.Error()` onu söylemiyordu (toolerr.go). isError=true
@@ -1097,11 +1106,13 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 	// the next turn; we deliberately don't try to "render" it.
 	body, err := json.Marshal(out)
 	if err != nil {
+		done(CallOutcome{Err: err, ErrorClass: classifyToolErrorClass(err)})
 		return successResp(req.ID, toolCallResult{
 			Content: []toolCallContent{{Type: "text", Text: ToolErrorJSON(fmt.Errorf("marshal result: %w", err))}},
 			IsError: true,
 		})
 	}
+	done(CallOutcome{ResultBytes: len(body)})
 	return successResp(req.ID, toolCallResult{
 		Content: []toolCallContent{{Type: "text", Text: string(body)}},
 	})
@@ -1213,7 +1224,9 @@ func (s *Server) handleResourcesRead(ctx context.Context, req *Request) *Respons
 		if resp := s.runGate(ctx, GateCall{Kind: "resource", Name: p.URI, MinRole: res.MinRole}, req.ID); resp != nil {
 			return resp
 		}
-		text, err := res.Reader(ctx, p.URI)
+		octx, done := s.beginObserve(ctx, "resource", p.URI, nil) // v0.10.426 (M1)
+		text, err := res.Reader(octx, p.URI)
+		done(CallOutcome{Err: err, ResultBytes: len(text)})
 		if err != nil {
 			return errorResp(req.ID, ErrInternal, "read resource: "+err.Error())
 		}
@@ -1226,7 +1239,9 @@ func (s *Server) handleResourcesRead(ctx context.Context, req *Request) *Respons
 			if resp := s.runGate(ctx, GateCall{Kind: "resource", Name: p.URI, MinRole: rt.MinRole}, req.ID); resp != nil {
 				return resp
 			}
-			text, err := rt.Reader(ctx, p.URI)
+			octx, done := s.beginObserve(ctx, "resource", p.URI, nil) // v0.10.426 (M1)
+			text, err := rt.Reader(octx, p.URI)
+			done(CallOutcome{Err: err, ResultBytes: len(text)})
 			if err != nil {
 				return errorResp(req.ID, ErrInternal, "read resource: "+err.Error())
 			}
@@ -1380,7 +1395,9 @@ func (s *Server) handlePromptsGet(ctx context.Context, req *Request) *Response {
 				fmt.Sprintf("prompts/get %q: missing required arg %q", p.Name, a.Name))
 		}
 	}
-	msgs, err := prompt.Renderer(ctx, p.Arguments)
+	octx, done := s.beginObserve(ctx, "prompt", p.Name, nil) // v0.10.426 (M1)
+	msgs, err := prompt.Renderer(octx, p.Arguments)
+	done(CallOutcome{Err: err, ResultBytes: len(msgs)})
 	if err != nil {
 		return errorResp(req.ID, ErrInternal, "render prompt: "+err.Error())
 	}

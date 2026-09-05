@@ -442,6 +442,9 @@ func (s *Server) SetMCP(m *mcp.Server) {
 		// auth-agnostik kalır; kimliği api katmanı context'ten okur,
 		// MinRole çözümünü mcp paketi (registry sahibi) yapar.
 		m.SetCallGate(s.mcpCallGate)
+		// v0.10.426 (CoSRE denetimi M1) — gelen yürütmelere span + audit
+		// (mcp_observe.go); paket coremetry-import'suz, kanca buradan iner.
+		m.SetObserver(s.mcpObserve)
 	}
 }
 
@@ -712,13 +715,15 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// channel for the client→server JSON-RPC requests. Both gated
 	// by the same auth middleware as the rest of /api/*.
 	if s.mcp != nil {
-		mux.HandleFunc("GET /api/mcp/sse", s.mcp.HandleSSE)
-		mux.HandleFunc("POST /api/mcp/messages", s.mcp.HandleMessage)
+		// v0.10.426 (M1) — withMCPRequest: audit satırı kimlik + IP'yi
+		// ctx'e iliştirilen istekten okur.
+		mux.HandleFunc("GET /api/mcp/sse", withMCPRequest(s.mcp.HandleSSE))
+		mux.HandleFunc("POST /api/mcp/messages", withMCPRequest(s.mcp.HandleMessage))
 		// v0.9.14 — Streamable-HTTP (2025-03-26), stateless: Claude
 		// Code'un birincil `--transport http` yolu; session'sız olduğu
 		// için çok-pod LB'de afinite gerektirmez (audit EK BULGU'nun
 		// kökten çözümü). SSE yolu eski istemciler için aynen kalır.
-		mux.HandleFunc("POST /api/mcp", s.mcp.HandleStreamable)
+		mux.HandleFunc("POST /api/mcp", withMCPRequest(s.mcp.HandleStreamable))
 	}
 	mux.HandleFunc("GET /api/services/{name}/bundle", s.getServiceBundle)
 	mux.HandleFunc("GET /api/services/{name}/structure", s.getServiceStructure)

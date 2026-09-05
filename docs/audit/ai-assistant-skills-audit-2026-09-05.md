@@ -46,7 +46,7 @@ Her bulgu dosya:satır kanıtlı; uygulamadan önce ±10 satır bağlam okunur.
 
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
-| M1 | Gelen MCP araç çağrıları gözlemsiz (span/audit/ai_calls yok); giden çağrılar hem audit'li hem span'li | `mcp/mcp.go:1078`, `api/mcp_gate.go:35` | `mcp.tool` span + `source=mcp` audit | ~yarım gün |
+| M1 | **GEMİDE v0.10.426** — Gelen MCP araç çağrıları gözlemsiz (span/audit/ai_calls yok); giden çağrılar hem audit'li hem span'li | `mcp/mcp.go:1078`, `api/mcp_gate.go:35` | `mcp.tool` span + `source=mcp` audit | ~yarım gün |
 | M2 | **GEMİDE v0.10.401** — Tel üzerindeki `tools/call`'un süre tavanı yok (uygulama içi 20 sn) | `mcp.go:1078` vs `copilot_chat.go:703` | `WithTimeout` + `ToolErrTimeout` eşlemesi | ~30 dk |
 | M3 | **GEMİDE v0.10.407** — Limit'li 10 tool sessiz kırpıyor (`has_more` yok) → model "tam liste" sanıyor | `mcptools/tools.go:566,850` + 8 tool | `limit+1` oku, `has_more`+`limit` döndür | ~yarım gün |
 | M4 | `notifications/cancelled` yok sayılıyor; ağır CH okuması sonuna kadar koşar | `mcp.go:944` | request-id → cancelFunc | ~yarım gün |
@@ -57,7 +57,7 @@ Her bulgu dosya:satır kanıtlı; uygulamadan önce ±10 satır bağlam okunur.
 - Deterministik kalkanlar (LLM self-critique yerine sunucu doğrulaması); 👍 → `ConfirmedRCASignatures`; 20 yüzeyin hepsi `ai_calls`'a tek satır.
 - MCP şema kalitesi: 36 tool, 98/98 property açıklamalı, `rangeWindow` zorlaması testli, 5 sınıflık hata sözleşmesi telde ve sohbette aynı.
 
-## PLAN (onaylandı 2026-09-05; Faz 0 GEMİDE v0.10.397-402; Faz 1 GEMİDE v0.10.403-408; Faz 2 dilim 1 (E2+O3+O4) GEMİDE v0.10.409; E4 GEMİDE v0.10.410; E8 GEMİDE v0.10.411; E6 GEMİDE v0.10.421 — Faz 2 TAMAM; Faz 3: E1+E7 GEMİDE v0.10.422, E5 GEMİDE v0.10.423, RCA replay v0.10.424 — Faz 3 TAMAM; Faz 4: O2 GEMİDE v0.10.425)
+## PLAN (onaylandı 2026-09-05; Faz 0 GEMİDE v0.10.397-402; Faz 1 GEMİDE v0.10.403-408; Faz 2 dilim 1 (E2+O3+O4) GEMİDE v0.10.409; E4 GEMİDE v0.10.410; E8 GEMİDE v0.10.411; E6 GEMİDE v0.10.421 — Faz 2 TAMAM; Faz 3: E1+E7 GEMİDE v0.10.422, E5 GEMİDE v0.10.423, RCA replay v0.10.424 — Faz 3 TAMAM; Faz 4: O2 GEMİDE v0.10.425, M1 GEMİDE v0.10.426)
 
 | Faz | Kapsam | Toplam | Ne zaman görünür |
 |---|---|---|---|

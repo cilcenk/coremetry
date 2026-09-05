@@ -48,6 +48,8 @@ const KNOWN_ACTIONS = [
   'dashboard.create',
   'dashboard.update',
   'dashboard.delete',
+  'mcp.call',      // v0.10.426 — giden (v0.10.88'den beri yazılıyordu, listede yoktu)
+  'mcp.tool.call', // v0.10.426 — gelen (M1)
   'notification_channel.create',
   'notification_channel.update',
   'notification_channel.delete',

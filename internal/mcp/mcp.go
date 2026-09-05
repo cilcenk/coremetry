@@ -529,6 +529,10 @@ type session struct {
 	mu          sync.Mutex
 	initialized bool
 	clientInfo  ClientInfo
+	// inflight / cancelled — v0.10.427 (M4) uçuş defteri + mezar taşı
+	// (cancel.go); anahtar kanonik JSON-RPC id, oturum kapsamlı.
+	inflight  map[string]context.CancelFunc
+	cancelled map[string]bool
 }
 
 // New constructs an MCP server with the given serverInfo. Name +
@@ -777,7 +781,15 @@ func (s *Server) HandleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := s.dispatch(r.Context(), sess, &req)
+	// v0.10.427 (M4) — uçuş defteri: notifications/cancelled bu isteği
+	// iptal edebilsin; iptal edildiyse yanıt BASTIRILIR (spec SHOULD NOT
+	// send). Streamable yolunda oturum yok, iptal desteklenmez (cancel.go).
+	ctx, finish := sess.track(r.Context(), &req)
+	resp := s.dispatch(ctx, sess, &req)
+	if finish() {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	raw, err := json.Marshal(resp)
 	if err != nil {
 		log.Printf("[mcp] marshal response: %v", err)
@@ -934,6 +946,13 @@ func (s *Server) dispatch(ctx context.Context, sess *session, req *Request) *Res
 // notifications/initialized matters at v0.6.4 — it transitions
 // the session into the "ready for arbitrary methods" state.
 func (s *Server) dispatchNotification(_ context.Context, sess *session, req *Request) {
+	// v0.10.427 (M4) — iptal, oturum kontrolünden ÖNCE: oturumsuz yolda
+	// da yutulur (cancel.go — orada sess nil ise no-op).
+	switch req.Method {
+	case "notifications/cancelled":
+		s.handleCancelled(sess, req)
+		return
+	}
 	// sess == nil = Streamable-HTTP (stateless, v0.9.14): oturum
 	// durumu yok, bildirimler sessizce kabul edilir (spec: 202).
 	if sess == nil {

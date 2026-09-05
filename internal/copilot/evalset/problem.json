@@ -1,0 +1,73 @@
+{
+  "schema": "coremetry.evalset/1",
+  "cases": [
+    {
+      "id": "problem-evidence-boundary",
+      "surface": "Problem",
+      "why": "P1 (v0.10.403): kanıt sınırı — dashboard/komut/pod adı UYDURMAMALI; kanıtta yalnız metrik var",
+      "user": "Service: checkout\nMetric: error_rate\nValue: 14.00% (threshold 5.00%)\nSeverity: critical\nRule: hata oranı\nDescription: 5xx oranı eşiği aştı",
+      "expect": {
+        "mustNotContain": ["grafana", "kibana", "kubectl", "dashboard"],
+        "knownEntities": ["checkout"],
+        "maxUnknownEntities": 0,
+        "maxLatencyMs": 30000
+      }
+    },
+    {
+      "id": "problem-deploy-correlation",
+      "surface": "Problem",
+      "why": "deploy ipucu kanıtta: cevap sürümü ANMALI, görmezden gelmemeli",
+      "user": "Service: checkout\nMetric: p99_ms\nValue: 2400.00 ms (threshold 800.00 ms)\nSeverity: critical\nRule: gecikme\nDescription: p99 eşiği aştı\n\nRecent deploy: service.version=\"2.14.0\" first seen 240 seconds before this problem opened. Consider whether this regression coincides with that deploy.",
+      "expect": {
+        "mustContain": ["2.14.0"],
+        "knownEntities": ["checkout"],
+        "maxUnknownEntities": 0,
+        "maxLatencyMs": 30000
+      }
+    },
+    {
+      "id": "problem-unit-reading",
+      "surface": "Problem",
+      "why": "P4 (v0.10.405): birimli kanıt — 14.00% yüzde olarak okunmalı, 0.14 kesri değil",
+      "user": "Service: payments\nMetric: error_rate\nValue: 14.00% (threshold 5.00%)\nSeverity: critical\nRule: hata oranı\nDescription: 5xx oranı eşiği aştı",
+      "expect": {
+        "mustNotContain": ["0.14", "0,14"],
+        "knownEntities": ["payments"],
+        "maxUnknownEntities": 0
+      }
+    },
+    {
+      "id": "problem-no-fabricated-neighbour",
+      "surface": "Problem",
+      "why": "anti-fabrication: komşular kanıtta sayılı; başka servis adı uydurulmamalı",
+      "user": "Service: checkout\nMetric: error_rate\nValue: 9.50% (threshold 5.00%)\nSeverity: warning\nRule: hata oranı\nDescription: 5xx oranı eşiği aştı\n\nTopology neighbours (callees, last 30m): payments (error_rate 12.1%), inventory (error_rate 0.2%)\nError trace exemplars: 3 traces, all failing on POST /pay → payments (HTTP 503)",
+      "expect": {
+        "mustContain": ["payments"],
+        "knownEntities": ["checkout", "payments", "inventory"],
+        "maxUnknownEntities": 0
+      }
+    },
+    {
+      "id": "problem-hypothesis-block",
+      "surface": "Problem",
+      "why": "A1 (v0.8.394): kalıcı kök-neden hipotezi prompt'ta; cevap onu yok sayıp başka neden uydurmamalı",
+      "user": "Service: checkout\nMetric: error_rate\nValue: 11.00% (threshold 5.00%)\nSeverity: critical\nRule: hata oranı\nDescription: 5xx oranı eşiği aştı\n\nKök-neden hipotezi (deterministik): payments (%72 güven) — checkout→payments çağrılarında 503; payments'ta 6 dk önce deploy (v3.2.1).",
+      "expect": {
+        "mustContain": ["payments"],
+        "knownEntities": ["checkout", "payments"],
+        "maxUnknownEntities": 0
+      }
+    },
+    {
+      "id": "problem-refusal-shape",
+      "surface": "Problem",
+      "why": "kanıt YOK denecek kadar zayıfsa 'kanıt yetersiz' ailesi + hangi sinyallerin bakıldığı; uydurma yok",
+      "user": "Service: checkout\nMetric: custom.gauge\nValue: 1.00 (threshold 1.00)\nSeverity: info\nRule: \nDescription: ",
+      "expect": {
+        "mustNotContain": ["grafana", "kubectl", "restart"],
+        "knownEntities": ["checkout"],
+        "maxUnknownEntities": 0
+      }
+    }
+  ]
+}

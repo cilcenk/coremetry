@@ -1,0 +1,62 @@
+{
+  "schema": "coremetry.evalset/1",
+  "cases": [
+    {
+      "id": "runbook-no-invented-commands",
+      "surface": "Runbook",
+      "why": "P1 (v0.10.403): systemRunbook 'somut dashboard/komut' isterdi; kanıtta komut YOKSA uydurmamalı",
+      "user": "Problem: checkout — hata oranı 14.00% (eşik 5.00%), critical, 20 dk açık.\nEvidence: 5xx yanıtlarının %90'ı POST /pay; payments çağrılarında HTTP 503.\nNo deploy in the last 24h. No runbook attached.",
+      "expect": {
+        "mustNotContain": ["kubectl", "grafana", "kibana", "systemctl"],
+        "knownEntities": ["checkout", "payments"],
+        "maxUnknownEntities": 0,
+        "maxLatencyMs": 30000
+      }
+    },
+    {
+      "id": "runbook-uses-given-command",
+      "surface": "Runbook",
+      "why": "kanıtta gerçek bir komut varsa cevap ONU kullanmalı (uydurmak değil, yok saymak da değil)",
+      "user": "Problem: payments — gecikme p99 1900 ms (eşik 800 ms), warning.\nEvidence: payments v3.2.1 8 dk önce deploy edildi; p99 deploy'dan hemen sonra yükseldi.\nAttached runbook step: `kubectl rollout undo deployment/payments` (approved rollback procedure).",
+      "expect": {
+        "mustContain": ["rollout undo"],
+        "knownEntities": ["payments"],
+        "maxUnknownEntities": 0
+      }
+    },
+    {
+      "id": "runbook-numbered-steps",
+      "surface": "Runbook",
+      "why": "şekil sözleşmesi: numaralı adım listesi, önsöz yok",
+      "user": "Problem: inventory — connection pool exhausted (log pattern anomaly, x70).\nEvidence: DB bağlantı havuzu 50/50 dolu; sorgu süresi 3× arttı; deploy yok.",
+      "expect": {
+        "mustContain": ["1."],
+        "mustNotContain": ["here's a runbook", "işte bir runbook"],
+        "knownEntities": ["inventory"],
+        "maxUnknownEntities": 0
+      }
+    },
+    {
+      "id": "service-health-healthy",
+      "surface": "ServiceHealth",
+      "why": "sağlıklı servis: alarm dili yok, uydurma yok",
+      "user": "Service: inventory (last 1h)\nRequests: 38 req/s (baseline 36)\nError rate: 0.1% (baseline 0.1%)\np50/p95/p99: 40/120/210 ms (baseline 42/118/205)\nOpen problems: 0\nRecent deploys: none",
+      "expect": {
+        "mustNotContain": ["critical", "kritik durum", "acil"],
+        "knownEntities": ["inventory"],
+        "maxUnknownEntities": 0
+      }
+    },
+    {
+      "id": "service-health-degraded",
+      "surface": "ServiceHealth",
+      "why": "bozulan servis: p99 sıçraması cevapta anılmalı",
+      "user": "Service: checkout (last 1h)\nRequests: 41 req/s (baseline 40)\nError rate: 0.4% (baseline 0.3%)\np50/p95/p99: 60/900/2400 ms (baseline 58/300/610)\nOpen problems: 1 (gecikme, critical)\nRecent deploys: checkout 2.14.0 (35 dk önce)",
+      "expect": {
+        "mustContain": ["p99", "2.14.0"],
+        "knownEntities": ["checkout"],
+        "maxUnknownEntities": 0
+      }
+    }
+  ]
+}

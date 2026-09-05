@@ -3194,6 +3194,10 @@ td > .cell-actions.end { justify-content: flex-end; }
    WARN amber). Scoped to direct rows so the expanded-row pre/kv-table keep
    their own styling. Tokens only. */
 .logtbl-dense > tbody > tr > td { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+/* v0.10.417 (log arama denetimi B5) — satır sarma anahtarı: yalnız mesaj
+   hücresi, yalnız açıkken. .td-full değil (word-break:break-all URL/UUID'yi
+   parçalar); telefon kuralı (640px) dokunulmadı. */
+.logtbl-dense > tbody > tr > td.lt-wrap { max-width: none; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
 .logtbl-dense > tbody > tr.log-error { background: color-mix(in oklab, var(--err) 7%, transparent); }
 .logtbl-dense > tbody > tr.log-warn  { background: color-mix(in oklab, var(--warn) 6%, transparent); }
 .logtbl-dense > tbody > tr.log-error:hover, .logtbl-dense > tbody > tr.log-warn:hover { filter: brightness(1.04); }

@@ -188,6 +188,11 @@ function LogsInner() {
   // fetch yalnız açıkken. Satır/"Ara" → türetilmiş sorgu serbest metne.
   const [patternsOpen, setPatternsOpen] = useState<boolean>(() => getRaw('logs.patterns.open') === '1');
   const togglePatterns = () => setPatternsOpen(v => { setRaw('logs.patterns.open', v ? '0' : '1'); return !v; });
+  // v0.10.417 (log arama denetimi B5) — satır sarma; okuma yardımı, URL'e
+  // girmez (narrow gibi), kalıcı (localStorage). Varsayılan KAPALI: tek
+  // satır + … bugünkü davranış.
+  const [wrapLines, setWrapLines] = useState<boolean>(() => getRaw('logs.wrap') === '1');
+  const toggleWrap = () => setWrapLines(v => { setRaw('logs.wrap', v ? '0' : '1'); return !v; });
   const searchFromPattern = (qStr: string) => {
     const next = { ...filter, search: qStr };
     setFilter(next); setDraft(next); resetPaging(); writeUrl(next, filters);
@@ -1325,6 +1330,14 @@ function LogsInner() {
               </>
             )}
             <span style={{ flex: 1 }} />
+            {/* v0.10.417 (B5) — satır sarma anahtarı (aç/kapa deseni: variant + aria-pressed). */}
+            <Button variant={wrapLines ? 'primary' : 'secondary'} size="sm" aria-pressed={wrapLines}
+              onClick={toggleWrap}
+              title={wrapLines
+                ? 'Mesajlar sarılı. Tıkla: tek satır + … (tam metin hücre başlığında).'
+                : 'Mesajlar tek satır (…). Tıkla: sar — uzun satırlar tam görünür, satır yüksekliği değişir.'}>
+              {wrapLines ? '⤶ sarılı' : '⤶ sar'}
+            </Button>
             {/* v0.9.295 — sort direction. Both backends have honoured
                 oldest-first since v0.7.83; only the Context modal ever
                 asked for it, so the list never had the control. Hidden
@@ -1355,6 +1368,7 @@ function LogsInner() {
         {data && logs.length > 0 && (
           <>
             <LogTable logs={logs} nav={tableNav}
+              wrap={wrapLines}
               columns={logCols}
               onRemoveColumn={removeColumn}
               highlightTerms={highlightTerms}

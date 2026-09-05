@@ -139,3 +139,24 @@ func TestRuntimePodsOrPicksAtCallTime(t *testing.T) {
 		t.Fatal("nil VM → fallback")
 	}
 }
+
+// v0.10.376 — dış skill denetimi A1: query_range(step=win) iki nokta döner;
+// ilk noktanın increase'i pencere DIŞINI kapsar. Toplam değil SON kova.
+func TestJVMGCPodStatsUsesLastBucketNotSum(t *testing.T) {
+	s, _ := podFake(t, map[string]string{
+		"_seconds_sum": podMatrix(
+			`{"metric":{"service_name":"svc","k8s_pod_name":"pod-1"},"values":[[1700000000,"30"],[1700000600,"30"]]}`,
+		),
+		"_seconds_count": podMatrix(
+			`{"metric":{"service_name":"svc","k8s_pod_name":"pod-1"},"values":[[1700000000,"120"],[1700000600,"120"]]}`,
+		),
+	})
+	to := time.Unix(1700000600, 0)
+	pauses, acts, err := s.JVMGCPodStats(context.Background(), to.Add(-10*time.Minute), to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(acts) != 1 || acts[0].SharePct != 5 || acts[0].RatePerMin != 12 || pauses[0].Usage != 250 {
+		t.Fatalf("two-point series must count the window once: %+v %+v", acts, pauses)
+	}
+}

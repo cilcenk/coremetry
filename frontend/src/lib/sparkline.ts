@@ -33,8 +33,11 @@ export function maxLinePointsForWidth(width: number, perPx = 2): number {
 
 export type SparkRenderMode = 'nodata' | 'zero' | 'series';
 
-export function sparkRenderMode(values: readonly number[]): SparkRenderMode {
-  const finite = values.filter(v => Number.isFinite(v));
+// v0.10.385 (dış skill denetimi A7) — değer dizisi null taşıyabilir:
+// null = "o kovada veri yok" (dataFrame.ts sözleşmesi: eksik veri null'dır,
+// sıfır değil). Ölü servis "%0 hata" gibi okunmasın.
+export function sparkRenderMode(values: readonly (number | null)[]): SparkRenderMode {
+  const finite = values.filter((v): v is number => v != null && Number.isFinite(v));
   if (finite.length === 0) return 'nodata';
   return finite.some(v => v > 0) ? 'series' : 'zero';
 }
@@ -156,27 +159,29 @@ export type BucketReducer = 'sum' | 'max';
 // slot, consistent with barGeometry's zero-suppression). n ≤ maxBars
 // returns the input untouched; maxBars ≤ 0 has no drawable slots → [].
 export function downsampleBuckets(
-  values: number[],
+  values: (number | null)[],
   maxBars: number,
   reducer: BucketReducer,
-): number[] {
+): (number | null)[] {
   const n = values.length;
   if (n === 0 || maxBars <= 0) return [];
   if (n <= maxBars) return values;
   const k = Math.ceil(n / maxBars);
-  const out: number[] = [];
+  const out: (number | null)[] = [];
   for (let start = 0; start < n; start += k) {
     const end = Math.min(n, start + k);
     let acc = 0;
     let seen = false;
     for (let j = start; j < end; j++) {
       const v = values[j];
-      if (!isFinite(v)) continue;
+      // null / NaN kova birleştirmeye katılmaz; hiç veri yoksa kova null
+      // kalır (eskiden global isFinite(null) → true ve 0 sayılıyordu).
+      if (v == null || !Number.isFinite(v)) continue;
       if (!seen) { acc = v; seen = true; }
       else if (reducer === 'sum') acc += v;
       else if (v > acc) acc = v;
     }
-    out.push(seen ? acc : 0);
+    out.push(seen ? acc : null);
   }
   return out;
 }

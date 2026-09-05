@@ -15,13 +15,13 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
 | A1 | **GEMİDE v0.10.376** — JVM GC penceresi ×2: `step=win` ile 2 nokta döner, ilk noktanın `increase`'i pencere DIŞI; `seriesWindowTotal` ikisini toplar | `internal/vmetrics/runtime_pods.go:69,126` | `lastValue` (capacity.go:57 kalıbı) | ~10 dk |
-| A2 | Yığılmış alanda karşılaştırma hayaleti yığına katılıyor → pod throughput ~2× | `components/chart/corePanelEntry.tsx:130-139`, `lib/chart/stacking.ts:34` | `stackData`'ya `excludeIdx`; hayalet ham çizgi | ~2 saat |
+| A2 | **GEMİDE v0.10.383** — Yığılmış alanda karşılaştırma hayaleti yığına katılıyor → pod throughput ~2× | `components/chart/corePanelEntry.tsx:130-139`, `lib/chart/stacking.ts:34` | `stackData`'ya `excludeIdx`; hayalet ham çizgi | ~2 saat |
 | A3 | Yüzdelik dalında `vmrange` korumasız: exponential histogramda `le=""` tek kova → sessiz yanlış p95 | `internal/vmetrics/promql.go:741,1211` | sonuçta `le` yoksa `vmrange` / not | ~yarım gün |
 | A4 | **GEMİDE v0.10.379** — `attrInt` yalnız IntValue: string/double `http.status_code` → 0, 5xx sınıflandırması eksik | `internal/otlp/convert.go:554` | string/double dalları + test tip ekseni | ~1 saat |
 | A5 | ~~`MetricPresentKeys` RTMetric, rate sorgusu Metric okuyor~~ — **bulgu değil**: iki ad aynı ailenin (`_count` ↔ taban) etiketlerini paylaşır, `labelNames` discovery adaylarıyla çözer | `internal/api/service_metric_red.go:157-177` | ikisi de `id.RTMetric` | ~10 dk |
 | A6 | VM uç-damgası kaynakta değil 3 çağrı yerinde telafi ediliyor; diğer tüketicilerde x ekseni kayık (7g'de ~34 dk) | `internal/vmetrics/throughput.go:107`, `endpoints_metric.go:439`, `hosts_metric.go:314`, `capacity.go:205` | kaymayı `runRangeQuery`'de bir kez uygula, 3 telafiyi kaldır | ~yarım gün |
-| A7 | Sparkline'da "trafik yok" ile "%0 hata" aynı: null yerine 0 | `pages/Services.tsx:756,871` | `(number\|null)[]`, null'da path kes | ~2 saat |
-| A8 | Eşik çizgisi y-ölçeği dışındaysa sessizce yok (alarm önizlemesi, pod CPU limiti) | `lib/chart/overlays.ts:63`, `CorePanel.tsx:815` | eşiği `softMin/softMax`'a kat, sığmazsa kenar işareti | ~2 saat |
+| A7 | **GEMİDE v0.10.385** — Sparkline'da "trafik yok" ile "%0 hata" aynı: null yerine 0 | `pages/Services.tsx:756,871` | `(number\|null)[]`, null'da path kes | ~2 saat |
+| A8 | **GEMİDE v0.10.384** — Eşik çizgisi y-ölçeği dışındaysa sessizce yok (alarm önizlemesi, pod CPU limiti) | `lib/chart/overlays.ts:63`, `CorePanel.tsx:815` | eşiği `softMin/softMax`'a kat, sığmazsa kenar işareti | ~2 saat |
 | A9 | Yığılmış alanda sıfır taban yok — **v0.9.811 sözleşmesiyle çelişir** (`CorePanel.smoke.test`: "area ve stacked dokunulmadan kalır"); operatör kararı olmadan uygulanmaz | `components/chart/CorePanel.tsx:634` | `(bars \|\| stacked) ? 0` | ~10 dk |
 | A10 | Pasta/yığın `isAdditiveUnit`'e sormuyor ("p99'un payı %31") | `pages/explore/SummaryViz.tsx:56` | rail düğmelerini kapıla, top-6+diğer | ~2 saat |
 | A11 | **GEMİDE v0.10.380** — `http.target` ham hâliyle LowCardinality `http_route`'a (query string dahil) | `internal/otlp/convert.go:142`, `store.go:1031` | `NormalizePathTemplate`'ten geçir | ~1 saat |

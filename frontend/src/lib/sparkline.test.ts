@@ -97,8 +97,8 @@ describe('barGeometry', () => {
 describe('downsampleBuckets', () => {
   it('table: grouping + reducer semantics', () => {
     const cases: Array<{
-      name: string; values: number[]; maxBars: number;
-      reducer: BucketReducer; want: number[];
+      name: string; values: (number | null)[]; maxBars: number;
+      reducer: BucketReducer; want: (number | null)[];
     }> = [
       { name: 'exact division, max',
         values: [1, 2, 3, 4, 5, 6], maxBars: 3, reducer: 'max', want: [2, 4, 6] },
@@ -120,8 +120,9 @@ describe('downsampleBuckets', () => {
         values: [1, 0, 3], maxBars: 40, reducer: 'max', want: [1, 0, 3] },
       { name: 'non-finite inputs are ignored inside a group',
         values: [NaN, 2, Infinity, 4], maxBars: 2, reducer: 'sum', want: [2, 4] },
-      { name: 'all-non-finite group yields 0 (empty slot)',
-        values: [NaN, NaN, 1, 1], maxBars: 2, reducer: 'sum', want: [0, 2] },
+      // v0.10.385 — veri yok = null, 0 değil (ölü servis '%0' okunmasın).
+      { name: 'all-non-finite group yields null (empty slot)',
+        values: [NaN, NaN, 1, 1], maxBars: 2, reducer: 'sum', want: [null, 2] },
     ];
     for (const c of cases) {
       expect(downsampleBuckets(c.values, c.maxBars, c.reducer), c.name).toEqual(c.want);
@@ -136,7 +137,7 @@ describe('downsampleBuckets', () => {
     values[1234] = 5;
     const out = downsampleBuckets(values, 40, 'max');
     expect(out.length).toBeLessThanOrEqual(40);
-    expect(Math.max(...out)).toBe(5);
+    expect(Math.max(...out.map(v => v ?? 0))).toBe(5);
   });
 
   it('sum reducer preserves the window total for counters', () => {
@@ -144,7 +145,7 @@ describe('downsampleBuckets', () => {
     const total = values.reduce((a, b) => a + b, 0);
     const out = downsampleBuckets(values, 7, 'sum');
     expect(out.length).toBeLessThanOrEqual(7);
-    expect(out.reduce((a, b) => a + b, 0)).toBe(total);
+    expect(out.reduce((a, b) => (a ?? 0) + (b ?? 0), 0)).toBe(total);
   });
 });
 

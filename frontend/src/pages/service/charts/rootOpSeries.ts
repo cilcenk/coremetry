@@ -32,9 +32,11 @@ export const ROOT_OP_TOP_N = 5;
 // olmayan eleman = operasyon adı. Hepsi boşsa "(adsız)" — CH'de name=''
 // olan span'ler var (enstrümantasyon hatası) ve boş etiket lejantta
 // görünmez satır olurdu.
-export function rootOpName(groupKey: readonly string[] | undefined): string {
+// v0.10.369 — `fallback`: route kırılımı boş anahtarı "(adsız)" diye
+// değil, NE olduğunu söyleyerek etiketler (routeSeries.ROUTE_UNLABELLED).
+export function rootOpName(groupKey: readonly string[] | undefined, fallback = '(adsız)'): string {
   const hit = (groupKey ?? []).find(k => k != null && k !== '');
-  return hit ?? '(adsız)';
+  return hit ?? fallback;
 }
 
 /** Alan (|değer| toplamı) — PanelStack'in top-N ölçütünün aynısı. P95

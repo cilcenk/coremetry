@@ -66,6 +66,16 @@ export function routeMoreNote(total: number, shown: number, cap: number, rowsCap
 // eksenini kendisi kurar ve eksik bucket null olur (sıkı doktrin). Eski
 // motorun ChartCard'ı değerleri İNDEKSLE eşlediği için orada union hizalama
 // şarttı; v2'de hizalayan taraf panel, o yüzden burada hizalamamak DOĞRU.
+// ROUTE_UNLABELLED — v0.10.369 (operatör: "Response time altında adsız
+// yazıyor ama aslında var metrik adı"). Route kırılımında boş anahtar,
+// adı olmayan bir seri DEĞİL: http.route etiketi TAŞIMAYAN gözlemler —
+// çatının route atamadığı istekler (404, filtre/statik, eşleşmeyen yol).
+// VM'de etiketsiz seri `by (http_route)` altında etiketsiz grup olarak
+// döner; CH'de attr '' olur. "(adsız)" operatöre "isim kayboldu" dedirtti;
+// etiket ne olduğunu söylemeli. Throughput ve Response time aynı yoldan
+// geçer (topRoutesByArea) — iki grafik aynı adı basar.
+export const ROUTE_UNLABELLED = '(http.route etiketi yok)';
+
 export function topRoutesByArea(
   series: readonly SpanMetricSeries[] | null | undefined,
   cap = ROUTE_TOP_N,
@@ -74,7 +84,7 @@ export function topRoutesByArea(
   const all = series ?? [];
   const top = rankRootOps(all, cap);
   return {
-    items: top.map(s => ({ name: rootOpName(s.groupKey), role: 'data' as const, series: [s] })),
+    items: top.map(s => ({ name: rootOpName(s.groupKey, ROUTE_UNLABELLED), role: 'data' as const, series: [s] })),
     note: routeMoreNote(all.length, top.length, cap, rowsCapped),
   };
 }

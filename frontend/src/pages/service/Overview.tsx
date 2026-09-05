@@ -38,7 +38,7 @@ import { Spinner } from '@/components/Spinner';
 const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 import {
-  topRoutesByArea, metricUnitToGrafana, ROUTE_TOP_N, metricAvgToMs,
+  topRoutesByArea, metricUnitToGrafana, ROUTE_TOP_N, metricAvgToMs, ROUTE_UNLABELLED,
 } from './charts/routeSeries';
 import { OpsCard, DbCard } from './OverviewTables';
 import { TopEndpointsCard } from './TopEndpointsCard';
@@ -1042,7 +1042,11 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 // grafikte kalın bir çizgi olarak kırılımı bastırıyordu.
                 items={(metricTputQ.data?.series ?? []).map((s0) => ({
                   series: [s0],
-                  name: s0.groupKey?.length ? s0.groupKey.join(' · ')
+                  // v0.10.369 — route kırılımında BOŞ anahtar (http.route
+                  // etiketsiz gözlemler) Response time grafiğiyle aynı adı
+                  // alır; eskiden '' basıp lejantta görünmez satır bırakıyordu.
+                  name: s0.groupKey?.some(k => k) ? s0.groupKey.filter(k => k).join(' · ')
+                    : s0.groupKey?.length ? ROUTE_UNLABELLED
                     : `metrik (${metricTputQ.data?.matchedBy ?? 'job'})`,
                   role: 'data' as const,
                 }))}

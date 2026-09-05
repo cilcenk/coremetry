@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"strconv"
 	"strings"
 
@@ -322,7 +323,9 @@ func (s *ESStore) rawCountSearch(ctx context.Context, indicesIn []string, body j
 	// aggregations subtree'sini HİÇ taşımaz (import edilen body agg içerse
 	// bile ES yanıttan kırpar — transfer+buffer maliyeti sıfırlanır);
 	// agg-tipi yalnız ihtiyacını ister.
-	filter := []string{"hits.total", "_shards"}
+	// v0.10.413 (A5) — timed_out da istenir; envelope'un partial() yarısı
+	// aksi hâlde hiç dolmazdı (FilterPath kırpıyordu).
+	filter := []string{"hits.total", "_shards", "timed_out"}
 	if wantAggs {
 		filter = append(filter, "aggregations")
 	}
@@ -356,10 +359,11 @@ func (s *ESStore) rawCountSearch(ctx context.Context, indicesIn []string, body j
 		return 0, nil, s.recordQueryError("watcher raw search", idx, guarded, res.StatusCode,
 			fmt.Errorf("ES response exceeds the 8MB watcher cap (aggregations too large) — shrink the watch's aggregation (e.g. terms size)"))
 	}
+	// v0.10.413 (A5) — ortak zarf; eski elle yazılmış `_shards` alanı
+	// zarfın kopyasını gölgeliyordu (Go derinlik kuralı) → silindi,
+	// Shards.Total zarftan okunur.
 	var raw struct {
-		Shards struct {
-			Total int `json:"total"`
-		} `json:"_shards"`
+		esSearchEnvelope
 		Hits struct {
 			Total struct {
 				Value int64 `json:"value"`
@@ -369,6 +373,9 @@ func (s *ESStore) rawCountSearch(ctx context.Context, indicesIn []string, body j
 	}
 	if err := json.Unmarshal(respBody, &raw); err != nil {
 		return 0, nil, fmt.Errorf("decode ES raw search response: %w", err)
+	}
+	if d := raw.describe(); d != "" {
+		log.Printf("[logstore-es] PARTIAL watcher raw search (%s) — count/aggs are a subset (idx=%v)", d, idx)
 	}
 	if raw.Shards.Total == 0 {
 		return 0, nil, s.recordQueryError("watcher raw search", idx, guarded, res.StatusCode,
@@ -425,7 +432,8 @@ func (s *ESStore) RawSearchSamples(ctx context.Context, indicesIn []string, body
 			parseESError("watcher samples", res, strings.Join(idx, ",")))
 	}
 	var raw struct {
-		Hits struct {
+		esSearchEnvelope // v0.10.413 (A5)
+		Hits             struct {
 			Hits []struct {
 				Source map[string]any `json:"_source"`
 			} `json:"hits"`
@@ -437,6 +445,9 @@ func (s *ESStore) RawSearchSamples(ctx context.Context, indicesIn []string, body
 	dec.UseNumber()
 	if err := dec.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("decode ES sample response: %w", err)
+	}
+	if d := raw.describe(); d != "" {
+		log.Printf("[logstore-es] PARTIAL watcher samples (%s) — sample lines are a subset", d)
 	}
 	lines := make([]string, 0, len(raw.Hits.Hits))
 	for _, h := range raw.Hits.Hits {

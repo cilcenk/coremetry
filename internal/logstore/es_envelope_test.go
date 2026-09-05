@@ -3,6 +3,7 @@ package logstore
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -132,37 +133,65 @@ func TestESTotalRelation(t *testing.T) {
 // A new search decode site added without it fails here with its line
 // number.
 func TestEverySearchDecodeCarriesTheEnvelope(t *testing.T) {
-	src, err := os.ReadFile("elasticsearch.go")
-	if err != nil {
-		t.Fatalf("read source: %v", err)
-	}
-	lines := strings.Split(string(src), "\n")
-
-	// Each `var raw struct {` opens a response decode. Scan forward to
-	// its closing brace at the same indent and require the embed.
-	open := regexp.MustCompile(`^(\s*)var raw struct \{`)
+	// v0.10.413 (log arama denetimi A5) — bekçi genişledi: elasticsearch.go
+	// + her es_*.go (test dışı), `var raw|decoded struct`, yalnız hits ya da
+	// aggregations okuyan gövdeler (field_caps / terms_enum yanıtlarında
+	// zarf anlamsız — kapı onları otomatik muaf tutar). Dosya adı hata
+	// mesajında; taban sayısı yükseldi.
+	files, _ := filepath.Glob("es_*.go")
+	files = append(files, "elasticsearch.go")
+	open := regexp.MustCompile(`^(\s*)var (raw|decoded) struct \{`)
 	found := 0
-	for i, ln := range lines {
-		m := open.FindStringSubmatch(ln)
-		if m == nil {
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
 			continue
 		}
-		found++
-		indent := m[1]
-		body := []string{}
-		for j := i + 1; j < len(lines); j++ {
-			if lines[j] == indent+"}" {
-				break
-			}
-			body = append(body, lines[j])
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read source: %v", err)
 		}
-		if !strings.Contains(strings.Join(body, "\n"), "esSearchEnvelope") {
-			t.Errorf("elasticsearch.go:%d — `var raw struct` does not embed esSearchEnvelope; "+
-				"this decode path reports complete results even when ES timed out or lost shards", i+1)
+		lines := strings.Split(string(src), "\n")
+		for i, ln := range lines {
+			m := open.FindStringSubmatch(ln)
+			if m == nil {
+				continue
+			}
+			indent := m[1]
+			body := []string{}
+			for j := i + 1; j < len(lines); j++ {
+				if lines[j] == indent+"}" {
+					break
+				}
+				body = append(body, lines[j])
+			}
+			b := strings.Join(body, "\n")
+			if !strings.Contains(b, `json:"hits"`) && !strings.Contains(b, `json:"aggregations"`) {
+				continue // arama yanıtı değil (field_caps, terms_enum)
+			}
+			found++
+			if !strings.Contains(b, "esSearchEnvelope") {
+				t.Errorf("%s:%d — `var %s struct` does not embed esSearchEnvelope; "+
+					"this decode path reports complete results even when ES timed out or lost shards", file, i+1, m[2])
+			}
 		}
 	}
-	if found < 4 {
-		t.Fatalf("expected at least 4 response decode sites, found %d — "+
+	if found < 9 {
+		t.Fatalf("expected at least 9 response decode sites, found %d — "+
 			"the scan pattern has drifted from the source and is no longer guarding anything", found)
+	}
+}
+
+// v0.10.413 — watcher raw search FilterPath timed_out'u istemezse zarfın
+// partial() yarısı hiç dolmaz (ES yanıttan kırpar). Kaynak pini.
+func TestRawCountSearchRequestsTimedOut(t *testing.T) {
+	src, err := os.ReadFile("es_rawsearch.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), `filter := []string{"hits.total", "_shards", "timed_out"}`) {
+		t.Fatal("rawCountSearch FilterPath timed_out taşımalı")
+	}
+	if strings.Contains(string(src), "Shards struct {\n\t\t\tTotal int `json:\"total\"`\n\t\t} `json:\"_shards\"`") {
+		t.Fatal("elle yazılmış _shards alanı zarfı gölgeler — silinmeli")
 	}
 }

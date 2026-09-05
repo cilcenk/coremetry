@@ -2722,6 +2722,9 @@ export interface LogFieldStats {
   // as LogsResponse (v0.8.332). The accordion renders its empty state.
   degraded?: boolean;
   reason?: string;
+  /** v0.10.413 — ES kısmi cevap (yumuşak zaman aşımı / kayıp shard): üst değerler ve payda alt küme. */
+  partial?: boolean;
+  shardsFailed?: number;
 }
 
 export interface MetricInfo {

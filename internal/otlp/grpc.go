@@ -223,9 +223,9 @@ type metricsGRPC struct {
 func (s *metricsGRPC) Export(_ context.Context, req *metricscollpb.ExportMetricsServiceRequest) (*metricscollpb.ExportMetricsServiceResponse, error) {
 	// v0.10.293 — VM'e ham ileti: decode edilmiş istek yeniden kodlanır
 	// (forward.go); kapalıyken marshalForForward hiç çağrılmaz.
-	if s.ing.metricFwd != nil && s.ing.metricFwdEnabled != nil && s.ing.metricFwdEnabled() {
-		s.ing.forwardMetrics(marshalForForward(req), false)
-	}
+	// v0.10.373 — drop kuralları forward'a da uygulanır; ham gövde yok,
+	// (filtrelenmiş) istek yeniden kodlanır. Kapalıyken hiç marshal yok.
+	s.ing.forwardWithDrops(req, MetricBody{})
 	pts, exs := ConvertMetrics(req)
 	dropped := 0
 	for _, p := range pts {

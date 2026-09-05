@@ -323,20 +323,20 @@ func (e *Engine) Delete(ctx context.Context, st store, id string) error {
 //
 // Rule evaluation walks the catalog in order. Multiple rules
 // can match a single span:
-//   • Drop short-circuits — first matching drop wins, span
+//   - Drop short-circuits — first matching drop wins, span
 //     is gone.
-//   • Sample probability-rolls against rule.Rate; failure to
+//   - Sample probability-rolls against rule.Rate; failure to
 //     keep returns false (treated as dropped by the
 //     ingester). Continues to subsequent rules only when the
 //     keep roll succeeded.
-//   • Enrich mutates the span's resource attributes in place
+//   - Enrich mutates the span's resource attributes in place
 //     and continues; a later drop / sample may still discard.
 //
 // Hot-path discipline:
-//   • read lock per call (uncontended in steady state)
-//   • single math/rand/v2 call per sample-rule (lockless)
-//   • no map lookups for well-known fields
-//   • early-return on the first drop / drop-by-sample match
+//   - read lock per call (uncontended in steady state)
+//   - single math/rand/v2 call per sample-rule (lockless)
+//   - no map lookups for well-known fields
+//   - early-return on the first drop / drop-by-sample match
 func (e *Engine) AcceptSpan(sp *chstore.Span) bool {
 	if sp == nil {
 		return true
@@ -442,6 +442,49 @@ func (e *Engine) AcceptLog(l *chstore.Log) bool {
 // counts, and histogram buckets, so the operator opts in per rule
 // knowing the aggregate becomes an estimate. Only SignalMetrics
 // rules are considered.
+// HasMetricDropRules — v0.10.373: does any ENABLED metrics rule of kind
+// drop exist? The VictoriaMetrics forwarder asks this once per export
+// so the zero-rule install keeps its byte-identical raw pass-through.
+func (e *Engine) HasMetricDropRules() bool {
+	e.mu.RLock()
+	rules := e.rules
+	e.mu.RUnlock()
+	for i := range rules {
+		if rules[i].Enabled && rules[i].Signal == SignalMetrics && rules[i].Kind == KindDrop {
+			return true
+		}
+	}
+	return false
+}
+
+// DropsMetric — v0.10.373: the DETERMINISTIC half of AcceptMetric — true
+// when an enabled metrics DROP rule matches. Sampling (random) and
+// enrich (mutating) rules are deliberately not evaluated: the forwarder
+// must reach the same verdict as the ClickHouse path for every point a
+// drop rule names, and it must not roll the sample dice a second time.
+func (e *Engine) DropsMetric(m *chstore.MetricPoint) bool {
+	if m == nil {
+		return false
+	}
+	e.mu.RLock()
+	rules := e.rules
+	e.mu.RUnlock()
+	for i := range rules {
+		r := &rules[i]
+		if !r.Enabled || r.Signal != SignalMetrics || r.Kind != KindDrop {
+			continue
+		}
+		if !matchMetric(r.When, m) {
+			continue
+		}
+		if !matchAll(r.And, func(c Condition) bool { return matchMetric(c, m) }) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 func (e *Engine) AcceptMetric(m *chstore.MetricPoint) bool {
 	if m == nil {
 		return true

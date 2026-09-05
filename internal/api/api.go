@@ -10963,6 +10963,7 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 		// yeni ingest yolu = sayaç).
 		"vm_metrics_forward_enqueued": s.ing.MetricForwardEnqueued(),
 		"vm_metrics_forward_dropped":  s.ing.MetricForwardDropped(),
+		"vm_metrics_forward_filtered": s.ing.MetricForwardFiltered(), // v0.10.373 — drop kuralları
 		// v0.10.300 — attribute hash indeksi: hazır mı, kaç yüklem bloom yolunda.
 		"attr_index_available": chstore.AttrIndexAvailable(),
 		"attr_index_used":      chstore.AttrIndexUsed(),

@@ -327,3 +327,18 @@ Response time = `rtMetric` + avg. Çare: `metricsHref({metric, agg, by})`,
 panel başına ayrı kapı; `/metrics?agg=` zaten taşınıyordu. Ders: bir
 "doorway" grafiğin GERÇEK sorgusunu taşımalı (ad + aggregation + kırılım);
 ad tek başına yarım sözleşmedir. Pin: Throughput kapısı `agg: 'rate'`.
+
+### v0.10.373 — VM forward'ı pipeline drop kurallarını uygulamıyordu (367'nin boşluğu kapandı)
+
+Dışlama kurallarının "ingest'te düşür" kutusu `api/metric_exclusions.go`
+köprüsüyle pipeline DROP kuralı olur; ClickHouse yolu `AcceptMetric` ile
+dönüştürülmüş noktada uygular. VM forward (v0.10.293) ham gövdeyi pipeline'dan
+ÖNCE kuyruğa kopyalıyordu — yalnız dışlama değil, operatörün HER metrik drop
+kuralı VM'de sessizce yoktu. Çare: `Engine.DropsMetric` (deterministik yarı;
+sample zarı ikinci kez atılmaz, enrich mutasyonu yok) OTLP datapoint başına
+ConvertMetrics'in kurduğu görünümle değerlendirilir (`forward_filter.go`),
+düşen nokta istekten çıkar, boş metrik/scope/resource budanır, istek yeniden
+kodlanır; kural yokken ham geçiş bayt-aynı (`HasMetricDropRules` hızlı yol).
+Sayaç `vm_metrics_forward_filtered`. Ders: bir sinyalin İKİ yazma hedefi
+varsa ingest politikası her ikisinin de önünde durmalı; ham-geçiş
+optimizasyonu politika noktasını atlamanın gerekçesi olamaz.

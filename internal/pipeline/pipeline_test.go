@@ -273,3 +273,47 @@ func TestAcceptMetric(t *testing.T) {
 		}
 	})
 }
+
+// v0.10.373 — DropsMetric / HasMetricDropRules: the VictoriaMetrics
+// forwarder's deterministic half of AcceptMetric. A sample rule must
+// neither count as a drop rule nor drop; a disabled drop rule is inert;
+// a matching enabled drop rule drops — the exclusion bridge's shape
+// (When http.route matches, And metric eq).
+func TestDropsMetricIsTheDeterministicHalf(t *testing.T) {
+	probe := Rule{ID: "x", Kind: KindDrop, Signal: SignalMetrics, Enabled: true,
+		When: Condition{Key: "http.route", Op: OpMatches, Value: "check(Liveness|Readiness|Startup)"},
+		And:  []Condition{{Key: "metric", Op: OpEq, Value: "http.server.request.duration"}}}
+	sample := Rule{ID: "s", Kind: KindSample, Signal: SignalMetrics, Enabled: true, Rate: 0.5,
+		When: Condition{Key: "metric", Op: OpEq, Value: "http.server.request.duration"}}
+	spanDrop := Rule{ID: "sp", Kind: KindDrop, Signal: SignalSpans, Enabled: true,
+		When: Condition{Key: "name", Op: OpEq, Value: "x"}}
+	pt := func(route string) *chstore.MetricPoint {
+		return &chstore.MetricPoint{Metric: "http.server.request.duration", AttrKeys: []string{"http.route"}, AttrValues: []string{route}}
+	}
+	if (&Engine{rules: []Rule{sample, spanDrop}}).HasMetricDropRules() {
+		t.Fatal("sample + span rules are not metric drop rules")
+	}
+	disabled := probe
+	disabled.Enabled = false
+	if (&Engine{rules: []Rule{disabled}}).HasMetricDropRules() {
+		t.Fatal("a disabled drop rule must not count")
+	}
+	e := &Engine{rules: []Rule{sample, probe}}
+	if !e.HasMetricDropRules() {
+		t.Fatal("enabled metric drop rule must count")
+	}
+	if !e.DropsMetric(pt("/BSAWEB/bsa/core/server/checkReadiness")) {
+		t.Fatal("probe route must drop")
+	}
+	if e.DropsMetric(pt("/BSAWEB/loan/assessment")) {
+		t.Fatal("business route must survive")
+	}
+	other := pt("/BSAWEB/bsa/core/server/checkReadiness")
+	other.Metric = "jvm.memory.used"
+	if e.DropsMetric(other) {
+		t.Fatal("And metric condition must scope the rule")
+	}
+	if e.DropsMetric(nil) {
+		t.Fatal("nil point never drops")
+	}
+}

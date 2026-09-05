@@ -59,6 +59,7 @@ type Ingester struct {
 	metricFwdEnabled  func() bool
 	metricFwdDropped  atomic.Uint64
 	metricFwdEnqueued atomic.Uint64
+	metricFwdFiltered atomic.Uint64 // v0.10.373 — drop kurallarının forward'dan çıkardığı nokta
 
 	// pipeline (v0.5.263) — ingest-time drop / enrich rules. nil = no rules
 	// (the engine is a no-op-on-empty, so passing it through is fine too).
@@ -399,7 +400,9 @@ func (ing *Ingester) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	ing.forwardMetrics(fwd.Body, fwd.Gzipped)
+	// v0.10.373 — pipeline drop kuralları (dışlama "ingest'te düşür" dahil)
+	// forward'a da uygulanır (forward_filter.go); kural yokken ham geçiş.
+	ing.forwardWithDrops(req, fwd)
 	pts, exs := ConvertMetrics(req)
 	dropped := 0
 	for _, p := range pts {

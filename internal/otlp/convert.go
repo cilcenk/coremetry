@@ -4,12 +4,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 
-	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logscollpb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	metricscollpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	tracecollpb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 
@@ -320,7 +321,7 @@ func convertMetric(m *metricspb.Metric, svcName, svcInstance, hostName string, r
 			ServiceName: svcName, HostName: hostName,
 			Time:      time.Unix(0, int64(timeNs)).UTC(),
 			StartTime: time.Unix(0, int64(startNs)).UTC(),
-			Value: val, Count: cnt, SumValue: sum, MinValue: mn, MaxValue: mx,
+			Value:     val, Count: cnt, SumValue: sum, MinValue: mn, MaxValue: mx,
 			AttrKeys: attrK, AttrValues: attrV, ResKeys: resK, ResValues: resV,
 			SeriesFingerprint: SeriesFingerprint(m.Name, attrs, svcName, svcInstance),
 			// v0.9.106 (F2) — default monotonic (1); Sum dalı d.Sum.IsMonotonic
@@ -547,12 +548,25 @@ func attrStr(attrs []*commonpb.KeyValue, key, def string) string {
 	return def
 }
 
+// attrInt — v0.10.379 (dış skill denetimi A4): IntValue yanında string
+// ("503") ve double (503.0) de kabul edilir. Bazı enstrümantasyonlar
+// http.status_code'u string basar; eskiden sessizce 0 → 5xx sınıflaması
+// ve endpoint hata sayıları eksikti (/otlp-converter §3 "tanınan ama
+// beklenmedik tip → sessiz + yanıltıcı").
 func attrInt(attrs []*commonpb.KeyValue, key string, def int64) int64 {
 	for _, kv := range attrs {
 		if kv.Key == key {
-			if kv.Value != nil {
-				if iv, ok := kv.Value.Value.(*commonpb.AnyValue_IntValue); ok {
-					return iv.IntValue
+			if kv.Value == nil {
+				continue
+			}
+			switch v := kv.Value.Value.(type) {
+			case *commonpb.AnyValue_IntValue:
+				return v.IntValue
+			case *commonpb.AnyValue_DoubleValue:
+				return int64(v.DoubleValue)
+			case *commonpb.AnyValue_StringValue:
+				if n, err := strconv.ParseInt(strings.TrimSpace(v.StringValue), 10, 64); err == nil {
+					return n
 				}
 			}
 		}

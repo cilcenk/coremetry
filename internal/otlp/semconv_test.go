@@ -139,3 +139,18 @@ func TestEverySpellingIsKnownToFilterAndDisplay(t *testing.T) {
 		}
 	}
 }
+
+// v0.10.379 — dış skill denetimi A4: http.status_code string ("503") ya
+// da double (503.0) gelirse eskiden sessizce 0 → 5xx sınıflaması eksikti.
+func TestHTTPStatusAcceptsStringAndDouble(t *testing.T) {
+	if got := spanWithAttrs(t, kvStr("http.status_code", " 503 ")); got.HTTPStatus != 503 {
+		t.Fatalf("string status → http_status: %d, want 503", got.HTTPStatus)
+	}
+	dbl := &commonpb.KeyValue{Key: "http.response.status_code", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_DoubleValue{DoubleValue: 404}}}
+	if got := spanWithAttrs(t, dbl); got.HTTPStatus != 404 {
+		t.Fatalf("double status → http_status: %d, want 404", got.HTTPStatus)
+	}
+	if got := spanWithAttrs(t, kvStr("http.status_code", "teapot")); got.HTTPStatus != 0 {
+		t.Fatalf("non-numeric string must stay 0, got %d", got.HTTPStatus)
+	}
+}

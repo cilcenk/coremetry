@@ -22,11 +22,15 @@ import type { LogsResponse, LogPatternsResult, LogTemplate } from '@/lib/types';
 // call site. Everything else reaches /api/logs through api.logs()
 // directly, reads one page and drops the cursor; those callers now cost
 // the ES cluster no retained Point-in-Time.
-export function useLogs(params: LogsParams) {
+// v0.10.420 — opts.enabled: /logs canlı kuyruktayken statik sorgu KOŞMAZ
+// (yorum yıllardır öyle diyordu; hook seçeneği yoktu → her filtre dokunuşu
+// ES'te ~2 dk PIT pinliyordu).
+export function useLogs(params: LogsParams, opts?: { enabled?: boolean }) {
   const pagingParams: LogsParams = { ...params, paging: true };
   return useQuery<LogsResponse>({
     queryKey: ['logs', 'list', pagingParams],
     queryFn: ({ signal }) => api.logs(pagingParams, signal),
+    enabled: opts?.enabled ?? true,
     staleTime: 15_000,
     refetchOnWindowFocus: false,
     // v0.8.260 — "Load more" accumulation on /logs: a cursor change

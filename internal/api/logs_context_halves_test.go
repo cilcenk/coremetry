@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,38 +17,60 @@ type halvesStore struct {
 	logstore.Store
 	delay               time.Duration
 	beforeErr, afterErr error
+	mu                  sync.Mutex
+	spans               map[bool][2]time.Time // Ascending → (start, end)
 }
 
 func (h *halvesStore) Search(ctx context.Context, f logstore.Filter) (*logstore.Page, error) {
+	start := time.Now()
 	select {
 	case <-time.After(h.delay):
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+	h.mu.Lock()
+	if h.spans == nil {
+		h.spans = map[bool][2]time.Time{}
+	}
+	h.spans[f.Ascending] = [2]time.Time{start, time.Now()}
+	h.mu.Unlock()
+	// v0.10.420 — iki yarı AYIRT EDİLİR (Total 1 / 2): before/after yer
+	// değiştirse test kızarır (inceleme bulgusu).
 	if f.Ascending {
 		if h.afterErr != nil {
 			return nil, h.afterErr
 		}
-		return &logstore.Page{Total: 0}, nil
+		return &logstore.Page{Total: 2}, nil
 	}
 	if h.beforeErr != nil {
 		return nil, h.beforeErr
 	}
-	return &logstore.Page{}, nil
+	return &logstore.Page{Total: 1}, nil
+}
+
+// overlap — iki çağrının zaman aralıkları kesişiyor mu (paralellik kanıtı;
+// duvar saati tavanı yük altında kırılgandı — v0.10.420).
+func (h *halvesStore) overlap() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	a, b := h.spans[false], h.spans[true]
+	return a[0].Before(b[1]) && b[0].Before(a[1])
 }
 func (h *halvesStore) Backend() string { return "test" }
 
 // v0.10.414 — A7: iki yarı gerçekten paralel; toplam süre iki gecikmenin
 // toplamı değil, en uzunu.
 func TestSearchContextHalves_Parallel(t *testing.T) {
-	st := &halvesStore{delay: 150 * time.Millisecond}
-	t0 := time.Now()
+	st := &halvesStore{delay: 100 * time.Millisecond}
 	b, a, err := searchContextHalves(context.Background(), st, logstore.Filter{}, logstore.Filter{Ascending: true}, time.Second)
 	if err != nil || b == nil || a == nil {
 		t.Fatalf("err=%v b=%v a=%v", err, b, a)
 	}
-	if el := time.Since(t0); el > 260*time.Millisecond {
-		t.Fatalf("ardışık koşmuş: %s", el)
+	if b.Total != 1 || a.Total != 2 {
+		t.Fatalf("yarılar yer değiştirmiş: before.Total=%d after.Total=%d", b.Total, a.Total)
+	}
+	if !st.overlap() {
+		t.Fatal("ardışık koşmuş: iki aramanın zaman aralıkları kesişmiyor")
 	}
 }
 

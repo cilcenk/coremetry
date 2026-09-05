@@ -140,7 +140,7 @@ func TestEverySearchDecodeCarriesTheEnvelope(t *testing.T) {
 	// mesajında; taban sayısı yükseldi.
 	files, _ := filepath.Glob("es_*.go")
 	files = append(files, "elasticsearch.go")
-	open := regexp.MustCompile(`^(\s*)var (raw|decoded) struct \{`)
+	open := regexp.MustCompile(`^(\s*)var ([A-Za-z_][A-Za-z0-9_]*) struct \{`) // v0.10.420 — ad ne olursa olsun
 	found := 0
 	for _, file := range files {
 		if strings.HasSuffix(file, "_test.go") {

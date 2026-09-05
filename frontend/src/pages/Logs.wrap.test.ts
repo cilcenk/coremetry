@@ -22,5 +22,7 @@ describe('log line wrap toggle (B5)', () => {
     const css = read('../styles/globals.css');
     expect(css).toContain('.logtbl-dense > tbody > tr > td.lt-wrap {');
     expect(css).toMatch(/tbody td\.td-full \{[^}]*word-break: break-all/);
+    // v0.10.420 — telefon kuralı gerçekten pinli (başlık öyle diyordu, gövde bakmıyordu).
+    expect(css).toMatch(/\.logtbl-dense > tbody > tr > td \{ white-space: normal/);
   });
 });

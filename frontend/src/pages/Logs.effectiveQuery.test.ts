@@ -12,8 +12,11 @@ describe('effective search clause chip (B7)', () => {
     expect(src).toContain('<code title={compiledSearch}>{compiledSearch}</code>');
   });
   it('pill barının dışında (serbest metinle de görünür)', () => {
+    // v0.10.420 — "Clear all"dan sonra olmak yetmez (blok içinde de
+    // sonra olur); pill barı bloğunun KAPANIŞINDAN sonra olmalı.
     const chip = src.indexOf('<CopyButton value={compiledSearch}');
-    const barEnd = src.indexOf('Clear all');
-    expect(chip).toBeGreaterThan(barEnd);
+    const barClose = src.indexOf('Clear all\n            </Button>\n          </div>\n        )}');
+    expect(barClose).toBeGreaterThan(0);
+    expect(chip).toBeGreaterThan(barClose);
   });
 });

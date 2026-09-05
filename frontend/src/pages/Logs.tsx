@@ -265,20 +265,22 @@ function LogsInner() {
   // çözülür — range/filtre yazımları efekti yeniden tetiklemez.
   const docRaw = searchParams.get('doc');
   const docResolvedRef = useRef('');
-  const [docMiss, setDocMiss] = useState(false);
+  // v0.10.420 — 'degraded': backend yavaş (200 {degraded}); 'miss': kayıt yok.
+  const [docMiss, setDocMiss] = useState<false | 'miss' | 'degraded'>(false);
   useEffect(() => {
     if (!docRaw || docResolvedRef.current === docRaw) return;
     docResolvedRef.current = docRaw;
     const parsed = parseDocParam(docRaw);
-    if (!parsed) { setDocMiss(true); return; }
+    if (!parsed) { setDocMiss('miss'); return; }
     const svc = searchParams.get('docsvc') || undefined;
     api.logsContext({ ts: parsed.ts, service: svc, env: env || undefined, n: 5 })
       .then(r => {
+        if (r?.degraded) { setDocMiss('degraded'); return; } // v0.10.420 — "kayıt yok" değil "backend yavaş"
         const rows = [...(r?.before ?? []), ...(r?.after ?? [])];
         const hit = rows.find(x => x.id === parsed.id);
-        if (hit) { setDocMiss(false); setContextPivot(hit); } else setDocMiss(true);
+        if (hit) { setDocMiss(false); setContextPivot(hit); } else setDocMiss('miss');
       })
-      .catch(() => setDocMiss(true));
+      .catch(() => setDocMiss('miss'));
   }, [docRaw, searchParams, env]);
   // Live tail (HyperDX-style): poll, prepend new rows. Cadence is 10s — the
   // ≥10s polling budget, and at the operator's ES scale the ingest pipeline
@@ -454,7 +456,7 @@ function LogsInner() {
     spanId:  filter.spanId  || undefined,
     hasTrace: filter.hasTrace || undefined, // v0.8.406 — trace-only filter
     asc: asc || undefined, // v0.9.295 — oldest-first
-  });
+  }, { enabled: !live }); // v0.10.420 — canlıyken statik sorgu koşmaz
 
   // Level-facet counts. A per-severity timeseries query feeds the
   // toolbar facet chip badges (the duplicate Logs-local stacked-bar
@@ -1194,7 +1196,9 @@ function LogsInner() {
         {/* v0.9.1248 — kalıcı link çözülemedi notu: sessiz düşme yok. */}
         {docMiss && (
           <div style={{ fontSize: 11, color: 'var(--warn)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span>kalıcı doküman linki çözülemedi — kayıt pencere/retention dışında olabilir</span>
+            <span>{docMiss === 'degraded'
+              ? 'kalıcı doküman linki şimdilik çözülemedi — log backend yavaş/erişilemez, yeniden dene'
+              : 'kalıcı doküman linki çözülemedi — kayıt pencere/retention dışında olabilir'}</span>
             <Button variant="secondary" size="sm" onClick={() => setDocMiss(false)}>×</Button>
           </div>
         )}
@@ -1247,7 +1251,9 @@ function LogsInner() {
           </Empty>
         )}
         {/* v0.10.415 (B1) — degraded boş durum: "No logs found" YALAN olurdu. */}
-        {data && logs.length === 0 && !live && !!staticQ.data?.degraded && (
+        {/* v0.10.420 — kapı YÜKLENEN satırlar: narrow her şeyi süzdüyse kendi
+            mesajı var ("None of the N loaded rows…"); burada boş durum çizilmez. */}
+        {data && loadedRows.length === 0 && !live && !!staticQ.data?.degraded && (
           <Empty icon="⚠" title="Log backend yavaş — bu liste eksik">
             <div style={{ marginTop: 6, color: 'var(--text2)' }}>
               {staticQ.data.reason ?? 'log backend slow/unreachable'}. Sonuç 15 sn önbellekte —
@@ -1258,13 +1264,21 @@ function LogsInner() {
             </div>
           </Empty>
         )}
-        {data && logs.length === 0 && (live || !staticQ.data?.degraded) && (
+        {data && loadedRows.length === 0 && (live || !staticQ.data?.degraded) && (
           filter.traceId && live ? (
             /* v0.10.416 (B2) — canlı kuyruk ileri-yönlü: tamamlanmış bir trace
                yeni satır üretmez; "backend'de kaydı yok" teşhisi burada yalan olurdu. */
             <Empty icon="≡" title="Canlı kuyruk bu trace'e kilitli — yalnız YENİ satırlar akar">
               <div style={{ marginTop: 6, color: 'var(--text2)' }}>
                 Trace'in geçmiş logları için canlı kuyruğu kapat; tamamlanmış bir trace yeni satır üretmez.
+              </div>
+            </Empty>
+          ) : live ? (
+            /* v0.10.420 — canlı kuyruk ileri-yönlü; "pencereyi genişlet" öğüdü
+               burada anlamsız (akış from/to taşımaz). */
+            <Empty icon="≡" title="Canlı kuyruk açık — yeni satır bekleniyor">
+              <div style={{ marginTop: 6, color: 'var(--text2)' }}>
+                Yalnız akış açıldıktan sonra yazılan satırlar gelir. Geçmişi görmek için canlı kuyruğu kapat.
               </div>
             </Empty>
           ) : filter.traceId ? (
@@ -1349,7 +1363,7 @@ function LogsInner() {
               title={wrapLines
                 ? 'Mesajlar sarılı. Tıkla: tek satır + … (tam metin hücre başlığında).'
                 : 'Mesajlar tek satır (…). Tıkla: sar — uzun satırlar tam görünür, satır yüksekliği değişir.'}>
-              {wrapLines ? '⤶ sarılı' : '⤶ sar'}
+              ⤶ sar
             </Button>
             {/* v0.9.295 — sort direction. Both backends have honoured
                 oldest-first since v0.7.83; only the Context modal ever

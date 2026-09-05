@@ -49,6 +49,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/otlp"
 	"github.com/cilcenk/coremetry/internal/pipeline"
 	"github.com/cilcenk/coremetry/internal/profileconv"
+	"github.com/cilcenk/coremetry/internal/promptfmt"
 	"github.com/cilcenk/coremetry/internal/rag"
 	"github.com/cilcenk/coremetry/internal/rollout"
 	"github.com/cilcenk/coremetry/internal/sse"
@@ -8954,7 +8955,7 @@ func (s *Server) copilotExplainSpan(w http.ResponseWriter, r *http.Request) {
 	}
 	payload, _ := json.Marshal(compact)
 	user := fmt.Sprintf("Span %s (target) in trace %s — %d spans in context:\n```json\n%s\n```",
-		spanID, traceID, len(compact), string(payload))
+		spanID, traceID, len(compact), promptfmt.FenceSafe(string(payload))) // v0.10.404 — çit kaçışı
 	r, xid := withExchange(r)
 	s.deliverExplain(w, r, xid, nil, s.explainPrompt(r, copilot.SystemPromptSpan(), user), "", explainCacheKey(copilot.SystemPromptSpan(), user, ""))
 }

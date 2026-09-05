@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/promptfmt"
 	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/stackparse"
 )
@@ -527,12 +528,12 @@ func assembleExceptionPrompt(g *chstore.ExceptionGroup, trend, stack, traceBlock
 	}
 	mp, _ := json.Marshal(meta)
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Exception GRUBU:\n```json\n%s\n```", string(mp))
+	fmt.Fprintf(&sb, "Exception GRUBU:\n```json\n%s\n```", promptfmt.FenceSafe(string(mp))) // v0.10.404 — çit kaçışı
 	if trend != "" {
 		sb.WriteString("\n\nOccurrence trendi: " + trend)
 	}
 	if stack != "" {
-		sb.WriteString("\n\nTemsilî STACKTRACE:\n```\n" + stack + "\n```")
+		sb.WriteString("\n\nTemsilî STACKTRACE:\n```\n" + promptfmt.FenceSafe(stack) + "\n```")
 	}
 	sb.WriteString(traceBlock)
 	sb.WriteString(logsBlock)

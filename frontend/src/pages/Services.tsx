@@ -753,7 +753,7 @@ export default function ServicesPage() {
                             {fmtFixed(agg.errorRate, 2)}%
                           </span>
                         }
-                        spark={aggBuckets.map(b => b.spans > 0 ? (b.errs / b.spans) * 100 : 0)}
+                        spark={aggBuckets.map(b => b.spans > 0 ? (b.errs / b.spans) * 100 : null)}
                         color="var(--err)"
                         title="Aggregate error rate (weighted by spans)"
                         // v0.9.499 — çizgi moduna geri (operatör: "eskiden
@@ -868,7 +868,7 @@ export default function ServicesPage() {
                               {fmtFixed(s.errorRate, 2)}%
                             </span>
                           }
-                          spark={buckets.map(b => b.spans > 0 ? (b.errs / b.spans) * 100 : 0)}
+                          spark={buckets.map(b => b.spans > 0 ? (b.errs / b.spans) * 100 : null)}
                           color="var(--err)"
                           title={`Error rate (%) for ${s.name}`}
                           // v0.9.499 — çizgi moduna geri (bkz. agg satırı).
@@ -965,7 +965,7 @@ function SparkCell({
   value, spark, color, title, onClick, mode, threshold,
 }: {
   value: React.ReactNode;
-  spark: number[];
+  spark: (number | null)[]; // v0.10.386 — null = veri yok (Sparkline sözleşmesi)
   color: string;
   title: string;
   onClick: () => void;

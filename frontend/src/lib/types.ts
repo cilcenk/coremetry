@@ -6966,6 +6966,10 @@ export interface LogPatternsResult {
   cap: number;
   truncated: boolean;
   distinct: number;
+  // v0.10.441 (C4) — örneklemenin gerçekten kapsadığı alt pencere (ns);
+  // isteğe bağlı: 30 sn önbellekten gelen eski gövdelerde yok.
+  coveredFromNs?: number;
+  coveredToNs?: number;
   degraded?: boolean;
   reason?: string;
 }

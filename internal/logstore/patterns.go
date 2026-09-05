@@ -57,6 +57,16 @@ type PatternsResult struct {
 	Cap       int              `json:"cap"`       // PatternsSampleCap
 	Truncated bool             `json:"truncated"` // Sampled == Cap && Total > Cap
 	Distinct  int              `json:"distinct"`  // limit'ten önceki grup sayısı
+	// CoveredFromNs/CoveredToNs (v0.10.441, log arama denetimi C4) —
+	// örneklemenin GERÇEKTEN kapsadığı alt pencere (en yeni uç; okunan
+	// satırların min/max zaman damgası). Tavan dolduğunda istenen
+	// pencereden dardır: yoğun serviste "son 1 saat" sanılan sayımlar
+	// aslında son birkaç dakikayı anlatıyordu ve panel bunu söylemiyordu.
+	// Kapıyı Sampled >= Cap ile kur, Truncated ile DEĞİL (Total güvenilmez
+	// olabilir: ES track_total_hits kapalı; aşağıdaki clamp truncated=false
+	// bırakır).
+	CoveredFromNs int64 `json:"coveredFromNs,omitempty"`
+	CoveredToNs   int64 `json:"coveredToNs,omitempty"`
 }
 
 // GroupBySignature — st.Search üstünden örnekleyerek gruplar. limit ≤ 0 →
@@ -104,6 +114,16 @@ func GroupBySignature(ctx context.Context, st Store, f Filter, limit int) (*Patt
 				continue
 			}
 			res.Sampled++
+			// v0.10.441 (C4) — kapsanan uç: Sampled'a eşlik eder (imzasız
+			// satır da okunmuştur); ts=0 (bozuk doküman) 1970'e çekmesin.
+			if ts := rec.Timestamp; ts > 0 {
+				if res.CoveredFromNs == 0 || ts < res.CoveredFromNs {
+					res.CoveredFromNs = ts
+				}
+				if ts > res.CoveredToNs {
+					res.CoveredToNs = ts
+				}
+			}
 			sig := NormalizeSignature(rec.Body)
 			if sig == "" {
 				continue

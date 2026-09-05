@@ -22,31 +22,40 @@ import { resolve } from 'node:path';
 const src = readFileSync(resolve(__dirname, './Overview.tsx'), 'utf8')
   .replace(/\/\/.*$/gm, '');
 
-describe('Overview → Metrics tık hedefi (v0.9.794)', () => {
-  it('🔴 hiçbir onExpandClick `by`siz metricsHref() çağırmaz', () => {
-    // Çıplak metricsHref() — parametresiz çağrı — artık bir kusurdur:
-    // panellerin ikisi de kırılımlı çiziyor.
+describe('Overview → Metrics tık hedefi (v0.9.794 + v0.10.370)', () => {
+  it('🔴 hiçbir onExpandClick çıplak metricsHref() çağırmaz', () => {
     const bare = src.match(/navigate\(metricsHref\(\)\)/g) ?? [];
     expect(bare, 'by taşımayan metricsHref() çağrısı').toEqual([]);
   });
 
-  it('Response time paneli route kırılımını taşır (operatör bulgusu)', () => {
+  it('Response time paneli route kırılımlı, rtMetric + avg ile açılır', () => {
     const i = src.indexOf('ov-response-time-metric-v2');
     expect(i).toBeGreaterThan(0);
-    // storageKey ile aynı JSX satırında/komşuluğunda tık hedefi.
     const near = src.slice(i, i + 400);
-    expect(near).toMatch(/onExpandClick=\{\(\) => navigate\(metricsHref\(\{ by: 'http\.route' \}\)\)\}/);
+    expect(near).toMatch(/onExpandClick=\{\(\) => navigate\(rtExploreHref\(\)\)\}/);
+    expect(src).toMatch(/const rtExploreHref = \(\) => metricsHref\(\{ by: 'http\.route', metric: metricName, agg: 'avg' \}\);/);
   });
 
-  it('Throughput paneli emsali korunur — iki panel AYNI dilde', () => {
-    const calls = src.match(/metricsHref\(\{ by: '([^']+)' \}\)/g) ?? [];
+  // v0.10.370 — operator-reported: "Overview'daki metrik grafiği artan trend
+  // gösterirken üstüne basıp açılan Explore grafiği dümdüz". Kapı `_count`
+  // sayacını `avg` ile açıyordu (kümülatif sayacın ortalaması, eksen
+  // "4.63 days"). Throughput = _count + RATE; ad soruya göre çözülür
+  // (v0.9.1274 dersinin kapı hâli).
+  it('🔴 Throughput paneli _count adını RATE ile açar, avg ile değil', () => {
+    expect(src).toMatch(/const tputExploreHref = \(\) => metricsHref\(\{ by: 'http\.route', metric: metricTputQ\.data\?\.metric \?\? '', agg: 'rate' \}\);/);
+    expect(src).toMatch(/onExpandClick=\{\(\) => navigate\(tputExploreHref\(\)\)\}/);
+  });
+
+  it('iki panel AYNI kırılımı taşır', () => {
+    const calls = src.match(/metricsHref\(\{ by: '([^']+)'/g) ?? [];
     expect(calls.length).toBe(2);
     expect(new Set(calls).size, 'iki panel aynı kırılımı kullanmalı').toBe(1);
   });
 
-  it('metricsHref `by` parametresini gerçekten URL\'e yazar', () => {
-    // Sözleşmenin öteki ucu: çağrı doğru ama fonksiyon yutuyorsa düzeltme
-    // görünmez kalırdı.
-    expect(src).toMatch(/opts\?\.by \? `&by=\$\{encodeURIComponent\(opts\.by\)\}` : ''/);
+  it('metricsHref `by` ve `agg` parametrelerini gerçekten URL\'e yazar', () => {
+    expect(src).toMatch(/opts\.by \? `&by=\$\{encodeURIComponent\(opts\.by\)\}` : ''/);
+    expect(src).toMatch(/`&agg=\$\{opts\.agg\}`/);
+    // agg'siz bir kapı = Metrics sayfasının varsayılanı (avg) = sayaç için yanlış.
+    expect(src).not.toMatch(/metricsHref\(\{ by: 'http\.route' \}\)/);
   });
 });

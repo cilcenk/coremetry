@@ -433,13 +433,22 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // v0.9.742 (operatör tercihi) — metrik paneline tık Metrics sayfasına
   // götürür (tam ekran yerine); mevcut ?range korunur.
   const navigate = useNavigate();
-  const metricsHref = (opts?: { by?: string }) => {
-    const m = metricTputQ.data?.metric ?? '';
+  // v0.10.370 (operatör: "Overview'daki metrik grafiği artan trend
+  // gösterirken üstüne basıp açılan Explore grafiği dümdüz") — kapı iki
+  // paneli de throughput'un `_count` adıyla ve varsayılan `avg` ile
+  // açıyordu: kümülatif sayacın ORTALAMASI (eksen "4.63 days"), hız değil.
+  // v0.9.1274 dersinin kapı hâli: ad soruya göre çözülür — Throughput
+  // `_count` + rate, Response time `rtMetric` + avg. /metrics?agg= zaten
+  // taşınıyor (Metrics.tsx legacy dalı → metricCatalogueHref).
+  const metricsHref = (opts: { by?: string; metric: string; agg: 'rate' | 'avg' }) => {
     const r = searchParams.get('range');
-    return `/metrics?metric=${encodeURIComponent(m)}&service=${encodeURIComponent(service)}`
-      + (opts?.by ? `&by=${encodeURIComponent(opts.by)}` : '')
+    return `/metrics?metric=${encodeURIComponent(opts.metric)}&service=${encodeURIComponent(service)}`
+      + `&agg=${opts.agg}`
+      + (opts.by ? `&by=${encodeURIComponent(opts.by)}` : '')
       + (r ? `&range=${encodeURIComponent(r)}` : '');
   };
+  const rtExploreHref = () => metricsHref({ by: 'http.route', metric: metricName, agg: 'avg' });
+  const tputExploreHref = () => metricsHref({ by: 'http.route', metric: metricTputQ.data?.metric ?? '', agg: 'rate' });
   // v0.9.844 — kırılım sorgusu (useRootOpLatency + opsStep + buildRootOpLines
   // projeksiyonu) ve SLO hata-bütçesi eşikleri (useSLOs → failureThresholds)
   // de bu panellerle birlikte gitti. Eşik çizgisi % eksenine aitti; kalan
@@ -972,7 +981,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 // gösteriyordu" diyordu. Throughput paneli (:723) doğru
                 // deseni zaten taşıyordu.
                 menuExtra={doorway}
-                storageKey="ov-response-time-metric-v2" height={200} onExpandClick={() => navigate(metricsHref({ by: 'http.route' }))}
+                storageKey="ov-response-time-metric-v2" height={200} onExpandClick={() => navigate(rtExploreHref())}
                 loading={metricTputQ.isLoading || rtAvgQ.isLoading}
                 // Birim SUNUCUDAN gelen OTLP birimine göre; tanınmazsa
                 // undefined (ham sayı) ve not bunu söyler.
@@ -1034,7 +1043,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 menuExtra={doorway}
                 storageKey="ov-throughput-metric-v2"
                 loading={metricTputQ.isLoading}
-                height={200} xRange={xRange} onExpandClick={() => navigate(metricsHref({ by: 'http.route' }))}
+                height={200} xRange={xRange} onExpandClick={() => navigate(tputExploreHref())}
                 unit="reqps"
                 // v0.9.799 — SAF route kırılımı (v0.9.796 görünümü).
                 // v0.9.798'in istemci-toplamı "Toplam" çizgisi kalktı:

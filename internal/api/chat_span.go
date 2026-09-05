@@ -49,8 +49,14 @@ type chatSpan struct {
 // turlar, araçlar ve CH sorguları onun altında iç içe geçer.
 func (s *Server) beginChatSpan(ctx context.Context, exchangeID string) (context.Context, *chatSpan) {
 	meta := copilot.MetaFromContext(ctx)
+	// v0.10.430 — INTERNAL: kök değil, otelhttp'nin "POST /api/copilot/chat"
+	// SERVER span'ının çocuğu. SERVER kind'ı giriş-span ilkesi (kind IN
+	// server,consumer) yüzünden her sohbet turunu onlarca saniyelik bir
+	// "giriş" olarak coremetry-monolithic'in latency SLI'ına ve /endpoints
+	// RPC sekmesine sokuyordu; soft-fail kademesi de giriş hata oranını
+	// şişiriyordu. ai.explain (ai_span.go) zaten INTERNAL.
 	ctx, span := s.tracerOrDefault().Start(ctx, "ai.chat",
-		trace.WithSpanKind(trace.SpanKindServer),
+		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
 			attribute.String("coremetry.ai.surface", meta.Surface),
 			attribute.String("coremetry.ai.exchange_id", exchangeID),

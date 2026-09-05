@@ -64,12 +64,12 @@ type Service struct {
 	// headers (oauth2-proxy / IAP / Cloudflare Access) on the
 	// fallback path. Guarded by trustedCIDRs so a request from
 	// outside the proxy mesh can't spoof the header.
-	mu             sync.RWMutex
+	mu sync.RWMutex
 	// tokens — cmk_ servis token cache'i (v0.8.444); EnableAPITokens bağlar.
-	tokens         *tokenCache
-	trustedHeader  *TrustedHeaderOptions
-	trustedCIDRs   []*net.IPNet
-	userStore      UserLookup
+	tokens        *tokenCache
+	trustedHeader *TrustedHeaderOptions
+	trustedCIDRs  []*net.IPNet
+	userStore     UserLookup
 	// liveAuthz (v0.9.352) resolves role/existence from the store instead of
 	// trusting the token's `role` claim. nil = not wired (tests/dev) → the
 	// middleware keeps the old behaviour. See live_authz.go.
@@ -78,7 +78,7 @@ type Service struct {
 	// access, loaded from system_settings at boot. Mutations go
 	// through Upsert/Delete which re-persist atomically. Empty
 	// map = no custom roles configured (default).
-	customRoles    map[string]CustomRole
+	customRoles map[string]CustomRole
 }
 
 // TrustedHeaderOptions is the auth.Service-side mirror of the
@@ -248,6 +248,13 @@ func CheckPassword(hash, plain string) bool {
 func FromContext(ctx context.Context) *Claims {
 	c, _ := ctx.Value(userCtxKey).(*Claims)
 	return c
+}
+
+// ContextWithClaims — v0.10.430: Middleware'in yaptığı iliştirmenin dışa
+// açık hâli; kimliğe bağlı yolları (audit satırı, rol kapısı) middleware
+// kurmadan DAVRANIŞLA test etmek için. Üretim yolu Middleware'dir.
+func ContextWithClaims(ctx context.Context, c *Claims) context.Context {
+	return context.WithValue(ctx, userCtxKey, c)
 }
 
 // SkipPath reports whether a path should bypass authentication.

@@ -46,7 +46,8 @@ func TestClassifyToolError(t *testing.T) {
 		wantRetry bool
 	}{
 		{"ctx deadline", context.DeadlineExceeded, ToolErrTimeout, true},
-		{"ctx canceled", context.Canceled, ToolErrTimeout, true},
+		{"ctx canceled → cancelled, tekrar yok (v0.10.430)", context.Canceled, ToolErrCancelled, false},
+		{"sarmalanmış iptal", fmt.Errorf("ch query: %w", context.Canceled), ToolErrCancelled, false},
 		{"sarmalanmış deadline", fmt.Errorf("clickhouse: read block: %w", context.DeadlineExceeded),
 			ToolErrTimeout, true},
 		{"CH 159", errors.New("code: 159, message: Timeout exceeded: elapsed 30.1 seconds, maximum: 30"),

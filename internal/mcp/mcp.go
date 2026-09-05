@@ -1110,7 +1110,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 	defer cancel()
 	out, err := tool.Handler(tctx, p.Arguments)
 	if err != nil {
-		done(CallOutcome{Err: err, ErrorClass: classifyToolErrorClass(err)})
+		done(CallOutcome{Err: err, ErrorClass: outcomeErrorClass(err)})
 		// v0.9.1234 — ham sürücü metni yerine YAPISAL hata: modelin
 		// cevaplaması gereken soru "şimdi ne yapayım", ham
 		// `err.Error()` onu söylemiyordu (toolerr.go). isError=true
@@ -1125,7 +1125,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 	// the next turn; we deliberately don't try to "render" it.
 	body, err := json.Marshal(out)
 	if err != nil {
-		done(CallOutcome{Err: err, ErrorClass: classifyToolErrorClass(err)})
+		done(CallOutcome{Err: err, ErrorClass: outcomeErrorClass(err)})
 		return successResp(req.ID, toolCallResult{
 			Content: []toolCallContent{{Type: "text", Text: ToolErrorJSON(fmt.Errorf("marshal result: %w", err))}},
 			IsError: true,
@@ -1245,7 +1245,7 @@ func (s *Server) handleResourcesRead(ctx context.Context, req *Request) *Respons
 		}
 		octx, done := s.beginObserve(ctx, "resource", p.URI, nil) // v0.10.426 (M1)
 		text, err := res.Reader(octx, p.URI)
-		done(CallOutcome{Err: err, ResultBytes: len(text)})
+		done(CallOutcome{Err: err, ErrorClass: outcomeErrorClass(err), ResultBytes: len(text)}) // v0.10.430 sınıf
 		if err != nil {
 			return errorResp(req.ID, ErrInternal, "read resource: "+err.Error())
 		}
@@ -1260,7 +1260,7 @@ func (s *Server) handleResourcesRead(ctx context.Context, req *Request) *Respons
 			}
 			octx, done := s.beginObserve(ctx, "resource", p.URI, nil) // v0.10.426 (M1)
 			text, err := rt.Reader(octx, p.URI)
-			done(CallOutcome{Err: err, ResultBytes: len(text)})
+			done(CallOutcome{Err: err, ErrorClass: outcomeErrorClass(err), ResultBytes: len(text)}) // v0.10.430 sınıf
 			if err != nil {
 				return errorResp(req.ID, ErrInternal, "read resource: "+err.Error())
 			}
@@ -1416,7 +1416,8 @@ func (s *Server) handlePromptsGet(ctx context.Context, req *Request) *Response {
 	}
 	octx, done := s.beginObserve(ctx, "prompt", p.Name, nil) // v0.10.426 (M1)
 	msgs, err := prompt.Renderer(octx, p.Arguments)
-	done(CallOutcome{Err: err, ResultBytes: len(msgs)})
+	// v0.10.430 — bayt, mesaj sayısı değil; hata sınıfı da dolu.
+	done(CallOutcome{Err: err, ErrorClass: outcomeErrorClass(err), ResultBytes: promptMessagesBytes(msgs)})
 	if err != nil {
 		return errorResp(req.ID, ErrInternal, "render prompt: "+err.Error())
 	}

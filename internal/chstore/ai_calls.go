@@ -205,6 +205,12 @@ type AIProviderStat struct {
 	Calls        uint64 `json:"calls"`
 	InputTokens  uint64 `json:"inputTokens"`
 	OutputTokens uint64 `json:"outputTokens"`
+	// v0.10.400 (CoSRE denetimi O5/E3) — model başına kalite: iki profil
+	// (yerel + bulut) yan yana koşarken "hangisi yavaş, hangisi hata
+	// veriyor" sorusu bu üç alandan okunur.
+	Errors uint64  `json:"errors"`
+	AvgMs  float64 `json:"avgMs"`
+	P95Ms  float64 `json:"p95Ms"`
 }
 
 // ComputeAIStats does the aggregate query for the overview cards.
@@ -288,7 +294,10 @@ func (s *Store) ComputeAIStats(ctx context.Context, from, to time.Time) (*AIStat
 		SELECT provider, model,
 		       toUInt64(count()),
 		       toUInt64(sum(input_tokens)),
-		       toUInt64(sum(output_tokens))
+		       toUInt64(sum(output_tokens)),
+		       toUInt64(countIf(status = 'error')),
+		       toFloat64(avg(duration_ms)),
+		       toFloat64(quantile(0.95)(duration_ms))
 		FROM ai_calls
 		WHERE created_at >= toDateTime64(?, 9, 'UTC')
 		  AND created_at <  toDateTime64(?, 9, 'UTC')
@@ -302,7 +311,7 @@ func (s *Store) ComputeAIStats(ctx context.Context, from, to time.Time) (*AIStat
 	for pRows.Next() {
 		var row AIProviderStat
 		if err := pRows.Scan(&row.Provider, &row.Model, &row.Calls,
-			&row.InputTokens, &row.OutputTokens); err != nil {
+			&row.InputTokens, &row.OutputTokens, &row.Errors, &row.AvgMs, &row.P95Ms); err != nil {
 			pRows.Close()
 			return nil, err
 		}

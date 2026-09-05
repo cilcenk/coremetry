@@ -2257,7 +2257,8 @@ export interface AIStats {
   // ratings in the window (thumbsUpRate only meaningful when
   // feedbackCount > 0; an omitted rate with count > 0 means 0%).
   bySurface: Array<{ surface: string; calls: number; errorRate: number; avgMs: number; feedbackCount?: number; thumbsUpRate?: number }>;
-  byProvider: Array<{ provider: string; model: string; calls: number; inputTokens: number; outputTokens: number }>;
+  // v0.10.400 — model başına hata sayısı ve gecikme (ms) (CoSRE denetimi O5/E3).
+  byProvider: Array<{ provider: string; model: string; calls: number; inputTokens: number; outputTokens: number; errors: number; avgMs: number; p95Ms: number }>;
 }
 
 // AI cost rates (v0.5.167). USD per 1M tokens, per model.

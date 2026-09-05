@@ -184,10 +184,11 @@ export default function AIObservabilityPage() {
                 <BreakdownTable title="By provider · model"
                   rows={stats.byProvider.map(r => ({
                     a: `${r.provider} · ${r.model || '—'}`, b: fmtNum(r.calls),
-                    c: fmtNum(r.inputTokens) + ' in',
+                    // v0.10.400 — model başına hata oranı + p95 gecikme (CoSRE denetimi O5/E3).
+                    c: `${r.calls ? ((r.errors ?? 0) / r.calls * 100).toFixed(1) : '0.0'}% · p95 ${fmtNum(Math.round(r.p95Ms ?? 0))} ms`,
                     d: fmtCost(costForCall(rates, r.model, r.inputTokens, r.outputTokens)),
                   }))}
-                  cols={['Provider', 'Calls', 'Input tok', 'Est cost']}
+                  cols={['Provider', 'Calls', 'Hata · p95', 'Est cost']}
                   onPickFirst={v => setProvider(v.split(' · ')[0])} />
               )}
             </div>

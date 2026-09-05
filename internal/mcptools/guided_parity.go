@@ -806,7 +806,7 @@ func sanitizePodHeapRows(rows []PodHeapRow) []PodHeapRow {
 func ReadPodHealth(ctx context.Context, d Deps, service string, from, to time.Time, instLimit, heapLimit int) (PodHealthData, error) {
 	data := PodHealthData{Service: service, HeapWindowS: int(chstore.RuntimePodWindow / time.Second)}
 	heapNow := nowOrAnchor(ctx)
-	heap, herr := d.Store.JVMHeapPodUsage(ctx, heapNow.Add(-chstore.RuntimePodWindow), heapNow)
+	heap, herr := d.runtimePods().JVMHeapPodUsage(ctx, heapNow.Add(-chstore.RuntimePodWindow), heapNow)
 	if service == "" {
 		if herr != nil {
 			return PodHealthData{}, herr

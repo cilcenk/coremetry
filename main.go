@@ -1250,6 +1250,9 @@ func main() {
 		// v0.10.242 — Problem↔Rollout korelasyonu: küme çevirisi (span değeri →
 		// EffectiveID) + rollouts bayrağı; kapalıyken hiçbir sorgu koşmaz.
 		rcSynth.SetRollouts(rolloutClusterSource{thanosSvc}, func() bool { return rolloutSettings.Resolved().Enabled })
+		// v0.10.374 — VM dilim 3c: JVM heap / GC kanıtı VM yapılandırılmışsa
+		// VictoriaMetrics'ten (çağrı anında karar), değilse ClickHouse.
+		rcSynth.SetRuntimePods(vmetrics.RuntimePodsOr(vmSvc, store))
 	}
 
 	// ── HTTP server (OTLP + API + UI) ─────────────────────────────────────────
@@ -1352,8 +1355,9 @@ func main() {
 		// get_trace / query_metric / list_problems / list_anomalies
 		// / get_service_health via tools/call.
 		mcptools.Register(mcpSvc, mcptools.Deps{
-			Store:    store,
-			LogStore: logsStore,
+			Store:       store,
+			LogStore:    logsStore,
+			RuntimePods: vmetrics.RuntimePodsOr(vmSvc, store), // v0.10.374
 		})
 		staticRes, tplRes := mcpSvc.ResourceCount()
 		log.Printf("[mcp] server ready (%d tools, %d resources, %d templates, %d prompts)",

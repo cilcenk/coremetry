@@ -544,7 +544,12 @@ func anyValStr(v *commonpb.AnyValue) string {
 	case *commonpb.AnyValue_KvlistValue:
 		b, _ := json.Marshal(x.KvlistValue)
 		return string(b)
+	case nil:
+		return "" // değer hiç set edilmemiş — boş, bilinmeyen değil
 	}
+	// v0.10.388 — yeni proto tipi: anahtar kalır, değer boşalır; sessiz
+	// kalmasın (/otlp-converter §3 "sessiz return \"\" kabul edilmez").
+	convertDegrades.anyValUnknown.Add(1)
 	return ""
 }
 

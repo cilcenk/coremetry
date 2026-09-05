@@ -37,17 +37,26 @@ const maxExpBuckets = 320
 // them, and folding a negative range into ascending positive bounds
 // would misplace every quantile.
 func expBucketsToExplicit(dp *metricspb.ExponentialHistogramDataPoint) ([]float64, []uint64, bool) {
-	if dp == nil || dp.Positive == nil || len(dp.Positive.BucketCounts) == 0 {
+	// v0.10.388 — her degrade dalı sayılır (convert_counters.go); nil
+	// datapoint sayılmaz (çağıran zaten atlar).
+	if dp == nil {
+		return nil, nil, false
+	}
+	if dp.Positive == nil || len(dp.Positive.BucketCounts) == 0 {
+		convertDegrades.expHistEmpty.Add(1)
 		return nil, nil, false
 	}
 	if dp.Negative != nil && len(dp.Negative.BucketCounts) > 0 {
+		convertDegrades.expHistNegative.Add(1)
 		return nil, nil, false
 	}
 	if dp.Scale < -10 || dp.Scale > 20 {
+		convertDegrades.expHistScale.Add(1)
 		return nil, nil, false
 	}
 	n := len(dp.Positive.BucketCounts)
 	if n > maxExpBuckets {
+		convertDegrades.expHistCap.Add(1)
 		return nil, nil, false
 	}
 

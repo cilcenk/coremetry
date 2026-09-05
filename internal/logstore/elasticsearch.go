@@ -668,7 +668,8 @@ func (s *ESStore) EQLSearch(ctx context.Context, q EQLQuery) ([]EQLSequence, err
 			fmt.Errorf("eql search: %s", res.String()))
 	}
 	var decoded struct {
-		Hits struct {
+		esSearchEnvelope // v0.10.413 (A5) — EQL yanıtı timed_out taşır (_shards yok → tam sayılır)
+		Hits             struct {
 			Sequences []struct {
 				JoinKeys []any `json:"join_keys"`
 				Events   []struct {
@@ -679,6 +680,9 @@ func (s *ESStore) EQLSearch(ctx context.Context, q EQLQuery) ([]EQLSequence, err
 	}
 	if err := json.NewDecoder(res.Body).Decode(&decoded); err != nil {
 		return nil, err
+	}
+	if d := decoded.describe(); d != "" {
+		log.Printf("[logstore-es] PARTIAL eql (%s) — sequences are a subset", d)
 	}
 	out := make([]EQLSequence, 0, len(decoded.Hits.Sequences))
 	for _, sq := range decoded.Hits.Sequences {
@@ -1121,7 +1125,8 @@ func (s *ESStore) FieldStats(ctx context.Context, f Filter, field string, limit 
 				parseESError("fieldstats", res, s.cfg.Index))
 		}
 		var decoded struct {
-			Aggregations struct {
+			esSearchEnvelope // v0.10.413 (log arama denetimi A5) — kısmi cevap görünür
+			Aggregations     struct {
 				Vals struct {
 					SumOther int64 `json:"sum_other_doc_count"`
 					Buckets  []struct {
@@ -1134,7 +1139,14 @@ func (s *ESStore) FieldStats(ctx context.Context, f Filter, field string, limit 
 		if err := json.NewDecoder(res.Body).Decode(&decoded); err != nil {
 			return nil, err
 		}
-		out := &FieldStatsResult{Field: field, Values: []FieldValueCount{}}
+		// v0.10.413 — kalıbın kardeşleri (Search/Histogram/CountPatterns)
+		// gibi: yumuşak zaman aşımı / kayıp shard üst değerleri ve yüzde
+		// paydasını ALT KÜME yapar; sessizce "tam" dönmez. Deneme başına
+		// (keyword + çıplak) iki kez basılabilir — aynı istek.
+		if d := decoded.describe(); d != "" {
+			log.Printf("[logstore-es] PARTIAL fieldstats (%s) — top values and the %% denominator are a subset (field=%q attempt=%q)", d, field, aggField)
+		}
+		out := &FieldStatsResult{Field: field, Values: []FieldValueCount{}, Partial: decoded.partial(), ShardsFailed: decoded.Shards.Failed}
 		out.Total = decoded.Aggregations.Vals.SumOther
 		for _, b := range decoded.Aggregations.Vals.Buckets {
 			out.Total += b.DocCount

@@ -495,6 +495,11 @@ type FieldStatsResult struct {
 	Field  string            `json:"field"`
 	Total  int64             `json:"total"`
 	Values []FieldValueCount `json:"values"`
+	// v0.10.413 (log arama denetimi A5) — Page.Partial'ın ikizi: ES yumuşak
+	// zaman aşımı / kayıp shard → üst değerler ve payda alt küme. CH
+	// tam sayar, bayrakları hiç kurmaz (omitempty ile telde görünmez).
+	Partial      bool `json:"partial,omitempty"`
+	ShardsFailed int  `json:"shardsFailed,omitempty"`
 }
 
 // LogSeries is one bucketed timeseries returned by Histogram. Name

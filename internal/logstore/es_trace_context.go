@@ -32,6 +32,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -225,7 +226,8 @@ func buildTraceCoverageBody(tsField, effField, svcAggField string, from, to time
 // FieldStats (a numeric-mapped service field must not fail the decode).
 func parseTraceCoverageResponse(raw []byte) (total, withTrace int64, services []TraceContextServiceCoverage, err error) {
 	var decoded struct {
-		Aggregations struct {
+		esSearchEnvelope // v0.10.413 (A5) — kısmi kapsama yanıtı görünür
+		Aggregations     struct {
 			Total struct {
 				DocCount int64 `json:"doc_count"`
 			} `json:"total"`
@@ -245,6 +247,9 @@ func parseTraceCoverageResponse(raw []byte) (total, withTrace int64, services []
 	}
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return 0, 0, nil, fmt.Errorf("decode coverage response: %w", err)
+	}
+	if d := decoded.describe(); d != "" {
+		log.Printf("[logstore-es] PARTIAL trace coverage (%s) — counts are a subset", d)
 	}
 	services = make([]TraceContextServiceCoverage, 0, len(decoded.Aggregations.Services.Buckets))
 	for _, b := range decoded.Aggregations.Services.Buckets {

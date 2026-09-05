@@ -108,6 +108,37 @@ func fmtPeriodTR(sec int64) string {
 	return fmt.Sprintf("%d sn", sec)
 }
 
+// fillSeries — v0.10.444: CH GROUP BY yalnız VAR OLAN kovaları döndürür;
+// otokorelasyon eşit aralıklı seri varsayar. 30 dk'da bir ateşlenen cron
+// 48 kova/24 sa üretir, hepsi ≈N → boşluksuz seri SABİT görünür ve
+// "periyot yok" çıkardı — sorunun tam tersi. Izgara [from, to) adımla
+// kurulur, eksik kovalar 0.
+func fillSeries(times []int64, values []float64, stepS int64, from, to time.Time) ([]int64, []float64) {
+	if stepS <= 0 || !to.After(from) {
+		return times, values
+	}
+	step := stepS * int64(time.Second)
+	start := from.UnixNano() / step * step
+	n := int((to.UnixNano() - start + step - 1) / step)
+	if n <= 0 || n > 100000 {
+		return times, values
+	}
+	byIdx := map[int]float64{}
+	for i := range times {
+		idx := int((times[i] - start) / step)
+		if idx >= 0 && idx < n {
+			byIdx[idx] += values[i]
+		}
+	}
+	outT := make([]int64, n)
+	outV := make([]float64, n)
+	for i := 0; i < n; i++ {
+		outT[i] = start + int64(i)*step
+		outV[i] = byIdx[i]
+	}
+	return outT, outV
+}
+
 // periodSeries — kanıt için bir seri.
 type periodSeries struct {
 	Label  string
@@ -193,7 +224,7 @@ func renderCallPeriodTR(route guidedRoute, series []periodSeries, minuteWin, edg
 	return b.String()
 }
 
-func spanMetricSeriesToPeriod(label string, ser []chstore.SpanMetricSeries, stepS int64, note string) periodSeries {
+func spanMetricSeriesToPeriod(label string, ser []chstore.SpanMetricSeries, stepS int64, note string, from, to time.Time) periodSeries {
 	p := periodSeries{Label: label, StepS: stepS, Note: note}
 	if len(ser) == 0 {
 		return p
@@ -202,6 +233,7 @@ func spanMetricSeriesToPeriod(label string, ser []chstore.SpanMetricSeries, step
 		p.Times = append(p.Times, pt.Time)
 		p.Values = append(p.Values, pt.Value)
 	}
+	p.Times, p.Values = fillSeries(p.Times, p.Values, stepS, from, to) // v0.10.444
 	return p
 }
 
@@ -213,8 +245,20 @@ func (s *Server) guidedCallPeriodBundle(ctx context.Context, emit func(string, a
 	var series []periodSeries
 	var srcParts []string
 	if route.PairFrom != "" && route.PairTo != "" {
-		n := emitGuidedStep(emit, "topology_edge_series", fmt.Sprintf(`{"from":%q,"to":%q,"step":"5m"}`, route.PairFrom, route.PairTo))
-		pts, err := s.store.TopologyEdgeSeries(ctx, route.PairFrom, route.PairTo, edgeFrom, to)
+		edgeChild := route.PairTo
+		if route.PairToKind != "service" {
+			// v0.10.444 — dış/DB düğüm parçası ("osbprod") saklanan ada
+			// ("ext:osbprod.example.com") çözülür; aksi hâlde IN listesi hiç
+			// eşleşmiyor ve seri "veri yok" çıkıyordu.
+			if edges, err := s.store.ReadServiceTopologyAggForFocus(ctx, edgeFrom, to, route.PairFrom, 1, 20000); err == nil {
+				if matched, _ := matchPairEdges(edges, route.PairFrom, route.PairTo, false); len(matched) > 0 {
+					edgeChild = matched[0].ChildNode
+					route.PairTo = strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(edgeChild, "ext:"), "db:"), "q:")
+				}
+			}
+		}
+		n := emitGuidedStep(emit, "topology_edge_series", fmt.Sprintf(`{"from":%q,"to":%q,"step":"5m"}`, route.PairFrom, edgeChild))
+		pts, err := s.store.TopologyEdgeSeries(ctx, route.PairFrom, edgeChild, edgeFrom, to)
 		if err != nil {
 			emitGuidedStepResult(emit, n, "topology_edge_series", "", err)
 			return "", "", err
@@ -224,6 +268,9 @@ func (s *Server) guidedCallPeriodBundle(ctx context.Context, emit func(string, a
 		for _, p := range pts {
 			ps.Times = append(ps.Times, p.Time)
 			ps.Values = append(ps.Values, float64(p.Calls))
+		}
+		if len(pts) > 0 {
+			ps.Times, ps.Values = fillSeries(ps.Times, ps.Values, 300, edgeFrom, to) // v0.10.444
 		}
 		series = append(series, ps)
 		srcParts = append(srcParts, "topology_edges_5m")
@@ -239,7 +286,7 @@ func (s *Server) guidedCallPeriodBundle(ctx context.Context, emit func(string, a
 			return err
 		}
 		emitGuidedStepResult(emit, n, "span_series", fmt.Sprintf("%d seri", len(ser)), nil)
-		series = append(series, spanMetricSeriesToPeriod(label, ser, 60, note))
+		series = append(series, spanMetricSeriesToPeriod(label, ser, 60, note, minFrom, to))
 		return nil
 	}
 	a := route.PairFrom

@@ -51,8 +51,13 @@ func TestLogFieldSearchQueryPerBackend(t *testing.T) {
 	if q, note := logFieldSearchQuery("url.full", "/api/x", true, "elasticsearch"); q != `url.full:"/api/x"` || !strings.Contains(note, "TAM İFADE") {
 		t.Fatalf("ES içeren tam ifade + not: %q %q", q, note)
 	}
-	if q, note := logFieldSearchQuery("message", "time out", true, "clickhouse"); q != `message:"time out"` || note == "" {
-		t.Fatalf("boşluklu değer CH'de de ifade: %q %q", q, note)
+	// v0.10.444 — gövde alanı CH'de ifade de alt-dize: not yok; gövde dışı
+	// boşluklu değer CH notu tam eşitlik der (ES'in joker notu değil).
+	if q, note := logFieldSearchQuery("message", "time out", true, "clickhouse"); q != `message:"time out"` || note != "" {
+		t.Fatalf("gövde alanı CH'de alt-dize, not yok: %q %q", q, note)
+	}
+	if q, note := logFieldSearchQuery("url.full", "/api/x y", true, "clickhouse"); q != `url.full:"/api/x y"` || !strings.Contains(note, "TAM EŞİTLİK") || strings.Contains(note, "joker desteklenmediğinden") {
+		t.Fatalf("CH gövde dışı boşluklu değer notu: %q %q", q, note)
 	}
 	if q, note := logFieldSearchQuery("message", `a"b`, false, "clickhouse"); q != `message:"a\"b"` || note != "" {
 		t.Fatalf("tam eşleşme kaçışlı: %q %q", q, note)
@@ -151,6 +156,12 @@ func TestRenderLogFieldEvidenceTR(t *testing.T) {
 	}
 	if strings.Contains(ev, strings.Repeat("y", 200)) {
 		t.Fatal("gövde 160 rune'a kırpılmalı")
+	}
+	// v0.10.444 — tavanlı sayım "en az", kısmi sonuç uyarısı.
+	page.TotalIsLowerBound, page.Partial = true, true
+	lb := renderLogFieldEvidenceTR(page, route, "", 3600)
+	if !strings.Contains(lb, "EN AZ 42 kayıt") || strings.Contains(lb, "toplam 42 kayıt") || !strings.Contains(lb, "Kısmi sonuç") {
+		t.Fatalf("tavan/kısmi dürüstlüğü:\n%s", lb)
 	}
 	empty := renderLogFieldEvidenceTR(&logstore.Page{}, route, "", 3600)
 	if !strings.Contains(empty, "eşleşen log yok") {

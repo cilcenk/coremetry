@@ -147,8 +147,16 @@ func logFieldSearchQuery(field, value string, contains bool, backend string) (q,
 	if !contains {
 		return phrase, ""
 	}
-	if backend == "clickhouse" && logFieldBareValueRe.MatchString(value) {
-		return field + ":*" + value + "*", ""
+	if backend == "clickhouse" {
+		if logFieldBareValueRe.MatchString(value) {
+			return field + ":*" + value + "*", ""
+		}
+		// v0.10.444 — gövde alanları CH'de ifade eşleşmesinde de alt-dize
+		// arar (multiSearchAnyCaseInsensitive): içeren semantiği korunur.
+		if logFieldBodyFields[strings.ToLower(field)] {
+			return phrase, ""
+		}
+		return phrase, "'geçen' (içeren) araması: değer boşluk/özel karakter taşıdığından ClickHouse'ta TAM EŞİTLİK olarak koştu (tırnaksız joker güvenli değil); alt-dize eşleşmeleri eksik olabilir"
 	}
 	label := backend
 	if label == "" {
@@ -156,6 +164,10 @@ func logFieldSearchQuery(field, value string, contains bool, backend string) (q,
 	}
 	return phrase, fmt.Sprintf("'geçen' (içeren) araması %s'de baştan joker desteklenmediğinden TAM İFADE eşleşmesi olarak koştu; alt-dize eşleşmeleri eksik olabilir", label)
 }
+
+// logFieldBodyFields — CH'de gövde kolonuna eşlenen alan adları
+// (log_query_compile.go Resolve: message/body/msg → body).
+var logFieldBodyFields = map[string]bool{"message": true, "body": true, "msg": true}
 
 // guidedLogFieldBundle — arama + kanıt; route.LogQuery koşulan sorguyla
 // doldurulur (link aynı sorguyu taşır — ReqWindow deseninin ikizi).
@@ -217,7 +229,17 @@ func renderLogFieldEvidenceTR(page *logstore.Page, route guidedRoute, note strin
 	if route.Service != "" {
 		scope = ", servis: " + route.Service
 	}
-	fmt.Fprintf(&b, "Log araması — %s alanında %q %s kayıtlar (son %s%s): toplam %d kayıt.\n", route.LogField, route.LogValue, mode, fmtAgoTR(rangeS), scope, page.Total)
+	// v0.10.444 — sayım tavana dayandıysa (CH LogsCountCap / ES track_total
+	// _hits) "toplam" değil "en az"; kısmi sonuç (ES soft timeout/shard)
+	// ilan edilir — model kesin sayı iddia etmesin.
+	total := fmt.Sprintf("toplam %d kayıt", page.Total)
+	if page.TotalIsLowerBound {
+		total = fmt.Sprintf("EN AZ %d kayıt (sayım tavana ulaştı, gerçek toplam daha yüksek)", page.Total)
+	}
+	fmt.Fprintf(&b, "Log araması — %s alanında %q %s kayıtlar (son %s%s): %s.\n", route.LogField, route.LogValue, mode, fmtAgoTR(rangeS), scope, total)
+	if page.Partial {
+		b.WriteString("⚠ Kısmi sonuç: arka uç zaman aşımı/shard hatası — sayılar eksik olabilir.\n")
+	}
 	if note != "" {
 		b.WriteString("⚠ " + note + "\n")
 	}

@@ -54,6 +54,10 @@ func TestExtractAbsoluteWindows(t *testing.T) {
 	if chatLocation(180).String() != "UTC+3" || chatLocation(0) != time.UTC || chatLocation(9999) != time.UTC {
 		t.Fatal("konum")
 	}
+	// v0.10.444 — yarım saatlik ofsetler dakikayla etiketlenir.
+	if chatLocation(330).String() != "UTC+5:30" || chatLocation(-210).String() != "UTC-3:30" || chatLocation(345).String() != "UTC+5:45" {
+		t.Fatalf("yarım saat etiketi: %s %s", chatLocation(330), chatLocation(-210))
+	}
 	if l := absWindowLabel(absWindow{at(2026, 8, 8, 4, 0), at(2026, 8, 8, 8, 0)}, ist); l != "08/08 04:00–08:00" {
 		t.Fatalf("etiket: %s", l)
 	}

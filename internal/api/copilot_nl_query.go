@@ -156,9 +156,12 @@ func (s *Server) copilotNLToQuery(w http.ResponseWriter, r *http.Request) {
 	// and wrapped its output in ```. Common enough to be worth the
 	// belt-and-suspenders parse step.
 	out = strings.TrimSpace(out)
-	out = strings.TrimPrefix(out, "```json")
-	out = strings.TrimPrefix(out, "```")
-	out = strings.TrimSuffix(out, "```")
+	// v0.10.399 (CoSRE denetimi P3) — gevezelik küçük modelde beklenen
+	// hâl ("İşte JSON: {…} umarım yardımcı olur"); çit kırpmak yetmez.
+	// Kardeş yüzeylerle aynı ayıklayıcı: ilk `{` … son `}`.
+	if obj, ok := salvageJSONObject(out); ok {
+		out = obj
+	}
 	out = strings.TrimSpace(out)
 
 	var parsed nlToQueryResponse

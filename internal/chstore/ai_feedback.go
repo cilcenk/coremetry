@@ -165,6 +165,37 @@ func (s *Store) ListNegativeFeedbackCalls(ctx context.Context, from, to time.Tim
 	return out, rows.Err()
 }
 
+// NegativeFeedbackCallByExchange — v0.10.431: tek 👎 satırının NOKTA
+// okuması (evalset export ?exchangeId=). Eskiden export son 200 satırlık
+// pencereyi çekip Go'da süzüyordu: 7 günden eski ya da 201. satırdaki bir
+// exchange "cases: []" ile sessizce boş dönüyordu. Zaman sınırı yok —
+// kimlik zaten tekil; verdict=-1 şartı korunur (👍 vaka olmaz). Yoksa nil.
+func (s *Store) NegativeFeedbackCallByExchange(ctx context.Context, exchangeID string) (*NegativeFeedbackCall, error) {
+	if exchangeID == "" {
+		return nil, nil
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT f.exchange_id, f.surface, toUnixTimestamp64Nano(f.created_at), f.user_email,
+		       c.prompt_sample, c.response_sample, f.comment
+		FROM ai_feedback AS f FINAL
+		LEFT JOIN ai_calls AS c ON c.exchange_id = f.exchange_id
+		WHERE f.exchange_id = ? AND f.verdict = -1
+		LIMIT 1
+		SETTINGS max_execution_time = 5`, exchangeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	var r NegativeFeedbackCall
+	if err := rows.Scan(&r.ExchangeID, &r.Surface, &r.CreatedAt, &r.UserEmail, &r.Prompt, &r.Response, &r.Comment); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // AIFeedbackCommentByExchange — flip'te yorumun KORUNMASI için nokta
 // okuma (v0.9.1193). ReplacingMergeTree tam-satır replace: yorum
 // göndermeyen bir re-rate (👎→👍 ya da başka yüzeyden tık) yeni sürümü

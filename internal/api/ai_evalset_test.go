@@ -63,4 +63,10 @@ func TestAIEvalsetRoutesRegisteredOutsideAPIGo(t *testing.T) {
 	if !strings.Contains(string(src), `s.audit(r, "ai.evalset.export"`) || strings.Contains(string(src), "requireCopilot(") {
 		t.Fatal("audit yok ya da copilot kapısı var (veri okuması kapısız olmalı)")
 	}
+	// v0.10.431 — exchangeId nokta okuma: pencere/200 tavanından sonra Go
+	// süzgeci yok; bulunamayan kimlik 404.
+	if !strings.Contains(string(src), "NegativeFeedbackCallByExchange(r.Context(), only)") || strings.Contains(string(src), "fb.ExchangeID != only") ||
+		!strings.Contains(string(src), "http.StatusNotFound") {
+		t.Fatal("exchangeId nokta okuma + 404 yolu yok")
+	}
 }

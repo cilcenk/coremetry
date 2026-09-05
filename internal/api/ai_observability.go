@@ -94,7 +94,7 @@ func (s *Server) putAIRates(w http.ResponseWriter, r *http.Request) {
 // rest of the handler — surface is derived from the request path
 // and the auth claims live in ctx via the auth middleware.
 func (s *Server) copilotExplain(r *http.Request, system, user string) (string, error) {
-	ctx, done := s.beginExplainSpan(r, explainCallCtx(r))
+	ctx, done := s.beginExplainSpan(r, s.explainCallCtx(r))
 	out, err := s.copilot.Explain(ctx, system, user)
 	done(err)
 	return out, err
@@ -114,7 +114,7 @@ func (s *Server) copilotExplain(r *http.Request, system, user string) (string, e
 // (sıfır delta + tam metin), yani çağıran her iki durumda da aynı
 // "cevap metni doğrunun kaynağıdır" sözleşmesini korur.
 func (s *Server) copilotExplainStream(r *http.Request, system, user string, onDelta func(string)) (string, error) {
-	ctx, done := s.beginExplainSpan(r, explainCallCtx(r))
+	ctx, done := s.beginExplainSpan(r, s.explainCallCtx(r))
 	out, err := s.copilot.StreamText(ctx, system, user, onDelta)
 	done(err)
 	return out, err
@@ -128,18 +128,19 @@ func (s *Server) copilotExplainStream(r *http.Request, system, user string, onDe
 // buraya da: çağıran ctx'e exchange kimliği koyduysa (withExchange)
 // ai_calls satırına biner ve tek-atış prose yüzeyleri de oylanabilir
 // olur. O satırın YOKLUĞU, 15 yüzeyin 👍/👎 alamamasının tek sebebiydi.
-func explainCallCtx(r *http.Request) context.Context {
+func (s *Server) explainCallCtx(r *http.Request) context.Context {
 	c := auth.FromContext(r.Context())
 	uid, email := "", ""
 	if c != nil {
 		uid, email = c.UserID, c.Email
 	}
+	surface := aiSurfaceFromPath(r.URL.Path)
 	return copilot.WithMeta(r.Context(), copilot.CallMeta{
-		Surface:    aiSurfaceFromPath(r.URL.Path),
+		Surface:    surface,
 		UserID:     uid,
 		UserEmail:  email,
 		ExchangeID: copilot.MetaFromContext(r.Context()).ExchangeID,
-		Shield:     aiShield, // v0.10.421 (E6)
+		Shield:     s.aiShieldFor(r.Context(), surface), // v0.10.421 (E6); v0.10.431 tohumlu
 	})
 }
 
@@ -175,14 +176,15 @@ func (s *Server) copilotExplainMasked(r *http.Request, system, user, logUser str
 	if c != nil {
 		uid, email = c.UserID, c.Email
 	}
+	surface := aiSurfaceFromPath(r.URL.Path)
 	meta := copilot.CallMeta{
-		Surface:   aiSurfaceFromPath(r.URL.Path),
+		Surface:   surface,
 		UserID:    uid,
 		UserEmail: email,
 		// Çağıran ctx'e bir exchange kimliği koyduysa TAŞI (v0.9.593
 		// ile aynı sözleşme — geri bildirim rayı kopmasın).
 		ExchangeID: copilot.MetaFromContext(r.Context()).ExchangeID,
-		Shield:     aiShield, // v0.10.421 (E6) — GERÇEK prompt'la sayar, maskeli örnekle değil
+		Shield:     s.aiShieldFor(r.Context(), surface), // v0.10.421 (E6) — GERÇEK prompt'la sayar, maskeli örnekle değil; v0.10.431 tohumlu
 	}
 	if logUser != "" && logUser != user {
 		meta.PromptLogOverride = system + "\n\n" + logUser
@@ -231,7 +233,7 @@ func (s *Server) copilotExplainJSON(r *http.Request, system, user string, schema
 		// sonra bir handler kimliği ctx'e koyup yanıtında döndürdüğü
 		// anda o cevap oylanabilir hale geliyor.
 		ExchangeID: copilot.MetaFromContext(r.Context()).ExchangeID,
-		Shield:     aiShield, // v0.10.421 (E6)
+		Shield:     s.aiShieldFor(r.Context(), surface), // v0.10.421 (E6); v0.10.431 tohumlu
 	})
 	ctx, done := s.beginExplainSpan(r, ctx)
 	out, err := s.copilot.Explain(ctx, system, user)
@@ -252,7 +254,7 @@ func (s *Server) copilotExplainSurface(ctx context.Context, surface, system, use
 	meta := copilot.MetaFromContext(ctx)
 	meta.Surface = surface
 	if meta.Shield == nil {
-		meta.Shield = aiShield // v0.10.421 (E6)
+		meta.Shield = s.aiShieldFor(ctx, surface) // v0.10.421 (E6); v0.10.431 tohumlu + yüzey kapısı
 	}
 	sctx, done := s.beginExplainSpanCtx(copilot.WithMeta(ctx, meta)) // v0.10.425 (O2)
 	out, err := s.copilot.Explain(sctx, system, user)
@@ -272,7 +274,7 @@ func (s *Server) copilotStreamSurface(ctx context.Context, surface, system, user
 	meta := copilot.MetaFromContext(ctx)
 	meta.Surface = surface
 	if meta.Shield == nil {
-		meta.Shield = aiShield // v0.10.421 (E6)
+		meta.Shield = s.aiShieldFor(ctx, surface) // v0.10.421 (E6); v0.10.431 tohumlu + yüzey kapısı
 	}
 	sctx, done := s.beginExplainSpanCtx(copilot.WithMeta(ctx, meta)) // v0.10.425 (O2)
 	out, err := s.copilot.StreamText(sctx, system, user, onDelta)
@@ -488,7 +490,7 @@ func (s *Server) copilotExplainJSONSurface(ctx context.Context, surface, system,
 	meta := copilot.MetaFromContext(ctx)
 	meta.Surface = surface
 	if meta.Shield == nil {
-		meta.Shield = aiShield // v0.10.421 (E6)
+		meta.Shield = s.aiShieldFor(ctx, surface) // v0.10.421 (E6); v0.10.431 tohumlu + yüzey kapısı
 	}
 	sctx, done := s.beginExplainSpanCtx(copilot.WithMeta(jctx, meta)) // v0.10.425 (O2)
 	out, err := s.copilot.Explain(sctx, system, user)

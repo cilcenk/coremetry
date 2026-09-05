@@ -136,6 +136,9 @@ const bucketSuffix = "_bucket"
 // distribution to read.
 const labelLE = "le"
 
+// labelVMRange — VictoriaMetrics native histogram kova etiketi (v0.10.391).
+const labelVMRange = "vmrange"
+
 // promOpts carries the SETTINGS-derived knobs the translation needs
 // (v0.9.1164). It exists so promql.go can stay what its header claims:
 // pure, a function of its arguments, table-testable without a live VM.
@@ -737,10 +740,17 @@ func buildPromQL(f chstore.MetricQueryFilter, opts promOpts) (string, error) {
 		if err := guardBucketScan(classPercentile, len(extra), opts.AllowUnfilteredPercentiles); err != nil {
 			return "", err
 		}
-		by := make([]string, 0, len(labels)+1)
-		by = append(by, labelLE)
+		// v0.10.391 (dış skill denetimi A3) — `vmrange` de by-listesinde:
+		// VictoriaMetrics OTLP exponential histogramı kendi biçimine
+		// (`<ad>_bucket{vmrange="lo...hi"}`) çevirir, `le` taşımaz. Yalnız
+		// `by (le)` o serileri tek kovaya (le="") çökertip histogram_quantile'a
+		// sessizce yanlış bir p95 verdiriyordu. MetricsQL histogram_quantile
+		// le VE vmrange kovalarını anlar; klasik kovada vmrange boş etiket
+		// olarak zararsız kalır.
+		by := make([]string, 0, len(labels)+2)
+		by = append(by, labelLE, labelVMRange)
 		for _, l := range labels {
-			if l != labelLE {
+			if l != labelLE && l != labelVMRange {
 				by = append(by, l)
 			}
 		}

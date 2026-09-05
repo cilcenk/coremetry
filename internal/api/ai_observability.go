@@ -139,6 +139,7 @@ func explainCallCtx(r *http.Request) context.Context {
 		UserID:     uid,
 		UserEmail:  email,
 		ExchangeID: copilot.MetaFromContext(r.Context()).ExchangeID,
+		Shield:     aiShield, // v0.10.421 (E6)
 	})
 }
 
@@ -181,6 +182,7 @@ func (s *Server) copilotExplainMasked(r *http.Request, system, user, logUser str
 		// Çağıran ctx'e bir exchange kimliği koyduysa TAŞI (v0.9.593
 		// ile aynı sözleşme — geri bildirim rayı kopmasın).
 		ExchangeID: copilot.MetaFromContext(r.Context()).ExchangeID,
+		Shield:     aiShield, // v0.10.421 (E6) — GERÇEK prompt'la sayar, maskeli örnekle değil
 	}
 	if logUser != "" && logUser != user {
 		meta.PromptLogOverride = system + "\n\n" + logUser
@@ -229,6 +231,7 @@ func (s *Server) copilotExplainJSON(r *http.Request, system, user string, schema
 		// sonra bir handler kimliği ctx'e koyup yanıtında döndürdüğü
 		// anda o cevap oylanabilir hale geliyor.
 		ExchangeID: copilot.MetaFromContext(r.Context()).ExchangeID,
+		Shield:     aiShield, // v0.10.421 (E6)
 	})
 	ctx, done := s.beginExplainSpan(r, ctx)
 	out, err := s.copilot.Explain(ctx, system, user)
@@ -248,6 +251,9 @@ func (s *Server) copilotExplainJSON(r *http.Request, system, user string, schema
 func (s *Server) copilotExplainSurface(ctx context.Context, surface, system, user string) (string, error) {
 	meta := copilot.MetaFromContext(ctx)
 	meta.Surface = surface
+	if meta.Shield == nil {
+		meta.Shield = aiShield // v0.10.421 (E6)
+	}
 	return s.copilot.Explain(copilot.WithMeta(ctx, meta), system, user)
 }
 
@@ -262,6 +268,9 @@ func (s *Server) copilotExplainSurface(ctx context.Context, surface, system, use
 func (s *Server) copilotStreamSurface(ctx context.Context, surface, system, user string, onDelta func(string)) (string, error) {
 	meta := copilot.MetaFromContext(ctx)
 	meta.Surface = surface
+	if meta.Shield == nil {
+		meta.Shield = aiShield // v0.10.421 (E6)
+	}
 	return s.copilot.StreamText(copilot.WithMeta(ctx, meta), system, user, onDelta)
 }
 
@@ -362,7 +371,7 @@ func (s *Server) aiStats(w http.ResponseWriter, r *http.Request) {
 	// v0.10.409 — yanıt şekli değişti (byErrorClass/avgTtftMs/extended) ve
 	// dolum boot-zamanı bayrağına bağlı: ikisi de anahtarda, deploy sonrası
 	// bayat şekil servis edilmez.
-	key := fmt.Sprintf("ai-stats:v409:from=%d:to=%d:ext=%t",
+	key := fmt.Sprintf("ai-stats:v421:from=%d:to=%d:ext=%t",
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute), chstore.AICallsExtended())
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		return s.store.ComputeAIStats(ctx, from, to)
@@ -472,5 +481,8 @@ func (s *Server) copilotExplainJSONSurface(ctx context.Context, surface, system,
 	}
 	meta := copilot.MetaFromContext(ctx)
 	meta.Surface = surface
+	if meta.Shield == nil {
+		meta.Shield = aiShield // v0.10.421 (E6)
+	}
 	return s.copilot.Explain(copilot.WithMeta(jctx, meta), system, user)
 }

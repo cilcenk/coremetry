@@ -10,6 +10,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/logstore"
+	"github.com/cilcenk/coremetry/internal/rca"
 )
 
 // ExceptionExplainer (v0.9.415, operatör istegi #1) — ProblemExplainer'ın
@@ -118,6 +119,9 @@ func (e *ExceptionExplainer) run(ctx context.Context) {
 		in := BuildExceptionExplainInput(ctx, e.store, e.logs, &g)
 		cctx := copilot.WithMeta(ctx, copilot.CallMeta{
 			Surface: "exception-auto-explain", UserID: "system",
+			Shield: func(prompt, answer string) uint8 {
+				return rca.CountUnknownEntities(rca.LowerKnownSet(), prompt, answer)
+			}, // v0.10.421 (E6)
 		})
 		summary, err := e.copilot.Explain(cctx, copilot.SystemPromptException(), in.User)
 		if err != nil {

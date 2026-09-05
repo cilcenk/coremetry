@@ -264,3 +264,21 @@ describe('stackItemOrder', () => {
     expect(stackItemOrder([0, 2, 0, 5], true)).toEqual([3, 1, 0, 2]);
   });
 });
+
+// v0.10.383 — dış skill denetimi A2: karşılaştırma hayaleti yığına
+// katılmaz. Pod throughput compare açıkken ~2× okunuyordu.
+describe('stackData/stackBands — ham (hayalet) seri yığın dışı', () => {
+  const m: SeriesMatrix = [[1, 2], [1, 1], [2, 2], [10, 10]];
+  it('ham seri toplama katılmaz ve AYNEN geçer', () => {
+    const out = stackData(m, new Set(), new Set([2]));
+    expect(out[1]).toEqual([1, 1]);
+    expect(out[2]).toEqual([3, 3]);   // hayalet olmadan koşan toplam
+    expect(out[3]).toEqual([10, 10]); // hayalet ham
+  });
+  it('ham seri banda girmez', () => {
+    expect(stackBands(3, new Set(), new Set([2]))).toEqual([{ series: [2, 1] }]);
+  });
+  it('rawIdx verilmezse davranış aynen (geriye uyum)', () => {
+    expect(stackData(m, new Set())[3]).toEqual([13, 13]);
+  });
+});

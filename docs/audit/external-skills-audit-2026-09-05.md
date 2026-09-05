@@ -14,15 +14,15 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
-| A1 | JVM GC penceresi ×2: `step=win` ile 2 nokta döner, ilk noktanın `increase`'i pencere DIŞI; `seriesWindowTotal` ikisini toplar | `internal/vmetrics/runtime_pods.go:69,126` | `lastValue` (capacity.go:57 kalıbı) | ~10 dk |
+| A1 | **GEMİDE v0.10.376** — JVM GC penceresi ×2: `step=win` ile 2 nokta döner, ilk noktanın `increase`'i pencere DIŞI; `seriesWindowTotal` ikisini toplar | `internal/vmetrics/runtime_pods.go:69,126` | `lastValue` (capacity.go:57 kalıbı) | ~10 dk |
 | A2 | Yığılmış alanda karşılaştırma hayaleti yığına katılıyor → pod throughput ~2× | `components/chart/corePanelEntry.tsx:130-139`, `lib/chart/stacking.ts:34` | `stackData`'ya `excludeIdx`; hayalet ham çizgi | ~2 saat |
 | A3 | Yüzdelik dalında `vmrange` korumasız: exponential histogramda `le=""` tek kova → sessiz yanlış p95 | `internal/vmetrics/promql.go:741,1211` | sonuçta `le` yoksa `vmrange` / not | ~yarım gün |
 | A4 | `attrInt` yalnız IntValue: string/double `http.status_code` → 0, 5xx sınıflandırması eksik | `internal/otlp/convert.go:554` | string/double dalları + test tip ekseni | ~1 saat |
-| A5 | `MetricPresentKeys` RTMetric, rate sorgusu Metric okuyor → `errorsUnknown` yanlış tarafta | `internal/api/service_metric_red.go:157-177` | ikisi de `id.RTMetric` | ~10 dk |
+| A5 | ~~`MetricPresentKeys` RTMetric, rate sorgusu Metric okuyor~~ — **bulgu değil**: iki ad aynı ailenin (`_count` ↔ taban) etiketlerini paylaşır, `labelNames` discovery adaylarıyla çözer | `internal/api/service_metric_red.go:157-177` | ikisi de `id.RTMetric` | ~10 dk |
 | A6 | VM uç-damgası kaynakta değil 3 çağrı yerinde telafi ediliyor; diğer tüketicilerde x ekseni kayık (7g'de ~34 dk) | `internal/vmetrics/throughput.go:107`, `endpoints_metric.go:439`, `hosts_metric.go:314`, `capacity.go:205` | kaymayı `runRangeQuery`'de bir kez uygula, 3 telafiyi kaldır | ~yarım gün |
 | A7 | Sparkline'da "trafik yok" ile "%0 hata" aynı: null yerine 0 | `pages/Services.tsx:756,871` | `(number\|null)[]`, null'da path kes | ~2 saat |
 | A8 | Eşik çizgisi y-ölçeği dışındaysa sessizce yok (alarm önizlemesi, pod CPU limiti) | `lib/chart/overlays.ts:63`, `CorePanel.tsx:815` | eşiği `softMin/softMax`'a kat, sığmazsa kenar işareti | ~2 saat |
-| A9 | Yığılmış alanda sıfır taban yok (`softMin` yalnız bars) | `components/chart/CorePanel.tsx:634` | `(bars \|\| stacked) ? 0` | ~10 dk |
+| A9 | Yığılmış alanda sıfır taban yok — **v0.9.811 sözleşmesiyle çelişir** (`CorePanel.smoke.test`: "area ve stacked dokunulmadan kalır"); operatör kararı olmadan uygulanmaz | `components/chart/CorePanel.tsx:634` | `(bars \|\| stacked) ? 0` | ~10 dk |
 | A10 | Pasta/yığın `isAdditiveUnit`'e sormuyor ("p99'un payı %31") | `pages/explore/SummaryViz.tsx:56` | rail düğmelerini kapıla, top-6+diğer | ~2 saat |
 | A11 | `http.target` ham hâliyle LowCardinality `http_route`'a (query string dahil) | `internal/otlp/convert.go:142`, `store.go:1031` | `NormalizePathTemplate`'ten geçir | ~1 saat |
 | A12 | RED paneli `rateWindow=180` varsayılanı Settings tabanını (300 s) atlıyor; 120 s export'ta delikli rate | `internal/api/service_metric_red.go:274`, `promql.go:1088` | varsayılan 0 ya da `max(180, taban)` — **davranış değişikliği, sorulur** | ~10 dk |
@@ -52,7 +52,7 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 | C8 | Traces'te her tuş vuruşu 1370 satırlık gövde + memo'suz `AggregateTable` (200 satır) | `pages/Traces.tsx:318,1262,1636` | `memo` + `useDeferredValue` | ~3 saat |
 | C9 | 112 effect-fetch'in 67'si yarış korumasız (216 `useQuery` varken) | ör. `AnomaliesPage.tsx:302`, Traces 7, PanelRenderer 7 | `useQuery`'ye taşı (ilk dilim) | ~yarım gün |
 | C10 | `DataTableColgroup` fit memo'su 20 sitede hiç isabet etmiyor (satır içi dizi) | `DataTable.tsx:448-459` | sabit diziler / primitif dep | ~30 dk |
-| C11 | Endpoints satır anahtarı `rowKey\|i` → sıralamada tüm tbody remount | `pages/Endpoints.tsx:747` | `key={rowKey}` | ~10 dk |
+| C11 | **GEMİDE v0.10.377** — Endpoints satır anahtarı `rowKey\|i` → sıralamada tüm tbody remount | `pages/Endpoints.tsx:747` | `key={rowKey}` | ~10 dk |
 | C12 | Traces 31 useState / 0 useCallback; `startResize` her pointermove'da yeniden | `Traces.tsx`, `DataTable.tsx:224-243` | reducer + useCallback; ref | ~yarım gün |
 
 ## D. Erişilebilirlik / tasarım
@@ -64,7 +64,7 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 | D3 | 42 tıklanabilir `<tr>`'nin 37'si klavyeye kapalı; `getRowHref` 0 tüketici | `pages/Traces.tsx:1656`, `DataTable.tsx:81` | AnomaliesPage kalıbı / row-link | ~yarım gün |
 | D4 | `CommandPalette` diyalog değil; ham renkler | `components/CommandPalette.tsx:553-583` | Modal kabuğu + listbox + token | ~2-3 saat |
 | D5 | 18 sekme şeridi, 0 `role="tablist"` | `.tab-strip` siteleri | `TabStrip` atomu | ~3-4 saat |
-| D6 | `FlashBox` aria-live yok — ayar kaydı ekran okuyucuya ulaşmıyor | `pages/settings/shared.tsx:40` | `role=status/alert` | ~10 dk |
+| D6 | **GEMİDE v0.10.378** — `FlashBox` aria-live yok — ayar kaydı ekran okuyucuya ulaşmıyor | `pages/settings/shared.tsx:40` | `role=status/alert` | ~10 dk |
 | D7 | Palet `--ok/--warn` hex'leriyle çakışıyor; renk körlüğünde ~3 küme; 8 seride çakışma ~%98 | `lib/chartFmt.ts:135-159` | Okabe-Ito/8 + panel-içi slot | ~yarım gün |
 | D8 | LatencyHeatmap tema-kör, lejantsız, çok günlü eksende tarih yok, `--warn` fallback yanlış | `components/LatencyHeatmap.tsx:28-33,264,278,468` | tek-hue rampa + useThemeTick + lejant | ~yarım gün |
 | D9 | Dashboard birim alanı serbest metin; karo/eksen iki sözlük | `components/dashboard/PanelEditor.tsx:386`, `PanelRenderer.tsx:1163` | `<select>` + normalizasyon | ~3 saat |

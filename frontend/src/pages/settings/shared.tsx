@@ -39,8 +39,11 @@ export function Row({ children }: { children: ReactNode }) {
 // re-resolved under the light/redhat themes.
 export function FlashBox({ kind, children }: { kind: 'ok' | 'err'; children: ReactNode }) {
   const tok = kind === 'ok' ? 'var(--ok)' : 'var(--err)';
+  // v0.10.379 (dış skill denetimi D6) — 20+ ayar sekmesinin kaydet/hata
+  // geri bildirimi buradan geçer; role + aria-live olmadan ekran okuyucu
+  // sonucu hiç duymuyordu. Hata "alert" (assertive), başarı "status".
   return (
-    <div style={{
+    <div role={kind === 'err' ? 'alert' : 'status'} aria-live={kind === 'err' ? 'assertive' : 'polite'} style={{
       color: tok, fontSize: 12, marginTop: 12,
       padding: '6px 10px',
       background: `color-mix(in srgb, ${tok} 8%, transparent)`,

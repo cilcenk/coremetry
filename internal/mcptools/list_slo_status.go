@@ -89,7 +89,7 @@ func listSLOStatusTool(d Deps) mcp.Tool {
 				}
 				out = append(out, row)
 			}
-			return map[string]any{"slos": out, "count": len(out), "total": total}, nil
+			return map[string]any{"slos": out, "count": len(out), "total": total, "has_more": total > len(out)}, nil // v0.10.407 — sayfa doluysa "hepsi bu" değil (CoSRE denetimi M3)
 		},
 	}
 }

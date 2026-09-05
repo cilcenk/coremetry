@@ -563,7 +563,7 @@ func listServicesTool(d Deps) mcp.Tool {
 			if err != nil {
 				return nil, err
 			}
-			res := map[string]any{"services": rows, "count": len(rows), "source": src}
+			res := map[string]any{"services": rows, "count": len(rows), "source": src, "has_more": len(rows) >= limit} // v0.10.407 — sayfa doluysa "hepsi bu" değil (CoSRE denetimi M3)
 			if a.Env != "" {
 				res["env"] = a.Env // echo the applied narrowing
 			}
@@ -838,6 +838,7 @@ func listProblemsTool(d Deps) mcp.Tool {
 			rows = chstore.SortProblemsByPriority(rows)
 			// Genişletilmiş tarama SAYFAYA kırpılır — model 25 satır
 			// istediyse 125 satır almasın.
+			hasMore := len(rows) > page
 			if len(rows) > page {
 				rows = rows[:page]
 			}
@@ -847,7 +848,7 @@ func listProblemsTool(d Deps) mcp.Tool {
 			// /problems ribbon shows. One batched GetHypotheses read;
 			// soft-fails to unenriched rows. Additive, omitempty field.
 			rows = d.Store.EnrichProblemsWithRootCause(ctx, rows)
-			res := map[string]any{"problems": rows, "count": len(rows)}
+			res := map[string]any{"problems": rows, "count": len(rows), "has_more": hasMore} // v0.10.407 — sayfa doluysa "hepsi bu" değil (CoSRE denetimi M3)
 			if a.Env != "" {
 				res["env"] = a.Env // echo the applied narrowing (v0.8.398)
 			}
@@ -918,7 +919,7 @@ func listAnomaliesTool(d Deps) mcp.Tool {
 				}
 				rows = filtered
 			}
-			return map[string]any{"anomalies": rows, "count": len(rows)}, nil
+			return map[string]any{"anomalies": rows, "count": len(rows), "has_more": len(rows) >= lim}, nil // v0.10.407 — sayfa doluysa "hepsi bu" değil (CoSRE denetimi M3)
 		},
 	}
 }

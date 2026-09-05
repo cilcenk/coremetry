@@ -154,3 +154,17 @@ func TestHTTPStatusAcceptsStringAndDouble(t *testing.T) {
 		t.Fatalf("non-numeric string must stay 0, got %d", got.HTTPStatus)
 	}
 }
+
+// v0.10.380 — dış skill denetimi A11: http.target HAM path + query taşır;
+// LowCardinality http_route'a şablon olarak iner (url.path ile aynı kural).
+func TestHTTPTargetIsTemplatedLikeURLPath(t *testing.T) {
+	got := spanWithAttrs(t, kvStr("http.target", "/api/accounts/12345?x=1"))
+	if got.HTTPRoute != "/api/accounts/:id" {
+		t.Fatalf("http.target → http_route: %q, want /api/accounts/:id", got.HTTPRoute)
+	}
+	// http.route varsa o kazanır — şablonlama devreye girmez.
+	got = spanWithAttrs(t, kvStr("http.route", "/api/accounts/{id}"), kvStr("http.target", "/api/accounts/12345"))
+	if got.HTTPRoute != "/api/accounts/{id}" {
+		t.Fatalf("http.route must win: %q", got.HTTPRoute)
+	}
+}

@@ -25,11 +25,21 @@ func podFake(t *testing.T, answers map[string]string) (*Service, *[]string) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("query")
 		queries = append(queries, q)
+		// v0.10.435 — EN UZUN eşleşen anahtar kazanır. Eskiden map sırasıyla
+		// ilk eşleşen dönüyordu: "memory_used" iğnesi
+		// "memory_used_after_last_gc" sorgusunun içinde de geçtiğinden
+		// post-GC sorgusu rastgele (map sırası) kullanım matrisini alıyor,
+		// test ~%50 kırmızı oluyordu (PostGC 900 ≠ 400). Sıra map'e değil
+		// özgüllüğe bağlı.
+		best, bestBody := "", ""
 		for needle, body := range answers {
-			if strings.Contains(q, needle) {
-				_, _ = w.Write([]byte(body))
-				return
+			if strings.Contains(q, needle) && len(needle) > len(best) {
+				best, bestBody = needle, body
 			}
+		}
+		if best != "" {
+			_, _ = w.Write([]byte(bestBody))
+			return
 		}
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[]}}`))
 	}))

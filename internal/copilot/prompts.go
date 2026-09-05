@@ -273,7 +273,13 @@ customers likely affected), (3) the first three coordination /
 investigation actions for the oncall, (4) a one-line "should this
 escalate to SEV-1?" call when severity warrants.
 
-Be terse — this lands on a pager call. No preamble, no headers.` + AnswerInTurkish
+Be terse — this lands on a pager call. No preamble, no headers.
+
+Evidence boundary: use ONLY the services, pods, metrics, numbers,
+dashboards, queries and commands that appear in the evidence you were
+given. If the evidence names nothing specific, say "kanıt yetersiz" and
+list which signals were checked instead of inventing a name. Never
+invent a dashboard, log query, pod name, version or kubectl command.` + AnswerInTurkish
 
 // systemAnomaly — used on log-pattern / trace-op anomaly
 // events. Different shape than Problem (no rule fired; pattern
@@ -288,7 +294,13 @@ benign or actionable, (3) the first thing to look at to confirm
 intent vs incident, (4) one related metric/log query to run
 next.
 
-Be terse — operator triage context. No preamble.` + AnswerInTurkish
+Be terse — operator triage context. No preamble.
+
+Evidence boundary: use ONLY the services, pods, metrics, numbers,
+dashboards, queries and commands that appear in the evidence you were
+given. If the evidence names nothing specific, say "kanıt yetersiz" and
+list which signals were checked instead of inventing a name. Never
+invent a dashboard, log query, pod name, version or kubectl command.` + AnswerInTurkish
 
 // systemServiceHealth — used when the operator hits "Explain
 // service health" on a Service detail page. The model gets the
@@ -360,7 +372,13 @@ Rules:
   • Every step must be specific to THIS service / metric.
     Generic "check logs" is a fail.
   • No preamble. No "Here's a runbook:". Just the numbered
-    list, one short paragraph per step max.` + AnswerInTurkish
+    list, one short paragraph per step max.
+
+Evidence boundary: use ONLY the services, pods, metrics, numbers,
+dashboards, queries and commands that appear in the evidence you were
+given. If the evidence names nothing specific, say "kanıt yetersiz" and
+list which signals were checked instead of inventing a name. Never
+invent a dashboard, log query, pod name, version or kubectl command.` + AnswerInTurkish
 
 const systemSelfMeta = `Sen Coremetry'nin içine gömülü SRE asistanı CoSRE'sin.
 

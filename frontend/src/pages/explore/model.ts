@@ -9,6 +9,7 @@
 // formulaSeries stay unit-testable without the chart bundle.
 
 import type { FilterExpr, FilterGroup, SpanAgg } from '@/lib/types';
+import { isAdditiveUnit } from '@/lib/chart/legendStats';
 import { isFlatAndGroup } from '@/lib/urlState';
 import { metricQuery, type MetricQuery, type MetricAgg } from '@/lib/metricQuery';
 import { TIER_DIM_KEYS, EXEMPLAR_AGGS } from '@/lib/resolverEligibility';
@@ -428,3 +429,14 @@ export function exemplarDescriptor(q: BuilderQuery): MetricQuery | null {
 
 // SpanAgg type re-export convenience for consumers narrowing span aggs.
 export type { SpanAgg };
+
+// vizDisabledFor — v0.10.393 (dış skill denetimi A10): pay (pie) ve yığın
+// (stacked) yalnız TOPLANABİLİR birimde anlamlı. p99'un "payı %31" ya da
+// gecikmelerin yığını sayı üretir ama anlam üretmez; isAdditiveUnit
+// (lejant Σ'sının kapısı) burada da karar verir. Dönüş: viz → sebep.
+export function vizDisabledFor(units: readonly string[]): Partial<Record<ExploreViz, string>> {
+  const bad = units.filter(u => !isAdditiveUnit(u));
+  if (bad.length === 0) return {};
+  const why = `Birim toplanamaz (${[...new Set(bad)].join(', ')}): pay/yığın anlamsız — oran, sayaç ya da bayt seçin`;
+  return { pie: why, stacked: why };
+}

@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { isAdditiveUnit } from '@/lib/chart/legendStats';
 import { fmtSmart } from '@/lib/chartFmt';
 import { buildGroupRows } from './GroupTable';
 import type { PanelData } from './PanelStack';
@@ -53,6 +54,16 @@ export function SummaryViz({ panels, mode }: { panels: PanelData[]; mode: 'stat'
           const slices = list
             .map(r => ({ ...r, v: isFinite(r.last) ? Math.max(0, r.last) : 0 }))
             .sort((a, b) => b.v - a.v);
+          // v0.10.393 (dış skill denetimi A10) — pay yalnız toplanabilir
+          // birimde anlamlı; "p99'un payı %31" sayı üretir, anlam üretmez.
+          const badUnit = list.map(r => r.unit).find(u => !isAdditiveUnit(u));
+          if (badUnit !== undefined) {
+            return (
+              <div key={letter} style={{ background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', color: 'var(--text2)', fontSize: 12 }}>
+                <b>{letter}</b> · pay hesaplanmadı: birim toplanamaz ({badUnit || 'birimsiz'}). Oran, sayaç ya da bayt için pasta; gecikme/yüzde için Stat ya da Top list.
+              </div>
+            );
+          }
           const total = slices.reduce((a, r) => a + r.v, 0);
           const size = 150, stroke = 18;
           const rad = (size - stroke) / 2;

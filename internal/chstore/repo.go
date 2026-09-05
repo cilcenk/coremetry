@@ -4729,6 +4729,8 @@ type LogFilter struct {
 	// passes it back; it dedups same-ns boundary rows by LogRow.ID
 	// (the cityHash64 rowkey). See logstore.Filter.SinceNs.
 	SinceNs int64
+	// SkipTotal (v0.10.414) — count() sorgusu atlanır; bkz. logstore.Filter.SkipTotal.
+	SkipTotal bool
 }
 
 // logsMaxLimit caps the per-page row count on the logs table. A
@@ -5051,10 +5053,14 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 	// sayılır; tavana çarpan sonuç "en az" demektir ve logstore sarmalayıcı
 	// bunu TotalIsLowerBound ile ilan eder (UI "100k+" basar).
 	var total uint64
-	if err := s.telemetryReadConn().QueryRow(ctx,
-		"SELECT count() FROM (SELECT 1 FROM logs "+wc.sql()+" LIMIT "+strconv.Itoa(LogsCountCap)+") SETTINGS max_execution_time = 25",
-		wc.args...).Scan(&total); err != nil {
-		return nil, 0, "", err
+	// v0.10.414 (A7) — çağıran toplamı okumayacaksa sayaç sorgusu hiç
+	// koşmaz (Context modalı: yarı pencere başına bir sorgu eksik).
+	if !f.SkipTotal {
+		if err := s.telemetryReadConn().QueryRow(ctx,
+			"SELECT count() FROM (SELECT 1 FROM logs "+wc.sql()+" LIMIT "+strconv.Itoa(LogsCountCap)+") SETTINGS max_execution_time = 25",
+			wc.args...).Scan(&total); err != nil {
+			return nil, 0, "", err
+		}
 	}
 
 	// Keyset: append the strict (time, span_id) predicate when a

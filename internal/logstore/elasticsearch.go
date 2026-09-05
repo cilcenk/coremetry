@@ -1461,7 +1461,7 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		// hanging the /api/logs handler. Mirrors searchForward +
 		// buildHistogramBody, which already carry these guards — this Search
 		// was the CH-vs-ES divergence laggard. v0.8.x.
-		"track_total_hits": 10000,
+		"track_total_hits": esTrackTotalHits(f.SkipTotal), // v0.10.414 — çağıran okumayacaksa false
 		"timeout":          esTimeoutFromEnv("10s"),
 	}
 	if usePIT {
@@ -1607,7 +1607,8 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	// without us blindly shipping more candidate field names.
 	// Only logs the empty-result case so steady-state traffic
 	// stays quiet.
-	if raw.Hits.Total.Value == 0 && (f.TraceID != "" || f.SpanID != "" || f.Service != "") {
+	// v0.10.414 — len(out) (Total sayılmamış olabilir; SkipTotal'da 0 döner).
+	if len(out) == 0 && (f.TraceID != "" || f.SpanID != "" || f.Service != "") {
 		// v0.8.239 — service-scoped queries joined the diagnostic: the
 		// service-detail Logs tab going empty was silent (0 hits is not
 		// an ES error, so /admin/elastic showed nothing). Now the exact
@@ -1622,15 +1623,19 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		log.Printf("[logstore-es] PARTIAL search result (%s) — every count below is a subset (service=%q, search=%q)",
 			d, f.Service, f.Search)
 	}
+	total, lowerBound := raw.Hits.Total.Value, raw.Hits.Total.isLowerBound()
+	if f.SkipTotal {
+		total, lowerBound = 0, false // v0.10.414 — sayılmadı, "sıfır eşleşme" değil
+	}
 	return &Page{
-		Total:             raw.Hits.Total.Value,
+		Total:             total,
 		Logs:              out,
 		NextCursor:        next,
 		EnvUnapplied:      envUnapplied,
 		HasTraceUnapplied: hasTraceUnapplied,
 		Partial:           raw.partial(),
 		ShardsFailed:      raw.Shards.Failed,
-		TotalIsLowerBound: raw.Hits.Total.isLowerBound(),
+		TotalIsLowerBound: lowerBound,
 	}, nil
 }
 
@@ -3273,4 +3278,14 @@ func ensureConventionalFields(out []string, seen map[string]struct{}) []string {
 		out = append(out, f)
 	}
 	return out
+}
+
+// esTrackTotalHits — v0.10.414 (log arama denetimi A7): çağıran Page.Total'ı
+// okumayacaksa (Filter.SkipTotal) tüm-shard sayımı hiç istenmez; aksi
+// hâlde ES varsayılan tavanı 10000 ("10000+" ilanı, v0.8.3 dersi).
+func esTrackTotalHits(skip bool) any {
+	if skip {
+		return false
+	}
+	return 10000
 }

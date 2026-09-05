@@ -1104,8 +1104,8 @@ export const api = {
     request<void>(`/api/operator-events/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   // v0.5.402 — surrounding context (±N logs around a pivot ts).
   // Datadog Context tab equivalent. Two parallel server-side
-  // searches (before / after); 30-min symmetric window, capped
-  // at n=200 per side.
+  // searches (before / after — v0.10.414: gerçekten paralel, toplam
+  // sayılmaz); 30-min symmetric window, capped at n=200 per side.
   // v0.9.1249 — pod: bağlamı tek podun satırlarına daraltır (boş =
   // tüm podlar). Sunucu hem ES hem CH tarafında yapısal clause uygular.
   logsContext: (params: { ts: number; service?: string; env?: string; pod?: string; n?: number; search?: string }) =>

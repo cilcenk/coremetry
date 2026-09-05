@@ -31,8 +31,8 @@ func (s *Server) registerLogsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/logs/field-values", s.getLogsFieldValues)
 	// v0.5.402 — surrounding context (±N logs around a pivot ts).
 	// Datadog Context tab equivalent. Two parallel logstore.Search
-	// calls (before / after) so the operator sees what was emitted
-	// either side of the log they're investigating.
+	// calls (before / after — gerçekten paralel + sayaçsız v0.10.414) so
+	// the operator sees what was emitted either side of the log.
 	mux.HandleFunc("GET /api/logs/context", s.getLogsContext)
 	// v0.5.244 — Drain-extracted log template ledger. Persistent
 	// templates with sticky first_seen so the operator can ask

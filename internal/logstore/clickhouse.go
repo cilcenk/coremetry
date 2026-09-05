@@ -43,6 +43,7 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		Cursor:    f.Cursor,    // v0.7.22 — opaque CH keyset token round-trip
 		Ascending: f.Ascending, // v0.7.83 — oldest-first for Context "after"
 		SinceNs:   f.SinceNs,   // v0.8.x — forward-tail (live-tail SSE)
+		SkipTotal: f.SkipTotal, // v0.10.414 — sayaç sorgusu atlanır (A7)
 	})
 	if err != nil {
 		return nil, err
@@ -97,7 +98,8 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	}
 	// v0.10.382 — GetLogs sayacı LogsCountCap'e kadar sayar; tavana çarpan
 	// toplam "en az" demektir (ES'in track_total_hits tavanıyla aynı ilan).
-	return &Page{Total: int(total), TotalIsLowerBound: total >= chstore.LogsCountCap, Logs: out, NextCursor: next}, nil
+	// v0.10.414 — SkipTotal'da total 0 "sayılmadı"dır; tavan bayrağı da kurulmaz.
+	return &Page{Total: int(total), TotalIsLowerBound: !f.SkipTotal && total >= chstore.LogsCountCap, Logs: out, NextCursor: next}, nil
 }
 
 // ── logs-table attribute lookups (v0.8.400) ─────────────────────────────────

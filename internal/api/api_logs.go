@@ -768,7 +768,8 @@ func logsTemplatesKey(sortBy string, since time.Duration, limit int, service str
 // to the same service. Datadog Context tab equivalent — operator
 // clicks a log line, sees what was emitted just before and just
 // after, without leaving /logs to rebuild a time-bounded filter
-// by hand. Two parallel logstore.Search calls; one for the
+// by hand. Two parallel logstore.Search calls (GERÇEKTEN paralel ve
+// sayaçsız v0.10.414'ten beri — searchContextHalves); one for the
 // before window (DESC limit n) and one for the after window
 // (ASC limit n). 30-minute symmetric window — wide enough to
 // catch a slow incident, narrow enough that the search stays
@@ -836,6 +837,9 @@ func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
 		From:    pivot.Add(-30 * time.Minute),
 		To:      pivot,
 		Limit:   n,
+		// v0.10.414 (A7) — modal Total'ı okumaz: ES track_total_hits:false,
+		// CH count() atlanır.
+		SkipTotal: true,
 	}
 	afterF := logstore.Filter{
 		Service:   service,
@@ -846,6 +850,7 @@ func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
 		To:        pivot.Add(30 * time.Minute),
 		Limit:     n,
 		Ascending: true,
+		SkipTotal: true, // v0.10.414 (A7)
 	}
 	key := logsContextKey(ts, service, env, pod, search, n)
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
@@ -866,14 +871,8 @@ func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
 				"reason":   "log backend slow/unreachable",
 			}
 		}
-		beforePage, err := logstore.SearchWithTimeout(ctx, s.logs, beforeF, logsContextBudget)
-		if err != nil {
-			if errors.Is(err, logstore.ErrBackendSlow) {
-				return degradedPayload(err), nil
-			}
-			return nil, err
-		}
-		afterPage, err := logstore.SearchWithTimeout(ctx, s.logs, afterF, logsContextBudget)
+		// v0.10.414 (A7) — iki yarı gerçekten paralel (logs_context_halves.go).
+		beforePage, afterPage, err := searchContextHalves(ctx, s.logs, beforeF, afterF, logsContextBudget)
 		if err != nil {
 			if errors.Is(err, logstore.ErrBackendSlow) {
 				return degradedPayload(err), nil

@@ -115,6 +115,7 @@ type chatRequest struct {
 // streams progress + the final answer. One ai_calls row is written
 // per exchange (summing per-round token usage) via RecordUsage.
 func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
+	chatT0 := time.Now() // v0.10.397 — sohbet süresi ai_calls'a
 	var req chatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -690,7 +691,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	if lastErr != nil {
 		status, errMsg = "error", lastErr.Error()
 	}
-	s.copilot.RecordUsage(ctx, totalIn, totalOut, status, errMsg, lastUserText(req.Messages), finalText)
+	s.copilot.RecordUsage(ctx, chatT0, totalIn, totalOut, status, errMsg, lastUserText(req.Messages), finalText)
 
 	emit("done", map[string]bool{"ok": lastErr == nil})
 }

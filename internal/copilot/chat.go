@@ -81,7 +81,10 @@ func (s *Service) ChatWithTools(ctx context.Context, system string, msgs []ChatM
 // exchange. Mirrors the recording block in Explain so the /ai page
 // attributes chat usage alongside the ✨ Explain surfaces. Surface
 // comes from MetaFromContext (the handler sets it to "chat").
-func (s *Service) RecordUsage(ctx context.Context, inTok, outTok uint32, status, errMsg, promptSample, respSample string) {
+// RecordUsage — v0.10.397 (CoSRE denetimi O1): `started` çağrının
+// başlangıcı; sıfır değer DurationMs'i 0 bırakır (eski davranış). Sohbet
+// döngüsü en pahalı yüzeyken /ai gecikme KPI'ları onu 0 sayıyordu.
+func (s *Service) RecordUsage(ctx context.Context, started time.Time, inTok, outTok uint32, status, errMsg, promptSample, respSample string) {
 	if s.recorder == nil {
 		return
 	}
@@ -96,6 +99,7 @@ func (s *Service) RecordUsage(ctx context.Context, inTok, outTok uint32, status,
 		BaseURL:        baseURL,
 		InputTokens:    inTok,
 		OutputTokens:   outTok,
+		DurationMs:     durationMsSince(started),
 		Status:         status,
 		PromptChars:    uint32(len(promptSample)),
 		ResponseChars:  uint32(len(respSample)),
@@ -165,4 +169,12 @@ func (s *Service) chatGitHubWithTools(ctx context.Context, system string, msgs [
 	cfg.APIKey = sessTok
 	resp, err := aiprov.ChatGitHubTools(ctx, cfg, chatRequest(req, system, msgs, tools))
 	return chatTurnFrom(resp), err
+}
+
+// durationMsSince — sıfır zaman → 0 (ölçülmemiş), aksi hâlde geçen ms.
+func durationMsSince(started time.Time) uint32 {
+	if started.IsZero() {
+		return 0
+	}
+	return uint32(time.Since(started).Milliseconds())
 }

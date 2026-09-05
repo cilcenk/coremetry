@@ -317,7 +317,7 @@ func (s *Server) copilotChatIntent(ctx context.Context, emit func(string, any), 
 		// soruları surface='chat' ile sayar; on_no_loop'ta o satır hiç
 		// yazılmaz — none sonucu ayrı yüzeyle kaydedilir ki rapor kör
 		// kalmasın (#6). Exchange'siz: KB adayı JOIN'ine girmez.
-		s.copilot.RecordUsage(copilot.WithMeta(ctx, copilot.CallMeta{Surface: "chat-intent-none", UserID: m.UserID, UserEmail: m.UserEmail}),
+		s.copilot.RecordUsage(copilot.WithMeta(ctx, copilot.CallMeta{Surface: "chat-intent-none", UserID: m.UserID, UserEmail: m.UserEmail}), t0,
 			0, 0, "ok", "", question, strings.TrimSpace(raw))
 		if mode != copilot.IntentOnNoLoop {
 			return false, false

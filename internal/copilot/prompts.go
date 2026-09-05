@@ -1487,6 +1487,7 @@ Niyetler:
 - deploy_impact: son deploy'un etkisi, sürüm değişikliği
 - log_errors: hata logları, exception'lar
 - log_field: belirli bir LOG ALANINDA belirli bir değer geçen loglar ("url.full alanında \"/x/y\" geçen loglar", "message field'ında timeout geçen loglar")
+- trace_search: içinde belirli bir host/route/sorgu parçası geçen TRACE'ler ("checkout servisinden içinde osb.example.com geçen trace'leri getir")
 - pod_health: pod'lar, restart, CPU/bellek
 - db_health: veritabanı sorguları, yavaş SQL
 - messaging_health: kuyruk / Kafka / consumer gecikmesi
@@ -1501,6 +1502,7 @@ Kurallar:
 - service: mesajda geçen servis adı ya da ad PARÇASI, mesajdaki yazımıyla AYNEN ("login external" → "login external"); mesajda yoksa "". Sunucu canlı katalogla eşleştirir, bulamazsa kullanıcıya adayları sorar — sen tamamlama, uydurma, "muhtemelen" deme.
 - team: mesajda geçen takım adı ya da kodu aynen (yalnız team_services için), yoksa "".
 - logField / logValue: yalnız log_field için — alan adı mesajdaki yazımıyla (url.full, message), değer tırnaklar olmadan aynen; yoksa "".
+- searchText: yalnız trace_search için — aranan parça (host, yol, sorgu) tırnaklar olmadan aynen; yoksa "".
 - env: mesajda açıkça geçen ortam adı (prod, uat, test…), yoksa "".
 - rangeS: mesajdaki zaman penceresi saniye olarak (1 saat=3600, 24 saat=86400, 7 gün=604800); belirtilmemişse 0.
 - traceId / spanId: mesajdaki hex kimlik; yoksa "".
@@ -1516,7 +1518,7 @@ Kurallar:
 - "yavaşlığın sebebi ne?" → {"intent":"root_cause","service":"","env":"","rangeS":0,"traceId":"","spanId":"","team":""}
 - "checkout loglarında url.full alanında \"/api/pay\" geçen kayıtlar" → {"intent":"log_field","service":"checkout","env":"","rangeS":0,"traceId":"","spanId":"","team":"","logField":"url.full","logValue":"/api/pay"}
 
-Çıktı şeması: {"intent":"…","service":"…","env":"…","rangeS":0,"traceId":"","spanId":"","team":"","logField":"","logValue":""}`
+Çıktı şeması: {"intent":"…","service":"…","env":"…","rangeS":0,"traceId":"","spanId":"","team":"","logField":"","logValue":"","searchText":""}`
 
 // IntentNoInstructionLine — sınıflandırıcının enjeksiyon kalkanı; chatTiers'ın
 // DataNotInstruction'ının TERSİ (orada talimat operatörün sorusundan gelir,

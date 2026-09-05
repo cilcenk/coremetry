@@ -69,6 +69,9 @@ const (
 	guidedLogField guidedIntent = "log_field"
 	// guidedOpenPage (v0.10.434, D7b) — "X sayfasını aç": LLM'siz link + open.
 	guidedOpenPage guidedIntent = "open_page"
+	// v0.10.436 (D2) — "A'dan B'ye giden istekler" / "X servisinde içinde … geçen trace'ler".
+	guidedPairRequests guidedIntent = "pair_requests"
+	guidedTraceSearch  guidedIntent = "trace_search"
 	// guidedFamilyHealth (v0.9.192) — a family-of-services ask:
 	// "mobile bff'lerde hangisinde hata var". No single service
 	// resolves, but the message's name-fragments (mobile + bff) match
@@ -226,6 +229,16 @@ type guidedRoute struct {
 	LogQuery    string
 	// Page (v0.10.434, D7b) — open_page hedefi: overview|problems|logs|traces|endpoints.
 	Page string
+	// v0.10.436 (D2) — pair_requests: PairFrom servis, PairTo servis ya da
+	// düğüm parçası (PairToKind "service"|"node"; bundle çözülen düğüm adını
+	// yazar), PairMissing "from"|"to" (ask çipleri için); trace_search:
+	// SearchText + SearchSQL (db.statement LIKE).
+	PairFrom    string
+	PairTo      string
+	PairToKind  string
+	PairMissing string
+	SearchText  string
+	SearchSQL   bool
 }
 
 // normalizeGuidedMsg lowercases for matching. Go's ToLower maps the
@@ -910,6 +923,43 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 	svc := extractServiceEntity(msg, services, envs)
 	env := extractEnvEntity(msg, envs)
 	team := extractTeamEntity(msg, teams)
+	// v0.10.436 (D2a) — "A'dan B'ye giden istekler": çift, aile/kıyas
+	// dallarından ÖNCE (iki ad + istek sözcüğü aileye düşmesin). Kaynak
+	// servis şart; hedef servis ya da dış düğüm parçası.
+	if hasPairRequestSignal(toks) {
+		if fromFrag, toFrag, ok := splitPairFragments(raw); ok {
+			fromOpts := resolvePairSide(fromFrag, services, envs)
+			toOpts := resolvePairSide(toFrag, services, envs)
+			switch {
+			case len(fromOpts) == 1 && len(toOpts) == 1:
+				return guidedRoute{Intent: guidedPairRequests, Service: fromOpts[0], Env: env, PairFrom: fromOpts[0], PairTo: toOpts[0], PairToKind: "service"}
+			case len(fromOpts) == 1 && len(toOpts) == 0 && toFrag != "":
+				return guidedRoute{Intent: guidedPairRequests, Service: fromOpts[0], Env: env, PairFrom: fromOpts[0], PairTo: toFrag, PairToKind: "node"}
+			case len(fromOpts) > 1:
+				other := toFrag
+				if len(toOpts) == 1 {
+					other = toOpts[0]
+				}
+				return guidedRoute{Intent: guidedAskService, AskIntent: guidedPairRequests, ServiceOptions: fromOpts, PairTo: other, PairMissing: "from", Env: env}
+			case len(fromOpts) == 1 && len(toOpts) > 1:
+				return guidedRoute{Intent: guidedAskService, AskIntent: guidedPairRequests, ServiceOptions: toOpts, PairFrom: fromOpts[0], PairMissing: "to", Env: env}
+			}
+		}
+	}
+	// v0.10.436 (D2b) — "X servisinde içinde <parça> geçen trace'ler".
+	if frag, isSQL, ok := extractTraceSearch(raw, toks); ok {
+		tsvc := svc
+		if tsvc == "" {
+			cleaned := strings.NewReplacer(strings.ToLower(frag), " ").Replace(msg)
+			switch opts := serviceCandidates(cleaned, services, envs, guidedServiceAskMax); {
+			case len(opts) == 1:
+				tsvc = opts[0]
+			case len(opts) > 1:
+				return guidedRoute{Intent: guidedAskService, AskIntent: guidedTraceSearch, ServiceOptions: opts, SearchText: frag, SearchSQL: isSQL, Env: env}
+			}
+		}
+		return guidedRoute{Intent: guidedTraceSearch, Service: tsvc, Env: env, SearchText: frag, SearchSQL: isSQL}
+	}
 	// v0.9.422 (CoSRE fikir #7) — çoklu tam-ad kıyası: soru 2+ canlı
 	// servisi ADIYLA anıyor ve sağlık/hata/kıyas şekliyse familyHealth
 	// yan-yana RED karşılaştırması zaten işi yapar. Tek-ad çözümü
@@ -1447,6 +1497,10 @@ func (s *Server) runGuidedRoute(ctx context.Context, emit func(string, any), rou
 		evidence, sources, err = s.guidedLogErrorsBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
 	case guidedLogField: // v0.10.433 (D5)
 		evidence, sources, err = s.guidedLogFieldBundle(ctx, emit, &route, from, to, rangeS)
+	case guidedPairRequests: // v0.10.436 (D2a)
+		evidence, sources, err = s.guidedPairBundle(ctx, emit, &route, from, to, rangeS)
+	case guidedTraceSearch: // v0.10.436 (D2b)
+		evidence, sources, err = s.guidedTraceSearchBundle(ctx, emit, &route, from, to, rangeS)
 	case guidedMyServices:
 		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "health", &route, from, to, rangeS)
 	case guidedMyProblems:

@@ -252,8 +252,11 @@ func TestGuidedHandlerPassesARealWindow(t *testing.T) {
 		}
 		return true
 	})
-	if found != 1 {
-		t.Errorf("copilot_guided.go'da %d guidedAnswerLinks çağrısı var, 1 bekleniyordu — "+
+	// v0.10.434 (D7b) — ikinci çağrı open_page'in LLM'siz cevap yolu
+	// (runGuidedRoute başı); aynı linkWindowBetween(from, to) sözleşmesi,
+	// yukarıdaki AST denetimi her çağrıyı ayrı ayrı doğrular.
+	if found != 2 {
+		t.Errorf("copilot_guided.go'da %d guidedAnswerLinks çağrısı var, 2 bekleniyordu — "+
 			"yeni bir çağrı eklendiyse pencere sözleşmesi onun için de doğrulanmalı", found)
 	}
 }

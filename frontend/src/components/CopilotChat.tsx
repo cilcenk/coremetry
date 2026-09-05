@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { useLocation, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Chip } from '@/components/ui/Chip';
@@ -95,6 +95,7 @@ export function CopilotChat() {
   const [defaultProfile, setDefaultProfile] = useState('');
   const [profile, setProfile] = useState('');
   const [open, setOpen] = useState(false);
+  const navigate = useNavigate(); // v0.10.434 (D7b) — "sayfasını aç" cevabı SPA içinde gezer
   // v0.9.169 — proaktif rozet: açık KRİTİK problem sayısı (chat kapalıyken
   // FAB'da kırmızı rozet). Yalnız copilot açıkken pollar; RQ tab gizliyken durur.
   const criticalOpen = useOpenCriticalCount({ enabled: enabled === true }).data ?? 0;
@@ -180,6 +181,7 @@ export function CopilotChat() {
       service: currentService, operation: currentOp, rangeS, toMs, trace: currentTrace, env,
       profile: profile || undefined,
       persist: true,
+      onOpen: href => navigate(href), // v0.10.434 (D7b)
     });
 
   // v0.9.1258 — konuşma deep-link'i (?chat=<convId>): URL → state yarısı.

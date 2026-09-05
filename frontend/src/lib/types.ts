@@ -5526,7 +5526,9 @@ export type ChatStreamEvent =
   // suggestions (v0.9.411) — guided cevabın rotasından türetilen
   // konuya-duyarlı takip önerileri; yoksa frontend statik listesine düşer.
   // links (v0.9.419) — rotadan türetilen deterministik derin linkler.
-  | { kind: 'answer'; text: string; exchangeId?: string; sources?: RagSource[]; suggestions?: string[]; links?: ChatAnswerLink[] }
+  // open (v0.10.434, D7b) — "sayfasını aç": sunucunun seçtiği uygulama-içi
+  // href; frontend SPA içinde oraya gider, sohbet açık kalır.
+  | { kind: 'answer'; text: string; exchangeId?: string; sources?: RagSource[]; suggestions?: string[]; links?: ChatAnswerLink[]; open?: string }
   | { kind: 'error'; error: string }
   | { kind: 'done'; ok: boolean };
 

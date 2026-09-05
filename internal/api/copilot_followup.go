@@ -91,6 +91,7 @@ var followUpFillable = map[guidedIntent]bool{
 	guidedDeployImpact: true,
 	guidedLogErrors:    true,
 	guidedPodHealth:    true,
+	guidedLogField:     true, // v0.10.433 (D5)
 }
 
 // guidedSuggestions (v0.9.411) — cevap sonrası konuya-duyarlı takip
@@ -145,6 +146,11 @@ func guidedSuggestions(route guidedRoute) []string {
 	case guidedLogErrors:
 		if svc != "" {
 			return []string{svc + " problemleri?", svc + " sağlığı nasıl?", svc + " en yavaş trace'ler?"}
+		}
+		return []string{"Açık problemler?", "En yavaş trace'ler?"}
+	case guidedLogField: // v0.10.433 (D5)
+		if svc != "" {
+			return []string{svc + " hata logları?", svc + " sağlığı nasıl?", svc + " en yavaş trace'ler?"}
 		}
 		return []string{"Açık problemler?", "En yavaş trace'ler?"}
 	case guidedFamilyHealth:
@@ -320,6 +326,16 @@ func guidedAnswerLinkTargets(route guidedRoute) []guidedAnswerLink {
 			return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?service=" + svcQ + "&severity=17"}}
 		}
 		return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?severity=17"}}
+	case guidedLogField: // v0.10.433 (D5) — bundle'ın koştuğu sorgu; yoksa backend'siz şekil
+		q := route.LogQuery
+		if q == "" {
+			q, _ = logFieldSearchQuery(route.LogField, route.LogValue, route.LogContains, "")
+		}
+		href := "/logs?q=" + url.QueryEscape(q)
+		if svc != "" {
+			href += "&service=" + svcQ
+		}
+		return []guidedAnswerLink{{Label: "Loglar (" + route.LogField + ")", Href: href}}
 	case guidedFamilyHealth:
 		return []guidedAnswerLink{{Label: "Servisler", Href: "/services"}}
 	case guidedMyServices:

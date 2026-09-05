@@ -297,3 +297,19 @@ tablonun sabit px bütçesi (150/150/160/240) yüksek zoom'da sığmıyordu →
 124/124/120/208. Ders: "kural yeşil" ≠ "kural görünür" — bir yüzey kuralı
 göstermiyorsa operatör için kural yoktur; liste ucunun kuralı çağırdığını
 kaynak-pin testi çiviler (`TestListExceptionGroupsAttachesPriority`).
+
+### v0.10.367 — Metrik dışlama kuralları VM okuma yolunda uygulanmıyordu
+
+Operator-reported (prod, VM-birincil): Service Overview metrik grafiklerinde
+checkLiveness / checkReadiness / checkStartup probe route'ları görünüyor;
+"kapatabilir miyiz". Mekanizma v0.9.797'den beri var (Settings → Pipeline →
+Dışlama: metrik `*`, http.route deseni) ama YALNIZ ClickHouse okuyucusu
+uyguluyordu (`applyMetricExclusionWhere`); VM adaptörü (`vmMetricSource`)
+filtreyi olduğu gibi iletiyor, önbellek anahtarı ise kuralların digest'ini
+taşıyordu — kural CH'de gizliyor, VM'de bırakıyordu. Çare: adaptörün beş
+sorgu metodu `excluded(f)` ile `http.route !~ ".*(?:desen).*"` ekler
+(kural ankorsuz RE2, PromQL tam ankorlar → sarmalama). Ders: dikişin iki
+ucu aynı okuma-politikasını taşımalı; digest anahtarda olup filtre sorguda
+yoksa "uygulanıyor" yanılsaması. Kaynak-pin: `v.svc.Query*(ctx, f` çıplak
+geçiş yasak. Bilinen boşluk: `dropAtIngest` VM forward'ında uygulanmıyor
+(ham OTLP gövdesi aynen gider) — okuma filtresi görünümü kapatır.

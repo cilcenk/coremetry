@@ -193,7 +193,7 @@ func (s *Server) getMetricsCompare(w http.ResponseWriter, r *http.Request) {
 		to = time.Now()
 		from = to.Add(-time.Hour)
 	}
-	chSrc, vmSrc := chMetricSource{s.store}, vmMetricSource{s.vmetrics}
+	chSrc, vmSrc := chMetricSource{s.store}, newVMMetricSource(s.vmetrics, s.store)
 	key := fmt.Sprintf("metrics-compare:v1%s:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:inst=%s:eng=%s:from=%d:to=%d:mx=%s",
 		s.metricNameRuleTag(vmSrc), name, svc, agg, step, maxDP, groupByRaw, filtersRaw, inst, engine,
 		from.Unix()/60, to.Unix()/60, s.store.MetricExclusions().Digest())

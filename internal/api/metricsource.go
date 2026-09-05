@@ -442,9 +442,55 @@ func (c chMetricSource) QueryPromQLRange(ctx context.Context, query string, from
 // vmMetricSource wraps the external VictoriaMetrics reader. The method
 // set is delegation-only because vmetrics.Service already carries the
 // chstore-identical signatures — that is the point of matching them.
-type vmMetricSource struct{ svc *vmetrics.Service }
+type vmMetricSource struct {
+	svc *vmetrics.Service
+	// ex — the operator's metric exclusion rules (Settings → Pipeline →
+	// Dışlama, v0.9.797). The ClickHouse reader applies them inside
+	// every metric_points WHERE (applyMetricExclusionWhere); until
+	// v0.10.367 the VictoriaMetrics path applied NOTHING while its cache
+	// keys still carried the rules' digest — a rule for the health
+	// probes hid them on CH and left them on VM. Read at query time so a
+	// PUT takes effect without a rebuild of the source.
+	ex func() *chstore.CompiledMetricExclusions
+}
+
+func newVMMetricSource(svc *vmetrics.Service, store *chstore.Store) vmMetricSource {
+	return vmMetricSource{svc: svc, ex: store.MetricExclusions}
+}
 
 func (vmMetricSource) Name() string { return metricSourceVM }
+
+// routeExclusionFilters — the rules that apply to `metric`, as `!~`
+// matchers on http.route. A rule pattern is UNANCHORED RE2 ("/health"
+// hits anywhere in the path, metric_exclusions.go); PromQL anchors a
+// matcher fully, so the pattern is wrapped as `.*(?:pat).*` to keep the
+// same set the ClickHouse `NOT match()` selects. Nil when no rule
+// applies — the zero-impact pin.
+func routeExclusionFilters(ex *chstore.CompiledMetricExclusions, metric string) []chstore.FilterExpr {
+	pats := ex.RoutePatterns(metric)
+	if len(pats) == 0 {
+		return nil
+	}
+	out := make([]chstore.FilterExpr, 0, len(pats))
+	for _, p := range pats {
+		out = append(out, chstore.FilterExpr{Key: "http.route", Op: "!~", Values: []string{".*(?:" + p + ").*"}})
+	}
+	return out
+}
+
+// excluded — the filter with the operator's route exclusions appended.
+// Copy-on-write: callers reuse their base filter across several calls.
+func (v vmMetricSource) excluded(f chstore.MetricQueryFilter) chstore.MetricQueryFilter {
+	if v.ex == nil {
+		return f
+	}
+	add := routeExclusionFilters(v.ex(), f.Name)
+	if len(add) == 0 {
+		return f
+	}
+	f.Filters = append(append([]chstore.FilterExpr(nil), f.Filters...), add...)
+	return f
+}
 
 // upstream classifies a VM error for the HTTP layer. One helper rather
 // than four inline wraps: a new method added without the tag would 500
@@ -481,7 +527,7 @@ func (v vmMetricSource) ListMetricNames(ctx context.Context, service, pattern st
 }
 
 func (v vmMetricSource) QueryMetric(ctx context.Context, f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error) {
-	out, err := v.svc.QueryMetric(ctx, f)
+	out, err := v.svc.QueryMetric(ctx, v.excluded(f))
 	return out, upstream(err)
 }
 
@@ -496,7 +542,7 @@ func (v vmMetricSource) MetricAttrKeys(ctx context.Context, metric, service stri
 }
 
 func (v vmMetricSource) QueryMetricHistogram(ctx context.Context, f chstore.MetricQueryFilter) (*chstore.HistogramSeries, error) {
-	out, err := v.svc.QueryMetricHistogram(ctx, f)
+	out, err := v.svc.QueryMetricHistogram(ctx, v.excluded(f))
 	return out, upstream(err)
 }
 
@@ -541,12 +587,12 @@ func (v vmMetricSource) MetricInstrument(ctx context.Context, name, service stri
 }
 
 func (v vmMetricSource) QueryMetricRate(ctx context.Context, f chstore.MetricQueryFilter, mode string) ([]chstore.SpanMetricSeries, error) {
-	out, err := v.svc.QueryMetricRate(ctx, f, mode)
+	out, err := v.svc.QueryMetricRate(ctx, v.excluded(f), mode)
 	return out, upstream(err)
 }
 
 func (v vmMetricSource) QueryMetricCountRate(ctx context.Context, f chstore.MetricQueryFilter, mode string) ([]chstore.SpanMetricSeries, error) {
-	out, err := v.svc.QueryMetricCountRate(ctx, f, mode)
+	out, err := v.svc.QueryMetricCountRate(ctx, v.excluded(f), mode)
 	return out, upstream(err)
 }
 
@@ -580,7 +626,7 @@ func (vmMetricSource) EnvFilterExpr(string) (chstore.FilterExpr, bool) {
 // VM source is its only implementer. Same upstream() tagging as every other
 // method: an untagged error 500s and reads as a Coremetry bug.
 func (v vmMetricSource) QueryMetricNoted(ctx context.Context, f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, string, error) {
-	out, note, err := v.svc.QueryMetricNoted(ctx, f)
+	out, note, err := v.svc.QueryMetricNoted(ctx, v.excluded(f))
 	return out, note, upstream(err)
 }
 
@@ -596,7 +642,7 @@ func (v vmMetricSource) QueryMetricNoted(ctx context.Context, f chstore.MetricQu
 // mcpDeps().
 func (s *Server) metricSource() metricSource {
 	if s.vmetrics != nil && s.vmetrics.Configured() {
-		return vmMetricSource{s.vmetrics}
+		return newVMMetricSource(s.vmetrics, s.store)
 	}
 	return chMetricSource{s.store}
 }
@@ -711,7 +757,7 @@ func (s *Server) metricSourceFor(r *http.Request) (metricSource, error) {
 	}
 	switch want {
 	case metricSourceVM:
-		return vmMetricSource{s.vmetrics}, nil
+		return newVMMetricSource(s.vmetrics, s.store), nil
 	case metricSourceCH:
 		return chMetricSource{s.store}, nil
 	default:

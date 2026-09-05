@@ -146,7 +146,7 @@ func TestHistogramHandlerThreadsEveryFilterField(t *testing.T) {
 // satisfied by a gate that validates nothing anywhere.
 func TestValidatePromQLAsymmetry(t *testing.T) {
 	ch := chMetricSource{&chstore.Store{}}
-	vm := vmMetricSource{vmetrics.New()}
+	vm := vmMetricSource{svc: vmetrics.New()}
 
 	// Real syntax errors: 400 on the CH path, with the parser's own text.
 	for _, bad := range []string{"sum(", "up{", ")))", "1 +"} {
@@ -279,7 +279,7 @@ func TestHistogramMissingNameIs400(t *testing.T) {
 // symmetry" — which would mean answering "why is this empty?" from a backend
 // that guessed no names and therefore has nothing to say.
 func TestNoteCapabilityIsVMOnly(t *testing.T) {
-	if _, ok := any(vmMetricSource{vmetrics.New()}).(metricNoteSource); !ok {
+	if _, ok := any(vmMetricSource{svc: vmetrics.New()}).(metricNoteSource); !ok {
 		t.Error("vmMetricSource does not implement metricNoteSource — the percentile note would " +
 			"be built and then dropped, and the operator would see the silent blank chart again")
 	}
@@ -430,7 +430,7 @@ func TestQueryMetricBodyOmitsTheNoteForOrdinaryEmptyResults(t *testing.T) {
 func TestFaz2VMSourceTagsEveryError(t *testing.T) {
 	// Unconfigured service → every read returns its own "not configured"
 	// error, the cheapest way to exercise both paths without a live VM.
-	v := vmMetricSource{vmetrics.New()}
+	v := vmMetricSource{svc: vmetrics.New()}
 	ctx := context.Background()
 
 	_, errHist := v.QueryMetricHistogram(ctx, chstore.MetricQueryFilter{Name: "m"})
@@ -455,7 +455,7 @@ func TestFaz2VMSourceTagsEveryError(t *testing.T) {
 
 	// A TRANSLATION refusal on the new paths is still a 400, not a 502 — VM
 	// is healthy, the request is what does not translate.
-	vmOK := vmMetricSource{vmetrics.New()}
+	vmOK := vmMetricSource{svc: vmetrics.New()}
 	vmOK.svc.Configure(vmetrics.Settings{BaseURL: "http://vm:8428"})
 	_, err := vmOK.QueryMetricHistogram(ctx, chstore.MetricQueryFilter{
 		Name: "m", Instance: "pg-1", Engine: "postgres", From: faz2From, To: faz2To,

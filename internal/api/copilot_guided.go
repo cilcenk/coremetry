@@ -76,6 +76,8 @@ const (
 	guidedWindowCompare guidedIntent = "window_compare"
 	// v0.10.438 (D3) — çağrı periyodu (A→B ya da tek servis).
 	guidedCallPeriod guidedIntent = "call_period"
+	// v0.10.439 (D4) — A→B→C fan-out (örnek tabanlı).
+	guidedFanout guidedIntent = "fanout"
 	// guidedFamilyHealth (v0.9.192) — a family-of-services ask:
 	// "mobile bff'lerde hangisinde hata var". No single service
 	// resolves, but the message's name-fragments (mobile + bff) match
@@ -247,6 +249,9 @@ type guidedRoute struct {
 	// mesajdaki tarih/saat parçaları (ask çipleri aynı pencereyi taşır).
 	Windows    []absWindow
 	WindowText string
+	// v0.10.439 (D4) — fanout: üçüncü düğüm.
+	FanoutTo     string
+	FanoutToKind string
 }
 
 // normalizeGuidedMsg lowercases for matching. Go's ToLower maps the
@@ -931,6 +936,21 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 	svc := extractServiceEntity(msg, services, envs)
 	env := extractEnvEntity(msg, envs)
 	team := extractTeamEntity(msg, teams)
+	// v0.10.439 (D4) — fan-out: A→B→C; periyot ve çift dallarından ÖNCE
+	// (cümle istek/giden sözcüğü de taşır).
+	if hasFanoutSignal(toks) && hasPairRequestSignal(toks) {
+		if aFrag, bFrag, cFrag, ok := splitFanoutFragments(raw); ok {
+			aOpts, bOpts, cOpts := resolvePairSide(aFrag, services, envs), resolvePairSide(bFrag, services, envs), resolvePairSide(cFrag, services, envs)
+			switch {
+			case len(aOpts) == 1 && len(bOpts) == 1 && len(cOpts) == 1:
+				return guidedRoute{Intent: guidedFanout, Service: aOpts[0], Env: env, PairFrom: aOpts[0], PairTo: bOpts[0], PairToKind: "service", FanoutTo: cOpts[0], FanoutToKind: "service"}
+			case len(aOpts) == 1 && len(bOpts) == 1 && len(cOpts) == 0 && cFrag != "":
+				return guidedRoute{Intent: guidedFanout, Service: aOpts[0], Env: env, PairFrom: aOpts[0], PairTo: bOpts[0], PairToKind: "service", FanoutTo: cFrag, FanoutToKind: "node"}
+			case len(aOpts) > 1:
+				return guidedRoute{Intent: guidedAskService, AskIntent: guidedFanout, ServiceOptions: aOpts, PairTo: bFrag, FanoutTo: cFrag, PairMissing: "from", Env: env}
+			}
+		}
+	}
 	// v0.10.438 (D3) — periyot sorusu: çift varsa A→B, yoksa tek servis;
 	// hiçbiri yoksa sor. D2 çift dalından ÖNCE (aynı cümle istek sözcüğü
 	// de taşır).
@@ -1561,6 +1581,8 @@ func (s *Server) runGuidedRoute(ctx context.Context, emit func(string, any), rou
 		evidence, sources, err = s.guidedWindowCompareBundle(ctx, emit, &route)
 	case guidedCallPeriod: // v0.10.438 (D3)
 		evidence, sources, err = s.guidedCallPeriodBundle(ctx, emit, &route, to)
+	case guidedFanout: // v0.10.439 (D4)
+		evidence, sources, err = s.guidedFanoutBundle(ctx, emit, &route, from, to, rangeS)
 	case guidedMyServices:
 		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "health", &route, from, to, rangeS)
 	case guidedMyProblems:

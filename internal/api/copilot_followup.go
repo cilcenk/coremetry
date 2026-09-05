@@ -184,6 +184,8 @@ func guidedSuggestions(route guidedRoute) []string {
 			return []string{svc + " sağlığı nasıl?", svc + " en yavaş trace'ler?"}
 		}
 		return []string{"Açık problemler?"}
+	case guidedFanout: // v0.10.439 (D4)
+		return []string{route.PairFrom + "'dan " + route.PairTo + "'ye giden istekler", route.PairTo + " sağlığı nasıl?", route.PairTo + " en yavaş trace'ler?"}
 	case guidedFamilyHealth:
 		return []string{"Açık problemler?", "En yavaş trace'ler?", "Son 1 saatteki log hataları?"}
 	case guidedMyServices:
@@ -400,6 +402,15 @@ func guidedAnswerLinkTargets(route guidedRoute) []guidedAnswerLink {
 			href += "&service=" + svcQ
 		}
 		return []guidedAnswerLink{{Label: "Trace'ler (arama)", Href: href}}
+	case guidedFanout: // v0.10.439 (D4)
+		a, b, c := url.QueryEscape(route.PairFrom), url.QueryEscape(route.PairTo), url.QueryEscape(route.FanoutTo)
+		out := []guidedAnswerLink{{Label: "Servis haritası · " + route.PairTo, Href: "/service-map?focus=" + b}}
+		if route.FanoutToKind == "service" {
+			out = append([]guidedAnswerLink{{Label: "Trace'ler (" + route.PairFrom + ", " + route.PairTo + " ve " + route.FanoutTo + "'yi birlikte içeren)", Href: "/traces?services=" + a + "," + b + "," + c + "&view=list&rootOnly=false"}}, out...)
+		} else {
+			out = append([]guidedAnswerLink{{Label: "Trace'ler (" + route.PairFrom + " ve " + route.PairTo + "'yi birlikte içeren)", Href: "/traces?services=" + a + "," + b + "&view=list&rootOnly=false"}}, out...)
+		}
+		return out
 	case guidedCallPeriod: // v0.10.438 (D3)
 		a := route.PairFrom
 		if a == "" {
@@ -622,6 +633,8 @@ func askServiceChipFor(route guidedRoute) []string {
 			out = append(out, opt+" "+route.WindowText+" arası kıyas")
 		case guidedCallPeriod: // v0.10.438 (D3)
 			out = append(out, opt+" isteklerinde periyot var mı")
+		case guidedFanout: // v0.10.439 (D4)
+			out = append(out, opt+"'dan "+route.PairTo+"'ye gidenlerin hepsi "+route.FanoutTo+"'ye gidiyor mu")
 		default:
 			out = append(out, askServiceChip(route.AskIntent, opt))
 		}

@@ -38,3 +38,40 @@ func TestPatternCountBody_CarriesCostGuards(t *testing.T) {
 		t.Fatal("body lost the base_window agg")
 	}
 }
+
+// v0.10.412 — log arama denetimi A1: pencere agg'lerde değil SORGUDA da
+// olmalı; yoksa token taraması indeks listesinin tamamını gezer
+// (tarihsiz/rollover indekste tüm saklama). Aralık [baseFrom, curEnd)
+// = cur_window ∪ base_window — sayılar değişmez, tarama küçülür.
+func TestPatternCountBody_QueryCarriesWindow(t *testing.T) {
+	body := patternCountBody(
+		`body:"tok"`, "message", "@timestamp", "service.name",
+		"2026-06-15T00:00:00Z", "2026-06-15T09:00:00Z", "2026-06-15T10:00:00Z",
+		"10s")
+	q, _ := body["query"].(map[string]any)
+	b, _ := q["bool"].(map[string]any)
+	filters, _ := b["filter"].([]any)
+	if len(filters) != 2 {
+		t.Fatalf("query.bool.filter 2 üye olmalı (range + query_string), %v", body["query"])
+	}
+	var sawRange, sawQS bool
+	for _, f := range filters {
+		m := f.(map[string]any)
+		if rng, ok := m["range"].(map[string]any); ok {
+			ts, _ := rng["@timestamp"].(map[string]any)
+			if ts["gte"] != "2026-06-15T00:00:00Z" || ts["lt"] != "2026-06-15T10:00:00Z" {
+				t.Fatalf("range [baseFrom, curEnd) olmalı: %v", ts)
+			}
+			sawRange = true
+		}
+		if qs, ok := m["query_string"].(map[string]any); ok {
+			if qs["query"] != `body:"tok"` || qs["default_field"] != "message" || qs["allow_leading_wildcard"] != false {
+				t.Fatalf("query_string bozuldu: %v", qs)
+			}
+			sawQS = true
+		}
+	}
+	if !sawRange || !sawQS {
+		t.Fatalf("range=%v query_string=%v", sawRange, sawQS)
+	}
+}

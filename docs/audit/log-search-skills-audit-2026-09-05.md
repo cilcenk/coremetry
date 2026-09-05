@@ -11,7 +11,7 @@ bağlam okunur.
 
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
-| A1 🔴 | `CountPatterns` alt-sorgularında zaman yüklemi yok; pencere yalnız filter agg'de → token taraması tüm saklama süresinde (rollover/tarihsiz indekslerde daraltma kesmez) | `logstore/elasticsearch.go:2327-2336`, `es_indices.go:133,159` | gövdeye `bool.filter` range (baseFrom…curEnd) | ~20 dk |
+| A1 🔴 | **GEMİDE v0.10.412** — `CountPatterns` alt-sorgularında zaman yüklemi yok; pencere yalnız filter agg'de → token taraması tüm saklama süresinde (rollover/tarihsiz indekslerde daraltma kesmez) | `logstore/elasticsearch.go:2327-2336`, `es_indices.go:133,159` | gövdeye `bool.filter` range (baseFrom…curEnd) | ~20 dk |
 | A2 🔴 | Agg tarafı `.keyword`'e çakılı; filtre iki mapping şeklini öğrendi, agg öğrenmedi → ECS/managed mapping'de severity yığını OTHER, servis kırılımı boş | `elasticsearch.go:1723,1864,2350`; teşhis `es_group_fields.go:20-26` | `resolveGroupAggFields`/field_caps üzerinden | ~yarım gün |
 | A3 🟠 | `buildQuery` her şeyi `must`'a koyuyor (zaman, service, term, exists, severity) — filter context yok | `elasticsearch.go:2447,2745` | serbest metin dışını `bool.filter`'a; altın-gövde testi | ~1 saat |
 | A4 🟠 | `/api/logs/patterns` 4 ardışık tam-`_source` PIT sayfası (2000 doküman) — yalnız `body` okunuyor | `patterns.go:83`, `elasticsearch.go:1428-1453` | `Filter.SourceFields` (es_rawsearch emsali) ya da ES\|QL `CATEGORIZE` (Platinum, fallback şart) | ~2 saat / ~yarım gün |

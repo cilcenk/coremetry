@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useSettingsLoad, SettingsLoadError, Field } from './shared';
 import type { AIProvider, AISettings, AIIntentClassify, AIProfilesPayload } from '@/lib/types';
 import { AiProfilesPanel } from './AiProfilesPanel';
+import { AiBudgetPanel } from './AiBudgetPanel'; // v0.10.411
 import { tuningToForm, tuningToWire } from './aiTuning';
 import { IconSparkles } from '@/components/icons';
 import { Link } from 'react-router-dom';
@@ -234,6 +235,7 @@ export function AITab() {
           if (d) { setProvider(d.provider); setModel(d.model ?? ''); setBaseUrl(d.baseUrl ?? ''); setHasKey(d.hasKey); setSkipTls(!!d.skipTls); }
         }} />
       )}
+      <AiBudgetPanel />
       <div style={{ maxWidth: 640 }}>
       <form onSubmit={save} style={{
         marginTop: 18, padding: 16, borderRadius: 8,

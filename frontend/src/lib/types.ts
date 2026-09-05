@@ -2302,6 +2302,29 @@ export interface AIRate {
   outputPer1M: number;
 }
 
+/** v0.10.411 — AI bütçesi (system_settings ai.budget). 0 = tavan yok. */
+export interface AIBudget {
+  dailyTokens: number;
+  dailyCostUsd: number;
+  p95Ms: number;
+}
+
+/** v0.10.411 — son 24 saat kullanımı; dolar istemcide (ai-rates) hesaplanır. */
+export interface AIBudgetUsage {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  p95Ms: number;
+  byModel: Array<{ provider: string; model: string; inputTokens: number; outputTokens: number }>;
+}
+
+export interface AIBudgetStatus {
+  budget: AIBudget;
+  configured: boolean;
+  windowS: number;
+  usage: AIBudgetUsage;
+}
+
 export interface AICallsTimePoint {
   time: number;
   calls: number;

@@ -55,6 +55,8 @@ const KNOWN_ACTIONS = [
   'saved_view.create',
   'saved_view.delete',
   'settings.ai.update',
+  'settings.ai_budget.update', // v0.10.411
+  'settings.ai_rates.update',  // v0.10.411 — gemide olan ama listede olmayan eylem
   'settings.ldap.update',
   'settings.sampling.update',
   'settings.smtp.update',

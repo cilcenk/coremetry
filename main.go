@@ -2073,6 +2073,13 @@ func (r aiCallRecorder) RecordCall(ctx context.Context, c copilot.CallRecord) {
 		UserEmail:      c.UserEmail,
 		PromptSample:   c.PromptSample,
 		ResponseSample: c.ResponseSample,
+		// v0.10.409
+		PromptVersion:  c.PromptVersion,
+		ProfileID:      c.ProfileID,
+		ErrorClass:     c.ErrorClass,
+		TTFTMs:         c.TTFTMs,
+		StreamFallback: c.StreamFallback,
+		ShieldHits:     c.ShieldHits,
 	}
 	if err := r.store.InsertAICall(ctx, row); err != nil {
 		log.Printf("[ai-obs] insert call: %v", err)

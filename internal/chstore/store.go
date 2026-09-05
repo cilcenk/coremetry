@@ -1729,6 +1729,16 @@ func (s *Store) migrate(ctx context.Context) error {
 		// gereği HER yazıcı bu kolonu taşır; flip'te korunması API
 		// katmanında (ai_feedback.go preserve yolu).
 		`ALTER TABLE ai_feedback ADD COLUMN IF NOT EXISTS comment String DEFAULT '' CODEC(ZSTD(3))`,
+		// v0.10.409 (CoSRE denetimi E2/O3/O4) — ai_calls: prompt sürümü,
+		// profil, hata sınıfı, TTFT, akış düşüşü, kalkan isabeti. Düşük
+		// hacimli state tablosu; küme kipinde ertelenen DDL → INSERT probe
+		// görene dek eski kolon listesi (iki-boot sözleşmesi, operatör onayı).
+		`ALTER TABLE ai_calls ADD COLUMN IF NOT EXISTS prompt_version LowCardinality(String) DEFAULT ''`,
+		`ALTER TABLE ai_calls ADD COLUMN IF NOT EXISTS profile_id LowCardinality(String) DEFAULT ''`,
+		`ALTER TABLE ai_calls ADD COLUMN IF NOT EXISTS error_class LowCardinality(String) DEFAULT ''`,
+		`ALTER TABLE ai_calls ADD COLUMN IF NOT EXISTS ttft_ms UInt32 DEFAULT 0`,
+		`ALTER TABLE ai_calls ADD COLUMN IF NOT EXISTS stream_fallback UInt8 DEFAULT 0`,
+		`ALTER TABLE ai_calls ADD COLUMN IF NOT EXISTS shield_hits UInt8 DEFAULT 0`,
 
 		// rca_verdicts — kök-neden hakem kararının KALICI kaydı
 		// (v0.9.591). Öncesinde verdict istek başına üretilip
@@ -3295,6 +3305,8 @@ func (s *Store) migrate(ctx context.Context) error {
 	// probe (küme kipinde ertelenir → ddl_defer.go yeniden probe eder).
 	s.repairAttrIndexCols(ctx)
 	registerAttrIndex(s.probeAttrIndex(ctx))
+	// v0.10.409 — ai_calls genişletilmiş kolon probe'u (iki-boot).
+	s.probeAICallsColumns(ctx)
 
 	// v0.10.127 — entity_seen MV'leri k8s_pod terfi kolonunu OKUR; kolon
 	// yoksa (dış Distributed: repairPromotedAttrCols atlandı, ya da DDL

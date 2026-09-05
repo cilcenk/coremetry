@@ -213,6 +213,13 @@ type CallRecord struct {
 	UserEmail      string
 	PromptSample   string
 	ResponseSample string
+	// v0.10.409 — bkz. chstore.AICall aynı adlı alanlar.
+	PromptVersion  string
+	ProfileID      string
+	ErrorClass     string
+	TTFTMs         uint32
+	StreamFallback bool
+	ShieldHits     uint8
 }
 
 // metaKey is the unexported type for ctx.WithValue lookups so other
@@ -806,6 +813,13 @@ func (s *Service) recordNarration(ctx context.Context, started time.Time,
 	if err != nil {
 		rec.Status = "error"
 		rec.ErrorMsg = truncErr(err.Error())
+		rec.ErrorClass = ClassifyAIError(err) // v0.10.409
+	}
+	// v0.10.409 — sürüm/profil/akış istatistikleri.
+	rec.PromptVersion = PromptVersion()
+	rec.ProfileID = s.profileID(ctx)
+	if st := streamStatsFromContext(ctx); st != nil {
+		rec.TTFTMs, rec.StreamFallback = st.ttftMs(), st.fallbackSet()
 	}
 	// Fire-and-forget recording so the user gets their response
 	// the moment the LLM returns — CH ingest can take 5-20ms.

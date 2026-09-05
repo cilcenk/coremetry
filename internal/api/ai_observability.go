@@ -359,8 +359,11 @@ func (s *Server) getAICall(w http.ResponseWriter, r *http.Request) {
 // the same numbers.
 func (s *Server) aiStats(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, 24*time.Hour)
-	key := fmt.Sprintf("ai-stats:from=%d:to=%d",
-		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
+	// v0.10.409 — yanıt şekli değişti (byErrorClass/avgTtftMs/extended) ve
+	// dolum boot-zamanı bayrağına bağlı: ikisi de anahtarda, deploy sonrası
+	// bayat şekil servis edilmez.
+	key := fmt.Sprintf("ai-stats:v409:from=%d:to=%d:ext=%t",
+		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute), chstore.AICallsExtended())
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		return s.store.ComputeAIStats(ctx, from, to)
 	})

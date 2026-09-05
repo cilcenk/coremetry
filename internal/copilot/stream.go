@@ -60,6 +60,16 @@ func (s *Service) StreamText(ctx context.Context, systemPrompt, userPrompt strin
 		return "", errors.New("AI copilot not available (disabled or not configured — open Settings → AI Copilot)")
 	}
 	provider, model, baseURL := s.profileIdentity(ctx) // v0.10.175
+	// v0.10.409 (CoSRE denetimi O4) — ilk token damgası + akış düşüşü.
+	st := &streamStats{started: time.Now()}
+	ctx = withStreamStats(ctx, st)
+	inner := onDelta
+	onDelta = func(d string) {
+		st.markFirst()
+		if inner != nil {
+			inner(d)
+		}
+	}
 
 	started := time.Now()
 	var (
@@ -74,6 +84,7 @@ func (s *Service) StreamText(ctx context.Context, systemPrompt, userPrompt strin
 	case ProviderGitHub:
 		// No streaming twin this slice (see the package comment) —
 		// buffered call, zero deltas, same answer contract.
+		markStreamFallback(ctx) // v0.10.409 — buffered = düşüş, ttft 0 sağlıklı değil
 		out, inputTokens, outputTokens, err = s.explainGitHub(ctx, systemPrompt, userPrompt)
 	default: // anthropic
 		out, inputTokens, outputTokens, err = s.streamAnthropicWithUsage(ctx, systemPrompt, userPrompt, onDelta)
@@ -163,12 +174,14 @@ func (s *Service) streamOpenAIWithUsage(ctx context.Context, systemPrompt, userP
 	}
 	if s.streamKnownUnsupported(ProviderOpenAI, base, model) {
 		// Known-unsupported endpoint: no re-probe, straight buffered.
+		markStreamFallback(ctx) // v0.10.409 — önbellekli karar da düşüştür
 		return s.explainOpenAI(ctx, systemPrompt, userPrompt)
 	}
 
 	resp, err := aiprov.StreamOpenAI(ctx, cfg, req, onDelta)
 	var fe *aiprov.StreamFallbackError
 	if errors.As(err, &fe) {
+		markStreamFallback(ctx)
 		return s.streamFallback(fe, ProviderOpenAI, base, model, parseBufferedOpenAI,
 			func() (string, uint32, uint32, error) {
 				return s.explainOpenAI(ctx, systemPrompt, userPrompt)
@@ -190,12 +203,14 @@ func (s *Service) streamAnthropicWithUsage(ctx context.Context, systemPrompt, us
 	// baseURL is not consulted by the anthropic provider (fixed API
 	// host) — key on the empty string so the verdict stays coherent.
 	if s.streamKnownUnsupported(ProviderAnthropic, "", model) {
+		markStreamFallback(ctx) // v0.10.409 — önbellekli karar da düşüştür
 		return s.explainAnthropic(ctx, systemPrompt, userPrompt)
 	}
 
 	resp, err := aiprov.StreamAnthropic(ctx, cfg, req, onDelta)
 	var fe *aiprov.StreamFallbackError
 	if errors.As(err, &fe) {
+		markStreamFallback(ctx)
 		return s.streamFallback(fe, ProviderAnthropic, "", model, parseBufferedAnthropic,
 			func() (string, uint32, uint32, error) {
 				return s.explainAnthropic(ctx, systemPrompt, userPrompt)

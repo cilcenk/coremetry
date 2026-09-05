@@ -29,7 +29,7 @@ bağlam okunur.
 | B4 | Filter-for/out yalnız pod hücresinde; service/cluster/attr hücrelerinde yok | `LogTable.tsx:437,450,458-500` | `.lt-pivot` kalıbı | ~1-2 saat |
 | B5 | **GEMİDE v0.10.417** — Wrap/truncate anahtarı yok (`.td-full` hazır) | `globals.css:1277,1286`, `LogTable.tsx:411` | toolbar toggle + localStorage | ~20 dk |
 | B6 | Desenler: exclude yok, "Ara" mevcut serbest metni eziyor | `Logs.tsx:191-194`, `LogPatternsPanel.tsx:146,163` | ⊕/⊖; ⊖ `NOT`; metin korunur | ~1-2 saat |
-| B7 | Efektif sorgu görünmüyor/kopyalanmıyor | `compileSearch` 12 kullanım, 0 render | pill barı sonuna `<code>` + CopyButton | ~20 dk |
+| B7 | **GEMİDE v0.10.418** — Efektif sorgu görünmüyor/kopyalanmıyor | `compileSearch` 12 kullanım, 0 render | pill barı sonuna `<code>` + CopyButton | ~20 dk |
 | B8 | Histogram kırılım serisinden filtreye geçiş yok | `LogsHistogram.tsx:343`, TimeChart legend tık 0 | `onSeriesPick` → `toggleFilter`; OTHER tıklanamaz | ~yarım gün |
 
 ## C. Problem → log triage hunisi (observability-sre-triage)

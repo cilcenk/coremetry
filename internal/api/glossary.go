@@ -171,12 +171,26 @@ func glossaryLookup(norm string) (term string, entry glossaryEntry, ok bool) {
 	if k, e, ok := glossaryFind(key); ok {
 		return k, e, true
 	}
-	for cut := 1; cut <= 4 && len(key)-cut >= 3; cut++ {
-		if k, e, ok := glossaryFind(key[:len(key)-cut]); ok {
-			return k, e, true
+	// v0.10.443 — yalnız Türkçe/İngilizce ek listesinden kırp ("trace'i",
+	// "p95in", "span'ın"); keyfi 1-4 karakter kırpma "redis" → "red"
+	// (RED metrikleri) gibi yanlış terime oturuyordu. Kalan ≥ 3 karakter.
+	for _, suf := range glossarySuffixes {
+		if strings.HasSuffix(key, suf) && len(key)-len(suf) >= 3 {
+			if k, e, ok := glossaryFind(key[:len(key)-len(suf)]); ok {
+				return k, e, true
+			}
 		}
 	}
 	return "", glossaryEntry{}, false
+}
+
+// glossarySuffixes — glossaryKey katlamasından SONRA (ı→i, ü→u…) görünen
+// ekler; uzun ek önce.
+var glossarySuffixes = []string{
+	"lerinin", "larinin", "lerin", "larin", "leri", "lari", "ler", "lar",
+	"inin", "unun", "nin", "nun", "nda", "nde", "inda", "inde", "unda", "unde",
+	"den", "dan", "ten", "tan", "in", "un", "de", "da", "te", "ta", "ye", "ya", "yi", "yu", "si", "su",
+	"i", "u", "e", "a",
 }
 
 // glossaryAnswer — answer olayının gövdesi: exchangeId YOK (deterministik),

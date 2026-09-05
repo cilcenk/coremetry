@@ -954,7 +954,12 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 	// v0.10.438 (D3) — periyot sorusu: çift varsa A→B, yoksa tek servis;
 	// hiçbiri yoksa sor. D2 çift dalından ÖNCE (aynı cümle istek sözcüğü
 	// de taşır).
-	if hasPeriodSignal(toks) {
+	// v0.10.443 — kapı: hata/log/deploy/problem şekilleri kendi yollarında
+	// kalır ("cron loglarında hata var mı" log_errors, "düzenli olarak hata
+	// alıyoruz" sağlık, "her gün 09:00'da deploy" deploy); özne yoksa yalnız
+	// istek/çağrı sözcüğü varken sorulur, aksi hâlde düşer (eskiden koşulsuz
+	// dönüp her şeyi yutuyordu).
+	if hasPeriodSignal(toks) && !hasErrorSignal(toks) && !hasLogSignal(toks) && !hasDeploySignal(toks) && !hasProblemSignal(toks) {
 		if fromFrag, toFrag, ok := splitPairFragments(raw); ok {
 			fromOpts, toOpts := resolvePairSide(fromFrag, services, envs), resolvePairSide(toFrag, services, envs)
 			switch {
@@ -977,7 +982,9 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 		if ctxService != "" {
 			return guidedRoute{Intent: guidedCallPeriod, Service: ctxService, Env: env}
 		}
-		return guidedRoute{Intent: guidedAskService, AskIntent: guidedCallPeriod, Env: env}
+		if hasPairRequestSignal(toks) {
+			return guidedRoute{Intent: guidedAskService, AskIntent: guidedCallPeriod, Env: env}
+		}
 	}
 	// v0.10.436 (D2a) — "A'dan B'ye giden istekler": çift, aile/kıyas
 	// dallarından ÖNCE (iki ad + istek sözcüğü aileye düşmesin). Kaynak

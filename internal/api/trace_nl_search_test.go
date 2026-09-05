@@ -88,6 +88,10 @@ func TestExtractTraceSearchAndRoute(t *testing.T) {
 		{`traces containing osb.example.com`, "osb.example.com", false, true},
 		{`içinde "/x" geçen loglar`, "", false, false}, // log → D5
 		{`checkout en yavaş trace'ler`, "", false, false},
+		// v0.10.443 — tırnaksız düz sözcük literal arama olmaz; değer şekli şart.
+		{`içinde hata olan trace'ler`, "", false, false},
+		{`traces with errors`, "", false, false},
+		{`içinde order-123 geçen trace'ler`, "order-123", false, true},
 	}
 	for _, c := range cases {
 		frag, sql, ok := extractTraceSearch(c.msg, guidedTokens(normalizeGuidedMsg(c.msg)))
@@ -138,6 +142,25 @@ func TestExtractTraceSearchAndRoute(t *testing.T) {
 	}
 	if _, _, ok := parseIntentJSON(`{"intent":"trace_search","searchText":""}`, services, nil, nil, ""); ok {
 		t.Fatal("boş parça none")
+	}
+	// v0.10.443 — belirsiz servis + parça: ask rotası parçayı taşır, çip yeniden çözülür.
+	ar, _, ok := parseIntentJSON(`{"intent":"trace_search","service":"checkout-svc","searchText":"osb"}`, services, nil, nil, "")
+	if !ok || ar.Intent != guidedAskService || ar.SearchText != "osb" || len(ar.ServiceOptions) == 0 {
+		t.Fatalf("ask parçayı taşımalı: ok=%v %+v", ok, ar)
+	}
+	for _, c := range guidedSuggestions(ar) {
+		if rr := routeGuidedIntent(c, services, nil, nil, ""); rr.Intent != guidedTraceSearch || rr.SearchText != "osb" {
+			t.Errorf("çip %q → %+v", c, rr)
+		}
+	}
+	lr, _, ok := parseIntentJSON(`{"intent":"log_field","service":"checkout-svc","logField":"url.full","logValue":"/api/pay"}`, services, nil, nil, "")
+	if !ok || lr.Intent != guidedAskService || lr.LogField != "url.full" {
+		t.Fatalf("log_field ask alanı taşımalı: ok=%v %+v", ok, lr)
+	}
+	for _, c := range guidedSuggestions(lr) {
+		if rr := routeGuidedIntent(c, services, nil, nil, ""); rr.Intent != guidedLogField || rr.LogField != "url.full" || rr.LogValue != "/api/pay" || rr.Service == "" {
+			t.Errorf("log_field çipi %q → %+v", c, rr)
+		}
 	}
 }
 

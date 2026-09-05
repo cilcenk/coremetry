@@ -11,9 +11,20 @@ package api
 
 import "strings"
 
-// hasOpenPageSignal — sayfa/ekran sözcüğü + açma/gösterme fiili.
+// hasOpenPageSignal — sayfa/ekran sözcüğü (yalın/belirtme: "sayfasını",
+// "sayfayı", "sayfa", "page" — bulunma "sayfasında" DEĞİL) + açma fiili
+// (aç/git/götür/open/navigate — "göster/show" DEĞİL: "X sayfasında hataları
+// göster" bir veri sorusudur, v0.10.443).
 func hasOpenPageSignal(toks []string) bool {
-	if !tokenHasPrefix(toks, "sayfa", "page", "ekran") {
+	pageWord := false
+	for _, t := range toks {
+		switch t {
+		case "sayfa", "sayfayı", "sayfayi", "sayfası", "sayfasi", "sayfasını", "sayfasini", "sayfasına", "sayfasina", "sayfaya",
+			"page", "ekran", "ekranı", "ekrani", "ekranını", "ekranini", "ekranına", "ekranina", "ekrana":
+			pageWord = true
+		}
+	}
+	if !pageWord {
 		return false
 	}
 	for _, t := range toks {
@@ -21,8 +32,8 @@ func hasOpenPageSignal(toks []string) bool {
 		case "aç", "ac", "açar", "açsana", "açalım", "açın", "açabilir", "açabilirsin", "açarmısın", "git", "gidelim", "take":
 			return true
 		}
-		if strings.HasPrefix(t, "göster") || strings.HasPrefix(t, "goster") || strings.HasPrefix(t, "götür") || strings.HasPrefix(t, "gotur") ||
-			strings.HasPrefix(t, "open") || strings.HasPrefix(t, "show") || strings.HasPrefix(t, "navigate") {
+		if strings.HasPrefix(t, "götür") || strings.HasPrefix(t, "gotur") || strings.HasPrefix(t, "open") || strings.HasPrefix(t, "navigate") ||
+			strings.HasPrefix(t, "göster") || strings.HasPrefix(t, "goster") || strings.HasPrefix(t, "show") {
 			return true
 		}
 	}

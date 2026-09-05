@@ -25,6 +25,10 @@ func TestGlossaryLookup(t *testing.T) {
 		"checkout nedir":              "", // katalog sorusu değil sözlük: bilinmeyen terim → alt katman
 		"checkout servisi nasıl":      "",
 		"bugün hava nasıl":            "",
+		"redis nedir":                 "", // v0.10.443 — keyfi kırpma "red"e oturuyordu
+		"span'ın anlamı nedir":        "",
+		"p95in tanımı nedir":          "",
+		"traceler nedir":              "trace",
 	}
 	for msg, want := range cases {
 		term, entry, ok := glossaryLookup(normalizeGuidedMsg(msg))
@@ -112,6 +116,13 @@ func TestRouteOpenPage(t *testing.T) {
 	// "açık problemler neler" sayfa isteği DEĞİL.
 	if r := routeGuidedIntent("açık problemler neler", services, nil, nil, ""); r.Intent == guidedOpenPage {
 		t.Fatalf("sayfa sözcüğü yok → open_page olmamalı: %+v", r)
+	}
+	// v0.10.443 — bulunma hâli ("sayfasında") bir veri sorusudur, sayfa isteği değil.
+	if r := routeGuidedIntent("checkout-service sayfasında hataları göster", services, nil, nil, ""); r.Intent == guidedOpenPage {
+		t.Fatalf("'sayfasında … göster' open_page olmamalı: %+v", r)
+	}
+	if r := routeGuidedIntent("checkout-service sayfasında en yavaş trace'leri göster", services, nil, nil, ""); r.Intent != guidedSlowTraces {
+		t.Fatalf("slow_traces korunmalı: %+v", r)
 	}
 	// Çip gidiş-dönüşü + linkler.
 	chip := askServiceChip(guidedOpenPage, "checkout-service")

@@ -2740,6 +2740,28 @@ func (s *Store) migrate(ctx context.Context) error {
 		`ALTER TABLE spans MODIFY COLUMN db_statement String DEFAULT '' CODEC(ZSTD(3))`,
 		`ALTER TABLE spans MODIFY COLUMN status_msg   String DEFAULT '' CODEC(ZSTD(3))`,
 		`ALTER TABLE spans MODIFY COLUMN events       String DEFAULT '[]' CODEC(ZSTD(3))`,
+		// v0.10.381 (dış skill denetimi C7) — logs'un attr/res dizileri spans
+		// ile aynı kodeğe: LZ4 varsayılanı kalmıştı. Aynı metadata-only,
+		// idempotent, distributed-safe sınıf (LC'ye GEÇİRİLMEDİ: logs res
+		// değerleri ölçülmedi, C3 kuralı).
+		`ALTER TABLE logs MODIFY COLUMN attr_values Array(String) CODEC(ZSTD(3))`,
+		`ALTER TABLE logs MODIFY COLUMN res_values  Array(String) CODEC(ZSTD(3))`,
+		// v0.10.381 (dış skill denetimi C3) — metric_points ORDER BY
+		// (service_name, metric, time); Hat-B okumaları service_name'i
+		// opsiyonel bırakır (metricrate.go: WHERE metric = ? AND time …) ve
+		// birincil indeks önek olmadan budamaz. `metric` granül içinde
+		// yerel olarak kümelenmiş → set(0) neredeyse ideal. Yalnız yeni
+		// part'lar; 7g retention'da bir haftada dolar.
+		`ALTER TABLE metric_points ADD INDEX IF NOT EXISTS idx_mp_metric metric TYPE set(0) GRANULARITY 4`,
+		// v0.10.381 (dış skill denetimi C2) — TTL partition sınırına hizalı
+		// (toDate(time) günlük); ttl_only_drop_parts olmadan CH süresi dolan
+		// part'ı düşürmeden önce TTL-merge ile yeniden yazıyordu (rollup
+		// migration'ları 0001-0008 bunu zaten taşıyor). MODIFY SETTING
+		// metadata-only, idempotent; Distributed sarmalayıcı reddederse
+		// isClusterUnsupportedAlter yutar.
+		`ALTER TABLE spans MODIFY SETTING ttl_only_drop_parts = 1`,
+		`ALTER TABLE logs MODIFY SETTING ttl_only_drop_parts = 1`,
+		`ALTER TABLE metric_points MODIFY SETTING ttl_only_drop_parts = 1`,
 		// Apply the trace_snapshots TTL to installs that created
 		// the table before v0.5.91. MODIFY TTL is metadata-only;
 		// repeated applies are idempotent.

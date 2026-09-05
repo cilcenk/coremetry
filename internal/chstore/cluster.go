@@ -1333,8 +1333,13 @@ func isClusterUnsupportedAlter(err error) bool {
 	// are storage-engine limitations on the Distributed wrapper, not real
 	// failures — the caller skips + logs and the operator applies them on
 	// the per-shard local tables (or sets cluster_name).
+	// v0.10.381 — MODIFY SETTING sarmalayıcıda "desteklenmiyor" DEĞİL
+	// "bilinmeyen ayar" der (Distributed'ın kendi ayarları vardır):
+	// "Unknown setting 'ttl_only_drop_parts' for storage Distributed".
+	// Aynı sınıf: sarmalayıcıya uygulanamaz, _local'da uygulandı, atla.
 	return strings.Contains(msg, "is not supported by storage Distributed") ||
-		strings.Contains(msg, "Distributed doesn't support TTL")
+		strings.Contains(msg, "Distributed doesn't support TTL") ||
+		(strings.Contains(msg, "Unknown setting") && strings.Contains(msg, "for storage Distributed"))
 }
 
 // identifyDDLTarget pulls the target table/view name out of a DDL

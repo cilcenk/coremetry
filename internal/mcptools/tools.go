@@ -57,7 +57,7 @@
 //     doğru çağrının koşulu, orada kazanılan bayt yanlış argümanla
 //     harcanan bir tura değmez.
 //
-// Tool catalogue (39 tools; v0.10.468 — 36 → 39: entity_catalog.go list_namespaces / list_workloads / list_pods; sayım v0.9.1050'de düzeltildi — blok
+// Tool catalogue (40 tools; v0.10.469 — 39 → 40: resolve_entity.go; v0.10.468 — 36 → 39: entity_catalog.go list_namespaces / list_workloads / list_pods; sayım v0.9.1050'de düzeltildi — blok
 // v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu;
 // v0.9.1227'de get_operation_health ile 33; v0.9.1233'te
 // get_exception_samples ile 34; v0.9.1244'te list_teams +
@@ -296,6 +296,8 @@ func ToolList(d Deps) []mcp.Tool {
 		listNamespacesTool(d),
 		listWorkloadsTool(d),
 		listPodsTool(d),
+		// v0.10.469 (Faz 2, F2-2) — serbest metin → aday (resolve_entity.go); kataloğun hemen ardında.
+		resolveEntityTool(d),
 		getTraceTool(d),
 		// v0.9.1087 (Faz 4) — id'siz giriş: trace ID'yi BULMANIN yolu.
 		searchTracesTool(d),
@@ -488,6 +490,12 @@ func marshalJSON(v any) (string, error) {
 // into a (from, to) pair. Used by every list/query tool below.
 // Caps the lookback at 7 days so an over-eager LLM can't ask for
 // 90 days of spans and trigger a CH scan timeout.
+// cacheNow — v0.10.469: süreç içi CACHE TTL saati (resolve_entity.go katalog
+// indeksi). Sorgu penceresi DEĞİL — pencereler rangeWindow'dan geçer; bu
+// yüzden yalnız bu dosyada (anchor kapısının muaf tuttuğu tek dosya) yaşar
+// ve adı bilerek "pencere" çağrıştırmaz.
+func cacheNow() time.Time { return time.Now() }
+
 func rangeWindow(ctx context.Context, rangeS int) (from, to time.Time) {
 	// v0.10.50 — pencerenin SONU çıpadan gelir. Operatör geçmişe zoom
 	// yaptıysa (mutlak pencere) araçlar da o ana bakmalı; yoksa sunucu

@@ -48,9 +48,13 @@ func TestTraceRawStage1LightSQL_Shape(t *testing.T) {
 	if s, _ := traceRawStage1GroupSQL("", "", "duration", "sideways", 25); !strings.Contains(s, " DESC, trace_id") {
 		t.Fatalf("unknown order defaults to DESC: %s", s)
 	}
-	for _, sort := range []string{"service", "operation", "weird"} {
-		if _, ok := traceRawStage1GroupSQL("", "", sort, "DESC", 25); ok {
-			t.Fatalf("sort %q must not be light-eligible (string key)", sort)
+	if _, ok := traceRawStage1GroupSQL("", "", "weird", "DESC", 25); ok {
+		t.Fatal("unknown sort must not be light-eligible")
+	}
+	// v0.10.499 — string anahtarlar recency ile (her zaman DESC) 1. aşamaya girer.
+	for _, sort := range []string{"service", "operation"} {
+		if s, ok := traceRawStage1GroupSQL("", "", sort, "ASC", 25); !ok || !strings.Contains(s, "ORDER BY min(time) DESC, trace_id") {
+			t.Fatalf("sort %q must take the recency stage 1 (DESC regardless of order):\n%s", sort, s)
 		}
 	}
 	// v0.10.239 — zaman sıralaması yalnız kök son-filtreli düşüşte: min(time).
@@ -73,8 +77,8 @@ func TestRawListLightEligible(t *testing.T) {
 		{"default (time), no root", TraceFilter{}, false, false},
 		{"time + root post-filter → light full-window fallback (v0.10.239)", TraceFilter{Sort: "time"}, true, true},
 		{"default (time) + root post-filter", TraceFilter{}, true, true},
-		{"service (string key) even with root", TraceFilter{Sort: "service"}, true, false},
-		{"operation (string key)", TraceFilter{Sort: "operation"}, false, false},
+		{"service (string key) → ranked light path (v0.10.499)", TraceFilter{Sort: "service"}, true, true},
+		{"operation (string key) → ranked light path (v0.10.499)", TraceFilter{Sort: "operation"}, false, true},
 		{"trace id list already bounded", TraceFilter{Sort: "duration", TraceIDs: []string{"a"}}, false, false},
 		{"trace id prefix already bounded", TraceFilter{Sort: "duration", TraceID: "ab"}, false, false},
 	}

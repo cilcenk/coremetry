@@ -1,3 +1,4 @@
+import { UnitSelect } from './UnitSelect'; // v0.10.506 (D9)
 import { MetricNamePicker } from '../MetricNamePicker';
 import { ActionRow, Button } from '@/components/ui';
 import { STEP_OPTIONS } from '@/pages/explore/presets';
@@ -383,8 +384,7 @@ function PromqlFields({ cfg, onChange }: {
           </select>
         </Field>
         <Field label="Unit (optional)">
-          <input value={cfg.unit ?? ''} onChange={e => update('unit', e.target.value)}
-            placeholder="ms / % / rps" />
+          <UnitSelect value={cfg.unit} onChange={v => update('unit', v)} />
         </Field>
         <Field label="Step">
           <StepSelect value={cfg.step} onChange={v => update('step', v)} />
@@ -498,8 +498,7 @@ function TopNFields({ cfg, onChange }: {
             onChange={e => update('groupBy', e.target.value)} style={{ width: '100%' }} />
         </Field>
         <Field label="Unit">
-          <input value={cfg.unit ?? ''} placeholder="ms / % / rps"
-            onChange={e => update('unit', e.target.value)} />
+          <UnitSelect value={cfg.unit} onChange={v => update('unit', v)} />
         </Field>
       </div>
       <Field label="Row click">
@@ -542,8 +541,7 @@ function StatFields({ cfg, onChange }: {
       )}
       <div className="grid-2" style={{ display: 'grid', gap: 12 }}>
         <Field label="Unit suffix">
-          <input value={cfg.unit ?? ''} placeholder="ms / % / rps"
-            onChange={e => onChange({ ...cfg, unit: e.target.value })} />
+          <UnitSelect value={cfg.unit} onChange={v => onChange({ ...cfg, unit: v })} />
         </Field>
         <Field label="Decimals">
           <input type="number" min={0} max={6} value={cfg.decimals ?? 2}
@@ -605,8 +603,7 @@ function GaugeFields({ cfg, onChange }: {
             onChange={e => onChange({ ...cfg, max: parseFloat(e.target.value || '0') })} />
         </Field>
         <Field label="Unit suffix">
-          <input value={cfg.unit ?? ''} placeholder="% / ms / rps"
-            onChange={e => onChange({ ...cfg, unit: e.target.value })} />
+          <UnitSelect value={cfg.unit} onChange={v => onChange({ ...cfg, unit: v })} />
         </Field>
         <Field label="Decimals">
           <input type="number" min={0} max={6} value={cfg.decimals ?? 1}

@@ -28,6 +28,7 @@ package api
 import (
 	"encoding/json"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -130,4 +131,59 @@ func mergeToolLinks(acc []guidedAnswerLink, l guidedAnswerLink) []guidedAnswerLi
 		return acc
 	}
 	return append(acc, l)
+}
+
+// toolResultDeepLink — v0.10.495 (operatör: "trace'leri getir" cevabı
+// arkada Traces sayfasını açsın): search_traces / trace_stats SONUCUNDAKİ
+// `deep_link` aramanın BİREBİR linkidir (sunucunun kendi ürettiği
+// TracesDeepLink / aggregateDeepLink — süzgeçler, pencere, sıralama).
+// toolCallLink'in arg-türevi "Trace'ler" köprüsü yalnız servis taşıyordu.
+// Kök-göreli /traces? dışı her şey yok sayılır (model çıktısı değil ama
+// sınır aynı: href asla dış adres olmaz). Saf, tablo testli.
+func toolResultDeepLink(tool, content string) (guidedAnswerLink, bool) {
+	var label string
+	switch tool {
+	case "search_traces":
+		label = "Traces'te aç"
+	case "trace_stats":
+		label = "Aggregated'de aç"
+	default:
+		return guidedAnswerLink{}, false
+	}
+	var r struct {
+		DeepLink string `json:"deep_link"`
+	}
+	if err := json.Unmarshal([]byte(content), &r); err != nil {
+		return guidedAnswerLink{}, false
+	}
+	if !strings.HasPrefix(r.DeepLink, "/traces?") || len(r.DeepLink) > 4096 {
+		return guidedAnswerLink{}, false
+	}
+	return guidedAnswerLink{Label: label, Href: r.DeepLink}, true
+}
+
+// answerOpenHref — v0.10.495 (B): döngü bir trace araması yaptıysa ve
+// operatörün sorusu bir "getir/göster/listele/aç" fiili taşıyorsa (kip
+// sözlüğü mutationVerbs) cevap `open` alanıyla arkadaki sayfayı o aramaya
+// götürür (D7b, v0.10.434 — çekmece açık kalır). Soru/analiz kipi
+// ("neden yavaş", "bunun sebebi ne") gezmez: çip yeter. Saf.
+func answerOpenHref(question, deepLink string) string {
+	if deepLink == "" {
+		return ""
+	}
+	toks := guidedTokens(normalizeGuidedMsg(question))
+	if anyToken(toks, questionWords...) || !anyToken(toks, mutationVerbs...) {
+		return ""
+	}
+	return deepLink
+}
+
+// chatAnswerEvent — serbest döngünün `answer` gövdesi (iki yayın noktası
+// aynı şekli kursun: normal bitiş + tur tavanı). open boşsa alan yazılmaz.
+func chatAnswerEvent(text, exchangeID string, links []guidedAnswerLink, open string) map[string]any {
+	ev := map[string]any{"text": text, "exchangeId": exchangeID, "links": links}
+	if open != "" {
+		ev["open"] = open
+	}
+	return ev
 }

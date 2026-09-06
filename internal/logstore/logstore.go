@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"time"
 )
 
@@ -497,6 +498,51 @@ type Store interface {
 type FieldValueCount struct {
 	Value string `json:"value"`
 	Count int64  `json:"count"`
+	// v0.10.509 (log arama denetimi C5) — yalnız ?errorLift=1 ile: değerin
+	// HATA seçimindeki payı, tabandaki (aynı süzgeç, tüm seviyeler) payı ve
+	// farkı (puan). BubbleUp'ın (chstore/bubbleup.go) log tarafı ikizi.
+	SelPct  float64 `json:"selPct,omitempty"`
+	BasePct float64 `json:"basePct,omitempty"`
+	Lift    float64 `json:"lift,omitempty"`
+}
+
+// FieldStatsLift — v0.10.509 (C5): hata-seçimi/taban zarfı.
+type FieldStatsLift struct {
+	SeverityMin    uint8  `json:"severityMin"`
+	SelectionTotal int64  `json:"selectionTotal"`
+	BaselineTotal  int64  `json:"baselineTotal"`
+	Degraded       bool   `json:"degraded,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+}
+
+// LiftFieldStats — v0.10.509 (C5) SAF: seçim (hata logları) ile tabanın
+// (aynı süzgeç, tüm seviyeler) üst değerlerini birleştirir; her değere
+// selPct/basePct/lift yazar ve lift'e göre (büyükten küçüğe) sıralar.
+// Tabanın top-N'inde olmayan değer basePct 0 sayılır (taban top-N dışı —
+// küçük pay, lift ancak abartılı değil: seçim payı zaten küçükse küçük).
+// Seçim boşsa (hata logu yok) lift yok — çağıran zarfı söyler.
+func LiftFieldStats(sel, base *FieldStatsResult) *FieldStatsResult {
+	if sel == nil {
+		return nil
+	}
+	basePct := map[string]float64{}
+	if base != nil && base.Total > 0 {
+		for _, v := range base.Values {
+			basePct[v.Value] = 100 * float64(v.Count) / float64(base.Total)
+		}
+	}
+	out := *sel
+	out.Values = make([]FieldValueCount, len(sel.Values))
+	copy(out.Values, sel.Values)
+	for i := range out.Values {
+		if sel.Total > 0 {
+			out.Values[i].SelPct = 100 * float64(out.Values[i].Count) / float64(sel.Total)
+		}
+		out.Values[i].BasePct = basePct[out.Values[i].Value]
+		out.Values[i].Lift = out.Values[i].SelPct - out.Values[i].BasePct
+	}
+	sort.SliceStable(out.Values, func(i, j int) bool { return out.Values[i].Lift > out.Values[j].Lift })
+	return &out
 }
 
 // FieldStatsResult — top values of one field plus the total docs
@@ -511,6 +557,8 @@ type FieldStatsResult struct {
 	// tam sayar, bayrakları hiç kurmaz (omitempty ile telde görünmez).
 	Partial      bool `json:"partial,omitempty"`
 	ShardsFailed int  `json:"shardsFailed,omitempty"`
+	// ErrorLift — v0.10.509 (C5): yalnız ?errorLift=1 ile dolar.
+	ErrorLift *FieldStatsLift `json:"errorLift,omitempty"`
 }
 
 // LogSeries is one bucketed timeseries returned by Histogram. Name

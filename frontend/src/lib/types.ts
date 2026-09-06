@@ -2722,7 +2722,9 @@ export interface NotificationLogEntry {
 export interface LogFieldStats {
   field: string;
   total: number;
-  values: { value: string; count: number }[];
+  // selPct/basePct/lift — v0.10.509 (C5), yalnız ?errorLift=1 ile.
+  values: { value: string; count: number; selPct?: number; basePct?: number; lift?: number }[];
+  errorLift?: { severityMin: number; selectionTotal: number; baselineTotal: number; degraded?: boolean; reason?: string };
   // v0.8.350 (HA 🟡6) — slow/unreachable log backend degrades to HTTP 200
   // {degraded:true, reason} + empty values instead of a 5xx, same contract
   // as LogsResponse (v0.8.332). The accordion renders its empty state.

@@ -3,7 +3,7 @@
 // + legend above the bars + "spans / Nm bucket" note) but delegates the axes,
 // gridlines, hover crosshair/tooltip, deploy-free brush and Canvas rendering to
 // TimeChart. ok-span bars (accent) with the error share overlaid red at the
-// bottom + a p50 latency line. Drag to brush a time range.
+// bottom + a response-time line (p95 default, selectable). Drag to brush a time range.
 //
 // v0.9.843 (operatör isteği) — EKSEN TAKASI, Grafana düzeni: SÜRE (p50
 // çizgisi) SOL eksende, SPAN SAYISI (bar'lar) SAĞ eksende. Eşleme +
@@ -13,13 +13,17 @@ import { useMemo } from 'react';
 import type { SpanMetricSeries } from '@/lib/types';
 import { TimeChart } from '@/components/charts/TimeChart';
 import { volumeHint, buildVolumeSeries, fmtVolumeDuration } from './volumeSeries';
+import { STRIP_STAT_DEFAULT, type StripStat } from './stripStat';
 
 export function VolumeChart({
-  count, errors, p50, height = 140, onBrush, onZoomReset, xRange, header, headerRight, unit = 'traces',
+  count, errors, latency, stat = STRIP_STAT_DEFAULT, height = 140, onBrush, onZoomReset, xRange, header, headerRight, unit = 'traces',
 }: {
   count: SpanMetricSeries[] | null;
   errors: SpanMetricSeries[] | null;
-  p50: SpanMetricSeries[] | null;
+  // v0.10.513 — yanıt-süresi serisi + hangi istatistik olduğu (p50/p95/p99,
+  // varsayılan p95; stripStat.ts). Etiket istatistiği söyler.
+  latency: SpanMetricSeries[] | null;
+  stat?: StripStat;
   height?: number;
   onBrush?: (fromMs: number, toMs: number) => void;
   // v0.9.390 (Faz A-3) — çift-tık = brush'ı geri al; TimeChart'ın mevcut
@@ -33,15 +37,15 @@ export function VolumeChart({
   // aşağı itiyordu.
   header?: React.ReactNode;
   // Aynı şeridin SAĞ ucu — pencere istatistikleri (TOTAL / ERROR SPANS /
-  // ERR RATE / P50 MAX). Ayrı slot, çünkü aradaki bucket ipucu ikisinin
+  // ERR RATE / P95 MAX + istatistik seçici). Ayrı slot, çünkü aradaki bucket ipucu ikisinin
   // ortasına giriyor.
   headerRight?: React.ReactNode;
   // v0.10.268 — çubuk birimi ("traces" | "requests"), volumeUnitLabel.
   unit?: string;
 }) {
   const { times, series, bucketMin } = useMemo(
-    () => buildVolumeSeries(count, errors, p50, unit),
-    [count, errors, p50, unit],
+    () => buildVolumeSeries(count, errors, latency, unit, stat),
+    [count, errors, latency, unit, stat],
   );
 
   return (

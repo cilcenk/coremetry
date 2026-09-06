@@ -1,7 +1,7 @@
 // Traces.tsx — the trace explorer (Phase 1 Task B, Tempo/Datadog-grade).
 //
 // Rebuilt on the Phase-0 perf primitives + the OTel correlation layer:
-//   • Header viz: Volume (stacked ok+error bars + p99 line + TOTAL/ERRORS/
+//   • Header viz: Volume (stacked ok+error bars + response-time line, p95 default + TOTAL/ERRORS/
 //     ERROR RATE/P99 MAX stats) ↔ Latency (duration-vs-time scatter, log y,
 //     hover/click/drag-brush). Both derive from the live, filtered rows.
 //   • RED-from-traces panel (rate/errors/p99) over the same filtered set.
@@ -64,7 +64,6 @@ import { useContextParams, type ContextPatch } from '@/hooks/useContextParams';
 import { useTablePrefs } from '@/lib/queries/prefs';
 import { parseColsParam } from '@/lib/columnModel';
 import type { ContextDim } from '@/lib/contextParams';
-import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import { useAuth } from '@/components/AuthProvider';
 import { tracesExplainUrl } from '@/lib/tracesExplainUrl';
 import type { TracesParams } from '@/lib/api';
@@ -72,6 +71,7 @@ import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, Aggreg
 import { traceHref } from '@/lib/traceHref';
 
 import { VolumeChart } from '@/components/traces/VolumeChart';
+import { STRIP_STATS, STRIP_STAT_DEFAULT, parseStripStat, stripStatHeaderLabel, type StripStat } from '@/components/traces/stripStat';
 import { stripScope, volumeUnitFor } from '@/components/traces/volumeSeries';
 import { LatencyScatter } from '@/components/traces/LatencyScatter';
 import { ShapesView } from '@/components/traces/ShapesView';
@@ -391,14 +391,13 @@ function TracesPageInner() {
 
 
   // Header viz mode + interaction state.
-  // v0.9.301 — overview-chart height, persisted. Slim is the default:
-  // Dynatrace keeps this strip thin because the TABLE is the page, and
-  // the operator reported the same thing ("traceler az satır çıkıyor").
-  const [chartTall, setChartTall] = useState(
-    () => getRaw(STORAGE_KEYS.tracesChartTall) === '1');
-  const toggleChartTall = () => {
-    setChartTall(v => { setRaw(STORAGE_KEYS.tracesChartTall, v ? '0' : '1'); return !v; });
-  };
+  // v0.9.301 — overview-chart height was persisted with a shrink/expand
+  // toggle. v0.10.513 (operatör: "expand'e gerek yok, default shrink
+  // kalsın") — toggle KALDIRILDI, şerit hep kompakt (130 px): Dynatrace
+  // keeps this strip thin because the TABLE is the page.
+  // v0.10.513 — yanıt-süresi çizgisinin istatistiği (p50/p95/p99), URL
+  // `?rt=`; varsayılan p95 URL'ye yazılmaz (stripStat.ts).
+  const [stripStat, setStripStat] = useState<StripStat>(() => parseStripStat(searchParams.get('rt')));
   const [viz, setViz] = useState<'volume' | 'latency'>(() => searchParams.get('viz') === 'latency' ? 'latency' : 'volume');
 
 
@@ -445,6 +444,7 @@ function TracesPageInner() {
       ['env',      env],
       ['view',     view !== 'list' ? view : ''],
       ['viz',      viz !== 'volume' ? viz : ''],
+      ['rt',       stripStat !== STRIP_STAT_DEFAULT ? stripStat : ''],
       ['sort',     sort !== 'time' ? sort : ''],
       ['order',    order !== 'desc' ? order : ''],
       ['page',     page > 0 ? page : ''],
@@ -629,7 +629,7 @@ function TracesPageInner() {
   const [volSeries, setVolSeries] = useState<{
     count: SpanMetricSeries[] | null;
     errors: SpanMetricSeries[] | null;
-    p50: SpanMetricSeries[] | null;
+    rt: SpanMetricSeries[] | null;
   } | null>(null);
   useEffect(() => {
     if (view !== 'list') return;
@@ -698,7 +698,9 @@ function TracesPageInner() {
       aggs: [
         { name: 'count', agg: 'count' },
         { name: 'errors', agg: 'errors' },
-        { name: 'p50', agg: 'p50', field: 'duration_ms' },
+        // v0.10.513 — istatistik seçime bağlı (p95 varsayılan); dar rollup
+        // fast-path p50/p95/p99'u aynı tDigest'ten servis eder.
+        { name: 'rt', agg: stripStat, field: 'duration_ms' },
       ],
     }, ctl.signal)
       .then(r => {
@@ -706,12 +708,12 @@ function TracesPageInner() {
         setVolSeries({
           count: r.series.count ?? [],
           errors: r.series.errors ?? [],
-          p50: r.series.p50 ?? [],
+          rt: r.series.rt ?? [],
         });
       })
       .catch((e: unknown) => { if (!cancelled && !isCanceled(e)) setVolSeries(null); });
     return () => { cancelled = true; ctl.abort(); };
-  }, [view, listRangeNs, filter.service, filter.search, filter.rootOnly, filter.hasError, env, clusterScope, advFilters, grouped]); // v0.10.484
+  }, [view, listRangeNs, filter.service, filter.search, filter.rootOnly, filter.hasError, env, clusterScope, advFilters, grouped, stripStat]); // v0.10.484, v0.10.513 stripStat
 
   // v0.9.637 — anahtar önerisi YALNIZ boş sonuçta çekilir. CLAUDE.md
   // ES/CH maliyet disiplini: liste boyunca prefetch yok, poll yok —
@@ -917,11 +919,11 @@ function TracesPageInner() {
   const headerStats = useMemo(() => {
     const cPts = volSeries?.count?.[0]?.points ?? [];
     const eMap = new Map((volSeries?.errors?.[0]?.points ?? []).map(p => [p.time, p.value]));
-    const pPts = volSeries?.p50?.[0]?.points ?? [];
-    let total = 0, err = 0, p50Max = 0;
+    const pPts = volSeries?.rt?.[0]?.points ?? [];
+    let total = 0, err = 0, rtMax = 0;
     for (const p of cPts) { total += p.value; err += eMap.get(p.time) ?? 0; }
-    for (const p of pPts) if (p.value > p50Max) p50Max = p.value;
-    return { total, err, errRate: total > 0 ? (err / total) * 100 : 0, p50Max };
+    for (const p of pPts) if (p.value > rtMax) rtMax = p.value;
+    return { total, err, errRate: total > 0 ? (err / total) * 100 : 0, rtMax };
   }, [volSeries]);
 
   const openTrace = (t: TraceRow) => navigate(traceHref(t.traceId, { pageRange: range }));
@@ -1131,41 +1133,40 @@ function TracesPageInner() {
                 tone={headerStats.err > 0 ? 'err' : undefined}
                 title="Seçili pencerenin tamamındaki hatalı giriş span'ı sayısı — yüklü satırlardan bağımsız, gerçek trafiği tarif eder." />
               <HeaderStat label="ERR RATE" value={`${headerStats.errRate.toFixed(2)}%`} tone={headerStats.errRate > 0 ? 'err' : undefined} />
-              <HeaderStat label="MEDIAN MAX" value={headerStats.p50Max ? fmtDur(headerStats.p50Max) : '—'} tone="warn"
-                title="Giriş span'ı medyan yanıt süresinin penceredeki en yüksek kovası." />
+              <HeaderStat label={stripStatHeaderLabel(stripStat)} value={headerStats.rtMax ? fmtDur(headerStats.rtMax) : '—'} tone="warn"
+                title={`Giriş span'ı ${stripStat} yanıt süresinin penceredeki en yüksek kovası.`} />
             </>
           );
           return data === undefined ? (
             <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 8,
               // v0.9.301 — the skeleton must match the real card, or the
               // table jumps on every load. Tracks the persisted height.
-              height: chartTall ? 282 : 182, // v0.10.486 — kompakt yükseklikle hizalı
+              height: 182, // v0.10.486 — kompakt yükseklikle hizalı; v0.10.513 tek yükseklik
               display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Spinner />
             </div>
           ) : viz === 'volume' ? (
             // slimmer + recedes — it's the brush/overview "tool", not the
             // headline chart; the RED strip below carries the filtered numbers.
-            <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} p50={volSeries?.p50 ?? null}
-              // v0.10.268 — Dynatrace ölçeği (mockup A: 200 px); shrink/expand duruyor.
+            <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} latency={volSeries?.rt ?? null}
+              stat={stripStat}
+              // v0.10.268 — Dynatrace ölçeği (mockup A: 200 px).
               // v0.10.486 (operatör: "histogram biraz daha shrink edilebilir") — kompakt 170 → 130.
-              height={chartTall ? 230 : 130} unit={volumeUnit} onBrush={applyBrush} onZoomReset={clearBrush}
+              // v0.10.513 — shrink/expand kaldırıldı; tek yükseklik.
+              height={130} unit={volumeUnit} onBrush={applyBrush} onZoomReset={clearBrush}
               xRange={{ from: listRangeNs.from / 1e9, to: listRangeNs.to / 1e9 }}
               header={vizToggle}
               headerRight={<>{vizStats}
-                {/* v0.9.301 — the chart's own size control, in its header
-                    strip. The comment two lines up has always said this is
-                    the brush/overview TOOL, not the headline chart; at
-                    140px it did not behave like one and the trace table —
-                    the thing the page is for — started below the fold. */}
-                <button type="button" onClick={toggleChartTall}
-                  title={chartTall
-                    ? 'Shrink the overview chart so more traces fit on screen'
-                    : 'Expand the overview chart'}
-                  style={{
-                    background: 'none', border: 'none', cursor: 'pointer',
-                    color: 'var(--text3)', fontSize: 11, padding: '0 2px', marginLeft: 4,
-                  }}>{chartTall ? '⌃ shrink' : '⌄ expand'}</button>
+                {/* v0.10.513 (operatör: "seçilebilir olsun, çok yer kaplamasın,
+                    expand yerinde") — yanıt-süresi istatistiği seçici, eski
+                    expand düğmesinin yerinde; `.segmented.sg-sm` yoğun rung. */}
+                <div className="segmented sg-sm" role="group" aria-label="Yanıt süresi istatistiği"
+                  title="Çizgi ve başlıktaki MAX bu istatistiği gösterir (URL ?rt=)">
+                  {STRIP_STATS.map(st => (
+                    <button key={st} type="button" className={stripStat === st ? 'active' : ''}
+                      onClick={() => setStripStat(st)}>{st}</button>
+                  ))}
+                </div>
               </>} />
           ) : (
             <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10 }}>

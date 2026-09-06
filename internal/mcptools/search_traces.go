@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -30,6 +31,13 @@ type searchTracesArgs struct {
 	Sort       string `json:"sort,omitempty"`
 	RangeS     int    `json:"range_s,omitempty"`
 	Limit      int    `json:"limit,omitempty"`
+	// v0.10.473 (F3-2) — attribute süzgeçleri + kapsam + süre aralığı.
+	Filters   []SearchFilter `json:"filters,omitempty"`
+	Namespace string         `json:"namespace,omitempty"`
+	Cluster   string         `json:"cluster,omitempty"`
+	Env       string         `json:"env,omitempty"`
+	MinMs     float64        `json:"min_ms,omitempty"`
+	MaxMs     float64        `json:"max_ms,omitempty"`
 }
 
 func searchTracesTool(d Deps) mcp.Tool {
@@ -43,7 +51,11 @@ func searchTracesTool(d Deps) mcp.Tool {
 			"errors_only=true narrows to failed traces. " +
 			"Reads the trace-summary pre-aggregate when possible, falls back to bounded raw scans — keep range_s modest (default 1800s). " +
 			"Honesty envelope: has_more (page full), ranked_within (duration sort ranked inside the newest-N slice only), " +
-			"narrowed_from_iso (window was halved under resource pressure — the answer covers LESS than you asked).",
+			"narrowed_from_iso (window was halved under resource pressure — the answer covers LESS than you asked). " +
+			"ATTRIBUTE FILTERS (filters[]): keys MUST come from describe_attributes / find_attribute_by_value — never invent one; a filter requires a scope " +
+			"(service, namespace or cluster). Filtered searches are the slow path, so the window is clamped: indexed keys ≤ 6h, non-indexed keys ≤ 1h, " +
+			"sort=duration with filters ≤ 1h, ≤ 50 rows — window_clamped_reason says when. `deep_link` reproduces the exact search in the Traces UI: " +
+			"put it at the end of your answer.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -78,8 +90,27 @@ func searchTracesTool(d Deps) mcp.Tool {
 					"type":        "integer",
 					"minimum":     1,
 					"maximum":     100,
-					"description": "Max traces to return. Default 20.",
+					"description": "Max traces to return. Default 20 (≤ 50 with filters).",
 				},
+				"filters": map[string]any{
+					"type":        "array",
+					"description": "Attribute filters, AND-joined. Each: {key, op, value|values}. op: eq (default) | ne | in (values) | contains | prefix | regex (anchored full match) | exists | not_exists. Keys from describe_attributes / find_attribute_by_value only.",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"key":    map[string]any{"type": "string"},
+							"op":     map[string]any{"type": "string", "enum": []string{"eq", "ne", "in", "contains", "prefix", "regex", "exists", "not_exists"}},
+							"value":  map[string]any{"type": "string"},
+							"values": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						},
+						"required": []string{"key"},
+					},
+				},
+				"namespace": map[string]any{"type": "string", "description": "Exact k8s namespace (k8s.namespace.name) to scope to."},
+				"cluster":   map[string]any{"type": "string", "description": "Remote Cluster id / name / span value (list_clusters) to scope to."},
+				"env":       map[string]any{"type": "string", "description": "deploy_env value to narrow to."},
+				"min_ms":    map[string]any{"type": "number", "description": "Only traces slower than this (ms)."},
+				"max_ms":    map[string]any{"type": "number", "description": "Only traces faster than this (ms)."},
 			},
 		},
 		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -89,12 +120,48 @@ func searchTracesTool(d Deps) mcp.Tool {
 					return nil, fmt.Errorf("decode args: %w", err)
 				}
 			}
-			from, to := rangeWindow(ctx, a.RangeS)
-			limit := clampLimit(a.Limit, 20, 100)
 			sortBy := "time"
 			if a.Sort == "duration" {
 				sortBy = "duration"
 			}
+			// v0.10.473 (F3-2) — süzgeçler + kapsam + kapı.
+			var filters []chstore.FilterExpr
+			for _, sf := range a.Filters {
+				fe, err := toFilterExpr(sf)
+				if err != nil {
+					return nil, err
+				}
+				filters = append(filters, fe)
+			}
+			ns := strings.TrimSpace(a.Namespace)
+			if ns != "" {
+				filters = append(filters, chstore.FilterExpr{Key: "k8s.namespace.name", Op: "=", Values: []string{ns}})
+			}
+			clusterVal := ""
+			if c := strings.TrimSpace(a.Cluster); c != "" {
+				cs, ok := clustersFor(d, c)
+				if !ok || len(cs) == 0 {
+					return nil, unknownClusterErr(d, c)
+				}
+				switch vals := cs[0].SpanValues; len(vals) {
+				case 0:
+					clusterVal = cs[0].Name
+				case 1:
+					clusterVal = vals[0]
+				default:
+					filters = append(filters, chstore.FilterExpr{Key: "cluster", Op: "IN", Values: vals})
+				}
+			}
+			if err := chstore.ValidateFilters(filters); err != nil {
+				return nil, fmt.Errorf("filters: %w", err)
+			}
+			hasScope := strings.TrimSpace(a.Service) != "" || ns != "" || clusterVal != "" || strings.TrimSpace(a.Cluster) != ""
+			gate, err := applySearchGate(a.RangeS, clampLimit(a.Limit, 20, 100), filters, hasScope, sortBy == "duration", chstore.AttrIndexAvailable())
+			if err != nil {
+				return nil, err
+			}
+			from, to := rangeWindow(ctx, gate.RangeS)
+			limit := gate.Limit
 			var ranked int
 			var narrowed time.Time
 			f := chstore.TraceFilter{
@@ -106,16 +173,25 @@ func searchTracesTool(d Deps) mcp.Tool {
 				CountMode:    "skip", // sayım pahalı ve modele gerekmez; has_more yeter
 				RankedWithin: &ranked,
 				NarrowedFrom: &narrowed,
+				Filters:      filters, Env: strings.TrimSpace(a.Env), Cluster: clusterVal,
+				MinMs: a.MinMs, MaxMs: a.MaxMs,
 			}
 			rows, _, hasMore, err := d.Store.GetTraces(ctx, f)
 			if err != nil {
 				return nil, err
 			}
 			out := map[string]any{
-				"traces":   rows,
-				"count":    len(rows),
-				"window_s": int(to.Sub(from).Seconds()),
-				"has_more": hasMore,
+				"traces":    rows,
+				"count":     len(rows),
+				"window_s":  int(to.Sub(from).Seconds()),
+				"has_more":  hasMore,
+				"deep_link": tracesDeepLink(f, from, to),
+			}
+			if len(filters) > 0 {
+				out["filters_applied"] = filters
+			}
+			if gate.Reason != "" {
+				out["window_clamped_reason"] = gate.Reason
 			}
 			if ranked > 0 {
 				out["ranked_within"] = ranked

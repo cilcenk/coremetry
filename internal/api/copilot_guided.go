@@ -1205,6 +1205,12 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 	}
 	// v0.10.463 (D1) — hiçbir niyet tanımadı: ad-şekilli mesaj varlık kademesine
 	// (find_entity.go). Yalnız burada, tüm sinyal dallarından SONRA.
+	// v0.10.470 (F2-3) — "X namespace'indeki servisler" / "namespace'leri listele"
+	// (namespace_guided.go); varlık kademesinden ÖNCE (namespace sözcüğü
+	// ad-şekil kapısından geçmezdi).
+	if r, ok := routeNamespaceAsk(toks, env); ok {
+		return r
+	}
 	if r, ok := routeFindEntity(msg, toks, svc, env, services, envs); ok {
 		return r
 	}
@@ -1515,7 +1521,14 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		}
 	}
 	if route.Intent == guidedNone {
-		return false, false
+		// v0.10.470 (F2-3, G8) — kısa ad-şekilli mesaj serbest döngüye düşmeden
+		// katalog indeksine sorulur (namespace_guided.go entityScanRoute); aday
+		// yoksa handler false döner ve eski yol aynen sürer.
+		fb, ok := entityScanRoute(norm)
+		if !ok {
+			return false, false
+		}
+		route = fb
 	}
 	// v0.9.479 — çekmece bağlamı varken SOMUT ÖZNEYE oturmayan rota
 	// guided'a bırakılmaz: filo geneli prefetch ekrandaki konuyu
@@ -1568,10 +1581,18 @@ func (s *Server) runGuidedRoute(ctx context.Context, emit func(string, any), rou
 	// v0.10.463 (D1) — find_entity: LLM'siz varlık kartı / aday çipleri / liste
 	// (find_entity.go). Okuma başarısızsa serbest döngüye bırakır.
 	if route.Intent == guidedFindEntity {
+		// v0.10.470 (F2-3) — yalnız FindQuery: ucuz katalog taraması (servis /
+		// namespace / karışık); aday yoksa eski yol.
+		if route.Service == "" && len(route.ServiceOptions) == 0 && !route.FindList && route.FindQuery != "" {
+			return s.guidedEntityScanAnswer(ctx, emit, route, from, to, rangeS)
+		}
 		if handled, ok := s.guidedFindEntityAnswer(ctx, emit, route, from, to, rangeS); handled {
 			return handled, ok
 		}
 		return false, false
+	}
+	if route.Intent == guidedNamespaceServices { // v0.10.470 (F2-3)
+		return s.guidedNamespaceServicesAnswer(ctx, emit, route, from, to, rangeS)
 	}
 	if route.Intent == guidedOpenPage {
 		links := dedupLinksByHref(guidedAnswerLinks(route, linkWindowBetween(from, to)))

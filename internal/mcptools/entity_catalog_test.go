@@ -60,7 +60,7 @@ func TestEntityToolsDisabledHonest(t *testing.T) {
 	}
 }
 
-func TestNamespaceAndWorkloadRows(t *testing.T) {
+func TestNamespaceAndworkloadRows(t *testing.T) {
 	c := ecClusters[0]
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	recs := []chstore.EntityRecord{{Name: "shop", Source: "thanos", LastSeen: now}, {Name: "core", Source: "span", LastSeen: now}}

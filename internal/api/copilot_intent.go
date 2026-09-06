@@ -58,6 +58,8 @@ var intentAllowed = map[string]guidedIntent{
 	"trace_search": guidedTraceSearch,
 	// v0.10.463 (D1) — servisi adıyla bul / servis listesi (find_entity.go).
 	"find_entity": guidedFindEntity,
+	// v0.10.470 (F2-3) — namespace'teki servisler / namespace listesi; `namespace` slotu.
+	"namespace_services": guidedNamespaceServices,
 }
 
 // intentNeedsService — servissiz anlamsız şekiller: model servis vermediyse
@@ -79,6 +81,7 @@ func intentClassifySchema() map[string]any {
 		"team":     strProp(),                        // v0.10.429 (D1)
 		"logField": strProp(), "logValue": strProp(), // v0.10.433 (D5)
 		"searchText": strProp(), // v0.10.436 (D2b)
+		"namespace":  strProp(), // v0.10.470 (F2-3)
 	})
 }
 
@@ -95,6 +98,7 @@ type intentJSON struct {
 	LogValue string `json:"logValue"`
 	// v0.10.436 (D2b)
 	SearchText string `json:"searchText"`
+	Namespace string `json:"namespace"` // v0.10.470 (F2-3)
 }
 
 var (
@@ -191,6 +195,12 @@ func parseIntentJSON(raw string, services, envs, teams []string, ctxService stri
 	// v0.10.463 (D1) — find_entity: servis slotu boşsa liste; tam/tek yakın ad
 	// kart; 2+ yakın ad aday çipleri (deterministik, guidedAskService DEĞİL);
 	// hiç yakın ad yoksa uydurma → none.
+	if intent == guidedNamespaceServices { // v0.10.470 (F2-3) — çözüm handler'da (katalog)
+		if ns := strings.TrimSpace(in.Namespace); ns != "" {
+			return guidedRoute{Intent: guidedNamespaceServices, FindQuery: ns}, 0, true
+		}
+		return guidedRoute{Intent: guidedNamespaceServices, FindList: true}, 0, true
+	}
 	if intent == guidedFindEntity {
 		sv := strings.TrimSpace(in.Service)
 		if sv == "" {

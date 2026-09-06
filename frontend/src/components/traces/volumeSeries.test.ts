@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { SpanMetricSeries } from '@/lib/types';
-import { buildVolumeSeries, fmtVolumeDuration, volumeUnitLabel, smoothCentered, P50_SMOOTH_WINDOW, stripScope, isEntrySpanKey, volumeUnitFor, volumeHint } from './volumeSeries';
+import { buildVolumeSeries, fmtVolumeDuration, volumeUnitLabel, smoothCentered, RT_SMOOTH_WINDOW, stripScope, isEntrySpanKey, volumeUnitFor, volumeHint } from './volumeSeries';
 
 const S = 1_000_000_000; // 1 saniye, ns
 const T0 = 1_700_000_000 * S;
@@ -29,7 +29,7 @@ describe('buildVolumeSeries — eksen eşlemesi (v0.10.268 Dynatrace düzeni; v0
   it.each([
     ['total', 'left', 'bar'],   // span sayısı → SAĞ
     ['error', 'left', 'bar'],   // span sayısı → SAĞ
-    ['p50', 'right', 'line'],     // SÜRE → SOL
+    ['rt', 'right', 'line'],     // SÜRE → SOL
   ] as const)('%s serisi %s eksende ve %s tipinde', (key, axis, type) => {
     const s = byKey(cfg, key);
     expect(s.axis).toBe(axis);
@@ -37,11 +37,11 @@ describe('buildVolumeSeries — eksen eşlemesi (v0.10.268 Dynatrace düzeni; v0
   });
 
   it('süre ekseni ile sayı ekseni AYRI taraflarda (çift eksen korunur)', () => {
-    expect(byKey(cfg, 'p50').axis).not.toBe(byKey(cfg, 'total').axis);
+    expect(byKey(cfg, 'rt').axis).not.toBe(byKey(cfg, 'total').axis);
   });
 
   it('çizim sırası korunur: tam bar → hata payı → p50 çizgisi en üstte', () => {
-    expect(cfg.series.map(s => s.key)).toEqual(['total', 'error', 'p50']);
+    expect(cfg.series.map(s => s.key)).toEqual(['total', 'error', 'rt']);
   });
 });
 
@@ -79,7 +79,7 @@ describe('buildVolumeSeries — veri dönüşümü', () => {
       points: [{ time: T0, value: 0 }, { time: T0 + 300 * S, value: 42 }],
     }];
     const cfg = buildVolumeSeries(mk([1, 2, 3]), null, p50);
-    expect(byKey(cfg, 'p50').data).toEqual([null, 42, null]);
+    expect(byKey(cfg, 'rt').data).toEqual([null, 42, null]);
   });
 });
 
@@ -129,13 +129,13 @@ describe('smoothCentered / p50 yumuşatma', () => {
     expect(smoothCentered([1, null, 5, 7, 9], 3)).toEqual([1, null, 6, 7, 8]);
     const same = [1, 2, 3];
     expect(smoothCentered(same, 1)).toBe(same);
-    expect(P50_SMOOTH_WINDOW % 2).toBe(1);
+    expect(RT_SMOOTH_WINDOW % 2).toBe(1);
   });
   it('p50 serisi yumuşatılmış, etiket söyler, GAP korunur, yoğun seride nokta yok', () => {
     const n = 30;
     const mk = (f: (i: number) => number | null): SpanMetricSeries[] => [{ groupKey: [], points: Array.from({ length: n }, (_, i) => ({ time: (1_700_000_000 + i * 120) * 1e9, value: f(i) ?? 0 })) }];
     const cfg = buildVolumeSeries(mk(() => 100), mk(() => 1), mk(i => (i === 10 ? 0 : (i % 2 ? 10 : 2))));
-    const p50 = cfg.series.find(s0 => s0.key === 'p50')!;
+    const p50 = cfg.series.find(s0 => s0.key === 'rt')!;
     expect(p50.label).toContain('ort.');
     expect(p50.pointsShow).toBe(false);
     expect(p50.data[10]).toBeNull();                       // GAP korunur (0 → null)
@@ -163,5 +163,16 @@ describe('stripScope', () => {
     expect(volumeUnitFor(true, 'spans')).toBe('spans');
     expect(volumeHint('spans')).toContain('SPAN');
     expect(volumeHint('traces')).toContain('Giriş span');
+  });
+});
+
+// v0.10.513 (operatör: "Median yerine p95 olsun default") — üçüncü seri
+// seçilebilir istatistik; etiket seçimi söyler, varsayılan p95.
+describe('şerit istatistiği (v0.10.513)', () => {
+  const mk = (v: number): SpanMetricSeries[] => [{ groupKey: [], points: [1, 2, 3].map(i => ({ time: (1_700_000_000 + i * 120) * 1e9, value: v })) }];
+  it('varsayılan etiket p95; p50 "median" diye, p99 adıyla', () => {
+    expect(buildVolumeSeries(mk(10), mk(1), mk(42)).series.find(s0 => s0.key === 'rt')!.label).toContain('(p95,');
+    expect(buildVolumeSeries(mk(10), mk(1), mk(42), 'traces', 'p50').series.find(s0 => s0.key === 'rt')!.label).toContain('(median,');
+    expect(buildVolumeSeries(mk(10), mk(1), mk(42), 'traces', 'p99').series.find(s0 => s0.key === 'rt')!.label).toContain('(p99,');
   });
 });

@@ -16,6 +16,7 @@
 import type { SpanMetricSeries } from '@/lib/types';
 import type { TimeChartSeries } from '@/components/charts/TimeChart';
 import { statusColor } from '@/lib/statusColor';
+import { STRIP_STAT_DEFAULT, stripStatLabel, type StripStat } from './stripStat';
 
 /** Süre ekseni formatı (v0.9.73; v0.9.843'e dek SAĞ eksendeydi, artık SOL):
  *  <1000ms ms, aksi s. "3100 ms" gibi okunmaz büyük değerleri "3.1s" yapar;
@@ -43,16 +44,19 @@ export function volumeUnitLabel(serviceScoped: boolean): string {
   return serviceScoped ? 'traces' : 'requests';
 }
 
+/** v0.10.513 — üçüncü seri artık seçilebilir istatistik (p50/p95/p99,
+ *  varsayılan p95, stripStat.ts); seri anahtarı `rt`, etiket istatistiği söyler. */
 export function buildVolumeSeries(
   count: SpanMetricSeries[] | null,
   errors: SpanMetricSeries[] | null,
-  p50: SpanMetricSeries[] | null,
+  latency: SpanMetricSeries[] | null,
   unit: string = 'traces',
+  stat: StripStat = STRIP_STAT_DEFAULT,
 ): VolumeChartConfig {
   const cPts = count?.[0]?.points ?? [];
   if (!cPts.length) return { times: [], series: [], bucketMin: 1 };
   const eMap = new Map((errors?.[0]?.points ?? []).map(p => [p.time, p.value]));
-  const pMap = new Map((p50?.[0]?.points ?? []).map(p => [p.time, p.value]));
+  const pMap = new Map((latency?.[0]?.points ?? []).map(p => [p.time, p.value]));
   const t = cPts.map(p => Math.round(p.time / 1e9)); // ns → unix sec
   const total = cPts.map(p => p.value);
   const err = cPts.map(p => Math.min(eMap.get(p.time) ?? 0, p.value));
@@ -68,9 +72,9 @@ export function buildVolumeSeries(
   // çizgisi 5 kovalık merkezli hareketli ortalama (2 dk kovada 10 dk).
   // GAP'ler korunur (null merkez null kalır); kenarlarda mevcut komşularla.
   // Yoğun seride (≥20 kova) noktalar kapalı — nokta işaretleri zikzağın
-  // görsel yarısıydı. Başlıktaki MEDIAN MAX ham kovadan okunur; etiket
+  // görsel yarısıydı. Başlıktaki <STAT> MAX ham kovadan okunur; etiket
   // yumuşatmayı söyler.
-  const p50s = smoothCentered(p50d, P50_SMOOTH_WINDOW);
+  const p50s = smoothCentered(p50d, RT_SMOOTH_WINDOW);
   // v0.10.268 (operatör: "bar gösterimleri Dynatrace gibi olabilir", mockup A
   // onayı) — SAYIM SOL eksende (çubuklar), MEDYAN yanıt süresi SAĞ eksende
   // (çizgi): Dynatrace "Trace count / Response Time (Median)" düzeni.
@@ -83,14 +87,15 @@ export function buildVolumeSeries(
     { key: 'error', label: 'error ' + unit, data: err, color: statusColor('error'), type: 'bar', axis: 'left' },
     // v0.9.73 — kalın çizgi + nokta: seyrek p50 örnekleri artık okunur.
     // v0.9.843 — süre SOL eksende (Grafana düzeni).
-    { key: 'p50', label: `response time (median, ${P50_SMOOTH_WINDOW}-kova ort.)`, data: p50s, color: 'var(--orange)', type: 'line', axis: 'right', width: 2, pointsShow: t.length < 20 },
+    { key: 'rt', label: `response time (${stripStatLabel(stat)}, ${RT_SMOOTH_WINDOW}-kova ort.)`, data: p50s, color: 'var(--orange)', type: 'line', axis: 'right', width: 2, pointsShow: t.length < 20 },
   ];
   return { times: t, series, bucketMin: Math.max(1, dt) };
 }
 
 
-/** v0.10.322 — medyan çizgisi yumuşatma penceresi (kova sayısı, tek). */
-export const P50_SMOOTH_WINDOW = 5;
+/** v0.10.322 — yanıt-süresi çizgisi yumuşatma penceresi (kova sayısı, tek).
+ *  v0.10.513'e dek P50_SMOOTH_WINDOW; çizgi artık seçilebilir istatistik. */
+export const RT_SMOOTH_WINDOW = 5;
 
 /**
  * smoothCentered — merkezli hareketli ortalama, null-farkında. Merkez null

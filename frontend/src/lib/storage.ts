@@ -39,7 +39,6 @@ export const STORAGE_KEYS = {
   // list's overview chart a THIN brush strip so the table gets the
   // page; ours was a 140px headline that pushed rows below the fold.
   // Slim by default, expandable, and the choice sticks.
-  tracesChartTall: 'coremetry.tracesChartTall',
   sidebarWidth:     'coremetry-sidebar-w',
   sidebarCollapsed: 'coremetry-sidebar-collapsed',
   sidebarGroups:    'coremetry-sidebar-groups',

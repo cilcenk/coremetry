@@ -3380,49 +3380,6 @@ func (s *Store) fillTraceExtras(ctx context.Context, rows []TraceRow, attrs []st
 	return nil
 }
 
-// traceStage1LightSQL builds the no-service Stage-1 id-select
-// (v0.8.357): ONE aggregate for the sort key + only the states the
-// active HAVING filters need — instead of every merge state for every
-// trace in the window. ok=false for service/operation sorts, whose sort
-// key IS the heavy argMax state (nothing to lighten; caller falls back
-// to the single-stage scan). Pure so the shape is table-tested.
-func traceStage1LightSQL(f TraceFilter, having []string) (string, bool) {
-	var sortExpr string
-	switch f.Sort {
-	case "", "time":
-		// Plain column max — no merge state at all. 5-min granularity
-		// ties are fine: Stage 1 over-selects and Stage 2 re-sorts the
-		// kept ids on the exact trace_start state.
-		sortExpr = "max(time_bucket)"
-	case "duration":
-		sortExpr = "(maxMerge(trace_end_state) - toUnixTimestamp64Nano(minMerge(trace_start_state)))"
-	case "spans":
-		sortExpr = "countMerge(span_count_state)"
-	case "status":
-		sortExpr = "toUInt8(countMerge(error_count_state) > 0)"
-	default:
-		return "", false
-	}
-	order := "DESC"
-	if f.Order == "asc" {
-		order = "ASC"
-	}
-	havingSQL := ""
-	if len(having) > 0 {
-		havingSQL = " HAVING " + strings.Join(having, " AND ")
-	}
-	return `
-		SELECT trace_id
-		FROM trace_summary_5m
-		WHERE time_bucket >= ? AND time_bucket < ?
-		GROUP BY trace_id` + havingSQL + `
-		ORDER BY ` + sortExpr + ` ` + order + `
-		LIMIT ?
-		SETTINGS max_execution_time = 15,
-		         optimize_read_in_order = 1,
-		         optimize_aggregation_in_order = 1`, true
-}
-
 // v0.9.633 — in-order ayarlarının ÖLÇÜLMÜŞ etkisi (denetim bulgusu:
 // "ölü ayar"). Kaldırılmadılar — bir no-op'u silmenin operatöre faydası
 // YOK, riski sıfır değil (aşağıdaki 1. satır bunun kanıtı: az kalsın
@@ -3467,26 +3424,30 @@ func traceSortRecencySliced(sort string) bool {
 	return sort != "" && sort != "time"
 }
 
-// noServiceSlice — servissiz MV yolunda 1. aşama kararı (v0.10.494).
+// noServiceSlice — servissiz MV yolunda 1. aşama kararı (v0.10.494/497).
+// 1. aşama HER ZAMAN toplamasız recency dilimidir (traceRecencySlice):
 //
-//	ok              → toplamasız recency dilimi (traceRecencySlice); false →
-//	                  hafif 1. aşama (traceStage1LightSQL, tüm pencere GROUP BY)
 //	errorsPrefilter → dilim satır-düzeyi finalizeAggregation(error_count_state)
 //	                  ön süzgecini taşır (v0.9.277 üst-küme; stage 2 HAVING kesin)
-//	rootPostAgg     → kök yüklemi YALNIZ stage 2 HAVING'inde süzülür (holders ile
-//	                  sınırlı); zaman sıralamasında bütçe traceRecencySliceN ve
-//	                  RankedWithin raporlanır — sayfalar en yeni N kök trace içinde
+//	postAgg         → kök / minMs / maxMs yüklemi YALNIZ stage 2 HAVING'inde
+//	                  süzülür (holders ile sınırlı, kırpma tespitli); zaman
+//	                  sıralamasında bütçe ≥ traceRecencySliceN ve RankedWithin
+//	                  raporlanır — sayfalar en yeni N trace içinde süzülür
+//
+// v0.10.497 — minMs/maxMs de buraya bindi ve hafif 1. aşama
+// (traceStage1LightSQL: tüm pencerede GROUP BY trace_id + merge durumu,
+// bellek pencereyle lineer — v0.10.494'ün 241 şekli) KALDIRILDI; süre
+// yüklemi satır-düzeyi ön süzgeçle daraltılamaz (bir trace'in süresi
+// satırlarının hiçbirinde görünmez), o yüzden salt son-filtre.
 type noServiceSlice struct {
-	ok, errorsPrefilter, rootPostAgg bool
+	errorsPrefilter, postAgg bool
 }
 
-// noServiceSlicePlan — SAF; trace_root_slice_test.go pinler. minMs/maxMs
-// dilime binmez: yüklemleri birleşik sayısal durum ister (ayrı dilim).
+// noServiceSlicePlan — SAF; trace_root_slice_test.go pinler.
 func noServiceSlicePlan(f TraceFilter) noServiceSlice {
 	return noServiceSlice{
-		ok:              f.MinMs <= 0 && f.MaxMs <= 0,
 		errorsPrefilter: f.HasError,
-		rootPostAgg:     f.RootOnly,
+		postAgg:         f.RootOnly || f.MinMs > 0 || f.MaxMs > 0,
 	}
 }
 
@@ -3735,10 +3696,10 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 			"((maxMerge(trace_end_state) - toUnixTimestamp64Nano(minMerge(trace_start_state))) / 1e6) <= %v",
 			f.MaxMs))
 	}
-	// Light Stage 1 for the no-service path (v0.8.357) — see
-	// traceStage1LightSQL. Filters ride the same HAVING so the top-N ids
-	// are correct; Stage 2 then merges the full states for ~stage1Limit
-	// ids instead of the whole window. Deep offsets grow the id budget.
+	// Stage 1 for the no-service path: the aggregation-free recency slice
+	// (v0.9.277; v0.10.497 the ONLY shape — the v0.8.357 light GROUP BY
+	// stage is gone). Post-aggregate filters ride Stage 2's HAVING over
+	// the bounded ids. Deep offsets grow the id budget.
 	// Zero means "no narrowing" — Stage 2 then uses f.From, i.e. today's
 	// behaviour. Only the aggregation-free slice sets it, because only it
 	// knows where the slice was actually cut.
@@ -3773,11 +3734,11 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		// yüklemi stage 2'nin HAVING'inde ZATEN var (holders ile sınırlı,
 		// kırpma tespitli) — 1. aşamanın onu taşıması gerekmiyor: rootOnly
 		// düz dilime biner (bütçe traceRecencySliceN; RankedWithin dürüst),
-		// hasError ile birlikteyken satır ön süzgeci kalır. Yalnız minMs /
-		// maxMs eski hafif 1. aşamada (sayısal merge; ayrı dilim). Plan SAF:
-		// noServiceSlicePlan, trace_root_slice_test.go.
+		// hasError ile birlikteyken satır ön süzgeci kalır. v0.10.497 —
+		// minMs/maxMs de aynı yola bindi, hafif 1. aşama kaldırıldı. Plan
+		// SAF: noServiceSlicePlan, trace_root_slice_test.go.
 		plan := noServiceSlicePlan(f)
-		if plan.ok && plan.rootPostAgg && !ranked {
+		if plan.postAgg && !ranked {
 			// Kök süzgeci adayları eler: zaman sıralamasında sayfa bütçesi
 			// yerine en az traceRecencySliceN aday (derin sayfanın daha büyük
 			// bütçesi korunur; tavan zaten traceStage2MaxIDs).
@@ -3787,7 +3748,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 			budgetOK = true
 		}
 		errorsOnly := plan.errorsPrefilter
-		if budgetOK && plan.ok {
+		if budgetOK {
 			ids, cut, exhausted, serr := s.traceRecencySlice(ctx, s1f, budget, errorsOnly)
 			if serr != nil {
 				return nil, 0, false, serr
@@ -3801,7 +3762,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 			// v0.10.267 — asc'te kesim TAVAN'dır (id'ler pencerenin başında);
 			// eskiden taban sayılıyor, kırpma tespiti ×8 genişleterek kurtarıyordu.
 			stage2Floor, stage2Ceil = sliceStageBounds(s1f.Order, cut, exhausted)
-			if (ranked || plan.rootPostAgg) && f.RankedWithin != nil {
+			if (ranked || plan.postAgg) && f.RankedWithin != nil {
 				// Report the REAL slice, not the constant. When the slice
 				// exhausted the window the ordering is global, so the "ranked
 				// within newest N" hint must not appear at all rather than
@@ -3810,33 +3771,6 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 				if exhausted {
 					*f.RankedWithin = 0
 				}
-			}
-		} else if s1, ok := traceStage1LightSQL(s1f, having); ok && budgetOK {
-			rows1, err := s.telemetryReadConn().Query(ctx, s1, f.From, f.To, budget)
-			if err != nil {
-				return nil, 0, false, fmt.Errorf("stage1-light: %w", err)
-			}
-			ids := make([]any, 0, budget)
-			for rows1.Next() {
-				var id string
-				if err := rows1.Scan(&id); err != nil {
-					rows1.Close()
-					return nil, 0, false, err
-				}
-				ids = append(ids, id)
-			}
-			rows1.Close()
-			if err := rows1.Err(); err != nil {
-				return nil, 0, false, err
-			}
-			if len(ids) == 0 {
-				return []TraceRow{}, 0, false, nil
-			}
-			traceIDs = ids
-			holders = strings.Repeat("?,", len(ids))
-			holders = holders[:len(holders)-1]
-			if ranked && f.RankedWithin != nil {
-				*f.RankedWithin = traceRecencySliceN
 			}
 		}
 	}

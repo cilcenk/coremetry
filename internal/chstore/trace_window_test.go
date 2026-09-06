@@ -98,11 +98,8 @@ func TestSelectionBoundsAreExclusive(t *testing.T) {
 		t.Errorf("sayım seçim sınırı DIŞLAYICI olmalı: %v", preds)
 	}
 
-	// Liste stage-1 — saf builder.
-	sql, ok := traceStage1LightSQL(f, nil)
-	if !ok {
-		t.Fatal("stage-1 light yolu kapalı — test kurgusu bozuk")
-	}
+	// Liste stage-1 — recency dilimi (v0.10.497: tek 1. aşama şekli).
+	sql := (&Store{}).traceSliceScanSQL("desc", false)
 	if !strings.Contains(sql, "time_bucket < ?") || strings.Contains(sql, "time_bucket <= ?") {
 		t.Errorf("stage-1 seçim sınırı DIŞLAYICI olmalı:\n%s", sql)
 	}

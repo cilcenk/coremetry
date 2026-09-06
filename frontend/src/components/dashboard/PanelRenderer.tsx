@@ -9,6 +9,7 @@ import type {
  TailPoint } from '@/lib/types';
 import { timeRangeToNs, substituteVars } from '@/lib/utils';
 import { fmtSmart } from '@/lib/chartFmt';
+import { normalizeUnit } from '@/lib/units'; // v0.10.506 (D9)
 import { lazy, Suspense } from 'react';
 
 // v0.9.758 (operatör "önerinle devam" — Grafana deneyimi #1) — dashboard
@@ -83,6 +84,7 @@ function DashChart({ series, tail, totalSeries, viz = 'line', unit, syncKey, onZ
   // AYNEN döndürür — mevcut panellerin çıktısı bayt-bayt aynı.
   // v0.10.147 — tail: sunucu top-N'in dışında bıraktığı kuyruğun ham
   // toplamı foldTopN'in kendi kuyruğuna eklenir; not GERÇEK toplamdan.
+  unit = normalizeUnit(unit); // v0.10.506 (D9) — eksen/hover karo ile aynı sözlük
   const folded = foldTopN(series, unit, undefined, tail);
   const note = foldNote(totalSeries ?? series.length);
   return (
@@ -1160,7 +1162,7 @@ function formatStatValue(value: number | null, unit: string | undefined, decimal
   // If unit is a known-smart kind (ms, %, rps, etc.), defer to
   // fmtSmart for the auto-promotion (ms→s past 1k, etc.).
   if (unit) {
-    return fmtSmart(value, unit);
+    return fmtSmart(value, normalizeUnit(unit)); // v0.10.506 (D9) — karo ve eksen tek sözlük
   }
   const d = decimals ?? 2;
   return value.toFixed(d);

@@ -53,6 +53,14 @@ describe('LogPatternsPanel', () => {
     expect(el.querySelector('tr.lp-row td')!.textContent).toContain('connection refused to <x>');
     act(() => { (el.querySelector('tr.lp-row .lp-search') as HTMLButtonElement).click(); });
     expect(onSearch).toHaveBeenCalledWith('"connection refused to" AND "after"');
+    // v0.10.502 (B6) — ⊕ / ⊖ mevcut metni ezmeden ekler / hariç tutar (kip ile).
+    const and = el.querySelector('button[aria-label^="Mevcut aramaya ekle"]') as HTMLButtonElement;
+    const not = el.querySelector('button[aria-label^="Hariç tut"]') as HTMLButtonElement;
+    expect(and).toBeTruthy(); expect(not).toBeTruthy();
+    and.click();
+    expect(onSearch).toHaveBeenLastCalledWith('"connection refused to" AND "after"', 'and');
+    not.click();
+    expect(onSearch).toHaveBeenLastCalledWith('"connection refused to" AND "after"', 'not');
   });
   it('kapalıyken hiç fetch etmez ve DOM boş', async () => {
     const el = render(<LogPatternsPanel params={{ from: 1, to: 2 }} open={false} onSearch={() => {}} />);

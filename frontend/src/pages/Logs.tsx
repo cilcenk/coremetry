@@ -41,7 +41,7 @@ import { severityBandOf } from '@/lib/severityBand';
 import { accumulatePage, narrowLoaded } from '@/lib/logAccumulate';
 import { logsToCSV, logsToNDJSON, downloadText, exportFilename } from '@/lib/logsExport';
 import {
-  compileSearch, toggleFilter, encodeFiltersParam, parseFiltersParam,
+  compileSearch, toggleFilter, encodeFiltersParam, parseFiltersParam, mergePatternQuery,
   extractHighlightTerms, toggleExistsFilter, replaceFilterAt,
 } from '@/lib/logFilters';
 import type { LogFilter } from '@/lib/logFilters';
@@ -219,8 +219,12 @@ function LogsInner() {
   // satır + … bugünkü davranış.
   const [wrapLines, setWrapLines] = useState<boolean>(() => getRaw('logs.wrap') === '1');
   const toggleWrap = () => setWrapLines(v => { setRaw('logs.wrap', v ? '0' : '1'); return !v; });
-  const searchFromPattern = (qStr: string) => {
-    const next = { ...filter, search: qStr };
+  // v0.10.502 (B6) — mode: 'replace' (Ara / satır tıkı, eski davranış) |
+  // 'and' (⊕ mevcut metne ekle) | 'not' (⊖ hariç tut, NOT). Ekleme
+  // mevcut serbest metni EZMEZ (mergePatternQuery).
+  const searchFromPattern = (qStr: string, mode: 'replace' | 'and' | 'not' = 'replace') => {
+    const search = mode === 'replace' ? qStr : mergePatternQuery(filter.search, qStr, mode === 'not');
+    const next = { ...filter, search };
     setFilter(next); setDraft(next); resetPaging(); writeUrl(next, filters);
   };
   // v0.9.1100 (F3.5) — ✨ desen anlatımı durumu (Shift emsali).

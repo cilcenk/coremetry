@@ -19,6 +19,7 @@ import type { LogPatternGroup, LogTemplate } from '@/lib/types';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { Button } from '@/components/ui/Button';
+import { IconButton } from '@/components/ui/IconButton'; // v0.10.502 (B6)
 import { Spinner, Empty } from '@/components/Spinner';
 import { sevClass, sevName, tsLong, tsShort } from '@/lib/utils';
 import type { LogPatternsResult } from '@/lib/types';
@@ -90,7 +91,8 @@ export function LogPatternsPanel({ params, open, onSearch, tab: tabProp, onTab }
   tab?: PanelTab;
   onTab?: (t: PanelTab) => void;
   open: boolean;
-  onSearch: (query: string) => void;
+  // v0.10.502 (B6) — mode: 'replace' (Ara/satır, varsayılan) | 'and' (⊕) | 'not' (⊖).
+  onSearch: (query: string, mode?: 'replace' | 'and' | 'not') => void;
 }) {
   const [localTab, setLocalTab] = useState<PanelTab>(() => (getRaw(TAB_KEY) === 'templates' ? 'templates' : 'patterns'));
   const tab = tabProp ?? localTab;
@@ -177,9 +179,18 @@ export function LogPatternsPanel({ params, open, onSearch, tab: tabProp, onTab }
                         <td className="num" style={{ fontSize: 11, color: 'var(--text2)' }} title={tsLong(r.lastSeen)}>{agoLabel(r.lastSeen)}</td>
                         <td>
                           {r.query && (
-                            <Button variant="secondary" size="xs" className="lp-search"
-                              title={`Ara: ${r.query}`}
-                              onClick={e => { e.stopPropagation(); onSearch(r.query); }}>Ara</Button>
+                            <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                              <Button variant="secondary" size="xs" className="lp-search"
+                                title={`Ara: ${r.query}`}
+                                onClick={e => { e.stopPropagation(); onSearch(r.query); }}>Ara</Button>
+                              {/* v0.10.502 (B6) — mevcut metni ezmeden ekle / hariç tut */}
+                              <IconButton variant="bare" size="xs" className="ib-add"
+                                title={`Mevcut aramaya ekle: ${r.query}`} aria-label={`Mevcut aramaya ekle: ${r.query}`}
+                                onClick={e => { e.stopPropagation(); onSearch(r.query, 'and'); }} icon="⊕" />
+                              <IconButton variant="bare" size="xs" className="ib-not"
+                                title={`Hariç tut: NOT (${r.query})`} aria-label={`Hariç tut: NOT (${r.query})`}
+                                onClick={e => { e.stopPropagation(); onSearch(r.query, 'not'); }} icon="⊖" />
+                            </span>
                           )}
                         </td>
                       </tr>

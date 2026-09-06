@@ -59,12 +59,29 @@ func TestStatementSQLContracts(t *testing.T) {
 	if strings.Contains(w, "db_name = ?") || strings.Count(w, "?") != 3 {
 		t.Errorf("window SQL bind sayısı: %s", w)
 	}
-	q := statementSearchSQL()
-	for _, s := range []string{"INTERVAL 24 HOUR", "GROUP BY db_system, db_name, stmt_hash", "HAVING positionCaseInsensitiveUTF8(sample_stmt, ?) > 0", "LIMIT ?", "max_execution_time = 10"} {
+	// v0.10.515 (operator-reported, prod 241 / 3.73 GiB): süzgeç SATIR
+	// düzeyinde WHERE'de, HAVING yok; örnek kırpık; grup tavanı; servis
+	// kapsamı isteğe bağlı ve bind sırası (service, q, limit).
+	q := statementSearchSQL(false)
+	for _, s := range []string{
+		"INTERVAL 24 HOUR", "GROUP BY db_system, db_name, stmt_hash",
+		"AND positionCaseInsensitiveUTF8(finalizeAggregation(sample_stmt_state), ?) > 0",
+		"any(substring(finalizeAggregation(sample_stmt_state), 1, 400))",
+		"LIMIT ?", "max_execution_time = 10", "max_rows_to_group_by = 50000", "group_by_overflow_mode = 'any'",
+	} {
 		if !strings.Contains(q, s) {
 			t.Errorf("search SQL: %q yok", s)
 		}
 	}
+	if strings.Contains(q, "HAVING") || strings.Contains(q, "anyMerge(sample_stmt_state)") || strings.Contains(q, "service_name = ?") || strings.Count(q, "?") != 2 {
+		t.Errorf("search SQL (servissiz) biçimi: %s", q)
+	}
+	qs := statementSearchSQL(true)
+	if !strings.Contains(qs, "AND service_name = ?") || strings.Count(qs, "?") != 3 ||
+		strings.Index(qs, "service_name = ?") > strings.Index(qs, "finalizeAggregation(sample_stmt_state), ?") {
+		t.Errorf("search SQL (servisli) bind sırası service, q, limit olmalı: %s", qs)
+	}
+	t.Logf("SEARCH_SQL_SVC: %s", strings.Join(strings.Fields(qs), " "))
 }
 
 // v0.10.334 — kolon yokken kayıt reddetmeden önce yeniden probe eder (kaynak pini);

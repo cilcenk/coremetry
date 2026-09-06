@@ -1,7 +1,7 @@
 package api
 
 // db_statement_search_routes.go — v0.10.331: /alerts SQL arama seçici.
-// GET /api/db/statements/search?q=…&limit=20 — son 24 saat, örnek SQL'de
+// GET /api/db/statements/search?q=…&limit=20[&service=] — son 24 saat, örnek SQL'de
 // alt-dize (büyük/küçük harfsiz), yürütmeye göre sıralı. Kimlikli her rol
 // (kural yazmak editör ister; aramak okuma).
 
@@ -19,7 +19,8 @@ func (s *Server) registerDBStatementSearchRoutes(mux *http.ServeMux) {
 
 func (s *Server) searchDBStatements(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	rows, err := s.store.SearchStatements(r.Context(), q.Get("q"), parseInt(q.Get("limit"), 20))
+	// v0.10.515 — ?service= kuralın servisi (isteğe bağlı kapsam).
+	rows, err := s.store.SearchStatements(r.Context(), q.Get("q"), q.Get("service"), parseInt(q.Get("limit"), 20))
 	if err != nil {
 		writeErr(w, err)
 		return

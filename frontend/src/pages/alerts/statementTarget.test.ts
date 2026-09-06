@@ -37,7 +37,12 @@ describe('DB statement hedefli kural', () => {
     expect(stmt).toContain('⚠ Alarm oluştur');
   });
   it('istemci + tip', () => {
-    expect(api).toContain('`/api/db/statements/search?${qs({ q, limit })}`');
+    // v0.10.515 — ?service= isteğe bağlı kapsam (prod 241); picker kuralın
+    // servisini geçirir, boşken parametre yazılmaz.
+    expect(api).toContain('`/api/db/statements/search?${qs({ q, limit, service: service || undefined })}`');
+    const picker = readFileSync(resolve(__dirname, 'StatementPicker.tsx'), 'utf8');
+    expect(picker).toContain('api.searchStatements(term, 20, ctl.signal, service)');
+    expect(alerts).toContain("service={draft.service ?? ''}");
     expect(types).toMatch(/export interface RuleTarget \{\s*kind: 'db_statement';/);
     expect(types).toMatch(/export interface AlertRule \{[^}]*target\?: RuleTarget;/);
   });

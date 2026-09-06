@@ -187,24 +187,46 @@ type StatementSearchRow struct {
 	Services []string `json:"services"`
 }
 
-func statementSearchSQL() string {
+// statementSearchSQL — v0.10.515 (operator-reported, prod: /alerts DB
+// statement araması "UPDATE" → HTTP 500 code 241, 3.73 GiB,
+// SourceFromNativeStream). Önceki biçim 24 saatin TÜM ifadelerini (her
+// servis, her DB) GROUP BY ile birleştirip metin süzgecini HAVING'de
+// uyguluyordu: bellek eşleşen değil TOPLAM grup sayısı × (8 KiB örnek
+// anyState + tDigest + servis dizisi) ile büyüyor, Distributed'da her
+// shard'ın bütün kısmi durumları başlatıcıya akıyordu.
+//
+// Şimdi: (1) metin süzgeci SATIR düzeyinde WHERE'de —
+// finalizeAggregation(anyState) = satırın kendi örneği; yalnız eşleşen
+// satırlar gruplanır (lokal denklik: 21/21 grup, execs birebir);
+// (2) örnek `any(substring(…,1,400))` — seçici zaten 400'e kırpıyordu,
+// 8 KiB durum birleştirmenin gereği yok; (3) isteğe bağlı servis kapsamı
+// (kuralın servisi seçiliyse) — anahtar öneki değil ama satır süzgeci;
+// (4) çok geniş terim ("SELECT") için GROUP BY tavanı: 50k grup üstü
+// 'any' taşma kipi = ilk görülen gruplar arasında sıralı (241 yerine
+// yaklaşık liste; seçici LIMIT 20 zaten kısmi).
+func statementSearchSQL(withService bool) string {
+	svc := ""
+	if withService {
+		svc = "\n\t\t  AND service_name = ?"
+	}
 	return `
 		SELECT db_system, db_name, stmt_hash,
-		       anyMerge(sample_stmt_state)                                                    AS sample_stmt,
+		       any(substring(finalizeAggregation(sample_stmt_state), 1, 400))                AS sample_stmt,
 		       countMerge(span_count_state)                                                   AS execs,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       groupUniqArray(5)(service_name)                                                AS services
 		FROM db_statement_summary_5m
-		WHERE time_bucket >= now() - INTERVAL 24 HOUR
+		WHERE time_bucket >= now() - INTERVAL 24 HOUR` + svc + `
+		  AND positionCaseInsensitiveUTF8(finalizeAggregation(sample_stmt_state), ?) > 0
 		GROUP BY db_system, db_name, stmt_hash
-		HAVING positionCaseInsensitiveUTF8(sample_stmt, ?) > 0
 		ORDER BY execs DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 10`
+		SETTINGS max_execution_time = 10, max_rows_to_group_by = 50000, group_by_overflow_mode = 'any'`
 }
 
-// SearchStatements — son 24 saatte örnek SQL'i q'yu içeren ifadeler.
-func (s *Store) SearchStatements(ctx context.Context, q string, limit int) ([]StatementSearchRow, error) {
+// SearchStatements — son 24 saatte örnek SQL'i q'yu içeren ifadeler;
+// service boş değilse yalnız o servisin çağırdıkları (v0.10.515).
+func (s *Store) SearchStatements(ctx context.Context, q, service string, limit int) ([]StatementSearchRow, error) {
 	q = strings.TrimSpace(q)
 	if len(q) < 3 {
 		return []StatementSearchRow{}, nil
@@ -215,7 +237,12 @@ func (s *Store) SearchStatements(ctx context.Context, q string, limit int) ([]St
 	if !s.hasDBStmtHashCol {
 		return []StatementSearchRow{}, nil
 	}
-	rows, err := s.telemetryReadConn().Query(ctx, statementSearchSQL(), q, limit)
+	service = strings.TrimSpace(service)
+	args := []any{q, limit}
+	if service != "" {
+		args = []any{service, q, limit}
+	}
+	rows, err := s.telemetryReadConn().Query(ctx, statementSearchSQL(service != ""), args...)
 	if err != nil {
 		return nil, err
 	}

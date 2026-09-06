@@ -11,7 +11,10 @@ export function statementTargetOf(row: StatementSearchRow): RuleTarget {
   return { kind: 'db_statement', dbSystem: row.dbSystem, dbName: row.dbName, stmtHash: row.stmtHash, sample: row.sample.slice(0, 300) };
 }
 
-export function StatementPicker({ value, onChange }: { value?: RuleTarget; onChange: (t: RuleTarget | undefined) => void }) {
+// v0.10.515 — `service`: kuralda servis seçiliyse arama o servisin
+// çağırdığı ifadelerle sınırlı (operatör: "ilgili servisin query'sini
+// bulurken" 241). Seçim sonrası kural yine tüm çağıranları kapsar.
+export function StatementPicker({ value, onChange, service = '' }: { value?: RuleTarget; onChange: (t: RuleTarget | undefined) => void; service?: string }) {
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<StatementSearchRow[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -22,13 +25,13 @@ export function StatementPicker({ value, onChange }: { value?: RuleTarget; onCha
     const ctl = new AbortController();
     const t = setTimeout(() => {
       setBusy(true); setErr(null);
-      api.searchStatements(term, 20, ctl.signal)
+      api.searchStatements(term, 20, ctl.signal, service)
         .then(r => setRows(r.rows))
         .catch(e => { if (!ctl.signal.aborted) setErr(e instanceof Error ? e.message : 'search failed'); })
         .finally(() => setBusy(false));
     }, 300);
     return () => { clearTimeout(t); ctl.abort(); };
-  }, [q]);
+  }, [q, service]);
   if (value) {
     return (
       <div className="stmt-pick" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -43,7 +46,7 @@ export function StatementPicker({ value, onChange }: { value?: RuleTarget; onCha
       <input value={q} onChange={e => setQ(e.target.value)} placeholder="SQL ara (≥3 karakter): tablo adı, kolon, şekil…" style={{ width: '100%' }} />
       {busy && <Spinner />}
       {err && <div style={{ fontSize: 11, color: 'var(--err)', marginTop: 4 }}>{err}</div>}
-      {rows && rows.length === 0 && !busy && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Son 24 saatte eşleşen ifade yok.</div>}
+      {rows && rows.length === 0 && !busy && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Son 24 saatte eşleşen ifade yok{service ? ` (${service} kapsamında)` : ''}.</div>}
       {rows && rows.length > 0 && (
         <div style={{ marginTop: 6, maxHeight: 220, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
           {rows.map(r => (

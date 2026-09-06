@@ -50,23 +50,23 @@ func TestSeverityCandidateKeywordFields_Dedupe(t *testing.T) {
 			// fallback — must appear ONCE.
 			name:       "default log.level dedupes",
 			severityTx: "log.level",
-			want:       []string{"log.level.keyword", "level.keyword", "severity_text.keyword", "severity.keyword"},
+			want:       []string{"log.level", "log.level.keyword", "level", "level.keyword", "severity_text", "severity_text.keyword", "severity", "severity.keyword"},
 		},
 		{
 			name:       "custom field prepends",
 			severityTx: "app.sev",
-			want:       []string{"app.sev.keyword", "level.keyword", "log.level.keyword", "severity_text.keyword", "severity.keyword"},
+			want:       []string{"app.sev", "app.sev.keyword", "level", "level.keyword", "log.level", "log.level.keyword", "severity_text", "severity_text.keyword", "severity", "severity.keyword"},
 		},
 		{
 			// Collision with a non-first fallback still dedupes.
 			name:       "configured equals severity_text",
 			severityTx: "severity_text",
-			want:       []string{"severity_text.keyword", "level.keyword", "log.level.keyword", "severity.keyword"},
+			want:       []string{"severity_text", "severity_text.keyword", "level", "level.keyword", "log.level", "log.level.keyword", "severity", "severity.keyword"},
 		},
 		{
 			name:       "empty configured field skipped",
 			severityTx: "",
-			want:       []string{"level.keyword", "log.level.keyword", "severity_text.keyword", "severity.keyword"},
+			want:       []string{"level", "level.keyword", "log.level", "log.level.keyword", "severity_text", "severity_text.keyword", "severity", "severity.keyword"},
 		},
 	}
 	for _, tc := range cases {

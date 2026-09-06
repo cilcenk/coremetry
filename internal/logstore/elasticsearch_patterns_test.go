@@ -13,7 +13,7 @@ import "testing"
 // regressed.
 func TestPatternCountBody_CarriesCostGuards(t *testing.T) {
 	body := patternCountBody(
-		`body:"tok"`, "message", "@timestamp", "service.name",
+		`body:"tok"`, "message", "@timestamp", "service.name.keyword", // v0.10.500 — çözümlenmiş yazım çağırandan
 		"2026-06-15T00:00:00Z", "2026-06-15T09:00:00Z", "2026-06-15T10:00:00Z",
 		"10s")
 
@@ -45,7 +45,7 @@ func TestPatternCountBody_CarriesCostGuards(t *testing.T) {
 // = cur_window ∪ base_window — sayılar değişmez, tarama küçülür.
 func TestPatternCountBody_QueryCarriesWindow(t *testing.T) {
 	body := patternCountBody(
-		`body:"tok"`, "message", "ts_custom", "service.name", // v0.10.420 — özel alan: "@timestamp" sabitine düşen mutasyon ölür
+		`body:"tok"`, "message", "ts_custom", "service.name.keyword", // v0.10.500 — çözümlenmiş yazım çağırandan // v0.10.420 — özel alan: "@timestamp" sabitine düşen mutasyon ölür
 		"2026-06-15T00:00:00Z", "2026-06-15T09:00:00Z", "2026-06-15T10:00:00Z",
 		"10s")
 	q, _ := body["query"].(map[string]any)

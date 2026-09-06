@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { logsUrlSig, writeLogsParams, readLogsParams, logsRangeParam, buildDocPermalink, parseDocParam, logsHref, type LogsUrlFilter } from './logsUrl';
+import { logsUrlSig, writeLogsParams, readLogsParams, logsRangeParam, buildDocPermalink, parseDocParam, logsHref, type LogsUrlFilter, parseLogsPanel } from './logsUrl';
 import { decodeRange } from './urlState';
 
 // v0.8.546 — /logs `severity` was a live filter that never round-tripped
@@ -304,6 +304,16 @@ describe('logsHref — agrees with readLogsParams, its own consumer', () => {
   it('writes hasTrace as the `1` readLogsParams tests for', () => {
     expect(lp(logsHref({ window: null, hasTrace: true })).get('hasTrace')).toBe('1');
     expect(lp(logsHref({ window: null, hasTrace: false })).has('hasTrace')).toBe(false);
+  });
+
+  // v0.10.448 (C8) — panel görünüm ipucu: yalnız istenince yazılır, bilinmeyen değer null.
+  it('panel is a view hint: written only when asked, narrowed on read', () => {
+    expect(lp(logsHref({ window: null, panel: 'patterns' })).get('panel')).toBe('patterns');
+    expect(lp(logsHref({ window: null, panel: 'templates' })).get('panel')).toBe('templates');
+    expect(lp(logsHref({ window: null })).has('panel')).toBe(false);
+    expect(parseLogsPanel('patterns')).toBe('patterns');
+    expect(parseLogsPanel('templates')).toBe('templates');
+    for (const bad of ['', 'x', 'PATTERNS', null, undefined]) expect(parseLogsPanel(bad)).toBeNull();
   });
 
   it('a bare pivot carries nothing it was not given', () => {

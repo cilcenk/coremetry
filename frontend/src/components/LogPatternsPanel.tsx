@@ -57,7 +57,7 @@ export function templatesSinceRung(fromNs?: number, nowMs = Date.now()): string 
   return '720h';
 }
 
-type PanelTab = 'patterns' | 'templates';
+export type PanelTab = 'patterns' | 'templates';
 const TAB_KEY = 'logs.patterns.tab';
 const TEMPLATES_LIMIT = 200;
 
@@ -82,13 +82,17 @@ const TCOLS: DataTableColumn<LogTemplate>[] = [
 const cellEllipsis = { fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const;
 const cellServices = { fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const;
 
-export function LogPatternsPanel({ params, open, onSearch }: {
+export function LogPatternsPanel({ params, open, onSearch, tab: tabProp, onTab }: {
   params: LogsParams;
+  /** v0.10.448 (C8) — sekme dışarıdan (URL) sürülebilir; verilmezse localStorage. */
+  tab?: PanelTab;
+  onTab?: (t: PanelTab) => void;
   open: boolean;
   onSearch: (query: string) => void;
 }) {
-  const [tab, setTab] = useState<PanelTab>(() => (getRaw(TAB_KEY) === 'templates' ? 'templates' : 'patterns'));
-  const switchTab = (t: PanelTab) => { setRaw(TAB_KEY, t); setTab(t); };
+  const [localTab, setLocalTab] = useState<PanelTab>(() => (getRaw(TAB_KEY) === 'templates' ? 'templates' : 'patterns'));
+  const tab = tabProp ?? localTab;
+  const switchTab = (t: PanelTab) => { setRaw(TAB_KEY, t); setLocalTab(t); onTab?.(t); };
   const since = useMemo(() => templatesSinceRung(params.from), [params.from]);
 
   const q = useLogsPatterns({ ...params, limit: 50 }, open && tab === 'patterns');

@@ -2714,6 +2714,13 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		var cands []stage1Cand
 		streaming := traceRawStage1Streaming(f.Sort, lightHavingSQL)
 		s1Limit, s1Offset := rawLightStage1Window(f.Offset, pageLimit, rootPostFilter)
+		// v0.10.499 — servis/operasyon sıralaması: 1. aşama en yeni N aday
+		// (OFFSET yok), kök süzgeci adayların tümüne, 2. aşama sıralar ve
+		// LIMIT/OFFSET'i o uygular (MV yolunun ranked dilimi gibi).
+		rankedRaw := rawRankedSort(f.Sort)
+		if rankedRaw {
+			s1Limit, s1Offset = traceRecencySliceN, 0
+		}
 		wantK := s1Limit
 		if streaming && !rootPostFilter {
 			// Span-düzeyi OFFSET anlamsız: offset+sayfa kadar trace çekilir,
@@ -2758,12 +2765,17 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 			log.Printf("[traces] raw stage1 exhausted resources (%v) — halving the window to %s and retrying (attempt %d/%d)",
 				err, from.Format(time.RFC3339), attempt, traceStage2NarrowMaxRetry)
 		}
+		stage1Seen := len(cands)
 		if rootPostFilter && len(cands) > 0 {
 			hasRoot, err := s.filterRootTracesAt(ctx, cands, f.From, f.To)
 			if err != nil {
 				return nil, 0, false, err
 			}
-			cands = applyRootFilterPageCands(cands, hasRoot, f.Offset, pageLimit)
+			if rankedRaw {
+				cands = applyRootFilterPageCands(cands, hasRoot, 0, len(cands))
+			} else {
+				cands = applyRootFilterPageCands(cands, hasRoot, f.Offset, pageLimit)
+			}
 		} else if streaming {
 			if f.Offset >= len(cands) {
 				cands = nil
@@ -2793,7 +2805,11 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 			args := append([]any{}, idArgs...)
 			args = append(args, lwc.args...)
 			args = append(args, lightHavingArgs...)
-			args = append(args, len(cands), 0)
+			if rankedRaw {
+				args = append(args, pageLimit, f.Offset)
+			} else {
+				args = append(args, len(cands), 0)
+			}
 			s20 := time.Now()
 			rows, err := s.telemetryReadConn().Query(ctx, querySQL, args...)
 			if err != nil {
@@ -2809,6 +2825,18 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 			out = page
 		}
 		hasMore = len(cands) > f.Limit
+		if rankedRaw {
+			// Sayfa 2. aşamada kesildi: hasMore = pageLimit'in fazlası;
+			// RankedWithin = 1. aşamanın aday sayısı (dilim pencereyi
+			// tükettiyse 0 — sıralama küreseldir, ipucu görünmez).
+			hasMore = len(out) > f.Limit
+			if f.RankedWithin != nil {
+				*f.RankedWithin = stage1Seen
+				if stage1Seen < s1Limit {
+					*f.RankedWithin = 0
+				}
+			}
+		}
 		if len(out) > f.Limit {
 			out = out[:f.Limit]
 		}
@@ -3088,8 +3116,23 @@ func rawListLightEligible(f TraceFilter, rootPostFilter bool) bool {
 		// pencereye düşüşte gelinir) — sınırsız GLOBAL IN HAVING'i
 		// taşıyan tek geçişe düşmemek için.
 		return rootPostFilter
+	case "service", "operation":
+		// v0.10.499 — string anahtarlı sıralamalar da hafif yola biner:
+		// 1. aşama EN YENİ traceRecencySliceN trace (min(time) DESC), 2.
+		// aşama o adaylar içinde root_svc/root_name sıralar (MV yolunun
+		// v0.8.369 "ranked within newest N" sözleşmesi; RankedWithin
+		// raporlanır). Eskiden tek geçişe düşüyordu: tüm pencerede GROUP
+		// BY trace_id + string durumlar, kök son-filtresinde de tam-pencere
+		// GLOBAL IN alt sorgusu (v0.10.494 incelemesi, 241 sınıfı).
+		return true
 	}
 	return false
+}
+
+// rawRankedSort — v0.10.499: ham hafif yolda 1. aşaması recency olan
+// (string anahtarlı) sıralamalar; sayfa 2. aşamada kesilir. SAF.
+func rawRankedSort(sort string) bool {
+	return sort == "service" || sort == "operation"
 }
 
 // getTracesFromMV implements the two-stage fast path:

@@ -85,8 +85,8 @@ func TestTraceRawStage1GroupSQLShape(t *testing.T) {
 			t.Errorf("sorguda %q yok:\n%s", want, q)
 		}
 	}
-	if _, ok := traceRawStage1GroupSQL("", "", "service", "DESC", 25); ok {
-		t.Error("service sıralaması hafif yola uygun değil")
+	if _, ok := traceRawStage1GroupSQL("", "", "weird", "DESC", 25); ok {
+		t.Error("bilinmeyen sıralama hafif yola uygun değil")
 	}
 }
 

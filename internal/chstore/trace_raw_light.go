@@ -122,6 +122,11 @@ func traceRawStage1GroupSQL(whereSQL, havingSQL, sort, order string, maxExec int
 		sortExpr = "max(if(status_code = 'error', 1, 0))"
 	case "", "time":
 		sortExpr = "min(time)"
+	case "service", "operation":
+		// v0.10.499 — string anahtar 1. aşamada sıralanmaz: en yeni N aday
+		// (recency, her zaman DESC); 2. aşama root_svc/root_name sıralar.
+		sortExpr = "min(time)"
+		order = "DESC"
 	default:
 		return "", false
 	}

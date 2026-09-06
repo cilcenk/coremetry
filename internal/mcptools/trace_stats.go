@@ -153,6 +153,7 @@ func traceStatsTool(d Deps) mcp.Tool {
 				}
 				filters = append(filters, fe)
 			}
+			userFilters := len(filters) // v0.10.491 — kapı yalnız operatör süzgeçlerine bakar
 			ns := strings.TrimSpace(a.Namespace)
 			if ns != "" {
 				filters = append(filters, chstore.FilterExpr{Key: "k8s.namespace.name", Op: "=", Values: []string{ns}})
@@ -176,7 +177,7 @@ func traceStatsTool(d Deps) mcp.Tool {
 				return nil, fmt.Errorf("filters: %w", err)
 			}
 			hasScope := strings.TrimSpace(a.Service) != "" || ns != "" || strings.TrimSpace(a.Cluster) != ""
-			gate, err := applySearchGate(a.RangeS, clampLimit(a.Limit, 20, 100), filters, hasScope, false, chstore.AttrIndexAvailable())
+			gate, err := applySearchGate(a.RangeS, clampLimit(a.Limit, 20, 100), filters[:userFilters], hasScope, false, chstore.AttrIndexAvailable(), len(filters)-userFilters)
 			if err != nil {
 				return nil, err
 			}
@@ -189,15 +190,20 @@ func traceStatsTool(d Deps) mcp.Tool {
 				GroupBy: groupBy, GroupAttr: groupAttr, Service: strings.TrimSpace(a.Service), Search: strings.TrimSpace(a.Search),
 				From: from, To: to, HasError: a.ErrorsOnly, MinMs: a.MinMs, MaxMs: a.MaxMs,
 				Env: strings.TrimSpace(a.Env), Cluster: clusterVal, Filters: filters,
-				Sort: sortBy, Order: "desc", Limit: gate.Limit,
+				Sort: sortBy, Order: "desc", Limit: gate.Limit + 1, // v0.10.491 (Astra #10) — has_more için bir fazlası
 			}
 			rows, err := d.Store.GetTraceAggregate(ctx, f)
 			if err != nil {
 				return nil, err
 			}
+			hasMore := len(rows) > gate.Limit
+			if hasMore {
+				rows = rows[:gate.Limit]
+			}
+			f.Limit = gate.Limit
 			out := map[string]any{
 				"group_by": groupBy, "rows": traceStatsRows(rows), "count": len(rows),
-				"window_s": int(to.Sub(from).Seconds()), "has_more": len(rows) >= gate.Limit,
+				"window_s": int(to.Sub(from).Seconds()), "has_more": hasMore,
 				"deep_link": aggregateDeepLink(f, from, to),
 			}
 			if groupAttr != "" {

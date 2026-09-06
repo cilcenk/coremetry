@@ -93,3 +93,17 @@ func TestTracesDeepLink(t *testing.T) {
 		t.Errorf("range: %s", q.Get("range"))
 	}
 }
+
+// v0.10.491 (Astra #12d) — kapsam çipleri (namespace/cluster IN) kapıyı
+// tetiklemez; kapsam-yalnız ham istek 24 s tavanlı.
+func TestApplySearchGateScopeChips(t *testing.T) {
+	if g, err := applySearchGate(604800, 50, nil, true, false, false, 1); err != nil || g.RangeS != searchWindowScopeChipMax || g.Reason == "" {
+		t.Fatalf("kapsam çipi 24 s: %+v %v", g, err)
+	}
+	if g, _ := applySearchGate(3600, 50, nil, true, false, false, 1); g.RangeS != 3600 || g.Reason != "" {
+		t.Errorf("tavanın altı dokunulmaz: %+v", g)
+	}
+	if g, _ := applySearchGate(604800, 50, nil, false, false, false, 0); g.RangeS != 604800 {
+		t.Errorf("çipsiz eski davranış: %+v", g)
+	}
+}

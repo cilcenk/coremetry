@@ -29,6 +29,15 @@ var (
 	podWords    = []string{"pod", "pods", "podlar", "pod'lar", "podları", "podlari", "podlarını", "podlarini", "podlarına"}
 )
 
+// questionWords — v0.10.491 (Astra #8): bunlar varken "pod"/"log" sözcüğü bir
+// KİP değil yeni bir sorudur ("pod restart sayısı nedir", "log seviyesi ne",
+// "logları nasıl indiririm") — router'a bırakılır.
+var questionWords = []string{"nedir", "ne", "neden", "niye", "nasıl", "nasil", "kaç", "kac", "sayısı", "sayisi", "seviyesi", "mi", "mı", "mu", "mü", "midir", "mıdır", "hangi", "kim", "what", "why", "how", "many", "level"}
+
+// mutationVerbs — kip için beklenen fiil/işaret: göster/listele/bak/getir/aç
+// ya da işaret zamiri (bunun/onun/aynı/şunun).
+var mutationVerbs = []string{"göster", "goster", "listele", "bak", "getir", "aç", "ac", "ver", "çıkar", "cikar", "bunun", "onun", "aynı", "ayni", "şunun", "sunun", "show", "list", "open"}
+
 func anyToken(toks []string, words ...string) bool {
 	for _, t := range toks {
 		for _, w := range words {
@@ -56,12 +65,26 @@ func detectContextMutation(norm string, toks []string, c ChatContext, explicitEn
 	if anyToken(toks, onlyWords...) && hasErrorSignal(toks) && !hasLogSignal(toks) {
 		return contextMutation{Kind: "errors", Label: "yalnız hatalı"}, true
 	}
+	// v0.10.491 (Astra #8) — soru/analiz sözcüğü varsa kip DEĞİL; kip için
+	// fiil ya da işaret zamiri şart, ya da mesaj yalnız pod/log sözcüğünden
+	// ibaret ("pod'ları", "logları").
+	if anyToken(toks, questionWords...) {
+		return contextMutation{}, false
+	}
+	// bare: ek artıkları sayılmaz ("pod'ları" → pod + ları).
+	substantive := 0
+	for _, t := range toks {
+		if !findSuffixDebris[t] && len([]rune(t)) > 2 {
+			substantive++
+		}
+	}
+	bare := substantive == 1
 	// Pod'lar: "bunun pod'larını göster", "pod'ları", "podları göster".
-	if anyToken(toks, podWords...) && !hasErrorSignal(toks) {
+	if anyToken(toks, podWords...) && !hasErrorSignal(toks) && (bare || anyToken(toks, mutationVerbs...)) {
 		return contextMutation{Kind: "pods", Label: "pod'lar"}, true
 	}
 	// Loglar: "aynı filtreyle loglara bak", "loglara bak", "logları".
-	if anyToken(toks, logWords...) {
+	if anyToken(toks, logWords...) && (bare || anyToken(toks, mutationVerbs...)) {
 		return contextMutation{Kind: "logs", Label: "loglar"}, true
 	}
 	return contextMutation{}, false

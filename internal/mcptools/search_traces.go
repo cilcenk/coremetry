@@ -133,6 +133,7 @@ func searchTracesTool(d Deps) mcp.Tool {
 				}
 				filters = append(filters, fe)
 			}
+			userFilters := len(filters) // v0.10.491 — kapı yalnız operatör süzgeçlerine bakar
 			ns := strings.TrimSpace(a.Namespace)
 			if ns != "" {
 				filters = append(filters, chstore.FilterExpr{Key: "k8s.namespace.name", Op: "=", Values: []string{ns}})
@@ -156,7 +157,7 @@ func searchTracesTool(d Deps) mcp.Tool {
 				return nil, fmt.Errorf("filters: %w", err)
 			}
 			hasScope := strings.TrimSpace(a.Service) != "" || ns != "" || clusterVal != "" || strings.TrimSpace(a.Cluster) != ""
-			gate, err := applySearchGate(a.RangeS, clampLimit(a.Limit, 20, 100), filters, hasScope, sortBy == "duration", chstore.AttrIndexAvailable())
+			gate, err := applySearchGate(a.RangeS, clampLimit(a.Limit, 20, 100), filters[:userFilters], hasScope, sortBy == "duration", chstore.AttrIndexAvailable(), len(filters)-userFilters)
 			if err != nil {
 				return nil, err
 			}

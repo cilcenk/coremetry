@@ -38,6 +38,8 @@ func (s *Server) mcpDeps() mcptools.Deps {
 		// yoksa tool'lar dürüst disabled/boş döner).
 		Clusters:      s.mcpClusterRefs,
 		EntityEnabled: func() bool { return s.entitySettings != nil && s.entitySettings.Resolved().Enabled },
+		// v0.10.478 (Faz 4, F4-1) — sohbet bağlamı (chat_context.go); ctx'te state yoksa tool dürüst hata.
+		CtxGet: s.chatContextGet, CtxSet: s.chatContextSet, CtxClear: s.chatContextClear,
 	}
 }
 

@@ -117,6 +117,9 @@ type chatRequest struct {
 		// Sabit ofset DST'yi bilmez: kışın sorulan yaz tarihi bir saat kayıyordu;
 		// ad varsa time.LoadLocation (tzdata gömülü), yoksa ofset.
 		Tz string `json:"tz,omitempty"`
+		// Conversation (v0.10.478, Faz 4) — kalıcı konuşma kimliği; sunucu
+		// bağlam state'i (chat_context.go) buna bağlı. Boş = ilk tur.
+		Conversation string `json:"conversation,omitempty"`
 	} `json:"context,omitempty"`
 }
 
@@ -251,6 +254,19 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// v0.10.33 — ZAMAN ÇIPASI, kademelerden ÖNCE hesaplanıyor: guided de
 	// serbest döngü de aynı pencereyi görmeli, yoksa aynı soru hangi
 	// kademeye düştüğüne göre farklı bir zaman diliminden cevaplanır.
+	// v0.10.478 (Faz 4, F4-1) — SUNUCU BAĞLAM STATE'İ: konuşma başına Redis;
+	// guided varsayılanı + serbest döngü önsözü + tool'lar (set/get/clear_context)
+	// aynı state'i okur; alışveriş sonunda kirliyse yazılır.
+	cst := s.loadChatContext(ctx, req.Context.Conversation)
+	ctx = ctxWithChatContext(ctx, cst)
+	defer func() {
+		fctx, fcancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer fcancel()
+		s.flushChatContext(fctx, cst)
+	}()
+	if chip := chatContextChipTR(cst.ctx); chip != "" {
+		emit("step", map[string]string{"label": chip})
+	}
 	anchorTo, anchored := chatAnchorTime(req.Context.ToMs, time.Now())
 	if anchored {
 		// Çıpa sessizce uygulanmamalı: operatör cevabın GEÇMİŞ bir
@@ -450,6 +466,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		emit("step", map[string]string{"label": chip})
 	}
 	loopPrompt := screenContextPreambleTR(screenCtx) +
+		chatContextPreambleTR(cst.ctx) + // v0.10.478 — aktif sohbet bağlamı (Ek A ACTIVE_CONTEXT)
 		withAddressee(addressee, copilot.SystemPromptChat())
 
 	// v0.10.88 — TEKRAR MUHAFIZI (exchange kapsamı). v0.10.84 prompt'u

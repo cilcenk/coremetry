@@ -7,7 +7,7 @@ import { isMessagingDep, fmtNum } from '@/lib/utils';
 import { edgeWeights } from '@/lib/edgeWeight';
 import { edgeArrow } from '@/lib/topoArrow';
 import { fitViewport, readableFit, zoomAt, zoomRange, type Viewport } from '@/lib/topoViewport';
-import { depInstanceLabel } from '@/lib/topoLabels';
+import { depPillLines } from '@/lib/topoLabels';
 import { Button } from '@/components/ui/Button';
 import { useServicesMetadata } from '@/lib/queries';
 import {
@@ -517,15 +517,18 @@ export function TopologyFlowGraph({
             }>
             <span className={`topo-dot ${level}`} />
             <div style={{ minWidth: 0 }}>
+              {/* v0.10.517 (operatör: "oracle altta, db name üstte") — bağımlılık
+                  pilinde somut kimlik (db.name / @instance) BAŞLIK, sistem adı
+                  alt satır (lib/topoLabels depPillLines). */}
               <div className="topo-name">
-                {displayLabel(n)}
+                {isDep ? depPillLines(n, depLabel(n.kind!)).title : displayLabel(n)}
                 {/* v0.8.383 — env chip: lights up on the MV path where the
                     adapter carries GraphNode.env (deploy_env-led derive,
                     v0.8.380). The sampled global map has no env → no chip. */}
                 {n.env && <span className="topo-envchip">{n.env}</span>}
               </div>
               <div className="topo-sub">
-                {isDep ? (depInstanceLabel(n) ?? depLabel(n.kind!)) : `${n.spanCount.toLocaleString()} span`}
+                {isDep ? depPillLines(n, depLabel(n.kind!)).sub : `${n.spanCount.toLocaleString()} span`}
               </div>
             </div>
           </div>

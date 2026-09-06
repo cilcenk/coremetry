@@ -17,3 +17,19 @@ export function depInstanceLabel(n: { service: string; subkind?: string; dbName?
   }
   return null;
 }
+
+// depPillLines — v0.10.517 (operatör, prod topoloji: "oracle altta, db name
+// pgts02 üstte yazsa daha iyi olur"): bağımlılık pilinin İKİ satırı.
+// Somut kimlik (db.name / @instance) varsa BAŞLIK odur, sistem adı
+// ("oracle") alt satıra iner — operatör hangi veritabanına gittiğini
+// başlıkta okur; sistem türü zaten renk/ikon ve alt satırda. Kimlik yoksa
+// eski düzen: başlık sistem adı, alt satır tür etiketi (kindLabel).
+export function depPillLines(
+  n: { service: string; subkind?: string; dbName?: string },
+  kindLabel: string,
+): { title: string; sub: string } {
+  const system = n.subkind || n.service.replace(/^(db|queue|ext):/, '');
+  const inst = depInstanceLabel(n);
+  if (inst) return { title: inst, sub: system };
+  return { title: system, sub: kindLabel };
+}

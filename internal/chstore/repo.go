@@ -79,6 +79,10 @@ func asyncInsertCtx(ctx context.Context) context.Context {
 // asyncInsertSettings — SAF; async_insert_settings_test.go pinler
 // (CLAUDE.md: async_insert mekanizmasını bozma).
 func asyncInsertSettings() clickhouse.Settings {
+	pv := 1
+	if !parallelViewsOn.Load() {
+		pv = 0
+	}
 	return clickhouse.Settings{
 		"async_insert":                     1,
 		"wait_for_async_insert":            1,
@@ -87,9 +91,19 @@ func asyncInsertSettings() clickhouse.Settings {
 		"async_insert_busy_timeout_min_ms": 500,
 		"async_insert_busy_timeout_ms":     1000,
 		"async_insert_stale_timeout_ms":    1000,
-		"parallel_view_processing":         1,
+		"parallel_view_processing":         pv,
 	}
 }
+
+// parallelViewsOn — v0.10.511 (dış denetim C6 ölçüm anahtarı): spans
+// INSERT'inde MV'lerin paralel itişi. Varsayılan AÇIK (v0.10.240); boot
+// SetParallelViewProcessing(!cfg.DisableParallelViews) ile kurar. Paket
+// düzeyinde atomik: asyncInsertCtx Store'a erişmeyen çağrı yerlerinden
+// (api_tokens, exemplar, notification_log, rag) de kullanılıyor.
+var parallelViewsOn = func() *atomic.Bool { b := &atomic.Bool{}; b.Store(true); return b }()
+
+// SetParallelViewProcessing — boot'ta bir kez; testler geri alır.
+func SetParallelViewProcessing(on bool) { parallelViewsOn.Store(on) }
 
 // spansInsertColumns is the EXPLICIT, physically-ordered column list for the
 // spans INSERT EXCEPT the trailing op_group column (which is conditional —

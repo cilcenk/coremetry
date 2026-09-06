@@ -260,6 +260,8 @@ type guidedRoute struct {
 	// v0.10.476 (F3-5, trace_nl_search.go) — değerin bulunduğu attribute anahtarları
 	// (bundle yazar; link süzgeç çipine döner).
 	SearchKeys []string
+	// v0.10.479 (F4-2) — namespace_services: yalnız pod listesi ("bunun pod'ları").
+	FindPods bool
 }
 
 // normalizeGuidedMsg lowercases for matching. Go's ToLower maps the
@@ -1444,6 +1446,24 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	svcNames, envNames := s.guidedServiceNames(ctx), s.guidedEnvNames(ctx)
 	teamNames := s.guidedTeamNames(ctx)
 	route := routeGuidedIntent(question, svcNames, envNames, teamNames, ctxService)
+	// v0.10.479 (F4-2, G10) — TAKİP MUTASYONU: "son 1 saate genişlet" / "sadece
+	// hatalı olanlar" / "bunun pod'larını göster" / "aynı filtreyle loglara bak"
+	// → aktif bağlamın son rotası klonlanır, alan değişir, aynı dispatch; router'ın
+	// bunları yeni soru sanmasından ÖNCE (chat_followups.go).
+	if st := chatContextFromCtx(ctx); st != nil && st.ctx.LastRoute != nil {
+		explicitEntity := extractServiceEntity(norm, svcNames, envNames) != "" || hasNamespaceWord(guidedTokens(norm))
+		if m, ok := detectContextMutation(norm, guidedTokens(norm), st.ctx, explicitEntity); ok {
+			if mr, mrange, next, ok := applyContextMutation(st.ctx, m); ok {
+				st.ctx, st.dirty = next, true
+				emitGuidedContextStep(emit, "takip: "+m.Label+" (bağlam)")
+				handled, ok = s.runGuidedRoute(ctx, emit, mr, mrange, question, msgs, explain, ctxService, ctxOperation, "", anchorTo)
+				if handled {
+					s.noteChatContextRoute(ctx, mr, mrange, m.Kind == "window")
+				}
+				return handled, ok
+			}
+		}
+	}
 	// v0.9.537 — "bu trace" / "ekrandaki trace" İD'siz sorulduğunda
 	// ekrandaki trace'e otur: operatör /trace sayfasında, adres zaten
 	// özneyi taşıyor. Mesajdaki AÇIK 32-hex her zaman kazanır

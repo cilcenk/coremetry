@@ -43,7 +43,10 @@ type ChatContext struct {
 	Filters    []chstore.FilterExpr `json:"filters,omitempty"`
 	SearchText string               `json:"searchText,omitempty"`
 	LastIntent string               `json:"lastIntent,omitempty"`
-	UpdatedAt  int64                `json:"updatedAt,omitempty"`
+	// LastRoute — v0.10.479 (F4-2): son cevaplanan rota; takip mutasyonları
+	// (chat_followups.go) bunu klonlayıp alan değiştirir.
+	LastRoute *guidedRoute `json:"lastRoute,omitempty"`
+	UpdatedAt int64        `json:"updatedAt,omitempty"`
 }
 
 func (c ChatContext) Empty() bool {
@@ -150,6 +153,8 @@ func contextPatchFromRoute(c ChatContext, route guidedRoute, rangeS int64, expli
 	}
 	if route.Intent != guidedNone {
 		c.LastIntent = string(route.Intent)
+		lr := route
+		c.LastRoute = &lr
 	}
 	return c, !chatContextEqual(before, c)
 }

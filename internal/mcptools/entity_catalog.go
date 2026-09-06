@@ -439,7 +439,7 @@ type listPodsArgs struct {
 	Limit     int    `json:"limit,omitempty"`
 }
 
-type podRow struct {
+type PodRow struct {
 	Cluster   string   `json:"cluster"`
 	Namespace string   `json:"namespace"`
 	Pod       string   `json:"pod"`
@@ -454,7 +454,7 @@ type podRow struct {
 }
 
 // podRows — SAF: pod kayıtları + seen satırları → satırlar.
-func podRows(c ClusterRef, pods []chstore.EntityRecord, seen []chstore.EntitySeenAgg) []podRow {
+func podRows(c ClusterRef, pods []chstore.EntityRecord, seen []chstore.EntitySeenAgg) []PodRow {
 	type acc struct {
 		svcs        map[string]bool
 		spans, errs int64
@@ -480,9 +480,9 @@ func podRows(c ClusterRef, pods []chstore.EntityRecord, seen []chstore.EntitySee
 			x.last = a.LastSeen
 		}
 	}
-	out := make([]podRow, 0, len(pods))
+	out := make([]PodRow, 0, len(pods))
 	for _, p := range pods {
-		row := podRow{Cluster: c.Name, Namespace: p.Namespace, Pod: p.Name, Source: p.Source, Stale: p.Stale, Services: []string{}}
+		row := PodRow{Cluster: c.Name, Namespace: p.Namespace, Pod: p.Name, Source: p.Source, Stale: p.Stale, Services: []string{}}
 		if ref, ok := entity.ParseID(p.ParentID); ok && ref.Type == entity.TypeWorkload {
 			row.Workload = ref.Name
 		}
@@ -541,48 +541,13 @@ func listPodsTool(d Deps) mcp.Tool {
 			if !entityLayerOn(d) {
 				return entityDisabled(), nil
 			}
-			clusters, ok := clustersFor(d, a.Cluster)
-			if !ok {
-				return nil, unknownClusterErr(d, a.Cluster)
-			}
 			from, to := rangeWindow(ctx, a.RangeS)
-			limit := clampLimit(a.Limit, entityCatalogLimit, 500)
-			rows := []podRow{}
-			wl := strings.TrimSpace(a.Workload)
-			for _, c := range clusters {
-				q := chstore.EntityListQuery{ClusterID: c.ID, Type: entity.TypePod, Namespace: ns, Limit: limit}
-				if wl != "" {
-					wls, err := d.Store.EntityList(ctx, chstore.EntityListQuery{ClusterID: c.ID, Type: entity.TypeWorkload, Namespace: ns, Name: wl, Limit: 5})
-					if err != nil {
-						return nil, err
-					}
-					if len(wls) == 0 {
-						continue // bu cluster'da böyle workload yok
-					}
-					q.ParentID = wls[0].ID
-				}
-				pods, err := d.Store.EntityList(ctx, q)
-				if err != nil {
-					return nil, err
-				}
-				if len(pods) == 0 {
-					continue
-				}
-				names := make([]string, 0, len(pods))
-				for _, p := range pods {
-					names = append(names, p.Name)
-				}
-				var seen []chstore.EntitySeenAgg
-				if len(c.SpanValues) > 0 {
-					seen, err = d.Store.EntitySeenForPods(ctx, c.SpanValues, ns, names, from, to)
-					if err != nil {
-						return nil, err
-					}
-				}
-				rows = append(rows, podRows(c, pods, seen)...)
+			rows, searched, err := ReadNamespacePods(ctx, d, ns, strings.TrimSpace(a.Workload), a.Cluster, from, to, clampLimit(a.Limit, entityCatalogLimit, 500))
+			if err != nil {
+				return nil, err
 			}
-			res := map[string]any{"namespace": ns, "pods": rows, "count": len(rows), "window_s": int(to.Sub(from).Seconds()), "clusters_searched": clusterNames(clusters)}
-			if wl != "" {
+			res := map[string]any{"namespace": ns, "pods": rows, "count": len(rows), "window_s": int(to.Sub(from).Seconds()), "clusters_searched": searched}
+			if wl := strings.TrimSpace(a.Workload); wl != "" {
 				res["workload"] = wl
 				if len(rows) == 0 {
 					res["hint"] = "Bu workload aranan cluster'larda katalogda yok (adı list_workloads ile doğrula)."
@@ -591,4 +556,50 @@ func listPodsTool(d Deps) mcp.Tool {
 			return res, nil
 		},
 	}
+}
+
+// ReadNamespacePods — v0.10.479 (F4-2): list_pods'un okuma çekirdeği, guided
+// rota ile paylaşılır. Bayrak kapısı çağıranda.
+func ReadNamespacePods(ctx context.Context, d Deps, ns, workload, cluster string, from, to time.Time, limit int) ([]PodRow, []string, error) {
+	clusters, ok := clustersFor(d, cluster)
+	if !ok {
+		return nil, nil, unknownClusterErr(d, cluster)
+	}
+	if limit <= 0 {
+		limit = entityCatalogLimit
+	}
+	rows := []PodRow{}
+	for _, c := range clusters {
+		q := chstore.EntityListQuery{ClusterID: c.ID, Type: entity.TypePod, Namespace: ns, Limit: limit}
+		if workload != "" {
+			wls, err := d.Store.EntityList(ctx, chstore.EntityListQuery{ClusterID: c.ID, Type: entity.TypeWorkload, Namespace: ns, Name: workload, Limit: 5})
+			if err != nil {
+				return nil, nil, err
+			}
+			if len(wls) == 0 {
+				continue
+			}
+			q.ParentID = wls[0].ID
+		}
+		pods, err := d.Store.EntityList(ctx, q)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(pods) == 0 {
+			continue
+		}
+		names := make([]string, 0, len(pods))
+		for _, p := range pods {
+			names = append(names, p.Name)
+		}
+		var seen []chstore.EntitySeenAgg
+		if len(c.SpanValues) > 0 {
+			seen, err = d.Store.EntitySeenForPods(ctx, c.SpanValues, ns, names, from, to)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		rows = append(rows, podRows(c, pods, seen)...)
+	}
+	return rows, clusterNames(clusters), nil
 }

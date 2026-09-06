@@ -1,14 +1,17 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/anomaly"
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
+	"github.com/cilcenk/coremetry/internal/logstore"
 )
 
 // log_patterns_explain.go — F3.5 (v0.9.1100): Logs sayfasının ✨ desen
@@ -28,28 +31,166 @@ const (
 	logPatternsExplainTopTpls  = 8
 )
 
+// logPatternsScope — v0.10.507 (log arama denetimi C7): operatörün EKRANDAKİ
+// süzgeci ve penceresi. Eskiden "✨ Desenleri anlat" bunları yok sayıyordu:
+// filo geneli 30 dk (tavan) anomali taraması + 24 saatlik şablon kataloğu
+// anlatılıyor, seçili servis/cluster/env/arama ve seçili pencere kanıta
+// hiç girmiyordu. Şimdi paketin İLK bölümü bu kapsamın kendi desen
+// örneklemesi (GroupBySignatureN, tek ES sayfası — 500 doküman, tıkla
+// çekilir); anomali/şablon bölümleri filo geneli olarak etiketlenir.
+type logPatternsScope struct {
+	Service, Cluster, Env, Search string
+	From, To                      time.Time
+	Severity                      int
+}
+
+func (sc logPatternsScope) empty() bool {
+	return sc.Service == "" && sc.Cluster == "" && sc.Env == "" && sc.Search == "" && sc.Severity == 0
+}
+
+const logPatternsExplainScopeTop = 8
+
+// logPatternsScopeFromQuery — getLogsPatterns ile aynı parametre adları.
+func logPatternsScopeFromQuery(get func(string) string) logPatternsScope {
+	sev, _ := strconv.Atoi(get("severity"))
+	return logPatternsScope{
+		Service: get("service"), Cluster: get("cluster"), Env: strings.TrimSpace(get("env")),
+		Search: get("search"), From: parseTime(get("from")), To: parseTime(get("to")), Severity: sev,
+	}
+}
+
 func (s *Server) explainLogPatterns(w http.ResponseWriter, r *http.Request) {
-	// 503 ön-kapısı ROUTE'ta: requireCopilot (ai_routes.go, v0.9.1118).
 	window := snapAnomalyWindow(parseDuration(r.URL.Query().Get("window"), 30*time.Minute))
+	scope := logPatternsScopeFromQuery(r.URL.Query().Get)
+
+	// v0.10.507 (C7) — kapsamın kendi desen örneklemesi: sayfa süzgeci +
+	// seçili pencere (rung'lanmaz; pencere yoksa son `window`). Tek ES sayfası.
+	sf := logstore.Filter{Service: scope.Service, Cluster: scope.Cluster, Env: scope.Env, Search: scope.Search,
+		From: scope.From, To: scope.To, SeverityMin: uint8(scope.Severity)}
+	if sf.To.IsZero() {
+		sf.To = time.Now()
+	}
+	if sf.From.IsZero() {
+		sf.From = sf.To.Add(-window)
+	}
+	pctx, pcancel := context.WithTimeout(r.Context(), 15*time.Second)
+	pats, patsErr := logstore.GroupBySignatureN(pctx, s.logs, sf, logPatternsExplainScopeTop, logsPatternsSample(500))
+	pcancel()
 
 	hits, hitsErr := anomaly.DetectLogPatterns(r.Context(), s.logs, window)
 	tpls, tplsErr := s.store.ListLogTemplates(r.Context(), chstore.ListLogTemplatesFilter{
 		SinceNs: time.Now().Add(-24 * time.Hour).UnixNano(),
 		SortBy:  "count",
 		Limit:   logPatternsExplainTopTpls,
+		Service: scope.Service, // v0.10.507 — şablon kataloğu da seçili servise
 	})
-	if hitsErr != nil && tplsErr != nil {
-		writeErr(w, fmt.Errorf("log patterns: %v · templates: %v", hitsErr, tplsErr))
+	if hitsErr != nil && tplsErr != nil && patsErr != nil {
+		writeErr(w, fmt.Errorf("log patterns: %v · templates: %v · scope: %v", hitsErr, tplsErr, patsErr))
 		return
 	}
-	evidence := renderLogPatternsEvidence(window, hits, tpls, hitsErr == nil, tplsErr == nil)
+	scope.From, scope.To = sf.From, sf.To
+	evidence := renderLogPatternsScopeEvidence(scope, pats, patsErr == nil) +
+		renderLogPatternsEvidence(window, hits, tpls, hitsErr == nil, tplsErr == nil)
 	r, xid := withExchange(r)
 	out, err := s.copilotExplain(r, copilot.SystemPromptLogPatterns(), evidence)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid, "windowSec": int(window.Seconds())})
+	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid,
+		"windowSec": int(scope.To.Sub(scope.From).Seconds()), // v0.10.507 — GERÇEK pencere, rung değil
+		"scope":     scope.label()})
+}
+
+// label — UI başlığı için kısa kapsam metni ("payments · prod · 6 sa").
+func (sc logPatternsScope) label() string {
+	parts := []string{}
+	if sc.Service != "" {
+		parts = append(parts, sc.Service)
+	}
+	if sc.Cluster != "" {
+		parts = append(parts, sc.Cluster)
+	}
+	if sc.Env != "" {
+		parts = append(parts, sc.Env)
+	}
+	if sc.Search != "" {
+		parts = append(parts, "arama: "+oneLineSample(sc.Search, 40))
+	}
+	if !sc.From.IsZero() && !sc.To.IsZero() {
+		parts = append(parts, fmtRangeTR(int64(sc.To.Sub(sc.From).Seconds())))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// renderLogPatternsScopeEvidence — v0.10.507 (C7) SAF: paketin ilk bölümü,
+// operatörün baktığı süzgeç + pencerenin desen örneklemesi. Süzgeç boşsa
+// bunu söyler; örnekleme okunamadıysa "OKUNAMADI" (yokluk sıfır değil);
+// tavan dolduysa kapsanan alt pencereyi yazar (v0.10.441 dürüstlük zarfı).
+func renderLogPatternsScopeEvidence(sc logPatternsScope, pats *logstore.PatternsResult, ok bool) string {
+	var b strings.Builder
+	b.WriteString("BAKILAN KAPSAM — operatörün ekrandaki süzgeci ve penceresi:\n")
+	if sc.empty() {
+		b.WriteString("Süzgeç: yok (tüm servisler).")
+	} else {
+		fields := []string{}
+		if sc.Service != "" {
+			fields = append(fields, "servis="+sc.Service)
+		}
+		if sc.Cluster != "" {
+			fields = append(fields, "cluster="+sc.Cluster)
+		}
+		if sc.Env != "" {
+			fields = append(fields, "env="+sc.Env)
+		}
+		if sc.Severity > 0 {
+			fields = append(fields, fmt.Sprintf("severity≥%d", sc.Severity))
+		}
+		if sc.Search != "" {
+			fields = append(fields, "arama="+oneLineSample(sc.Search, 80))
+		}
+		b.WriteString("Süzgeç: " + strings.Join(fields, ", ") + ".")
+	}
+	if !sc.From.IsZero() && !sc.To.IsZero() {
+		fmt.Fprintf(&b, " Pencere: %s (%s → %s UTC).\n",
+			fmtRangeTR(int64(sc.To.Sub(sc.From).Seconds())),
+			sc.From.UTC().Format("2006-01-02 15:04"), sc.To.UTC().Format("2006-01-02 15:04"))
+	} else {
+		b.WriteString("\n")
+	}
+	switch {
+	case !ok || pats == nil:
+		b.WriteString("Bu kapsamın desen örneklemesi OKUNAMADI — kapsam hakkında sonuç çıkarma (sıfır DEĞİL).\n")
+	case len(pats.Groups) == 0:
+		b.WriteString("Bu kapsamda örneklenen satır yok (pencere ve süzgeçte log bulunmadı).\n")
+	default:
+		fmt.Fprintf(&b, "Kapsamın desenleri (%d örnek satırdan %d farklı desen, ilk %d):\n",
+			pats.Sampled, pats.Distinct, len(pats.Groups))
+		if pats.Truncated && pats.CoveredFromNs > 0 && pats.CoveredToNs > 0 {
+			fmt.Fprintf(&b, "(Örnekleme tavanı doldu: sayımlar yalnız %s → %s UTC alt penceresini anlatır.)\n",
+				time.Unix(0, pats.CoveredFromNs).UTC().Format("15:04"), time.Unix(0, pats.CoveredToNs).UTC().Format("15:04"))
+		}
+		for i, g := range pats.Groups {
+			fmt.Fprintf(&b, "%d. %q — %d satır, %s", i+1, oneLineSample(g.Template, 110), g.Count, sevWord(g.Severity, g.SeverityText))
+			if len(g.Services) > 0 {
+				fmt.Fprintf(&b, "; servisler: %s", strings.Join(g.Services, ", "))
+				if g.ServiceCount > len(g.Services) {
+					fmt.Fprintf(&b, " +%d", g.ServiceCount-len(g.Services))
+				}
+			}
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("\nFİLO GENELİ (süzgeçten bağımsız) — anomali taraması ve şablon kataloğu:\n")
+	return b.String()
+}
+
+// sevWord — severity metni varsa o, yoksa sayısal seviye.
+func sevWord(sev uint8, text string) string {
+	if text != "" {
+		return text
+	}
+	return fmt.Sprintf("seviye %d", sev)
 }
 
 // renderLogPatternsEvidence — kanıt paketi (saf, tablo testli). Model

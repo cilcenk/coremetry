@@ -234,7 +234,12 @@ function LogsInner() {
     setAiPat({ busy: true, text: null, err: null });
     try {
       const winSec = from && to ? Math.max(60, Math.round((to - from) / 1e9)) : 1800;
-      const r = await api.explainLogPatterns(winSec);
+      // v0.10.507 (C7) — ekrandaki süzgeç ve pencere de gider; cevap "bakılan
+      // kapsam"ı anlatır, filo geneli bölümler ayrı etiketlenir.
+      const r = await api.explainLogPatterns(winSec, {
+        service: filter.service, cluster: filter.cluster, env, search: compiledSearch,
+        severity: filter.severity, fromNs: from ?? undefined, toNs: to ?? undefined,
+      });
       setAiPat({ busy: false, text: r.explanation, err: null, xid: r.exchangeId });
     } catch (e) {
       setAiPat({ busy: false, text: null, err: e instanceof Error ? e.message : 'Anlatım alınamadı' });
@@ -814,7 +819,7 @@ function LogsInner() {
           </Button>
           <Button variant="secondary" size="sm" disabled={aiPat.busy}
             onClick={explainPatterns}
-            title="Penceredeki yeni/patlayan log desenlerini ve sürekli gürültü şablonlarını AI anlatır">
+            title="Seçili süzgeç ve penceredeki log desenlerini AI anlatır; filo geneli yeni/patlayan desenler ve sürekli gürültü şablonları ayrıca etiketlenir">
             <IconSparkles /> Desenleri anlat
           </Button>
           {(() => {

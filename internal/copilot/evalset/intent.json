@@ -104,6 +104,97 @@
           "UG"
         ]
       }
+    },
+    {
+      "id": "intent-find-entity-bare-name",
+      "surface": "IntentClassify",
+      "why": "v0.10.463/479 (telemetry agent kabul 2): çıplak ad bir soru değil, varlık bulma — sunucu kataloğa çözer",
+      "user": "shop-payment",
+      "expect": {
+        "intent": "find_entity",
+        "intentService": "shop-payment",
+        "knownEntities": [
+          "shop-payment-api",
+          "shop-payment-worker",
+          "core-auth"
+        ],
+        "maxLatencyMs": 20000
+      }
+    },
+    {
+      "id": "intent-find-entity-verb",
+      "surface": "IntentClassify",
+      "why": "bulma fiili + yaklaşık ad; sunucu adayları sorar",
+      "user": "shop payment'ı bul",
+      "expect": {
+        "intent": "find_entity",
+        "intentService": "shop payment",
+        "knownEntities": [
+          "shop-payment-api",
+          "shop-payment-worker",
+          "core-auth"
+        ],
+        "maxLatencyMs": 20000
+      }
+    },
+    {
+      "id": "intent-find-entity-list",
+      "surface": "IntentClassify",
+      "why": "servis listesi sorusu; servis slotu boş",
+      "user": "hangi servisler var?",
+      "expect": {
+        "intent": "find_entity",
+        "intentService": "",
+        "knownEntities": [
+          "shop-payment-api",
+          "core-auth"
+        ],
+        "maxLatencyMs": 20000
+      }
+    },
+    {
+      "id": "intent-namespace-services",
+      "surface": "IntentClassify",
+      "why": "v0.10.470 (kabul 1): namespace'teki servisler; namespace slotu mesajdaki yazımıyla",
+      "user": "shop namespace'indeki servisleri getir",
+      "expect": {
+        "intent": "namespace_services",
+        "intentService": "",
+        "knownEntities": [
+          "shop-payment-api",
+          "core-auth"
+        ],
+        "maxLatencyMs": 20000
+      }
+    },
+    {
+      "id": "intent-namespace-list",
+      "surface": "IntentClassify",
+      "why": "namespace listesi; slot boş",
+      "user": "hangi namespace'ler var",
+      "expect": {
+        "intent": "namespace_services",
+        "intentService": "",
+        "knownEntities": [
+          "shop-payment-api"
+        ],
+        "maxLatencyMs": 20000
+      }
+    },
+    {
+      "id": "intent-trace-search-host",
+      "surface": "IntentClassify",
+      "why": "v0.10.476 (kabul 3): servis + içinde host geçen trace'ler; searchText aynen",
+      "user": "shop-payment-api servisinin içinde apigateway.example.com olan trace'leri getir",
+      "expect": {
+        "intent": "trace_search",
+        "intentService": "shop-payment-api",
+        "knownEntities": [
+          "shop-payment-api",
+          "core-auth"
+        ],
+        "maxLatencyMs": 20000
+      }
     }
   ]
 }

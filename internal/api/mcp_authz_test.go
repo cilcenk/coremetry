@@ -261,8 +261,10 @@ func TestAllShippedToolsAreViewerLevel(t *testing.T) {
 	// list_pods); REST eşleri GET /api/entities, /api/entity/services,
 	// /api/services/{name}/pods — RequireRole'süz (viewer tabanı) → MinRole "".
 	// v0.10.469 — 39 → 40: resolve_entity (katalog okuması, viewer).
-	if len(tools) != 40 {
-		t.Errorf("katalog %d tool (40 bekleniyordu) — yeni tool'un REST eşinin kapısını (auth.RequireRole/"+
+	// v0.10.472 — 40 → 42: describe_attributes / find_attribute_by_value (REST eşleri
+	// /api/attribute-keys, /api/services/{name}/attrs viewer).
+	if len(tools) != 42 {
+		t.Errorf("katalog %d tool (42 bekleniyordu) — yeni tool'un REST eşinin kapısını (auth.RequireRole/"+
 			"RequireAnyRole) kontrol et, MinRole'ü ona eşitle, sonra bu sayıyı güncelle", len(tools))
 	}
 	for _, tool := range tools {

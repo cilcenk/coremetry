@@ -70,7 +70,7 @@ export const STORAGE_KEYS = {
   aiIncludeCode:    'cm.ai.includeCode',
   // v0.10.432 (CoSRE router boşlukları D8) — trace ilk açılış baloncuğu
   // ("Bu trace'i açıklamamı ister misin?"). declined = kalıcı ret
-  // (localStorage: "Sağol, gerek yok" bir daha sormaz); asked =
+  // (localStorage: "Bir daha sorma" bir daha sormaz); asked =
   // sekme oturumu (sessionStorage): tab başına bir kez sorulur, cevapsız
   // bırakılsa da tekrar çıkmaz.
   aiTraceNudgeDeclined: 'cm.ai.traceNudge.declined',

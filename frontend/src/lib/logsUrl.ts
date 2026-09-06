@@ -221,6 +221,21 @@ export interface LogsPivot {
    * Ignored for a preset or a pre-encoded string, where it has no meaning.
    */
   padNs?: number;
+  /**
+   * v0.10.448 (log arama denetimi C8) — GÖRÜNÜM ipucu, süzgeç değil:
+   * Desenler panelini bu sekmede açık indirir (`?panel=patterns|templates`).
+   * Süzgeç kimliğine (logsUrlSig/LogsUrlFilter) GİRMEZ — girse her panel
+   * tıkı içe aktarma etkisini tetikleyip sayfalamayı sıfırlardı.
+   * Ad `panel` bu sayfaya ayrılmıştır; dashboard "panel" kavramı değildir.
+   */
+  panel?: LogsPanel;
+}
+
+export type LogsPanel = 'patterns' | 'templates';
+
+/** parseLogsPanel — parseBreakdown ikizi: bilinmeyen/boş → null (kapalı). */
+export function parseLogsPanel(v: string | null | undefined): LogsPanel | null {
+  return v === 'patterns' || v === 'templates' ? v : null;
 }
 
 function pivotRangeParam(w: LogsPivot['window'], padNs: number): string {
@@ -255,6 +270,7 @@ export function logsHref(p: LogsPivot): string {
   if (p.filters) q.set('filters', p.filters);
   if (p.cols) q.set('cols', p.cols);
   if (p.env) q.set('env', p.env);
+  if (p.panel) q.set('panel', p.panel); // v0.10.448 (C8)
   const range = pivotRangeParam(p.window, p.padNs ?? 0);
   if (range) q.set('range', range);
   return `/logs?${q.toString()}`;

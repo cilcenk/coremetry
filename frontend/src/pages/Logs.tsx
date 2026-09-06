@@ -20,7 +20,7 @@ import {
   LogsHistogram, parseBreakdown, histogramFeedsChips, type LogsBreakdown,
 } from '@/components/LogsHistogram';
 import { LogFieldsPanel } from '@/components/LogFieldsPanel';
-import { LogPatternsPanel } from '@/components/LogPatternsPanel';
+import { LogPatternsPanel, type PanelTab } from '@/components/LogPatternsPanel';
 import { Button } from '@/components/ui/Button';
 import { RenderedMarkdown } from '@/components/Markdown';
 import { Pager } from '@/components/Pager';
@@ -45,7 +45,7 @@ import {
   extractHighlightTerms, toggleExistsFilter, replaceFilterAt,
 } from '@/lib/logFilters';
 import type { LogFilter } from '@/lib/logFilters';
-import { logsUrlSig, writeLogsParams, readLogsParams, buildDocPermalink, parseDocParam } from '@/lib/logsUrl';
+import { logsUrlSig, writeLogsParams, readLogsParams, buildDocPermalink, parseDocParam, parseLogsPanel } from '@/lib/logsUrl';
 import type { LogsResponse, LogRow, TimeRange } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
 import { PageShell } from '@/components/ui/PageShell';
@@ -196,8 +196,24 @@ function LogsInner() {
   const [draft, setDraft] = useState(filter);
   // v0.10.298 — "Desenler" paneli (log-search Dilim 2b): açık/kapalı kalıcı;
   // fetch yalnız açıkken. Satır/"Ara" → türetilmiş sorgu serbest metne.
-  const [patternsOpen, setPatternsOpen] = useState<boolean>(() => getRaw('logs.patterns.open') === '1');
-  const togglePatterns = () => setPatternsOpen(v => { setRaw('logs.patterns.open', v ? '0' : '1'); return !v; });
+  // v0.10.448 (log arama denetimi C8) — Desenler paneli URL'den de
+  // adreslenir: `?panel=patterns|templates` (görünüm ipucu; süzgeç
+  // kimliğine GİRMEZ — logsUrlSig'e girse her tık sayfalamayı sıfırlardı).
+  // Öncelik: URL varsa URL, yoksa localStorage (bugünkü varsayılan korunur:
+  // param yokken sabit tercih). Problem/anomali deep link'i desene iner.
+  // Görünür bedel: paylaşılan link paneli açık indirir (bir /patterns
+  // isteği), kayıtlı görünüm paneli açıp kapayınca "● modified" olur.
+  const urlPanel = parseLogsPanel(searchParams.get('panel'));
+  const [patternsOpen, setPatternsOpen] = useState<boolean>(() => urlPanel !== null || getRaw('logs.patterns.open') === '1');
+  const [panelTab, setPanelTab] = useState<PanelTab>(() => urlPanel ?? (getRaw('logs.patterns.tab') === 'templates' ? 'templates' : 'patterns'));
+  useEffect(() => { if (urlPanel) { setPatternsOpen(true); setPanelTab(urlPanel); } }, [urlPanel]);
+  const writePanelParam = (open: boolean, tab: PanelTab) => setSearchParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (open) next.set('panel', tab); else next.delete('panel');
+    return next;
+  }, { replace: true });
+  const togglePatterns = () => setPatternsOpen(v => { setRaw('logs.patterns.open', v ? '0' : '1'); writePanelParam(!v, panelTab); return !v; });
+  const onPanelTab = (t: PanelTab) => { setPanelTab(t); if (patternsOpen) writePanelParam(true, t); };
   // v0.10.417 (log arama denetimi B5) — satır sarma; okuma yardımı, URL'e
   // girmez (narrow gibi), kalıcı (localStorage). Varsayılan KAPALI: tek
   // satır + … bugünkü davranış.
@@ -986,7 +1002,7 @@ function LogsInner() {
           </div>
         )}
 
-        <LogPatternsPanel open={patternsOpen} onSearch={searchFromPattern}
+        <LogPatternsPanel open={patternsOpen} onSearch={searchFromPattern} tab={panelTab} onTab={onPanelTab}
           params={{ ...filter, env, search: compiledSearch, from: from ?? undefined, to: to ?? undefined }} />
 
         {/* v0.9.1084 — HONEST with-trace chip (EnvUnapplied ikizi;

@@ -43,7 +43,7 @@ bağlam okunur.
 | C5 | "Hatalıyı ayıran alan" log tarafında yok (BubbleUp yalnız span) | `bubbleup.go:86`, `api_logs.go:914` | fieldstats `baseline=1` + lift rozeti | ~yarım gün |
 | C6 | Desenler'de trend/yeni-mi yok (anomaly/log_patterns.go hesaplıyor) | `patterns.go:35-50`, `anomaly/log_patterns.go:193` | `Ratio/New` + Δ sütunu + YENİ rozeti | ~yarım gün |
 | C7 | "✨ Desenleri anlat" filtre/pencereyi yok sayıyor (servissiz 24 sa, tavan 30 dk; `windowSec` atılıyor) | `log_patterns_explain.go:33-38`, `Logs.tsx:202` | service/cluster/env/search kanıta; `windowSec` başlıkta | ~yarım gün |
-| C8 | Desenler paneli URL'de değil (localStorage) → Problem linki desene inemiyor | `Logs.tsx:189` | `?panel=patterns\|templates` → `logsUrl.ts` | ~1 saat |
+| C8 | Desenler paneli URL'de değil (localStorage) → Problem linki desene inemiyor | `Logs.tsx:189` | `?panel=patterns\|templates` → `logsUrl.ts` | ~1 saat | **GEMİDE v0.10.448** (operatör kararı) — `?panel=patterns|templates` görünüm ipucu (`parseLogsPanel`, `LogsPivot.panel`, `logsHref`), süzgeç kimliğine girmez, sekme panele URL'den geçer, URL yoksa localStorage; görünür bedel: paylaşılan link paneli açık indirir, kayıtlı görünüm toggle'da "● modified" |
 
 ## Zaten iyi olan
 - `_msearch` toplu tik, `min_doc_count:1`, `track_total_hits:false` + soft timeout, PIT fallback; `es_rawsearch.go` dar `_source` emsali.

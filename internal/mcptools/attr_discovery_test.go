@@ -3,6 +3,7 @@ package mcptools
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -76,5 +77,31 @@ func TestAttrScopeRequired(t *testing.T) {
 	}
 	if _, err := findAttributeByValueTool(Deps{}).Handler(context.Background(), json.RawMessage(`{"value":"x"}`)); err == nil {
 		t.Error("find value kısa/kapsamsız hata")
+	}
+}
+
+// v0.10.488 (Astra #4) — modele giden değerler kırpılır ve toplamı tavanlı.
+func TestCapSampleValues(t *testing.T) {
+	long := strings.Repeat("x", 400)
+	rows := []chstore.ServiceAttrRow{{Key: "url.full", SampleValues: []string{long, "ok"}}}
+	out, capped := capSampleValues(rows)
+	if !capped || len([]rune(out[0].SampleValues[0])) != attrValueMaxRunes+1 || out[0].SampleValues[1] != "ok" {
+		t.Fatalf("değer kırpma: %v %v", capped, len(out[0].SampleValues[0]))
+	}
+	many := make([]chstore.ServiceAttrRow, 0, 100)
+	for i := 0; i < 100; i++ {
+		vals := make([]string, 20)
+		for j := range vals {
+			vals[j] = "v"
+		}
+		many = append(many, chstore.ServiceAttrRow{Key: "k", SampleValues: vals})
+	}
+	out, capped = capSampleValues(many)
+	total := 0
+	for _, r := range out {
+		total += len(r.SampleValues)
+	}
+	if !capped || total != attrSampleMaxTotal {
+		t.Errorf("toplam tavan: %d capped=%v", total, capped)
 	}
 }

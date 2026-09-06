@@ -24,8 +24,38 @@ import (
 
 const (
 	attrProbeMaxRangeS = 6 * 3600
-	attrProbeMaxKeys   = 6
+	// attrProbeMaxKeys — v0.10.488 (Astra #2): 6 → 3 seri prob (her biri 3 s
+	// tavanlı count); zaman aşımı sessiz düşmez, probe_timeouts ile ilan edilir.
+	attrProbeMaxKeys = 3
+	// attrValueMaxRunes / attrSampleMaxTotal — v0.10.488 (Astra #4): modele
+	// giden ham değer uzunluğu ve toplam örnek değer sayısı tavanı.
+	attrValueMaxRunes  = 160
+	attrSampleMaxTotal = 800
 )
+
+// capSampleValues — SAF: değer başına rune tavanı ("…" ile) ve toplam tavan.
+func capSampleValues(rows []chstore.ServiceAttrRow) ([]chstore.ServiceAttrRow, bool) {
+	total, truncated := 0, false
+	out := make([]chstore.ServiceAttrRow, 0, len(rows))
+	for _, r := range rows {
+		var vals []string
+		for _, v := range r.SampleValues {
+			if total >= attrSampleMaxTotal {
+				truncated = true
+				break
+			}
+			if rs := []rune(v); len(rs) > attrValueMaxRunes {
+				v = string(rs[:attrValueMaxRunes]) + "…"
+				truncated = true
+			}
+			vals = append(vals, v)
+			total++
+		}
+		r.SampleValues = vals
+		out = append(out, r)
+	}
+	return out, truncated
+}
 
 // valueKeyDictionary — bir değerin ŞEKLİNE göre aday anahtarlar (örneklemde
 // görünmese de probe edilir): host → adres anahtarları, yol → route/path.
@@ -228,11 +258,13 @@ func describeAttributesTool(d Deps) mcp.Tool {
 			if err != nil {
 				return nil, err
 			}
+			rows, capped := capSampleValues(rows)
 			keys := tagKeys(rows, chstore.AttrIndexAvailable())
 			res := map[string]any{
 				"scope": map[string]any{"service": sc.Service, "namespace": sc.Namespace, "clusters": sc.Clusters},
 				"keys":  keys, "count": len(keys), "window_s": int(to.Sub(from).Seconds()),
-				"sample_relative": true, "sample_spans": 5000, "attr_index": chstore.AttrIndexAvailable(),
+				"sample_relative": true, "sample_spans": chstore.ScopedAttrsInnerLimit, "sample_order": sc.SampleOrder(),
+				"values_capped": capped, "attr_index": chstore.AttrIndexAvailable(),
 			}
 			if len(keys) == 0 {
 				res["hint"] = "Bu kapsamda pencerede span yok ya da attribute taşımıyor — pencereyi büyüt (≤6 saat) ya da kapsamı doğrula (resolve_entity)."
@@ -284,6 +316,7 @@ func findAttributeByValueTool(d Deps) mcp.Tool {
 			if err != nil {
 				return nil, err
 			}
+			rows, _ = capSampleValues(rows)
 			matches := MatchSamples(rows, value)
 			shape := valueShape(value)
 			seen := map[string]bool{}
@@ -297,16 +330,23 @@ func findAttributeByValueTool(d Deps) mcp.Tool {
 				}
 			}
 			// Kesin prob: ilk N aday (kolon ya da kvh); yalnız tam eşleşme anlamlı.
+			// v0.10.488 (Astra #2): zaman aşımı/hata SESSİZ düşmez — probe_timeouts.
 			probed := 0
+			var probeTimeouts []string
 			for i := range matches {
 				if probed >= attrProbeMaxKeys || matches[i].Match == "substring" {
 					continue
 				}
 				count, basis, perr := d.Store.AttrValueProbe(ctx, sc, matches[i].Key, value, from, to)
-				if perr != nil || basis == chstore.ProbeNone {
+				if basis == chstore.ProbeNone {
 					continue
 				}
 				probed++
+				if perr != nil {
+					probeTimeouts = append(probeTimeouts, matches[i].Key)
+					matches[i].Basis = "probe_failed"
+					continue
+				}
 				matches[i].Basis, matches[i].Count, matches[i].Confirmed = basis, count, count > 0
 				if col, _, ok := chstore.AttrKeyColumn(matches[i].Key); ok {
 					matches[i].Column = col
@@ -322,7 +362,12 @@ func findAttributeByValueTool(d Deps) mcp.Tool {
 			}
 			res := map[string]any{
 				"value": value, "shape": shape, "matches": kept, "count": len(kept),
-				"window_s": int(to.Sub(from).Seconds()), "sample_spans": 5000, "attr_index": chstore.AttrIndexAvailable(),
+				"window_s": int(to.Sub(from).Seconds()), "sample_spans": chstore.ScopedAttrsInnerLimit, "sample_order": sc.SampleOrder(),
+				"attr_index": chstore.AttrIndexAvailable(),
+			}
+			if len(probeTimeouts) > 0 {
+				res["probe_timeouts"] = probeTimeouts
+				res["probe_hint"] = "Bu anahtarlarda kesin sayım zaman aşımına uğradı (3 s); örneklem kanıtı geçerli, pencereyi daralt."
 			}
 			if len(kept) == 0 {
 				res["hint"] = "Değer bu kapsamın örnekleminde ve probe edilen anahtarlarda yok — kapsamı/pencereyi doğrula; değeri farklı bir yazımla (kısaltma, alt-dize) dene; anahtar UYDURMA."

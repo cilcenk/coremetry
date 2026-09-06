@@ -20,6 +20,20 @@ func TestScopedAttrsSQL(t *testing.T) {
 			t.Errorf("%q yok", want)
 		}
 	}
+	// v0.10.488 — LIMIT'in birimi SPAN: arrayJoin, LIMIT'li alt sorgunun ÜSTÜNDE.
+	if strings.Index(sql, "LIMIT ?") < strings.Index(sql, "arrayJoin(") {
+		t.Errorf("LIMIT arrayJoin'den önce (span sayar) olmalı:\n%s", sql)
+	}
+	if strings.Contains(sql, "ORDER BY time DESC") {
+		t.Error("namespace/cluster kapsamında time sıralaması yok (tarama)")
+	}
+	svcSQL, _ := scopedAttrsSQL("attr_keys", "attr_values", AttrScope{Service: "checkout"})
+	if !strings.Contains(svcSQL, "ORDER BY time DESC") || strings.Index(svcSQL, "ORDER BY time DESC") > strings.Index(svcSQL, "LIMIT ?") {
+		t.Errorf("servis kapsamında en yeni N span (ORDER BY time DESC ... LIMIT):\n%s", svcSQL)
+	}
+	if (AttrScope{Service: "x"}).SampleOrder() != "recent" || (AttrScope{Namespace: "n"}).SampleOrder() != "unordered" {
+		t.Error("sample_order")
+	}
 }
 
 func TestAttrKeyColumn(t *testing.T) {

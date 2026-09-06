@@ -211,3 +211,19 @@ export function replaceFilterAt(filters: LogFilter[], i: number, next: LogFilter
   if (!next.key.trim()) return filters.filter((_, j) => j !== i);
   return filters.map((f, j) => (j === i ? next : f));
 }
+
+// mergePatternQuery — v0.10.502 (log arama denetimi B6): Desenler
+// panelinin ⊕/⊖ eylemi türetilmiş sorguyu MEVCUT serbest metne ekler
+// ("Ara" eskisi gibi değiştirir — davranış korunur, iki yeni eylem
+// eklendi). exclude → `NOT (…)`. Zaten aynı parça varsa (aynı kip)
+// yinelenmez; parantez, `a OR b` gibi metinlerin AND önceliğini korur.
+export function mergePatternQuery(existing: string, pattern: string, exclude: boolean): string {
+  const q = pattern.trim();
+  if (!q) return existing;
+  const piece = exclude ? `NOT (${q})` : `(${q})`;
+  const base = existing.trim();
+  if (!base) return piece;
+  if (base.includes(piece)) return base;
+  const left = /\bOR\b/i.test(base) && !/^\(.*\)$/.test(base) ? `(${base})` : base;
+  return `${left} AND ${piece}`;
+}

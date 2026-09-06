@@ -4,6 +4,7 @@ import {
   extractHighlightTerms, highlightSegments,
   type LogFilter,
 } from './logFilters';
+import { mergePatternQuery } from './logFilters';
 
 const f = (key: string, value: string, negated = false, disabled = false): LogFilter =>
   ({ key, value, negated, disabled });
@@ -250,5 +251,27 @@ describe('range op (gte/lte)', () => {
 
   it('disabled range pill is excluded from compile', () => {
     expect(compileSearch([{ ...gte('n', '5'), disabled: true }], 'x')).toBe('x');
+  });
+});
+
+
+// v0.10.502 (B6) — Desenler ⊕/⊖: türetilmiş sorgu mevcut metne eklenir,
+// metin ezilmez; ⊖ NOT; yineleme yok; OR'lu tabanın önceliği korunur.
+describe('mergePatternQuery', () => {
+  it('boş tabana düz / NOT parça', () => {
+    expect(mergePatternQuery('', '"a" AND "b"', false)).toBe('("a" AND "b")');
+    expect(mergePatternQuery('  ', '"a"', true)).toBe('NOT ("a")');
+  });
+  it('mevcut metni korur ve AND ile ekler', () => {
+    expect(mergePatternQuery('level:error', '"timeout"', false)).toBe('level:error AND ("timeout")');
+    expect(mergePatternQuery('level:error', '"timeout"', true)).toBe('level:error AND NOT ("timeout")');
+  });
+  it('OR içeren tabanı parantezler', () => {
+    expect(mergePatternQuery('a OR b', '"x"', false)).toBe('(a OR b) AND ("x")');
+    expect(mergePatternQuery('(a OR b)', '"x"', true)).toBe('(a OR b) AND NOT ("x")');
+  });
+  it('aynı parçayı yinelemez; boş deseni yok sayar', () => {
+    expect(mergePatternQuery('level:error AND ("x")', '"x"', false)).toBe('level:error AND ("x")');
+    expect(mergePatternQuery('level:error', '   ', true)).toBe('level:error');
   });
 });

@@ -556,7 +556,8 @@ func TestDiscoveryToolsGroupedNearConsumers(t *testing.T) {
 	// v0.10.468 — 36 → 39 (entity_catalog.go: list_namespaces / list_workloads / list_pods).
 	// v0.10.469 — 39 → 40 (resolve_entity.go).
 	// v0.10.472 — 40 → 42 (attr_discovery.go).
-	if len(tools) != 42 {
+	// v0.10.474 — 42 → 43 (trace_stats.go).
+	if len(tools) != 43 {
 		t.Errorf("katalog %d tool — sayı değiştiyse tools.go başlığındaki sayım yorumunu, "+
 			"api/mcp_authz_test.go'daki duruş notunu ve docs/runbooks/mcp-claude-code.md'yi de güncelle", len(tools))
 	}

@@ -11,7 +11,7 @@ import { shouldNudgeExplain } from './traceNudge';
 // yaşar (sohbet açıkken çizilmez, copilot kapalıyken de — CopilotChat'in
 // kendi kapıları), yani /public/trace'te hiç yok. Karar traceNudge.ts'te.
 // "Evet" → AI çekmecesi bu trace için, src=nudge ile (sunucu yüzeyi
-// explain-trace:nudge); "Sağol, gerek yok" → kalıcı ret. Baloncuk gösterildiği
+// explain-trace:nudge); "Bir daha sorma" → kalıcı ret. Baloncuk gösterildiği
 // an sekme oturumuna "soruldu" yazılır: cevapsız bırakılırsa da bir daha
 // dürtmez. Sayfa-düzeyi yapışkan şerit DEĞİL: FAB'a bağlı, 320px'lik callout.
 export function TraceExplainNudge() {
@@ -42,8 +42,10 @@ export function TraceExplainNudge() {
         <span>Bu trace'i açıklamamı ister misin?</span>
       </div>
       <div className="cm-ai-nudge-actions">
-        <Button variant="accent" size="sm" onClick={accept} title="CoSRE bu trace'i açıklasın (explain-trace)">Evet</Button>
-        <Button variant="secondary" size="sm" onClick={decline} title="Bir daha sorma">Sağol, gerek yok</Button>
+        {/* v0.10.459 (operatör): düğmeler ne yaptığını söyler — ret KALICI
+            (localStorage), o yüzden "Bir daha sorma"; kabul "Evet, açıkla". */}
+        <Button variant="accent" size="sm" onClick={accept} title="CoSRE bu trace'i açıklasın (explain-trace)">Evet, açıkla</Button>
+        <Button variant="secondary" size="sm" onClick={decline} title="Bu sekmede ve sonraki açılışlarda bir daha sorulmaz (tarayıcıda saklanır)">Bir daha sorma</Button>
       </div>
     </div>
   );

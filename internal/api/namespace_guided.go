@@ -177,6 +177,31 @@ func renderNamespaceCard(ov mcptools.NamespaceOverview, rangeS int64) string {
 	return b.String()
 }
 
+// renderNamespacePods — v0.10.479 (F4-2): "bunun pod'larını göster" — namespace pod tablosu. SAF.
+func renderNamespacePods(ns string, rows []mcptools.PodRow, rangeS int64) string {
+	if len(rows) == 0 {
+		return fmt.Sprintf("**%s** namespace'inde katalogda pod yok (son %s).", ns, fmtAgoTR(rangeS))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "**%s** namespace'i · %d pod · son %s\n\n| Cluster | Pod | Workload | Node | Span | Hata | Son span |\n|---|---|---|---|---:|---:|---|\n", ns, len(rows), fmtAgoTR(rangeS))
+	for _, r := range rows {
+		last := r.LastSpan
+		if last == "" {
+			last = "—"
+		}
+		wl, node := r.Workload, r.Node
+		if wl == "" {
+			wl = "—"
+		}
+		if node == "" {
+			node = "—"
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n", r.Cluster, r.Pod, wl, node, fmtInt64(r.Spans), fmtInt64(r.Errors), last)
+	}
+	b.WriteString("\nSpan=0 olan pod katalogda var ama bu pencerede telemetri göndermedi (yok sayma).\n")
+	return b.String()
+}
+
 func renderNamespaceList(rows []mcptools.NamespaceRow, searched []string) string {
 	if len(rows) == 0 {
 		return fmt.Sprintf("Katalogda namespace yok (aranan cluster'lar: %s).", strings.Join(searched, ", "))
@@ -285,6 +310,18 @@ func (s *Server) guidedNamespaceServicesAnswer(ctx context.Context, emit func(st
 	q := strings.TrimSpace(route.FindQuery)
 	if q == "" {
 		return false, false
+	}
+	if route.FindPods { // v0.10.479 (F4-2) — bağlamdaki namespace'in pod'ları
+		n := emitGuidedStep(emit, "list_pods", `{"namespace":`+jsonStr(q)+`}`)
+		rows, _, err := mcptools.ReadNamespacePods(ctx, deps, q, "", "", from, to, 200)
+		if err != nil {
+			emitGuidedStepResult(emit, n, "list_pods", "", err)
+			return false, false
+		}
+		text := renderNamespacePods(q, rows, rangeS)
+		emitGuidedStepResult(emit, n, "list_pods", fmt.Sprintf("%d pod", len(rows)), nil)
+		emit("answer", map[string]any{"text": text, "suggestions": []string{q + " namespace'i", "Namespace'leri listele"}, "links": dedupLinksByHref(win.applyAll(namespaceLinks(mcptools.NamespaceOverview{Namespace: q}, deps)))})
+		return true, true
 	}
 	n := emitGuidedStep(emit, "resolve_entity", `{"text":`+jsonStr(q)+`,"kind":"namespace"}`)
 	cands, _, err := mcptools.ResolveEntityText(ctx, deps, q, "", "")

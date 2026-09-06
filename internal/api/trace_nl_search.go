@@ -269,6 +269,7 @@ func mergeTraceRows(sets [][]chstore.TraceRow, limit int) []chstore.TraceRow {
 }
 
 func (s *Server) guidedTraceSearchBundle(ctx context.Context, emit func(string, any), route *guidedRoute, from, to time.Time, rangeS int64) (string, string, error) {
+	errorsOnly := route.TraceErrorsOnly // v0.10.479 (F4-2) — "sadece hatalı olanlar" takibi
 	// v0.10.476 (F3-5; audit kabul 3-4) — ÖNCE anahtar keşfi: değer hangi
 	// attribute'ta? Servis kapsamlı örneklem (5000 span) + tam eşleşen
 	// anahtarlar → anahtar başına ayrı süzgeçli arama (OR yerine; v0.10.343
@@ -300,6 +301,7 @@ func (s *Server) guidedTraceSearchBundle(ctx context.Context, emit func(string, 
 				for _, k := range keys {
 					f := traceSearchFilter(route.Service, route.Env, route.SearchText, false, from, to)
 					f.Search = ""
+					f.HasError = errorsOnly
 					f.Filters = []chstore.FilterExpr{{Key: k, Op: "=", Values: []string{route.SearchText}}}
 					n := emitGuidedStep(emit, "trace_search", fmt.Sprintf(`{"service":%q,"filter":{"key":%q,"op":"=","value":%q},"limit":%d}`, route.Service, k, route.SearchText, guidedTraceSearchLimit))
 					rows, _, _, err := s.store.GetTraces(ctx, f)
@@ -317,6 +319,7 @@ func (s *Server) guidedTraceSearchBundle(ctx context.Context, emit func(string, 
 		}
 	}
 	f := traceSearchFilter(route.Service, route.Env, route.SearchText, route.SearchSQL, from, to)
+	f.HasError = errorsOnly
 	args, _ := json.Marshal(map[string]any{"service": route.Service, "search": route.SearchText, "sql": route.SearchSQL, "limit": guidedTraceSearchLimit})
 	n := emitGuidedStep(emit, "trace_search", string(args))
 	rows, _, _, err := s.store.GetTraces(ctx, f)

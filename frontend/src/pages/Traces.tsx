@@ -1139,7 +1139,7 @@ function TracesPageInner() {
             <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 8,
               // v0.9.301 — the skeleton must match the real card, or the
               // table jumps on every load. Tracks the persisted height.
-              height: chartTall ? 282 : 222,
+              height: chartTall ? 282 : 182, // v0.10.486 — kompakt yükseklikle hizalı
               display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Spinner />
             </div>
@@ -1148,7 +1148,8 @@ function TracesPageInner() {
             // headline chart; the RED strip below carries the filtered numbers.
             <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} p50={volSeries?.p50 ?? null}
               // v0.10.268 — Dynatrace ölçeği (mockup A: 200 px); shrink/expand duruyor.
-              height={chartTall ? 230 : 170} unit={volumeUnit} onBrush={applyBrush} onZoomReset={clearBrush}
+              // v0.10.486 (operatör: "histogram biraz daha shrink edilebilir") — kompakt 170 → 130.
+              height={chartTall ? 230 : 130} unit={volumeUnit} onBrush={applyBrush} onZoomReset={clearBrush}
               xRange={{ from: listRangeNs.from / 1e9, to: listRangeNs.to / 1e9 }}
               header={vizToggle}
               headerRight={<>{vizStats}

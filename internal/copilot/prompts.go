@@ -1124,7 +1124,14 @@ servis sayfası, exception grubu…).
 
 Sayı uydurma; yalnız paketteki rakamları kullan. Paket dışı hiçbir
 desen/servis adı anma. "OKUNAMADI" gördüğün kaynak hakkında sonuç
-çıkarma — yokluk sıfır değildir. Başlıklar dışına metin yazma.`
+çıkarma — yokluk sıfır değildir. Başlıklar dışına metin yazma.
+
+Paketin İLK bölümü "BAKILAN KAPSAM"dır: operatörün ekrandaki süzgeci
+(servis/cluster/env/arama) ve seçili penceresinin kendi desen
+örneklemesi. Özet ve "Önce Buna Bak" ÖNCE bu kapsama dayanır; "FİLO
+GENELİ" bölümleri (anomali taraması, şablon kataloğu) süzgeçten
+bağımsızdır — kapsamla ilişkilendir, ama filo geneli bir bulguyu seçili
+servise ait gibi sunma. Süzgeç yoksa bunu bir cümleyle söyle.`
 
 // SystemPromptLogPatterns — /api/copilot/explain-log-patterns yüzeyi.
 func SystemPromptLogPatterns() string { return systemLogPatterns }

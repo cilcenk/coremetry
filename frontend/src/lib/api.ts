@@ -1782,9 +1782,19 @@ export const api = {
       '/api/copilot/explain-alert-noise?since=24h', { method: 'POST' }),
   // v0.9.1100 (F3.5) — log desen/şablon anlatımı; pencere sunucuda
   // rung'lanır (v0.8.270 disiplini).
-  explainLogPatterns: (windowSec: number) =>
-    request<{ explanation: string; exchangeId?: string; windowSec: number }>(
-      `/api/copilot/explain-log-patterns?window=${windowSec}s`, { method: 'POST' }),
+  // v0.10.507 (log arama denetimi C7) — sayfa süzgeci + gerçek pencere de
+  // gider; sunucu kapsamın kendi desen örneklemesini kanıta koyar.
+  explainLogPatterns: (windowSec: number, scope?: { service?: string; cluster?: string; env?: string; search?: string; severity?: number; fromNs?: number; toNs?: number }) => {
+    const p = new URLSearchParams({ window: `${windowSec}s` });
+    if (scope?.service) p.set('service', scope.service);
+    if (scope?.cluster) p.set('cluster', scope.cluster);
+    if (scope?.env) p.set('env', scope.env);
+    if (scope?.search) p.set('search', scope.search);
+    if (scope?.severity && scope.severity > 0) p.set('severity', String(scope.severity));
+    if (scope?.fromNs && scope?.toNs) { p.set('from', String(scope.fromNs)); p.set('to', String(scope.toNs)); }
+    return request<{ explanation: string; exchangeId?: string; windowSec: number; scope?: string }>(
+      `/api/copilot/explain-log-patterns?${p.toString()}`, { method: 'POST' });
+  },
 
   clusterResourceTrend: (cluster: string, metric: 'cpu' | 'mem', byNode: boolean, fromNs: number, toNs: number, node?: string) =>
     get<ClusterResourceTrendResponse>(`/api/clusters/resource-trend?cluster=${encodeURIComponent(cluster)}` +

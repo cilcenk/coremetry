@@ -33,6 +33,7 @@ import { logsHref } from '@/lib/logsUrl';
 import { tracesPivotHref } from '@/lib/pivotHref';
 import { latencyThresholdMs, slowTracesHref } from '@/features/anomalies/slowTracesHref';
 import { problemWindowNs, topOffenders } from '@/features/anomalies/problemOffenders';
+import { ProblemLogEvidence } from '@/features/anomalies/ProblemLogEvidence'; // v0.10.452 (C1)
 import { operationTracesHref } from '@/lib/pivotHref';
 import { traceHref } from '@/lib/traceHref';
 import { SubjectLink } from '../../components/SubjectLink';
@@ -967,6 +968,15 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
               label="◉ Service map" sub="focused" />
             </>)}
           </Sect>
+
+          {/* v0.10.452 (log arama denetimi C1) — log kanıtı: yalnız servis
+              özneli problemde (db/dış öznenin logu yok — yukarıdaki kapı),
+              varsayılan kapalı, açılınca tek istek (ES maliyeti). */}
+          {subjectKind(problem.service, problem.kind) === 'service' && (
+            <Sect title="Log kanıtı" sub="ERROR+ desenler, problem penceresi · açılınca yüklenir">
+              <ProblemLogEvidence service={problem.service} startedAt={problem.startedAt} resolvedAt={problem.resolvedAt} linkWindow={probWindow} />
+            </Sect>
+          )}
 
           {/* v0.9.1344 — "bu problemden kimin haberi var?" Triyaj eden
               operatörün bu soruyu soracağı yer burası; cevabı bugüne

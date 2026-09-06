@@ -911,7 +911,8 @@ export interface CheckedSignal {
 export interface DeepEvidence {
   checked?: CheckedSignal[];
   exceptions?: unknown[];
-  templates?: unknown[];
+  // v0.10.452 (C3) — servis kapsamlı kalıcı Drain şablonları (sayım ömür boyu).
+  templates?: LogTemplate[];
   heap?: unknown[];
   gcPause?: unknown[];
   slowOps?: unknown[];
@@ -6970,6 +6971,10 @@ export interface LogPatternsResult {
   // isteğe bağlı: 30 sn önbellekten gelen eski gövdelerde yok.
   coveredFromNs?: number;
   coveredToNs?: number;
+  // v0.10.452 (C1) — Page dürüstlük zarfı: ES'te total ≥ alt sınır olabilir.
+  partial?: boolean;
+  shardsFailed?: number;
+  totalIsLowerBound?: boolean;
   degraded?: boolean;
   reason?: string;
 }

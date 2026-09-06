@@ -17,6 +17,16 @@ describe('Problem → Logs error pivot (C2)', () => {
     expect(src).toContain("logsHref({ window: probWindow, service: problem.service, panel: 'patterns' })");
     expect(src).toContain('label="≡ Loglar (desenler)"');
   });
+  it('ProblemDetail: log kanıtı paneli servis kapısının içinde, pencere problemWindowNs (v0.10.452)', () => {
+    const src = read('../features/anomalies/ProblemDetail.tsx');
+    expect(src).toContain("subjectKind(problem.service, problem.kind) === 'service' && (");
+    expect(src).toContain('<ProblemLogEvidence service={problem.service} startedAt={problem.startedAt} resolvedAt={problem.resolvedAt} linkWindow={probWindow} />');
+    const panel = read('../features/anomalies/ProblemLogEvidence.tsx');
+    expect(panel).toContain('problemWindowNs(startedAt, resolvedAt ?? undefined, Date.now())');
+    expect(panel).toContain('useState(false)'); // varsayılan kapalı
+    expect(panel).toContain('sample: PROBLEM_LOG_SAMPLE');
+    expect(panel).not.toContain('refetchInterval');
+  });
   it('InboxTriageDrawer: Logs + Error logs', () => {
     const src = read('./InboxTriageDrawer.tsx');
     expect(src).toContain('logsHref({ window: w, service: item.service })');

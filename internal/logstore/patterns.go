@@ -67,14 +67,30 @@ type PatternsResult struct {
 	// bırakır).
 	CoveredFromNs int64 `json:"coveredFromNs,omitempty"`
 	CoveredToNs   int64 `json:"coveredToNs,omitempty"`
+	// v0.10.452 (C1) — Page'in dürüstlük zarfı (v0.9.288) buraya taşınır:
+	// ES'te Total ≥10k alt sınırdır, kısmi/shard hatası sayıyı eksiltir.
+	// "N hata logu" diye başlık atan yüzey bunları okumak zorunda.
+	Partial           bool `json:"partial,omitempty"`
+	ShardsFailed      int  `json:"shardsFailed,omitempty"`
+	TotalIsLowerBound bool `json:"totalIsLowerBound,omitempty"`
 }
 
 // GroupBySignature — st.Search üstünden örnekleyerek gruplar. limit ≤ 0 →
 // 50; tavan patternsMaxGroups. Filter'ın Limit/Offset/Cursor/WantCursor
 // alanları burada YÖNETİLİR (çağıranınki ezilir).
 func GroupBySignature(ctx context.Context, st Store, f Filter, limit int) (*PatternsResult, error) {
+	return GroupBySignatureN(ctx, st, f, limit, PatternsSampleCap)
+}
+
+// GroupBySignatureN — v0.10.452 (C1, ES maliyeti): örnek tavanı çağırandan.
+// Problem detayındaki log kanıtı 500 satırla yetinir (1 ES sayfası; 2000 =
+// 4 sayfa). 1..PatternsSampleCap'e kıstırılır.
+func GroupBySignatureN(ctx context.Context, st Store, f Filter, limit, sampleCap int) (*PatternsResult, error) {
 	if st == nil {
 		return nil, fmt.Errorf("log store not configured")
+	}
+	if sampleCap <= 0 || sampleCap > PatternsSampleCap {
+		sampleCap = PatternsSampleCap
 	}
 	if limit <= 0 {
 		limit = 50
@@ -89,12 +105,12 @@ func GroupBySignature(ctx context.Context, st Store, f Filter, limit int) (*Patt
 		svcs map[string]int64
 	}
 	groups := map[string]*acc{}
-	res := &PatternsResult{Cap: PatternsSampleCap}
-	for res.Sampled < PatternsSampleCap {
+	res := &PatternsResult{Cap: sampleCap}
+	for res.Sampled < sampleCap {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		remaining := PatternsSampleCap - res.Sampled
+		remaining := sampleCap - res.Sampled
 		f.Limit = patternsPageSize
 		if remaining < f.Limit {
 			f.Limit = remaining
@@ -108,6 +124,12 @@ func GroupBySignature(ctx context.Context, st Store, f Filter, limit int) (*Patt
 		}
 		if page.Total > res.Total {
 			res.Total = page.Total
+		}
+		// v0.10.452 — dürüstlük zarfı sayfalar boyunca OR/max.
+		res.Partial = res.Partial || page.Partial
+		res.TotalIsLowerBound = res.TotalIsLowerBound || page.TotalIsLowerBound
+		if page.ShardsFailed > res.ShardsFailed {
+			res.ShardsFailed = page.ShardsFailed
 		}
 		for _, rec := range page.Logs {
 			if rec == nil {
@@ -156,7 +178,7 @@ func GroupBySignature(ctx context.Context, st Store, f Filter, limit int) (*Patt
 		}
 		f.Cursor = page.NextCursor
 	}
-	res.Truncated = res.Sampled >= PatternsSampleCap && res.Total > res.Sampled
+	res.Truncated = res.Sampled >= sampleCap && res.Total > res.Sampled
 	if res.Total < res.Sampled {
 		res.Total = res.Sampled
 	}

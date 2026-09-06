@@ -1,6 +1,7 @@
 package anomaly
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -257,5 +258,23 @@ func TestRenderDeepEvidenceRuntime(t *testing.T) {
 	})
 	if strings.Contains(sb2.String(), "Çalışma zamanı") {
 		t.Fatalf("boş runtime satır basmamalı:\n%s", sb2.String())
+	}
+}
+
+// v0.10.452 (C3) — familyLogs okuması servis kapsamlı ve ES'siz: kaynak
+// pini (filtreye Service geçer, kalıcı tablo, GroupBySignature/ES yok).
+func TestFamilyLogsIsServiceScoped(t *testing.T) {
+	b, err := os.ReadFile("investigation.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	i := strings.Index(src, "case familyLogs:")
+	if i < 0 {
+		t.Fatal("familyLogs dalı yok")
+	}
+	body := src[i : i+900]
+	if !strings.Contains(body, "Service: p.Service") || strings.Contains(body, "GroupBySignature") {
+		t.Fatal("familyLogs servis süzgecini geçmeli ve ES'e (GroupBySignature) gitmemeli")
 	}
 }

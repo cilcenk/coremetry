@@ -157,6 +157,25 @@ Her tool: sunucu taraflı kapsam süzgeci (G13 arayüzü, bugün boş), zorunlu 
 - **Maskeleme:** collector'da; tool'lar değeri olduğu gibi taşır, çözmez.
 - **Ad sızıntısı:** test/fixture/doküman yalnız sentetik ad (repo kuralı).
 
+## Durum (2026-09-06, v0.10.476)
+
+| Faz / dilim | Sürüm | İçerik |
+|---|---|---|
+| Faz 2 F2-1 | v0.10.468 | `list_namespaces` / `list_workloads` / `list_pods` (entities + entity_seen_5m; JOIN'siz; bayrak kapalı → `disabled`) — G2 |
+| Faz 2 F2-2 | v0.10.469 | `resolve_entity` — servis/namespace/workload/pod adayları, skorlu, çok-cluster; 60 s katalog indeksi — G3 |
+| Faz 2 F2-3 | v0.10.470 | `namespace_services` guided rotası + kart (kabul 1) + ucuz varlık taraması (router none → katalog) — G8 |
+| Faz 2 F2-4 | v0.10.471 | Span-only pod → pod adından türetilmiş workload (KSM yoksa) — G14; `k8s_deployment` terfi kolonu zaten var (v0.10.193) |
+| Faz 2 F2-5 | — | **BLOKE**: `entity_seen_*` MV'leri yalnız `cluster` taşıyor; env→cluster okuma-zamanı eşleme işe yaramaz → karar N1 (collector `k8s.cluster.name` önerilir) |
+| Faz 3 F3-1 | v0.10.472 | `describe_attributes` + `find_attribute_by_value` (kapsamlı 5000-span örneklem, kolon/kvh probu) — G4/G5 |
+| Faz 3 F3-2 | v0.10.473 | `search_traces` filters[] / namespace / cluster / env / min-max + zorunlu kapı (kapsam şart; 6 s / 1 s kelepçe; ≤50) + `deep_link` — G6 |
+| Faz 3 F3-3 | v0.10.474 | `trace_stats` (aggregate; MV yolu koşullu) — G7 |
+| Faz 3 F3-4 | v0.10.475 | `build_link` (sayfa sözleşmesi §2.4) — G8 |
+| Faz 3 F3-5 | v0.10.476 | Guided trace araması anahtar keşfiyle (kabul 3-4): değer → anahtar → anahtar başına süzgeç → birleşim → süzgeç linki |
+| Faz 4 | — | G9 bağlam state, G10 takip mutasyonları, G11 akış, G12 in-app tool audit, G13 kapsam arayüzü, G16 evalset — sırada |
+
+Katalog 36 → 44 tool. Canlı kabul testi (6 cümle) operatörde: lokal login
+yanıt vermediği için sohbet uçtan uca çalıştırılamadı; birim + SQL kanıtı var.
+
 ## Ek A — Faz 2 hedef sistem prompt'u (operatör taslağı, 2026-09-06)
 
 Operatörün verdiği taslak; kurum adı ve gerçek host/namespace adları

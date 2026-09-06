@@ -35,7 +35,7 @@
   --border: #444c56;
   --text: #d5dde5;
   --text2: #909dab;
-  --text3: #636e7b;
+  --text3: #85909d;  /* v0.10.450 (dış denetim D1) — 2.90:1 → 4.63:1 on --bg1 (AA); 4.99 on --bg0; text2 (#909dab) hâlâ bir kademe açık */
 
   /* Brand — Corporate red, used sparingly: logo, primary CTAs, key brand surfaces. */
   --brand:  #E30613;
@@ -202,7 +202,7 @@
   --border: #d0d7de;
   --text:  #1f2328;
   --text2: #59636e;
-  --text3: #818b98;
+  --text3: #667080;  /* v0.10.450 (dış denetim D1) — 3.24:1 → 4.70:1 on --bg1 (AA); 5.01 on white; text2 (#59636e) hâlâ bir kademe koyu */
 
   --brand:  #E30613;
   --brand2: #ff2333;

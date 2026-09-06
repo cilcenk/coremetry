@@ -59,7 +59,7 @@ cila. Tahminler: ~10 dk / ~30 dk / ~1 saat / ~2 saat / ~yarım gün.
 
 | # | Bulgu | Kanıt | Fix | Tahmin |
 |---|---|---|---|---|
-| D1 | `--text3` dark 2.90:1, light 3.24:1 (AA 4.5), 1250 kullanım | `styles/globals.css:38,205` | iki token değeri — **görsel değişiklik, sorulur** | ~10 dk |
+| D1 | `--text3` dark 2.90:1, light 3.24:1 (AA 4.5), 1250 kullanım | `styles/globals.css:38,205` | iki token değeri — **görsel değişiklik, sorulur** | ~10 dk | **GEMİDE v0.10.450** (operatör kararı, kuyruk 4) — dark `#85909d` 4.63:1 / light `#667080` 4.70:1 on `--bg1`; redhat 5.13 zaten AA, dokunulmadı; `--text-faint` kapsam dışı |
 | D2 | **GEMİDE v0.10.389** — `Drawer` role/aria-modal yok, Tab hapsi yok (Modal'da var) | `components/ui/Drawer.tsx:103` | ortak `useFocusTrap` | ~yarım gün |
 | D3 | **KISMEN v0.10.394** (ortak `rowActivation`; Traces/LogTable/Dependencies; kalan siteler aynı kalıpla) — 42 tıklanabilir `<tr>`'nin 37'si klavyeye kapalı; `getRowHref` 0 tüketici | `pages/Traces.tsx:1656`, `DataTable.tsx:81` | AnomaliesPage kalıbı / row-link | ~yarım gün |
 | D4 | `CommandPalette` diyalog değil; ham renkler | `components/CommandPalette.tsx:553-583` | Modal kabuğu + listbox + token | ~2-3 saat |

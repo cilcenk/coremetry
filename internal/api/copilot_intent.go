@@ -98,7 +98,7 @@ type intentJSON struct {
 	LogValue string `json:"logValue"`
 	// v0.10.436 (D2b)
 	SearchText string `json:"searchText"`
-	Namespace string `json:"namespace"` // v0.10.470 (F2-3)
+	Namespace  string `json:"namespace"` // v0.10.470 (F2-3)
 }
 
 var (
@@ -465,7 +465,11 @@ func (s *Server) copilotChatIntent(ctx context.Context, emit func(string, any), 
 			rangeS = 3600
 		}
 	}
-	return s.runGuidedRoute(ctx, emit, route, rangeS, question, msgs, explain, ctxService, ctxOperation, "", anchorTo)
+	handled, ok = s.runGuidedRoute(ctx, emit, route, rangeS, question, msgs, explain, ctxService, ctxOperation, "", anchorTo)
+	if handled {
+		s.noteChatContextRoute(ctx, route, rangeS, false) // v0.10.478 (F4-1)
+	}
+	return handled, ok
 }
 
 // matchLiveTeam — v0.10.429 (D1): takım adı/kodu canlı katalogla; katlanmış

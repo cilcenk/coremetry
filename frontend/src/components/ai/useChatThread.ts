@@ -211,7 +211,8 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
         }
       }, ac.signal, o.service || undefined, o.operation || undefined, o.explain || undefined,
         o.subject || undefined, o.rangeS || undefined, o.trace || undefined, o.env || undefined,
-        o.toMs || undefined, o.profile || undefined); // v0.10.183 — model profili
+        o.toMs || undefined, o.profile || undefined, // v0.10.183 — model profili
+        convIdRef.current || undefined); // v0.10.478 — konuşma kimliği (sunucu bağlam state'i)
     } catch (err) {
       // v0.10.23 — İPTAL ARIZA DEĞİL. Durdurulan bir fetch AbortError
       // fırlatıyor; ayırmazsak operatörün kasıtlı eylemi kırmızı bir

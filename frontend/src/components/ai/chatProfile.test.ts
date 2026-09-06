@@ -17,7 +17,8 @@ describe('sohbet model profili kablolaması (v0.10.183)', () => {
   it('useChatThread opts.profile → copilotChat son argüman', () => {
     const src = read('./useChatThread.ts');
     expect(src).toMatch(/profile\?: string;/);
-    expect(src).toMatch(/o\.toMs \|\| undefined, o\.profile \|\| undefined\)/);
+    // v0.10.478 — konuşma kimliği (sunucu bağlam state'i) profilin ARDINDA geçer; profil hâlâ son-öncesi argüman.
+    expect(src).toMatch(/o\.toMs \|\| undefined, o\.profile \|\| undefined,[\s\S]{0,140}convIdRef\.current \|\| undefined\)/);
   });
   it("iki yüzey de seçimi hook'a geçirir; seçici yalnız >1 profilde", () => {
     for (const rel of ['./AIDrawer.tsx', '../CopilotChat.tsx']) {

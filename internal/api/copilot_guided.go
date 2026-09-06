@@ -1476,6 +1476,16 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// penceresi > ekran > 30dk varsayılanı. Soru her zaman ekrandan
 	// güçlü — "son 24 saatte" yazan operatör ekranını değiştirmek
 	// zorunda kalmamalı.
+	// v0.10.478 (F4-1) — sohbet bağlamı VARSAYILAN: ekran servisi yoksa bağlamın
+	// servisi; açık (set_context / "son 1 saate genişlet") pencere ekranı ezer.
+	if st := chatContextFromCtx(ctx); st != nil {
+		if ctxService == "" {
+			ctxService = st.ctx.Service
+		}
+		if st.ctx.RangeExplicit && st.ctx.RangeS > 0 {
+			ctxRangeS = st.ctx.RangeS
+		}
+	}
 	rangeS, explicitRange := guidedRangeSExplicit(norm)
 	if !explicitRange && ctxRangeS > 0 {
 		rangeS = snapRangeS(ctxRangeS)
@@ -1553,7 +1563,11 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// BUGÜNKÜ pencereyi cevaplıyordu. Sayılar gerçek olduğu için hata
 	// sessiz kalıyordu. anchorTo göreli aralıkta zaten `now()`dur
 	// (chat_anchor.go); mutlak seçimde operatörün penceresidir.
-	return s.runGuidedRoute(ctx, emit, route, rangeS, question, msgs, explain, ctxService, ctxOperation, followBase, anchorTo)
+	handled, ok = s.runGuidedRoute(ctx, emit, route, rangeS, question, msgs, explain, ctxService, ctxOperation, followBase, anchorTo)
+	if handled {
+		s.noteChatContextRoute(ctx, route, rangeS, explicitRange) // v0.10.478 (F4-1)
+	}
+	return handled, ok
 }
 
 // runGuidedRoute — v0.10.172: ÇÖZÜLMÜŞ bir rota için prefetch → anlatım →

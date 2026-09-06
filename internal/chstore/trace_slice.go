@@ -467,16 +467,25 @@ func (s *Store) runTraceStage2(
 				half := len(idArgs) / 2
 				log.Printf("[traces] stage2 exhausted with %d ids (%v) — splitting the id list at %d and merging",
 					len(idArgs), rerr, half)
-				lo, loMore, lerr := s.runTraceStage2(ctx, f, stage2, idArgs[:half], floor, ceil, pageLimit)
+				// v0.10.496 — her yarı OFFSET 0 ile ilk (offset+limit) satırı
+				// getirir; sayfa BİRLEŞİMDEN kesilir (assembleSplitPage).
+				// Eskiden f aynen geçiyor, her yarı KENDİ OFFSET'ini uyguluyor
+				// ve birleşim iki bağımsız kesilmiş baştan kuruluyordu:
+				// offset > 0 sayfada ~2× satır atlanıyordu (tek sorgunun
+				// ORDER BY … LIMIT OFFSET'i birleşim üstünde çalışır, yarılar
+				// üstünde değil). Offset 0 sayfası (v0.9.300 vakası) aynen.
+				hf := f
+				hf.Offset, hf.Limit = 0, f.Offset+f.Limit
+				lo, loMore, lerr := s.runTraceStage2(ctx, hf, stage2, idArgs[:half], floor, ceil, hf.Limit+1)
 				if lerr != nil {
 					return nil, false, lerr
 				}
-				hi, hiMore, herr := s.runTraceStage2(ctx, f, stage2, idArgs[half:], floor, ceil, pageLimit)
+				hi, hiMore, herr := s.runTraceStage2(ctx, hf, stage2, idArgs[half:], floor, ceil, hf.Limit+1)
 				if herr != nil {
 					return nil, false, herr
 				}
-				merged := mergeTracePages(lo, hi, f.Sort, f.Order, f.Limit)
-				return merged, loMore || hiMore || len(lo)+len(hi) > f.Limit, nil
+				page, more := assembleSplitPage(lo, hi, loMore, hiMore, f.Sort, f.Order, f.Offset, f.Limit)
+				return page, more, nil
 			}
 			if narrowed < traceStage2NarrowMaxRetry && isResourceExhaustion(rerr) {
 				span := f.To.Sub(from)
@@ -574,6 +583,24 @@ func mergeTracePages(a, b []TraceRow, sort, order string, limit int) []TraceRow 
 		out = out[:limit+1]
 	}
 	return out
+}
+
+// assembleSplitPage — v0.10.496 SAF: iki yarının (her biri OFFSET 0 ile
+// ilk offset+limit satırı) birleşiminden istenen sayfa. Tek sorgunun
+// `ORDER BY … LIMIT limit+1 OFFSET offset` sonucuyla birebir: birleşim
+// offset+limit+1'e kadar tutulur (hasMore probu), sonra offset atlanır.
+// more = yarılardan biri kendi tavanını aştı VEYA birleşim sayfadan uzun.
+func assembleSplitPage(lo, hi []TraceRow, loMore, hiMore bool, sort, order string, offset, limit int) ([]TraceRow, bool) {
+	merged := mergeTracePages(lo, hi, sort, order, offset+limit)
+	more := loMore || hiMore || len(merged) > offset+limit
+	if offset >= len(merged) {
+		return []TraceRow{}, more
+	}
+	page := merged[offset:]
+	if len(page) > limit {
+		page = page[:limit]
+	}
+	return page, more
 }
 
 // traceRowLess returns "a sorts before b" for the whitelisted sort

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
-  BREAKDOWNS, BREAKDOWN_LABEL, collapse, collapseGroups, histogramFeedsChips, parseBreakdown,
+  BREAKDOWNS, BREAKDOWN_LABEL, breakdownPillKey, collapse, collapseGroups, histogramFeedsChips, parseBreakdown,
 } from './LogsHistogram';
 
 // v0.9.218 — the severity-stacked histogram was replaced by a
@@ -281,5 +283,32 @@ describe('kırılım ekseni', () => {
     ]);
     expect(r.series.map(s => s.label)).toEqual(['ocp5', 'diğer']);
     expect(r.totals.all).toBe(97);
+  });
+});
+
+
+// v0.10.503 (log arama denetimi B8) — histogram kırılım serisinden süzgece
+// geçiş: lejant ⊕ pill'i eksene göre anahtarla yazar; severity ekseninde
+// lejant gizli (anahtar yok); "diğer" seçilemez.
+describe('breakdownPillKey', () => {
+  it('eksen → DSL anahtarı (her iki backend tanır)', () => {
+    expect(breakdownPillKey('service')).toBe('service.name');
+    expect(breakdownPillKey('cluster')).toBe('cluster');
+    expect(breakdownPillKey('namespace')).toBe('namespace');
+    expect(breakdownPillKey('severity')).toBe('');
+  });
+  it('her BREAKDOWNS ekseni bilinçli bir karar taşır', () => {
+    for (const bd of BREAKDOWNS) expect(typeof breakdownPillKey(bd)).toBe('string');
+  });
+  it('kaynak pinleri: rest seçilemez, Logs sayfası pill üreticisine bağlı, lejant ⊕ çizer', () => {
+    const hist = readFileSync(resolve(__dirname, './LogsHistogram.tsx'), 'utf8');
+    expect(hist).toContain("sr.key !== 'rest'");
+    expect(hist).toContain("seriesPickable={i => series[i]?.key !== 'rest'}");
+    const page = readFileSync(resolve(__dirname, '../pages/Logs.tsx'), 'utf8');
+    expect(page).toContain('onSeriesPick={addFromRow}');
+    const legend = readFileSync(resolve(__dirname, './chart/StatsLegend.tsx'), 'utf8');
+    expect(legend).toContain('onPick(i)');
+    const chart = readFileSync(resolve(__dirname, './charts/TimeChart.tsx'), 'utf8');
+    expect(chart).toContain('onPick={onSeriesPick}');
   });
 });

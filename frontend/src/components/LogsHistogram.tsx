@@ -82,11 +82,26 @@ export function parseBreakdown(v: string | null | undefined): LogsBreakdown {
 // de toplamlar süzülmüş alt-küme olur. İkisinden biri bozulursa
 // ebeveyn kendi hacim sorgusuna (volumeQ) döner — cluster/namespace
 // kırılımında olması gereken de budur.
+// breakdownPillKey — v0.10.503 (log arama denetimi B8): kırılım serisi →
+// süzgeç pill'inin ANAHTARI. İki backend'in DSL derleyicisinin tanıdığı
+// yazımlar: service → `service.name` (CH service_name kolonu, ES takma ad
+// listesi), cluster/namespace → kısa ad (CH `case "cluster"/"namespace"`,
+// ES expandShorthand). severity ekseninin lejantı zaten gizli (bant
+// kimliği seviye çipleri) → '' (pill yok). SAF; tablo-testli.
+export function breakdownPillKey(bd: LogsBreakdown): string {
+  switch (bd) {
+    case 'service': return 'service.name';
+    case 'cluster': return 'cluster';
+    case 'namespace': return 'namespace';
+  }
+  return '';
+}
+
 export function histogramFeedsChips(bd: LogsBreakdown, severityFloor: number): boolean {
   return severityFloor === 0 && bd === 'severity';
 }
 
-export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSeries, breakdown, onBreakdown }: {
+export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSeries, breakdown, onBreakdown, onSeriesPick }: {
   range: { from?: number; to?: number };
   filter: Filter;
   // Drag-select a horizontal span → called with the selection as unix-ns
@@ -104,6 +119,8 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
   onSeries?: (s: { name: string; total: number }[] | null) => void;
   // v0.9.1220 — kırılım ekseni; verilmezse seviye (eski davranış bire bir).
   breakdown?: LogsBreakdown;
+  // v0.10.503 (B8) — lejant ⊕: (pill anahtarı, seri adı) → sayfa süzgeci.
+  onSeriesPick?: (key: string, value: string) => void;
   // Verilirse başlıkta kırılım seçicisi çizilir (yalnız /logs geçirir;
   // servis Logs sekmesi + anomali çekmecesi seviye modunda kalır).
   onBreakdown?: (b: LogsBreakdown) => void;
@@ -252,6 +269,12 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
           // v0.9.1250 — cluster/namespace de aynı sınıf: seviye dışındaki
           // her eksende lejant açık.
           hideLegend={bd === 'severity'}
+          // v0.10.503 (B8) — lejant satırından süzgece: "diğer" (rest)
+          // sentetik, seçilemez; anahtar eksene göre (breakdownPillKey).
+          onSeriesPick={onSeriesPick && breakdownPillKey(bd)
+            ? i => { const sr = series[i]; if (sr && sr.key !== 'rest') onSeriesPick(breakdownPillKey(bd), sr.label); }
+            : undefined}
+          seriesPickable={i => series[i]?.key !== 'rest'}
         />
       )}
     </div>

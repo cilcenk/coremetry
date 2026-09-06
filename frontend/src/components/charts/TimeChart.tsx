@@ -89,6 +89,10 @@ interface Props {
   // tamamen kaldırır (kapalı tek satır bile yok). Log histogramları gibi
   // seri kimliğinin zaten yüzeydeki chip'lerden okunduğu yerler için.
   hideLegend?: boolean;
+  // v0.10.503 (log arama denetimi B8) — lejant satırından süzgece geçiş
+  // (StatsLegend.onPick/pickable geçişi); seri indeksiyle çağrılır.
+  onSeriesPick?: (i: number) => void;
+  seriesPickable?: (i: number) => boolean;
 }
 
 // v0.9.75 (chart-consolidation Adım 0) — cssVar/yRange lib/chart/'a çıkarıldı
@@ -101,7 +105,7 @@ const MAX_BAR_PX = 18;
 export function TimeChart({
   times, series, height = 150, leftUnit = '', rightUnit = '',
   deployMarkers, thresholds, regions, onBrush, onZoomReset, syncKey, fmtLeft, fmtRight, fmtX, xRange,
-  legendCollapsed, hideLegend, barSize = 0.86,
+  legendCollapsed, hideLegend, barSize = 0.86, onSeriesPick, seriesPickable,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const ttRef = useRef<HTMLDivElement>(null);
@@ -462,6 +466,8 @@ export function TimeChart({
         isVisible={i => legendVis?.[i] ?? true}
         onToggle={handleLegendToggle}
         defaultCollapsed={legendCollapsed}
+        onPick={onSeriesPick}
+        pickable={seriesPickable}
       />}
     </>
   );

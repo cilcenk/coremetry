@@ -258,20 +258,18 @@ export default function EndpointsPage() {
   // türevli kalır; ?src=metric URL'de (Copy link / saved view aynı kipi
   // açar). Metrik kipi HTTP yüzeyine özgü (http_route etiketi): cluster
   // filtresi sunucuda "uygulanmadı" diye ilan edilir.
-  // v0.10.361 (operatör: "2 olsun") — VARSAYILAN METRİK, Overview (359) ile
-  // aynı kural: ?src yoksa metrik denenir; metrik çözülemezse (metricExists
-  // =false) span'a düşülür ve not söyler; ?src=span eski görünüm, ?src=metric
-  // zorlar. RPC & Messaging sekmesi (entry=rpc) metrikte yok → o sekme
-  // seçiliyken kaynak kendiliğinden span (sekme kapatılmaz).
+  // v0.10.361 varsayılanı METRİK yapmıştı (operatör "2 olsun"); v0.10.454
+  // (operatör 2026-09-06, prod ekranı): LİSTE VARSAYILANI SPAN — "endpoint
+  // sayfasında span'den çeksin hep default; detay sayfasında belirli bir
+  // endpoint metrikten çekebilir". ?src=metric hâlâ zorlar (Copy link /
+  // saved view aynı kipi açar); metrik çözülemezse sunucunun notu ekranda
+  // (kendiliğinden span'a düşme kalktı — varsayılan zaten span). RPC &
+  // Messaging sekmesi (entry=rpc) metrikte yok → o sekmede kaynak span.
   const srcParam = params.get('src');
   const explicitSrc: 'metric' | 'span' | null = srcParam === 'metric' ? 'metric' : srcParam === 'span' ? 'span' : null;
-  const [autoSpan, setAutoSpan] = useState(false);
-  const [autoNote, setAutoNote] = useState<string | null>(null);
-  useEffect(() => { setAutoSpan(false); setAutoNote(null); }, [service, srcParam]);
   const src: 'span' | 'metric' = entry === 'rpc' ? 'span'
     : explicitSrc === 'metric' ? 'metric'
-    : explicitSrc === 'span' ? 'span'
-    : autoSpan ? 'span' : 'metric';
+    : 'span';
   const setSrc = (v: 'span' | 'metric') => setParams(prev => {
     const next = new URLSearchParams(prev);
     next.set('src', v);
@@ -507,16 +505,9 @@ export default function EndpointsPage() {
   const sourceNote = useMemo(() => endpointsSourceNote(cluster, env), [cluster, env]);
   // v0.10.336 — metrik kipinde not SUNUCUDAN gelir (hata tanımı, birim,
   // adım, env/cluster daraltması, eksik alt sorgular): istemci tahmin etmez.
-  const metricNote = src === 'metric'
-    ? (rowsQ.data?.note ?? null)
-    : autoSpan ? `Metrik bulunamadı, span gösteriliyor${autoNote ? ` — ${autoNote}` : ''}` : null;
-  // v0.10.361 — otomatik kipte metrik yoksa span'a düş (bir kez; servis/src
-  // değişince sıfırlanır).
-  useEffect(() => {
-    if (explicitSrc !== null || src !== 'metric') return;
-    const d = rowsQ.data;
-    if (d && d.source === 'metric' && d.metricExists === false) { setAutoNote(d.note ?? null); setAutoSpan(true); }
-  }, [rowsQ.data, explicitSrc, src]);
+  // v0.10.454 — metrik kipi yalnız açık seçimle; not sunucudan (metrik
+  // bulunamadıysa da sunucunun cümlesi ekranda, sessiz düşüş yok).
+  const metricNote = src === 'metric' ? (rowsQ.data?.note ?? null) : null;
 
   return (
     <>

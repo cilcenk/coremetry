@@ -59,6 +59,17 @@ export default function EndpointDetailPage() {
   const cluster = params.get('cluster') ?? '';
   const compare = params.get('compare') === '1';
   const entry = params.get('entry') === 'rpc' ? 'rpc' : undefined;
+  // v0.10.454 (operatör 2026-09-06) — detayda BELİRLİ endpoint metrikten
+  // okunabilir: ?src=metric → üst RED şeridi /api/endpoints/metric'ten
+  // (OTel HTTP server histogramı, örneklemeden bağımsız); grafikler ve alt
+  // bölümler span türevli kalır — not bunu söyler. Varsayılan span (liste
+  // ile aynı). URL = tek gerçek kaynak; replace:true, yabancı param korunur.
+  const detailSrc: 'span' | 'metric' = params.get('src') === 'metric' && !entry ? 'metric' : 'span';
+  const setDetailSrc = (v: 'span' | 'metric') => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v === 'metric') next.set('src', 'metric'); else next.delete('src');
+    return next;
+  }, { replace: true });
   const { range, setRange, handleZoom, handleZoomReset } = usePageZoomRange('1h');
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   // v0.9.1044 (Ş3 paritesi) — operatör olayları TEK fetch'te; üç RED
@@ -96,6 +107,7 @@ export default function EndpointDetailPage() {
     sort: 'calls',
     dir: 'desc' as const,
     entry,
+    ...(detailSrc === 'metric' ? { src: 'metric' as const } : {}),
   } : { from, to, limit: 1 });
   const row: EndpointRow | undefined = useMemo(() => {
     if (!refObj) return undefined;
@@ -178,6 +190,16 @@ export default function EndpointDetailPage() {
               onları `.sec`ten `.accent`e taşıdı — a.accent = button.accent
               yüzeyi + a.sec anatomisi (globals.css). */}
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, fontSize: 12 }}>
+            {!entry && (
+              <select value={detailSrc} onChange={e => setDetailSrc(e.target.value as 'span' | 'metric')}
+                aria-label="RED şeridinin kaynağı"
+                title={detailSrc === 'metric'
+                  ? 'Kaynak: metrik — üst şerit OTel HTTP server histogramından (VM ya da ClickHouse), örneklemeden bağımsız; grafikler ve alt bölümler span türevli'
+                  : 'Kaynak: span — spanmetrics (izlerden türetilmiş); collector örnekliyorsa eksik sayar'}>
+                <option value="span">Kaynak: span</option>
+                <option value="metric">Kaynak: metrik</option>
+              </select>
+            )}
             <Link className="accent" style={{ fontSize: 12, padding: '3px 10px' }}
               to={tracesLink(refObj, range, env, cluster)}>Traces →</Link>
             <Link className="accent" style={{ fontSize: 12, padding: '3px 10px' }}
@@ -192,6 +214,12 @@ export default function EndpointDetailPage() {
 
         <REDStrip row={row} pending={rowsQ.isPending} compare={compare}
           onToggleCompare={() => setCompare(!compare)} />
+        {detailSrc === 'metric' && (
+          <div className="badge b-info" style={{ marginTop: -6, marginBottom: 12 }}
+            title="Metrik kipi yalnız üst RED şeridini değiştirir; aşağıdaki seriler, durum kırılımı ve gecikme dağılımı span türevlidir">
+            RED şeridi: metrik{rowsQ.data?.note ? ` — ${rowsQ.data.note}` : ''} · grafikler ve alt bölümler span türevli
+          </div>
+        )}
 
         {/* Three RED series — from the row's own sparklines, no extra
             fetch. Absent row ⇒ honest empty tiles, never fabricated

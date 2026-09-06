@@ -157,7 +157,7 @@ Her tool: sunucu taraflı kapsam süzgeci (G13 arayüzü, bugün boş), zorunlu 
 - **Maskeleme:** collector'da; tool'lar değeri olduğu gibi taşır, çözmez.
 - **Ad sızıntısı:** test/fixture/doküman yalnız sentetik ad (repo kuralı).
 
-## Durum (2026-09-06, v0.10.476)
+## Durum (2026-09-06, v0.10.492)
 
 | Faz / dilim | Sürüm | İçerik |
 |---|---|---|
@@ -171,10 +171,24 @@ Her tool: sunucu taraflı kapsam süzgeci (G13 arayüzü, bugün boş), zorunlu 
 | Faz 3 F3-3 | v0.10.474 | `trace_stats` (aggregate; MV yolu koşullu) — G7 |
 | Faz 3 F3-4 | v0.10.475 | `build_link` (sayfa sözleşmesi §2.4) — G8 |
 | Faz 3 F3-5 | v0.10.476 | Guided trace araması anahtar keşfiyle (kabul 3-4): değer → anahtar → anahtar başına süzgeç → birleşim → süzgeç linki |
-| Faz 4 | — | G9 bağlam state, G10 takip mutasyonları, G11 akış, G12 in-app tool audit, G13 kapsam arayüzü, G16 evalset — sırada |
+| Faz 4 F4-1 | v0.10.478 | G9 bağlam state: Redis `copilot:ctx:<user>:<conv>` (24 s) + `get/set/clear_context` tool'ları; preamble + çip |
+| Faz 4 F4-2 | v0.10.479 | G10 takip kipleri: pencere / yalnız hatalar / pod'lar / loglar — son rotayı yeni bağlamla yeniden oynatır |
+| Faz 4 F4-3 | v0.10.480 | G16 evalset 13 vaka (`internal/copilot/evalset/intent.json`) |
+| Faz 4 F4-4 | v0.10.481 | G12 in-app tool çağrısı audit satırı (`mcp.tool.call`, transport `chat-inapp`) |
+| Faz 4 F4-5 | v0.10.482 | G11 `systemChatAgentLoop` — Ek A'nın Türkçe çekirdek döngüsü (RESOLVE→SCOPE→DISCOVER→QUERY→ANSWER) |
+| Operatör | v0.10.484-486 | histogram yalnız-root / yalnız-hata bayrakları (484), histogram shrink (485), "mobile bff servisleri listele" aile listesi (486) |
+| Astra #1 | v0.10.487 | Bağlam sızıntısı: "_" köprüsü konuşma anahtarına köprülenip silinir; iki konuşma / iki kullanıcı izolasyon testi |
+| Astra #2-#4, #9 | v0.10.488 | Attribute keşfi: iç LIMIT span sayar (arrayJoin üstte), prob ≤3 anahtar × 3 s, değer tavanları 160/800 rune, `telemetryReadConn` |
+| Astra #5, #11 | v0.10.489 | HasError → `status = error` çipi (dar rollup yolu açık); cache anahtarında açık bayraklar |
+| Astra #6, #7, #13 | v0.10.490 | Varlık indeksi cluster/bayrak anahtarlı + Settings PUT sıfırlar; namespace sayımları eşleşenlere daraltıldı; ölü `NamespaceFilter` |
+| Astra #8, #10, #12d | v0.10.491 | Takip kipi soru sözcüklerinde susar (fiil/işaret şartı); `has_more` limit+1; kapı yalnız operatör süzgeçleri, kapsam çipi 24 s tavan |
+| Astra #12a | v0.10.492 | Tek çekmece render testi (`?ai=` + `?chat=` → bir dialog; ✕ `?ai=`'i siler) |
+| G13 | — | Kapsam kaynağı (LDAP grup → cluster/namespace) — operatör kararı bekliyor |
 
-Katalog 36 → 44 tool. Canlı kabul testi (6 cümle) operatörde: lokal login
-yanıt vermediği için sohbet uçtan uca çalıştırılamadı; birim + SQL kanıtı var.
+Katalog 36 → 47 tool. Canlı kabul: namespace kartı / listesi, çıplak ad →
+servis kartı, host değeriyle trace araması (anahtar keşfi + süzgeç linki),
+"mobile bff servisleri listele" lokalde sohbet SSE üzerinden doğrulandı;
+takip kipleri (pencere/hatalar/pod/log) canlı doğrulama sırada.
 
 ## Ek A — Faz 2 hedef sistem prompt'u (operatör taslağı, 2026-09-06)
 

@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { mergeOpenHref } from '@/lib/openHref'; // v0.10.460
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
@@ -181,7 +182,7 @@ export function CopilotChat() {
       service: currentService, operation: currentOp, rangeS, toMs, trace: currentTrace, env,
       profile: profile || undefined,
       persist: true,
-      onOpen: href => navigate(href), // v0.10.434 (D7b)
+      onOpen: href => { const to = mergeOpenHref(href, window.location.pathname, window.location.search); if (to) navigate(to, { replace: true }); }, // v0.10.434 (D7b); v0.10.460 aynı sayfada paramları korur
     });
 
   // v0.9.1258 — konuşma deep-link'i (?chat=<convId>): URL → state yarısı.

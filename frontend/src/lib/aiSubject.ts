@@ -59,7 +59,7 @@ export function writeAiCodeParam(on: boolean): void {
 // değer HİÇ gönderilmez. aicode gibi yalnız o açılışta yaşar — useAiSubject
 // her özne değişimi/kapanışta siler.
 export const AI_SRC_PARAM = 'aisrc';
-export const AI_SRC_VALUES = ['nudge'] as const;
+export const AI_SRC_VALUES = ['nudge', 'chat'] as const; // chat (v0.10.460) — sohbetten açılan Explain
 export type AISrc = typeof AI_SRC_VALUES[number];
 
 export function parseAiSrc(raw: string | null | undefined): AISrc | null {

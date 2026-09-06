@@ -25,6 +25,7 @@ package api
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 	"time"
 
@@ -70,13 +71,27 @@ func (s *Server) guidedTraceExplain(ctx context.Context, emit func(string, any),
 		return false, false
 	}
 	emitGuidedStepResult(emit, n, "trace", in.User, nil)
-	system, user := copilot.SystemPromptTrace(), in.User
-	cacheKey := ""
+	// v0.10.460 (operatör: "hepsi Explain trace gibi olsun — çekmeceler de"):
+	// açıklama isteği (çip, yapıştırılan id, "açıkla") sohbette anlatılmaz;
+	// ✨ Explain ÇEKMECESİ açılır (?ai=trace:<id>&aisrc=chat → CopilotExplain,
+	// aynı bileşen, aynı önbellek anahtarı — tek uygulama, tek görünüm).
+	// Sohbet balonu deterministik bir yönlendirme yazar (LLM yok, exchangeId
+	// yok). Trace'e dair AÇIK soru ("neden yavaş") aşağıdaki odaklı yolda
+	// sohbette cevaplanır.
 	if isTraceExplainAsk(question) {
-		cacheKey = explainCacheKey(system, user, "") // copilotExplainTrace ile AYNI anahtar
-	} else {
-		user = in.User + "\n\nOperatörün sorusu (yalnız yukarıdaki kanıta dayanarak, kanıtta olmayanı söylemeden cevapla): " + strings.TrimSpace(question)
+		href := "/trace?id=" + url.QueryEscape(route.TraceID) + "&ai=" + url.QueryEscape("trace:"+route.TraceID) + "&aisrc=chat"
+		links := guidedAnswerLinks(route, linkWindowBetween(from, to))
+		emit("answer", map[string]any{
+			"text":        "✨ Explain açılıyor — trace " + route.TraceID + " açıklaması sağdaki Explain çekmecesinde (aynı motor, aynı önbellek).",
+			"suggestions": guidedSuggestions(route),
+			"links":       dedupLinksByHref(links),
+			"open":        href,
+		})
+		return true, true
 	}
+	system := copilot.SystemPromptTrace()
+	user := in.User + "\n\nOperatörün sorusu (yalnız yukarıdaki kanıta dayanarak, kanıtta olmayanı söylemeden cevapla): " + strings.TrimSpace(question)
+	cacheKey := "" // soruya özel: önbelleğe girmez
 	xid := copilot.MetaFromContext(ctx).ExchangeID
 	var text string
 	cached := false

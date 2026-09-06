@@ -295,7 +295,7 @@ func (s *Server) copilotStreamSurface(ctx context.Context, surface, system, user
 // yalnız explain-* yüzeylerinde. "nudge" = trace ilk açılış baloncuğundan
 // tetiklenen explain — operatör "kendiliğinden önerilen açıklama ne kadar
 // tıklanıyor, kaça mal oluyor"u /ai'da ayrı görsün.
-var aiSurfaceSrcAllowed = map[string]bool{"nudge": true}
+var aiSurfaceSrcAllowed = map[string]bool{"nudge": true, "chat": true} // chat — v0.10.460: sohbetten açılan Explain çekmecesi
 
 // aiSurfaceFromRequest — path'ten türeyen etiket + whitelist'li src soneki.
 func aiSurfaceFromRequest(r *http.Request) string {

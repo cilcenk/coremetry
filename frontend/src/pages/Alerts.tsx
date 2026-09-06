@@ -470,7 +470,7 @@ export default function AlertsPage() {
               {/* v0.10.331 — hedef: belirli bir DB ifadesi (SQL arayıp seç). Seçilince
                   metrik ailesi db_stmt_* (p95 varsayılan), servis = tüm çağıranlar. */}
               <Field label="Target — DB statement (optional)">
-                <StatementPicker value={draft.target} onChange={t => setDraft(d => ({
+                <StatementPicker value={draft.target} service={draft.service ?? ''} onChange={t => setDraft(d => ({
                   ...d, target: t, service: t ? '' : d.service,
                   metric: t ? (isDbStmtMetric(d.metric) ? d.metric : 'db_stmt_p95_ms') : (isDbStmtMetric(d.metric) ? 'error_rate' : d.metric),
                   threshold: t && !isDbStmtMetric(d.metric) ? 1000 : d.threshold,

@@ -1277,8 +1277,9 @@ export const api = {
   // not just promoted anomalies.
   // v0.10.325 — yavaş SQL dedektörü ayarları (admin).
   // v0.10.331 — /alerts SQL arama seçici (son 24 saat, örnek SQL alt-dize).
-  searchStatements: (q: string, limit = 20, signal?: AbortSignal) =>
-    get<{ rows: StatementSearchRow[] }>(`/api/db/statements/search?${qs({ q, limit })}`, signal),
+  // v0.10.515 — service: kuralın servisi seçiliyse arama o servisle sınırlı.
+  searchStatements: (q: string, limit = 20, signal?: AbortSignal, service = '') =>
+    get<{ rows: StatementSearchRow[] }>(`/api/db/statements/search?${qs({ q, limit, service: service || undefined })}`, signal),
   getDBSlowQuery: () => get<DBSlowQueryConfig>(`/api/settings/db-slow-query`),
   putDBSlowQuery: (c: DBSlowQueryConfig) =>
     request<DBSlowQueryConfig>(`/api/settings/db-slow-query`, {

@@ -553,7 +553,8 @@ func TestDiscoveryToolsGroupedNearConsumers(t *testing.T) {
 	// 34 → 36 (team_ownership.go: list_teams / get_team_services). Sayı ÜÇ
 	// yerde daha yazılı ve üçü de bu testle birlikte güncellenir; aksi
 	// hâlde katalog büyürken doküman ve duruş notu sessizce bayatlar.
-	if len(tools) != 36 {
+	// v0.10.468 — 36 → 39 (entity_catalog.go: list_namespaces / list_workloads / list_pods).
+	if len(tools) != 39 {
 		t.Errorf("katalog %d tool — sayı değiştiyse tools.go başlığındaki sayım yorumunu, "+
 			"api/mcp_authz_test.go'daki duruş notunu ve docs/runbooks/mcp-claude-code.md'yi de güncelle", len(tools))
 	}

@@ -115,7 +115,8 @@ func TestGuidedParityToolsGroupedNearFamilies(t *testing.T) {
 	// başlığı, api/mcp_authz_test.go duruş notu,
 	// docs/runbooks/mcp-claude-code.md) ve discovery_test.go da aynı sayıyı
 	// pinliyor.
-	if len(tools) != 36 {
+	// v0.10.468 — 36 → 39 (entity_catalog.go: list_namespaces / list_workloads / list_pods).
+	if len(tools) != 39 {
 		t.Errorf("katalog %d tool — sayı değiştiyse tools.go başlığındaki sayımı, "+
 			"api/mcp_authz_test.go'daki duruş notunu, discovery_test.go'daki pini ve "+
 			"docs/runbooks/mcp-claude-code.md'yi de güncelle", len(tools))

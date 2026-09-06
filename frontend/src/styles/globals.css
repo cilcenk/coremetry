@@ -3477,6 +3477,11 @@ thead th:hover .th-remove { opacity: 1; }
   font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre; color: var(--text);
 }
+/* v0.10.514 (operatör, prod: "highlight ettiği satır uzun olunca CoSRE
+   genişliğini geçince yarım kalıyor") — <code> blok ve EN UZUN SATIR kadar
+   geniş (min. konteyner): blok satırlar konteynerin değil kaydırma
+   genişliğinin tamamını kaplar, vurgu zemini sağa kaydırınca bitmez. */
+.cm-md-code pre > code { display: block; width: max-content; min-width: 100%; }
 /* v0.10.154 — kaynak-kod alıntısında modelin `>>>` ile işaretlediği hata
    satırı (v0.9.1254 prompt sözleşmesi): satır bloğu, uyarı tonunda zemin. */
 .cm-md-code-line { display: block; }

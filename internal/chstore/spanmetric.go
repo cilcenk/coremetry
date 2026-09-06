@@ -844,8 +844,15 @@ func (s *Store) tryOperationMVFastPathMulti(ctx context.Context, f SpanMetricBat
 // "error_rate", "p99") so the frontend can address each
 // series without inspecting types.
 type SpanMetricBatchFilter struct {
-	Filters     []FilterExpr
-	GroupBy     []string
+	Filters []FilterExpr
+	GroupBy []string
+	// RootOnly / HasError — v0.10.484 (operatör: "trace histogramı Root/Errors
+	// seçince değişmiyor"): /traces hacim şeridi tablonun iki bayrağını
+	// taşımıyordu. RootOnly = parent_span_id boş (kök span), HasError =
+	// status_code='error'. İkisi de ham yolu zorlar (MV'lerde kök bilgisi
+	// yok; hata dilimi dar rollup'ta var ama tek kapı sade kalsın).
+	RootOnly    bool
+	HasError    bool
 	From, To    time.Time
 	StepSeconds int
 	// MaxDataPoints (v0.9.391, grafik-audit Faz B) — panel nokta bütçesi.
@@ -1026,7 +1033,7 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	// arrayJoin'iyle taşır → Search yoksa her zaman denenir. Overview
 	// RED'i böylece pencereli modda da 10s rollup'tan okur (ham tarama
 	// yalnız rollup tabloları yokken/kapsamıyorken).
-	fastPathOK := f.Search == "" && winK == 0
+	fastPathOK := f.Search == "" && winK == 0 && !f.RootOnly && !f.HasError // v0.10.484
 	if fastPathOK {
 		if out, ok := s.tryOperationMVFastPathMulti(ctx, f); ok {
 			return out, f.StepSeconds, nil
@@ -1038,7 +1045,7 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	// bu şekli 10s granülaritede cevaplar. Tablolar yoksa / pencere
 	// rollup'ın en eski verisinden önceyse SESSİZCE ham yola düşer —
 	// migrations-öncesi prod davranışı bayt-bayt aynı.
-	if f.Search == "" {
+	if f.Search == "" && !f.RootOnly && !f.HasError { // v0.10.484 — kök/hata bayrağı ham yol
 		if out, ok := s.tryNarrowRollupFastPathMulti(ctx, f, effWin, winK); ok {
 			return out, f.StepSeconds, nil
 		}
@@ -1061,6 +1068,13 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 		wc.add("time <= ?", f.To)
 	}
 	ApplyFilters(&wc, f.Filters)
+	// v0.10.484 — /traces Root / Errors bayrakları (tablo ile aynı küme).
+	if f.RootOnly {
+		wc.add("parent_span_id = ''")
+	}
+	if f.HasError {
+		wc.add("status_code = 'error'")
+	}
 	// v0.9.601 — tek-agg yolundaki (yukarıda, ~satır 189) searchPredicate
 	// ile BİREBİR aynı. İki yolun aynı yüklemi kurması şart: /traces
 	// hacim şeridi bu yüzeye geçtiğinde grafik ile tablo aynı kümeyi

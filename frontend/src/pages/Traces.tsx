@@ -691,6 +691,10 @@ function TracesPageInner() {
     api.spanMetricBatch({
       from: common.from, to: common.to, step: common.step,
       search: common.search, filters: common.filters, dsl: common.dsl,
+      // v0.10.484 (operatör: "Root seçince histogram değişmiyor") — tablonun
+      // iki bayrağı şeride de gider; effect bağımlılığında da (yeniden çekim).
+      rootOnly: filter.rootOnly || undefined,
+      hasError: filter.hasError || undefined,
       aggs: [
         { name: 'count', agg: 'count' },
         { name: 'errors', agg: 'errors' },
@@ -707,7 +711,7 @@ function TracesPageInner() {
       })
       .catch((e: unknown) => { if (!cancelled && !isCanceled(e)) setVolSeries(null); });
     return () => { cancelled = true; ctl.abort(); };
-  }, [view, listRangeNs, filter.service, filter.search, env, clusterScope, advFilters, grouped]);
+  }, [view, listRangeNs, filter.service, filter.search, filter.rootOnly, filter.hasError, env, clusterScope, advFilters, grouped]); // v0.10.484
 
   // v0.9.637 — anahtar önerisi YALNIZ boş sonuçta çekilir. CLAUDE.md
   // ES/CH maliyet disiplini: liste boyunca prefetch yok, poll yok —

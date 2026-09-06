@@ -77,6 +77,12 @@ var mvCostClaims = map[string]string{
 		"koşulsuz; doğrudan izlendi v0.10.31)",
 	"search_traces": "trace_summary_5m ön-toplamı UYGUN OLDUĞUNDA; açıklama ham " +
 		"taramaya düştüğünü ZATEN söylüyordu — koşullu ve dürüst",
+	// v0.10.474 — GetTraceAggregate: trace_summary_5m YALNIZ service/operation
+	// gruplaması + süzgeç/env/cluster/search YOK + pencere ≥5 dk iken
+	// (repo.go:4055 kapısı, doğrudan izlendi); aksi hâlde sınırlı ham
+	// GROUP BY trace_id ve açıklama bunu SÖYLÜYOR (kapı + kelepçe).
+	"trace_stats": "trace_summary_5m — GetTraceAggregate MV yolu koşullu (service/operation, süzgeçsiz); " +
+		"süzgeçli çağrı search_traces kapısıyla kelepçeli ham yol, açıklama koşulu söylüyor",
 }
 
 // claimRe — açıklamada ön-toplam İDDİASI.

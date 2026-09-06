@@ -17,6 +17,7 @@ import { Empty, Spinner } from './Spinner';
 import { ChatBubble } from './ai/ChatBubble';
 import { TraceExplainNudge } from './ai/TraceExplainNudge';
 import { useChatThread } from './ai/useChatThread';
+import { AI_DRAWER_WIDTH } from './ai/answerCard'; // v0.10.461
 import { greetHello, greetStatus } from './ai/greeting';
 import type { AiConversationSummary } from '@/lib/types';
 
@@ -94,6 +95,8 @@ export function CopilotChat() {
   // v0.10.183 — model profili seçici (>1 profil); boş = sunucu varsayılanı.
   const [profiles, setProfiles] = useState<{ id: string; label?: string; model?: string }[]>([]);
   const [defaultProfile, setDefaultProfile] = useState('');
+  // v0.10.461 — başlık meta şeridindeki model çipi (AIDrawer ile aynı anatomi).
+  const [model, setModel] = useState('');
   const [profile, setProfile] = useState('');
   const [open, setOpen] = useState(false);
   const navigate = useNavigate(); // v0.10.434 (D7b) — "sayfasını aç" cevabı SPA içinde gezer
@@ -182,7 +185,15 @@ export function CopilotChat() {
       service: currentService, operation: currentOp, rangeS, toMs, trace: currentTrace, env,
       profile: profile || undefined,
       persist: true,
-      onOpen: href => { const to = mergeOpenHref(href, window.location.pathname, window.location.search); if (to) navigate(to, { replace: true }); }, // v0.10.434 (D7b); v0.10.460 aynı sayfada paramları korur
+      onOpen: href => {
+        const to = mergeOpenHref(href, window.location.pathname, window.location.search); // v0.10.434 (D7b); v0.10.460 aynı sayfa
+        if (!to) return;
+        navigate(to, { replace: true });
+        // v0.10.461 — hedef Explain çekmecesiyse (?ai=) sohbet KAPANIR: iki
+        // çekmece üst üste durmasın (v0.9.479 operatör raporunun aynısı);
+        // konuşma arşivde, "Geçmiş"ten geri gelir.
+        if (/[?&]ai=/.test(to)) setOpen(false);
+      },
     });
 
   // v0.9.1258 — konuşma deep-link'i (?chat=<convId>): URL → state yarısı.
@@ -264,7 +275,7 @@ export function CopilotChat() {
   const p1s = p1q.data?.items;
 
   useEffect(() => {
-    api.copilotConfig().then(c => { setEnabled(c.enabled); setProfiles(c.profiles ?? []); setDefaultProfile(c.defaultProfile ?? ''); }).catch(() => setEnabled(false));
+    api.copilotConfig().then(c => { setEnabled(c.enabled); setProfiles(c.profiles ?? []); setDefaultProfile(c.defaultProfile ?? ''); setModel(c.model ?? ''); }).catch(() => setEnabled(false));
   }, []);
 
   useEffect(() => {
@@ -341,7 +352,7 @@ export function CopilotChat() {
         <Drawer
           onClose={() => setOpen(false)}
           backdrop={false}
-          width={expanded ? 1100 : 480}
+          width={expanded ? 1100 : AI_DRAWER_WIDTH}
           bodyStyle={{ display: 'flex', flexDirection: 'column', padding: 0 }}
           header={
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
@@ -349,9 +360,28 @@ export function CopilotChat() {
                   büyük font olabilir") — 13→16 + 700 + hafif harf aralığı;
                   marka adı çekmece başlığında artık ilk bakışta okunur.
                   AiMark de eşlik etsin diye 18→20. */}
-              <AiMark size={20} />
-              <span style={{ fontWeight: 700, fontSize: 16, letterSpacing: 0.3 }}>CoSRE</span>
-              <span style={{ flex: 1 }} />
+              {/* v0.10.461 — AIDrawer başlık anatomisi: başlık satırı + meta
+                  şeridi (kapsam + model çipi). Eski 📍 kapsam bandı buraya
+                  taşındı; ikinci bir bant çizilmiyor. */}
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 16, letterSpacing: 0.3 }}>
+                  <AiMark size={20} /> CoSRE
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, minWidth: 0 }}>
+                  <span className="mono" style={{
+                    fontSize: 11, color: currentService ? 'var(--accent2)' : 'var(--text3)',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }} title={currentService ? `Sorular ${currentService} servisine kapsanır` : 'Filo geneli sorular'}>
+                    {currentService ? `📍 ${currentService}` : 'filo geneli'}{env ? ` · env ${env}` : ''}
+                  </span>
+                  {model && (
+                    <span className="chip" style={{ flexShrink: 0, fontSize: 10.5 }} title="Cevapları üreten model">
+                      <span className="k">model</span>
+                      <b className="mono">{model}</b>
+                    </span>
+                  )}
+                </div>
+              </div>
               {/* v0.9.1139 — konuşma arşivi. Menü değil bir BÖLÜM:
                   çekmece zaten sağ kenarda ve ikinci bir uçan katman
                   (dropdown) sohbetin üstüne binerdi. */}
@@ -374,26 +404,6 @@ export function CopilotChat() {
               )}
             </div>
           }>
-
-          {/* Context banner (v0.9.164) — bulunulan servis, scope şeffaflığı. */}
-          {(currentService || env) && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 6, fontSize: 11,
-              color: 'var(--text2)', background: 'var(--accent-soft)',
-              padding: '5px 14px', borderBottom: '1px solid var(--border)',
-            }}>
-              {currentService && (<>
-                📍 <b className="mono" style={{ color: 'var(--accent2)' }}>{currentService}</b> · sorular bu servise scope'lanır
-              </>)}
-              {/* v0.9.1259 — env devri şeffaf: ekrandaki env seçimi sohbete
-                  bağlam gider; bant söylemezse daraltma görünmez olurdu. */}
-              {env && (
-                <span className="mono" style={{ marginLeft: currentService ? 8 : 0, color: 'var(--info)' }}>
-                  env: {env}
-                </span>
-              )}
-            </div>
-          )}
 
           {/* Geçmiş bölümü (v0.9.1139) — başlık + son etkinlik + mesaj
               sayısı. Satıra tıklamak konuşmayı YÜKLER; satır sonundaki
@@ -463,7 +473,7 @@ export function CopilotChat() {
           )}
 
           {/* Messages */}
-          <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 'var(--sp-7)', display: 'flex', flexDirection: 'column', gap: 10 }}>
             {turns.length === 0 && (
               <div style={{ color: 'var(--text3)', fontSize: 12 }}>
                 {/* Karşılama (v0.9.528) — LLM çağrısı YOK; ad
@@ -517,7 +527,7 @@ export function CopilotChat() {
               guided cevap kendi rotasından öneri getirirse onlar,
               yoksa statik drill-down listesi. */}
           {showFollowups && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '0 12px 8px' }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '0 var(--sp-7) 8px' }}>
               {(last.suggestions?.length ? last.suggestions : FOLLOWUPS).map(q => (
                 <Chip key={q} pill onClick={() => submit(q)}>↳ {q}</Chip>
               ))}
@@ -527,7 +537,7 @@ export function CopilotChat() {
           {/* Composer */}
           <form
             onSubmit={e => { e.preventDefault(); submit(input); }}
-            style={{ display: 'flex', gap: 8, padding: 10, borderTop: '1px solid var(--border)' }}>
+            style={{ display: 'flex', gap: 8, padding: 'var(--sp-5) var(--sp-7)', borderTop: '1px solid var(--border)' }}>
             <input
               value={input}
               onChange={e => setInput(e.target.value)}

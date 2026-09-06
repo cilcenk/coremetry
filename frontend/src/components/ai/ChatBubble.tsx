@@ -471,7 +471,7 @@ export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | 
   };
   const done = !isUser && !turn.pending && !turn.error && !!turn.text;
   return (
-    <div style={{ alignSelf: isUser ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
+    <div style={{ alignSelf: isUser ? 'flex-end' : 'stretch', maxWidth: isUser ? '85%' : '100%' }}>
       {/* pre-wrap BURADA KALIYOR ve bu, diğer AI yüzeylerinin tersi
           (orada Markdown blok üretince pre-wrap satır aralığını ikiye
           katlıyordu — v0.9.641/696). Fark şu: balonun düz metin koşuları
@@ -480,13 +480,14 @@ export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | 
           Satır sonlarını taşıyan tek şey pre-wrap; kaldırılırsa çok
           satırlı cevap tek paragrafa yapışır. Blok öğeler (tablo/kod/
           başlık/liste) kendi margin'lerini `.cm-md-*` üzerinden alıyor. */}
-      <div onClick={onBodyClick} style={{
+      {/* v0.10.461 — asistan turu = Explain cevap kartı (`.ai-answer-card`,
+          answerCard.ts): CoSRE çekmecesi ile Explain çekmecesi aynı kartı
+          çizer; gri 85%'lik balon yalnız operatörün kendi mesajı için. */}
+      <div onClick={onBodyClick} className={isUser ? undefined : 'ai-answer-card'} style={isUser ? {
         padding: '8px 11px', borderRadius: 10, fontSize: 13, lineHeight: 1.5,
         whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-        background: isUser ? 'var(--accent2)' : 'var(--bg2)',
-        color: isUser ? '#fff' : 'var(--text)',
-        border: isUser ? 'none' : '1px solid var(--border)',
-      }}>
+        background: 'var(--accent2)', color: '#fff', border: 'none',
+      } : { whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
         {/* Tool-call progress chips (assistant only). v0.9.1181 (Faz 4.3):
             veri gelmişse çip TIKLANABİLİR ve altında kanıt bloğu açılır. */}
         {!isUser && turn.steps && turn.steps.length > 0 && (

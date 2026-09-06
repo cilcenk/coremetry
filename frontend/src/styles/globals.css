@@ -3853,6 +3853,14 @@ thead th:hover .th-remove { opacity: 1; }
 .cm-md-code-res { color: var(--text3); font-style: italic; }
 .cm-md-code-fold { padding: 2px 6px 4px; border-top: 1px solid var(--border); background: var(--bg2); }
 /* CoSRE cevap kartı anatomisi: Karar + Kanıt satırları */
+/* v0.10.461 — AI cevap kartı: Explain paneli (CopilotExplain) ve asistan
+   sohbet turu (ChatBubble) AYNI kart. answerCard.ts açıklar. */
+.ai-answer-card {
+  padding: var(--sp-6); border-radius: var(--radius-sm);
+  font-size: var(--fs-md); line-height: 1.5; color: var(--text);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+}
 .cx-verdict { margin: 0 0 8px; padding: 6px 10px; border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; font-weight: 600; }
 .cx-verdict-k { display: inline-block; font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: .06em; color: var(--accent2); margin-right: 8px; font-weight: 700; }
 .cx-evidence { margin: 0 0 8px; font-size: var(--fs-xs); color: var(--text2); }

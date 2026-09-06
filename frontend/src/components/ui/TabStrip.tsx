@@ -42,8 +42,10 @@ export function TabStrip<K extends string>({ tabs, value, onChange, ariaLabel, c
     e.preventDefault();
     const target = enabled[next];
     onChange(target.key);
-    const btn = ref.current?.querySelector<HTMLButtonElement>(`button[data-tab-key="${CSS.escape(target.key)}"]`);
-    btn?.focus();
+    // CSS.escape jsdom'da ve eski tarayıcılarda yok: sıra ile bul (sekme
+    // anahtarı seçiciye hiç girmez).
+    const btns = ref.current ? Array.from(ref.current.querySelectorAll<HTMLButtonElement>('button[role="tab"]')) : [];
+    btns.find(b => b.dataset.tabKey === target.key)?.focus();
   };
   return (
     <div ref={ref} role="tablist" aria-label={ariaLabel}

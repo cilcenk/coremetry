@@ -47,7 +47,7 @@ describe('TabStrip', () => {
     expect(onChange).toHaveBeenLastCalledWith('c');
     expect(onChange).toHaveBeenCalledTimes(4);
   });
-  it('raw .tab-strip markup remains only in the slice-2 leftovers', () => {
+  it('no raw .tab-strip markup remains (D5 closed, v0.10.457)', () => {
     const src = resolve(__dirname, '../..');
     const left: string[] = [];
     const walk = (d: string) => {
@@ -58,6 +58,6 @@ describe('TabStrip', () => {
       }
     };
     walk(src);
-    expect(left.sort()).toEqual(['pages/Clusters.tsx', 'pages/Trace.tsx']);
+    expect(left.sort()).toEqual([]);
   });
 });

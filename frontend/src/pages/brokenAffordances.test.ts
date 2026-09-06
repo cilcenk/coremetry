@@ -50,7 +50,8 @@ describe('brokenAffordances — ekranda yalan söyleyen yüzeyler', () => {
     const promise = /[Cc]lick (a|any) row/;
     // Bağlama biçimleri: satırda doğrudan onClick · paylaşılan
     // rowClickHandlers yardımcısı · useDataTable'ın onOpen/rowProps yolu.
-    const wired = /<tr[^>]*onClick|rowClickHandlers|onOpen[=:]|rowProps/;
+    // v0.10.451 — rowActivation (D3) da bir bağlama biçimidir (onClick + klavye).
+    const wired = /<tr[^>]*onClick|rowActivation\(|rowClickHandlers|onOpen[=:]|rowProps/;
     const offenders: string[] = [];
     for (const p of FILES) {
       const code = blank(readFileSync(p, 'utf8'));

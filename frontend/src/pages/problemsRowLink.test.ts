@@ -36,7 +36,7 @@ describe('/problems satırları gerçek link', () => {
     const links = src.match(/<Link to=\{excHref\} replace className="row-link" onClick=\{e => e\.stopPropagation\(\)\}>/g) ?? [];
     // State · type+message · occurrences · first seen · last seen
     expect(links.length, 'düz hücre sayısı değişti — sözleşmeyi güncelle').toBe(5);
-    expect(src).toContain('<tr onClick={() => openExcDetail(g)}');
+    expect(src).toContain('<tr {...rowActivation(() => openExcDetail(g))}'); // v0.10.451 — klavye eşdeğeriyle
   });
 
   it('kendi linkini taşıyan hücreler satır linkine SARILMAZ (<a> içinde <a> yok)', () => {

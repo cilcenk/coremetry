@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.451 (dış denetim D3 kalan)
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -171,7 +172,7 @@ export default function ProfilingPage() {
                   <DataTableHead dt={profileDt} />
                   <tbody>
                     {profileDt.sortedRows.map((p, i) => (
-                      <tr key={p.profileId} {...profileDt.rowProps(i)} onClick={() => navigate(`/profile?id=${p.profileId}`)}
+                      <tr key={p.profileId} {...profileDt.rowProps(i)} {...rowActivation(() => navigate(`/profile?id=${p.profileId}`))}
                         style={profileDt.sortedRows.length > 100 ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' } : undefined}>
                         <td className="mono">{tsShort(p.startTime)}</td>
                         <td>

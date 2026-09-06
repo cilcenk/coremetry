@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.451 (dış denetim D3 kalan)
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
@@ -547,7 +548,7 @@ export default function ProblemsPage() {
                   const excHref = excDetailHref(location.pathname, searchParams, g.fingerprint);
                   return (
                     <Fragment key={g.fingerprint}>
-                      <tr onClick={() => openExcDetail(g)}
+                      <tr {...rowActivation(() => openExcDetail(g))}
                         onKeyDown={(e) => {
                           // Enter/Space opens the full detail (keyboard parity
                           // with the click). The caret cell handles the inline

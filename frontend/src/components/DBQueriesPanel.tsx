@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.451 (dış denetim D3 kalan)
 import { Link } from 'react-router-dom';
 import { Spinner, Empty } from './Spinner';
 import { DisclosureButton } from '@/components/ui';
@@ -175,7 +176,7 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
                     );
                     return (
                       <Row key={i}>
-                        <tr onClick={() => setExpandedIdx(e => e === i ? null : i)}
+                        <tr {...rowActivation(() => setExpandedIdx(e => e === i ? null : i))}
                             style={{ cursor: 'pointer', ...(dt.sortedRows.length > 100 ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' } : null) }}>
                           <td className="mono"
                               style={{ maxWidth: 540, overflow: 'hidden',

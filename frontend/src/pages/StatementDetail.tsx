@@ -120,9 +120,10 @@ export default function StatementDetailPage() {
             title={`Persistent statement identity (stmt_hash ${refObj.hash})`}>
             #{refObj.hash.slice(0, 8)}
           </span>
-          {/* v0.10.331 — bu ifade için hedefli alarm kuralı (editör/admin). */}
+          {/* v0.10.331 — bu ifade için hedefli alarm kuralı (editör/admin).
+              v0.10.516 (operatör: "Alarm oluştur yazısı çok küçük") — xs → sm. */}
           {canEditRules && (
-            <Button variant="secondary" size="xs" style={{ marginLeft: 'auto' }} onClick={() => setAlertOpen(true)}
+            <Button variant="secondary" size="sm" style={{ marginLeft: 'auto' }} onClick={() => setAlertOpen(true)}
               title="Bu ifade için eşik alarmı: p95/p99/max/avg süresi eşiği geçince Problem + DB sahibi/SRE maili">
               ⚠ Alarm oluştur
             </Button>

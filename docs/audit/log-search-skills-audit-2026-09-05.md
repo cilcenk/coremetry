@@ -25,7 +25,7 @@ bağlam okunur.
 |---|---|---|---|---|
 | B1 | **GEMİDE v0.10.415** — Ana liste `degraded` bayrağını okumuyor → yavaş ES "No logs found" görünüyor (FieldsPanel/ContextModal aynı) | `Logs.tsx` grep 0; `api_logs.go:448-454,1049` | `:970` partial rozetinin ikizi, üç yüzey | ~30 dk |
 | B2 | **GEMİDE v0.10.416** — Live tail traceId/spanId'yi SSE URL'ine yazmıyor; "Filtered to trace" şeridi yalan | `Logs.tsx:544-553,788`; BE okuyor `api_logs.go:122` | iki `p.set` + pin | ~10 dk |
-| B3 | Göreli pencere donuyor; sayfa-yerel ↻ yok; Search yeniden fetch atmıyor | `Logs.tsx:409`, `queries/logs.ts:31` | ↻ + `nowTick` + "veri: HH:mm:ss" | ~30 dk | **GEMİDE v0.10.440** — ↻ butonu (etiket pencere sonu HH:mm:ss), sayaç memo bağımlılığında, özel aralıkta refetch, canlı kuyrukta gizli; Search'ün kendisi bilinçli olarak yeniden fetch atmıyor (davranış değişikliği — sorulacak); otomatik aralık yok |
+| B3 | Göreli pencere donuyor; sayfa-yerel ↻ yok; Search yeniden fetch atmıyor | `Logs.tsx:409`, `queries/logs.ts:31` | ↻ + `nowTick` + "veri: HH:mm:ss" | ~30 dk | **GEMİDE v0.10.440** — ↻ butonu (etiket pencere sonu HH:mm:ss), sayaç memo bağımlılığında, özel aralıkta refetch, canlı kuyrukta gizli; Search her tıkta yeniden arar (v0.10.447, operatör kararı); otomatik aralık yok |
 | B4 | Filter-for/out yalnız pod hücresinde; service/cluster/attr hücrelerinde yok | `LogTable.tsx:437,450,458-500` | `.lt-pivot` kalıbı | ~1-2 saat |
 | B5 | **GEMİDE v0.10.417** — Wrap/truncate anahtarı yok (`.td-full` hazır) | `globals.css:1277,1286`, `LogTable.tsx:411` | toolbar toggle + localStorage | ~20 dk |
 | B6 | Desenler: exclude yok, "Ara" mevcut serbest metni eziyor | `Logs.tsx:191-194`, `LogPatternsPanel.tsx:146,163` | ⊕/⊖; ⊖ `NOT`; metin korunur | ~1-2 saat |

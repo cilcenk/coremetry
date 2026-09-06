@@ -23,6 +23,14 @@ describe('Logs ↻ refresh (B3)', () => {
     expect(block).toContain('setNowTick(t => t + 1)');
     expect(block).toContain('fmtClock(to / 1e6)');
   });
+  it('Search always re-queries (v0.10.447): apply ticks on presets, refetches on custom', () => {
+    const i = src.indexOf('const apply = () => {');
+    expect(i).toBeGreaterThan(0);
+    const block = src.slice(i, i + 400);
+    expect(block).toContain('setNowTick(t => t + 1)');
+    expect(block).toContain("range.preset === 'custom'");
+    expect(block).toContain('staticQ.refetch()');
+  });
   it('never adds an automatic interval around the tick', () => {
     expect(src).not.toMatch(/setInterval\([^)]*setNowTick/);
   });

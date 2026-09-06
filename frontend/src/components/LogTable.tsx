@@ -6,6 +6,7 @@ import { CopyButton } from './CopyButton';
 import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/ui/DataTable';
 import { highlightSegments } from '@/lib/logFilters';
 import { podOfLog, podEntryOfLog } from '@/lib/logPod';
+import { clusterEntryOfLog } from '@/lib/logCluster'; // v0.10.501 (B4)
 import { tsLong, sevName, sevClass } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { LogRow } from '@/lib/types';
@@ -147,17 +148,6 @@ function truncMid(s: string, max: number): string {
   return s.slice(0, half) + '…' + s.slice(s.length - half);
 }
 
-// firstNonEmpty picks the first argument that is a non-empty
-// string. Stricter than ??-chains because some shippers emit
-// "" / null for canonical OTel attrs while the snake_case
-// alternative carries the real value; we want to keep walking
-// the chain past those.
-function firstNonEmpty(...vals: Array<string | undefined | null>): string {
-  for (const v of vals) {
-    if (typeof v === 'string' && v.length > 0) return v;
-  }
-  return '';
-}
 
 // LogTable — the shared rendering for log lists used by:
 //
@@ -394,11 +384,37 @@ function LogRow({
   // resource_attributes.* düz alanı.
   const ra = l.resourceAttributes ?? {};
   const pod = podOfLog(l);
-  const cluster = firstNonEmpty(
-    ra['openshift.labels.cluster'],
-    ra['openshift.cluster.name'],
-    ra['k8s.cluster.name'],
-    ra['kubernetes.cluster_name'],
+  // v0.10.501 (B4) — cluster da pod gibi TAŞIYAN anahtarla (logCluster.ts):
+  // hücrenin ⊕/⊖ pill'i o anahtarla yazılır, gösterilen değer süzgecin
+  // bulacağı değerdir.
+  const ce = clusterEntryOfLog(l);
+  const cluster = ce?.value ?? '';
+  // pivotCell — v0.10.501 (B4): pod hücresinin ⊕/⊖ kalıbı (v0.10.282)
+  // servis / cluster / attribute hücrelerine de; geri çağrı yoksa
+  // (trace Logs sekmesi) yalnız değer. Sınıf `.lt-pivot` hover'da açar.
+  const canPivot = !!(onFilterAdd || onFilterExclude);
+  const pivotCell = (key: string, value: string, shown: React.ReactNode) => (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <span>{shown}</span>
+      {canPivot && value && (
+        <span className="kv-actions" style={{ display: 'inline-flex', gap: 2 }}>
+          {onFilterAdd && (
+            <IconButton variant="bare" size="xs" className="ib-add"
+              onClick={(e) => { e.stopPropagation(); onFilterAdd(key, value); }}
+              title={`Filter for ${key}: ${value}`}
+              aria-label={`Filter for ${key}: ${value}`}
+              icon="⊕" />
+          )}
+          {onFilterExclude && (
+            <IconButton variant="bare" size="xs" className="ib-not"
+              onClick={(e) => { e.stopPropagation(); onFilterExclude(key, value); }}
+              title={`Filter out ${key}: ${value}`}
+              aria-label={`Filter out ${key}: ${value}`}
+              icon="⊖" />
+          )}
+        </span>
+      )}
+    </span>
   );
   return (
     <>
@@ -442,23 +458,27 @@ function LogRow({
             );
           }
           if (id === 'service') {
+            // v0.10.501 (B4) — pill anahtarı `service.name`: CH derleyicisi
+            // service_name kolonuna, ES takma ad listesine çevirir.
             return (
-              <td key={id}>
-                <span style={{
-                  fontSize: 11, padding: '1px 6px',
-                  background: 'var(--bg3)', borderRadius: 3,
-                  fontFamily: 'monospace',
-                }}>
-                  {l.serviceName || '—'}
-                </span>
+              <td key={id} className={canPivot && l.serviceName ? 'lt-pivot' : undefined}>
+                {pivotCell('service.name', l.serviceName || '', (
+                  <span style={{
+                    fontSize: 11, padding: '1px 6px',
+                    background: 'var(--bg3)', borderRadius: 3,
+                    fontFamily: 'monospace',
+                  }}>
+                    {l.serviceName || '—'}
+                  </span>
+                ))}
               </td>
             );
           }
           if (id === 'cluster') {
             return (
-              <td key={id} className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
+              <td key={id} className={'mono' + (canPivot && ce ? ' lt-pivot' : '')} style={{ fontSize: 11, color: 'var(--text2)' }}
                   title={cluster || 'no openshift.labels.cluster / openshift.cluster.name / k8s.cluster.name resource attr'}>
-                {cluster || '—'}
+                {ce ? pivotCell(ce.key, ce.value, cluster) : '—'}
               </td>
             );
           }
@@ -467,31 +487,10 @@ function LogRow({
             // TAŞIYAN anahtarla yazılır (podEntryOfLog); geri çağrı yoksa
             // (trace Logs sekmesi) yalnız değer.
             const pe = pod ? podEntryOfLog(l) : null;
-            const canPivot = !!pe && !!(onFilterAdd || onFilterExclude);
             return (
-              <td key={id} className={'mono' + (canPivot ? ' lt-pivot' : '')} style={{ fontSize: 11, color: 'var(--text2)' }}
+              <td key={id} className={'mono' + (canPivot && pe ? ' lt-pivot' : '')} style={{ fontSize: 11, color: 'var(--text2)' }}
                   title={pod || 'no k8s.pod.name / kubernetes.pod_name resource attr'}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <span>{pod ? truncMid(pod, 22) : '—'}</span>
-                  {canPivot && pe && (
-                    <span className="kv-actions" style={{ display: 'inline-flex', gap: 2 }}>
-                      {onFilterAdd && (
-                        <IconButton variant="bare" size="xs" className="ib-add"
-                          onClick={(e) => { e.stopPropagation(); onFilterAdd(pe.key, pe.value); }}
-                          title={`Filter for ${pe.key}: ${pe.value}`}
-                          aria-label={`Filter for ${pe.key}: ${pe.value}`}
-                          icon="⊕" />
-                      )}
-                      {onFilterExclude && (
-                        <IconButton variant="bare" size="xs" className="ib-not"
-                          onClick={(e) => { e.stopPropagation(); onFilterExclude(pe.key, pe.value); }}
-                          title={`Filter out ${pe.key}: ${pe.value}`}
-                          aria-label={`Filter out ${pe.key}: ${pe.value}`}
-                          icon="⊖" />
-                      )}
-                    </span>
-                  )}
-                </span>
+                {pe ? pivotCell(pe.key, pe.value, truncMid(pod, 22)) : '—'}
               </td>
             );
           }
@@ -500,9 +499,9 @@ function LogRow({
           // the expanded row's kv-tables imply (attrs listed first).
           const v = (l.attributes ?? {})[id] ?? (l.resourceAttributes ?? {})[id] ?? '';
           return (
-            <td key={id} className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
+            <td key={id} className={'mono' + (canPivot && v ? ' lt-pivot' : '')} style={{ fontSize: 11, color: 'var(--text2)' }}
                 title={v || `no ${id} attribute on this log`}>
-              {v || '—'}
+              {v ? pivotCell(id, v, v) : '—'}
             </td>
           );
         })}

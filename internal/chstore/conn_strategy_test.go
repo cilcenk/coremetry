@@ -208,6 +208,9 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		"trace_error_first.go": true,
 		// v0.10.342 — kimlik-önce aday sorgusu: spans üzerinde telemetri SELECT'i.
 		"trace_identity_first.go": true,
+		// v0.10.472 — SAF telemetri: attribute değer probu, tek FROM'u spans
+		// (kolon eşitliği ya da kvh bloom count). State okumaz.
+		"attr_discovery.go": true,
 		// v0.10.329 — SAF telemetri: boş liste öz-teşhisi, tek FROM'u spans
 		// (count). State okumaz; liste sorgusuyla aynı havuz doğru adres.
 		"trace_explain.go": true,

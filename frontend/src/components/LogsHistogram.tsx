@@ -3,6 +3,8 @@ import { api } from '@/lib/api';
 import { logsBucketSec } from '@/lib/chartStep';
 import { severityBandOf } from '@/lib/severityBand';
 import { TimeChart, type TimeChartSeries } from '@/components/charts/TimeChart';
+import { seriesPalette } from '@/lib/chartFmt'; // v0.10.510 (D7)
+import { useThemeTick } from '@/lib/useThemeTick';
 
 // LogsHistogram — log volume over time for /logs, the service Logs tab and
 // the anomaly drawer.
@@ -131,6 +133,7 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
   // onZoomRef pattern) so a per-render callback identity doesn't re-run the
   // fetch effect.
   const onSeriesRef = useRef(onSeries); onSeriesRef.current = onSeries;
+  const themeTick = useThemeTick(); // v0.10.510 (D7) — kırılım renkleri paletten; tema değişince yeniden kur
   const bd: LogsBreakdown = breakdown ?? 'severity';
 
   useEffect(() => {
@@ -188,7 +191,8 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
     () => (bd === 'severity'
       ? collapse(data ?? [], filter.severity > 0)
       : collapseGroups(data ?? [])),
-    [data, filter.severity, bd]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, filter.severity, bd, themeTick]);
 
   if (data === undefined) return <div style={{ height: 104, marginBottom: 10 }} />;
   // v0.9.1220 review — hata/boş durumda TAMAMEN kaybolmak, kırılım
@@ -315,9 +319,11 @@ function fmtPct(v: number): string {
 // tamamen gizlerdi; overlay-okuma numarası (total⊃warn⊃err) yalnız
 // altküme serilerde çalışır. Hata-oranı ekseni yok — oran seviye
 // türevi, servis serilerinden türetilemez.
-const GROUP_COLORS = [
-  'var(--accent2)', 'var(--purple)', 'var(--teal)', 'var(--orange)', 'var(--ok)',
-];
+// v0.10.510 (D7) — ilk beş yuva seri paletinden (tema-farkında; --ok bir
+// DURUM rengiydi, seri olamaz). Bileşen tema değişiminde yeniden kurulur
+// (useThemeTick memo bağımlılığı), collapseGroups çağrı anında paleti çözer.
+const GROUP_SLOTS = 5;
+function groupColors(): readonly string[] { return seriesPalette().slice(0, GROUP_SLOTS); }
 export function collapseGroups(input: Series[]) {
   const empty = {
     times: [] as number[],
@@ -349,6 +355,7 @@ export function collapseGroups(input: Series[]) {
     .filter(s => s.name !== 'OTHER')
     .map(withTotal)
     .sort((a, b) => b.total - a.total);
+  const GROUP_COLORS = groupColors();
   const top = ranked.slice(0, GROUP_COLORS.length);
   const rest = ranked.slice(GROUP_COLORS.length).concat(otherSeries);
 

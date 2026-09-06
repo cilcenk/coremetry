@@ -3,7 +3,7 @@ import { rowKeyboard } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3
 import { useEscLayer } from '@/lib/escLayer';
 import uPlot from 'uplot';
 import { downsampleXY } from '@/lib/perf/lttb';
-import { fmtSmart, fmtXTicks, seriesColor } from '@/lib/chartFmt';
+import { fmtSmart, fmtXTicks, seriesColor, seriesColorsFor } from '@/lib/chartFmt';
 import { escapeHTML } from '@/lib/utils';
 import { placeTooltip } from '@/lib/chartTooltip';
 import { DisclosureButton } from '@/components/ui';
@@ -215,6 +215,16 @@ export function TimeSeriesPanel({
   // changed; with the fast-path a poll no longer rebuilds, so this is now
   // required for a theme toggle to repaint the strokes.
   const themeTick = useThemeTick();
+  // v0.10.510 (D7) — panel içi yuva ataması: aynı panelde sekize kadar
+  // çakışma yok; ad tercih ettiği yuvayı ister (seriesColorsFor). Açık
+  // `color` verilen seri (operatör seçimi / eşik) atamanın dışında.
+  // Tema değişince (themeTick) palet yeniden çözülür.
+  const slotColors = useMemo(
+    () => seriesColorsFor(series.map(s => s.label)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [series, themeTick],
+  );
+  const colorOf = (s: { label: string; color?: string }) => s.color ?? slotColors.get(s.label) ?? seriesColor(s.label);
 
   // ── Grafana-parite #2: tooltip pin ──────────────────────────────────────
   // pinRef: pinli veri index'i (null = pin yok). Tetik (TSP): çizim alanına
@@ -260,7 +270,7 @@ export function TimeSeriesPanel({
   // Per-series stats for the legend, over raw (pre-downsample) values.
   const legendRows = useMemo<LegendRow[]>(() => series.map((s, i) => {
     const vs = s.points.map(p => p.value).filter((v): v is number => v != null && isFinite(v));
-    const color = resolveColor(s.color ?? seriesColor(s.label));
+    const color = resolveColor(colorOf(s));
     if (vs.length === 0) return { idx: i + 1, label: s.label, color, unit: s.unit ?? '', last: NaN, min: NaN, max: NaN, avg: NaN };
     return {
       idx: i + 1,
@@ -333,7 +343,7 @@ export function TimeSeriesPanel({
     const stacked = mode === 'stacked';
     const { times } = bundleRef.current;
 
-    const colors = series.map(s => resolveColor(s.color ?? seriesColor(s.label)));
+    const colors = series.map(s => resolveColor(colorOf(s)));
     const yScaleKey = (s: TSSeries) => (s.axis === 'right' ? 'yr' : 'y');
 
     // Grafana-parite M1 — drag(+sync)+setSelect paylaşımlı buildCursorOpts'tan

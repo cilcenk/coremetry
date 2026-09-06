@@ -771,7 +771,7 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
         const label = q.alias ? (grp ? `${q.alias} · ${grp}` : q.alias) : (multi ? `${q.id}: ${base}` : base);
         all.push({
           label,
-          color: q.color || seriesColor(label),
+          color: q.color || undefined /* v0.10.510 (D7) — yuva atamasını panel yapar (seriesColorsFor) */,
           unit: q.unit || undefined,
           points: s.points.map(p => ({ time: p.time, value: p.value })),
           // v0.9.80 (Aşama 2 madde 1) — scrape gauge/counter adım çizilir;
@@ -801,7 +801,7 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
       }
       if (!pts.length) continue;
       const label = q.alias || `${q.id}: ${q.expr}`;
-      all.push({ label, color: q.color || seriesColor(label), points: pts });
+      all.push({ label, color: q.color || undefined /* v0.10.510 (D7) — yuva atamasını panel yapar (seriesColorsFor) */, points: pts });
     }
     // Top-N BY AREA cap — biggest series win; the rest collapse into a "+N more"
     // note so a 200-group fan-out doesn't drown the chart.

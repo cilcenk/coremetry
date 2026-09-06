@@ -149,7 +149,9 @@ export function buildGroupRows(panels: PanelData[]): GroupRow[] {
         isFormula: p.isFormula,
         label: s.label,
         unit: p.unit,
-        color: seriesColor(s.label),
+        // v0.10.510 (D7) — çizginin rengi (panel içi yuva ataması, PanelStack)
+        // satırın rengidir; renk taşımayan seri (eski çağıran/test) hash'e düşer.
+        color: s.color ?? seriesColor(s.label),
         // Boş seride NaN — fmtSmart bunu "—" basar (mevcut sözleşme).
         last: st.last ?? NaN,
         min: st.min ?? NaN,

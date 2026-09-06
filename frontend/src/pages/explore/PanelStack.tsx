@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { SpanMetricSeries, MetricExemplar, ChartAnnotation, OtlpExemplar } from '@/lib/types';
 import type { TSSeries, TSThreshold } from '@/components/viz/TimeSeriesPanel';
-import { seriesColor } from '@/lib/chartFmt';
+import { seriesColor, seriesColorsFor } from '@/lib/chartFmt';
 import { formulaSeries } from './formulaSeries';
 import { alignFormulaLetters, fmtStep } from './stepAlign';
 import {
@@ -139,13 +139,14 @@ export function buildGhostSeries(
     return { ghosts: [], note: 'önceki dönemde veri yok' };
   }
   const shownLabels = new Set(shown.map(s => s.label));
+  const shownColor = new Map(shown.map(s => [s.label, s.color] as const)); // v0.10.510 (D7) — hayalet = ana serinin yuvası
   const ghosts: TSSeries[] = [];
   for (const s of compareSeries) {
     const label = seriesGroupLabel(q, s.groupKey, desc);
     if (!shownLabels.has(label)) continue;
     ghosts.push({
       label,
-      color: seriesColor(label),
+      color: shownColor.get(label) ?? seriesColor(label),
       points: s.points.map(p => ({ time: p.time + offsetNs, value: p.value })),
     });
   }
@@ -303,6 +304,13 @@ export function buildPanels(state: BuilderState, inputs: PanelInputs): PanelData
         pivot: pairs.length ? { pairs, disabled: pivotBlocked } : undefined,
       };
     });
+    // v0.10.510 (D7) — panel içi yuva ataması: aynı panelde sekize kadar
+    // çakışma yok; ad tercih ettiği yuvayı ister; satır/dilim renkleri
+    // (GroupTable/SummaryViz) bu seri rengini okur — tek türetim korunur.
+    {
+      const cmap = seriesColorsFor(labeled.map(s => s.label));
+      for (const s of labeled) s.color = cmap.get(s.label) ?? s.color;
+    }
     // v0.8.332 (pivot Phase 3) — single-series panels attach the OTLP ◆
     // wholesale. v0.8.432 (audit Faz B) — grouped items now arrive with a
     // per-item groupKey (the /by-series endpoint's server-side fp→gk join);

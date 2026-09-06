@@ -132,31 +132,95 @@ function trim(v: number): string {
 // when only a couple of series are on screen (Datadog blue,
 // orange, green is the "primary trio" most APM tools converge
 // on).
-const PALETTE = [
-  '#388bfd', // blue        — Coremetry accent
-  '#f0703f', // orange
-  '#3fb950', // green
-  '#a371f7', // purple
-  '#f5b343', // amber
-  '#39c5cf', // cyan
-  '#db61a2', // pink
-  '#6dbf5b', // light green
-  '#d29922', // gold
-  '#7d8590', // neutral grey
-];
+// v0.10.510 (dış skill denetimi D7, mockup onaylı) — SEKİZ yuvalı, TEMA
+// BAŞINA adımlanmış, validator'dan geçmiş seri paleti. Eski on sabit renk
+// tema tokenlarıyla çakışıyordu (koyu temada seri yeşili = --ok, altın =
+// --warn), renk körlüğünde turuncu↔yeşil ΔE 3.0 idi ve ışıklık bandı
+// dışındaydı. Yuva 1 = Coremetry vurgusu; durum renkleri (--ok/--warn/
+// --err) paletin DIŞINDA. Koyu yüzeyde beş kontrol PASS; açık yüzeylerde
+// üç rengin kontrastı 3:1 altı (validator WARN) — karşılığı görünür
+// lejant/tooltip (≥2 serili her grafik taşır). Koyulaştırılmış varyant
+// denendi: renk körlüğü ayrımı 8'in altına iniyordu, reddedildi.
+export type ChartTheme = 'dark' | 'light' | 'redhat';
+export const SERIES_PALETTES: Record<ChartTheme, readonly string[]> = {
+  dark:   ['#388bfd', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'],
+  light:  ['#0969da', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'],
+  redhat: ['#0066cc', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'],
+};
+export const SERIES_SLOTS = 8;
 
-// seriesColor — FNV-1a hash on the series label, then mod by
-// palette length. Deterministic so the same label always hits
-// the same colour; uses a hash (rather than first-come-first-
-// assigned) so two charts that share series-set order still
-// get a consistent mapping.
-export function seriesColor(label: string): string {
+// chartTheme — <html data-theme>'den; yalnız light/redhat token setini
+// değiştirir (globals.css), yokluk/dark = koyu tokenlar. Canvas var()
+// okuyamadığı için palet burada çözülür; tema değişince grafikler
+// useThemeTick ile yeniden kurulur.
+export function chartTheme(): ChartTheme {
+  if (typeof document === 'undefined') return 'dark';
+  const t = document.documentElement.getAttribute('data-theme');
+  return t === 'light' || t === 'redhat' ? t : 'dark';
+}
+
+export function seriesPalette(theme: ChartTheme = chartTheme()): readonly string[] {
+  return SERIES_PALETTES[theme];
+}
+
+function fnv1a(label: string): number {
   let h = 2166136261;
   for (let i = 0; i < label.length; i++) {
     h ^= label.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  return PALETTE[Math.abs(h) % PALETTE.length];
+  return Math.abs(h);
+}
+
+// preferredSlot — adın tercih ettiği yuva (hash mod 8): aynı ad her
+// panelde aynı yuvayı İSTER; panel dolduysa sıradaki boş yuvayı alır.
+export function preferredSlot(label: string): number {
+  return fnv1a(label) % SERIES_SLOTS;
+}
+
+// seriesColor — panel bağlamı OLMAYAN yerler için (flame düğümü, komşu
+// servis, harita halkası): tercih edilen yuvanın rengi, tema-farkında.
+// Deterministic so the same label always hits the same colour.
+export function seriesColor(label: string): string {
+  return seriesPalette()[preferredSlot(label)];
+}
+
+// assignSeriesSlots — v0.10.510 SAF: bir panelin SIRALI seri etiketlerine
+// yuva atar. Kural: her etiket tercih ettiği yuvayı (hash mod 8) alır;
+// doluysa sıradaki boş yuva. `pinned` (önceki atama) verilirse o
+// etiketler önce ve aynen yerleşir — süzgeç seri sayısını değiştirdiğinde
+// kalanlar yeniden BOYANMAZ (renk varlığı izler, sırayı değil). Sekizden
+// fazla seri: dokuzuncudan itibaren yuvalar dolaşır (çakışma kaçınılmaz;
+// çağıran "diğer"e katlamalı — LogsHistogram bunu yapar).
+export function assignSeriesSlots(labels: readonly string[], pinned?: ReadonlyMap<string, number>): Map<string, number> {
+  const out = new Map<string, number>();
+  const taken = new Set<number>();
+  const place = (label: string, want: number) => {
+    let s = want % SERIES_SLOTS;
+    for (let k = 0; k < SERIES_SLOTS && taken.has(s); k++) s = (s + 1) % SERIES_SLOTS;
+    if (taken.size >= SERIES_SLOTS) s = want % SERIES_SLOTS; // dolaşım: 9. seri
+    out.set(label, s);
+    taken.add(s);
+  };
+  if (pinned) {
+    for (const l of labels) {
+      const p = pinned.get(l);
+      if (p !== undefined && !out.has(l) && !taken.has(p % SERIES_SLOTS)) place(l, p);
+    }
+  }
+  for (const l of labels) {
+    if (!out.has(l)) place(l, preferredSlot(l));
+  }
+  return out;
+}
+
+// seriesColorsFor — panel bağlamlı renkler: etiket → renk (tema-farkında).
+export function seriesColorsFor(labels: readonly string[], pinned?: ReadonlyMap<string, number>, theme: ChartTheme = chartTheme()): Map<string, string> {
+  const pal = seriesPalette(theme);
+  const slots = assignSeriesSlots(labels, pinned);
+  const out = new Map<string, string>();
+  for (const [l, s] of slots) out.set(l, pal[s]);
+  return out;
 }
 
 // fmtXTicks — shared time-axis label formatter for uPlot charts. Takes the

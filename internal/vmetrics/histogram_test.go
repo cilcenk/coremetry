@@ -898,8 +898,8 @@ func TestQueryPromQLRangeForwardsMetricsQLVerbatim(t *testing.T) {
 func TestQueryPromQLRangeShapeMapping(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[
-			{"metric":{"__name__":"m","pod":"a"},"values":[[1700000000,"1.5"],[1700000060,"NaN"],[1700000120,"2.5"]]},
-			{"metric":{},"values":[[1700000000,"9"]]}
+			{"metric":{"__name__":"m","pod":"a"},"values":[[1700000060,"1.5"],[1700000120,"NaN"],[1700000180,"2.5"]]},
+			{"metric":{},"values":[[1700000060,"9"]]}
 		]}}`))
 	}))
 	defer srv.Close()
@@ -927,8 +927,9 @@ func TestQueryPromQLRangeShapeMapping(t *testing.T) {
 	if len(out[0].Points) != 2 {
 		t.Fatalf("points = %+v, want the NaN dropped and the series kept", out[0].Points)
 	}
+	// v0.10.504 (A6) — VM örneği t=from+60 kova (from, from+60] → başlangıç from.
 	if out[0].Points[0].Time != from.UnixNano() {
-		t.Fatalf("time = %d, want %d (unix nanos)", out[0].Points[0].Time, from.UnixNano())
+		t.Fatalf("time = %d, want %d (unix nanos, bucket start = t − step)", out[0].Points[0].Time, from.UnixNano())
 	}
 	if out[0].Points[1].Value != 2.5 {
 		t.Fatalf("value = %v", out[0].Points[1].Value)
@@ -1080,7 +1081,7 @@ func TestQueryMetricNotedSilentWhenBucketsExist(t *testing.T) {
 			t.Errorf("percentile did not translate to histogram_quantile: %s", r.URL.Query().Get("query"))
 		}
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[
-			{"metric":{"pod":"a"},"values":[[1700000000,"0.42"]]}
+			{"metric":{"pod":"a"},"values":[[1700000060,"0.42"]]}
 		]}}`))
 	}))
 	defer srv.Close()

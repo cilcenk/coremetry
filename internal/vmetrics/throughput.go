@@ -94,6 +94,7 @@ func (s *Service) runRangeQuery(ctx context.Context, cfg Settings, q string, f c
 		return nil, err
 	}
 	out := make([]chstore.SpanMetricSeries, 0, len(series))
+	startSec := float64(f.From.Unix())
 	for _, sr := range series {
 		row := chstore.SpanMetricSeries{GroupKey: seriesGroupKey(f.GroupBy, sr.Metric)}
 		for _, raw := range sr.Values {
@@ -103,15 +104,43 @@ func (s *Service) runRangeQuery(ctx context.Context, cfg Settings, q string, f c
 				// A gap renders as a gap; a 0 renders as a measurement.
 				continue
 			}
+			// v0.10.504 (dış denetim A6) — kova BAŞLANGICI: VM örneği t'yi
+			// (t−step, t] için verir; CH serileri kova başlangıcıyla damgalı.
+			// Kaydırma BURADA bir kez; tüketicilerdeki üç telafi kaldırıldı.
+			t := bucketStartNs(ts, step)
+			if atRequestStart(ts, startSec) {
+				continue // start'a damgalı ilk örnek = pencerenin ÖNÜNDEKİ kısmi kova
+			}
 			row.Points = append(row.Points, chstore.SpanMetricPoint{
 				// SpanMetricPoint.Time is unix NANOS (bucket start).
-				Time:  int64(ts * 1e9),
+				Time:  t,
 				Value: v,
 			})
 		}
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+// bucketStartNs — v0.10.504 (dış skill denetimi A6): Prometheus/VM
+// `query_range` her örneği değerlendirme anına, yani kovanın SONUNA
+// damgalar (`rate(x[step])` t'de (t−step, t] penceresini anlatır). CH
+// serileri (spanmetric/metric_points) kovayı BAŞLANGICIYLA damgalar;
+// Explore, endpoints, hosts, capacity aynı SpanMetricPoint şeklini okur.
+// Eskiden üç tüketici kendi başına `t − step` yapıyor, ötekilerde x
+// ekseni bir adım kayıyordu (7 g'de ~34 dk). SAF; bucket_start_test.go.
+func bucketStartNs(tsSec float64, stepSec int) int64 {
+	return int64(tsSec*1e9) - int64(stepSec)*int64(time.Second)
+}
+
+// atRequestStart — `query_range` ilk örneğini tam `start`a damgalar; o örnek
+// (start−step, start] kovasıdır, yani pencerenin ÖNÜ. Yalnız o düşer —
+// pencereye göre "t < from" kuralı değil: sabit damgalı fixture'lar
+// şimdi-göreli pencerelerle de yaşar, gerçek istekte start'taki örnek
+// daima tam start'tadır (promTime saniye çözünürlüğü). SAF.
+func atRequestStart(tsSec, startSec float64) bool {
+	d := tsSec - startSec
+	return d > -1e-3 && d < 1e-3
 }
 
 // rateRollup validates the mode the two rate methods accept.

@@ -143,9 +143,10 @@ func TestBuildHostDetailMetricFiltersHostAndShiftsVMMinutes(t *testing.T) {
 				{GroupKey: []string{"host-a", "svc-x"}, Points: []chstore.SpanMetricPoint{pt(to, 100)}},
 			}, nil
 		}
-		// trend: service-only grouping, end-stamped buckets
-		m1 := to.Add(-9 * time.Minute) // bucket END → minute -10
-		m2 := to.Add(-8 * time.Minute)
+		// trend: service-only grouping. v0.10.504 (A6) — kaynak artık kova
+		// BAŞLANGICINI damgalar (vmetrics bucketStartNs); burada kaydırma yok.
+		m1 := to.Add(-10 * time.Minute)
+		m2 := to.Add(-9 * time.Minute)
 		if q.Name == "jvm.cpu.recent_utilization" {
 			return []chstore.SpanMetricSeries{{GroupKey: []string{"svc-x"}, Points: []chstore.SpanMetricPoint{pt(m1, 0.4), pt(m2, 0.2)}}}, nil
 		}
@@ -166,7 +167,7 @@ func TestBuildHostDetailMetricFiltersHostAndShiftsVMMinutes(t *testing.T) {
 	if len(d.Trend) != 2 {
 		t.Fatalf("trend points = %d, want 2: %+v", len(d.Trend), d.Trend)
 	}
-	wantFirst := to.Add(-10 * time.Minute).Unix() // end-stamp shifted back one step
+	wantFirst := to.Add(-10 * time.Minute).Unix() // kova başlangıcı olduğu gibi
 	if d.Trend[0].Bucket != wantFirst || d.Trend[0].CPUPct != 40 || d.Trend[0].MemBytes != 100 {
 		t.Fatalf("trend[0] = %+v, want bucket %d cpu 40 mem 100", d.Trend[0], wantFirst)
 	}

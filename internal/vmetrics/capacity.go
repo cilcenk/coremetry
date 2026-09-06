@@ -202,7 +202,10 @@ func (s *Service) UsageTrend(ctx context.Context, usageMetric, attrKey string, w
 		k := chstore.CapacityTrendKey(inst, capacitySubkeyFromTuple(ser.GroupKey))
 		for _, p := range ser.Points {
 			out[k] = append(out[k], chstore.CapacityTrendPoint{
-				TSec:  p.Time/int64(time.Second) - capacityTrendStepSec,
+				// v0.10.504 (A6) — kova başlangıcı artık decode'da
+				// (bucketStartNs); buradaki `− capacityTrendStepSec` telafisi
+				// kalktı (promStep adımı genişlettiğinde yanlıştı da).
+				TSec:  p.Time / int64(time.Second),
 				Usage: p.Value,
 			})
 		}

@@ -306,18 +306,15 @@ func buildHostDetailMetric(ctx context.Context, src metricSource, host string, f
 
 // hostTrendSamples — per-service minute buckets: cpu = avg over the
 // minute, mem = last in the minute (the ClickHouse trend's avgIf /
-// argMaxIf pair). VictoriaMetrics stamps a bucket at its END (v0.10.337
-// lesson), so the minute is taken from `t - step` there.
+// argMaxIf pair). v0.10.504 (dış denetim A6) — VictoriaMetrics'in kova-
+// sonu damgası artık decode'da başlangıca çevriliyor (vmetrics
+// bucketStartNs); buradaki v0.10.337 `t − step` telafisi kalktı — iki
+// kaynak aynı damgayı taşır.
 func hostTrendSamples(ctx context.Context, src metricSource, host string, from, to time.Time) ([]chstore.HostTrendSample, error) {
 	const step = 60
 	flt := hostFilter(host)
-	endStamped := src.Name() == metricSourceVM
 	minuteOf := func(p chstore.SpanMetricPoint) int64 {
-		ns := p.Time
-		if endStamped {
-			ns -= int64(step) * int64(time.Second)
-		}
-		return ns / int64(time.Minute)
+		return p.Time / int64(time.Minute)
 	}
 	byKey := map[[2]any]*chstore.HostTrendSample{}
 	var order [][2]any

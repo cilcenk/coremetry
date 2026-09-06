@@ -21,6 +21,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -339,9 +340,11 @@ func TestQueryMetricCountRateHitsQueryRangeWithTheCountArm(t *testing.T) {
 		t.Fatalf("points not decoded: %+v", out[0].Points)
 	}
 	// Time is unix NANOS. A seconds value here renders every point at the
-	// epoch and the chart looks empty.
-	if out[0].Points[0].Time != 1_700_000_000*int64(time.Second) {
-		t.Errorf("point time is not unix nanos: %d", out[0].Points[0].Time)
+	// epoch and the chart looks empty. v0.10.504 (A6) — VM'in kova-sonu
+	// damgası (örnek t=to) kova BAŞLANGICINA (to − step) çevrilir.
+	stepSec, _ := strconv.Atoi(strings.TrimSuffix(gotStep, "s"))
+	if want := (1_700_000_000 - int64(stepSec)) * int64(time.Second); out[0].Points[0].Time != want {
+		t.Errorf("point time = %d, want bucket start %d (unix nanos, t − step)", out[0].Points[0].Time, want)
 	}
 }
 

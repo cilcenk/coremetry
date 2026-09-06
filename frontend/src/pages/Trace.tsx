@@ -1,4 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { TabStrip } from '@/components/ui/TabStrip'; // v0.10.457 (D5 dilim B)
 import { useEscLayer } from '@/lib/escLayer';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -564,22 +565,18 @@ function TraceDetailInner() {
             {/* Trace vs Logs (Uptrace-style) — uses the shared
                 .tab-strip pattern so it visually matches Settings,
                 Exceptions inbox, and Status Page admin tabs. */}
-            <div className="tab-strip" style={{ marginBottom: 10 }}>
-              <TabBtn active={tab === 'trace'} onClick={() => setTab('trace')}>
-                Trace <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{spans.length}</span>
-              </TabBtn>
-              <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')}>
-                {/* v0.8.407 — count covers ES logs + span-event rows once
-                    fetched; before the lazy ES fetch a ● hints that the
-                    trace already carries log-like span events (zero-cost
-                    signal — no ES query fires until the tab opens). */}
-                Logs {logs
-                  ? <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{logs.length + eventRows.length}</span>
-                  : eventRows.length > 0
-                    ? <span style={{ color: 'var(--text3)', marginLeft: 4 }} title={`${eventRows.length} span event(s) on this trace`}>●</span>
-                    : null}
-              </TabBtn>
-            </div>
+            <TabStrip ariaLabel="Trace görünümü" value={tab} onChange={setTab} style={{ marginBottom: 10 }} tabs={[
+              { key: 'trace', label: <>Trace <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{spans.length}</span></> },
+              // v0.8.407 — count covers ES logs + span-event rows once fetched;
+              // before the lazy ES fetch a ● hints that the trace already
+              // carries log-like span events (zero-cost signal — no ES query
+              // fires until the tab opens).
+              { key: 'logs', label: <>Logs {logs
+                ? <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{logs.length + eventRows.length}</span>
+                : eventRows.length > 0
+                  ? <span style={{ color: 'var(--text3)', marginLeft: 4 }} title={`${eventRows.length} span event(s) on this trace`}>●</span>
+                  : null}</> },
+            ]} />
 
             {tab === 'trace' && (
               <>
@@ -750,14 +747,6 @@ function SpanFilterBar({ spans, value, onChange, critCount, critFocus, onCritFoc
         );
       })()}
     </div>
-  );
-}
-
-function TabBtn({ active, onClick, children }: {
-  active: boolean; onClick: () => void; children: React.ReactNode;
-}) {
-  return (
-    <button onClick={onClick} className={active ? 'active' : ''}>{children}</button>
   );
 }
 

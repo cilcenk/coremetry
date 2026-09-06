@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { TabStrip } from '@/components/ui/TabStrip'; // v0.10.457 (D5 dilim B)
 import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
@@ -712,21 +713,12 @@ export default function ClustersPage() {
 
             {/* v0.9.8 — sekme şeridi (OpenShift konsolu tarzı). Sayaçlar
                 yalnız veri yüklendiyse — sayaç için önden fetch YOK. */}
-            <div className="tab-strip" style={{ marginBottom: 12 }}>
-              <button className={section === 'overview' ? 'active' : ''}
-                onClick={() => setSection('overview')}>Overview</button>
-              <button className={section === 'nodes' ? 'active' : ''}
-                onClick={() => setSection('nodes')}>
-                Nodes{section === 'nodes' && nodeRows.length > 0 ? ` (${nodeRows.length})` : ''}
-              </button>
-              <button className={section === 'namespaces' ? 'active' : ''}
-                onClick={() => setSection('namespaces')}>
-                Namespaces{section === 'namespaces' && nsRows.length > 0 ? ` (${nsRows.length})` : ''}
-              </button>
-              <button className={section === 'pods' ? 'active' : ''}
-                onClick={() => setSection('pods')}>
-                Pods{section === 'pods' && rows.length > 0 ? ` (${rows.length})` : ''}
-              </button>
+            <TabStrip ariaLabel="Cluster bölümleri" value={section} onChange={k => setSection(k)} style={{ marginBottom: 12 }} tabs={[
+              { key: 'overview', label: 'Overview' },
+              { key: 'nodes', label: `Nodes${section === 'nodes' && nodeRows.length > 0 ? ` (${nodeRows.length})` : ''}` },
+              { key: 'namespaces', label: `Namespaces${section === 'namespaces' && nsRows.length > 0 ? ` (${nsRows.length})` : ''}` },
+              { key: 'pods', label: `Pods${section === 'pods' && rows.length > 0 ? ` (${rows.length})` : ''}` },
+            ]}>
               {/* v0.9.34 (F3) — namespace typeahead, sağ hizalı. Seçim
                   ?namespace= yazıp Namespaces (deployments) görünümüne
                   geçer; native select DEĞİL. */}
@@ -742,7 +734,7 @@ export default function ClustersPage() {
                   onPick={ns => setSection('namespaces', p => { p.set('namespace', ns); p.delete('deployment'); })}
                   onClear={() => setSection('namespaces', p => { p.delete('namespace'); p.delete('deployment'); })} />
               </div>
-            </div>
+            </TabStrip>
 
             {detailUnreachable ? (
               <Empty icon="✗" title={`${clusterParam} is unreachable`}>

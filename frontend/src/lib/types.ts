@@ -6961,9 +6961,24 @@ export interface LogPatternGroup {
   services: string[];
   serviceCount: number;
   query: string; // "Ara" — şablondan türetilen tırnaklı AND sorgusu ('' = yok)
+  // v0.10.508 (C6) — yalnız ?baseline=1 ile: önceki eşit pencerenin
+  // örneklemesindeki sayı, oran ve "örneklemede yeni" ipucu.
+  prevCount?: number;
+  ratio?: number;
+  new?: boolean;
+}
+export interface LogPatternsBaseline {
+  fromNs: number;
+  toNs: number;
+  sampled: number;
+  distinct: number;
+  truncated?: boolean;
+  degraded?: boolean;
+  reason?: string;
 }
 export interface LogPatternsResult {
   groups: LogPatternGroup[];
+  baseline?: LogPatternsBaseline; // v0.10.508 (C6)
   sampled: number;
   total: number;
   cap: number;

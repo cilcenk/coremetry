@@ -90,7 +90,7 @@ func TestGetLogsPatterns_GroupsAndSyntaxGate(t *testing.T) {
 
 func TestLogsPatternsKeyAndLimit(t *testing.T) {
 	base := logstore.Filter{Service: "a", Search: "x"}
-	k1 := logsPatternsKey(base, "1", "2", 50, 2000)
+	k1 := logsPatternsKey(base, "1", "2", 50, 2000, false)
 	for _, v := range []struct {
 		name string
 		f    logstore.Filter
@@ -106,11 +106,11 @@ func TestLogsPatternsKeyAndLimit(t *testing.T) {
 		{"from", base, "9", 50},
 		{"limit", base, "1", 100},
 	} {
-		if logsPatternsKey(v.f, v.from, "2", v.lim, 2000) == k1 {
+		if logsPatternsKey(v.f, v.from, "2", v.lim, 2000, false) == k1 {
 			t.Errorf("%s anahtara girmiyor", v.name)
 		}
 	}
-	if !strings.HasPrefix(k1, "logs-patterns:v2:") {
+	if !strings.HasPrefix(k1, "logs-patterns:v3:") {
 		t.Errorf("anahtar öneki %q", k1)
 	}
 	for _, tc := range []struct{ want, rung int }{{0, 50}, {1, 20}, {20, 20}, {21, 50}, {50, 50}, {51, 100}, {100, 100}, {999, 100}} {
@@ -128,7 +128,7 @@ func TestLogsPatternsSampleRungAndKey(t *testing.T) {
 		}
 	}
 	base := logstore.Filter{Service: "checkout"}
-	if logsPatternsKey(base, "1", "2", 20, 500) == logsPatternsKey(base, "1", "2", 20, 2000) {
+	if logsPatternsKey(base, "1", "2", 20, 500, false) == logsPatternsKey(base, "1", "2", 20, 2000, false) {
 		t.Fatal("örnek tavanı anahtarı ayırmalı")
 	}
 }

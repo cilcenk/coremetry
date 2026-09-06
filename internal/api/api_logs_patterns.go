@@ -56,11 +56,27 @@ func logsPatternsSample(want int) int {
 	return logstore.PatternsSampleCap
 }
 
-func logsPatternsKey(f logstore.Filter, fromRaw, toRaw string, limit, sample int) string {
-	return fmt.Sprintf("logs-patterns:v2:svc=%s:clu=%s:env=%s:sev=%d:trace=%s:span=%s:ht=%t:from=%s:to=%s:q=%s:lim=%d:smp=%d",
+func logsPatternsKey(f logstore.Filter, fromRaw, toRaw string, limit, sample int, baseline bool) string {
+	return fmt.Sprintf("logs-patterns:v3:svc=%s:clu=%s:env=%s:sev=%d:trace=%s:span=%s:ht=%t:from=%s:to=%s:q=%s:lim=%d:smp=%d:base=%t",
 		f.Service, f.Cluster, f.Env, f.SeverityMin, f.TraceID, f.SpanID, f.HasTrace,
-		fromRaw, toRaw, f.Search, limit, sample)
+		fromRaw, toRaw, f.Search, limit, sample, baseline)
 }
+
+// logsPatternsBaselineWindow — v0.10.508 (C6) SAF: tabanın penceresi =
+// hemen önceki EŞİT uzunluk ([from−(to−from), from)). Sıfır/negatif
+// pencerede ok=false (taban yok).
+func logsPatternsBaselineWindow(from, to time.Time) (bFrom, bTo time.Time, ok bool) {
+	d := to.Sub(from)
+	if d <= 0 {
+		return time.Time{}, time.Time{}, false
+	}
+	return from.Add(-d), from, true
+}
+
+// logsPatternsBaselineSample — taban örneklemesi TEK ES sayfası (500):
+// mevcut pencerenin örneklemesi 2000'e çıksa da taban 500'de kalır (ES
+// maliyet disiplini: Trend düğmesi bir ek sayfa, dört değil).
+const logsPatternsBaselineSample = 500
 
 func (s *Server) getLogsPatterns(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -86,8 +102,9 @@ func (s *Server) getLogsPatterns(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := logsPatternsLimit(parseInt(q.Get("limit"), 0))
 	sample := logsPatternsSample(parseInt(q.Get("sample"), 0))                       // v0.10.452
+	baseline := q.Get("baseline") == "1"                                             // v0.10.508 (C6) — Trend: önceki pencere örneklemesi
 	keyFrom, keyTo := snapLogsWindow(&f, q.Get("from"), q.Get("to"), 30*time.Second) // v0.10.446 (A6-V2: TTL kadar; varsayılan pencere de anahtara girer)
-	key := logsPatternsKey(f, keyFrom, keyTo, limit, sample)
+	key := logsPatternsKey(f, keyFrom, keyTo, limit, sample, baseline)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		tctx, cancel := context.WithTimeout(ctx, logsPatternsBudget)
 		defer cancel()
@@ -107,6 +124,28 @@ func (s *Server) getLogsPatterns(w http.ResponseWriter, r *http.Request) {
 		}
 		if res.Groups == nil {
 			res.Groups = []logstore.SignatureGroup{}
+		}
+		// v0.10.508 (C6) — taban: hemen önceki eşit pencere, aynı süzgeç, tek
+		// sayfa; hash ile birleşir. Okunamazsa gruplar tabansız kalır ve zarf
+		// degraded der (yokluk sıfır değil). Tam grup listesi (limit yerine
+		// patternsMaxGroups) — mevcut top-N'in tabanı kesilmiş listede
+		// "yok" görünmesin.
+		if baseline {
+			if bFrom, bTo, ok := logsPatternsBaselineWindow(f.From, f.To); ok {
+				bf := f
+				bf.From, bf.To = bFrom, bTo
+				bctx, bcancel := context.WithTimeout(ctx, logsPatternsBudget)
+				base, berr := logstore.GroupBySignatureN(bctx, s.logs, bf, logstore.PatternsMaxGroups, logsPatternsBaselineSample)
+				bcancel()
+				res.Baseline = &logstore.PatternsBaseline{FromNs: bFrom.UnixNano(), ToNs: bTo.UnixNano()}
+				if berr != nil {
+					log.Printf("[logs] patterns baseline degraded (backend=%s, svc=%q): %v", s.logs.Backend(), f.Service, berr)
+					res.Baseline.Degraded, res.Baseline.Reason = true, "baseline sample failed"
+				} else {
+					res.Baseline.Sampled, res.Baseline.Distinct, res.Baseline.Truncated = base.Sampled, base.Distinct, base.Truncated
+					logstore.JoinPatternBaseline(res, base)
+				}
+			}
 		}
 		return res, nil
 	})

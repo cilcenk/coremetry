@@ -1023,7 +1023,7 @@ export const api = {
   // for ClickHouse (shape is fixed); ES backend returns the
   // mapping leaves. Server caches 60s.
   // v0.10.297 — /api/logs/patterns: /api/logs filtre kümesi + limit (20/50/100).
-  logsPatterns: (params: LogsParams & { limit?: number; sample?: number }, signal?: AbortSignal) => // sample (v0.10.452): 500 | 2000
+  logsPatterns: (params: LogsParams & { limit?: number; sample?: number; baseline?: 1 }, signal?: AbortSignal) => // sample (v0.10.452): 500 | 2000; baseline (v0.10.508 C6): önceki pencere örneklemesi
     get<LogPatternsResult>(`/api/logs/patterns?${qs(params)}`, signal),
   // v0.10.310 — /api/logs/templates: Drain kalıcı şablonları (+ türetilmiş
   // "Ara" sorgusu). Sunucu 30 s cache; yalnız Şablonlar sekmesi açıkken.

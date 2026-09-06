@@ -255,6 +255,8 @@ type guidedRoute struct {
 	// v0.10.463 (D1, find_entity.go) — liste sorusu / sorulan ifade (aday turu).
 	FindList  bool
 	FindQuery string
+	// v0.10.465 (D2, family_traces.go) — yalnız hatalı trace'ler (yavaş değil).
+	TraceErrorsOnly bool
 }
 
 // normalizeGuidedMsg lowercases for matching. Go's ToLower maps the
@@ -1026,6 +1028,12 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 		}
 		return guidedRoute{Intent: guidedTraceSearch, Service: tsvc, Env: env, SearchText: frag, SearchSQL: isSQL}
 	}
+	// v0.10.465 (D2) — "… hatalı/yavaş trace'ler(i getir)": trace kökü + hata/yavaş
+	// → aile/çoklu/tek servis trace LİSTESİ (family_traces.go). Kıyas ve aile
+	// sağlık dallarından ÖNCE: trace kökü olmayan "mobile bff hataları" oraya kalır.
+	if r, ok := routeFamilyTraces(msg, toks, svc, env, services, envs, ctxService); ok {
+		return r
+	}
 	// v0.9.422 (CoSRE fikir #7) — çoklu tam-ad kıyası: soru 2+ canlı
 	// servisi ADIYLA anıyor ve sağlık/hata/kıyas şekliyse familyHealth
 	// yan-yana RED karşılaştırması zaten işi yapar. Tek-ad çözümü
@@ -1612,6 +1620,8 @@ func (s *Server) runGuidedRoute(ctx context.Context, emit func(string, any), rou
 		evidence, sources, err = s.guidedPairBundle(ctx, emit, &route, from, to, rangeS)
 	case guidedTraceSearch: // v0.10.436 (D2b)
 		evidence, sources, err = s.guidedTraceSearchBundle(ctx, emit, &route, from, to, rangeS)
+	case guidedFamilyTraces: // v0.10.465 (D2)
+		evidence, sources, err = s.guidedFamilyTracesBundle(ctx, emit, &route, from, to, rangeS)
 	case guidedWindowCompare: // v0.10.437 (D6)
 		evidence, sources, err = s.guidedWindowCompareBundle(ctx, emit, &route)
 	case guidedCallPeriod: // v0.10.438 (D3)

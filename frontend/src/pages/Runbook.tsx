@@ -1,4 +1,5 @@
 import { Suspense, useEffect, useState } from 'react';
+import { TabStrip as UiTabStrip } from '@/components/ui/TabStrip'; // v0.10.456 (D5) — sayfanın yerel TabStrip sarmalayıcısıyla ad çakışmasın
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Hand, Search, Globe, Code, SquareTerminal, Play, GripVertical, X,
@@ -389,18 +390,11 @@ function TabStrip({ tab, onChange, stepCount }: {
     { key: 'audit', label: 'Audit Logs' },
   ];
   return (
-    <div className="tab-strip" style={{ marginBottom: 16 }}>
-      {items.map(it => (
-        <button key={it.key} type="button"
-          className={tab === it.key ? 'active' : undefined}
-          onClick={() => onChange(it.key)}>
-          {it.label}
-          {it.hint && (
-            <span className="badge b-gray" style={{ marginLeft: 6, padding: '0 6px' }}>{it.hint}</span>
-          )}
-        </button>
-      ))}
-    </div>
+    <UiTabStrip ariaLabel="Runbook sekmeleri" value={tab} onChange={onChange} style={{ marginBottom: 16 }}
+      tabs={items.map(it => ({
+        key: it.key,
+        label: <>{it.label}{it.hint && <span className="badge b-gray" style={{ marginLeft: 6, padding: '0 6px' }}>{it.hint}</span>}</>,
+      }))} />
   );
 }
 

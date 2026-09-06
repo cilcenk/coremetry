@@ -24,6 +24,8 @@ export { Chip } from './Chip';
 export type { ChipProps } from './Chip';
 
 export { DisclosureButton } from './DisclosureButton';
+export { TabStrip } from './TabStrip';
+export type { TabItem } from './TabStrip';
 export type { DisclosureButtonProps } from './DisclosureButton';
 
 export { Card } from './Card';

@@ -1,4 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { TabStrip as UiTabStrip } from '@/components/ui/TabStrip'; // v0.10.456 (D5) — sayfanın yerel TabStrip sarmalayıcısıyla ad çakışmasın
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { navHref } from '@/lib/navHref';
 import { encodeRange } from '@/lib/urlState';
@@ -800,19 +801,8 @@ function TabStrip({ tab, onChange, opCount }: {
   // stays pinned to the top of the #main scroll viewport while the body
   // scrolls under it, with the page bg masking the content behind it.
   return (
-    <div className="tab-strip svc-tabs">
-      {items.map(it => {
-        const active = tab === it.key;
-        return (
-          <button key={it.key} type="button"
-            className={active ? 'active' : ''}
-            onClick={() => onChange(it.key)}>
-            {it.label}
-            {it.hint && <span className="tab-count">{it.hint}</span>}
-          </button>
-        );
-      })}
-    </div>
+    <UiTabStrip ariaLabel="Servis sekmeleri" className="svc-tabs" value={tab} onChange={onChange}
+      tabs={items.map(it => ({ key: it.key, label: <>{it.label}{it.hint && <span className="tab-count">{it.hint}</span>}</> }))} />
   );
 }
 

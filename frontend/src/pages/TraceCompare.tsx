@@ -1,4 +1,5 @@
 import { Suspense, useMemo, useState } from 'react';
+import { TabStrip } from '@/components/ui/TabStrip'; // v0.10.456 (D5)
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
@@ -147,16 +148,8 @@ function Inner() {
 
         {b && (
           <>
-            <div className="tab-strip" style={{ marginBottom: 10 }}>
-              <button onClick={() => setTab('split')}
-                      className={tab === 'split' ? 'active' : ''}>
-                Split waterfall
-              </button>
-              <button onClick={() => setTab('diff')}
-                      className={tab === 'diff' ? 'active' : ''}>
-                Aligned diff
-              </button>
-            </div>
+            <TabStrip ariaLabel="Compare view" value={tab} onChange={setTab} style={{ marginBottom: 10 }}
+              tabs={[{ key: 'split', label: 'Split waterfall' }, { key: 'diff', label: 'Aligned diff' }]} />
 
             {/* Split ızgarası: `.grid-2` (D8'in paylaşılan sınıfı) ≤640px'te
                 tek kolona düşüyor — iki 50% kolon 390px'lik bir telefonda

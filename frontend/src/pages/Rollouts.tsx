@@ -15,6 +15,7 @@
 // Koşu durumu (runs) admin ucu: viewer'da hiç sorulmaz (403 döngüsü olmasın).
 // Satır çekmecesi + health verdict + tekil `/api/rollout` istemcisi Faz 4b.
 import { useEffect, useMemo, useState } from 'react';
+import { TabStrip } from '@/components/ui/TabStrip'; // v0.10.456 (D5)
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
@@ -123,10 +124,8 @@ export default function RolloutsPage() {
     <>
       <Topbar title="Rollouts" range={range} onRangeChange={setRange} />
       <PageShell>
-        <div className="tab-strip" style={{ marginBottom: 10 }}>
-          <button type="button" className={tab === 'live' ? 'active' : ''} onClick={() => setParam('tab', '')}>Canlı</button>
-          <button type="button" className={tab === 'stats' ? 'active' : ''} onClick={() => setParam('tab', 'stats')}>Toplu</button>
-        </div>
+        <TabStrip ariaLabel="Rollout görünümü" value={tab} onChange={k => setParam('tab', k === 'live' ? '' : k)} style={{ marginBottom: 10 }}
+          tabs={[{ key: 'live', label: 'Canlı' }, { key: 'stats', label: 'Toplu' }]} />
         <div className="controls" style={{ marginBottom: 12, gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text3)' }}>
             Cluster

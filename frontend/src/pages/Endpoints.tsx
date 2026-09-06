@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { TabStrip } from '@/components/ui/TabStrip'; // v0.10.456 (D5)
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Zap, ChevronRight, ChevronDown } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
@@ -529,18 +530,10 @@ export default function EndpointsPage() {
             incomplete truth. Two tabs, one MV: `name` and `kind` were
             already dimensions on it, they simply never reached the
             projection. */}
-        <div className="tab-strip" style={{ marginBottom: 10, fontSize: 12 }}>
-          <button className={entry === 'http' ? 'active' : ''}
-            onClick={() => setEntry('http')}
-            title="Inbound requests carrying an http.route — the table as it has always been.">
-            HTTP
-          </button>
-          <button className={entry === 'rpc' ? 'active' : ''}
-            onClick={() => setEntry('rpc')}
-            title="Inbound spans WITHOUT an http.route: gRPC servers and message consumers, keyed on the span name. Bu sekme span türevlidir (metrikte http_route dışı giriş yok); kaynak kendiliğinden span olur.">
-            RPC &amp; Messaging
-          </button>
-        </div>
+        <TabStrip ariaLabel="Inbound surface" value={entry} onChange={setEntry} style={{ marginBottom: 10, fontSize: 12 }} tabs={[
+          { key: 'http', label: 'HTTP', title: 'Inbound requests carrying an http.route — the table as it has always been.' },
+          { key: 'rpc', label: 'RPC & Messaging', title: 'Inbound spans WITHOUT an http.route: gRPC servers and message consumers, keyed on the span name. Bu sekme span türevlidir (metrikte http_route dışı giriş yok); kaynak kendiliğinden span olur.' },
+        ]} />
         <PageControls sticky>
           <ServicePicker value={service} onChange={setService}
             placeholder="Filter by service…" width={200} />

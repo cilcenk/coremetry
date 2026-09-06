@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { TabStrip } from '@/components/ui/TabStrip'; // v0.10.456 (D5)
 import { rowActivation } from '@/lib/a11y';
 import { Link } from 'react-router-dom';
 import { CopyButton } from './CopyButton';
@@ -552,12 +553,8 @@ function LogRow({
                 and ±50-context actions sit right of the tab strip
                 so they're reachable from either tab. */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-              <div className="tab-strip">
-                <button className={docTab === 'table' ? 'active' : ''}
-                  onClick={e => { e.stopPropagation(); setDocTab('table'); }}>Table</button>
-                <button className={docTab === 'json' ? 'active' : ''}
-                  onClick={e => { e.stopPropagation(); setDocTab('json'); }}>JSON</button>
-              </div>
+              <TabStrip ariaLabel="Log kaydı görünümü" value={docTab} onChange={setDocTab} stopPropagation
+                tabs={[{ key: 'table', label: 'Table' }, { key: 'json', label: 'JSON' }]} />
               <div style={{ flex: 1 }} />
               {onContextOpen && (
                 <Button variant="accent" size="sm"

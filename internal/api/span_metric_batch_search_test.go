@@ -107,12 +107,12 @@ func TestBatchSearchSkipsFastPaths(t *testing.T) {
 // v0.10.484 — Root / Errors bayrakları anahtara girer; ikisi boşken anahtar değişmez.
 func TestSpanMetricBatchKeyFlags(t *testing.T) {
 	aggs := []chstore.SpanMetricAggSpec{{Name: "count", Aggregation: "count"}}
-	base := spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "q"+spanMetricFlagKey(false, false), aggs)
+	base := spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "q", aggs, false, false)
 	if base != spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "q", aggs) {
 		t.Fatal("bayraksız anahtar eski anahtarla aynı olmalı")
 	}
-	root := spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "q"+spanMetricFlagKey(true, false), aggs)
-	errs := spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "q"+spanMetricFlagKey(false, true), aggs)
+	root := spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "q", aggs, true, false)
+	errs := spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "q", aggs, false, true)
 	if root == base || errs == base || root == errs {
 		t.Fatalf("bayraklar anahtarı ayırmalı: base=%s root=%s errs=%s", base, root, errs)
 	}

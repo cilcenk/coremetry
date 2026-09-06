@@ -5356,6 +5356,11 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filters, err := parseFiltersAndDSL(string(body.Filters), body.DSL)
+	if err == nil && body.HasError {
+		// v0.10.489 (Astra #5) — hata bayrağı ÇİP olarak: dar rollup fast-path'i
+		// status_code boyutunu bilir; bool olarak geçseydi ham yola düşerdi.
+		filters = append(filters, chstore.FilterExpr{Key: "status", Op: "=", Values: []string{"error"}})
+	}
 	if err != nil {
 		http.Error(w, "invalid query DSL: "+err.Error(), http.StatusBadRequest)
 		return
@@ -5405,7 +5410,7 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 	// genişliğini artık TAHMİN etmiyor (bar genişliği/gap eşiği için
 	// sözleşme; rollup /api/rollup/red planıyla AYNI kontrat).
 	s.serveCached(w, r, spanMetricBatchKey(body.From, body.To, body.Step, body.MaxDataPoints,
-		body.RateWindow, body.GroupBy, string(body.Filters), body.DSL, body.Search+spanMetricFlagKey(body.RootOnly, body.HasError), specs), 30*time.Second,
+		body.RateWindow, body.GroupBy, string(body.Filters), body.DSL, body.Search, specs, body.RootOnly, body.HasError), 30*time.Second,
 		func(ctx context.Context) (any, error) {
 			series, stepSec, err := s.store.QuerySpanMetricMulti(ctx, f)
 			if err != nil {
@@ -5426,19 +5431,10 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 // would collide, the v0.5.187 rule applied to strings. Fields are hashed
 // individually rather than summarised by count, which is the same rule
 // applied to the set.
-// spanMetricFlagKey — v0.10.484: Root / Errors bayrakları anahtara GİRER
-// (CLAUDE.md: anahtar TÜM girdileri hash'ler; girmeseydi kök-yalnız seri
-// tüm-span serisiyle çapraz zehirlenirdi). search'e eklenen kuyruk: iki
-// bayrak da boşken eski anahtar bayt-bayt aynı kalır.
-func spanMetricFlagKey(rootOnly, hasError bool) string {
-	if !rootOnly && !hasError {
-		return ""
-	}
-	return "\x1froot=" + strconv.FormatBool(rootOnly) + "\x1ferr=" + strconv.FormatBool(hasError)
-}
-
+// v0.10.489 (Astra #11) — bayraklar ayrı alan olarak hash'lenir (search'e
+// gizlenmiş kuyruk yerine); ikisi de boşken anahtar eski anahtarla aynı.
 func spanMetricBatchKey(fromNs, toNs int64, step, maxDataPoints, rateWindow int, groupBy []string,
-	filters, dsl, search string, aggs []chstore.SpanMetricAggSpec) string {
+	filters, dsl, search string, aggs []chstore.SpanMetricAggSpec, flags ...bool) string {
 	h := fnv.New64a()
 	write := func(parts ...string) {
 		for _, p := range parts {
@@ -5456,6 +5452,11 @@ func spanMetricBatchKey(fromNs, toNs int64, step, maxDataPoints, rateWindow int,
 	// "refused" arar ve ilkinin serisini görür. CLAUDE.md sert kısıtı
 	// (v0.5.187 çapraz-zehirlenme) — anahtar TÜM girdileri hash'ler.
 	write("f", filters, "dsl", dsl, "q", search)
+	// v0.10.484/489 — Root / Errors bayrakları (CLAUDE.md: anahtar TÜM girdileri
+	// hash'ler; girmeseydi kök-yalnız seri tüm-span serisiyle çapraz zehirlenirdi).
+	if len(flags) >= 2 && (flags[0] || flags[1]) {
+		write("root", strconv.FormatBool(flags[0]), "err", strconv.FormatBool(flags[1]))
+	}
 	// v0.9.391 — mdp key'de: farklı genişlikteki paneller farklı çözünürlük
 	// ister; key'e girmezse birbirinin çözünürlüğünü zehirler (v0.5.187).
 	write("mdp", strconv.Itoa(maxDataPoints))

@@ -257,7 +257,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// v0.10.478 (Faz 4, F4-1) — SUNUCU BAĞLAM STATE'İ: konuşma başına Redis;
 	// guided varsayılanı + serbest döngü önsözü + tool'lar (set/get/clear_context)
 	// aynı state'i okur; alışveriş sonunda kirliyse yazılır.
-	cst := s.loadChatContext(ctx, req.Context.Conversation)
+	cst := s.loadChatContext(ctx, req.Context.Conversation, len(req.Messages) <= 1) // v0.10.487 — ilk tur köprüyü okumaz
 	ctx = ctxWithChatContext(ctx, cst)
 	defer func() {
 		fctx, fcancel := context.WithTimeout(context.Background(), 2*time.Second)

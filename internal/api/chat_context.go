@@ -12,9 +12,11 @@ package api
 // bağlamı yoksa), serbest döngü prompt'una AKTİF BAĞLAM önsözü, operatöre
 // çip. Kural (Ek A): açık ifade > sohbet bağlamı > ekran bağlamı.
 //
-// Konuşma id'si ilk turda henüz yok (kalıcılık cevaptan sonra id verir);
-// o turlar kullanıcı-düzeyi "_" anahtarına yazılır ve id gelince oradan
-// devralınır.
+// Konuşma id'si ilk turda henüz yok (kalıcılık cevaptan sonra id verir).
+// v0.10.487 (Astra bulgusu #1 — sızıntı): "_" anahtarı YALNIZ id'siz turların
+// köprüsüdür — kısa TTL (10 dk), id gelince oradan devralınır ve SİLİNİR;
+// id'li konuşma "_"e ASLA yazmaz. Yeni bir konuşmanın İLK mesajı (tek mesajlık
+// geçmiş) "_"i okumaz: önceki thread'in çalışma kümesi yeni thread'e sızmaz.
 
 import (
 	"context"
@@ -56,6 +58,9 @@ func (c ChatContext) Empty() bool {
 
 const chatContextTTL = 24 * time.Hour
 
+// chatContextBridgeTTL — v0.10.487: id'siz köprü anahtarının ("_") ömrü.
+const chatContextBridgeTTL = 10 * time.Minute
+
 func chatContextKey(user, conv string) string {
 	if conv == "" {
 		conv = "_"
@@ -68,6 +73,9 @@ type chatContextState struct {
 	user, conv string
 	ctx        ChatContext
 	dirty      bool
+	// bridged — v0.10.487: id'li konuşma bağlamı "_" köprüsünden devraldı;
+	// flush köprüyü siler (başka konuşmaya sızmasın).
+	bridged bool
 }
 
 type chatCtxKey struct{}
@@ -81,9 +89,11 @@ func chatContextFromCtx(ctx context.Context) *chatContextState {
 	return st
 }
 
-// loadChatContext — kullanıcı + konuşma için bağlam (yoksa boş); conv
-// anahtarı boşsa "_" anahtarına düşer (ilk turlar).
-func (s *Server) loadChatContext(ctx context.Context, conv string) *chatContextState {
+// loadChatContext — kullanıcı + konuşma için bağlam (yoksa boş).
+// firstTurn: geçmişte tek mesaj var (yeni konuşmanın ilk turu) — "_" köprüsü
+// OKUNMAZ. conv boş + takip turu → "_"; conv dolu → kendi anahtarı, yoksa "_"
+// köprüsünden devralır (bridged) ve flush köprüyü siler.
+func (s *Server) loadChatContext(ctx context.Context, conv string, firstTurn bool) *chatContextState {
 	user := ""
 	if claims := auth.FromContext(ctx); claims != nil {
 		user = claims.UserID
@@ -92,22 +102,36 @@ func (s *Server) loadChatContext(ctx context.Context, conv string) *chatContextS
 	if user == "" || s.cache == nil {
 		return st
 	}
-	for _, key := range []string{chatContextKey(user, st.conv), chatContextKey(user, "")} {
+	read := func(key string) (ChatContext, bool) {
 		if b, ok, _ := s.cache.Get(ctx, key); ok && len(b) > 0 {
 			var c ChatContext
 			if json.Unmarshal(b, &c) == nil {
-				st.ctx = c
-				return st
+				return c, true
 			}
 		}
-		if st.conv == "" {
-			break
+		return ChatContext{}, false
+	}
+	if st.conv != "" {
+		if c, ok := read(chatContextKey(user, st.conv)); ok {
+			st.ctx = c
+			return st
 		}
+		if c, ok := read(chatContextKey(user, "")); ok {
+			st.ctx, st.bridged, st.dirty = c, true, true
+		}
+		return st
+	}
+	if firstTurn {
+		return st
+	}
+	if c, ok := read(chatContextKey(user, "")); ok {
+		st.ctx = c
 	}
 	return st
 }
 
-// flushChatContext — kirliyse yaz (konuşma anahtarı + "_" anahtarı).
+// flushChatContext — kirliyse yaz: id'li konuşma KENDİ anahtarına (24 s) ve
+// köprüden devraldıysa köprüyü siler; id'siz tur yalnız köprüye (10 dk).
 func (s *Server) flushChatContext(ctx context.Context, st *chatContextState) {
 	if st == nil || !st.dirty || st.user == "" || s.cache == nil {
 		return
@@ -117,8 +141,15 @@ func (s *Server) flushChatContext(ctx context.Context, st *chatContextState) {
 	if err != nil {
 		return
 	}
-	_ = s.cache.Set(ctx, chatContextKey(st.user, st.conv), b, chatContextTTL)
-	_ = s.cache.Set(ctx, chatContextKey(st.user, ""), b, chatContextTTL)
+	if st.conv == "" {
+		_ = s.cache.Set(ctx, chatContextKey(st.user, ""), b, chatContextBridgeTTL)
+	} else {
+		_ = s.cache.Set(ctx, chatContextKey(st.user, st.conv), b, chatContextTTL)
+		if st.bridged {
+			_ = s.cache.Del(ctx, chatContextKey(st.user, ""))
+			st.bridged = false
+		}
+	}
 	st.dirty = false
 }
 

@@ -40,8 +40,9 @@ func TestChatTraceExplainMatchesExplainButton(t *testing.T) {
 	}
 	us := string(u)
 	for _, want := range []string{
-		`system, user := copilot.SystemPromptTrace(), in.User`,
-		`explainCacheKey(system, user, "")`,
+		// v0.10.460 — açıklama isteği Explain ÇEKMECESİNİ açar (tek uygulama).
+		`"open":        href`,
+		`"&aisrc=chat"`,
 		`s.copilotStreamSurface(ctx, "explain-trace:chat", system, user,`,
 		`"evidenceSpanIds": in.Evidence`,
 	} {
@@ -55,6 +56,18 @@ func TestChatTraceExplainMatchesExplainButton(t *testing.T) {
 		}
 	}
 	if !strings.Contains(string(a), `explainCacheKey(copilot.SystemPromptTrace(), in.User, "")`) {
-		t.Fatal("copilotExplainTrace önbellek anahtarı formülü değişti — sohbetle paylaşım bozulur")
+		t.Fatal("copilotExplainTrace önbellek anahtarı formülü değişti")
 	}
+	if !strings.Contains(us, `"chat": true`) && !strings.Contains(mustRead(t, "ai_observability.go"), `"chat": true`) {
+		t.Fatal("aisrc=chat yüzey soneki whitelist'te olmalı (explain-trace:chat)")
+	}
+}
+
+func mustRead(t *testing.T, p string) string {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

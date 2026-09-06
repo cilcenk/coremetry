@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { mergeOpenHref } from '@/lib/openHref'; // v0.10.460
 import { useNavigate } from 'react-router-dom';
 import { Drawer, DrawerSection } from '@/components/ui/Drawer';
 import { CopilotExplain } from '@/components/CopilotExplain';
@@ -232,7 +233,7 @@ function AIDrawerChat({ subject, explainText, spanIds, traceIds }: {
   const navigate = useNavigate(); // v0.10.445 — "sayfasını aç" çekmece sohbetinde de gezer
   const { turns, busy, send, last, showFollowups } = useChatThread({
     explain, seed, subject: subjectParam,
-    onOpen: href => navigate(href),
+    onOpen: href => { const to = mergeOpenHref(href, window.location.pathname, window.location.search); if (to) navigate(to, { replace: true }); }, // v0.10.460
     service: subject.kind === 'service-health' ? subject.id : undefined,
     profile: profile || undefined,
     // persist (v0.10.55, operatör ürün kararı) — çekmece sohbeti artık

@@ -116,10 +116,18 @@ type searchGate struct {
 	Limit  int
 }
 
-// applySearchGate — SAF. hasScope: servis/namespace/cluster verildi mi.
-func applySearchGate(rangeS, limit int, filters []chstore.FilterExpr, hasScope bool, sortDuration, kvh bool) (searchGate, error) {
+const searchWindowScopeChipMax = 24 * 3600
+
+// applySearchGate — SAF. filters: yalnız OPERATÖRÜN attribute süzgeçleri
+// (v0.10.491, Astra #12d: namespace/cluster kapsam çipleri kapıyı tetiklemez —
+// kapsam-yalnız istek 6 s'e kelepçelenmiyordu, ama ham yol olduğu için
+// scopeChips>0 iken 24 s tavanı var). hasScope: servis/namespace/cluster verildi mi.
+func applySearchGate(rangeS, limit int, filters []chstore.FilterExpr, hasScope bool, sortDuration, kvh bool, scopeChips ...int) (searchGate, error) {
 	g := searchGate{RangeS: rangeS, Limit: limit}
 	if len(filters) == 0 {
+		if len(scopeChips) > 0 && scopeChips[0] > 0 && g.RangeS > searchWindowScopeChipMax {
+			g.RangeS, g.Reason = searchWindowScopeChipMax, "namespace/cluster kapsamı ham yol: pencere ≤ 24 saat"
+		}
 		return g, nil
 	}
 	if !hasScope {

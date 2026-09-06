@@ -31,6 +31,11 @@ func TestDetectContextMutation(t *testing.T) {
 		{"loglara bak", "logs"},
 		// kip değil:
 		{"son 1 saatte hata var mı", ""},
+		{"pod restart sayısı nedir", ""}, // v0.10.491 (Astra #8)
+		{"log seviyesi ne", ""},
+		{"logları nasıl indiririm", ""},
+		{"pod'ları göster", "pods"},
+		{"logları", "logs"},
 		{"checkout-service en yavaş trace'ler?", ""},
 		{"bugün hava nasıl", ""},
 	}

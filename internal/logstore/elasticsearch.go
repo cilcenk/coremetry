@@ -1464,6 +1464,11 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		"track_total_hits": esTrackTotalHits(f.SkipTotal), // v0.10.414 — çağıran okumayacaksa false
 		"timeout":          esTimeoutFromEnv("10s"),
 	}
+	if f.LeanSource {
+		// v0.10.500 (A4) — yalnız gövde/zaman/severity: desen örneklemesi
+		// 4 × 500 dokümanı tam _source ile çekiyordu, üçünü okuyordu.
+		searchBody["_source"] = s.leanSourceFields()
+	}
 	if usePIT {
 		// The PIT carries the index + a frozen segment view, so the index
 		// must NOT also appear in the request URL (set below).
@@ -1735,9 +1740,11 @@ func (s *ESStore) searchForward(ctx context.Context, f Filter) (*Page, error) {
 // groupBy=severity does NOT route through here anymore (v0.8.377) —
 // it gets canonical server-side banding via buildSeverityHistogramBody
 // instead of a terms agg on one configured field.
-func (s *ESStore) histogramGroupField(groupBy string) string {
+// v0.10.500 (A2) — yazım çözümlü (es_terms_field.go): çıplak keyword
+// mapping'de `.keyword` yok, agg boş dönüyordu.
+func (s *ESStore) histogramGroupField(ctx context.Context, groupBy string) string {
 	if groupBy == "service" {
-		return s.fields.Service + ".keyword"
+		return s.termsAggField(ctx, s.fields.Service)
 	}
 	return ""
 }
@@ -1878,7 +1885,11 @@ func severityCandidateKeywordFields(severityTx string) []string {
 			continue
 		}
 		seen[c] = struct{}{}
-		out = append(out, c+".keyword")
+		// v0.10.500 (A2) — İKİ yazım: bantlar QUERY tarafı (prefix), text
+		// alanda da çıplak keyword'de de hatasız; unmapped yazım hiçbir
+		// şey eşlemez. Yalnız `.keyword` yönetilen/ECS mapping'de (düz
+		// keyword, alt-alan yok) her şeyi OTHER'a yığıyordu.
+		out = append(out, c, c+".keyword")
 	}
 	return out
 }
@@ -1951,7 +1962,7 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	if bucketSec <= 0 {
 		bucketSec = 30
 	}
-	groupField := s.histogramGroupField(groupBy)
+	groupField := s.histogramGroupField(ctx, groupBy)
 	sevBanded := groupBy == "severity"
 
 	// v0.8.400 — env filter (cached discovery). No flag out of the
@@ -2219,8 +2230,10 @@ func (s *ESStore) CountPatterns(
 		}
 
 		tokenQuery := buildPatternTokenQuery(pat.Tokens, s.fields.Body)
+		// v0.10.500 (A2) — servis agg yazımı çözümlü (cache'li; döngüde
+		// ilk çağrıdan sonra map bakışı).
 		body := patternCountBody(
-			tokenQuery, s.fields.Body, s.fields.Timestamp, s.fields.Service,
+			tokenQuery, s.fields.Body, s.fields.Timestamp, s.termsAggField(ctx, s.fields.Service),
 			baseFrom, curFrom, curEnd, patTimeout)
 		bb, _ := json.Marshal(body)
 		ndjson.Write(bb)
@@ -2379,8 +2392,8 @@ func patternCountBody(tokenQuery, bodyField, tsField, svcField, baseFrom, curFro
 				"aggs": map[string]any{
 					"by_service": map[string]any{
 						"terms": map[string]any{
-							"field": svcField + ".keyword",
-							"size":  5, // v0.5.287 — top-5 services per pattern
+							"field": svcField, // v0.10.500 — çözümlenmiş yazım çağırandan (termsAggField)
+							"size":  5,        // v0.5.287 — top-5 services per pattern
 						},
 					},
 					"sample": map[string]any{

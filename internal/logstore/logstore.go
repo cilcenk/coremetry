@@ -131,6 +131,11 @@ type Filter struct {
 	// de uyar; dönen Page.Total = 0 ve TotalIsLowerBound = false —
 	// "sıfır eşleşme" değil "sayılmadı" (çağıran zaten sormadı).
 	SkipTotal bool
+	// LeanSource (v0.10.500, log arama denetimi A4) — çağıran satırların
+	// yalnız gövde + zaman + severity'sini okuyacak (desen örneklemesi):
+	// ES `_source` includes ile dar çekilir (2000 doküman × tam _source
+	// → üç alan). CH backend'inde etkisiz (zaten yalnız gereken kolonlar).
+	LeanSource bool
 
 	// envField (v0.8.400, ES-internal) — the resolved document field
 	// the Env term filter targets, stamped by ESStore.applyEnvResolution

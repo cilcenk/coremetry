@@ -98,6 +98,7 @@ func GroupBySignatureN(ctx context.Context, st Store, f Filter, limit, sampleCap
 	if limit > patternsMaxGroups {
 		limit = patternsMaxGroups
 	}
+	f.LeanSource = true // v0.10.500 (A4) — örnekleme yalnız body/zaman/severity okur
 	f.Offset, f.Cursor, f.Ascending = 0, "", false
 	f.WantCursor = true
 	type acc struct {

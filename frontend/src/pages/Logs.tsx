@@ -681,7 +681,16 @@ function LogsInner() {
       })
       .catch(() => { setFields([]); setFieldsTotal(undefined); setFieldTypes({}); });
   }, []);
-  const apply = () => { resetPaging(); setFilter(draft); writeUrl(draft, filters); };
+  // v0.10.447 (B3 ikinci yarı, operatör kararı 2026-09-06) — Search her
+  // zaman ARAR: eskiden aynı taslakla tık React'te bail-out ediyor,
+  // aynı parametreler aynı RQ anahtarına düşüp 15 sn staleTime içinde
+  // hiç istek atmıyordu ("Search" düğmesi aramıyordu). Sayaç göreli
+  // pencereyi şimdiye taşır (özel aralıkta refetch); maliyet tık başına
+  // bir sorgu — otomatik aralık yok.
+  const apply = () => {
+    resetPaging(); setFilter(draft); writeUrl(draft, filters);
+    if (range.preset === 'custom') void staticQ.refetch(); else setNowTick(t => t + 1);
+  };
   const reset = () => {
     const empty = { service: '', cluster: '', search: '', severity: 0, traceId: '', spanId: '', hasTrace: false };
     setDraft(empty); setFilter(empty); setFilters([]); resetPaging();

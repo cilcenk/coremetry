@@ -57,6 +57,7 @@ var promptVersionRegistry = map[string]string{
 	"systemRAGChat":           systemRAGChat,
 	"systemChat":              systemChat,
 	"systemChatRoundCap":      systemChatRoundCap,
+	"systemChatAgentLoop":     systemChatAgentLoop, // v0.10.482
 	"systemIntentClassify":    systemIntentClassify,
 	"IntentNoInstructionLine": IntentNoInstructionLine,
 	"systemGeneralChat":       systemGeneralChat,

@@ -83,6 +83,7 @@ func promptRegistry() map[string]promptClass {
 		"IntentClassify": classTurkishNative, // v0.10.172 — JSON çıktı, Türkçe talimat (RCAVerdict emsali)
 		"GeneralChat":    classTurkishNative, // v0.10.194 — none → genel bilgi cevabı (tool'suz)
 		"ChatRoundCap":   classTurkishNative,
+		"ChatAgentLoop":  classTurkishNative, // v0.10.482 — telemetri ajanı çekirdek döngüsü (Ek A, Türkçe/kısa)
 		"ShiftSummary":   classTurkishNative,
 		"AlertNoise":     classTurkishNative,
 		"LogPatterns":    classTurkishNative,
@@ -112,8 +113,8 @@ func promptTexts() map[string]string {
 		"IntentClassify": SystemPromptIntentClassify(),
 		"GeneralChat":    SystemPromptGeneralChat(),
 		"DrawerChat":     SystemPromptDrawerChat(), "Chat": SystemPromptChat(),
-		"ChatRoundCap": SystemPromptChatRoundCap(),
-		"RCAVerdict":   SystemPromptRCAVerdict(), "ServiceAnalysis": SystemPromptServiceAnalysis(),
+		"ChatRoundCap": SystemPromptChatRoundCap(), "ChatAgentLoop": SystemPromptChatAgentLoop(),
+		"RCAVerdict": SystemPromptRCAVerdict(), "ServiceAnalysis": SystemPromptServiceAnalysis(),
 		"RAGChat": SystemPromptRAGChat(), "ShiftSummary": SystemPromptShiftSummary(),
 		"AlertNoise": SystemPromptAlertNoise(), "LogPatterns": SystemPromptLogPatterns(),
 		"Postmortem": SystemPromptPostmortem(), "RunbookUpdate": SystemPromptRunbookUpdate(),

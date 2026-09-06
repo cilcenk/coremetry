@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
@@ -444,7 +445,7 @@ export default function DatabasesPage() {
                   <tbody>
                     {stmtDt.sortedRows.map((r, i) => (
                       <tr key={r.stmtHash ?? i}
-                        onClick={() => openStmt(r)}
+                        {...rowActivation(() => openStmt(r))}
                         title={r.sampleStatement || r.statement}
                         style={{ cursor: r.stmtHash ? 'pointer' : 'default' }}>
                         <td className="mono" style={{ maxWidth: 480, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

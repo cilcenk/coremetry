@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { Link, useNavigate } from 'react-router-dom';
 import { Spinner, Empty } from '@/components/Spinner';
 import { QueryError } from '@/components/QueryError';
@@ -85,7 +86,7 @@ export function RepeatsResult({
               <tbody>
                 {repeatsDt.sortedRows.map((r, i) => (
                   <tr key={`${r.traceId}|${i}`} {...repeatsDt.rowProps(i)}
-                      onClick={() => navigate(traceHref(r.traceId))}
+                      {...rowActivation(() => navigate(traceHref(r.traceId)))}
                       style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' }}>
                     <td>
                       <Link to={traceHref(r.traceId)}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rowActivation } from './a11y';
+import { rowActivation, rowKeyboard } from './a11y';
 
 // v0.10.394 — satır klavye eşdeğeri (dış skill denetimi D3).
 describe('rowActivation', () => {
@@ -27,3 +27,19 @@ describe('rowActivation', () => {
     expect(n).toBe(0);
   });
 });
+
+// v0.10.455 — rowKeyboard: yalnız klavye yarısı (onClick yok), Enter/Space etkinleştirir.
+describe('rowKeyboard', () => {
+  it('carries role/tabIndex/onKeyDown but no onClick', () => {
+    let n = 0;
+    const p = rowKeyboard(() => { n++; }) as Record<string, unknown>;
+    expect(p.role).toBe('button');
+    expect(p.tabIndex).toBe(0);
+    expect(p.onClick).toBeUndefined();
+    const target = {};
+    (p.onKeyDown as (e: unknown) => void)({ key: 'Enter', target, currentTarget: target, preventDefault() {} });
+    (p.onKeyDown as (e: unknown) => void)({ key: 'x', target, currentTarget: target, preventDefault() {} });
+    expect(n).toBe(1);
+  });
+});
+

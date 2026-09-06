@@ -17,6 +17,7 @@
 // the barrel re-exports AnomaliesPage, which would drag the whole
 // Exceptions page into the /inbox chunk.
 import { Fragment, useEffect, useMemo, useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -606,7 +607,7 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                   // (MT4, brokenAffordances kapısı).
                   <Fragment key={p.id}>
                   <tr {...dt.rowProps(i)}
-                      onClick={() => openDetail(p.id)}
+                      {...rowActivation(() => openDetail(p.id))}
                       onKeyDown={(e) => {
                         // Keyboard accessibility — Enter/Space opens the same
                         // Variant-B full-page detail the click does (the
@@ -616,7 +617,7 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                           openDetail(p.id);
                         }
                       }}
-                      tabIndex={0}
+                     
                       role="button"
                       style={{
                         cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 44px',

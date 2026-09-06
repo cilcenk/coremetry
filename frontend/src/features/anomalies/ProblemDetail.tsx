@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { useEscLayer } from '@/lib/escLayer';
 import { Link, useNavigate } from 'react-router-dom';
 import { rolloutEvidenceHref } from '@/lib/rolloutRow';
@@ -626,7 +627,7 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
                     className={isEv ? 'wf-evidence' : undefined}
                     title={isEv ? 'Explain kanıtı — kök neden bu trace üzerinden soruşturuldu' : undefined}
                     style={{ cursor: s.traceId ? 'pointer' : 'default' }}
-                    onClick={() => s.traceId && navigate(traceHref(s.traceId))}>
+                    {...(s.traceId ? rowActivation(() => navigate(traceHref(s.traceId!))) : {})}>
                     <td className="mono" style={{ paddingLeft: 14 }}>
                       <span style={{ color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: 150 }}>
                         {s.traceId ? s.traceId.slice(0, 16) + '…' : '—'}

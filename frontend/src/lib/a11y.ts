@@ -6,6 +6,18 @@
 // odaktayken satırı etkinleştirir.
 import type { KeyboardEvent, MouseEvent } from 'react';
 
+// rowKeyboard — v0.10.455 (D3 dilim 3): yalnız KLAVYE yarısı. Tık işleyicisi
+// olayı okuyan satırlar için (Ctrl/⌘-tık ile farklı davranan lejant/metrik
+// satırları): onClick aynen kalır, Enter/Space düz etkinleştirmeyi çağırır.
+export function rowKeyboard<E extends HTMLElement = HTMLTableRowElement>(onActivate: () => void): {
+  role: 'button';
+  tabIndex: 0;
+  onKeyDown: (e: KeyboardEvent<E>) => void;
+} {
+  const { role, tabIndex, onKeyDown } = rowActivation<E>(onActivate);
+  return { role, tabIndex, onKeyDown };
+}
+
 export function rowActivation<E extends HTMLElement = HTMLTableRowElement>(onActivate: () => void): {
   role: 'button';
   tabIndex: 0;

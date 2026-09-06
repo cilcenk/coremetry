@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -171,7 +172,7 @@ export default function WatchersPage() {
               <tbody>
                 {dt.sortedRows.map((r, i) => (
                   <tr key={r.id} {...dt.rowProps(i)}
-                    onClick={() => openWatcher(r.id)}
+                    {...rowActivation(() => openWatcher(r.id))}
                     style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 38px' }}
                     title="Open fire / notification / resolve history">
                     <td><b>{r.name}</b></td>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { rowKeyboard } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { metricsViewFromParam, metricsViewUrlValue, shouldRedirectLegacyMetric } from './metricsView';
 import { useQuery } from '@tanstack/react-query';
@@ -374,6 +375,7 @@ export default function MetricsPage() {
                       <tbody>
                         {dt.sortedRows.map((m, i) => (
                           <tr key={m.name} {...dt.rowProps(i)}
+                            {...rowKeyboard(() => navigate(metricHref(m)))}
                             // Değiştirici tuşlu tık satırda YOK SAYILIR: ⌘-tık
                             // "yeni sekme" demektir ve satır bir link değil, o
                             // yüzden aynı sekmede gezinmek operatörün istediğinin

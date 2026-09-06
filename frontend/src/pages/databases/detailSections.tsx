@@ -1,4 +1,5 @@
 import { lazy, Suspense, useMemo } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { msSyncKey } from '@/lib/chart/syncNamespace';
 import { Link } from 'react-router-dom';
 import { Turtle } from 'lucide-react';
@@ -444,7 +445,7 @@ export function DatabaseStatementsSection({
             <tbody>
               {dt.sortedRows.map((r, i) => (
                 <tr key={r.stmtHash ?? i}
-                  onClick={() => onOpen(r)}
+                  {...rowActivation(() => onOpen(r))}
                   title={`${r.sampleStatement || r.statement}\n\ncalled by ${r.service}`}
                   style={{ cursor: r.stmtHash ? 'pointer' : 'default' }}>
                   <td className="mono" style={{

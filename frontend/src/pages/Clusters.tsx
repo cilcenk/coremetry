@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { ChartSpline } from 'lucide-react';
@@ -826,7 +827,7 @@ export default function ClustersPage() {
                           {depdt.sortedRows.map(r => (
                             <tr key={r.deployment}
                               className={r.deployment === depFilter ? 'row-selected' : undefined}
-                              onClick={() => setSection('pods', p => p.set('deployment', r.deployment))}
+                              {...rowActivation(() => setSection('pods', p => p.set('deployment', r.deployment)))}
                               title="Open the pod list filtered to this workload"
                               style={{ cursor: 'pointer', ...(depdt.sortedRows.length > 100 ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 33px' } : null) }}>
                               <td className="mono" style={{ fontSize: 12 }}>{r.deployment}</td>
@@ -870,13 +871,13 @@ export default function ClustersPage() {
                             return (
                               <tr key={r.namespace}
                                 className={selected ? 'row-selected' : undefined}
-                                onClick={() => setSection('namespaces', p => {
+                                {...rowActivation(() => setSection('namespaces', p => {
                                   // v0.9.23 — ara kademe: seçim iş yükü
                                   // rollup'unu açar (pods'a atlamaz);
                                   // deployment seçimi pods'a götürür.
                                   if (selected) { p.delete('namespace'); p.delete('deployment'); }
                                   else { p.set('namespace', r.namespace); p.delete('deployment'); }
-                                })}
+                                }))}
                                 title={selected
                                   ? 'Clear the namespace selection'
                                   : 'Show workloads in this namespace'}
@@ -947,7 +948,7 @@ export default function ClustersPage() {
                         <tbody>
                           {dt.sortedRows.map(r => (
                             <tr key={`${r.cluster}|${r.namespace}|${r.pod}`}
-                              onClick={() => openPod(r)}
+                              {...rowActivation(() => openPod(r))}
                               style={{
                                 cursor: 'pointer',
                                 contentVisibility: 'auto',

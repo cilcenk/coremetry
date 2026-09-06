@@ -3467,6 +3467,29 @@ func traceSortRecencySliced(sort string) bool {
 	return sort != "" && sort != "time"
 }
 
+// noServiceSlice — servissiz MV yolunda 1. aşama kararı (v0.10.494).
+//
+//	ok              → toplamasız recency dilimi (traceRecencySlice); false →
+//	                  hafif 1. aşama (traceStage1LightSQL, tüm pencere GROUP BY)
+//	errorsPrefilter → dilim satır-düzeyi finalizeAggregation(error_count_state)
+//	                  ön süzgecini taşır (v0.9.277 üst-küme; stage 2 HAVING kesin)
+//	rootPostAgg     → kök yüklemi YALNIZ stage 2 HAVING'inde süzülür (holders ile
+//	                  sınırlı); zaman sıralamasında bütçe traceRecencySliceN ve
+//	                  RankedWithin raporlanır — sayfalar en yeni N kök trace içinde
+type noServiceSlice struct {
+	ok, errorsPrefilter, rootPostAgg bool
+}
+
+// noServiceSlicePlan — SAF; trace_root_slice_test.go pinler. minMs/maxMs
+// dilime binmez: yüklemleri birleşik sayısal durum ister (ayrı dilim).
+func noServiceSlicePlan(f TraceFilter) noServiceSlice {
+	return noServiceSlice{
+		ok:              f.MinMs <= 0 && f.MaxMs <= 0,
+		errorsPrefilter: f.HasError,
+		rootPostAgg:     f.RootOnly,
+	}
+}
+
 // traceStage2MaxIDs bounds how many trace ids Stage 1 may hand to
 // Stage 2's IN list. clickhouse-go interpolates bind args client-side,
 // so each id costs ~35 bytes ('<32 hex>' + comma) of query text and
@@ -3739,11 +3762,32 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		// actually hits: no HAVING, i.e. no rootOnly / minMs / maxMs. That is
 		// every default page load and every wide-window browse, and it is the
 		// case that was returning HTTP 500. hasError rides it too via a
-		// row-level prefilter; the remaining aggregate filters keep the old
-		// Stage 1 unchanged, because their predicates genuinely need the
-		// merged state and there is nothing to gain by rewriting them here.
-		errorsOnly := len(having) == 1 && having[0] == "countMerge(error_count_state) > 0"
-		if budgetOK && (len(having) == 0 || errorsOnly) {
+		// row-level prefilter.
+		// v0.10.494 — Operator-reported (prod): servissiz + rootOnly + 12 saat
+		// → CH 241 "memory limit exceeded 3.73 GiB" (SourceFromNativeStream);
+		// 6 saat geçiyordu, 24 saat / 7 gün de gelebilir. Kök HAVING'i bu
+		// dilimin DIŞINDA kalıp hafif 1. aşamaya (traceStage1LightSQL)
+		// düşüyordu; o da TÜM pencerede GROUP BY trace_id + argMaxIf STRING
+		// durumu birleştiriyor — bellek pencereyle lineer (lokal 2 shard,
+		// 12 saat: 51 MiB / 11.6 s; prod 12 saat = milyonlarca trace). Kök
+		// yüklemi stage 2'nin HAVING'inde ZATEN var (holders ile sınırlı,
+		// kırpma tespitli) — 1. aşamanın onu taşıması gerekmiyor: rootOnly
+		// düz dilime biner (bütçe traceRecencySliceN; RankedWithin dürüst),
+		// hasError ile birlikteyken satır ön süzgeci kalır. Yalnız minMs /
+		// maxMs eski hafif 1. aşamada (sayısal merge; ayrı dilim). Plan SAF:
+		// noServiceSlicePlan, trace_root_slice_test.go.
+		plan := noServiceSlicePlan(f)
+		if plan.ok && plan.rootPostAgg && !ranked {
+			// Kök süzgeci adayları eler: zaman sıralamasında sayfa bütçesi
+			// yerine en az traceRecencySliceN aday (derin sayfanın daha büyük
+			// bütçesi korunur; tavan zaten traceStage2MaxIDs).
+			if budget < traceRecencySliceN {
+				budget = traceRecencySliceN
+			}
+			budgetOK = true
+		}
+		errorsOnly := plan.errorsPrefilter
+		if budgetOK && plan.ok {
 			ids, cut, exhausted, serr := s.traceRecencySlice(ctx, s1f, budget, errorsOnly)
 			if serr != nil {
 				return nil, 0, false, serr
@@ -3757,7 +3801,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 			// v0.10.267 — asc'te kesim TAVAN'dır (id'ler pencerenin başında);
 			// eskiden taban sayılıyor, kırpma tespiti ×8 genişleterek kurtarıyordu.
 			stage2Floor, stage2Ceil = sliceStageBounds(s1f.Order, cut, exhausted)
-			if ranked && f.RankedWithin != nil {
+			if (ranked || plan.rootPostAgg) && f.RankedWithin != nil {
 				// Report the REAL slice, not the constant. When the slice
 				// exhausted the window the ordering is global, so the "ranked
 				// within newest N" hint must not appear at all rather than

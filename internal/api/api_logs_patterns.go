@@ -68,7 +68,7 @@ func (s *Server) getLogsPatterns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := logsPatternsLimit(parseInt(q.Get("limit"), 0))
-	keyFrom, keyTo := logsKeyWindow(f.From, f.To, q.Get("from"), q.Get("to")) // v0.10.442 (A6-V1; varsayılan pencere de anahtara girer)
+	keyFrom, keyTo := snapLogsWindow(&f, q.Get("from"), q.Get("to"), 30*time.Second) // v0.10.446 (A6-V2: TTL kadar; varsayılan pencere de anahtara girer)
 	key := logsPatternsKey(f, keyFrom, keyTo, limit)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		tctx, cancel := context.WithTimeout(ctx, logsPatternsBudget)

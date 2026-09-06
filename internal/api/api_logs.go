@@ -401,7 +401,7 @@ func (s *Server) serveLogsSearch(w http.ResponseWriter, r *http.Request, q url.V
 	if s.rejectLogQuerySyntax(w, f.Search) {
 		return
 	}
-	keyFrom, keyTo := logsKeyWindow(f.From, f.To, q.Get("from"), q.Get("to")) // v0.10.442 (A6-V1)
+	keyFrom, keyTo := snapLogsWindow(&f, q.Get("from"), q.Get("to"), 15*time.Second) // v0.10.446 (A6-V2: TTL kadar)
 	key := logsSearchKey(f, keyFrom, keyTo)
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.330 (pivot Phase 2) — the TRACE-LOGS branch (?traceId=, the
@@ -937,7 +937,7 @@ func (s *Server) getLogsFieldStats(w http.ResponseWriter, r *http.Request) {
 	if q.Get("size") == "20" {
 		size = 20
 	}
-	keyFrom, keyTo := logsKeyWindow(f.From, f.To, q.Get("from"), q.Get("to")) // v0.10.442 (A6-V1)
+	keyFrom, keyTo := snapLogsWindow(&f, q.Get("from"), q.Get("to"), 60*time.Second) // v0.10.446 (A6-V2: TTL kadar)
 	key := logsFieldStatsKey(field, f, keyFrom, keyTo, size)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -1030,9 +1030,9 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 	// own size. The UI's heuristic never reaches this (its widest ask is
 	// ~2,880 buckets on a 30-day window) — this catches hand-built URLs
 	// and saved views from a wider range.
+	keyFrom, keyTo := snapLogsWindow(&f, q.Get("from"), q.Get("to"), 30*time.Second) // v0.10.446 (A6-V2: TTL kadar; taban kovadan ÖNCE)
 	bucketSec = floorBucketByWindow(bucketSec, f.From, f.To)
 	groupBy := normalizeLogsGroupBy(q.Get("groupBy"))
-	keyFrom, keyTo := logsKeyWindow(f.From, f.To, q.Get("from"), q.Get("to")) // v0.10.442 (A6-V1)
 	key := logsTimeseriesKey(f, keyFrom, keyTo, bucketSec, groupBy)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.3 — bound the Go goroutine on BOTH backends. CH already

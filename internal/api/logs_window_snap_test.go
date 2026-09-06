@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cilcenk/coremetry/internal/logstore"
 )
 
 // v0.10.442 (log arama denetimi A6-V1) — anahtar penceresi: canlı pencere
@@ -60,21 +62,54 @@ func TestSnapLogsKeyWindow(t *testing.T) {
 	}
 }
 
-// Dört uç (search, fieldstats, timeseries, patterns) anahtarı yardımcıdan
-// alır; sorgunun f.From/f.To'su değişmez (V1 sözleşmesi).
-func TestLogsKeyWindowWiredIntoAllFourHandlers(t *testing.T) {
+// v0.10.446 (A6-V2) — dört uç canlı pencereyi KENDİ TTL'ine oturtur ve
+// sorguyu da taşır; mutlak pencere aynen; V1 yardımcısı çağrılmaz.
+func TestSnapLogsWindowV2(t *testing.T) {
+	now := time.Now()
+	f := logstore.Filter{From: now.Add(-time.Hour), To: now}
+	kf, kt := snapLogsWindow(&f, "1", "2", 15*time.Second)
+	if f.To.UnixNano()%int64(15*time.Second) != 0 || f.To.Sub(f.From) != time.Hour || kf == "1" || kt == "2" {
+		t.Fatalf("canlı pencere TTL'e oturmalı, süre korunmalı: %s–%s (%s %s)", f.From, f.To, kf, kt)
+	}
+	if now.Sub(f.To) > 15*time.Second {
+		t.Fatalf("sağ uç TTL'den fazla geriye kaymamalı: %s", now.Sub(f.To))
+	}
+	if n, _ := strconv.ParseInt(kt, 10, 64); n != f.To.UnixNano() {
+		t.Fatal("anahtar sorgu penceresiyle aynı olmalı")
+	}
+	old := logstore.Filter{From: now.Add(-3 * time.Hour), To: now.Add(-2 * time.Hour)}
+	of, ot := old.From, old.To
+	if kf, kt := snapLogsWindow(&old, "1", "2", 15*time.Second); kf != "1" || kt != "2" || !old.From.Equal(of) || !old.To.Equal(ot) {
+		t.Fatal("mutlak pencere aynen kalmalı")
+	}
+	empty := logstore.Filter{}
+	if kf, kt := snapLogsWindow(&empty, "", "", 15*time.Second); kf != "" || kt != "" || !empty.From.IsZero() {
+		t.Fatal("boş pencere boş kalır")
+	}
+}
+
+func TestLogsWindowSnapWiredIntoAllFourHandlers(t *testing.T) {
 	a, _ := os.ReadFile("api_logs.go")
 	b, _ := os.ReadFile("api_logs_patterns.go")
 	src := string(a) + string(b)
-	if n := strings.Count(src, "logsKeyWindow(f.From, f.To, q.Get(\"from\"), q.Get(\"to\"))"); n != 4 {
-		t.Fatalf("dört uç yardımcıyı kullanmalı, %d", n)
-	}
-	for _, old := range []string{`logsSearchKey(f, q.Get("from")`, `logsFieldStatsKey(field, f, q.Get("from")`, `logsTimeseriesKey(f, q.Get("from")`, `logsPatternsKey(f, q.Get("from")`} {
-		if strings.Contains(src, old) {
-			t.Fatalf("ham from/to hâlâ anahtara giriyor: %s", old)
+	for _, want := range []string{
+		`snapLogsWindow(&f, q.Get("from"), q.Get("to"), 15*time.Second)`,
+		`snapLogsWindow(&f, q.Get("from"), q.Get("to"), 60*time.Second)`,
+		`snapLogsWindow(&f, q.Get("from"), q.Get("to"), 30*time.Second)`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("uç TTL'iyle snap yok: %s", want)
 		}
 	}
-	if strings.Contains(string(a), "f.From, f.To = ") || strings.Contains(string(b), "f.From, f.To = ") {
-		t.Fatal("V1: sorgu penceresi oturtulmaz (V2 operatör kararı)")
+	if n := strings.Count(src, "snapLogsWindow(&f,"); n != 4 {
+		t.Fatalf("dört uç snap'lemeli, %d", n)
+	}
+	if strings.Contains(src, "logsKeyWindow(") {
+		t.Fatal("V1 yardımcısı handler'larda kalmamalı")
+	}
+	// Histogram: snap taban kovadan ÖNCE (kova pencereye göre seçilir).
+	i, j := strings.Index(string(a), `30*time.Second) // v0.10.446`), strings.Index(string(a), "bucketSec = floorBucketByWindow(")
+	if i < 0 || j < 0 || i > j {
+		t.Fatal("timeseries snap'i floorBucketByWindow'dan önce olmalı")
 	}
 }

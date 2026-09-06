@@ -57,7 +57,7 @@
 //     doğru çağrının koşulu, orada kazanılan bayt yanlış argümanla
 //     harcanan bir tura değmez.
 //
-// Tool catalogue (43 tools; v0.10.474 — 42 → 43: trace_stats.go; v0.10.472 — 40 → 42: attr_discovery.go; v0.10.469 — 39 → 40: resolve_entity.go; v0.10.468 — 36 → 39: entity_catalog.go list_namespaces / list_workloads / list_pods; sayım v0.9.1050'de düzeltildi — blok
+// Tool catalogue (44 tools; v0.10.475 — 43 → 44: build_link.go; v0.10.474 — 42 → 43: trace_stats.go; v0.10.472 — 40 → 42: attr_discovery.go; v0.10.469 — 39 → 40: resolve_entity.go; v0.10.468 — 36 → 39: entity_catalog.go list_namespaces / list_workloads / list_pods; sayım v0.9.1050'de düzeltildi — blok
 // v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu;
 // v0.9.1227'de get_operation_health ile 33; v0.9.1233'te
 // get_exception_samples ile 34; v0.9.1244'te list_teams +
@@ -306,6 +306,8 @@ func ToolList(d Deps) []mcp.Tool {
 		searchTracesTool(d),
 		// v0.10.474 (Faz 3, F3-3) — ham listeden ÖNCE sayı: trace_stats (trace_stats.go), aramanın hemen yanında.
 		traceStatsTool(d),
+		// v0.10.475 (Faz 3, F3-4) — UI deep-link üretici (build_link.go); cevabın son halkası.
+		buildLinkTool(d),
 		// v0.9.1141 (Faz 3.2) — trace ID'ye İKİNCİ giriş: yapıştırılan
 		// çıplak span id. in-app guided yolda (v0.9.548) çalışıyordu,
 		// MCP'de karşılığı yoktu.

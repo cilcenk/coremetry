@@ -1033,7 +1033,9 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	// arrayJoin'iyle taşır → Search yoksa her zaman denenir. Overview
 	// RED'i böylece pencereli modda da 10s rollup'tan okur (ham tarama
 	// yalnız rollup tabloları yokken/kapsamıyorken).
-	fastPathOK := f.Search == "" && winK == 0 && !f.RootOnly && !f.HasError // v0.10.484
+	// v0.10.489 (Astra #5): HasError artık SQL'de status çipi olarak gelir (dar
+	// rollup status_code boyutunu bilir → MV yolu açık); yalnız RootOnly ham yol.
+	fastPathOK := f.Search == "" && winK == 0 && !f.RootOnly
 	if fastPathOK {
 		if out, ok := s.tryOperationMVFastPathMulti(ctx, f); ok {
 			return out, f.StepSeconds, nil
@@ -1045,7 +1047,7 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	// bu şekli 10s granülaritede cevaplar. Tablolar yoksa / pencere
 	// rollup'ın en eski verisinden önceyse SESSİZCE ham yola düşer —
 	// migrations-öncesi prod davranışı bayt-bayt aynı.
-	if f.Search == "" && !f.RootOnly && !f.HasError { // v0.10.484 — kök/hata bayrağı ham yol
+	if f.Search == "" && !f.RootOnly { // v0.10.489 — yalnız kök bayrağı ham yol; hata çipi rollup'ta
 		if out, ok := s.tryNarrowRollupFastPathMulti(ctx, f, effWin, winK); ok {
 			return out, f.StepSeconds, nil
 		}
@@ -1071,9 +1073,6 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	// v0.10.484 — /traces Root / Errors bayrakları (tablo ile aynı küme).
 	if f.RootOnly {
 		wc.add("parent_span_id = ''")
-	}
-	if f.HasError {
-		wc.add("status_code = 'error'")
 	}
 	// v0.9.601 — tek-agg yolundaki (yukarıda, ~satır 189) searchPredicate
 	// ile BİREBİR aynı. İki yolun aynı yüklemi kurması şart: /traces

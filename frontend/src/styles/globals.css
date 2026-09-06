@@ -3386,13 +3386,21 @@ thead th:hover .th-remove { opacity: 1; }
 .pb-tl li.ok::after { background: var(--ok); }
 .pb-tl li.accent::after { background: var(--accent); }
 
-/* Coremetry AI (Copilot) — animasyonlu sparkline logo + streaming imleç (v0.9.163) */
-@keyframes cm-ai-draw { 0% { stroke-dashoffset: 64; } 55% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 0; } }
+/* Coremetry AI (Copilot) — streaming imleç (v0.9.163); v0.10.498 — sparkline
+   logo ve .cm-ai-spark çizim animasyonu kaldırıldı (FAB artık /favicon.svg,
+   resmî OpenTelemetry ikonu). */
 @keyframes cm-ai-blink { 50% { opacity: 0; } }
-.cm-ai-spark { stroke-dasharray: 64; stroke-dashoffset: 64; animation: cm-ai-draw 2.6s ease-in-out infinite; }
 .cm-ai-cursor { display: inline-block; width: 6px; height: 13px; background: var(--accent2); vertical-align: -2px; border-radius: 1px; margin-left: 1px; animation: cm-ai-blink 1s steps(2) infinite; }
 .cm-ai-fab { transition: transform .18s, box-shadow .18s; }
 .cm-ai-fab:hover { transform: scale(1.08); }
+/* v0.10.498 (operatör: "gerekirse animasyon olsun yanıp sönsün") — açık
+   kritik problem varken (rozet > 0) düğmenin ARKASINDA vurgu rengi nabız
+   halkası: 0.92 → 1.38 ölçek, 2.4 s ease-out. inset -3px ile halka tamamen
+   düğme dışında kalır, rozeti örtmez (negatif z-index; düğme kendi bağlamı).
+   Rozet yokken düğme durgun. */
+.cm-ai-fab.is-alert::before { content: ""; position: absolute; inset: -3px; border-radius: 50%; z-index: -1;
+  border: 2px solid var(--accent2); opacity: 0; animation: cm-ai-pulse 2.4s ease-out infinite; pointer-events: none; }
+@keyframes cm-ai-pulse { 0% { transform: scale(.92); opacity: .75; } 70% { transform: scale(1.38); opacity: 0; } 100% { transform: scale(1.38); opacity: 0; } }
 /* v0.10.432 (D8) — trace ilk açılış CoSRE baloncuğu: FAB'a bağlı callout
    (18px kenar + 48px FAB + 12px boşluk = bottom 78px), FAB katmanında. */
 .cm-ai-nudge { position: fixed; right: 18px; bottom: 78px; z-index: var(--z-fab); max-width: 320px;
@@ -3401,7 +3409,7 @@ thead th:hover .th-remove { opacity: 1; }
   border-radius: var(--radius); box-shadow: var(--shadow-pop); font-size: var(--fs-md); color: var(--text); }
 .cm-ai-nudge-text { display: flex; align-items: center; gap: var(--sp-3); }
 .cm-ai-nudge-actions { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
-@media (prefers-reduced-motion: reduce) { .cm-ai-spark, .cm-ai-cursor { animation: none; } .cm-ai-spark { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) { .cm-ai-cursor { animation: none; } .cm-ai-fab.is-alert::before { animation: none; opacity: .55; transform: none; } }
 
 /* ── Sohbet balonu markdown blokları (v0.9.1148, AI Faz 4.2) ─────────
    ChatBubble artık tabloyu GERÇEK tablo, ``` fence'ini kod bloğu olarak

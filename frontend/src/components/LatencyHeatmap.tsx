@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { LatencyHeatmap as Heatmap } from '@/lib/types';
 import { fmtSmart } from '@/lib/chartFmt';
 import { fmtClock } from '@/lib/utils';
+import { useThemeTick } from '@/lib/useThemeTick'; // v0.10.505 (D8)
+import { DEFAULT_RAMP_TOKENS, densityRamp, heatmapTimeLabel, type RampTokens } from '@/lib/chart/heatmapRamp';
 // v0.9.948 (UX denetimi D5 / Ö26) — paylaşılan crosshair kanalı.
 // Heatmap bir CANVAS: uPlot.sync'e KATILAMAZ (uPlot yalnız kendi
 // örneklerini senkronlar), o yüzden imleç izi bu otobüsten geliyor.
@@ -20,18 +22,23 @@ import { heatmapCursorCol, heatmapCursorX } from '@/lib/chart/heatmapCursor';
 // rolled against the cell grid (constant-time lookup; no
 // React event listener per cell).
 
-const PALETTE = [
-  // Cool → warm gradient. First entry is the empty-cell
-  // background; last is the peak. uPlot's accent palette
-  // wouldn't read as "density" — these stops are picked from
-  // viridis-tail so the eye reads "dim → bright" as count.
-  'rgba(0,0,0,0)',          // 0 — invisible (no cell)
-  'rgba(63,140,253,0.18)',
-  'rgba(63,140,253,0.40)',
-  'rgba(56,113,213,0.65)',
-  'rgba(220,164,82,0.80)',
-  'rgba(232,78,78,0.90)',
-];
+// v0.10.505 (dış skill denetimi D8) — rampa artık tema tokenlarından
+// (lib/chart/heatmapRamp.ts, densityRamp): boş hücre görünmez, az → vurgu
+// (üç alfa basamağı), çok → uyarı, tepe → hata. Çizim anında çözülür
+// (canvas var() okuyamaz) ve useThemeTick ile tema değişiminde yenilenir.
+// Eski altı rgba sabiti açık temada soluk, Red Hat temasında vurgu maviyle
+// çakışıyordu. PALETTE_STOPS yalnız durak sayısı (lejant + eşleme).
+const PALETTE_STOPS = 6;
+function resolveRampTokens(): RampTokens {
+  if (typeof document === 'undefined') return DEFAULT_RAMP_TOKENS;
+  const css = getComputedStyle(document.documentElement);
+  const pick = (name: string, fb: string) => css.getPropertyValue(name).trim() || fb;
+  return {
+    accent: pick('--accent', DEFAULT_RAMP_TOKENS.accent),
+    warn: pick('--warn', DEFAULT_RAMP_TOKENS.warn),
+    err: pick('--err', DEFAULT_RAMP_TOKENS.err),
+  };
+}
 
 // Z-score outlier detection (v0.5.256). For each cell, z =
 // (count - μ) / σ where μ + σ are taken over non-zero cells in
@@ -114,6 +121,7 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
   // through to onCellClick.
   onBoxSelect?: (box: { timeFromNs: number; timeToNs: number; lowDurMs: number; highDurMs: number; count: number }) => void;
 }) {
+  const themeTick = useThemeTick(); // v0.10.505 (D8) — tema değişiminde rampa yeniden çözülür
   const containerRef = useRef<HTMLDivElement>(null);
   // v0.9.948 (D5/Ö26) — KARDEŞ GRAFİKLERİN imleç zamanı (unix sn; null =
   // imleç yok). Bileşenin dosya başı yorumu ("Same time axis as the metric
@@ -179,6 +187,12 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
       const cellW = plotW / cols;
       const cellH = plotH / rows;
 
+      const rampTokens = resolveRampTokens();
+      const palette = densityRamp(rampTokens);
+      const tokens = {
+        warn: rampTokens.warn,
+        accent2: (typeof document !== 'undefined' && getComputedStyle(document.documentElement).getPropertyValue('--accent2').trim()) || rampTokens.accent,
+      };
       const max = Math.max(1, data.maxCount);
       // Logarithmic colour scale — span counts on a 24h chart
       // can range over 4 decades; linear mapping makes the
@@ -190,9 +204,9 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
           const c = data.counts[i]?.[j] ?? 0;
           if (c === 0) continue;
           const t = Math.log(c + 1) / lmax;
-          const stop = Math.min(PALETTE.length - 1,
-            Math.max(1, Math.floor(t * (PALETTE.length - 1)) + 1));
-          ctx.fillStyle = PALETTE[stop];
+          const stop = Math.min(PALETTE_STOPS - 1,
+            Math.max(1, Math.floor(t * (PALETTE_STOPS - 1)) + 1));
+          ctx.fillStyle = palette[stop];
           // Y-axis is inverted: row 0 (smallest latency) at the bottom.
           const x = padL + i * cellW;
           const y = padT + (rows - 1 - j) * cellH;
@@ -204,7 +218,7 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
       // SRE'nin taradığı yer) küçük elmas. HER hücreye çizmek gürültü
       // olurdu; hücrenin temsilci trace'i zaten tıkla açılan modalda.
       if (data.exemplars) {
-        ctx.fillStyle = 'rgba(18,184,255,0.95)';
+        ctx.fillStyle = tokens.accent2;
         for (let i = 0; i < cols; i++) {
           for (let j = rows - 1; j >= 0; j--) {
             if ((data.counts[i]?.[j] ?? 0) === 0) continue;
@@ -226,7 +240,7 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
       // changing the underlying density palette — the operator's
       // colour intuition for "warm = busy" is preserved.
       if (stats.outliers.size > 0) {
-        ctx.strokeStyle = 'rgba(250,204,21,0.95)';
+        ctx.strokeStyle = tokens.warn;
         ctx.lineWidth = 1.5;
         for (const key of stats.outliers) {
           const [iStr, jStr] = key.split(',');
@@ -260,14 +274,12 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
       // timestamp.
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      const tFmt = (ns: number) => {
-        const d = new Date(ns / 1e6);
-        return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
-      };
+      // v0.10.505 (D8) — çok günlü pencerede tarih de yazılır.
+      const spanNs = cols > 1 ? data.times[cols - 1] - data.times[0] : 0;
       const xPos = [0, Math.floor(cols / 2), cols - 1];
       for (const i of xPos) {
         const x = padL + i * cellW + cellW / 2;
-        ctx.fillText(tFmt(data.times[i]), x, height - padB + 4);
+        ctx.fillText(heatmapTimeLabel(data.times[i], spanNs), x, height - padB + 4);
       }
     };
 
@@ -275,7 +287,7 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
     const ro = new ResizeObserver(draw);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [data, height]);
+  }, [data, height, themeTick]);
 
   // ── Box-select geometry (Phase 4.2) ──────────────────────────────────────
   // Shared cell math so the drag handlers and the rubber-band overlay agree
@@ -463,9 +475,9 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
         <div style={{
           position: 'absolute', top: 6, right: 6, zIndex: 4,
           fontSize: 10, padding: '2px 6px', borderRadius: 10,
-          background: 'rgba(250,204,21,0.12)',
-          border: '1px solid rgba(250,204,21,0.40)',
-          color: 'var(--warn, #facc15)',
+          background: 'color-mix(in srgb, var(--warn) 12%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--warn) 40%, transparent)',
+          color: 'var(--warn)',
           pointerEvents: 'none',
           fontFamily: 'ui-monospace, monospace',
         }} title="Wide windows are hash-sampled by trace_id to keep the query under the execution cap; cell counts are estimated by multiplying back up.">
@@ -503,8 +515,8 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
             width: (colHi - colLo + 1) * cellW,
             top: PAD_T + (rows - 1 - rowHi) * cellH,
             height: (rowHi - rowLo + 1) * cellH,
-            background: 'rgba(63,140,253,0.15)',
-            border: '1px solid var(--accent, #3f8cfd)',
+            background: 'color-mix(in srgb, var(--accent) 15%, transparent)',
+            border: '1px solid var(--accent)',
             borderRadius: 2,
           }} />
         );
@@ -548,7 +560,7 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
           </div>
           {hover.count > 0 && (
             <div style={{
-              color: hover.isOutlier ? 'var(--warn, #facc15)' : 'var(--text3)',
+              color: hover.isOutlier ? 'var(--warn)' : 'var(--text3)',
               fontSize: 10, marginTop: 2,
             }}>
               z = {hover.z.toFixed(2)}{hover.isOutlier && ' · outlier'}
@@ -556,6 +568,20 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
           )}
         </div>
       )}
+      {/* v0.10.505 (D8) — yoğunluk lejantı: rampanın beş dolu durağı,
+          az → çok; tema tokenlarından (canvas ile aynı densityRamp). */}
+      <div aria-hidden="true" style={{
+        position: 'absolute', bottom: 6, left: 60, zIndex: 4,
+        display: 'inline-flex', alignItems: 'center', gap: 3,
+        fontSize: 10, color: 'var(--text3)', pointerEvents: 'none',
+        fontFamily: 'ui-monospace, monospace',
+      }} title="Hücre yoğunluğu (log ölçek): az → çok">
+        <span>az</span>
+        {densityRamp(resolveRampTokens()).slice(1).map((c, i) => (
+          <span key={i} style={{ width: 10, height: 8, background: c, borderRadius: 1, display: 'inline-block' }} />
+        ))}
+        <span>çok</span>
+      </div>
       {/* Outlier legend — only renders when at least one outlier
           is painted, so quiet heatmaps don't carry visual noise.
           Sits bottom-right; mirrors the sampledTag's top-right slot. */}
@@ -563,9 +589,9 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
         <div style={{
           position: 'absolute', bottom: 6, right: 6, zIndex: 4,
           fontSize: 10, padding: '2px 6px', borderRadius: 10,
-          background: 'rgba(250,204,21,0.10)',
-          border: '1px solid rgba(250,204,21,0.40)',
-          color: 'var(--warn, #facc15)',
+          background: 'color-mix(in srgb, var(--warn) 10%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--warn) 40%, transparent)',
+          color: 'var(--warn)',
           pointerEvents: 'none',
           fontFamily: 'ui-monospace, monospace',
         }} title={`Cells with z-score ≥ ${OUTLIER_Z} (count > mean + ${OUTLIER_Z}σ over non-empty cells)`}>

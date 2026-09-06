@@ -17,7 +17,11 @@ import { Empty, Spinner } from './Spinner';
 import { ChatBubble } from './ai/ChatBubble';
 import { TraceExplainNudge } from './ai/TraceExplainNudge';
 import { useChatThread } from './ai/useChatThread';
+import { useCopilotConfig } from './ai/useCopilotEnabled'; // v0.10.483
 import { AI_DRAWER_WIDTH } from './ai/answerCard'; // v0.10.461
+import { AIDrawerBody } from './ai/AIDrawerBody'; // v0.10.483 — ✨ Explain gövdesi aynı çekmecede
+import { useAiSubject } from './ai/useAiSubject';
+import { aiSubjectSubtitle, aiSubjectTitle, formatAiParam } from '@/lib/aiSubject';
 import { greetHello, greetStatus } from './ai/greeting';
 import type { AiConversationSummary } from '@/lib/types';
 
@@ -91,14 +95,22 @@ function AiMark({ size = 26 }: { size?: number }) {
 }
 
 export function CopilotChat() {
-  const [enabled, setEnabled] = useState<boolean | null>(null);
+  // v0.10.483 — config TEK kaynaktan (useCopilotConfig: modül cache'i, AIDrawer
+  // ile aynı); eskiden CopilotChat kendi effect'iyle ikinci bir istek atıyordu.
+  const cfg = useCopilotConfig(true);
+  const enabled: boolean | null = cfg ? cfg.enabled : null;
   // v0.10.183 — model profili seçici (>1 profil); boş = sunucu varsayılanı.
-  const [profiles, setProfiles] = useState<{ id: string; label?: string; model?: string }[]>([]);
-  const [defaultProfile, setDefaultProfile] = useState('');
+  const profiles = useMemo(() => cfg?.profiles ?? [], [cfg]);
+  const defaultProfile = cfg?.defaultProfile ?? '';
   // v0.10.461 — başlık meta şeridindeki model çipi (AIDrawer ile aynı anatomi).
-  const [model, setModel] = useState('');
+  const model = cfg?.model ?? ''; // v0.10.483 — config tek kaynaktan (useCopilotConfig)
   const [profile, setProfile] = useState('');
   const [open, setOpen] = useState(false);
+  // v0.10.483 — ✨ Explain öznesi (`?ai=`): varsa çekmece AÇIK ve açıklama
+  // kipinde (AIDrawerBody); genel sohbet kipi öznesizken. Tek kabuk.
+  const [subject, setSubject] = useAiSubject();
+  const drawerOpen = open || subject !== null;
+  const closeDrawer = () => { setSubject(null); setOpen(false); };
   const navigate = useNavigate(); // v0.10.434 (D7b) — "sayfasını aç" cevabı SPA içinde gezer
   // v0.9.169 — proaktif rozet: açık KRİTİK problem sayısı (chat kapalıyken
   // FAB'da kırmızı rozet). Yalnız copilot açıkken pollar; RQ tab gizliyken durur.
@@ -188,11 +200,9 @@ export function CopilotChat() {
       onOpen: href => {
         const to = mergeOpenHref(href, window.location.pathname, window.location.search); // v0.10.434 (D7b); v0.10.460 aynı sayfa
         if (!to) return;
+        // v0.10.483 — hedef ?ai= ise AYNI çekmece açıklama kipine geçer
+        // (özne URL'den okunur); kapatmaya gerek yok, ikinci çekmece yok.
         navigate(to, { replace: true });
-        // v0.10.461 — hedef Explain çekmecesiyse (?ai=) sohbet KAPANIR: iki
-        // çekmece üst üste durmasın (v0.9.479 operatör raporunun aynısı);
-        // konuşma arşivde, "Geçmiş"ten geri gelir.
-        if (/[?&]ai=/.test(to)) setOpen(false);
       },
     });
 
@@ -240,6 +250,7 @@ export function CopilotChat() {
 
   const openThread = async (id: string) => {
     try {
+      setSubject(null); // v0.10.483 — arşivden konuşma açmak genel kipe döner
       await load(id);
       setShowHistory(false);
     } catch (e) {
@@ -274,9 +285,6 @@ export function CopilotChat() {
     { enabled: enabled === true && open && turns.length === 0 });
   const p1s = p1q.data?.items;
 
-  useEffect(() => {
-    api.copilotConfig().then(c => { setEnabled(c.enabled); setProfiles(c.profiles ?? []); setDefaultProfile(c.defaultProfile ?? ''); setModel(c.model ?? ''); }).catch(() => setEnabled(false));
-  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -307,8 +315,8 @@ export function CopilotChat() {
     <>
       {/* Launcher — markalı animasyonlu sparkline (varyant B). Yuvarlak FAB
           kendi anatomisi; shared <Button> atomu uygulanmaz (U1 batch-2 kararı). */}
-      {!open && <TraceExplainNudge />}{/* v0.10.432 (D8) — FAB'ın üstündeki baloncuk */}
-      {!open && (
+      {!drawerOpen && <TraceExplainNudge />}{/* v0.10.432 (D8) — FAB'ın üstündeki baloncuk */}
+      {!drawerOpen && (
         <button
           className="cm-ai-fab"
           onClick={() => setOpen(true)}
@@ -348,9 +356,9 @@ export function CopilotChat() {
           ona EŞLİK ediyor. Explain'in modal davranışı DEĞİŞMEDİ.
 
           Genişlet kipi korundu: geniş sohbet için 620 → içerik alanı. */}
-      {open && (
+      {drawerOpen && (
         <Drawer
-          onClose={() => setOpen(false)}
+          onClose={closeDrawer}
           backdrop={false}
           width={expanded ? 1100 : AI_DRAWER_WIDTH}
           bodyStyle={{ display: 'flex', flexDirection: 'column', padding: 0 }}
@@ -360,28 +368,27 @@ export function CopilotChat() {
                   büyük font olabilir") — 13→16 + 700 + hafif harf aralığı;
                   marka adı çekmece başlığında artık ilk bakışta okunur.
                   AiMark de eşlik etsin diye 18→20. */}
-              {/* v0.10.461 — AIDrawer başlık anatomisi: başlık satırı + meta
-                  şeridi (kapsam + model çipi). Eski 📍 kapsam bandı buraya
-                  taşındı; ikinci bir bant çizilmiyor. */}
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 16, letterSpacing: 0.3 }}>
-                  <AiMark size={20} /> CoSRE
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, minWidth: 0 }}>
-                  <span className="mono" style={{
-                    fontSize: 11, color: currentService ? 'var(--accent2)' : 'var(--text3)',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }} title={currentService ? `Sorular ${currentService} servisine kapsanır` : 'Filo geneli sorular'}>
-                    {currentService ? `📍 ${currentService}` : 'filo geneli'}{env ? ` · env ${env}` : ''}
-                  </span>
-                  {model && (
-                    <span className="chip" style={{ flexShrink: 0, fontSize: 10.5 }} title="Cevapları üreten model">
-                      <span className="k">model</span>
-                      <b className="mono">{model}</b>
-                    </span>
-                  )}
-                </div>
-              </div>
+              {/* v0.10.483 (operatör: "Geçmiş/Temizle butonları kaymış") — TEK
+                  SATIR: marka · meta (kapsam ya da ✨ Explain öznesi, ellipsis)
+                  · model çipi · eylemler. 461'in iki satırlı başlığı Drawer'ın
+                  ✕ hizasını ve eylem düğmelerini kaydırıyordu. */}
+              <AiMark size={20} />
+              <span style={{ fontWeight: 700, fontSize: 16, letterSpacing: 0.3, flexShrink: 0 }}>CoSRE</span>
+              <span className="mono" style={{
+                flex: 1, minWidth: 0, fontSize: 11,
+                color: subject ? 'var(--text2)' : currentService ? 'var(--accent2)' : 'var(--text3)',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }} title={subject ? `${aiSubjectTitle(subject)} · ${aiSubjectSubtitle(subject)}` : currentService ? `Sorular ${currentService} servisine kapsanır` : 'Filo geneli sorular'}>
+                {subject
+                  ? `✨ ${aiSubjectTitle(subject)} · ${aiSubjectSubtitle(subject)}`
+                  : `${currentService ? `📍 ${currentService}` : 'filo geneli'}${env ? ` · env ${env}` : ''}`}
+              </span>
+              {model && (
+                <span className="chip" style={{ flexShrink: 0, fontSize: 10.5 }} title="Cevapları üreten model">
+                  <span className="k">model</span>
+                  <b className="mono">{model}</b>
+                </span>
+              )}
               {/* v0.9.1139 — konuşma arşivi. Menü değil bir BÖLÜM:
                   çekmece zaten sağ kenarda ve ikinci bir uçan katman
                   (dropdown) sohbetin üstüne binerdi. */}
@@ -398,7 +405,7 @@ export function CopilotChat() {
               <Button variant="ghost" size="sm" onClick={() => setExpanded(e => !e)}
                 title={expanded ? 'Daralt' : 'Genişlet'}>
                 {expanded ? '⊟' : '⤢'}</Button>
-              {turns.length > 0 && (
+              {!subject && turns.length > 0 && (
                 <Button variant="secondary" size="sm" onClick={clear}
                   title="Konuşmayı temizle ve yeni konuşma başlat">Temizle</Button>
               )}
@@ -472,6 +479,13 @@ export function CopilotChat() {
             </div>
           )}
 
+          {/* v0.10.483 — ✨ Explain kipi: aynı çekmece, açıklama + kanıt +
+              çekmece sohbeti (AIDrawerBody). key: özne değişince sıfırlanır. */}
+          {subject ? (
+            <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--sp-7)' }}>
+              <AIDrawerBody key={formatAiParam(subject)} subject={subject} onClose={closeDrawer} />
+            </div>
+          ) : (<>
           {/* Messages */}
           <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 'var(--sp-7)', display: 'flex', flexDirection: 'column', gap: 10 }}>
             {turns.length === 0 && (
@@ -566,6 +580,7 @@ export function CopilotChat() {
               </Button>
             )}
           </form>
+          </>)}
         </Drawer>
       )}
     </>

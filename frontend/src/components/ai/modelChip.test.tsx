@@ -35,6 +35,9 @@ vi.hoisted(() => {
 });
 
 import { AIDrawer } from './AIDrawer';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AuthProvider } from '@/components/AuthProvider';
+import { ConfirmProvider } from '@/components/ui/ConfirmDialog';
 import { __resetCopilotEnabledCache } from './useCopilotEnabled';
 import { api } from '@/lib/api';
 
@@ -48,7 +51,10 @@ async function mountDrawer() {
   await act(async () => {
     root.render(
       <MemoryRouter initialEntries={[OPEN]}>
-        <AIDrawer />
+        {/* v0.10.483 — ✨ Explain aynı çekmecede: AIDrawer → CopilotChat (sağlayıcılar onun) */}
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <AuthProvider><ConfirmProvider><AIDrawer /></ConfirmProvider></AuthProvider>
+        </QueryClientProvider>
       </MemoryRouter>,
     );
   });
@@ -67,6 +73,11 @@ beforeEach(() => {
   // ilgili, gövde isteğini sessizce düşürüyoruz.
   vi.spyOn(api, 'copilotExplainServiceHealth')
     .mockRejectedValue(new Error('gövde kapsam dışı'));
+  // v0.10.483 — kabuk artık CopilotChat: AuthProvider `me` reddedince /login'e
+  // yönlenir ve ?ai= silinirdi; sohbet kabuğunun diğer okumaları da mock.
+  vi.spyOn(api, 'me').mockResolvedValue({ id: 'u1', email: 'op@x.io', role: 'admin', firstName: 'Cenk' } as never);
+  vi.spyOn(api, 'problemsCount').mockResolvedValue({ count: 0 } as never);
+  vi.spyOn(api, 'aiConversations').mockResolvedValue([] as never);
 });
 
 afterEach(() => {

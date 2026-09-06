@@ -15,7 +15,8 @@ import { readFileSync } from 'node:fs';
 // !auto dalı) BİLEREK duruyor: o bir kapı değil, global pencereye
 // navigasyon — çekmecesi olmayan yüzeylerin tek sohbet yolu.
 
-const drawer = () => readFileSync(new URL('./AIDrawer.tsx', import.meta.url), 'utf8');
+// v0.10.483 — gövde AIDrawerBody.tsx'e taşındı (AIDrawer.tsx artık CopilotChat'e delege eder).
+const drawer = () => readFileSync(new URL('./AIDrawerBody.tsx', import.meta.url), 'utf8');
 
 describe('çekmece sohbeti hep açık', () => {
   it('open kapısı ve devam düğmesi KALKTI', () => {

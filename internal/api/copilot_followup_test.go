@@ -151,6 +151,8 @@ func TestGuidedSuggestionsRoute(t *testing.T) {
 		{Intent: guidedShiftSummary},
 		{Intent: guidedDBHealth},
 		{Intent: guidedMessagingHealth},
+		{Intent: guidedFindEntity, Service: "payments"}, // v0.10.463 (D1)
+		{Intent: guidedFindEntity, FindList: true},
 	}
 	for _, r := range routes {
 		sugg := guidedSuggestions(r)
@@ -181,6 +183,8 @@ func TestGuidedAnswerLinks(t *testing.T) {
 		{Intent: guidedFamilyHealth},
 		{Intent: guidedDBHealth},
 		{Intent: guidedMessagingHealth},
+		{Intent: guidedFindEntity, Service: "payments"}, // v0.10.463 (D1)
+		{Intent: guidedFindEntity, FindList: true},
 	}
 	for _, r := range routes {
 		links := guidedAnswerLinks(r, noLinkWindow())

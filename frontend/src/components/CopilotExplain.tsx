@@ -398,13 +398,10 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
           border: '1px solid rgba(255,82,82,.25)', maxWidth: 'min(720px, 100%)',
         }}>{error}</div>
       )}
+      {/* v0.10.461 — kart anatomisi paylaşılan sınıfta (ai/answerCard.ts):
+          asistan sohbet turu da aynı kartla çizilir. */}
       {text && (
-        <div style={{
-          padding: 12, borderRadius: 6, fontSize: 13, lineHeight: 1.5,
-          background: 'color-mix(in srgb, var(--accent) 8%, transparent)',
-          border: '1px solid color-mix(in srgb, var(--accent) 25%, transparent)',
-          color: 'var(--text)', maxWidth: 'min(720px, 100%)',
-        }}>
+        <div className="ai-answer-card" style={{ maxWidth: 'min(720px, 100%)' }}>
           {/* v0.9.1380 (operatör: "CoSRE yazısı daha büyük font olabilir
               burada") — 10→14, ikon 11→13.
 
@@ -534,12 +531,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
         </div>
       )}
       {codeAsk === 'accepted' && (
-        <div style={{
-          padding: 12, borderRadius: 6, fontSize: 13, lineHeight: 1.5,
-          background: 'color-mix(in srgb, var(--accent) 8%, transparent)',
-          border: '1px solid color-mix(in srgb, var(--accent) 25%, transparent)',
-          color: 'var(--text)', maxWidth: 'min(720px, 100%)',
-        }}>
+        <div className="ai-answer-card" style={{ maxWidth: 'min(720px, 100%)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
             <IconSparkles size={13} /> Kod incelemesi
             <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text3)' }}>· kaynak kodla yeniden değerlendirildi; yukarıdaki ilk cevap korunur</span>

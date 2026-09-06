@@ -13,6 +13,7 @@ import { ServiceChartsExplainBody } from './ServiceChartsExplainBody';
 import { aiSubjectQuestion, buildExplainContext, drawerFollowups } from './drawerChat';
 import { useAiSubject } from './useAiSubject';
 import { useChatThread } from './useChatThread';
+import { AI_DRAWER_WIDTH } from './answerCard'; // v0.10.461
 import { useCopilotConfig } from './useCopilotEnabled';
 
 // AIDrawer — uygulamadaki TEK AI açıklama yüzeyi (v0.9.477, onaylı
@@ -40,7 +41,7 @@ export function AIDrawer() {
 
   const key = formatAiParam(subject);
   return (
-    <Drawer onClose={() => setSubject(null)} width={620}
+    <Drawer onClose={() => setSubject(null)} width={AI_DRAWER_WIDTH}
       header={
         <div style={{ minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700 }}>

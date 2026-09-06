@@ -85,6 +85,24 @@ func mcpToolAuditDetails(tool string, args json.RawMessage, dur time.Duration, o
 	return string(b)
 }
 
+// chatToolAuditDetails — v0.10.480 (G12): in-app sohbet döngüsünün tool
+// çağrısı için mcpToolAuditDetails ikizi; transport "chat-inapp".
+func chatToolAuditDetails(tool string, args json.RawMessage, dur time.Duration, err error, resultBytes int) string {
+	preview := strings.TrimSpace(string(args))
+	if runes := []rune(preview); len(runes) > 256 {
+		preview = string(runes[:256]) + "…"
+	}
+	class := ""
+	if err != nil {
+		class = mcp.ClassifyToolError(err).Error
+	}
+	b, _ := json.Marshal(map[string]any{
+		"tool": tool, "argsPreview": preview, "durationMs": dur.Milliseconds(),
+		"ok": err == nil, "errorClass": class, "resultBytes": resultBytes, "transport": "chat-inapp",
+	})
+	return string(b)
+}
+
 // mcpObserve — mcp.Observer implementasyonu (api.SetMCP ile bağlanır).
 func (s *Server) mcpObserve(ctx context.Context, kind, name string, args json.RawMessage) (context.Context, func(mcp.CallOutcome)) {
 	actor := "anonymous"

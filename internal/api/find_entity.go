@@ -44,6 +44,9 @@ const guidedFindEntity guidedIntent = "find_entity"
 // findEntityListMax — liste cevabındaki satır tavanı.
 const findEntityListMax = 10
 
+// familyListMax — v0.10.485: aile listesi tavanı (mobile*bff* gibi).
+const familyListMax = 40
+
 // findVerbs — bulma/gösterme fiilleri. "getir"/"aç" BİLEREK yok: "trace'lerini
 // getir" trace yolunun, "sayfasını aç" open_page'in fiili; burada yalnız
 // dolgu sayılırlar (findFiller), tek başlarına bulma sinyali üretmezler.
@@ -82,6 +85,100 @@ var findSuffixDebris = map[string]bool{
 	"sini": true, "sını": true, "sinde": true, "sında": true, "sindeki": true, "sındaki": true, "lerde": true, "larda": true,
 }
 
+// trSuffixes — v0.10.485: Türkçe çoğul/iyelik/hâl ekleri (uzun önce). "bffleri"
+// → "bff", "servisleri" → "servis". Yalnız kalan gövde ≥3 karakterse ve bir
+// servis parçasına oturuyorsa kullanılır (kör kesme yok).
+var trSuffixes = []string{"lerini", "larını", "lerin", "ların", "leri", "ları", "ler", "lar", "ini", "ını", "unu", "ünü", "nin", "nın", "nun", "nün", "de", "da", "te", "ta", "e", "a", "i", "ı", "u", "ü"}
+
+// stripTRSuffix — jetonu, hits(gövde) doğru olana dek eklerden soyar; yoksa "".
+func stripTRSuffix(t string, hits func(string) bool) string {
+	for _, sfx := range trSuffixes {
+		if strings.HasSuffix(t, sfx) {
+			base := strings.TrimSuffix(t, sfx)
+			if len(base) >= 3 && hits(base) {
+				return base
+			}
+		}
+	}
+	return ""
+}
+
+// nearFiller — v0.10.485: yazım hatalı dolgu/fiil ("igetir" ≈ "getir",
+// "listle" ≈ "listele"): ≥4 karakter ve mesafe ≤1.
+func nearFiller(t string) bool {
+	if len([]rune(t)) < 4 {
+		return false
+	}
+	for w := range findFiller {
+		if levenshtein(t, w) <= 1 {
+			return true
+		}
+	}
+	for w := range findVerbs {
+		if levenshtein(t, w) <= 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// familyFragments — v0.10.485: mesajın servis parçalarına oturan jetonları
+// (ek soyulmuş) döndürür; "mobile bffleri listele" → [mobile bff].
+func familyFragments(toks []string, envs []string, services []string) []string {
+	envTok := map[string]bool{}
+	for _, e := range envs {
+		envTok[strings.ToLower(e)] = true
+	}
+	hitsAny := func(t string) bool {
+		for _, s := range services {
+			if tokenHitsService(t, strings.ToLower(s)) {
+				return true
+			}
+		}
+		return false
+	}
+	var out []string
+	for _, t := range toks {
+		if utf8.RuneCountInString(t) <= 2 || findSuffixDebris[t] || guidedStopwords[t] || findFiller[t] || findVerbs[t] || envTok[t] || nearFiller(t) {
+			continue
+		}
+		if hitsAny(t) {
+			out = append(out, t)
+			continue
+		}
+		if b := stripTRSuffix(t, hitsAny); b != "" {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// familyMatches — SAF: TÜM parçaları segment/önek olarak taşıyan servisler (≤ max).
+func familyMatches(frags []string, services []string, max int) []string {
+	if len(frags) == 0 {
+		return nil
+	}
+	var out []string
+	for _, s := range services {
+		ls := strings.ToLower(s)
+		all := true
+		for _, f := range frags {
+			if !tokenHitsService(f, ls) {
+				all = false
+				break
+			}
+		}
+		if all {
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	if len(out) > max {
+		out = out[:max]
+	}
+	return out
+}
+
 func hasFindSignal(toks []string) bool {
 	for _, t := range toks {
 		if findVerbs[t] {
@@ -95,13 +192,15 @@ func hasFindSignal(toks []string) bool {
 // listesi" / "kaç servis var": ÇOĞUL ya da liste/sayı sözcüğü + servis kökü.
 // Tekil "checkout servisini göster" liste DEĞİLDİR.
 func isServiceListAsk(toks []string) bool {
-	plural, listNoun, countQ, svcWord := false, false, false, false
+	plural, listNoun, countQ, svcWord, fetchVerb := false, false, false, false, false
 	for _, t := range toks {
 		switch t {
 		case "servisler", "servisleri", "servislerin", "servislerini", "servislerimiz", "services":
 			plural = true
 		case "kaç", "hangi", "hangileri", "neler", "tüm", "bütün", "hepsi", "all", "which":
 			countQ = true
+		case "getir", "göster", "gösterir", "ver", "çıkar", "dök", "fetch", "show", "get":
+			fetchVerb = true
 		}
 		if strings.HasPrefix(t, "liste") || t == "list" {
 			listNoun = true
@@ -109,8 +208,27 @@ func isServiceListAsk(toks []string) bool {
 		if strings.HasPrefix(t, "servis") || strings.HasPrefix(t, "service") {
 			svcWord = true
 		}
+		// v0.10.485 — yazım hatalı fiil ("igetir", "listle"): ≤1 mesafe.
+		if !fetchVerb && !listNoun && len([]rune(t)) >= 4 {
+			for _, w := range []string{"getir", "göster", "listele"} {
+				if levenshtein(t, w) <= 1 {
+					fetchVerb = true
+				}
+			}
+		}
 	}
-	return (plural && (hasFindSignal(toks) || countQ || listNoun)) || (svcWord && (listNoun || countQ))
+	return (plural && (hasFindSignal(toks) || countQ || listNoun || fetchVerb)) || (svcWord && (listNoun || countQ))
+}
+
+// isListCue — v0.10.485: servis sözcüğü olmadan da liste isteği ("mobile
+// bff'leri listele"): listele/liste/hangi + (çağıranın bulduğu) aile parçaları.
+func isListCue(toks []string) bool {
+	for _, t := range toks {
+		if strings.HasPrefix(t, "liste") || t == "list" || t == "hangi" || t == "hangileri" || t == "neler" {
+			return true
+		}
+	}
+	return false
 }
 
 // tokenHitsService — jeton, adın sınırlı bir parçasına ya da parça önekine
@@ -134,10 +252,10 @@ func findEntityShaped(toks []string, envs []string, hits func(string) bool) bool
 	}
 	named := false
 	for _, t := range toks {
-		if utf8.RuneCountInString(t) <= 2 || findSuffixDebris[t] || guidedStopwords[t] || findFiller[t] || findVerbs[t] || envTok[t] {
+		if utf8.RuneCountInString(t) <= 2 || findSuffixDebris[t] || guidedStopwords[t] || findFiller[t] || findVerbs[t] || envTok[t] || nearFiller(t) {
 			continue
 		}
-		if hits(t) {
+		if hits(t) || stripTRSuffix(t, hits) != "" { // v0.10.485 — "bffleri" → "bff"
 			named = true
 			continue
 		}
@@ -154,8 +272,18 @@ func routeFindEntity(msg string, toks []string, svc, env string, services, envs 
 		return guidedRoute{}, false
 	}
 	explicit := extractServiceEntity(msg, services, envs)
-	if explicit == "" && isServiceListAsk(toks) {
-		return guidedRoute{Intent: guidedFindEntity, FindList: true, Env: env}, true
+	if explicit == "" {
+		// v0.10.485 (operatör: "mobile bff servisleri listele → RAG'a gidiyor"):
+		// parçalı ad + liste/getir sözcüğü = AİLE listesi ("mobile*bff*" servisleri);
+		// servis sözcüğü olmadan da ("mobile bff'leri listele").
+		frags := familyFragments(toks, envs, services)
+		listAsk := isServiceListAsk(toks)
+		if (listAsk || (isListCue(toks) && len(frags) > 0)) && len(frags) > 0 && len(familyMatches(frags, services, familyListMax)) > 0 {
+			return guidedRoute{Intent: guidedFindEntity, FindList: true, FindQuery: strings.Join(frags, " "), Env: env}, true
+		}
+		if listAsk {
+			return guidedRoute{Intent: guidedFindEntity, FindList: true, Env: env}, true
+		}
 	}
 	if svc != "" {
 		ls := strings.ToLower(svc)
@@ -165,6 +293,12 @@ func routeFindEntity(msg string, toks []string, svc, env string, services, envs 
 		return guidedRoute{}, false
 	}
 	opts := serviceCandidates(msg, services, envs, guidedServiceAskMax)
+	if len(opts) == 0 {
+		// v0.10.485 — ek soyulmuş parçalar ("mobile bffleri"): aile eşleşmesi.
+		if frags := familyFragments(toks, envs, services); len(frags) > 0 {
+			opts = familyMatches(frags, services, guidedServiceAskMax)
+		}
+	}
 	if len(opts) == 0 {
 		return guidedRoute{}, false
 	}
@@ -258,6 +392,29 @@ func renderFindEntityList(total int, rows []chstore.ServiceSummary, rangeS int64
 	return b.String()
 }
 
+// renderFamilyServiceList — v0.10.485: aile listesi (ad + son pencere RED;
+// pencerede verisi olmayan üye "—" ile yine listelenir — katalog gerçeği).
+func renderFamilyServiceList(q string, names []string, rows []chstore.ServiceSummary, rangeS int64) string {
+	byName := map[string]chstore.ServiceSummary{}
+	for _, r := range rows {
+		byName[r.Name] = r
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "**%s** ile eşleşen **%d servis** (son %s):\n\n| Servis | span/s | hata %% | p99 ms |\n|---|---:|---:|---:|\n", q, len(names), fmtAgoTR(rangeS))
+	for _, n := range names {
+		if r, ok := byName[n]; ok && r.SpanCount > 0 {
+			rate := float64(r.SpanCount) / float64(maxInt64(rangeS, 1))
+			fmt.Fprintf(&b, "| %s | %.1f | %.2f | %.0f |\n", n, rate, r.ErrorRate, r.P99Ms)
+		} else {
+			fmt.Fprintf(&b, "| %s | — | — | — |\n", n)
+		}
+	}
+	if len(names) >= familyListMax {
+		fmt.Fprintf(&b, "\nİlk %d gösterildi; daraltmak için parça ekle.\n", familyListMax)
+	}
+	return b.String()
+}
+
 func renderFindEntityAsk(q string, opts []string) string {
 	if q != "" {
 		return fmt.Sprintf("%q birden çok servise oturuyor (%d aday). Hangisini kastettin? Aşağıdaki çiplerden seç ya da tam adı yaz.", q, len(opts))
@@ -275,6 +432,29 @@ func (s *Server) guidedFindEntityAnswer(ctx context.Context, emit func(string, a
 		})
 	}
 	switch {
+	case route.FindList && strings.TrimSpace(route.FindQuery) != "":
+		// v0.10.485 — AİLE listesi: parçaların hepsini taşıyan servisler + RED.
+		frags := strings.Fields(strings.ToLower(route.FindQuery))
+		names := familyMatches(frags, s.guidedServiceNames(ctx), familyListMax)
+		n := emitGuidedStep(emit, "list_services", fmt.Sprintf(`{"name_contains":%q,"limit":%d}`, route.FindQuery, familyListMax))
+		if len(names) == 0 {
+			emitGuidedStepResult(emit, n, "list_services", "eşleşen servis yok", nil)
+			answer(fmt.Sprintf("Katalogda %q parçalarını taşıyan servis yok.", route.FindQuery), route)
+			return true, true
+		}
+		rows, err := mcptools.ReadTeamServicesRED(ctx, s.mcpDeps(), names, from, to)
+		if err != nil {
+			emitGuidedStepResult(emit, n, "list_services", "", err)
+			return false, false
+		}
+		text := renderFamilyServiceList(route.FindQuery, names, rows, rangeS)
+		emitGuidedStepResult(emit, n, "list_services", text, nil)
+		route.TeamServices = names
+		if len(route.TeamServices) > 8 {
+			route.TeamServices = route.TeamServices[:8]
+		}
+		answer(text, route)
+		return true, true
 	case route.FindList:
 		n := emitGuidedStep(emit, "list_services", fmt.Sprintf(`{"sort":"spanCount","limit":%d}`, findEntityListMax))
 		total := len(s.guidedServiceNames(ctx))

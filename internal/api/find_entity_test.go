@@ -149,3 +149,45 @@ func TestRenderFindEntity(t *testing.T) {
 		t.Errorf("aday metni: %s", ask)
 	}
 }
+
+// v0.10.485 (operatör: "mobile bff servisleri listele → RAG'a gidiyor; mobile*bff*
+// servislerini listeleyebilir") — aile listesi + Türkçe ek soyma + yazım hatası.
+func TestRouteFindEntityFamilyList(t *testing.T) {
+	for _, q := range []string{"mobile bff servisleri listele", "mobile bffleri listele", "mobile bff servisler igetir", "mobile bff servislerini getir", "mobile bff'leri listele"} {
+		r := routeGuidedIntent(q, feServices, feEnvs, nil, "")
+		if r.Intent != guidedFindEntity || !r.FindList || r.FindQuery != "mobile bff" {
+			t.Errorf("%q → %+v; want find_entity liste FindQuery=\"mobile bff\"", q, r)
+		}
+	}
+	if r := routeGuidedIntent("servisleri listele", feServices, feEnvs, nil, ""); !r.FindList || r.FindQuery != "" {
+		t.Errorf("parçasız liste: %+v", r)
+	}
+	if r := routeGuidedIntent("zzqx servisleri listele", feServices, feEnvs, nil, ""); !r.FindList || r.FindQuery != "" {
+		t.Errorf("eşleşmeyen parça → genel liste: %+v", r)
+	}
+	// Ek soyulmuş çıplak ad → aday çipleri.
+	if r := routeGuidedIntent("mobile bffleri", feServices, feEnvs, nil, ""); r.Intent != guidedFindEntity || len(r.ServiceOptions) != 2 {
+		t.Errorf("ek soyma adayları: %+v", r)
+	}
+}
+
+func TestFamilyHelpers(t *testing.T) {
+	if got := familyFragments([]string{"mobile", "bffleri", "listele"}, feEnvs, feServices); strings.Join(got, ",") != "mobile,bff" {
+		t.Errorf("parçalar: %v", got)
+	}
+	if got := familyMatches([]string{"mobile", "bff"}, feServices, 40); len(got) != 2 || got[0] != "mobile-commercial-bff-prod" {
+		t.Errorf("aile: %v", got)
+	}
+	if !nearFiller("igetir") || !nearFiller("listle") || nearFiller("mobile") || nearFiller("bff") {
+		t.Error("yazım hatalı dolgu")
+	}
+	if stripTRSuffix("bffleri", func(b string) bool { return b == "bff" }) != "bff" || stripTRSuffix("mobile", func(string) bool { return false }) != "" {
+		t.Error("ek soyma")
+	}
+	txt := renderFamilyServiceList("mobile bff", []string{"mobile-commercial-bff-prod", "mobile-retail-bff-prod"}, []chstore.ServiceSummary{{Name: "mobile-retail-bff-prod", SpanCount: 1800, ErrorRate: 0.5, P99Ms: 120}}, 1800)
+	for _, want := range []string{"**2 servis**", "| mobile-retail-bff-prod | 1.0 | 0.50 | 120 |", "| mobile-commercial-bff-prod | — | — | — |"} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("%q yok:\n%s", want, txt)
+		}
+	}
+}

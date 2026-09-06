@@ -19,6 +19,8 @@ import type { LogPatternGroup, LogTemplate } from '@/lib/types';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { Button } from '@/components/ui/Button';
+import { trendCell, trendLabel } from '@/lib/logPatternsTrend'; // v0.10.508 (C6)
+import { getItem, setItem } from '@/lib/storage';
 import { IconButton } from '@/components/ui/IconButton'; // v0.10.502 (B6)
 import { Spinner, Empty } from '@/components/Spinner';
 import { sevClass, sevName, tsLong, tsShort } from '@/lib/utils';
@@ -64,9 +66,14 @@ export type PanelTab = 'patterns' | 'templates';
 const TAB_KEY = 'logs.patterns.tab';
 const TEMPLATES_LIMIT = 200;
 
+// COLS — v0.10.508 (C6): Δ sütunu (önceki pencere örneklemesine göre oran /
+// YENİ). Taban istenmediyse hücre "—"; sıralama değeri satır başına
+// trendSortValue ile (taban satır verisinde değil sonuç zarfında olduğu
+// için sortValue'ya kapanışla giriyor — aşağıda colsFor).
 const COLS: DataTableColumn<LogPatternGroup>[] = [
   { id: 'template', label: 'Desen', sortValue: r => r.template, naturalDir: 'asc', flex: true },
   { id: 'count', label: 'Sayı', sortValue: r => r.count, numeric: true, width: 110 },
+  { id: 'trend', label: 'Δ', sortValue: r => r.new ? Number.MAX_SAFE_INTEGER : (r.ratio ?? 0), numeric: true, width: 72 },
   { id: 'severity', label: 'Seviye', sortValue: r => r.severity, numeric: true, width: 84 },
   { id: 'services', label: 'Servisler', sortValue: r => r.services.join(','), naturalDir: 'asc', width: 170 },
   { id: 'lastSeen', label: 'Son', sortValue: r => r.lastSeen, numeric: true, width: 96 },
@@ -99,7 +106,11 @@ export function LogPatternsPanel({ params, open, onSearch, tab: tabProp, onTab }
   const switchTab = (t: PanelTab) => { setRaw(TAB_KEY, t); setLocalTab(t); onTab?.(t); };
   const since = useMemo(() => templatesSinceRung(params.from), [params.from]);
 
-  const q = useLogsPatterns({ ...params, limit: 50 }, open && tab === 'patterns');
+  // v0.10.508 (C6) — Trend: önceki eşit pencerenin örneklemesiyle Δ/YENİ.
+  // Kalıcı (localStorage); yalnız açıkken ek bir ES sayfası (500) çekilir.
+  const [trend, setTrend] = useState<boolean>(() => { try { return getItem<string>('logs.patternsTrend', '0') === '1'; } catch { return false; } });
+  const toggleTrend = () => setTrend(v => { const n = !v; try { setItem('logs.patternsTrend', n ? '1' : '0'); } catch { /* storage yok */ } return n; });
+  const q = useLogsPatterns({ ...params, limit: 50, ...(trend ? { baseline: 1 as const } : {}) }, open && tab === 'patterns');
   const tq = useLogsTemplates(
     { since, limit: TEMPLATES_LIMIT, sort: 'last_seen', service: params.service || undefined },
     open && tab === 'templates',
@@ -132,12 +143,21 @@ export function LogPatternsPanel({ params, open, onSearch, tab: tabProp, onTab }
           { key: 'patterns', label: 'Desenler', title: 'Penceredeki mesajlar imzaya göre gruplanır (örneklemeli)' },
           { key: 'templates', label: 'Şablonlar', title: "Drain templater'ın kalıcı şablonları (5 dk'da ≤1000 satır örneklenir)" },
         ]} />
+        {tab === 'patterns' && (
+          <Button variant={trend ? 'primary' : 'secondary'} size="xs" onClick={toggleTrend} aria-pressed={trend}
+            title="Δ / YENİ: hemen önceki eşit pencerenin örneklemesiyle (tek ek sayfa, 500 satır) karşılaştırır — ipucu, kanıt değil">
+            Trend
+          </Button>
+        )}
         <span style={{ fontSize: 11, color: 'var(--text3)' }}>
           {tab === 'patterns' ? (d ? (
             <>
               {d.sampled.toLocaleString()} örnek satır{d.truncated ? ` (tavan ${d.cap.toLocaleString()})` : ''}
               {' · '}pencere toplamı {d.total.toLocaleString()}{' · '}{d.distinct} desen
               {coveredLabel(d) && <span title="Tavan doldu: sayımlar yalnız bu alt pencereyi anlatır, seçili pencerenin tamamını değil (v0.10.441)">{' · '}{coveredLabel(d)}</span>}
+              {d.baseline && (d.baseline.degraded
+                ? <span className="badge b-warn" style={{ marginLeft: 6 }} title={d.baseline.reason}>taban okunamadı</span>
+                : <span title="Δ/YENİ tabanı: hemen önceki eşit pencerenin örneklemesi (ipucu, kanıt değil)">{' · '}taban {d.baseline.sampled.toLocaleString()} satır / {d.baseline.distinct} desen{d.baseline.truncated ? ' (tavan)' : ''}</span>)}
               {d.degraded && <span className="badge b-warn" style={{ marginLeft: 6 }}>{d.reason ?? 'degraded'}</span>}
             </>
           ) : 'sayımlar en yeni örnek satırlara göredir') : (
@@ -171,6 +191,13 @@ export function LogPatternsPanel({ params, open, onSearch, tab: tabProp, onTab }
                         <td className="num">
                           <span className="lp-bar" style={{ width: `${share}%` }} aria-hidden="true" />
                           <span style={{ position: 'relative' }}>{r.count.toLocaleString()}</span>
+                        </td>
+                        <td className="num" title={d?.baseline && !d.baseline.degraded
+                          ? `önceki pencere örneklemesinde ${r.prevCount ?? 0} satır${r.new ? ' (yok → örneklemede yeni)' : ''}`
+                          : 'Trend kapalı ya da taban okunamadı'}>
+                          {(() => { const c = trendCell(r, d?.baseline); return c.kind === 'new'
+                            ? <span className="badge b-warn">YENİ</span>
+                            : <span style={{ color: c.kind === 'ratio' ? (c.up ? 'var(--err)' : c.flat ? 'var(--text2)' : 'var(--ok)') : 'var(--text3)' }}>{trendLabel(c)}</span>; })()}
                         </td>
                         <td><span className={sevClass(r.severity)}>{r.severityText || sevName(r.severity)}</span></td>
                         <td className="mono" style={cellServices} title={r.services.join(', ')}>

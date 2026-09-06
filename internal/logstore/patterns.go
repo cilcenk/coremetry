@@ -47,16 +47,63 @@ type SignatureGroup struct {
 	// Query — v0.10.297: şablondan türetilen arama dizesi (PatternSearchQuery);
 	// UI "Ara" ile bunu serbest metne koyar. Boş = aranabilir literal yok.
 	Query string `json:"query"`
+	// v0.10.508 (log arama denetimi C6) — yalnız baseline istenince dolar:
+	// PrevCount = hemen önceki eşit pencerenin ÖRNEKLEMESİNDE aynı imzanın
+	// sayısı; Ratio = Count/PrevCount (PrevCount 0 → 0); New = önceki
+	// örneklemede hiç yok (örneklemede yeni — kanıt değil ipucu; tavan
+	// dolduysa taban da alt pencere anlatır).
+	PrevCount int64   `json:"prevCount,omitempty"`
+	Ratio     float64 `json:"ratio,omitempty"`
+	New       bool    `json:"new,omitempty"`
+}
+
+// PatternsBaseline — v0.10.508 (C6): taban örneklemesinin dürüstlük zarfı.
+type PatternsBaseline struct {
+	FromNs   int64 `json:"fromNs"`
+	ToNs     int64 `json:"toNs"`
+	Sampled  int   `json:"sampled"`
+	Distinct int   `json:"distinct"`
+	// Truncated — taban örneklemesi tavana dayandı: "yeni" ipucu zayıflar.
+	Truncated bool `json:"truncated,omitempty"`
+	// Degraded — taban okunamadı; gruplarda prevCount/ratio/new YOK.
+	Degraded bool   `json:"degraded,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// JoinPatternBaseline — v0.10.508 (C6) SAF: mevcut pencerenin grupları
+// tabanın gruplarıyla HASH üzerinden birleşir. Taban nil/boşsa hiçbir
+// alan yazılmaz (UI "—" çizer). Tabanda örnek satır yoksa (Sampled 0)
+// "yeni" DENMEZ: yokluk kanıt değildir.
+func JoinPatternBaseline(cur *PatternsResult, base *PatternsResult) {
+	if cur == nil || base == nil {
+		return
+	}
+	prev := make(map[string]int64, len(base.Groups))
+	for _, g := range base.Groups {
+		prev[g.Hash] = g.Count
+	}
+	for i := range cur.Groups {
+		pc := prev[cur.Groups[i].Hash]
+		cur.Groups[i].PrevCount = pc
+		if pc > 0 {
+			cur.Groups[i].Ratio = float64(cur.Groups[i].Count) / float64(pc)
+		} else {
+			cur.Groups[i].Ratio = 0
+		}
+		cur.Groups[i].New = pc == 0 && base.Sampled > 0
+	}
 }
 
 // PatternsResult — gruplar + örnekleme dürüstlüğü.
 type PatternsResult struct {
-	Groups    []SignatureGroup `json:"groups"`
-	Sampled   int              `json:"sampled"`   // okunan satır
-	Total     int              `json:"total"`     // backend'in pencere toplamı (ES ≤10k doygun)
-	Cap       int              `json:"cap"`       // PatternsSampleCap
-	Truncated bool             `json:"truncated"` // Sampled == Cap && Total > Cap
-	Distinct  int              `json:"distinct"`  // limit'ten önceki grup sayısı
+	Groups []SignatureGroup `json:"groups"`
+	// Baseline — v0.10.508 (C6): yalnız ?baseline=1 ile dolar.
+	Baseline  *PatternsBaseline `json:"baseline,omitempty"`
+	Sampled   int               `json:"sampled"`   // okunan satır
+	Total     int               `json:"total"`     // backend'in pencere toplamı (ES ≤10k doygun)
+	Cap       int               `json:"cap"`       // PatternsSampleCap
+	Truncated bool              `json:"truncated"` // Sampled == Cap && Total > Cap
+	Distinct  int               `json:"distinct"`  // limit'ten önceki grup sayısı
 	// CoveredFromNs/CoveredToNs (v0.10.441, log arama denetimi C4) —
 	// örneklemenin GERÇEKTEN kapsadığı alt pencere (en yeni uç; okunan
 	// satırların min/max zaman damgası). Tavan dolduğunda istenen
@@ -254,3 +301,7 @@ func PatternSearchQuery(template string) string {
 // patternsBudget — örnekleme turu tavanı (sayfa başına Search kendi
 // bütçesini de taşır).
 const patternsBudget = 10 * time.Second
+
+// PatternsMaxGroups — v0.10.508 (C6): taban örneklemesinde grup tavanı
+// (limit'in kırpması tabanı "yok" göstermesin).
+const PatternsMaxGroups = patternsMaxGroups

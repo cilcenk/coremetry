@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.451 (dış denetim D3 kalan)
 import { useSearchParams } from 'react-router-dom';
 import { DataTableHead, DataTableColgroup, type DataTable } from '@/components/ui/DataTable';
 import { PodJmxInline } from './PodJmxInline';
@@ -130,7 +131,7 @@ export function ServiceClusterPods({ dt, effNs, effDeploy, cFrom, cTo, colCount,
                       const open = openKey === key;
                       return (
                         <Fragment key={key}>
-                          <tr onClick={() => setOpenKey(open ? null : key)}
+                          <tr {...rowActivation(() => setOpenKey(open ? null : key))}
                             id={`pod-row-${r.pod}`}
                             title="Metrikleri göster · JVM · GC · datasource"
                             style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>

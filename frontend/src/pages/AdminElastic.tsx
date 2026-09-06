@@ -1,4 +1,5 @@
 import { Fragment, useRef, useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.451 (dış denetim D3 kalan)
 import { Empty, Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -114,7 +115,7 @@ function QueryErrorsPanel() {
               const k = esErrorKey(e);
               return (
               <Fragment key={k}>
-                <tr onClick={() => setOpen(open === k ? null : k)}
+                <tr {...rowActivation(() => setOpen(open === k ? null : k))}
                   style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
                   title="Click to show the exact query body sent">
                   <td className="mono" style={{ fontSize: 11 }}>{fmtClock(e.at)}</td>

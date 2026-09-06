@@ -554,7 +554,8 @@ func TestDiscoveryToolsGroupedNearConsumers(t *testing.T) {
 	// yerde daha yazılı ve üçü de bu testle birlikte güncellenir; aksi
 	// hâlde katalog büyürken doküman ve duruş notu sessizce bayatlar.
 	// v0.10.468 — 36 → 39 (entity_catalog.go: list_namespaces / list_workloads / list_pods).
-	if len(tools) != 39 {
+	// v0.10.469 — 39 → 40 (resolve_entity.go).
+	if len(tools) != 40 {
 		t.Errorf("katalog %d tool — sayı değiştiyse tools.go başlığındaki sayım yorumunu, "+
 			"api/mcp_authz_test.go'daki duruş notunu ve docs/runbooks/mcp-claude-code.md'yi de güncelle", len(tools))
 	}

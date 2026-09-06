@@ -260,8 +260,9 @@ func TestAllShippedToolsAreViewerLevel(t *testing.T) {
 	// v0.10.468 — 36 → 39: entity_catalog.go (list_namespaces / list_workloads /
 	// list_pods); REST eşleri GET /api/entities, /api/entity/services,
 	// /api/services/{name}/pods — RequireRole'süz (viewer tabanı) → MinRole "".
-	if len(tools) != 39 {
-		t.Errorf("katalog %d tool (39 bekleniyordu) — yeni tool'un REST eşinin kapısını (auth.RequireRole/"+
+	// v0.10.469 — 39 → 40: resolve_entity (katalog okuması, viewer).
+	if len(tools) != 40 {
+		t.Errorf("katalog %d tool (40 bekleniyordu) — yeni tool'un REST eşinin kapısını (auth.RequireRole/"+
 			"RequireAnyRole) kontrol et, MinRole'ü ona eşitle, sonra bu sayıyı güncelle", len(tools))
 	}
 	for _, tool := range tools {

@@ -1,6 +1,7 @@
 package chstore
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -16,56 +17,64 @@ import (
 // (local 2-shard, 12 h: 51 MiB / 11.6 s). Stage 2 already applies that
 // HAVING over the bounded holders list, so rootOnly now rides the
 // aggregation-free recency slice (v0.9.277 shape) like the plain and
-// hasError page loads. Contract pinned here:
-//   - no filter / hasError / rootOnly / rootOnly+hasError → slice
-//   - hasError sets the row-level errors prefilter, rootOnly never does
-//   - minMs / maxMs (alone or combined) keep the light stage 1
+// hasError page loads.
+//
+// v0.10.497 widened the contract: minMs/maxMs ride the slice too and the
+// light stage is deleted. Pinned here:
+//   - every no-service filter combination → the recency slice
+//   - hasError sets the row-level errors prefilter; rootOnly/min/max never do
+//   - rootOnly / minMs / maxMs mark postAgg (stage 2 HAVING + RankedWithin)
 func TestNoServiceSlicePlan_v0_10_494(t *testing.T) {
 	cases := []struct {
-		name             string
-		f                TraceFilter
-		ok, errors, root bool
+		name        string
+		f           TraceFilter
+		errors, agg bool
 	}{
-		{"no filter", TraceFilter{}, true, false, false},
-		{"hasError only", TraceFilter{HasError: true}, true, true, false},
-		{"rootOnly only (the reported shape)", TraceFilter{RootOnly: true}, true, false, true},
-		{"rootOnly + hasError", TraceFilter{RootOnly: true, HasError: true}, true, true, true},
-		{"minMs", TraceFilter{MinMs: 100}, false, false, false},
-		{"maxMs", TraceFilter{MaxMs: 100}, false, false, false},
-		{"rootOnly + minMs", TraceFilter{RootOnly: true, MinMs: 100}, false, false, true},
-		{"hasError + maxMs", TraceFilter{HasError: true, MaxMs: 100}, false, true, false},
+		{"no filter", TraceFilter{}, false, false},
+		{"hasError only", TraceFilter{HasError: true}, true, false},
+		{"rootOnly only (the reported shape)", TraceFilter{RootOnly: true}, false, true},
+		{"rootOnly + hasError", TraceFilter{RootOnly: true, HasError: true}, true, true},
+		{"minMs", TraceFilter{MinMs: 100}, false, true},
+		{"maxMs", TraceFilter{MaxMs: 100}, false, true},
+		{"rootOnly + minMs", TraceFilter{RootOnly: true, MinMs: 100}, false, true},
+		{"hasError + maxMs", TraceFilter{HasError: true, MaxMs: 100}, true, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			p := noServiceSlicePlan(c.f)
-			if p.ok != c.ok || p.errorsPrefilter != c.errors || p.rootPostAgg != c.root {
-				t.Fatalf("plan=%+v want ok=%v errors=%v root=%v", p, c.ok, c.errors, c.root)
+			if p.errorsPrefilter != c.errors || p.postAgg != c.agg {
+				t.Fatalf("plan=%+v want errors=%v postAgg=%v", p, c.errors, c.agg)
 			}
 		})
 	}
 }
 
 // Source pin: the plan must be what getTracesFromMV consults, the slice
-// call must consume its prefilter, rootOnly must widen the time-sort budget
-// to the recency slice (pages stay honest via RankedWithin), and the light
-// stage 1 must sit BEHIND the slice branch — a pure helper nobody calls
-// pins nothing (feedback-tested-but-unreachable).
+// call must consume its prefilter, post-aggregate filters must widen the
+// time-sort budget to the recency slice (pages stay honest via
+// RankedWithin), and the whole-window light stage must stay deleted — a
+// pure helper nobody calls pins nothing (feedback-tested-but-unreachable).
 func TestNoServiceSlicePlan_reachable_v0_10_494(t *testing.T) {
 	body := funcBody(t, "repo.go", "func (s *Store) getTracesFromMV(")
 	for _, want := range []string{
 		"plan := noServiceSlicePlan(f)",
 		"errorsOnly := plan.errorsPrefilter",
-		"if budgetOK && plan.ok {",
-		"if plan.ok && plan.rootPostAgg && !ranked {",
-		"if (ranked || plan.rootPostAgg) && f.RankedWithin != nil {",
+		"if budgetOK {",
+		"if plan.postAgg && !ranked {",
+		"if (ranked || plan.postAgg) && f.RankedWithin != nil {",
+		"s.traceRecencySlice(ctx, s1f, budget, errorsOnly)",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("getTracesFromMV missing %q", want)
 		}
 	}
-	slice := strings.Index(body, "s.traceRecencySlice(ctx, s1f, budget, errorsOnly)")
-	light := strings.Index(body, "traceStage1LightSQL(s1f, having)")
-	if slice < 0 || light < 0 || light < slice {
-		t.Fatalf("slice branch must precede the light stage 1: slice=%d light=%d", slice, light)
+	// v0.10.497 — no no-service stage 1 may GROUP BY trace_id over the
+	// window again (the v0.10.494 241 shape).
+	b, err := os.ReadFile("repo.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "traceStage1LightSQL(") {
+		t.Fatal("traceStage1LightSQL must not come back — it is the v0.10.494 241 shape")
 	}
 }

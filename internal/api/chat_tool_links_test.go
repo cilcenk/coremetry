@@ -6,6 +6,8 @@ package api
 
 import (
 	"encoding/json"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -97,5 +99,75 @@ func TestMergeToolLinks(t *testing.T) {
 	}
 	if acc[0].Href != "/a" || acc[3].Href != "/d" {
 		t.Errorf("ilk-çağrılan-önce sıra bozuldu: %+v", acc)
+	}
+}
+
+// v0.10.495 — operatör: "mobile … bff servisinin /… url'ine giden traceleri
+// getir" cevabı sohbette özetleniyor ama Traces sayfası açılmıyordu. Araç
+// SONUCUNDAKİ deep_link birebir arama çipi olur; soru getir/göster/listele/aç
+// fiili taşıyorsa cevap `open` alanıyla arkadaki sayfayı da oraya götürür.
+func TestToolResultDeepLink(t *testing.T) {
+	cases := []struct {
+		tool, content, wantHref, wantLabel string
+		wantOK                             bool
+	}{
+		{"search_traces", `{"count":2,"deep_link":"/traces?service=x&search=POST+%2Fv1%2Fa&range=custom:1-2"}`, "/traces?service=x&search=POST+%2Fv1%2Fa&range=custom:1-2", "Traces'te aç", true},
+		{"trace_stats", `{"deep_link":"/traces?view=aggregate&groupBy=operation"}`, "/traces?view=aggregate&groupBy=operation", "Aggregated'de aç", true},
+		{"search_traces", `{"count":0}`, "", "", false},                           // deep_link yok
+		{"search_traces", `{"deep_link":"https://evil/traces?x"}`, "", "", false}, // dış adres
+		{"search_traces", `{"deep_link":"//evil/traces?x"}`, "", "", false},       // şema-göreli
+		{"search_traces", `{"deep_link":"/logs?q=x"}`, "", "", false},             // yalnız /traces
+		{"search_traces", `not json`, "", "", false},
+		{"get_service_health", `{"deep_link":"/traces?service=x"}`, "", "", false}, // yalnız trace araçları
+	}
+	for _, c := range cases {
+		l, ok := toolResultDeepLink(c.tool, c.content)
+		if ok != c.wantOK || (ok && (l.Href != c.wantHref || l.Label != c.wantLabel)) {
+			t.Errorf("toolResultDeepLink(%s, %s) = (%q, %q, %v), beklenen (%q, %q, %v)",
+				c.tool, c.content, l.Label, l.Href, ok, c.wantLabel, c.wantHref, c.wantOK)
+		}
+	}
+}
+
+func TestAnswerOpenHref(t *testing.T) {
+	const dl = "/traces?service=x&range=custom:1-2"
+	cases := []struct {
+		q, deepLink, want string
+	}{
+		{"mobile bff servisinin /v1/a url'ine giden traceleri getir", dl, dl},
+		{"hatalı trace'leri göster", dl, dl},
+		{"Trace'lerini listele", dl, dl},
+		{"show me the traces", dl, dl},
+		{"neden yavaş?", dl, ""},         // analiz kipi — çip yeter
+		{"bunun sebebi ne", dl, ""},      // işaret zamiri + soru sözcüğü → gezmez
+		{"kaç trace var, getir", dl, ""}, // soru sözcüğü baskın
+		{"traceleri getir", "", ""},      // arama yapılmadı
+	}
+	for _, c := range cases {
+		if got := answerOpenHref(c.q, c.deepLink); got != c.want {
+			t.Errorf("answerOpenHref(%q) = %q, beklenen %q", c.q, got, c.want)
+		}
+	}
+}
+
+// Kaynak pini: döngü sonucu çipi arg-türevi köprüden ÖNCE dener ve her iki
+// cevap yayını open'ı chatAnswerEvent üzerinden taşır (feedback-tested-but-
+// unreachable sınıfı — saf yardımcı çağrılmıyorsa hiçbir şeyi pinlemez).
+func TestToolResultDeepLinkReachable(t *testing.T) {
+	b, err := os.ReadFile("copilot_chat.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	res := strings.Index(src, "toolResultDeepLink(tc.Name, tr.Content)")
+	call := strings.Index(src, "toolCallLink(tc.Name, tc.Input, time.Now())")
+	if res < 0 || call < 0 || call < res {
+		t.Fatalf("sonuç linki arg köprüsünden önce denenmeli: res=%d call=%d", res, call)
+	}
+	if strings.Count(src, "answerOpenHref(lastUserText(req.Messages), loopOpen)") != 2 {
+		t.Fatal("iki answer yayını da (normal + tur tavanı) open'ı taşımalı")
+	}
+	if strings.Contains(src, `emit("answer", map[string]any{"text": finalText`) {
+		t.Fatal("answer gövdesi chatAnswerEvent dışından kurulmamalı")
 	}
 }

@@ -432,6 +432,9 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// v0.9.1228 — döngü boyunca biriken ürün köprüleri (toolCallLink):
 	// cevap çipi olarak yayınlanır; request-ID linkleriyle birleşir.
 	var loopLinks []guidedAnswerLink
+	// v0.10.495 — döngünün SON trace araması (birebir deep_link); cevabın
+	// `open` alanı bundan türer (answerOpenHref: fiil kapısı).
+	var loopOpen string
 	// v0.9.528 Faz 2 — serbest döngünün sistem prompt'u da kiminle
 	// konuşulduğunu taşır. Ön-söz boşsa sabitin aynısı.
 	// v0.10.32 — EKRAN BAĞLAMI. İlk üç kademe req.Context.* alıyordu,
@@ -529,8 +532,8 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			for _, l := range s.answerRequestIDLinks(ctx, finalText, req.Context.Service) {
 				links = mergeToolLinks(links, l)
 			}
-			emit("answer", map[string]any{"text": finalText, "exchangeId": exchangeID,
-				"links": links})
+			emit("answer", chatAnswerEvent(finalText, exchangeID, links,
+				answerOpenHref(lastUserText(req.Messages), loopOpen)))
 			break
 		}
 		// Record the assistant's tool-call turn, then execute each
@@ -653,7 +656,14 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 				// v0.9.1321 (§3.1 K6) — köprü çipi tool'un GERÇEKTEN
 				// sorguladığı pencereyi taşır ([now-range_s, now]);
 				// arg'da range_s yoksa pencere yazılmaz.
-				if l, ok := toolCallLink(tc.Name, tc.Input, time.Now()); ok {
+				// v0.10.495 — sonuçtaki birebir arama linki (deep_link) varsa
+				// arg-türevi köprünün yerine geçer; sohbet cevabı `open` ile
+				// arkadaki sayfayı da oraya götürebilir.
+				if l, ok := toolResultDeepLink(tc.Name, tr.Content); ok {
+					stepEv["href"] = l.Href
+					loopLinks = mergeToolLinks(loopLinks, l)
+					loopOpen = l.Href
+				} else if l, ok := toolCallLink(tc.Name, tc.Input, time.Now()); ok {
 					stepEv["href"] = l.Href
 					loopLinks = mergeToolLinks(loopLinks, l)
 				}
@@ -727,8 +737,8 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 				for _, l := range s.answerRequestIDLinks(ctx, finalText, req.Context.Service) {
 					links = mergeToolLinks(links, l)
 				}
-				emit("answer", map[string]any{"text": finalText, "exchangeId": exchangeID,
-					"links": links})
+				emit("answer", chatAnswerEvent(finalText, exchangeID, links,
+					answerOpenHref(lastUserText(req.Messages), loopOpen)))
 			}
 		}
 	}

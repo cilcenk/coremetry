@@ -436,12 +436,10 @@ func buildEndpointsMetric(ctx context.Context, src metricSource, id endpointsMet
 	if nSlots > endpointsMetricSlots*2 {
 		nSlots = endpointsMetricSlots * 2
 	}
-	endStamped := src.Name() == metricSourceVM
+	// v0.10.504 (dış denetim A6) — VM kova-sonu damgası decode'da
+	// başlangıca çevrildi (vmetrics bucketStartNs); `off--` telafisi kalktı.
 	slotOf := func(tNs int64) int {
 		off := tNs/1e9 - p.From.Unix()
-		if endStamped {
-			off--
-		}
 		sl := int(off / int64(step))
 		if sl < 0 {
 			return 0

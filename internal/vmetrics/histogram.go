@@ -369,6 +369,7 @@ func (s *Service) QueryPromQLRange(ctx context.Context, query string, from, to t
 		return nil, err
 	}
 	out := make([]chstore.SpanMetricSeries, 0, len(series))
+	startSec := float64(from.Unix())
 	for _, sr := range series {
 		row := chstore.SpanMetricSeries{GroupKey: labelSetGroupKey(sr.Metric)}
 		for _, raw := range sr.Values {
@@ -378,8 +379,14 @@ func (s *Service) QueryPromQLRange(ctx context.Context, query string, from, to t
 				// a 0 renders as a measurement.
 				continue
 			}
+			// v0.10.504 (A6) — kova başlangıcı (bucketStartNs); pencere
+			// önündeki ilk kısmi kova düşer. runRangeQuery ile aynı kural.
+			t := bucketStartNs(ts, step)
+			if atRequestStart(ts, startSec) {
+				continue
+			}
 			row.Points = append(row.Points, chstore.SpanMetricPoint{
-				Time:  int64(ts * 1e9),
+				Time:  t,
 				Value: v,
 			})
 		}

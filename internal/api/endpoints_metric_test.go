@@ -61,9 +61,13 @@ func epFixtureWindow() (time.Time, time.Time) {
 }
 
 // epConst — her adımda sabit değerli seri (VM gibi pencere SONUNA damgalı).
+// epConst — n nokta, kova BAŞLANGICI damgalı (from + i·step, i = 0..n−1).
+// v0.10.504 (dış denetim A6): kaynak artık kova başlangıcını döner
+// (vmetrics bucketStartNs); eski `i = 1..n` şekli VM'in kova-sonu
+// damgasını taklit ediyordu ve reduce'taki `off--` telafisine yaslanıyordu.
 func epConst(gk []string, from time.Time, step, n int, v float64) chstore.SpanMetricSeries {
 	s := chstore.SpanMetricSeries{GroupKey: gk}
-	for i := 1; i <= n; i++ {
+	for i := 0; i < n; i++ {
 		s.Points = append(s.Points, chstore.SpanMetricPoint{Time: from.Add(time.Duration(i*step) * time.Second).UnixNano(), Value: v})
 	}
 	return s
@@ -212,28 +216,15 @@ func TestBuildEndpointsMetric_Reduce(t *testing.T) {
 	}
 }
 
-// CH kova BAŞINA damgalar: i=0..59 → slot i, kayma yok.
+// CH kova BAŞINA damgalar: i=0..59 → slot i, kayma yok. v0.10.504 (A6) —
+// VM kaynağı da artık kova başlangıcını döner (vmetrics bucketStartNs), bu
+// yüzden iki kaynak AYNI fixture'la aynı ızgarayı üretmeli: buradaki eski
+// "−60 s kaydır" sarmalayıcısı (VM'in kova-sonu taklidini CH'ye çeviren)
+// kalktı; test yalnız kaynak adının reduce'u DEĞİŞTİRMEDİĞİNİ pinler.
 func TestBuildEndpointsMetric_StartStampedCH(t *testing.T) {
 	from, to := epFixtureWindow()
 	src := epFixtureSource("s", []string{"http.response.status_code"})
 	src.name = "ch"
-	shift := func(ser []chstore.SpanMetricSeries) []chstore.SpanMetricSeries {
-		for i := range ser {
-			for j := range ser[i].Points {
-				ser[i].Points[j].Time -= int64(60 * time.Second)
-			}
-		}
-		return ser
-	}
-	rateFn, queryFn := src.rateFn, src.queryFn
-	src.rateFn = func(f chstore.MetricQueryFilter, m string) ([]chstore.SpanMetricSeries, error) {
-		ser, err := rateFn(f, m)
-		return shift(ser), err
-	}
-	src.queryFn = func(f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error) {
-		ser, err := queryFn(f)
-		return shift(ser), err
-	}
 	id := endpointsMetricIdentity{Metric: "m", RTMetric: "m", Instrument: "histogram", Service: "cart"}
 	resp, err := buildEndpointsMetric(context.Background(), src, id, epPlan(from, to))
 	if err != nil {

@@ -56,10 +56,10 @@ func podMatrix(rows ...string) string {
 func TestJVMHeapPodUsageAveragesPoolSumsAndGatesOnLimit(t *testing.T) {
 	s, queries := podFake(t, map[string]string{
 		"memory_used_after_last_gc": podMatrix(
-			`{"metric":{"service_name":"svc","k8s_pod_name":"pod-1"},"values":[[1700000000,"0"],[1700000060,"300"],[1700000120,"500"]]}`,
+			`{"metric":{"service_name":"svc","k8s_pod_name":"pod-1"},"values":[[1700000060,"0"],[1700000120,"300"],[1700000180,"500"]]}`,
 		),
 		"memory_used": podMatrix(
-			`{"metric":{"service_name":"svc","k8s_pod_name":"pod-1"},"values":[[1700000000,"800"],[1700000060,"1000"]]}`,
+			`{"metric":{"service_name":"svc","k8s_pod_name":"pod-1"},"values":[[1700000060,"800"],[1700000120,"1000"]]}`, // v0.10.504 — start'taki örnek pencere önü; kovalar start+step'ten
 			`{"metric":{"service_name":"svc","host_name":"host-9"},"values":[[1700000060,"10"]]}`,
 			`{"metric":{"service_name":"","k8s_pod_name":"orphan"},"values":[[1700000060,"10"]]}`,
 		),

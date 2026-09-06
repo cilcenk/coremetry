@@ -31,5 +31,28 @@ import "github.com/cilcenk/coremetry/internal/mcptools"
 // yani buradaki atamayı unutmak operatörün seçimini SESSİZCE iptal
 // eder — mcp_deps_test.go tam olarak bunu ısırıyor.
 func (s *Server) mcpDeps() mcptools.Deps {
-	return mcptools.Deps{Store: s.store, LogStore: s.logs, Metrics: s.metricSource()}
+	return mcptools.Deps{
+		Store: s.store, LogStore: s.logs, Metrics: s.metricSource(),
+		// v0.10.468 (Faz 2, F2-1) — varlık kataloğu tool'ları: etkin Remote
+		// Cluster'lar + entity_layer bayrağı (nil-güvenli; her ikisi de
+		// yoksa tool'lar dürüst disabled/boş döner).
+		Clusters:      s.mcpClusterRefs,
+		EntityEnabled: func() bool { return s.entitySettings != nil && s.entitySettings.Resolved().Enabled },
+	}
+}
+
+// mcpClusterRefs — thanos.ClusterConfig → mcptools.ClusterRef (yalnız etkin).
+func (s *Server) mcpClusterRefs() []mcptools.ClusterRef {
+	if s.thanos == nil {
+		return nil
+	}
+	cfg := s.thanos.CurrentSettings()
+	out := make([]mcptools.ClusterRef, 0, len(cfg.Clusters))
+	for _, c := range cfg.Clusters {
+		if !c.Enabled {
+			continue
+		}
+		out = append(out, mcptools.ClusterRef{ID: c.EffectiveID(), Name: c.Name, SpanValues: c.SpanClusterKeys(), NamespaceFilter: c.NamespaceFilter})
+	}
+	return out
 }

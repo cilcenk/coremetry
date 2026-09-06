@@ -57,7 +57,7 @@
 //     doğru çağrının koşulu, orada kazanılan bayt yanlış argümanla
 //     harcanan bir tura değmez.
 //
-// Tool catalogue (36 tools; sayım v0.9.1050'de düzeltildi — blok
+// Tool catalogue (39 tools; v0.10.468 — 36 → 39: entity_catalog.go list_namespaces / list_workloads / list_pods; sayım v0.9.1050'de düzeltildi — blok
 // v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu;
 // v0.9.1227'de get_operation_health ile 33; v0.9.1233'te
 // get_exception_samples ile 34; v0.9.1244'te list_teams +
@@ -194,6 +194,11 @@ type Deps struct {
 	// would be a large mechanical change that buys nothing. See
 	// MetricSource for the nil contract.
 	Metrics MetricSource
+	// v0.10.468 (Faz 2, F2-1) — varlık kataloğu tool'ları için: etkin Remote
+	// Cluster'lar (id/ad/span değerleri) ve entity_layer bayrağı; nil = kapalı /
+	// yapılandırılmamış (tool dürüst disabled döner). api/mcp_deps.go doldurur.
+	Clusters      func() []ClusterRef
+	EntityEnabled func() bool
 }
 
 // MetricSource is the metric-read half of Deps, satisfied by
@@ -285,6 +290,12 @@ func ToolList(d Deps) []mcp.Tool {
 		// v0.9.1146 (Faz 3.3) — search_logs SATIR döndürür, bu ŞEKİL:
 		// "hata ne zaman başladı" sorusu log ailesinin içinde dursun.
 		getLogHistogramTool(d),
+		// v0.10.468 (Faz 2, F2-1) — varlık kataloğu: list_clusters'ın ailesi
+		// (log ailesi araya girmesin diye histogramdan sonra) — namespace →
+		// workload → pod yürüyüşü (entity_catalog.go).
+		listNamespacesTool(d),
+		listWorkloadsTool(d),
+		listPodsTool(d),
 		getTraceTool(d),
 		// v0.9.1087 (Faz 4) — id'siz giriş: trace ID'yi BULMANIN yolu.
 		searchTracesTool(d),

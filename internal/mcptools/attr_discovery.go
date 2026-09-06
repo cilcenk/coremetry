@@ -97,8 +97,8 @@ type AttrValueMatch struct {
 	FilterValue string `json:"filter_value"`
 }
 
-// matchSamples — SAF: örneklem satırlarında değeri ara (tam / alt-dize).
-func matchSamples(rows []chstore.ServiceAttrRow, value string) []AttrValueMatch {
+// MatchSamples — SAF: örneklem satırlarında değeri ara (tam / alt-dize).
+func MatchSamples(rows []chstore.ServiceAttrRow, value string) []AttrValueMatch {
 	lv := strings.ToLower(strings.TrimSpace(value))
 	var out []AttrValueMatch
 	for _, r := range rows {
@@ -284,7 +284,7 @@ func findAttributeByValueTool(d Deps) mcp.Tool {
 			if err != nil {
 				return nil, err
 			}
-			matches := matchSamples(rows, value)
+			matches := MatchSamples(rows, value)
 			shape := valueShape(value)
 			seen := map[string]bool{}
 			for _, m := range matches {

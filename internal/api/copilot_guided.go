@@ -257,6 +257,9 @@ type guidedRoute struct {
 	FindQuery string
 	// v0.10.465 (D2, family_traces.go) — yalnız hatalı trace'ler (yavaş değil).
 	TraceErrorsOnly bool
+	// v0.10.476 (F3-5, trace_nl_search.go) — değerin bulunduğu attribute anahtarları
+	// (bundle yazar; link süzgeç çipine döner).
+	SearchKeys []string
 }
 
 // normalizeGuidedMsg lowercases for matching. Go's ToLower maps the

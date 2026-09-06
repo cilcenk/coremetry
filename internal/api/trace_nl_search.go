@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/mcptools"
 )
 
 const guidedTraceSearchLimit = 10
@@ -225,7 +226,96 @@ func traceSearchFilter(service, env, frag string, isSQL bool, from, to time.Time
 	return f
 }
 
+// searchKeyPick — SAF (v0.10.476, F3-5): örneklem eşleşmelerinden aranacak
+// anahtarlar — yalnız TAM eşleşenler, tipli/terfi kolonu olanlar önce, ≤3.
+// Alt-dize eşleşmeleri (host url.full'un içinde) haystack aramasına kalır.
+func searchKeyPick(matches []mcptools.AttrValueMatch) []string {
+	var col, arr []string
+	for _, m := range matches {
+		if m.Match != "exact" {
+			continue
+		}
+		if m.Column != "" {
+			col = append(col, m.Key)
+		} else {
+			arr = append(arr, m.Key)
+		}
+	}
+	out := append(col, arr...)
+	if len(out) > 3 {
+		out = out[:3]
+	}
+	return out
+}
+
+// mergeTraceRows — anahtar başına sonuçları trace_id ile tekilleştir, süreye
+// göre sırala, limit.
+func mergeTraceRows(sets [][]chstore.TraceRow, limit int) []chstore.TraceRow {
+	seen := map[string]bool{}
+	var out []chstore.TraceRow
+	for _, rows := range sets {
+		for _, r := range rows {
+			if !seen[r.TraceID] {
+				seen[r.TraceID] = true
+				out = append(out, r)
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].DurationMs > out[j].DurationMs })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
 func (s *Server) guidedTraceSearchBundle(ctx context.Context, emit func(string, any), route *guidedRoute, from, to time.Time, rangeS int64) (string, string, error) {
+	// v0.10.476 (F3-5; audit kabul 3-4) — ÖNCE anahtar keşfi: değer hangi
+	// attribute'ta? Servis kapsamlı örneklem (5000 span) + tam eşleşen
+	// anahtarlar → anahtar başına ayrı süzgeçli arama (OR yerine; v0.10.343
+	// dersi) → birleşim. Anahtar bulunamazsa eski haystack araması AYNEN.
+	var keyNote string
+	if !route.SearchSQL && route.Service != "" {
+		nk := emitGuidedStep(emit, "find_attribute_by_value", fmt.Sprintf(`{"service":%q,"value":%q}`, route.Service, route.SearchText))
+		attrs, aerr := s.store.GetScopedAttrs(ctx, chstore.AttrScope{Service: route.Service}, from, to, 100, 20)
+		if aerr != nil {
+			emitGuidedStepResult(emit, nk, "find_attribute_by_value", "", aerr)
+		} else {
+			matches := mcptools.MatchSamples(attrs, route.SearchText)
+			keys := searchKeyPick(matches)
+			var sub []string
+			for _, m := range matches {
+				if m.Match == "substring" {
+					sub = append(sub, m.Key)
+				}
+			}
+			route.SearchKeys = keys
+			res := fmt.Sprintf("tam eşleşen anahtar: %s; alt-dize (örneklem): %s", strings.Join(keys, ", "), strings.Join(sub, ", "))
+			emitGuidedStepResult(emit, nk, "find_attribute_by_value", res, nil)
+			if len(keys) > 0 {
+				keyNote = "Anahtar keşfi (servis örneklemi, 5000 span): tam eşleşme " + strings.Join(keys, ", ")
+				if len(sub) > 0 {
+					keyNote += "; alt-dize olarak " + strings.Join(sub, ", ")
+				}
+				var sets [][]chstore.TraceRow
+				for _, k := range keys {
+					f := traceSearchFilter(route.Service, route.Env, route.SearchText, false, from, to)
+					f.Search = ""
+					f.Filters = []chstore.FilterExpr{{Key: k, Op: "=", Values: []string{route.SearchText}}}
+					n := emitGuidedStep(emit, "trace_search", fmt.Sprintf(`{"service":%q,"filter":{"key":%q,"op":"=","value":%q},"limit":%d}`, route.Service, k, route.SearchText, guidedTraceSearchLimit))
+					rows, _, _, err := s.store.GetTraces(ctx, f)
+					if err != nil {
+						emitGuidedStepResult(emit, n, "trace_search", "", err)
+						return "", "", err
+					}
+					emitGuidedStepResult(emit, n, "trace_search", fmt.Sprintf("%d trace (%s)", len(rows), k), nil)
+					sets = append(sets, rows)
+				}
+				rows := mergeTraceRows(sets, guidedTraceSearchLimit)
+				src := fmt.Sprintf("trace araması %s = %q (son %s%s; anahtar başına süzgeç, birleşim)", strings.Join(keys, " | "), route.SearchText, fmtAgoTR(rangeS), guidedScopeTR(route.Service, route.Env))
+				return renderTraceSearchEvidenceTR(rows, *route, rangeS) + keyNote + "\n", src, nil
+			}
+		}
+	}
 	f := traceSearchFilter(route.Service, route.Env, route.SearchText, route.SearchSQL, from, to)
 	args, _ := json.Marshal(map[string]any{"service": route.Service, "search": route.SearchText, "sql": route.SearchSQL, "limit": guidedTraceSearchLimit})
 	n := emitGuidedStep(emit, "trace_search", string(args))
@@ -247,6 +337,9 @@ func renderTraceSearchEvidenceTR(rows []chstore.TraceRow, route guidedRoute, ran
 	where := "ad/route/attribute değerlerinde"
 	if route.SearchSQL {
 		where = "db.statement içinde"
+	}
+	if len(route.SearchKeys) > 0 { // v0.10.476 (F3-5)
+		where = strings.Join(route.SearchKeys, " | ") + " anahtarında (tam eşitlik)"
 	}
 	fmt.Fprintf(&b, "Trace araması — %s %q geçen trace'ler (son %s%s, en yavaş %d):\n", where, route.SearchText, fmtAgoTR(rangeS), guidedScopeTR(route.Service, route.Env), guidedTraceSearchLimit)
 	if len(rows) == 0 {

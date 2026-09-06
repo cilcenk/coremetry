@@ -450,6 +450,10 @@ func guidedAnswerLinkTargets(route guidedRoute) []guidedAnswerLink {
 		}
 	case guidedTraceSearch: // v0.10.436 (D2b)
 		href := "/traces?search=" + url.QueryEscape(route.SearchText)
+		if len(route.SearchKeys) > 0 { // v0.10.476 (F3-5) — anahtar çözüldü: tam eşitlik çipi (ilk anahtar)
+			fe, _ := json.Marshal([]chstore.FilterExpr{{Key: route.SearchKeys[0], Op: "=", Values: []string{route.SearchText}}})
+			href = "/traces?filters=" + url.QueryEscape(string(fe))
+		}
 		if route.SearchSQL {
 			fe, _ := json.Marshal([]chstore.FilterExpr{{Key: "db.statement", Op: "LIKE", Values: []string{route.SearchText}}})
 			href = "/traces?filters=" + url.QueryEscape(string(fe))

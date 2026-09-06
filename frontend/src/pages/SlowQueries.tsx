@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { navHref } from '@/lib/navHref';
@@ -244,9 +245,9 @@ export default function SlowQueriesPage() {
                           from a pre-D1 cache entry (no stmtHash) fall back
                           to the expand toggle. */}
                       <tr key={key}
-                        onClick={() => r.stmtHash
+                        {...rowActivation(() => r.stmtHash
                           ? openStmt(r)
-                          : setExpanded(isExpanded ? null : key)}
+                          : setExpanded(isExpanded ? null : key))}
                         style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 40px' } as React.CSSProperties}>
                         <td onClick={e => {
                           e.stopPropagation();

@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
@@ -103,7 +104,7 @@ export default function HostsPage() {
               <tbody>
                 {dt.sortedRows.map((r, i) => (
                   <tr key={r.host} {...dt.rowProps(i)}
-                    onClick={() => openHost(r.host)}
+                    {...rowActivation(() => openHost(r.host))}
                     style={{
                       cursor: 'pointer',
                       contentVisibility: 'auto',

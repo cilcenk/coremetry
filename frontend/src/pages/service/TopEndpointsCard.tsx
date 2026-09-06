@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useEffect } from 'react';
 import { endpointDetailHref } from '@/pages/endpoints/endpointParam';
@@ -98,7 +99,7 @@ export function TopEndpointsCard({ service, range, endpoints }: {
               const share = maxTime > 0 ? totalTimeOf(r) / maxTime : 0;
               return (
                 <tr key={r.path} {...dt.rowProps(i)} style={{ cursor: 'pointer' }}
-                    onClick={() => gotoEp(r.path)}>
+                    {...rowActivation(() => gotoEp(r.path))}>
                   <td><span className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={r.path}>{r.path}</span></td>
                   <td className="num">{fmtCount(r.calls)}</td>
                   <td className="num"><span className={errBadge(r.errorRate)}>{r.errorRate.toFixed(1)}%</span></td>

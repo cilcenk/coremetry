@@ -11,6 +11,7 @@
 // biriken kalıcı liste; totalCount pencere sayımı DEĞİL. Sekme yerel
 // tercih (panelin açık/kapalı durumu gibi); fetch yalnız aktif sekme için.
 import { useMemo, useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { useLogsPatterns, useLogsTemplates } from '@/lib/queries';
 import type { LogsParams } from '@/lib/api';
 import type { LogPatternGroup, LogTemplate } from '@/lib/types';
@@ -161,8 +162,8 @@ export function LogPatternsPanel({ params, open, onSearch, tab: tabProp, onTab }
                   {dt.sortedRows.map(r => {
                     const share = maxCount > 0 ? (r.count / maxCount) * 100 : 0;
                     return (
-                      <tr key={r.hash} className="lp-row" title={r.sample} tabIndex={0}
-                        onClick={() => { if (r.query) onSearch(r.query); }}
+                      <tr key={r.hash} className="lp-row" title={r.sample}
+                        {...rowActivation(() => { if (r.query) onSearch(r.query); })}
                         onKeyDown={e => { if (e.key === 'Enter' && r.query) { e.preventDefault(); onSearch(r.query); } }}
                         style={rowStyle(!!r.query)}>
                         <td className="mono" style={cellEllipsis}>{r.template}</td>
@@ -209,8 +210,8 @@ export function LogPatternsPanel({ params, open, onSearch, tab: tabProp, onTab }
                   {tdt.sortedRows.map(r => {
                     const share = maxTotal > 0 ? (r.totalCount / maxTotal) * 100 : 0;
                     return (
-                      <tr key={r.id} className="lp-row" title={r.sample} tabIndex={0}
-                        onClick={() => { if (r.query) onSearch(r.query); }}
+                      <tr key={r.id} className="lp-row" title={r.sample}
+                        {...rowActivation(() => { if (r.query) onSearch(r.query); })}
                         onKeyDown={e => { if (e.key === 'Enter' && r.query) { e.preventDefault(); onSearch(r.query); } }}
                         style={rowStyle(!!r.query)}>
                         <td className="mono" style={cellEllipsis}>

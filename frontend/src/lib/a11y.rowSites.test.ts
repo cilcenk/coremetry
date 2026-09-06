@@ -7,9 +7,10 @@ import { join, resolve } from 'node:path';
 // Enter/Space). Kaynak taraması: sayfa/bileşen ağacında `<tr … onClick=`
 // KALMAMALI. Tek muafiyet VirtualTable primitifi (onRowClick sözleşmesi;
 // Traces gibi tüketiciler kendi rowActivation'ını uygular).
-// KAPSAM (v0.10.451): tek satırlık `<tr … onClick=` şekli. Çok satırlı
-// açılış etiketindeki 20 site (Clusters, Inbox, Hosts, Databases, …) bir
-// sonraki D3 dilimi — tarama `[^>\n]*` ile bilinçli tek satır.
+// v0.10.455 (dilim 3): tarama ÇOK SATIRLI açılış etiketlerini de kapsar.
+// Olayı okuyan tık işleyicileri (Ctrl/⌘-tık) onClick'i korur ama aynı
+// etikette rowKeyboard( ile klavye yarısını taşımak ZORUNDADIR — tarama
+// yalnız onu muaf tutar.
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of readdirSync(dir)) {
     const p = join(dir, e);
@@ -25,14 +26,17 @@ describe('clickable rows use rowActivation (D3)', () => {
     for (const f of walk(root)) {
       if (f.endsWith('components/ui/DataTable/VirtualTable.tsx')) continue;
       const src = readFileSync(f, 'utf8');
-      const n = (src.match(/<tr[^>\n]*\sonClick=/g) ?? []).length;
+      const n = (src.match(/<tr[^>]*\sonClick=/g) ?? []).filter(tag => !tag.includes('rowKeyboard(')).length;
       if (n > 0) offenders.push(`${f.slice(root.length + 1)} (${n})`);
     }
     expect(offenders).toEqual([]);
   });
-  it('the six D3-remaining sites adopted the helper', () => {
-    for (const f of ['components/DBQueriesPanel.tsx', 'features/anomalies/AnomaliesPage.tsx', 'pages/AIObservability.tsx', 'pages/AdminElastic.tsx', 'pages/Profiling.tsx', 'pages/service/ServiceClusterPods.tsx']) {
+  it('the D3 sites adopted the helper', () => {
+    for (const f of ['components/DBQueriesPanel.tsx', 'features/anomalies/AnomaliesPage.tsx', 'pages/AIObservability.tsx', 'pages/AdminElastic.tsx', 'pages/Profiling.tsx', 'pages/service/ServiceClusterPods.tsx', 'pages/Clusters.tsx', 'pages/Inbox.tsx', 'pages/Hosts.tsx', 'pages/Databases.tsx', 'pages/SlowQueries.tsx', 'pages/service/OverviewTables.tsx', 'components/LogPatternsPanel.tsx']) {
       expect(readFileSync(join(root, f), 'utf8')).toContain('{...rowActivation(');
+    }
+    for (const f of ['components/chart/StatsLegend.tsx', 'components/viz/TimeSeriesPanel.tsx', 'pages/Metrics.tsx']) {
+      expect(readFileSync(join(root, f), 'utf8')).toContain('rowKeyboard(');
     }
   });
 });

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { rowKeyboard } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { useEscLayer } from '@/lib/escLayer';
 import uPlot from 'uplot';
 import { downsampleXY } from '@/lib/perf/lttb';
@@ -1035,6 +1036,7 @@ function TimeSeriesLegend({ rows, isVisible, onToggle }: {
             const on = isVisible(i);
             return (
               <tr key={r.label + i}
+                {...rowKeyboard(() => onToggle(i, false))}
                 onClick={e => onToggle(i, e.ctrlKey || e.metaKey)}
                 style={{ cursor: 'pointer', opacity: on ? 1 : 0.4, borderTop: '1px solid var(--border)' }}
                 title="Click to isolate this series · Ctrl/Cmd-click to toggle">

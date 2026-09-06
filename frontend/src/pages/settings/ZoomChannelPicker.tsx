@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { Button } from '@/components/ui';
 import { Empty } from '@/components/Spinner';
 
@@ -181,7 +182,7 @@ export function ZoomChannelPicker({
                 <tbody>
                   {filtered.map(r => (
                     <tr key={r.id || r.jid}
-                      onClick={() => { onPick(r.jid); setOpen(false); }}
+                      {...rowActivation(() => { onPick(r.jid); setOpen(false); })}
                       style={{ cursor: 'pointer', ...(filtered.length > 100 ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' } : null) }}
                       onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg3)')}
                       onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>

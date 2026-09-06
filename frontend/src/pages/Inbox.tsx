@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { PriorityBadge } from '@/components/ui/PriorityBadge';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -927,7 +928,7 @@ export default function InboxPage() {
                 {dt.sortedRows.map((it, i) => (
                   <tr key={it.id}
                     {...dt.rowProps(i)}
-                    onClick={() => openDrawer(it)}
+                    {...rowActivation(() => openDrawer(it))}
                     onMouseEnter={() => dt.nav.setSelected(i)}
                     style={{
                       cursor: 'pointer',

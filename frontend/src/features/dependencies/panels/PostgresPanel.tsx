@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
@@ -115,12 +116,12 @@ export function PostgresPanel({ instance, range }: { instance: string; range: Ti
                   <tbody>
                     {dbDt.sortedRows.map(d => (
                       <tr key={d.name}
-                        onClick={() => setDrill({
+                        {...rowActivation(() => setDrill({
                           metric: 'postgresql.database.size',
                           label: `Database · ${d.name}`,
                           unit: 'B',
                           filters: [{ k: 'database', op: '=', v: [d.name] }],
-                        })}
+                        }))}
                         style={{ cursor: 'pointer' }}>
                         <td style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, fontWeight: 600 }}>{d.name}</td>
                         <td className="num mono">{fmtBytes(d.sizeBytes)}</td>

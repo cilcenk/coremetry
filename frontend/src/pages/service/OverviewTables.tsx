@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
@@ -84,7 +85,7 @@ export function OpsCard({ service, range, operations }: {
           <tbody>
             {dt.sortedRows.slice(0, 8).map((r, i) => (
               <tr key={r.name} {...dt.rowProps(i)} style={{ cursor: 'pointer' }}
-                  onClick={() => navigate(opHref(r.name))}>
+                  {...rowActivation(() => navigate(opHref(r.name)))}>
                 <td><span className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={r.name}>{r.name}</span></td>
                 <td className="num">{r.spanCount >= 1000 ? `${(r.spanCount / 1000).toFixed(1)}K` : r.spanCount}</td>
                 <td className="num"><span className={errBadge(r.errorRate)}>{r.errorRate.toFixed(2)}%</span></td>
@@ -173,7 +174,7 @@ export function DbCard({ service, range, from, to }: { service: string; range: T
             <tbody>
               {dt.sortedRows.slice(0, 8).map((r, i) => (
                 <tr key={i} {...dt.rowProps(i)} style={{ cursor: 'pointer' }}
-                    onClick={() => navigate(dbHref(r))}>
+                    {...rowActivation(() => navigate(dbHref(r)))}>
                   <td>
                     <div className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.sampleStatement || r.statement}>{r.statement}</div>
                     {/* v0.9.964 (UX denetimi Ö9 / G2) — engine sub-label is

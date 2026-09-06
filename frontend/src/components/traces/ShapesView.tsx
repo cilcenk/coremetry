@@ -14,6 +14,7 @@
 // of the sample — so virtualisation isn't needed here).
 
 import { useEffect, useMemo, useState } from 'react';
+import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { percentiles } from '@/lib/perf/transforms';
@@ -135,7 +136,7 @@ export function ShapesView({ range, service }: { range: TimeRange; service?: str
               return (
                 <tr key={r.signature}
                   {...dt.rowProps(i)}
-                  onClick={() => r.exemplar && navigate(traceHref(r.exemplar, { pageRange: range }))}
+                  {...rowActivation(() => r.exemplar && navigate(traceHref(r.exemplar, { pageRange: range })))}
                   // v0.9.236 — shapes group a 1000-trace sample by
                   // (service, rootName); at 1000s of services × 10000s of
                   // operations that barely collapses, so an unfiltered

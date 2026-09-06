@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { rowKeyboard } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { fmtSmart } from '@/lib/chartFmt';
 import { seriesStats, isAdditiveUnit, resolveLegendCollapsed } from '@/lib/chart/legendStats';
 import { getItem, setItem, legendCollapseKey } from '@/lib/storage';
@@ -110,6 +111,7 @@ export function StatsLegend({ series, onToggle, isVisible, defaultCollapsed, sto
                 const on = isVisible ? isVisible(i) : true;
                 return (
                   <tr key={s.label + i}
+                    {...(onToggle ? rowKeyboard(() => onToggle(i, false)) : {})}
                     onClick={onToggle ? e => { e.preventDefault(); onToggle(i, e.ctrlKey || e.metaKey); } : undefined}
                     style={{ opacity: on ? 1 : 0.4, cursor: onToggle ? 'pointer' : 'default' }}
                     title={onToggle ? 'Tıkla: yalnız bu seri · Ctrl/Cmd-tık: gizle/göster' : undefined}>

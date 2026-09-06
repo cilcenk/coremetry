@@ -1496,6 +1496,7 @@ Niyetler:
 - team_services: ADI ya da KODU geçen bir takımın servisleri ("SY-XYZ'e ait servisleri listele")
 - self_meta: Coremetry'nin kendisi hakkında ("sen kimsin", "neler yapabilirsin")
 - trace_by_id / span_by_id: mesajda 32 ya da 16 haneli hex kimlik varsa
+- namespace_services: bir Kubernetes NAMESPACE'indeki servisler/workload'lar ("shop namespace'indeki servisleri getir", "namespace shop") ya da namespace listesi ("hangi namespace'ler var"); namespace slotu mesajdaki yazımıyla
 - find_entity: bir servisi ADIYLA bulma/gösterme ("mobile bff", "checkout servisini göster", "mobile bff'yi bul", "checkout sahibi kim") ya da servis LİSTESİ ("hangi servisler var", "servisleri listele"); veri/sağlık sorusu DEĞİL, yalnız bulma/listeleme
 - none: hiçbiri — telemetriyle cevaplanamayacak, muğlak ya da konu dışı soru
 
@@ -1518,6 +1519,7 @@ Kurallar:
 - "SY-XYZ takımına ait servisleri listele" → {"intent":"team_services","service":"","env":"","rangeS":0,"traceId":"","spanId":"","team":"SY-XYZ"}
 - "mobile bff'yi bul" → {"intent":"find_entity","service":"mobile bff","env":"","rangeS":0,"traceId":"","spanId":"","team":""}
 - "hangi servisler var?" → {"intent":"find_entity","service":"","env":"","rangeS":0,"traceId":"","spanId":"","team":""}
+- "shop namespace'indeki servisleri getir" → {"intent":"namespace_services","service":"","env":"","rangeS":0,"traceId":"","spanId":"","team":"","namespace":"shop"}
 - "yavaşlığın sebebi ne?" → {"intent":"root_cause","service":"","env":"","rangeS":0,"traceId":"","spanId":"","team":""}
 - "checkout loglarında url.full alanında \"/api/pay\" geçen kayıtlar" → {"intent":"log_field","service":"checkout","env":"","rangeS":0,"traceId":"","spanId":"","team":"","logField":"url.full","logValue":"/api/pay"}
 

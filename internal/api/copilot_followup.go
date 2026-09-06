@@ -155,6 +155,8 @@ func guidedSuggestions(route guidedRoute) []string {
 			return []string{svc + " hata logları?", svc + " sağlığı nasıl?", svc + " en yavaş trace'ler?"}
 		}
 		return []string{"Açık problemler?", "En yavaş trace'ler?"}
+	case guidedNamespaceServices: // v0.10.470 (F2-3) — handler kendi çiplerini basar; burada güvenli varsayılan
+		return []string{"Namespace'leri listele", "Açık problemler?"}
 	case guidedFamilyTraces: // v0.10.465 (D2) — üye başına drill-down (≤3 üye)
 		var out []string
 		for i, m := range route.Family {
@@ -386,6 +388,8 @@ func guidedAnswerLinkTargets(route guidedRoute) []guidedAnswerLink {
 			return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?service=" + svcQ + "&severity=17"}}
 		}
 		return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?severity=17"}}
+	case guidedNamespaceServices: // v0.10.470 (F2-3) — handler linkleri kendisi kurar
+		return []guidedAnswerLink{{Label: "Clusters", Href: "/clusters"}}
 	case guidedFamilyTraces: // v0.10.465 (D2) — aynı süzgeçle /traces
 		label := "Trace'ler (en yavaş)"
 		if route.TraceErrorsOnly {

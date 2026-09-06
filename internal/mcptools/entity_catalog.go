@@ -90,7 +90,7 @@ type listNamespacesArgs struct {
 	Limit   int    `json:"limit,omitempty"`
 }
 
-type namespaceRow struct {
+type NamespaceRow struct {
 	Cluster   string `json:"cluster"`
 	ClusterID string `json:"cluster_id"`
 	Namespace string `json:"namespace"`
@@ -101,10 +101,10 @@ type namespaceRow struct {
 }
 
 // namespaceRows — SAF birleştirme: namespace kayıtları + sayımlar → satırlar.
-func namespaceRows(c ClusterRef, recs []chstore.EntityRecord, wl, pods map[string]int) []namespaceRow {
-	out := make([]namespaceRow, 0, len(recs))
+func namespaceRows(c ClusterRef, recs []chstore.EntityRecord, wl, pods map[string]int) []NamespaceRow {
+	out := make([]NamespaceRow, 0, len(recs))
 	for _, r := range recs {
-		out = append(out, namespaceRow{
+		out = append(out, NamespaceRow{
 			Cluster: c.Name, ClusterID: c.ID, Namespace: r.Name,
 			Workloads: wl[r.Name], Pods: pods[r.Name], Source: r.Source,
 			LastSeen: r.LastSeen.UTC().Format(time.RFC3339),
@@ -164,51 +164,66 @@ func listNamespacesTool(d Deps) mcp.Tool {
 			if !entityLayerOn(d) {
 				return entityDisabled(), nil
 			}
-			clusters, ok := clustersFor(d, a.Cluster)
-			if !ok {
-				return nil, unknownClusterErr(d, a.Cluster)
+			rows, searched, err := ReadNamespaces(ctx, d, a.Cluster, a.Query, clampLimit(a.Limit, entityCatalogLimit, 500))
+			if err != nil {
+				return nil, err
 			}
-			limit := clampLimit(a.Limit, entityCatalogLimit, 500)
-			rows := []namespaceRow{}
-			for _, c := range clusters {
-				recs, err := d.Store.EntityList(ctx, chstore.EntityListQuery{ClusterID: c.ID, Type: entity.TypeNamespace, Search: a.Query, Limit: limit})
-				if err != nil {
-					return nil, err
-				}
-				if len(recs) == 0 && strings.TrimSpace(a.Query) != "" {
-					all, err := d.Store.EntityList(ctx, chstore.EntityListQuery{ClusterID: c.ID, Type: entity.TypeNamespace, Limit: 500})
-					if err != nil {
-						return nil, err
-					}
-					recs = fuzzyPick(a.Query, all)
-				}
-				if len(recs) == 0 {
-					continue
-				}
-				wl, err := d.Store.EntityCountsByNamespace(ctx, c.ID, entity.TypeWorkload, time.Time{})
-				if err != nil {
-					return nil, err
-				}
-				pods, err := d.Store.EntityCountsByNamespace(ctx, c.ID, entity.TypePod, time.Time{})
-				if err != nil {
-					return nil, err
-				}
-				rows = append(rows, namespaceRows(c, recs, wl, pods)...)
-			}
-			sort.SliceStable(rows, func(i, j int) bool {
-				if rows[i].Namespace != rows[j].Namespace {
-					return rows[i].Namespace < rows[j].Namespace
-				}
-				return rows[i].Cluster < rows[j].Cluster
-			})
-			res := map[string]any{"namespaces": rows, "count": len(rows), "clusters_searched": clusterNames(clusters)}
-			if len(clusters) == 0 {
+			res := map[string]any{"namespaces": rows, "count": len(rows), "clusters_searched": searched}
+			if len(searched) == 0 {
 				res["hint"] = "Yapılandırılmış etkin Remote Cluster yok (Settings → Remote Clusters)."
 			}
 			return res, nil
 		},
 	}
 }
+
+// ReadNamespaces — v0.10.470 (F2-3): list_namespaces'in okuma çekirdeği,
+// guided rota ile paylaşılır. Bayrak kapısı çağıranda.
+func ReadNamespaces(ctx context.Context, d Deps, cluster, query string, limit int) ([]NamespaceRow, []string, error) {
+	clusters, ok := clustersFor(d, cluster)
+	if !ok {
+		return nil, nil, unknownClusterErr(d, cluster)
+	}
+	if limit <= 0 {
+		limit = entityCatalogLimit
+	}
+	rows := []NamespaceRow{}
+	for _, c := range clusters {
+		recs, err := d.Store.EntityList(ctx, chstore.EntityListQuery{ClusterID: c.ID, Type: entity.TypeNamespace, Search: query, Limit: limit})
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(recs) == 0 && strings.TrimSpace(query) != "" {
+			all, err := d.Store.EntityList(ctx, chstore.EntityListQuery{ClusterID: c.ID, Type: entity.TypeNamespace, Limit: 500})
+			if err != nil {
+				return nil, nil, err
+			}
+			recs = fuzzyPick(query, all)
+		}
+		if len(recs) == 0 {
+			continue
+		}
+		wl, err := d.Store.EntityCountsByNamespace(ctx, c.ID, entity.TypeWorkload, time.Time{})
+		if err != nil {
+			return nil, nil, err
+		}
+		pods, err := d.Store.EntityCountsByNamespace(ctx, c.ID, entity.TypePod, time.Time{})
+		if err != nil {
+			return nil, nil, err
+		}
+		rows = append(rows, namespaceRows(c, recs, wl, pods)...)
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Namespace != rows[j].Namespace {
+			return rows[i].Namespace < rows[j].Namespace
+		}
+		return rows[i].Cluster < rows[j].Cluster
+	})
+	return rows, clusterNames(clusters), nil
+}
+
+// EntityLayerOn — dışa açık bayrak kapısı (guided rota).
+func EntityLayerOn(d Deps) bool { return entityLayerOn(d) }
 
 // ─── list_workloads ────────────────────────────────────────────
 
@@ -220,7 +235,7 @@ type listWorkloadsArgs struct {
 	RangeS    int    `json:"range_s,omitempty"`
 }
 
-type workloadRow struct {
+type WorkloadRow struct {
 	Cluster   string   `json:"cluster"`
 	ClusterID string   `json:"cluster_id"`
 	Namespace string   `json:"namespace"`
@@ -236,7 +251,7 @@ type workloadRow struct {
 
 // workloadRows — SAF: workload kayıtları + pod sayıları + pod→parent + seen
 // satırları → satırlar (telemetry = ≥1 seen satırı).
-func workloadRows(c ClusterRef, recs []chstore.EntityRecord, podCounts map[string]int, podParent map[string]string, seen []chstore.EntitySeenAgg, kind string) []workloadRow {
+func workloadRows(c ClusterRef, recs []chstore.EntityRecord, podCounts map[string]int, podParent map[string]string, seen []chstore.EntitySeenAgg, kind string) []WorkloadRow {
 	svcByWL := map[string]map[string]bool{}
 	spans, errs := map[string]int64{}, map[string]int64{}
 	for _, a := range seen {
@@ -253,7 +268,7 @@ func workloadRows(c ClusterRef, recs []chstore.EntityRecord, podCounts map[strin
 		spans[wl] += a.Spans
 		errs[wl] += a.Errors
 	}
-	out := make([]workloadRow, 0, len(recs))
+	out := make([]WorkloadRow, 0, len(recs))
 	for _, r := range recs {
 		k := r.Labels["kind"]
 		if kind != "" && !strings.EqualFold(k, kind) {
@@ -264,7 +279,7 @@ func workloadRows(c ClusterRef, recs []chstore.EntityRecord, podCounts map[strin
 			svcs = append(svcs, s)
 		}
 		sort.Strings(svcs)
-		out = append(out, workloadRow{
+		out = append(out, WorkloadRow{
 			Cluster: c.Name, ClusterID: c.ID, Namespace: r.Namespace, Workload: r.Name, Kind: k,
 			Pods: podCounts[r.ID], Services: svcs, Telemetry: len(svcByWL[r.ID]) > 0,
 			Spans: spans[r.ID], Errors: errs[r.ID], Source: r.Source,
@@ -309,79 +324,109 @@ func listWorkloadsTool(d Deps) mcp.Tool {
 			if !entityLayerOn(d) {
 				return entityDisabled(), nil
 			}
-			clusters, ok := clustersFor(d, a.Cluster)
-			if !ok {
-				return nil, unknownClusterErr(d, a.Cluster)
-			}
 			from, to := rangeWindow(ctx, a.RangeS)
-			rows := []workloadRow{}
-			svcNS := []map[string]any{}
-			orphanPods := 0
-			for _, c := range clusters {
-				recs, err := d.Store.EntityList(ctx, chstore.EntityListQuery{ClusterID: c.ID, Type: entity.TypeWorkload, Namespace: ns, Search: a.Query, Limit: 500})
-				if err != nil {
-					return nil, err
-				}
-				if len(recs) == 0 && strings.TrimSpace(a.Query) != "" {
-					all, err := d.Store.EntityList(ctx, chstore.EntityListQuery{ClusterID: c.ID, Type: entity.TypeWorkload, Namespace: ns, Limit: 500})
-					if err != nil {
-						return nil, err
-					}
-					recs = fuzzyPick(a.Query, all)
-				}
-				pods, err := d.Store.EntityList(ctx, chstore.EntityListQuery{ClusterID: c.ID, Type: entity.TypePod, Namespace: ns, Limit: 500})
-				if err != nil {
-					return nil, err
-				}
-				podParent := map[string]string{}
-				podNames := make([]string, 0, len(pods))
-				wlIDs := map[string]bool{}
-				for _, r := range recs {
-					wlIDs[r.ID] = true
-				}
-				for _, p := range pods {
-					podNames = append(podNames, p.Name)
-					if wlIDs[p.ParentID] {
-						podParent[p.Name] = p.ParentID
-					} else {
-						orphanPods++
-					}
-				}
-				parents := make([]string, 0, len(recs))
-				for _, r := range recs {
-					parents = append(parents, r.ID)
-				}
-				podCounts, err := d.Store.EntityChildrenCountsByParents(ctx, c.ID, entity.TypePod, parents, time.Time{})
-				if err != nil {
-					return nil, err
-				}
-				var seen []chstore.EntitySeenAgg
-				if len(podNames) > 0 && len(c.SpanValues) > 0 {
-					seen, err = d.Store.EntitySeenForPods(ctx, c.SpanValues, ns, podNames, from, to)
-					if err != nil {
-						return nil, err
-					}
-				}
-				rows = append(rows, workloadRows(c, recs, podCounts, podParent, seen, a.Kind)...)
-				svcs, err := d.Store.EntitySeenServicesByNamespace(ctx, c.SpanValues, ns, from, to)
-				if err != nil {
-					return nil, err
-				}
-				for _, sv := range svcs {
-					svcNS = append(svcNS, map[string]any{"cluster": c.Name, "service": sv.Service, "pods": sv.Pods, "spans": sv.Spans, "errors": sv.Errors, "last_seen": sv.LastSeen.UTC().Format(time.RFC3339)})
-				}
+			ov, err := ReadNamespaceOverview(ctx, d, ns, a.Cluster, a.Query, a.Kind, from, to)
+			if err != nil {
+				return nil, err
 			}
 			res := map[string]any{
-				"namespace": ns, "workloads": rows, "count": len(rows),
-				"services_in_namespace": svcNS, "pods_without_workload": orphanPods,
-				"window_s": int(to.Sub(from).Seconds()), "clusters_searched": clusterNames(clusters),
+				"namespace": ns, "workloads": ov.Workloads, "count": len(ov.Workloads),
+				"services_in_namespace": ov.Services, "pods_without_workload": ov.OrphanPods,
+				"window_s": ov.WindowS, "clusters_searched": ov.Clusters,
 			}
-			if len(rows) == 0 && orphanPods > 0 {
+			if len(ov.Workloads) == 0 && ov.OrphanPods > 0 {
 				res["hint"] = "Katalogda workload yok ama span kaynaklı pod'lar var: bu cluster için Thanos/KSM tanımlı değil ya da namespace süzgeci dışında; services_in_namespace telemetri tarafını yine gösterir."
 			}
 			return res, nil
 		},
 	}
+}
+
+// NamespaceServiceRow — namespace'te görülen bir service.name (telemetri tarafı).
+type NamespaceServiceRow struct {
+	Cluster  string `json:"cluster"`
+	Service  string `json:"service"`
+	Pods     int    `json:"pods"`
+	Spans    int64  `json:"spans"`
+	Errors   int64  `json:"errors"`
+	LastSeen string `json:"last_seen"`
+}
+
+// NamespaceOverview — v0.10.470 (F2-3): list_workloads'un okuma çekirdeği,
+// guided rota (api/namespace_guided.go) ile PAYLAŞILIR — tool ve sohbet
+// kartı aynı satırları görür.
+type NamespaceOverview struct {
+	Namespace  string
+	Clusters   []string
+	Workloads  []WorkloadRow
+	Services   []NamespaceServiceRow
+	OrphanPods int
+	WindowS    int
+}
+
+// ReadNamespaceOverview — cluster boş → tüm etkin cluster'lar; bilinmeyen
+// cluster → hata (adaylar mesajda). Bayrak kapısı ÇAĞIRANDA.
+func ReadNamespaceOverview(ctx context.Context, d Deps, ns, cluster, query, kind string, from, to time.Time) (NamespaceOverview, error) {
+	clusters, ok := clustersFor(d, cluster)
+	if !ok {
+		return NamespaceOverview{}, unknownClusterErr(d, cluster)
+	}
+	ov := NamespaceOverview{Namespace: ns, Clusters: clusterNames(clusters), Workloads: []WorkloadRow{}, Services: []NamespaceServiceRow{}, WindowS: int(to.Sub(from).Seconds())}
+	for _, c := range clusters {
+		recs, err := d.Store.EntityList(ctx, chstore.EntityListQuery{ClusterID: c.ID, Type: entity.TypeWorkload, Namespace: ns, Search: query, Limit: 500})
+		if err != nil {
+			return ov, err
+		}
+		if len(recs) == 0 && strings.TrimSpace(query) != "" {
+			all, err := d.Store.EntityList(ctx, chstore.EntityListQuery{ClusterID: c.ID, Type: entity.TypeWorkload, Namespace: ns, Limit: 500})
+			if err != nil {
+				return ov, err
+			}
+			recs = fuzzyPick(query, all)
+		}
+		pods, err := d.Store.EntityList(ctx, chstore.EntityListQuery{ClusterID: c.ID, Type: entity.TypePod, Namespace: ns, Limit: 500})
+		if err != nil {
+			return ov, err
+		}
+		podParent := map[string]string{}
+		podNames := make([]string, 0, len(pods))
+		wlIDs := map[string]bool{}
+		for _, r := range recs {
+			wlIDs[r.ID] = true
+		}
+		for _, p := range pods {
+			podNames = append(podNames, p.Name)
+			if wlIDs[p.ParentID] {
+				podParent[p.Name] = p.ParentID
+			} else {
+				ov.OrphanPods++
+			}
+		}
+		parents := make([]string, 0, len(recs))
+		for _, r := range recs {
+			parents = append(parents, r.ID)
+		}
+		podCounts, err := d.Store.EntityChildrenCountsByParents(ctx, c.ID, entity.TypePod, parents, time.Time{})
+		if err != nil {
+			return ov, err
+		}
+		var seen []chstore.EntitySeenAgg
+		if len(podNames) > 0 && len(c.SpanValues) > 0 {
+			seen, err = d.Store.EntitySeenForPods(ctx, c.SpanValues, ns, podNames, from, to)
+			if err != nil {
+				return ov, err
+			}
+		}
+		ov.Workloads = append(ov.Workloads, workloadRows(c, recs, podCounts, podParent, seen, kind)...)
+		svcs, err := d.Store.EntitySeenServicesByNamespace(ctx, c.SpanValues, ns, from, to)
+		if err != nil {
+			return ov, err
+		}
+		for _, sv := range svcs {
+			ov.Services = append(ov.Services, NamespaceServiceRow{Cluster: c.Name, Service: sv.Service, Pods: sv.Pods, Spans: sv.Spans, Errors: sv.Errors, LastSeen: sv.LastSeen.UTC().Format(time.RFC3339)})
+		}
+	}
+	return ov, nil
 }
 
 // ─── list_pods ─────────────────────────────────────────────────

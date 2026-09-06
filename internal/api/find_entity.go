@@ -75,6 +75,11 @@ var findFiller = map[string]bool{
 var findSuffixDebris = map[string]bool{
 	"nin": true, "nın": true, "nun": true, "nün": true, "den": true, "dan": true, "ten": true, "tan": true,
 	"ile": true, "yle": true, "yla": true, "nda": true, "nde": true, "yin": true, "yın": true, "yun": true, "yün": true,
+	// v0.10.470 — çoğul / bulunma / iyelik artıkları ("namespace'leri", "X'indeki").
+	"ler": true, "lar": true, "leri": true, "ları": true, "lerin": true, "ların": true, "lere": true, "lara": true,
+	"deki": true, "daki": true, "teki": true, "taki": true, "indeki": true, "ındaki": true, "undaki": true, "ündeki": true,
+	"inde": true, "ında": true, "unda": true, "ünde": true, "ine": true, "ına": true, "une": true, "üne": true,
+	"sini": true, "sını": true, "sinde": true, "sında": true, "sindeki": true, "sındaki": true, "lerde": true, "larda": true,
 }
 
 func hasFindSignal(toks []string) bool {

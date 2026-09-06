@@ -5529,7 +5529,9 @@ export type ChatStreamEvent =
   // links (v0.9.419) — rotadan türetilen deterministik derin linkler.
   // open (v0.10.434, D7b) — "sayfasını aç": sunucunun seçtiği uygulama-içi
   // href; frontend SPA içinde oraya gider, sohbet açık kalır.
-  | { kind: 'answer'; text: string; exchangeId?: string; sources?: RagSource[]; suggestions?: string[]; links?: ChatAnswerLink[]; open?: string }
+  // evidenceSpanIds / cached (v0.10.453) — trace açıklaması Explain çekirdeğinden:
+  // kanıt span'leri ve önbellek isabeti (sohbet ile ✨ Explain aynı cevabı paylaşır).
+  | { kind: 'answer'; text: string; exchangeId?: string; sources?: RagSource[]; suggestions?: string[]; links?: ChatAnswerLink[]; open?: string; evidenceSpanIds?: string[]; cached?: boolean }
   | { kind: 'error'; error: string }
   | { kind: 'done'; ok: boolean };
 

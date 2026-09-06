@@ -70,7 +70,7 @@ type evalsetExportPayload struct {
 // (TestEvalsetFixturesValid) commit'te kırmızı olur — operatör düzeltir.
 func evalSurfaceFromLabel(label string) string {
 	switch label {
-	case "explain-trace", "explain-trace:nudge": // :nudge — v0.10.432 (D8) baloncuk kaynağı, aynı prompt ailesi
+	case "explain-trace", "explain-trace:nudge", "explain-trace:chat": // :nudge v0.10.432 (D8), :chat v0.10.453 — aynı prompt ailesi
 		return "Trace"
 	case "explain-span":
 		return "Span"

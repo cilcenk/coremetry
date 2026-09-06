@@ -32,7 +32,7 @@ func TestMatchSamplesAndTagKeys(t *testing.T) {
 		{Key: "http.route", Scope: "span", Occurrences: 70, SampleValues: []string{"/pay", "/health"}},
 		{Key: "k8s.pod.name", Scope: "resource", Occurrences: 100, SampleValues: []string{"api-1"}},
 	}
-	m := matchSamples(rows, "APIGATEWAY.example.com")
+	m := MatchSamples(rows, "APIGATEWAY.example.com")
 	if len(m) != 2 || m[0].Key != "server.address" || m[0].Match != "exact" || m[0].FilterOp != "=" || m[1].Key != "url.full" || m[1].Match != "substring" || m[1].FilterOp != "LIKE" {
 		t.Fatalf("eşleşmeler: %+v", m)
 	}

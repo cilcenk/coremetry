@@ -185,7 +185,7 @@ func searchTracesTool(d Deps) mcp.Tool {
 				"count":     len(rows),
 				"window_s":  int(to.Sub(from).Seconds()),
 				"has_more":  hasMore,
-				"deep_link": tracesDeepLink(f, from, to),
+				"deep_link": TracesDeepLink(f, from, to),
 			}
 			if len(filters) > 0 {
 				out["filters_applied"] = filters

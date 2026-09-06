@@ -77,7 +77,7 @@ func TestTracesDeepLink(t *testing.T) {
 	from := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	to := from.Add(30 * time.Minute)
 	f := chstore.TraceFilter{Service: "checkout", Filters: []chstore.FilterExpr{{Key: "http.route", Op: "=", Values: []string{"/pay"}}}, HasError: true, Sort: "duration", Env: "prod", MinMs: 250}
-	h := tracesDeepLink(f, from, to)
+	h := TracesDeepLink(f, from, to)
 	u, err := url.Parse(h)
 	if err != nil || u.Path != "/traces" {
 		t.Fatalf("href: %s %v", h, err)

@@ -145,9 +145,9 @@ func applySearchGate(rangeS, limit int, filters []chstore.FilterExpr, hasScope b
 	return g, nil
 }
 
-// tracesDeepLink — /traces sözleşmesi (audit §2.4): service, filters JSON,
+// TracesDeepLink — /traces sözleşmesi (audit §2.4): service, filters JSON,
 // hasError=true, sort/order, minMs/maxMs, env, cluster, range=custom:ms-ms.
-func tracesDeepLink(f chstore.TraceFilter, from, to time.Time) string {
+func TracesDeepLink(f chstore.TraceFilter, from, to time.Time) string {
 	q := url.Values{}
 	if f.Service != "" {
 		q.Set("service", f.Service)

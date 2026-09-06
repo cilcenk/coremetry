@@ -635,6 +635,10 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			// modelin okuduğu şey olmalı. `bytes` kırpılmamış gerçek boy,
 			// yani "ne kadarını görmüyorum" cevaplanabilir.
 			endTool(len(tr.Content), tr.IsError) // v0.10.425 — bayt + ok; gövde yok
+			// v0.10.480 (Faz 4, G12) — in-app tool çağrısı da AUDIT satırı yazar: tel
+			// (mcp_observe.go) yazıyordu, yerel çağrı yalnız span'di — asimetri.
+			// Aynı ayrıntı biçimi (arg önizlemesi ≤256 rune, gövde yok), transport farkı.
+			s.audit(r, "mcp.tool.call", "mcp_tool", tc.Name, chatToolAuditDetails(tc.Name, tc.Input, toolDur, herr, len(tr.Content)))
 			preview, truncated := clipStepPreview(tr.Content)
 			stepEv := map[string]any{
 				"i": stepN, "tool": tc.Name, "ok": !tr.IsError,

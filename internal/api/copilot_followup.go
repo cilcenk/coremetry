@@ -405,6 +405,9 @@ func guidedAnswerLinkTargets(route guidedRoute) []guidedAnswerLink {
 		return out
 	case guidedFindEntity: // v0.10.463 (D1)
 		if route.FindList {
+			if q := strings.TrimSpace(route.FindQuery); q != "" { // v0.10.485 — aile listesi aynı arama ile
+				return []guidedAnswerLink{{Label: "Servisler · " + q, Href: "/services?q=" + url.QueryEscape(strings.Fields(q)[0])}}
+			}
 			return []guidedAnswerLink{{Label: "Servisler", Href: "/services"}}
 		}
 		if svc == "" {

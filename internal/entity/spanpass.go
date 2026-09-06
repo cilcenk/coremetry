@@ -84,8 +84,22 @@ func SpanSeenToEntities(cid string, rows []SeenRow, known map[string]Entity) ([]
 					ents[nsID] = Entity{Type: TypeNamespace, ClusterID: cid, ID: nsID, Name: r.Namespace, ParentID: ClusterID(cid), Labels: map[string]string{}, Source: SourceSpan}
 					rel(RelParent, ClusterID(cid), nsID)
 				}
-				ents[podID] = Entity{Type: TypePod, ClusterID: cid, ID: podID, Namespace: r.Namespace, Name: r.Pod, ParentID: nsID, Labels: map[string]string{}, Source: SourceSpan}
-				rel(RelParent, nsID, podID)
+				// v0.10.471 (F2-4, G14) — KSM sahibi yok: workload'ı pod adından türet
+				// (derived_workload.go); türetilemezse pod doğrudan namespace'in altında.
+				parent := nsID
+				if kind, name, ok := DerivedWorkload(r.Pod); ok {
+					wlID := WorkloadID(cid, r.Namespace, kind, name)
+					if _, known := known[wlID]; !known {
+						if _, dup := ents[wlID]; !dup {
+							ents[wlID] = Entity{Type: TypeWorkload, ClusterID: cid, ID: wlID, Namespace: r.Namespace, Name: name, ParentID: nsID,
+								Labels: map[string]string{"kind": kind, "derived": "pod-name"}, Source: SourceSpan}
+							rel(RelParent, nsID, wlID)
+						}
+					}
+					parent = wlID
+				}
+				ents[podID] = Entity{Type: TypePod, ClusterID: cid, ID: podID, Namespace: r.Namespace, Name: r.Pod, ParentID: parent, Labels: map[string]string{}, Source: SourceSpan}
+				rel(RelParent, parent, podID)
 			}
 		}
 		if r.Service != "" {

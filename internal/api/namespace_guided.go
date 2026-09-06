@@ -139,13 +139,22 @@ func renderNamespaceCard(ov mcptools.NamespaceOverview, rangeS int64) string {
 	}
 	fmt.Fprintf(&b, " · son %s\n\n", fmtAgoTR(rangeS))
 	if len(ov.Workloads) > 0 {
+		derived := false
 		b.WriteString("| Cluster | Workload | Tür | Pod | Telemetri | service.name |\n|---|---|---|---:|---|---|\n")
 		for _, w := range ov.Workloads {
 			tel := "yok"
 			if w.Telemetry {
 				tel = fmt.Sprintf("var (%s span, %s hata)", fmtInt64(w.Spans), fmtInt64(w.Errors))
 			}
-			fmt.Fprintf(&b, "| %s | %s | %s | %d | %s | %s |\n", w.Cluster, w.Workload, w.Kind, w.Pods, tel, strings.Join(w.Services, ", "))
+			kind := w.Kind
+			if w.Source == entity.SourceSpan { // v0.10.471 — pod adından türetilmiş (KSM yok)
+				kind += "~"
+				derived = true
+			}
+			fmt.Fprintf(&b, "| %s | %s | %s | %d | %s | %s |\n", w.Cluster, w.Workload, kind, w.Pods, tel, strings.Join(w.Services, ", "))
+		}
+		if derived {
+			b.WriteString("\n~ = workload adı pod adından türetildi (bu cluster için KSM sahibi yok).\n")
 		}
 	} else {
 		b.WriteString("Katalogda workload yok")

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEscLayer } from '@/lib/escLayer';
+import { useFocusTrap } from '@/components/ui/useFocusTrap'; // v0.10.458 (D4)
 import { scorePaletteEntry, rankPaletteResults } from '@/lib/paletteScore';
 import { useT } from '@/lib/i18n';
 import { SETTINGS_TAB_INDEX } from '@/pages/settings/tabIndex';
@@ -168,6 +169,7 @@ export function CommandPalette() {
   const [pivotSvcs, setPivotSvcs] = useState<Result[]>([]);
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null); // v0.10.458 (D4) — odak tuzağı kökü
   // Param-prompt sub-mode (v0.5.457). When activeAction is set,
   // the palette stops showing the search results and starts
   // collecting per-param input for the chosen action. paramIdx
@@ -267,6 +269,7 @@ export function CommandPalette() {
   // defaultPrevented), yani palet input'u artık istisna gerektirmiyor ve
   // yığın "en son açılan en üstte" diyor.
   useEscLayer(open, () => setOpen(false));
+  useFocusTrap(dialogRef, open); // v0.10.458 (D4) — Tab palet dışına çıkmaz
 
   // Focus the input + refresh the pivot rotation on open.
   useEffect(() => {
@@ -549,23 +552,29 @@ export function CommandPalette() {
   };
 
   if (!open) return null;
+  // v0.10.458 (dış skill denetimi D4) — palet bir DİYALOGDUR: role=dialog +
+  // aria-modal, odak tuzağı (Modal atomuyla aynı useFocusTrap), arka plan
+  // ve gölge Modal'ın token'ları (--backdrop / --shadow-modal); arama girişi
+  // combobox → sonuç listesi listbox/option (aria-activedescendant ile
+  // vurgulu satır ekran okuyucuya söylenir). Esc zaten useEscLayer'da.
   return (
-    <div onClick={() => setOpen(false)}
+    <div onClick={() => setOpen(false)} className="modal-backdrop"
       style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+        position: 'fixed', inset: 0,
         display: 'flex', justifyContent: 'center',
         alignItems: 'flex-start', paddingTop: '12vh',
         zIndex: 'var(--z-modal)',
       }}>
-      <div onClick={e => e.stopPropagation()}
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Komut paleti"
+        onClick={e => e.stopPropagation()}
         onKeyDown={onKeyDown}
         style={{
           width: 'min(640px, 92vw)',
           maxHeight: '70vh',
           display: 'flex', flexDirection: 'column',
           background: 'var(--bg)', color: 'var(--text)',
-          border: '1px solid var(--border)', borderRadius: 10,
-          boxShadow: '0 12px 48px rgba(0,0,0,0.5)',
+          border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+          boxShadow: 'var(--shadow-modal)',
         }}>
         {activeAction ? (
           // Param-prompt sub-mode (v0.5.457). Header shows the
@@ -580,7 +589,7 @@ export function CommandPalette() {
             }}>
               <span style={{
                 fontSize: 10, padding: '2px 6px', borderRadius: 3,
-                background: 'color-mix(in srgb, var(--accent) 18%, transparent)', color: 'rgb(56,139,253)',
+                background: 'color-mix(in srgb, var(--accent) 18%, transparent)', color: 'var(--accent2)',
                 fontFamily: 'ui-monospace, monospace', fontWeight: 600,
               }}>action</span>
               <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>
@@ -709,6 +718,9 @@ export function CommandPalette() {
         ) : (
         <>
         <input ref={inputRef}
+          role="combobox" aria-expanded={results.length > 0} aria-controls="cp-listbox" aria-autocomplete="list"
+          aria-activedescendant={results.length > 0 ? `cp-opt-${selected}` : undefined}
+          aria-label="Search or paste a trace id"
           value={query}
           onChange={e => setQuery(e.target.value)}
           placeholder="Search or paste a trace id…"
@@ -718,7 +730,7 @@ export function CommandPalette() {
             padding: '14px 16px', fontSize: 14,
             borderBottom: '1px solid var(--border)',
           }} />
-        <div style={{ overflowY: 'auto', flex: 1 }}>
+        <div id="cp-listbox" role="listbox" aria-label="Sonuçlar" style={{ overflowY: 'auto', flex: 1 }}>
           {results.length === 0 && (
             <div style={{ padding: 16, color: 'var(--text3)', fontSize: 13 }}>
               No matches.
@@ -726,6 +738,7 @@ export function CommandPalette() {
           )}
           {results.map((r, i) => (
             <div key={`${r.kind}:${r.to ?? r.action?.id ?? i}`}
+              id={`cp-opt-${i}`} role="option" aria-selected={i === selected}
               onMouseEnter={() => setSelected(i)}
               onClick={() => {
                 if (r.kind === 'action' && r.action) {
@@ -749,7 +762,7 @@ export function CommandPalette() {
               <span style={{
                 fontSize: 10, padding: '2px 6px', borderRadius: 3,
                 background: r.kind === 'action' ? 'color-mix(in srgb, var(--accent) 18%, transparent)' : 'var(--bg3)',
-                color: r.kind === 'action' ? 'rgb(56,139,253)' : 'var(--text2)',
+                color: r.kind === 'action' ? 'var(--accent2)' : 'var(--text2)',
                 fontFamily: 'ui-monospace, monospace',
                 minWidth: 56, textAlign: 'center',
                 fontWeight: r.kind === 'action' ? 600 : 400,

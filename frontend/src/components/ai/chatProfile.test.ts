@@ -21,7 +21,7 @@ describe('sohbet model profili kablolaması (v0.10.183)', () => {
     expect(src).toMatch(/o\.toMs \|\| undefined, o\.profile \|\| undefined,[\s\S]{0,140}convIdRef\.current \|\| undefined\)/);
   });
   it("iki yüzey de seçimi hook'a geçirir; seçici yalnız >1 profilde", () => {
-    for (const rel of ['./AIDrawer.tsx', '../CopilotChat.tsx']) {
+    for (const rel of ['./AIDrawerBody.tsx', '../CopilotChat.tsx']) {
       const src = read(rel);
       expect(src).toMatch(/profile: profile \|\| undefined,/);
       expect(src).toMatch(/profiles\.length > 1/);

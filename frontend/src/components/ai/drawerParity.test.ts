@@ -16,10 +16,19 @@ const explain = read('../CopilotExplain.tsx');
 const css = read('../../styles/globals.css');
 
 describe('AI çekmeceleri aynı genişlik', () => {
-  it('AIDrawer ve CoSRE sohbeti AI_DRAWER_WIDTH okuyor — sabit 480/620 yok', () => {
-    expect(ai).toContain('width={AI_DRAWER_WIDTH}');
+  it('v0.10.483 — TEK çekmece: AIDrawer CopilotChat\'e delege eder, kendi Drawer\'ı yok', () => {
+    expect(ai).toContain('<CopilotChat />');
+    expect(ai).not.toContain('<Drawer');
     expect(chat).toContain('width={expanded ? 1100 : AI_DRAWER_WIDTH}');
     expect(chat).not.toMatch(/width=\{expanded \? 1100 : 480\}/);
+    // Özne aynı kabukta: CopilotChat ?ai= öznesini okur ve AIDrawerBody çizer.
+    expect(chat).toContain('useAiSubject()');
+    expect(chat).toContain('<AIDrawerBody');
+  });
+  it('AppShell yalnız CopilotChat mount eder (iki çekmece yok)', () => {
+    const shell = read('../AppShell.tsx');
+    expect(shell).toContain('<CopilotChat />');
+    expect(shell).not.toContain('<AIDrawer />');
   });
 });
 
@@ -43,7 +52,8 @@ describe('CoSRE başlığı AIDrawer anatomisi', () => {
     expect(chat).toContain('<span className="k">model</span>');
     expect(chat).not.toContain('sorular bu servise scope\'lanır');
   });
-  it('Explain hedefi açılınca sohbet kapanır — iki çekmece üst üste değil', () => {
-    expect(chat).toContain('if (/[?&]ai=/.test(to)) setOpen(false);');
+  it('v0.10.483 — Explain hedefi (?ai=) aynı çekmecede açıklama kipine geçer; kapatma yok', () => {
+    expect(chat).not.toContain('if (/[?&]ai=/.test(to)) setOpen(false);');
+    expect(chat).toContain('const drawerOpen = open || subject !== null;');
   });
 });

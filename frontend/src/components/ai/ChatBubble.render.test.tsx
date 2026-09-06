@@ -330,6 +330,10 @@ describe('AIDrawer (çekmece) yüzeyi', () => {
     (Element.prototype as unknown as { scrollTo: () => void }).scrollTo = () => {};
     (Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = () => {};
     vi.spyOn(api, 'copilotConfig').mockResolvedValue({ enabled: true, model: 'gemma4' });
+    // v0.10.483 — kabuk CopilotChat: AuthProvider `me` + kabuğun okumaları mock.
+    vi.spyOn(api, 'me').mockResolvedValue({ id: 'u1', email: 'op@x.io', role: 'admin', firstName: 'Cenk' });
+    vi.spyOn(api, 'problemsCount').mockResolvedValue({ count: 0 });
+    vi.spyOn(api, 'aiConversations').mockResolvedValue([]);
     vi.spyOn(api, 'copilotExplainProblem').mockResolvedValue({
       explanation: 'kök neden: db havuzu doldu', exchangeId: 'e1',
     });
@@ -342,7 +346,8 @@ describe('AIDrawer (çekmece) yüzeyi', () => {
       root.render(
         <MemoryRouter initialEntries={['/problems?ai=problem:P-1']}>
           <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-            <AIDrawer />
+            {/* v0.10.483 — ✨ Explain aynı çekmecede: AIDrawer → CopilotChat (sağlayıcılar onun) */}
+            <AuthProvider><ConfirmProvider><AIDrawer /></ConfirmProvider></AuthProvider>
           </QueryClientProvider>
         </MemoryRouter>
       );
@@ -371,7 +376,7 @@ describe('markdown yolu TEK', () => {
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
 
-  for (const rel of ['./AIDrawer.tsx', '../CopilotChat.tsx']) {
+  for (const rel of ['./AIDrawerBody.tsx', '../CopilotChat.tsx']) { // v0.10.483 — gövde dosyası
     const name = rel.split('/').pop();
     it(`${name} — turları ChatBubble ile çiziyor, kendi HTML'ini basmıyor`, () => {
       const src = read(rel);

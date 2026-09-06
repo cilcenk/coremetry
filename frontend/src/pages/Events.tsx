@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { TabStrip } from '@/components/ui/TabStrip'; // v0.10.456 (D5)
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -96,12 +97,8 @@ export default function EventsPage() {
     <>
       <Topbar title="Events" range={range} onRangeChange={setRange} />
       <PageShell>
-        <div className="tab-strip" style={{ marginBottom: 12 }}>
-          <button className={tab === 'notifications' ? 'active' : ''}
-            onClick={() => setTab('notifications')}>Notifications</button>
-          <button className={tab === 'annotations' ? 'active' : ''}
-            onClick={() => setTab('annotations')}>Annotations</button>
-        </div>
+        <TabStrip ariaLabel="Event kinds" value={tab} onChange={setTab} style={{ marginBottom: 12 }}
+          tabs={[{ key: 'notifications', label: 'Notifications' }, { key: 'annotations', label: 'Annotations' }]} />
         {tab === 'notifications'
           ? <NotificationsTab from={from} to={to} />
           : <AnnotationsTab from={from} to={to} />}

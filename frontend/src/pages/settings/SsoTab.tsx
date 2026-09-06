@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { TabStrip } from '@/components/ui/TabStrip'; // v0.10.456 (D5)
 import { Button } from '@/components/ui/Button';
 import { copyToClipboard } from '@/lib/clipboard';
 
@@ -161,14 +162,8 @@ export function SSOPresetsTab() {
         deployment), then restart the pod. Live runtime persistence of OIDC config is queued for
         a follow-up — for now the file-driven path keeps things auditable in source control.
       </p>
-      <div className="tab-strip">
-        {presets.map(p => (
-          <button key={p.key} type="button" onClick={() => setActiveKey(p.key)}
-            className={activeKey === p.key ? 'active' : ''}>
-            {p.label}
-          </button>
-        ))}
-      </div>
+      <TabStrip ariaLabel="SSO sağlayıcı ön ayarları" value={activeKey} onChange={setActiveKey}
+        tabs={presets.map(p => ({ key: p.key, label: p.label }))} />
       <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10, lineHeight: 1.6 }}>
         {active.description}
       </div>

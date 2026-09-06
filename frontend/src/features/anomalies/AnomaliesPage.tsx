@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { TabStrip } from '@/components/ui/TabStrip'; // v0.10.456 (D5)
 import { rowActivation } from '@/lib/a11y'; // v0.10.451 (dış denetim D3 kalan)
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
@@ -427,14 +428,8 @@ export default function ProblemsPage() {
             Ack → Resolved/Ignored. Sits at the very top because
             it's the most actionable signal in the product —
             this is the assignable queue an SRE works through. */}
-        <div className="tab-strip">
-          {TABS.map(t => (
-            <button key={t.key} onClick={() => setTab(t.key)} title={t.hint}
-              className={tab === t.key ? 'active' : ''}>
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <TabStrip ariaLabel="Anomali sekmeleri" value={tab} onChange={setTab}
+          tabs={TABS.map(t => ({ key: t.key, label: t.label, title: t.hint }))} />
 
         <PageControls sticky>
           <ServicePicker value={service} onChange={setService}

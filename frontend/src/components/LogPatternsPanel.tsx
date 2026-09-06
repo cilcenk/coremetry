@@ -11,6 +11,7 @@
 // biriken kalıcı liste; totalCount pencere sayımı DEĞİL. Sekme yerel
 // tercih (panelin açık/kapalı durumu gibi); fetch yalnız aktif sekme için.
 import { useMemo, useState } from 'react';
+import { TabStrip } from '@/components/ui/TabStrip'; // v0.10.456 (D5)
 import { rowActivation } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3)
 import { useLogsPatterns, useLogsTemplates } from '@/lib/queries';
 import type { LogsParams } from '@/lib/api';
@@ -125,12 +126,10 @@ export function LogPatternsPanel({ params, open, onSearch, tab: tabProp, onTab }
   return (
     <div className="card lp-panel" style={{ padding: '10px 12px', marginBottom: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-        <div className="tab-strip">
-          <button className={tab === 'patterns' ? 'active' : ''} onClick={() => switchTab('patterns')}
-            title="Penceredeki mesajlar imzaya göre gruplanır (örneklemeli)">Desenler</button>
-          <button className={tab === 'templates' ? 'active' : ''} onClick={() => switchTab('templates')}
-            title="Drain templater'ın kalıcı şablonları (5 dk'da ≤1000 satır örneklenir)">Şablonlar</button>
-        </div>
+        <TabStrip ariaLabel="Log desenleri paneli" value={tab} onChange={switchTab} tabs={[
+          { key: 'patterns', label: 'Desenler', title: 'Penceredeki mesajlar imzaya göre gruplanır (örneklemeli)' },
+          { key: 'templates', label: 'Şablonlar', title: "Drain templater'ın kalıcı şablonları (5 dk'da ≤1000 satır örneklenir)" },
+        ]} />
         <span style={{ fontSize: 11, color: 'var(--text3)' }}>
           {tab === 'patterns' ? (d ? (
             <>

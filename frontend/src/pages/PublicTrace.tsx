@@ -1,4 +1,5 @@
 import { Suspense, useCallback, useRef, useState } from 'react';
+import { TabStrip } from '@/components/ui/TabStrip'; // v0.10.456 (D5)
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -141,14 +142,10 @@ function PublicTraceInner() {
           trace page so the recipient sees the exact same anatomy.
           The Logs tab renders the SNAPSHOT frozen at share time; it
           never queries the live logstore from this anonymous route. */}
-      <div className="tab-strip" style={{ marginBottom: 10 }}>
-        <button className={tab === 'waterfall' ? 'active' : ''} onClick={() => setTab('waterfall')}>
-          Waterfall <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{data.spans.length}</span>
-        </button>
-        <button className={tab === 'logs' ? 'active' : ''} onClick={() => setTab('logs')}>
-          Logs <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{logs.length}</span>
-        </button>
-      </div>
+      <TabStrip ariaLabel="Trace görünümü" value={tab} onChange={setTab} style={{ marginBottom: 10 }} tabs={[
+        { key: 'waterfall', label: <>Waterfall <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{data.spans.length}</span></> },
+        { key: 'logs', label: <>Logs <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{logs.length}</span></> },
+      ]} />
 
       {tab === 'waterfall' && (
         <div id="td-outer" ref={spanAreaRef}>

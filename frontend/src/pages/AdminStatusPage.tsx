@@ -1,4 +1,5 @@
 import { useEffect, useState, FormEvent } from 'react';
+import { TabStrip } from '@/components/ui/TabStrip'; // v0.10.456 (D5)
 import { Link } from 'react-router-dom';
 import { Spinner, Empty } from '@/components/Spinner';
 import { IconShield } from '@/components/icons';
@@ -37,14 +38,8 @@ export default function StatusPageAdmin() {
     <>
       <div>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
-          <div className="tab-strip" style={{ marginBottom: 0, flex: 1 }}>
-            <button onClick={() => setTab('components')}
-                    className={tab === 'components' ? 'active' : ''}>Components</button>
-            <button onClick={() => setTab('config')}
-                    className={tab === 'config' ? 'active' : ''}>Page header</button>
-            <button onClick={() => setTab('subs')}
-                    className={tab === 'subs' ? 'active' : ''}>Subscribers</button>
-          </div>
+          <TabStrip ariaLabel="Status page sections" value={tab} onChange={setTab} style={{ marginBottom: 0, flex: 1 }}
+            tabs={[{ key: 'components', label: 'Components' }, { key: 'config', label: 'Page header' }, { key: 'subs', label: 'Subscribers' }]} />
           <Link to="/public-status" target="_blank" style={{
             fontSize: 12, padding: '5px 12px',
             background: 'var(--bg3)', border: '1px solid var(--border)',

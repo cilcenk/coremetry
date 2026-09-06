@@ -79,3 +79,40 @@ func readServices(
 	}
 	return rows, "spans", nil
 }
+
+// readServicesIn — v0.10.464 (D3): ad KÜMESİ için readServices ikizi (bulanık
+// çözümden gelen tam adlar). Aynı MV/ham yol kararı, aynı kaynak etiketi.
+func readServicesIn(
+	ctx context.Context, d Deps, from, to time.Time,
+	names []string, env string, limit int,
+) ([]chstore.ServiceSummary, string, error) {
+	if len(names) == 0 {
+		return nil, "", nil
+	}
+	if servicesReadUseMV(to.Sub(from), env) {
+		rows, err := d.Store.GetServicesAggFilteredIn(ctx, from, to, "", names, "rps", "desc", limit, 0)
+		if err == nil {
+			return rows, "service_summary_5m", nil
+		}
+	}
+	rows, err := d.Store.GetServicesFilteredIn(ctx, 0, from, to, "", names, "rps", "desc", limit, 0, "", env)
+	if err != nil {
+		return nil, "", err
+	}
+	return rows, "spans", nil
+}
+
+// serviceCatalogueMax — bulanık çözüm için okunan katalog tavanı
+// (api.guidedServiceNames ile aynı: 2000).
+const serviceCatalogueMax = 2000
+
+// resolveServiceFuzzy — v0.10.464 (D3): ifadeyi canlı katalogla çözer
+// (ResolveServiceAmong). Katalog okuması picker'ın DISTINCT'i (ucuz).
+func resolveServiceFuzzy(ctx context.Context, d Deps, phrase string) (exact string, candidates []string, err error) {
+	names, _, err := d.Store.ListServiceNames(ctx, "", serviceCatalogueMax, 0)
+	if err != nil {
+		return "", nil, err
+	}
+	exact, candidates = ResolveServiceAmong(phrase, names, 8)
+	return exact, candidates, nil
+}

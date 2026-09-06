@@ -22,6 +22,7 @@ import (
 
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/entity"
+	"github.com/cilcenk/coremetry/internal/mcptools"
 )
 
 // SetEntity — main.go: ayar servisi her modda; syncer yalnız worker rolünde
@@ -74,6 +75,7 @@ func (s *Server) putEntitySettings(w http.ResponseWriter, r *http.Request) {
 	s.publishConfigReload(r.Context(), "entities")
 	details, _ := json.Marshal(in)
 	s.audit(r, "settings.entities.update", "settings", entity.SettingsKey, string(details))
+	mcptools.ResetEntityIndexCache() // v0.10.490 (Astra #7) — resolve_entity indeksi bayrak/cluster değişimini hemen görsün
 	s.getEntitySettings(w, r)
 }
 

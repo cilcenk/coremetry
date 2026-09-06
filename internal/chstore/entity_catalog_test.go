@@ -11,14 +11,19 @@ import (
 
 func TestEntityCatalogSQLShapes(t *testing.T) {
 	at := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
-	sql, args := entityCountsByNamespaceSQL("c-1", "pod", time.Time{})
+	sql, args := entityCountsByNamespaceSQL("c-1", "pod", nil, time.Time{})
 	for _, want := range []string{"FROM entities FINAL", "cluster_id = ?", "entity_type = ?", "valid_to = toDateTime(0)", "GROUP BY namespace", "LIMIT 5000", "max_execution_time"} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("counts: %q yok", want)
 		}
 	}
-	if strings.Contains(sql, "JOIN") || len(args) != 2 {
-		t.Errorf("counts: JOIN'siz + 2 arg: %v", args)
+	if strings.Contains(sql, "JOIN") || len(args) != 2 || strings.Contains(sql, "namespace IN") {
+		t.Errorf("counts: JOIN'siz + 2 arg, daraltma yok: %v", args)
+	}
+	// v0.10.490 — eşleşen namespace'lere daraltma.
+	sqlN, argsN := entityCountsByNamespaceSQL("c-1", "pod", []string{"shop"}, time.Time{})
+	if !strings.Contains(sqlN, "namespace IN (?)") || len(argsN) != 3 {
+		t.Errorf("counts daraltma: %s %v", sqlN, argsN)
 	}
 	sql, args = entityChildrenCountsByParentsSQL("c-1", "pod", []string{"wl:c-1/pay/Deployment/api"}, at)
 	if !strings.Contains(sql, "parent_id IN (?)") || !strings.Contains(sql, "valid_from <= ?") || len(args) != 5 {

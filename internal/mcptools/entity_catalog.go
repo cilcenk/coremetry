@@ -29,10 +29,9 @@ import (
 // ClusterRef — Remote Cluster kimliği, thanos paketi import edilmeden
 // (api → mcptools yönü; mcp_deps.go doldurur).
 type ClusterRef struct {
-	ID              string
-	Name            string
-	SpanValues      []string // span `cluster` kolonundaki değerler (SpanClusterKeys)
-	NamespaceFilter string
+	ID         string
+	Name       string
+	SpanValues []string // span `cluster` kolonundaki değerler (SpanClusterKeys)
 }
 
 const entityCatalogLimit = 200
@@ -203,11 +202,16 @@ func ReadNamespaces(ctx context.Context, d Deps, cluster, query string, limit in
 		if len(recs) == 0 {
 			continue
 		}
-		wl, err := d.Store.EntityCountsByNamespace(ctx, c.ID, entity.TypeWorkload, time.Time{})
+		// v0.10.490 (Astra #6) — sayımlar yalnız eşleşen namespace'ler için.
+		names := make([]string, 0, len(recs))
+		for _, r := range recs {
+			names = append(names, r.Name)
+		}
+		wl, err := d.Store.EntityCountsByNamespace(ctx, c.ID, entity.TypeWorkload, names, time.Time{})
 		if err != nil {
 			return nil, nil, err
 		}
-		pods, err := d.Store.EntityCountsByNamespace(ctx, c.ID, entity.TypePod, time.Time{})
+		pods, err := d.Store.EntityCountsByNamespace(ctx, c.ID, entity.TypePod, names, time.Time{})
 		if err != nil {
 			return nil, nil, err
 		}

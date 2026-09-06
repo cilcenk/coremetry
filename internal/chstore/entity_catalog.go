@@ -18,19 +18,31 @@ import (
 
 // entityCountsByNamespaceSQL — verilen tipin namespace başına sayısı (o an
 // geçerli). Saf; tablo-testli.
-func entityCountsByNamespaceSQL(cid, typ string, at time.Time) (string, []any) {
+// v0.10.490 (Astra #6): namespaces doluysa yalnız o namespace'ler sayılır (tek
+// eşleşme için tüm cluster'ı FINAL taramaz).
+func entityCountsByNamespaceSQL(cid, typ string, namespaces []string, at time.Time) (string, []any) {
 	v, vargs := entityValidAtSQL(at)
-	args := append([]any{cid, typ}, vargs...)
+	args := []any{cid, typ}
+	nsWhere := ""
+	if len(namespaces) > 0 {
+		nsWhere = " AND namespace IN (?)"
+		args = append(args, namespaces)
+	}
+	args = append(args, vargs...)
 	return `SELECT namespace, count() FROM entities FINAL
-		WHERE cluster_id = ? AND entity_type = ? AND ` + v + `
+		WHERE cluster_id = ? AND entity_type = ?` + nsWhere + ` AND ` + v + `
 		GROUP BY namespace
 		LIMIT 5000
 		SETTINGS max_execution_time = 10`, args
 }
 
-// EntityCountsByNamespace — namespace → adet (workload ya da pod).
-func (s *Store) EntityCountsByNamespace(ctx context.Context, cid, typ string, at time.Time) (map[string]int, error) {
-	sql, args := entityCountsByNamespaceSQL(cid, typ, at)
+// EntityCountsByNamespace — namespace → adet (workload ya da pod); namespaces
+// doluysa yalnız onlar.
+func (s *Store) EntityCountsByNamespace(ctx context.Context, cid, typ string, namespaces []string, at time.Time) (map[string]int, error) {
+	if len(namespaces) > 500 {
+		namespaces = namespaces[:500]
+	}
+	sql, args := entityCountsByNamespaceSQL(cid, typ, namespaces, at)
 	rows, err := s.conn.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("entity counts by namespace: %w", err)

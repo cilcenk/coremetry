@@ -3,7 +3,7 @@ import { rowKeyboard } from '@/lib/a11y'; // v0.10.455 (dış denetim D3 dilim 3
 import { fmtSmart } from '@/lib/chartFmt';
 import { seriesStats, isAdditiveUnit, resolveLegendCollapsed } from '@/lib/chart/legendStats';
 import { getItem, setItem, legendCollapseKey } from '@/lib/storage';
-import { DisclosureButton } from '@/components/ui';
+import { DisclosureButton, IconButton } from '@/components/ui';
 
 // StatsLegend (v0.9.103, Grafana-parity #1) — kompakt OVC/TC grafiklerinin
 // ALTINA seri-başı istatistik tablosu (Seçenek A, operatör onaylı). MLC/TSP'de
@@ -36,8 +36,14 @@ export interface StatsLegendSeries {
   unit?: string;
 }
 
-export function StatsLegend({ series, onToggle, isVisible, defaultCollapsed, storageKey }: {
+export function StatsLegend({ series, onToggle, isVisible, defaultCollapsed, storageKey, onPick, pickable }: {
   series: StatsLegendSeries[];
+  // v0.10.503 (log arama denetimi B8) — seriden SÜZGECE geçiş: verilirse
+  // seçilebilir satırlarda ⊕ çizilir (satır tıkı gizle/izole olarak
+  // kalır; ⊕ olayı yayılmaz). pickable yoksa her satır seçilebilir;
+  // "diğer"/OTHER gibi sentetik seriler için false döner.
+  onPick?: (i: number) => void;
+  pickable?: (i: number) => boolean;
   // v0.9.483 — açık/kapalı seçimi grafik başına KALICI (legendStorageKey ile
   // aynı anahtar, ayrı aile: lib/storage.ts legendCollapseKey). Bir kez açan
   // kullanıcı her ziyarette açık bulur; hiç dokunmayan default'u görür.
@@ -118,6 +124,13 @@ export function StatsLegend({ series, onToggle, isVisible, defaultCollapsed, sto
                     <td style={{ ...td, textAlign: 'left', color: 'var(--text2)', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'inherit' }}>
                       <span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 2, background: s.color, marginRight: 7, verticalAlign: 'middle' }} />
                       <span style={{ verticalAlign: 'middle' }}>{s.label}</span>
+                      {onPick && (pickable ? pickable(i) : true) && (
+                        <IconButton variant="bare" size="xs" className="ib-add"
+                          onClick={e => { e.stopPropagation(); onPick(i); }}
+                          onKeyDown={e => { e.stopPropagation(); }}
+                          title={`Filter for ${s.label}`} aria-label={`Filter for ${s.label}`}
+                          icon="⊕" />
+                      )}
                     </td>
                     <td style={{ ...td, color: 'var(--text)', fontWeight: 600 }}>{num(st.last, s.unit)}</td>
                     <td style={{ ...td, color: 'var(--text2)' }}>{num(st.min, s.unit)}</td>

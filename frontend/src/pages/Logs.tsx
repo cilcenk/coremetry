@@ -1265,7 +1265,8 @@ function LogsInner() {
           onRangeSelect={(fromNs, toNs) => handleZoom(fromNs / 1e9, toNs / 1e9)}
           onZoomReset={handleZoomReset}
           breakdown={breakdown} onBreakdown={setBreakdown}
-          onSeries={setHistTotals} />
+          onSeries={setHistTotals}
+          onSeriesPick={addFromRow} /* v0.10.503 (B8) — lejant ⊕ → pill */ />
 
         {data === undefined && <TableSkeleton rows={12} cols={5} />}
         {/* v0.9.215 — the error leg of the tri-state used to render NOTHING:

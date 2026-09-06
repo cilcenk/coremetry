@@ -63,6 +63,28 @@ export function unitFromCatalog(name: string, infos: ReadonlyArray<MetricInfo>):
   return '';
 }
 
+// unitFromMetricName — v0.10.512 (operatör: "Overview'da response time ms,
+// Explore'da 0.2 gibi saniye"): katalog birimsizse (VictoriaMetrics'te
+// birim üst verisi yok) Prometheus ad soneki birimi söyler. Tablo
+// internal/vmetrics/describe.go `displayUnitBySuffix`in AYNASI: _seconds → s,
+// _milliseconds → ms, _bytes → By (OTLP yazımı; otlpUnitToGrafana bytes'a
+// çevirir). `_ratio`/`_percent` BİLEREK yok: 0-1 ile 0-100'ü "%"ye eşlemek
+// yüz kat hata. Bilinmeyen → '' (birimsiz, uydurma değil).
+const UNIT_BY_SUFFIX: ReadonlyArray<readonly [string, string]> = [
+  ['_seconds', 's'], ['_milliseconds', 'ms'], ['_bytes', 'By'],
+];
+export function unitFromMetricName(name: string): string {
+  const n = (name ?? '').trim();
+  for (const [suffix, unit] of UNIT_BY_SUFFIX) {
+    if (n.endsWith(suffix)) return unit;
+    // histogram / summary bileşenleri: _seconds_bucket, _seconds_sum, _seconds_count
+    for (const tail of ['_bucket', '_sum', '_count']) {
+      if (n.endsWith(suffix + tail)) return unit;
+    }
+  }
+  return '';
+}
+
 // withMetricUnits — çözülen birimleri state'e uygular. HİÇBİR sorgu
 // değişmediyse AYNI referansı döndürür: setBuilder(b => withMetricUnits(b,
 // u)) o durumda React'in bail-out'una düşer, yani boş çözüm sonsuz
@@ -100,7 +122,8 @@ export function useMetricUnits(names: ReadonlyArray<string>): Record<string, str
   for (let i = 0; i < names.length; i++) {
     const d = results[i]?.data;
     if (!d) continue;
-    const u = unitFromCatalog(names[i], d.names);
+    // v0.10.512 — katalog birimsizse ad soneki (unitFromMetricName).
+    const u = unitFromCatalog(names[i], d.names) || unitFromMetricName(names[i]);
     if (u) pairs.push([names[i], u]);
   }
   const sig = pairs.map(([n, u]) => `${n}=${u}`).join('|');

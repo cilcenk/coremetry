@@ -440,14 +440,22 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // v0.9.1274 dersinin kapı hâli: ad soruya göre çözülür — Throughput
   // `_count` + rate, Response time `rtMetric` + avg. /metrics?agg= zaten
   // taşınıyor (Metrics.tsx legacy dalı → metricCatalogueHref).
-  const metricsHref = (opts: { by?: string; metric: string; agg: 'rate' | 'avg' }) => {
+  // v0.10.512 (operatör: "Overview'da response time ms, Explore'da 0.2 gibi
+  // saniye") — kapı RED'in BİLDİĞİ birimi de taşır (`unit=s`); Metrics.tsx
+  // legacy dalı Explore seed'ine geçirir. VM kataloğu birimsiz olduğundan
+  // Explore aksi hâlde ham saniye çiziyordu.
+  const metricsHref = (opts: { by?: string; metric: string; agg: 'rate' | 'avg'; unit?: string }) => {
     const r = searchParams.get('range');
     return `/metrics?metric=${encodeURIComponent(opts.metric)}&service=${encodeURIComponent(service)}`
       + `&agg=${opts.agg}`
       + (opts.by ? `&by=${encodeURIComponent(opts.by)}` : '')
+      + (opts.unit ? `&unit=${encodeURIComponent(opts.unit)}` : '')
       + (r ? `&range=${encodeURIComponent(r)}` : '');
   };
-  const rtExploreHref = () => metricsHref({ by: 'http.route', metric: metricName, agg: 'avg' });
+  const rtExploreHref = () => metricsHref({
+    by: 'http.route', metric: metricName, agg: 'avg',
+    unit: metricRedQ.data?.latencyUnitKnown && metricRedQ.data.latencyUnit ? metricRedQ.data.latencyUnit : undefined,
+  });
   const tputExploreHref = () => metricsHref({ by: 'http.route', metric: metricTputQ.data?.metric ?? '', agg: 'rate' });
   // v0.9.844 — kırılım sorgusu (useRootOpLatency + opsStep + buildRootOpLines
   // projeksiyonu) ve SLO hata-bütçesi eşikleri (useSLOs → failureThresholds)

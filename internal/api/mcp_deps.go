@@ -54,7 +54,7 @@ func (s *Server) mcpClusterRefs() []mcptools.ClusterRef {
 		if !c.Enabled {
 			continue
 		}
-		out = append(out, mcptools.ClusterRef{ID: c.EffectiveID(), Name: c.Name, SpanValues: c.SpanClusterKeys(), NamespaceFilter: c.NamespaceFilter})
+		out = append(out, mcptools.ClusterRef{ID: c.EffectiveID(), Name: c.Name, SpanValues: c.SpanClusterKeys()})
 	}
 	return out
 }

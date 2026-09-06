@@ -174,18 +174,32 @@ const entityIndexTTL = 60 * time.Second
 var entityIndexCache struct {
 	sync.Mutex
 	at  time.Time
+	key string // v0.10.490 (Astra #7): cluster kümesi + bayrak; değişince cache düşer
 	idx EntityCatalogIndex
+}
+
+// entityIndexKey — cluster id'leri (sıralı) + bayrak.
+func entityIndexKey(d Deps) string {
+	var ids []string
+	if d.Clusters != nil {
+		for _, c := range d.Clusters() {
+			ids = append(ids, c.ID)
+		}
+	}
+	sort.Strings(ids)
+	return fmt.Sprintf("%v|%s", entityLayerOn(d), strings.Join(ids, ","))
 }
 
 // loadEntityIndex — servisler + (bayrak açıksa) namespace/workload'lar; 60 s cache.
 func loadEntityIndex(ctx context.Context, d Deps) (EntityCatalogIndex, error) {
+	key := entityIndexKey(d)
+	// v0.10.490 — kilit yükleme boyunca tutulur (tek uçuş): TTL dolunca
+	// eşzamanlı turlar 2×N katalog sorgusunu yalnız bir kez öder.
 	entityIndexCache.Lock()
-	if cacheNow().Sub(entityIndexCache.at) < entityIndexTTL && entityIndexCache.at.After(time.Time{}) {
-		idx := entityIndexCache.idx
-		entityIndexCache.Unlock()
-		return idx, nil
+	defer entityIndexCache.Unlock()
+	if entityIndexCache.key == key && cacheNow().Sub(entityIndexCache.at) < entityIndexTTL && entityIndexCache.at.After(time.Time{}) {
+		return entityIndexCache.idx, nil
 	}
-	entityIndexCache.Unlock()
 	idx := EntityCatalogIndex{EntityLayer: entityLayerOn(d)}
 	if d.Store != nil {
 		names, _, err := d.Store.ListServiceNames(ctx, "", serviceCatalogueMax, 0)
@@ -213,16 +227,15 @@ func loadEntityIndex(ctx context.Context, d Deps) (EntityCatalogIndex, error) {
 			}
 		}
 	}
-	entityIndexCache.Lock()
-	entityIndexCache.at, entityIndexCache.idx = cacheNow(), idx
-	entityIndexCache.Unlock()
+	entityIndexCache.at, entityIndexCache.key, entityIndexCache.idx = cacheNow(), key, idx
 	return idx, nil
 }
 
-// ResetEntityIndexCache — test / ayar değişimi.
+// ResetEntityIndexCache — v0.10.490: Settings → Entities PUT (api/entity_routes.go)
+// ve testler çağırır; anahtar da sıfırlanır.
 func ResetEntityIndexCache() {
 	entityIndexCache.Lock()
-	entityIndexCache.at = time.Time{}
+	entityIndexCache.at, entityIndexCache.key = time.Time{}, ""
 	entityIndexCache.Unlock()
 }
 

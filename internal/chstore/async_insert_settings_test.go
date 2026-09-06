@@ -34,3 +34,28 @@ func TestAsyncInsertSettings(t *testing.T) {
 		t.Fatal("busy timeout floor must not exceed the ceiling")
 	}
 }
+
+// v0.10.511 — C6 ölçüm anahtarı: paralel itiş kapatılınca yalnız
+// parallel_view_processing değişir; öteki ayarlar (async_insert
+// mekanizması, CLAUDE.md) aynen kalır. Varsayılan açık.
+func TestAsyncInsertSettingsParallelViewsToggle(t *testing.T) {
+	t.Cleanup(func() { SetParallelViewProcessing(true) })
+	if asyncInsertSettings()["parallel_view_processing"].(int) != 1 {
+		t.Fatal("varsayılan paralel itiş AÇIK olmalı")
+	}
+	SetParallelViewProcessing(false)
+	off := asyncInsertSettings()
+	if off["parallel_view_processing"].(int) != 0 {
+		t.Fatal("kapatılınca 0 olmalı")
+	}
+	for k, v := range asyncInsertSettings() {
+		if k == "parallel_view_processing" {
+			continue
+		}
+		SetParallelViewProcessing(true)
+		if asyncInsertSettings()[k] != v {
+			t.Fatalf("anahtar %s'i etkilememeli", k)
+		}
+		SetParallelViewProcessing(false)
+	}
+}

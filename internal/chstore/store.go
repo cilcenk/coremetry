@@ -612,6 +612,10 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	memPlan := resolveQueryMemory(
 		cfg.MaxMemoryUsage, cfg.MaxBytesExternalGroupBy, cfg.MaxBytesExternalSort,
 		serverMaxMem, cfg.MemFraction)
+	// v0.10.511 (C6 ölçümü) — MV paralel itişi; etkin değer boot'ta görünür
+	// ki prod A/B'de hangi kolda olduğumuz tek satırdan okunsun.
+	SetParallelViewProcessing(!cfg.DisableParallelViews)
+	log.Printf("[chstore] parallel_view_processing=%d (COREMETRY_CH_PARALLEL_VIEWS; v0.10.511 ölçüm anahtarı)", map[bool]int{true: 1, false: 0}[!cfg.DisableParallelViews])
 	maxMem, extGroupBy, extSort := memPlan.MaxMemory, memPlan.GroupBy, memPlan.Sort
 	// v0.9.185 — surface the EFFECTIVE per-query limits at boot so an
 	// operator can confirm a COREMETRY_CH_MAX_MEMORY_USAGE override

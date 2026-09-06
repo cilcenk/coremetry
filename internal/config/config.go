@@ -360,6 +360,13 @@ type CHConfig struct {
 	// Fail-open when the server ceiling can't be read.
 	//   COREMETRY_CH_MEM_FRACTION
 	MemFraction float64 `yaml:"mem_fraction"`
+	// DisableParallelViews (v0.10.511, dış denetim C6 ölçümü) — spans
+	// INSERT'inde 19 MV'nin PARALEL itilmesini kapatır
+	// (parallel_view_processing=0 → sıralı). Varsayılan KAPALI DEĞİL: sıfır
+	// değer = paralel (v0.10.240 davranışı aynen). Yalnız prod A/B ölçümü
+	// için rebuild'siz anahtar; karar kuralı docs/RELEASE-1.0.md §Env.
+	//   COREMETRY_CH_PARALLEL_VIEWS=0|false|off → kapalı
+	DisableParallelViews bool `yaml:"disable_parallel_views"`
 }
 
 // Hosts splits Addr on commas and trims surrounding whitespace, so
@@ -610,6 +617,18 @@ func Load(path string) (*Config, error) {
 	// v0.9.975 — the ratio the three limits above are held under. See
 	// CHConfig.MemFraction / internal/chstore/query_memory.go.
 	chFractionEnv("COREMETRY_CH_MEM_FRACTION", &cfg.ClickHouse.MemFraction)
+	// v0.10.511 — MV paralel itişi (C6 ölçüm anahtarı). Bilinmeyen değer
+	// WARNING + varsayılan (paralel açık); sessiz düşüş yok.
+	if v, ok := os.LookupEnv("COREMETRY_CH_PARALLEL_VIEWS"); ok {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "0", "false", "off", "no":
+			cfg.ClickHouse.DisableParallelViews = true
+		case "1", "true", "on", "yes", "":
+			cfg.ClickHouse.DisableParallelViews = false
+		default:
+			log.Printf("[config] WARNING: COREMETRY_CH_PARALLEL_VIEWS=%q geçersiz — 0/1 bekleniyor; paralel itiş AÇIK kaldı", v)
+		}
+	}
 	if v := os.Getenv("COREMETRY_HTTP_ADDR"); v != "" {
 		cfg.Listen.HTTP = v
 	}

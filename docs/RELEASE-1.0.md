@@ -256,6 +256,15 @@ Tek yeni üretim env'i **`COREMETRY_CH_MEM_FRACTION`** (v0.9.975): CH sorgu
 bellek tavanı oranı, varsayılan `0.6`, `[0.1, 0.9]` arasına sıkıştırılır,
 geçersiz değer FATAL değil WARNING.
 
+**`COREMETRY_CH_PARALLEL_VIEWS`** (v0.10.511, dış denetim C6 ölçüm anahtarı,
+İSTEĞE BAĞLI): spans INSERT'inde 19 MV'nin paralel itişi
+(`parallel_view_processing`). Varsayılan `1` (v0.10.240 davranışı); `0`
+sıralı itiş. Yalnız A/B ölçümü için: 24 saat `1`, 24 saat `0`; `system.query_log`
+spans INSERT tepe/p99 belleği ve `pushing to view` zaman aşımları
+karşılaştırılır. Karar kuralı: tepe bellek ≥ %30 düşer ve zaman aşımı artmazsa
+`0`; artarsa `1` (çift satır riski v0.10.240'ın sebebiydi). Etkin değer boot
+logunda `[chstore] parallel_view_processing=…` satırında.
+
 ## §4 — Kesim GÜNÜ operatörden gereken cevaplar
 
 ### 2026-08-25 kesimi için CEVAPLANDI

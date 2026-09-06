@@ -465,7 +465,8 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	if chip := screenContextChipTR(screenCtx); chip != "" {
 		emit("step", map[string]string{"label": chip})
 	}
-	loopPrompt := screenContextPreambleTR(screenCtx) +
+	loopPrompt := copilot.SystemPromptChatAgentLoop() + // v0.10.482 — telemetri ajanı çekirdek döngüsü (Ek A)
+		screenContextPreambleTR(screenCtx) +
 		chatContextPreambleTR(cst.ctx) + // v0.10.478 — aktif sohbet bağlamı (Ek A ACTIVE_CONTEXT)
 		withAddressee(addressee, copilot.SystemPromptChat())
 

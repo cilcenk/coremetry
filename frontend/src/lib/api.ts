@@ -894,6 +894,7 @@ export const api = {
     traceId?: string;
     spanId?: string;
     size?: number; // v0.9.1223 — yalnız 5|20 basamakları (sunucu kıskacı)
+    errorLift?: 1; // v0.10.509 (C5) — hata seçimi vs taban lift'i (iki fieldstats)
   }) =>
     get<LogFieldStats>(`/api/logs/fieldstats?${qs(params)}`),
 

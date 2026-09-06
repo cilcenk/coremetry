@@ -203,12 +203,30 @@ func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request) {
 // /api/logs/timeseries cache keys, extracted pure alongside
 // logsSearchKey (v0.8.400) for the same hash-ALL-inputs test.
 func logsFieldStatsKey(field string, f logstore.Filter, fromRaw, toRaw string, size int) string {
+	return logsFieldStatsKeyLift(field, f, fromRaw, toRaw, size, false)
+}
+
+// logsFieldStatsKeyLift — v0.10.509 (C5): errorLift bayrağı anahtara girer
+// (lift'li gövde lift'siz isteğe ya da tersine servis edilmesin — v0.5.187).
+func logsFieldStatsKeyLift(field string, f logstore.Filter, fromRaw, toRaw string, size int, lift bool) string {
 	// v0.9.1223 — size anahtara girer: 5'lik yanıtın 20'lik isteğe (ya da
 	// tersine) 60 sn TTL içinde servis edilmesi v0.5.187 sınıfı çapraz
 	// zehirlenme olurdu.
-	return fmt.Sprintf("logs-fieldstats:f=%s:svc=%s:cl=%s:env=%s:sev=%d:trace=%s:span=%s:from=%s:to=%s:q=%s:n=%d",
+	return fmt.Sprintf("logs-fieldstats:f=%s:svc=%s:cl=%s:env=%s:sev=%d:trace=%s:span=%s:from=%s:to=%s:q=%s:n=%d:lift=%t",
 		field, f.Service, f.Cluster, f.Env, f.SeverityMin, f.TraceID, f.SpanID,
-		fromRaw, toRaw, f.Search, size)
+		fromRaw, toRaw, f.Search, size, lift)
+}
+
+// logsErrorLiftSeverity — hata seçimi eşiği (OTel ERROR = 17); sayfada
+// zaten daha yüksek bir seviye seçiliyse o korunur.
+const logsErrorLiftSeverity = 17
+
+func logsErrorLiftSelection(f logstore.Filter) logstore.Filter {
+	sel := f
+	if sel.SeverityMin < logsErrorLiftSeverity {
+		sel.SeverityMin = logsErrorLiftSeverity
+	}
+	return sel
 }
 
 // v0.9.216 — cluster joined the filter set, so it MUST join the key: a
@@ -937,11 +955,31 @@ func (s *Server) getLogsFieldStats(w http.ResponseWriter, r *http.Request) {
 	if q.Get("size") == "20" {
 		size = 20
 	}
+	errorLift := q.Get("errorLift") == "1"                                           // v0.10.509 (C5) — hatalıyı ayıran alan
 	keyFrom, keyTo := snapLogsWindow(&f, q.Get("from"), q.Get("to"), 60*time.Second) // v0.10.446 (A6-V2: TTL kadar)
-	key := logsFieldStatsKey(field, f, keyFrom, keyTo, size)
+	key := logsFieldStatsKeyLift(field, f, keyFrom, keyTo, size, errorLift)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
+		if errorLift {
+			// v0.10.509 (C5) — iki fieldstats (seçim = severity ≥ ERROR, taban =
+			// sayfa süzgeci) — yalnız genişletilen alan için, düğme açıkken;
+			// BubbleUp puanı selPct − basePct. Taban top-20 (kapsam).
+			sel, serr := s.logs.FieldStats(tctx, logsErrorLiftSelection(f), field, size)
+			if serr != nil {
+				return nil, serr
+			}
+			base, berr := s.logs.FieldStats(tctx, f, field, 20)
+			out := logstore.LiftFieldStats(sel, base)
+			out.ErrorLift = &logstore.FieldStatsLift{SeverityMin: logsErrorLiftSelection(f).SeverityMin, SelectionTotal: sel.Total}
+			if berr != nil {
+				log.Printf("[logs] fieldstats lift baseline degraded (backend=%s, field=%q): %v", s.logs.Backend(), field, berr)
+				out.ErrorLift.Degraded, out.ErrorLift.Reason = true, "baseline fieldstats failed"
+			} else {
+				out.ErrorLift.BaselineTotal = base.Total
+			}
+			return out, nil
+		}
 		res, err := s.logs.FieldStats(tctx, f, field, size)
 		if err != nil {
 			// v0.8.350 (HA 🟡6) — slow/unreachable backend degrades the

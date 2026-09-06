@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
 import { getRaw, setRaw } from '@/lib/storage';
+import { liftBadge } from '@/lib/logFieldLift'; // v0.10.509 (C5)
 import type { CSSProperties } from 'react';
 
 // LogFieldsPanel — Kibana Discover-style left rail on /logs
@@ -22,6 +23,7 @@ import type { CSSProperties } from 'react';
 // cache. Collapsing/re-expanding within a minute is free.
 
 const OPEN_KEY = 'logs.fieldsPanel.open';
+const LIFT_KEY = 'logs.fieldsPanel.lift'; // v0.10.509 (C5)
 
 // Params for the stats fetch — mirrors the /logs slice so the
 // accordion reflects what the table shows.
@@ -37,9 +39,12 @@ export interface FieldStatsScope {
   spanId?: string;
 }
 
-function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onPillExclude, onExists, windowTotal }: {
+function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onPillExclude, onExists, windowTotal, lift }: {
   field: string;
   scope: FieldStatsScope;
+  // lift — v0.10.509 (C5): "Hatalıyı ayıran" açık → sunucu iki fieldstats
+  // (hata seçimi + taban) koşturur; yalnız bu genişletilen alan için.
+  lift?: boolean;
   isColumn: boolean;
   onToggleColumn: (id: string) => void;
   onPillAdd: (key: string, value: string) => void;
@@ -55,8 +60,8 @@ function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onP
   // Yalnız iki basamak — cache-key kardinalitesi sınırlı (v0.8.270).
   const [size, setSize] = useState<5 | 20>(5);
   const q = useQuery({
-    queryKey: ['logs', 'fieldstats', field, scope, size],
-    queryFn: () => api.logsFieldStats({ field, ...scope, ...(size !== 5 ? { size } : {}) }),
+    queryKey: ['logs', 'fieldstats', field, scope, size, lift],
+    queryFn: () => api.logsFieldStats({ field, ...scope, ...(size !== 5 ? { size } : {}), ...(lift ? { errorLift: 1 as const } : {}) }),
     staleTime: 60_000, // matches the server-side cache TTL
     retry: 1,
   });
@@ -68,6 +73,14 @@ function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onP
     }}>
       {q.isLoading && <div style={{ fontSize: 11, color: 'var(--text3)' }}>Loading top values…</div>}
       {q.isError && <div style={{ fontSize: 11, color: 'var(--err)' }}>Top values unavailable</div>}
+      {lift && d?.errorLift && (
+        <div style={{ fontSize: 10.5, color: 'var(--text3)', marginBottom: 4 }}
+          title="Değerler hata seçimine (severity ≥ ERROR) göre; rozet tabana (aynı süzgeç, tüm seviyeler) göre farkı gösterir">
+          {d.errorLift.degraded
+            ? <span className="badge b-warn">taban okunamadı</span>
+            : <>hata seçimi {d.errorLift.selectionTotal.toLocaleString()} · taban {d.errorLift.baselineTotal.toLocaleString()} doküman</>}
+        </div>
+      )}
       {/* v0.10.415 (B1) — degraded {total:0, values:[]} "No values" değil;
           v0.10.413 (A5) partial: üst değerler ve payda alt küme. */}
       {d?.degraded && (
@@ -104,7 +117,10 @@ function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onP
                 whiteSpace: 'nowrap',
                 fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
               }}>{v.value}</span>
-              <span style={{ color: 'var(--text3)' }}>{pct.toFixed(pct >= 10 ? 0 : 1)}%</span>
+              <span style={{ color: 'var(--text3)' }} title={lift && d.errorLift ? `hata seçiminde %${(v.selPct ?? pct).toFixed(1)} · tabanda %${(v.basePct ?? 0).toFixed(1)}` : undefined}>{pct.toFixed(pct >= 10 ? 0 : 1)}%</span>
+              {(() => { const b = liftBadge(v, !!lift && !!d.errorLift && !d.errorLift.degraded); return b.kind === 'none' ? null : (
+                <span className={'badge ' + (b.kind === 'up' ? 'b-err' : b.kind === 'down' ? 'b-ok' : '')}
+                  title="lift = hata seçimindeki pay − tabandaki pay (puan); ±5 altı gürültü">{b.label}</span>); })()}
               <IconButton variant="bare" size="xs" className="ib-add"
                 onClick={() => onPillAdd(field, v.value)}
                 title={`Filter for ${field}: ${v.value}`}
@@ -202,6 +218,10 @@ export function LogFieldsPanel({
   // CLOSED by default so /logs opens with a full-width table; the thin "ƒ Fields"
   // affordance summons it, and the choice persists ('1' = keep open).
   const [open, setOpen] = useState<boolean>(() => getRaw(OPEN_KEY) === '1');
+  // v0.10.509 (C5) — "Hatalıyı ayıran": kalıcı; açıkken genişletilen alan
+  // için iki fieldstats (hata seçimi + taban). Kapalıyken ek istek yok.
+  const [lift, setLift] = useState<boolean>(() => getRaw(LIFT_KEY) === '1');
+  const toggleLift = () => setLift(v => { setRaw(LIFT_KEY, v ? '0' : '1'); return !v; });
   const [needle, setNeedle] = useState('');
   const [expandedField, setExpandedField] = useState<string | null>(null);
   const toggleOpen = () => {
@@ -286,7 +306,7 @@ export function LogFieldsPanel({
         <span style={{ color: 'var(--text3)', fontSize: 10 }}>{expandedField === f ? '▾' : '▸'}</span>
       </div>
       {expandedField === f && (
-        <FieldAccordion field={f} scope={scope}
+        <FieldAccordion field={f} scope={scope} lift={lift}
           onExists={onExists} windowTotal={windowTotal}
           isColumn={selectedSet.has(f)}
           onToggleColumn={onToggleColumn}
@@ -309,6 +329,10 @@ export function LogFieldsPanel({
           value={needle}
           onChange={e => setNeedle(e.target.value)}
           style={{ flex: 1, minWidth: 0, fontSize: 11.5, padding: '3px 6px' }} />
+        <Button variant={lift ? 'primary' : 'secondary'} size="sm" onClick={toggleLift} aria-pressed={lift}
+          title="Hatalıyı ayıran: genişletilen alanın değerlerini hata logları (severity ≥ ERROR) için sayar ve tabana göre farkı (lift, puan) gösterir — açıkken alan başına bir ek sorgu">
+          ⚠ ayıran
+        </Button>
         <Button variant="secondary" size="sm" onClick={toggleOpen}
           title="Hide the fields panel">«</Button>
       </div>

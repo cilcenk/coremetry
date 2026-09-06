@@ -33,7 +33,8 @@ describe('Overview → Metrics tık hedefi (v0.9.794 + v0.10.370)', () => {
     expect(i).toBeGreaterThan(0);
     const near = src.slice(i, i + 400);
     expect(near).toMatch(/onExpandClick=\{\(\) => navigate\(rtExploreHref\(\)\)\}/);
-    expect(src).toMatch(/const rtExploreHref = \(\) => metricsHref\(\{ by: 'http\.route', metric: metricName, agg: 'avg' \}\);/);
+    // v0.10.512 — kapı RED'in bildiği birimi de taşır (unit:); by/metric/agg değişmez.
+    expect(src).toMatch(/const rtExploreHref = \(\) => metricsHref\(\{\s*by: 'http\.route', metric: metricName, agg: 'avg',\s*unit: metricRedQ\.data\?\.latencyUnitKnown && metricRedQ\.data\.latencyUnit \? metricRedQ\.data\.latencyUnit : undefined,\s*\}\);/);
   });
 
   // v0.10.370 — operator-reported: "Overview'daki metrik grafiği artan trend
@@ -47,7 +48,7 @@ describe('Overview → Metrics tık hedefi (v0.9.794 + v0.10.370)', () => {
   });
 
   it('iki panel AYNI kırılımı taşır', () => {
-    const calls = src.match(/metricsHref\(\{ by: '([^']+)'/g) ?? [];
+    const calls = (src.match(/metricsHref\(\{\s*by: '([^']+)'/g) ?? []).map(c => c.replace(/\s+/g, ' '));
     expect(calls.length).toBe(2);
     expect(new Set(calls).size, 'iki panel aynı kırılımı kullanmalı').toBe(1);
   });

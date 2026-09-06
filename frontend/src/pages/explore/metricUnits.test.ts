@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { metricsNeedingUnit, unitFromCatalog, withMetricUnits } from './metricUnits';
+import { metricsNeedingUnit, unitFromCatalog, unitFromMetricName, withMetricUnits } from './metricUnits';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { blankQuery, queryUnit, type BuilderState, type BuilderQuery } from './model';
 import type { MetricInfo } from '@/lib/types';
 
@@ -135,4 +137,43 @@ describe('katalog → panel birimi (halkanın tamamı)', () => {
   it("bayt: katalog 'By' → panel 'bytes'", () => expect(run('By')).toBe('bytes'));
   it("boyutsuz: katalog '1' → panel birimsiz", () => expect(run('1')).toBe(''));
   it('katalog birimsiz → panel birimsiz', () => expect(run('')).toBe(''));
+});
+
+
+// v0.10.512 — operatör: Overview'da ms, Explore'da 0.2 (saniye, birimsiz).
+// Katalog birimsizse ad soneki; backend describe.go tablosunun aynası.
+describe('unitFromMetricName', () => {
+  it('Prometheus sonekleri → OTLP birimi', () => {
+    expect(unitFromMetricName('http_server_request_duration_seconds')).toBe('s');
+    expect(unitFromMetricName('http_server_request_duration_seconds_bucket')).toBe('s');
+    expect(unitFromMetricName('http_server_request_duration_seconds_sum')).toBe('s');
+    expect(unitFromMetricName('rpc_client_duration_milliseconds')).toBe('ms');
+    expect(unitFromMetricName('process_memory_bytes')).toBe('By');
+  });
+  it('ratio/percent ve bilinmeyen → birimsiz (uydurma yok)', () => {
+    expect(unitFromMetricName('cpu_usage_ratio')).toBe('');
+    expect(unitFromMetricName('http_requests_total')).toBe('');
+    expect(unitFromMetricName('')).toBe('');
+  });
+  it('Go tablosuyla birebir (internal/vmetrics/describe.go displayUnitBySuffix)', () => {
+    const go = readFileSync(resolve(__dirname, '../../../../internal/vmetrics/describe.go'), 'utf8');
+    const i = go.indexOf('var displayUnitBySuffix');
+    const start = go.indexOf('}{', i) + 2;            // struct tipi kapanıp literal açılır
+    const body = go.slice(start, go.indexOf('\n}', start));
+    const pairs = [...body.matchAll(/\{"(_\w+)", "(\w+)"\}/g)].map(m => [m[1], m[2]] as const);
+    expect(pairs.length).toBeGreaterThanOrEqual(3);
+    for (const [suffix, unit] of pairs) {
+      const want = unit === 'B' ? 'By' : unit; // Go 'B' (gösterim) ↔ OTLP 'By' (katalog yuvası)
+      expect(unitFromMetricName('x' + suffix), suffix).toBe(want);
+    }
+  });
+  it('kaynak pinleri: useMetricUnits sonek yedeğine düşer; Overview kapısı ve Metrics legacy dalı ?unit= taşır', () => {
+    const mu = readFileSync(resolve(__dirname, './metricUnits.ts'), 'utf8');
+    expect(mu).toContain('unitFromCatalog(names[i], d.names) || unitFromMetricName(names[i])');
+    const ov = readFileSync(resolve(__dirname, '../service/Overview.tsx'), 'utf8');
+    expect(ov).toContain("&unit=${encodeURIComponent(opts.unit)}");
+    expect(ov).toContain('metricRedQ.data?.latencyUnitKnown && metricRedQ.data.latencyUnit');
+    const mx = readFileSync(resolve(__dirname, '../Metrics.tsx'), 'utf8');
+    expect(mx).toContain("unit: searchParams.get('unit') || undefined");
+  });
 });

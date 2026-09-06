@@ -148,6 +148,9 @@ export default function MetricsPage() {
         // v0.9.746 — ?by=http.route (virgüllü çoklu) kırılımı Explore
         // seed'ine taşır; Overview route paneli geçişi bunu kullanır.
         splitBy: searchParams.get('by')?.split(',').filter(Boolean) || undefined,
+        // v0.10.512 — ?unit= (Overview kapısı RED'in bildiği birimi taşır;
+        // VM kataloğu birimsiz → Explore ham saniye çizmesin).
+        unit: searchParams.get('unit') || undefined,
       }) + (searchParams.get('range') ? `&range=${encodeURIComponent(searchParams.get('range')!)}` : '')
     : null;
 

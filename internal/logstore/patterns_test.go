@@ -127,6 +127,44 @@ func TestGroupBySignatureSamplesUpToCapWithCursor(t *testing.T) {
 	}
 }
 
+// v0.10.452 (C1, ES maliyeti) — örnek tavanı 500: tek sayfa, Cap 500,
+// tavan dolunca truncated; dürüstlük zarfı sayfalardan taşınır.
+func TestGroupBySignatureNCapAndHonesty(t *testing.T) {
+	rows := make([]*LogRecord, 0, 1200)
+	for i := 0; i < 1200; i++ {
+		rows = append(rows, rec(int64(i+1), "s", fmt.Sprintf("tick %d", 1000+i), 17))
+	}
+	st := &pagedStore{rows: rows}
+	res, err := GroupBySignatureN(context.Background(), st, Filter{}, 10, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sampled != 500 || res.Cap != 500 || !res.Truncated || st.calls != 1 {
+		t.Fatalf("tavan 500 → 1 sayfa: sampled=%d cap=%d truncated=%v calls=%d", res.Sampled, res.Cap, res.Truncated, st.calls)
+	}
+	if r2, _ := GroupBySignatureN(context.Background(), &pagedStore{rows: rows}, Filter{}, 10, 0); r2.Cap != PatternsSampleCap {
+		t.Fatalf("0 → varsayılan tavan: %d", r2.Cap)
+	}
+	hs := &honestyStore{pagedStore: pagedStore{rows: rows[:10]}}
+	r3, err := GroupBySignature(context.Background(), hs, Filter{}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r3.Partial || !r3.TotalIsLowerBound || r3.ShardsFailed != 2 {
+		t.Fatalf("dürüstlük zarfı taşınmalı: %+v", r3)
+	}
+}
+
+type honestyStore struct{ pagedStore }
+
+func (h *honestyStore) Search(ctx context.Context, f Filter) (*Page, error) {
+	p, err := h.pagedStore.Search(ctx, f)
+	if p != nil {
+		p.Partial, p.TotalIsLowerBound, p.ShardsFailed = true, true, 2
+	}
+	return p, err
+}
+
 func TestGroupBySignatureLimitAndErrors(t *testing.T) {
 	var rows []*LogRecord
 	for i := 0; i < 30; i++ {

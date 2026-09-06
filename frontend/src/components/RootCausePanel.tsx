@@ -279,6 +279,27 @@ export function RootCausePanel({ problemId, service, window: win, onLoaded }: {
           operatör "hangi sinyale bakıldı, ne bulundu"yu göremiyordu.
           found=false bir kanıt DEĞİL, "bakıldı ve bulunamadı"dır — asimetri
           görsel olarak korunur (soluk satır), aday listesine sızmaz. */}
+      {/* v0.10.452 (log arama denetimi C3) — servis kapsamlı kalıcı Drain
+          şablonları; sayım ÖMÜR BOYU (pencere sayımı değil) — alt başlık söyler. */}
+      {(rc.hypothesis?.deep?.templates?.length ?? 0) > 0 && (
+        <Section title="Log şablonları (bu servis)"
+                 subtitle="kalıcı Drain şablonları, son 60 dk görülen; sayım ömür boyu gözlem, problem penceresinin sayımı değil">
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Şablon</th><th className="num" style={{ width: 90 }}>Toplam</th><th style={{ width: 110 }}>Son görülme</th></tr></thead>
+              <tbody>
+                {rc.hypothesis!.deep!.templates!.map(t => (
+                  <tr key={t.id} title={t.sample}>
+                    <td className="mono" style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.template}</td>
+                    <td className="num">{t.totalCount.toLocaleString()}</td>
+                    <td className="mono" style={{ fontSize: 12, color: 'var(--text2)' }} title={tsLong(t.lastSeen)}>{tsLong(t.lastSeen)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
       {(rc.hypothesis?.deep?.checked?.length ?? 0) > 0 && (
         <Section title="Neye bakıldı"
                  subtitle="derin soruşturmanın denetim izi — bakılan her sinyal ailesi">

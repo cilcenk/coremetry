@@ -45,7 +45,7 @@ export function useLogs(params: LogsParams, opts?: { enabled?: boolean }) {
 // v0.10.297 — /logs "Desenler" paneli. YALNIZ panel açıkken (enabled) —
 // v0.8.270 ES-maliyet disiplini: liste prefetch'i yok, açılışta fetch.
 // staleTime = sunucu TTL (30 s); anahtar TÜM parametreler.
-export function useLogsPatterns(params: LogsParams & { limit?: number }, enabled: boolean) {
+export function useLogsPatterns(params: LogsParams & { limit?: number; sample?: number }, enabled: boolean) {
   return useQuery<LogPatternsResult>({
     queryKey: ['logs', 'patterns', params],
     queryFn: ({ signal }) => api.logsPatterns(params, signal),

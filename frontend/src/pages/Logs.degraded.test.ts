@@ -14,6 +14,12 @@ describe('degraded log backend surfaces (B1)', () => {
     expect(src).toContain('title="Log backend yavaş — bu liste eksik"');
     expect(src).toContain("(live || !staticQ.data?.degraded) && (");
   });
+  it('ProblemLogEvidence: degraded → partial → boş sırası (v0.10.452)', () => {
+    const src = read('../features/anomalies/ProblemLogEvidence.tsx');
+    expect(src).toContain('d?.degraded &&');
+    expect(src).toContain('d?.partial && !d.degraded &&');
+    expect(src).toContain('d && !d.degraded && rows.length === 0');
+  });
   it('LogFieldsPanel: degraded ve partial "No values" ile karışmaz', () => {
     const src = read('../components/LogFieldsPanel.tsx');
     expect(src).toContain('d?.degraded &&');

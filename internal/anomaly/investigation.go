@@ -145,16 +145,20 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, rt chstore.Ru
 			d.Exceptions = gs
 
 		case familyLogs:
-			// ListLogTemplatesFilter'da servis alanı YOK — şablonlar filo
-			// geneli tutuluyor ve satır kendi Services listesini taşıyor.
-			// Sınırlı okuma + istemci tarafı süzme; tavan geniş tutuluyor
-			// ki tek servisin şablonu filo sıralamasında kaybolmasın.
+			// v0.10.452 (log arama denetimi C3) — SERVİS KAPSAMLI okuma:
+			// filtre v0.10.310'dan beri `Service` (has(services, ?)) taşıyor
+			// ama burada geçilmiyordu; şablonlar filo sıralamasında okunup
+			// istemci tarafı süzülüyordu (tek servisin şablonu 100'lük
+			// tavanda kaybolabiliyordu). Kaynak kalıcı log_templates tablosu
+			// (ClickHouse, ucuz) — ES'e HİÇ gidilmez (operatör kısıtı 2026-09-06);
+			// bedeli: TotalCount ömür boyu sayaçtır, pencere sayımı değil —
+			// not ve panel bunu söyler.
 			all, err := store.ListLogTemplates(ctx, chstore.ListLogTemplatesFilter{
-				SinceNs: from.UnixNano(), SortBy: "count", Limit: 100,
+				SinceNs: from.UnixNano(), SortBy: "count", Limit: deepEvidenceLimit, Service: p.Service,
 			})
-			ts := templatesForService(all, p.Service)
+			ts := templatesForService(all, p.Service) // emniyet kemeri: sunucu süzgeci + yerel süzgeç
 			noteChecked(&d, f, err, len(ts), func() string {
-				return fmt.Sprintf("%d baskın log şablonu", len(ts))
+				return fmt.Sprintf("%d baskın log şablonu (bu servis, kalıcı Drain; sayım ömür boyu)", len(ts))
 			})
 			d.Templates = ts
 

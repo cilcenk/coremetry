@@ -39,10 +39,27 @@ func logsPatternsLimit(want int) int {
 	return logsPatternsLimitRungs[len(logsPatternsLimitRungs)-1]
 }
 
-func logsPatternsKey(f logstore.Filter, fromRaw, toRaw string, limit int) string {
-	return fmt.Sprintf("logs-patterns:v1:svc=%s:clu=%s:env=%s:sev=%d:trace=%s:span=%s:ht=%t:from=%s:to=%s:q=%s:lim=%d",
+// logsPatternsSampleRungs — v0.10.452 (C1, ES maliyeti): örnek tavanı
+// basamaklı (500 = 1 ES sayfası, 2000 = 4). Problem detayı 500 ister;
+// /logs paneli varsayılanı korur. Anahtara girer.
+var logsPatternsSampleRungs = []int{500, 2000}
+
+func logsPatternsSample(want int) int {
+	if want <= 0 {
+		return logstore.PatternsSampleCap
+	}
+	for _, r := range logsPatternsSampleRungs {
+		if want <= r {
+			return r
+		}
+	}
+	return logstore.PatternsSampleCap
+}
+
+func logsPatternsKey(f logstore.Filter, fromRaw, toRaw string, limit, sample int) string {
+	return fmt.Sprintf("logs-patterns:v2:svc=%s:clu=%s:env=%s:sev=%d:trace=%s:span=%s:ht=%t:from=%s:to=%s:q=%s:lim=%d:smp=%d",
 		f.Service, f.Cluster, f.Env, f.SeverityMin, f.TraceID, f.SpanID, f.HasTrace,
-		fromRaw, toRaw, f.Search, limit)
+		fromRaw, toRaw, f.Search, limit, sample)
 }
 
 func (s *Server) getLogsPatterns(w http.ResponseWriter, r *http.Request) {
@@ -68,19 +85,21 @@ func (s *Server) getLogsPatterns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := logsPatternsLimit(parseInt(q.Get("limit"), 0))
+	sample := logsPatternsSample(parseInt(q.Get("sample"), 0))                       // v0.10.452
 	keyFrom, keyTo := snapLogsWindow(&f, q.Get("from"), q.Get("to"), 30*time.Second) // v0.10.446 (A6-V2: TTL kadar; varsayılan pencere de anahtara girer)
-	key := logsPatternsKey(f, keyFrom, keyTo, limit)
+	key := logsPatternsKey(f, keyFrom, keyTo, limit, sample)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		tctx, cancel := context.WithTimeout(ctx, logsPatternsBudget)
 		defer cancel()
-		res, err := logstore.GroupBySignature(tctx, s.logs, f, limit)
+		res, err := logstore.GroupBySignatureN(tctx, s.logs, f, limit, sample)
 		if err != nil {
 			if mapped := logstore.MapBackendSlow(err, tctx, ctx); errors.Is(mapped, logstore.ErrBackendSlow) {
 				log.Printf("[logs] patterns degraded (backend=%s, svc=%q): %v", s.logs.Backend(), f.Service, err)
 				return map[string]any{
 					"groups": []logstore.SignatureGroup{}, "sampled": 0, "total": 0,
-					"cap": logstore.PatternsSampleCap, "truncated": false, "distinct": 0,
+					"cap": sample, "truncated": false, "distinct": 0,
 					"coveredFromNs": 0, "coveredToNs": 0, // v0.10.441 (C4) — sağlıklı gövdeyle aynı şekil
+					"partial": false, "shardsFailed": 0, "totalIsLowerBound": false, // v0.10.452
 					"degraded": true, "reason": "log backend slow/unreachable",
 				}, nil
 			}

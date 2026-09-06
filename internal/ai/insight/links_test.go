@@ -73,7 +73,7 @@ func TestExceptionWindow(t *testing.T) {
 			wantFrom: now - 30*60*sec, wantTo: now + 5*60*sec,
 		},
 		{
-			name: "genç grup: alt kenar FirstSeen-5dk (run-up pencerede)",
+			name:  "genç grup: alt kenar FirstSeen-5dk (run-up pencerede)",
 			first: now - 3*60*sec, last: now,
 			wantFrom: now - 8*60*sec, wantTo: now + 5*60*sec,
 		},
@@ -475,6 +475,10 @@ func TestLogPatternLinks(t *testing.T) {
 			t.Errorf("log linki ölü `%s` paramı taşıyor: %s", dead, lg)
 		}
 	}
+	// v0.10.449 — desen paneli açık iner (okuyucu pini: yukarıdaki kapı).
+	if u.Query().Get("panel") != "patterns" {
+		t.Errorf("log linki panel=patterns taşımalı: %s", lg)
+	}
 }
 
 func TestLogPatternLinksWithoutWindowProducesNothingWindowBearing(t *testing.T) {
@@ -597,6 +601,13 @@ func TestLinkParamsAreActuallyReadByTheTargetPages(t *testing.T) {
 			// bir gün yazılmasını engelliyor.
 			absent: []string{`p.get('pattern')`},
 			note:   "/logs okuyucusu readLogsParams",
+		},
+		{
+			// v0.10.449 — `panel` bir GÖRÜNÜM ipucu: süzgeç okuyucusunda değil,
+			// sayfa okur (parseLogsPanel). Kart yazıyorsa sayfa okumalı.
+			src:   "../../../frontend/src/pages/Logs.tsx",
+			reads: []string{`parseLogsPanel(searchParams.get('panel'))`},
+			note:  "/logs ?panel= okuyucusu (C8)",
 		},
 		{
 			// v0.9.1377 — pin TAŞINDI. v0.9.1374 ifade çekmecesini emekli

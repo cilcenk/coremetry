@@ -691,6 +691,7 @@ function logsLinkForPattern(a: LogPatternAnomaly): string {
     window: patternLogWindow(a.lastSeenNs) || null,
     service: a.service || undefined,
     q,
+    panel: 'patterns', // v0.10.449 (C8 üretici) — anomali → desen paneli açık iner
   });
 }
 

@@ -157,6 +157,12 @@ function DrawerBody({ item, onClose, onOpenSource }: {
             title="Bu pencerede servisin ERROR+ logları">
             Error logs
           </Link>
+          {/* v0.10.449 (C8 üretici) — desen pivotu, Desenler paneli açık iner. */}
+          <Link className="sec" style={{ textDecoration: 'none' }}
+            to={logsHref({ window: w, service: item.service, panel: 'patterns' })}
+            title="Bu pencerede servisin log desenleri (Desenler paneli açık)">
+            Desenler
+          </Link>
           <Link className="sec" style={{ textDecoration: 'none' }}
             to={tracesPivotHref({ window: w, service: item.service, hasError: true })}
             title="Bu pencerede servisin hatalı trace'leri">

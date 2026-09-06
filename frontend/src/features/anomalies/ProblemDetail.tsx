@@ -720,6 +720,10 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
   // loglar" linki olduğu gibi kalır (davranış değişmez). 17 = ERROR+
   // (OTel severity-number tabanı, copilot_followup ile aynı sözleşme).
   const logsErrorLink = logsHref({ window: probWindow, service: problem.service, severity: 17 });
+  // v0.10.449 (log arama denetimi C8 üretici yarısı) — desen pivotu: aynı
+  // pencere/servis, Desenler paneli açık iner (?panel=patterns). EK link;
+  // ilk iki link pinli ve dokunulmadı.
+  const logsPatternsLink = logsHref({ window: probWindow, service: problem.service, panel: 'patterns' });
   const isExternal = subjectKind(problem.service, problem.kind) === 'external';
 
   return (
@@ -920,6 +924,7 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
             ) : (<>
             <SignalLink to={logsLink} label="≡ Logs" sub="service, problem window" />
             <SignalLink to={logsErrorLink} label="≡ Logs (yalnız hatalar)" sub="service, problem window, severity ≥ ERROR" />
+            <SignalLink to={logsPatternsLink} label="≡ Loglar (desenler)" sub="service, problem window, Desenler paneli açık" />
             {/* v0.8.512 (perf raporu #12) — pivot problem penceresini
                 taşır: logs ile aynı custom range, yoksa /traces global
                 range'iyle açılıp problemle ilgisiz trace gösteriyordu. */}

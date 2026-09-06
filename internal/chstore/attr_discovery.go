@@ -48,10 +48,22 @@ func scopeWhere(s AttrScope) (string, []any) {
 }
 
 // scopedAttrsSQL — GetServiceAttrs'ın kapsam-genel şekli. Saf; tablo-testli.
+//
+// v0.10.488 (Astra bulgusu #3): LIMIT artık SPAN sayar — en içteki alt sorgu
+// önce N span seçer, arrayJoin ONUN üstünde koşar. Eski şekil arrayJoin'den
+// SONRA LIMIT koyuyordu: 5000 "span" aslında 5000 (anahtar,değer) çiftiydi
+// (~125-250 span) ve API bunu "5000 span" diye ilan ediyordu. Sıra: servis
+// kapsamında ORDER BY time DESC (PK: service_name, time — ucuz, gerçekten
+// "en yeni"); namespace/cluster kapsamında sıralama yok (tarama sırası;
+// çağıran sample_order="unordered" der).
 func scopedAttrsSQL(keysCol, valsCol string, scope AttrScope) (string, error) {
 	w, _ := scopeWhere(scope)
 	if w == "" {
 		return "", fmt.Errorf("attr discovery: kapsam boş (servis / namespace / cluster gerekir)")
+	}
+	order := ""
+	if scope.Service != "" {
+		order = "\n\t\t\t    ORDER BY time DESC"
 	}
 	return `
 			SELECT k, count() AS occurrences,
@@ -62,9 +74,12 @@ func scopedAttrsSQL(keysCol, valsCol string, scope AttrScope) (string, error) {
 			  FROM (
 			    SELECT ` + keysCol + `, ` + valsCol + `,
 			           arrayJoin(range(1, length(` + keysCol + `) + 1)) AS idx
-			    FROM spans
-			    WHERE time >= ? AND time <= ?` + w + `
-			    LIMIT ?
+			    FROM (
+			      SELECT ` + keysCol + `, ` + valsCol + `
+			      FROM spans
+			      WHERE time >= ? AND time <= ?` + w + order + `
+			      LIMIT ?
+			    )
 			  )
 			  WHERE k != '' AND v != ''
 			)
@@ -74,7 +89,16 @@ func scopedAttrsSQL(keysCol, valsCol string, scope AttrScope) (string, error) {
 			SETTINGS max_execution_time = 10`, nil
 }
 
-const scopedAttrsInnerLimit = 5000
+// SampleOrder — çağıranın ilan ettiği örneklem sırası.
+func (s AttrScope) SampleOrder() string {
+	if s.Service != "" {
+		return "recent"
+	}
+	return "unordered"
+}
+
+// ScopedAttrsInnerLimit — örneklem SPAN sayısı (LIMIT'in birimi span; v0.10.488).
+const ScopedAttrsInnerLimit = 5000
 
 // GetScopedAttrs — kapsamdaki span örnekleminden anahtar + örnek değerler
 // (span ve resource kapsamı ayrı satırlar).
@@ -96,8 +120,8 @@ func (s *Store) GetScopedAttrs(ctx context.Context, scope AttrScope, from, to ti
 			return nil, err
 		}
 		args := append([]any{sampleLimit, from, to}, sargs...)
-		args = append(args, scopedAttrsInnerLimit, topPerScope)
-		rows, err := s.conn.Query(ctx, sql, args...)
+		args = append(args, ScopedAttrsInnerLimit, topPerScope)
+		rows, err := s.telemetryReadConn().Query(ctx, sql, args...) // v0.10.488 (Astra #9) — telemetri okuma havuzu
 		if err != nil {
 			return nil, fmt.Errorf("scoped attrs: %w", err)
 		}
@@ -152,7 +176,7 @@ func attrValueProbeSQL(key, value string, scope AttrScope, kvh bool) (sql string
 	if col, res, found := AttrKeyColumn(key); found {
 		_ = res
 		return `SELECT count() FROM spans WHERE time >= ? AND time <= ?` + w + ` AND ` + col + ` = ?
-			SETTINGS max_execution_time = 5`, append(append([]any{}, sargs...), value), ProbeColumn, true
+			SETTINGS max_execution_time = 3`, append(append([]any{}, sargs...), value), ProbeColumn, true
 	}
 	if !kvh {
 		return "", nil, ProbeNone, false
@@ -165,7 +189,7 @@ func attrValueProbeSQL(key, value string, scope AttrScope, kvh bool) (sql string
 	}
 	return `SELECT count() FROM spans WHERE time >= ? AND time <= ?` + w + `
 			AND has(` + kvhCol + `, ` + AttrKVHashSQL + `) AND ` + valsCol + `[indexOf(` + keysCol + `, ?)] = ?
-			SETTINGS max_execution_time = 5`, append(append([]any{}, sargs...), k, value, k, value), ProbeKVH, true
+			SETTINGS max_execution_time = 3`, append(append([]any{}, sargs...), k, value, k, value), ProbeKVH, true
 }
 
 // AttrValueProbe — kesin eşitlik sayımı (kolon ya da kvh); prob yoksa

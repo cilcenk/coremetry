@@ -88,6 +88,24 @@ func (s *Server) explainCacheGet(r *http.Request, key string) (explainCacheEnvel
 	return env, true
 }
 
+// explainCacheGetCtx — v0.10.453: sohbet yolu için (http.Request yok;
+// refresh parametresi yok). Aynı anahtar → ✨ Explain düğmesiyle sohbet
+// aynı cevabı paylaşır.
+func (s *Server) explainCacheGetCtx(ctx context.Context, key string) (explainCacheEnvelope, bool) {
+	if key == "" || s.cache == nil {
+		return explainCacheEnvelope{}, false
+	}
+	raw, ok, err := s.cache.Get(ctx, key)
+	if err != nil || !ok || len(raw) == 0 {
+		return explainCacheEnvelope{}, false
+	}
+	var env explainCacheEnvelope
+	if json.Unmarshal(raw, &env) != nil || strings.TrimSpace(env.Text) == "" {
+		return explainCacheEnvelope{}, false
+	}
+	return env, true
+}
+
 // explainCacheSet — temiz cevabı saklar. Hata sessizce yutulur: önbellek
 // bir hızlandırıcı, cevabın ön koşulu değil.
 func (s *Server) explainCacheSet(ctx context.Context, key, text, xid string) {

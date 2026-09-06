@@ -43,7 +43,7 @@ func TestEvalSurfaceLabelsResolve(t *testing.T) {
 	for _, label := range []string{"explain-trace", "explain-span", "explain-problem", "problem-auto-explain", "explain-exception",
 		"explain-incident", "explain-anomaly", "explain-service", "runbook", "compare-traces", "deploy-impact", "explain-slo",
 		"nl-to-query", "ch-optimize", "rootcause-verdict", "explain-charts", "chat-general", "chat", "chat-intent",
-		"explain-trace:nudge"} { // v0.10.432 (D8)
+		"explain-trace:nudge", "explain-trace:chat"} { // v0.10.432 (D8), v0.10.453
 		if _, ok := evalSystemPrompt(evalSurfaceFromLabel(label)); !ok {
 			t.Errorf("%s → %s çözülmüyor", label, evalSurfaceFromLabel(label))
 		}

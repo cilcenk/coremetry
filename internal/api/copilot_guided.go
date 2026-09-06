@@ -1537,6 +1537,14 @@ func (s *Server) runGuidedRoute(ctx context.Context, emit func(string, any), rou
 	if route.Intent == guidedOpenPage && route.Service == "" && route.Page == "overview" {
 		route.Intent, route.AskIntent = guidedAskService, guidedOpenPage
 	}
+	// v0.10.453 — trace_by_id: Explain'in çekirdeği BİREBİR (aynı prompt
+	// çifti, aynı önbellek anahtarı, yüzey explain-trace:chat). Bulunamayan
+	// trace eski dürüst kanıt yoluna (guidedTraceBundle) düşer.
+	if route.Intent == guidedTraceByID {
+		if handled, ok := s.guidedTraceExplain(ctx, emit, route, question, from, to, ctxService); handled {
+			return handled, ok
+		}
+	}
 	if route.Intent == guidedOpenPage {
 		links := dedupLinksByHref(guidedAnswerLinks(route, linkWindowBetween(from, to)))
 		ans := map[string]any{"text": openPageAnswerTR(route), "suggestions": guidedSuggestions(route), "links": links}

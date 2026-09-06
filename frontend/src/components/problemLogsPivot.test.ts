@@ -13,10 +13,14 @@ describe('Problem → Logs error pivot (C2)', () => {
     expect(src).toContain('logsHref({ window: probWindow, service: problem.service })');
     expect(src).toContain('logsHref({ window: probWindow, service: problem.service, severity: 17 })');
     expect(src).toContain('label="≡ Logs (yalnız hatalar)"');
+    // v0.10.449 — üçüncü link: desen paneli açık iner; ilk ikisi aynen.
+    expect(src).toContain("logsHref({ window: probWindow, service: problem.service, panel: 'patterns' })");
+    expect(src).toContain('label="≡ Loglar (desenler)"');
   });
   it('InboxTriageDrawer: Logs + Error logs', () => {
     const src = read('./InboxTriageDrawer.tsx');
     expect(src).toContain('logsHref({ window: w, service: item.service })');
     expect(src).toContain('logsHref({ window: w, service: item.service, severity: 17 })');
+    expect(src).toContain("logsHref({ window: w, service: item.service, panel: 'patterns' })"); // v0.10.449
   });
 });

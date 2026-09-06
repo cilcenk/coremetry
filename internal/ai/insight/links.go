@@ -249,8 +249,10 @@ func LogPatternLinks(ev LogPatternEvidence) []Link {
 	// penceresiz açılan /logs yapışkan aralığa düşer ve boş liste
 	// "böyle log yok" diye okunur (v0.9.862'nin düzelttiği tam bu).
 	if q := PatternKQL(ev.Service, ev.Tokens); q != "" && rng != "" {
+		// v0.10.449 (C8 üretici) — Desenler paneli açık iner; `panel` /logs'ta
+		// Logs.tsx okur (görünüm ipucu, süzgeç okuyucusunda DEĞİL — kapı aşağıda).
 		out = append(out, Link{Label: "Loglar (desen)",
-			Href: href("/logs", kv{"q", q}, kv{"range", rng})})
+			Href: href("/logs", kv{"q", q}, kv{"range", rng}, kv{"panel", "patterns"})})
 	}
 	if svc := strings.TrimSpace(ev.Service); svc != "" {
 		if rng != "" {
@@ -269,6 +271,7 @@ func LogPatternLinks(ev LogPatternEvidence) []Link {
 // SlowQueryLinks — yavaş sorgu kartının çipleri, sıra sabit.
 //
 // PARAM DOĞRULAMASI:
+//
 //   - /databases/statement → `stmt` (decodeStmtParam) + `range`
 //     (usePageZoomRange → useUrlRange). İfade DETAY SAYFASI; aynı şekli
 //     stmtDetailHref (stmtParam.ts) da üretiyor.
@@ -286,7 +289,9 @@ func LogPatternLinks(ev LogPatternEvidence) []Link {
 //
 //     Hedef ayrıca v0.9.1374'te taşındı (çekmece → tam sayfa), yani tek
 //     düzeltme iki kusuru birden kapatıyor.
+//
 //   - /databases → `dbsys` + `dbname` (Databases.tsx:80-81) + `range`.
+//
 //   - /trace → `id`; pencere OKUMAZ (nokta nesnesi, links.go üst notu).
 //
 // /database (TEKİL, detay sayfası) BİLİNÇLİ YOK: oradaki kimlik bir

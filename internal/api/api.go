@@ -5332,6 +5332,9 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 		// kapıdan tehlikeliydi: okuyan "korunuyor" sanıp bir daha
 		// bakmaz.
 		Search string `json:"search"`
+		// v0.10.484 — /traces Root / Errors bayrakları histogramda da (tablo ile aynı küme).
+		RootOnly bool `json:"rootOnly"`
+		HasError bool `json:"hasError"`
 		// v0.9.391 (grafik-audit Faz B) — panel nokta bütçesi; 0 = eski
 		// davranış + 2000 emniyet tavanı. queryMetric ile aynı clamp.
 		MaxDataPoints int `json:"maxDataPoints"`
@@ -5374,6 +5377,8 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 	f := chstore.SpanMetricBatchFilter{
 		Filters:       filters,
 		Search:        body.Search,
+		RootOnly:      body.RootOnly, // v0.10.484
+		HasError:      body.HasError,
 		GroupBy:       body.GroupBy,
 		From:          time.Unix(0, body.From),
 		To:            time.Unix(0, body.To),
@@ -5400,7 +5405,7 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 	// genişliğini artık TAHMİN etmiyor (bar genişliği/gap eşiği için
 	// sözleşme; rollup /api/rollup/red planıyla AYNI kontrat).
 	s.serveCached(w, r, spanMetricBatchKey(body.From, body.To, body.Step, body.MaxDataPoints,
-		body.RateWindow, body.GroupBy, string(body.Filters), body.DSL, body.Search, specs), 30*time.Second,
+		body.RateWindow, body.GroupBy, string(body.Filters), body.DSL, body.Search+spanMetricFlagKey(body.RootOnly, body.HasError), specs), 30*time.Second,
 		func(ctx context.Context) (any, error) {
 			series, stepSec, err := s.store.QuerySpanMetricMulti(ctx, f)
 			if err != nil {
@@ -5421,6 +5426,17 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 // would collide, the v0.5.187 rule applied to strings. Fields are hashed
 // individually rather than summarised by count, which is the same rule
 // applied to the set.
+// spanMetricFlagKey — v0.10.484: Root / Errors bayrakları anahtara GİRER
+// (CLAUDE.md: anahtar TÜM girdileri hash'ler; girmeseydi kök-yalnız seri
+// tüm-span serisiyle çapraz zehirlenirdi). search'e eklenen kuyruk: iki
+// bayrak da boşken eski anahtar bayt-bayt aynı kalır.
+func spanMetricFlagKey(rootOnly, hasError bool) string {
+	if !rootOnly && !hasError {
+		return ""
+	}
+	return "\x1froot=" + strconv.FormatBool(rootOnly) + "\x1ferr=" + strconv.FormatBool(hasError)
+}
+
 func spanMetricBatchKey(fromNs, toNs int64, step, maxDataPoints, rateWindow int, groupBy []string,
 	filters, dsl, search string, aggs []chstore.SpanMetricAggSpec) string {
 	h := fnv.New64a()

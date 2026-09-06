@@ -2495,6 +2495,10 @@ export const api = {
      *  alana gider; eksikliği /traces hacim şeridinin bu yüzeye
      *  geçmesini engelliyordu (arama sessizce düşerdi). */
     search?: string;
+    /** v0.10.484 — /traces Root / Errors bayrakları: histogram tablonun
+     *  kümesini çizer (kök span / hatalı span). */
+    rootOnly?: boolean;
+    hasError?: boolean;
     /** v0.9.723 — Prometheus rate[W] kayan penceresi (sn); 0/yok = kapalı.
      *  Sunucu step kafesine yuvarlar, [0,600] clamp. Sayım-sınıfı seriler
      *  sıfır-doldurulur; oran/gecikme pencerede istek yoksa boşluk kalır. */

@@ -155,6 +155,22 @@ func guidedSuggestions(route guidedRoute) []string {
 			return []string{svc + " hata logları?", svc + " sağlığı nasıl?", svc + " en yavaş trace'ler?"}
 		}
 		return []string{"Açık problemler?", "En yavaş trace'ler?"}
+	case guidedFamilyTraces: // v0.10.465 (D2) — üye başına drill-down (≤3 üye)
+		var out []string
+		for i, m := range route.Family {
+			if i >= 3 {
+				break
+			}
+			if route.TraceErrorsOnly {
+				out = append(out, m+" hata logları?")
+			} else {
+				out = append(out, m+" sağlığı nasıl?")
+			}
+		}
+		if len(out) == 0 {
+			return []string{"Açık problemler?", "En yavaş trace'ler?"}
+		}
+		return out
 	case guidedFindEntity: // v0.10.463 (D1) — kart: eylem çipleri; liste: bulunan adlar (çıplak ad → kart)
 		if route.FindList {
 			if len(route.TeamServices) > 0 {
@@ -370,6 +386,19 @@ func guidedAnswerLinkTargets(route guidedRoute) []guidedAnswerLink {
 			return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?service=" + svcQ + "&severity=17"}}
 		}
 		return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?severity=17"}}
+	case guidedFamilyTraces: // v0.10.465 (D2) — aynı süzgeçle /traces
+		label := "Trace'ler (en yavaş)"
+		if route.TraceErrorsOnly {
+			label = "Trace'ler (hatalı)"
+		}
+		out := []guidedAnswerLink{{Label: label, Href: familyTracesHref(route.Family, route.TraceErrorsOnly)}}
+		for i, m := range route.Family {
+			if i >= 2 {
+				break
+			}
+			out = append(out, guidedAnswerLink{Label: m + " · Overview", Href: "/service?name=" + url.QueryEscape(m)})
+		}
+		return out
 	case guidedFindEntity: // v0.10.463 (D1)
 		if route.FindList {
 			return []guidedAnswerLink{{Label: "Servisler", Href: "/services"}}

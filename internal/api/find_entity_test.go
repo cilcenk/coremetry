@@ -45,7 +45,7 @@ func TestRouteFindEntity(t *testing.T) {
 		{"zzqx servisini bul", guidedNone, "", 0, false},
 		// Mevcut rotalar DEĞİŞMEDİ.
 		{"mobile bff hataları", guidedFamilyHealth, "", 0, false},
-		{"mobile bff yavaş traceler", guidedAskService, "", 2, false},
+		{"mobile bff yavaş traceler", guidedFamilyTraces, "", 0, false}, // v0.10.465 (D2) — aile trace listesi
 		{"checkout servisi nasıl", guidedServiceHealth, "checkout-service", 0, false},
 		{"checkout sayfasını aç", guidedOpenPage, "checkout-service", 0, false},
 	}

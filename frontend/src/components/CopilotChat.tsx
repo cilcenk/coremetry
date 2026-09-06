@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { mergeOpenHref } from '@/lib/openHref'; // v0.10.460
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
@@ -75,22 +75,15 @@ const STARTERS = [
   "En yavaş trace'ler?",
 ];
 
-// CoSRE markası — çizilen gradient sparkline (APM göndermesi, varyant B).
+// CoSRE markası — v0.10.498 (operatör: "direkt OpenTelemetry iconu olsun";
+// teleskop mockup'ı reddedildi): resmî OpenTelemetry ikonu, repodaki
+// /favicon.svg (CNCF artwork'ten birebir kopya, v0.9.495) — ikinci kopya
+// yok, favicon güncellenince düğme de güncellenir. Eski gradient sparkline
+// (v0.9.163, varyant B) ve .cm-ai-spark çizim animasyonu kaldırıldı.
 function AiMark({ size = 26 }: { size?: number }) {
-  const gid = useId();
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <defs>
-        <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#6e5cff" />
-          <stop offset="0.5" stopColor="#12b8ff" />
-          <stop offset="1" stopColor="#38e8c6" />
-        </linearGradient>
-      </defs>
-      <polyline className="cm-ai-spark" points="3,15 8,9 11,12 15,5 21,11"
-        stroke={`url(#${gid})`} strokeWidth="2.2" fill="none"
-        strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <img src="/favicon.svg" width={size} height={size} alt="" aria-hidden="true" draggable={false}
+      style={{ display: 'block', width: size, height: size }} />
   );
 }
 
@@ -318,7 +311,7 @@ export function CopilotChat() {
       {!drawerOpen && <TraceExplainNudge />}{/* v0.10.432 (D8) — FAB'ın üstündeki baloncuk */}
       {!drawerOpen && (
         <button
-          className="cm-ai-fab"
+          className={criticalOpen > 0 ? 'cm-ai-fab is-alert' : 'cm-ai-fab'}
           onClick={() => setOpen(true)}
           title={criticalOpen > 0 ? `CoSRE — ${criticalOpen} açık kritik problem` : "CoSRE'ye sor"}
           aria-label={criticalOpen > 0 ? `CoSRE, ${criticalOpen} açık kritik problem` : 'CoSRE'}

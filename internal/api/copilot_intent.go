@@ -56,6 +56,8 @@ var intentAllowed = map[string]guidedIntent{
 	"log_field": guidedLogField,
 	// v0.10.436 (D2b) — içinde parça geçen trace'ler; searchText slotu.
 	"trace_search": guidedTraceSearch,
+	// v0.10.463 (D1) — servisi adıyla bul / servis listesi (find_entity.go).
+	"find_entity": guidedFindEntity,
 }
 
 // intentNeedsService — servissiz anlamsız şekiller: model servis vermediyse
@@ -185,6 +187,26 @@ func parseIntentJSON(raw string, services, envs, teams []string, ctxService stri
 	ask := func(opts []string) guidedRoute {
 		return guidedRoute{Intent: guidedAskService, AskIntent: intent, ServiceOptions: opts,
 			SearchText: route.SearchText, SearchSQL: route.SearchSQL, LogField: route.LogField, LogValue: route.LogValue, LogContains: route.LogContains}
+	}
+	// v0.10.463 (D1) — find_entity: servis slotu boşsa liste; tam/tek yakın ad
+	// kart; 2+ yakın ad aday çipleri (deterministik, guidedAskService DEĞİL);
+	// hiç yakın ad yoksa uydurma → none.
+	if intent == guidedFindEntity {
+		sv := strings.TrimSpace(in.Service)
+		if sv == "" {
+			return guidedRoute{Intent: guidedFindEntity, FindList: true}, 0, true
+		}
+		if m := matchLiveName(sv, services); m != "" {
+			return guidedRoute{Intent: guidedFindEntity, Service: m}, 0, true
+		}
+		switch opts := nearNames(sv, services, guidedServiceAskMax); len(opts) {
+		case 0:
+			return guidedRoute{}, 0, false
+		case 1:
+			return guidedRoute{Intent: guidedFindEntity, Service: opts[0]}, 0, true
+		default:
+			return guidedRoute{Intent: guidedFindEntity, ServiceOptions: opts, AskIntent: guidedFindEntity, FindQuery: sv}, 0, true
+		}
 	}
 	if strings.TrimSpace(in.Service) != "" {
 		if route.Service = matchLiveName(in.Service, services); route.Service == "" {

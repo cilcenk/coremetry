@@ -155,6 +155,17 @@ func guidedSuggestions(route guidedRoute) []string {
 			return []string{svc + " hata logları?", svc + " sağlığı nasıl?", svc + " en yavaş trace'ler?"}
 		}
 		return []string{"Açık problemler?", "En yavaş trace'ler?"}
+	case guidedFindEntity: // v0.10.463 (D1) — kart: eylem çipleri; liste: bulunan adlar (çıplak ad → kart)
+		if route.FindList {
+			if len(route.TeamServices) > 0 {
+				return route.TeamServices
+			}
+			return []string{"Açık problemler?", "En yavaş trace'ler?"}
+		}
+		if svc != "" {
+			return []string{svc + " sağlığı nasıl?", svc + " en yavaş trace'ler?", svc + " hata logları?", svc + " sayfasını aç"}
+		}
+		return []string{"Açık problemler?", "En yavaş trace'ler?"}
 	case guidedOpenPage: // v0.10.434 (D7b)
 		if svc != "" {
 			return []string{svc + " sağlığı nasıl?", svc + " problemleri?", svc + " hata logları?"}
@@ -359,6 +370,18 @@ func guidedAnswerLinkTargets(route guidedRoute) []guidedAnswerLink {
 			return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?service=" + svcQ + "&severity=17"}}
 		}
 		return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?severity=17"}}
+	case guidedFindEntity: // v0.10.463 (D1)
+		if route.FindList {
+			return []guidedAnswerLink{{Label: "Servisler", Href: "/services"}}
+		}
+		if svc == "" {
+			return nil
+		}
+		return []guidedAnswerLink{
+			{Label: svc + " · Overview", Href: "/service?name=" + svcQ},
+			{Label: "Trace'ler", Href: "/traces?service=" + svcQ},
+			{Label: "Loglar", Href: "/logs?service=" + svcQ},
+		}
 	case guidedOpenPage: // v0.10.434 (D7b) — sayfa türüne göre; overview özne ister
 		withSvc := func(base string) string {
 			if svc != "" {
@@ -658,6 +681,8 @@ func askServiceChip(intent guidedIntent, svc string) string {
 		return svc + " son deploy etkisi?"
 	case guidedLogErrors:
 		return svc + " hata logları?"
+	case guidedFindEntity: // v0.10.463 (D1) — çıplak tam ad bu kademede tek servise çözülür
+		return svc
 	case guidedOpenPage: // v0.10.434 (D7b)
 		return svc + " sayfasını aç"
 	case guidedTraceSearch: // v0.10.436 (D2b) — parça route'tan (askServiceChipFor)

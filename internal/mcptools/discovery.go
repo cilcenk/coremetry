@@ -245,6 +245,25 @@ func listOperationsTool(d Deps) mcp.Tool {
 			if err != nil {
 				return nil, err
 			}
+			// v0.10.464 (D3) — ad tam değilse ("mobile bff") katalogda çöz: tek
+			// aday → onunla oku ve resolved_from ile söyle; 2+ aday → hata,
+			// adaylar mesajda (BadArgs sınıfı: model operatöre sorar).
+			if len(names) == 0 && total == 0 {
+				if exact, cands, ferr := resolveServiceFuzzy(ctx, d, service); ferr == nil {
+					switch {
+					case exact != "" && exact != service:
+						names, total, err = d.Store.ListOperationNames(ctx, exact, a.Pattern, limit, 0)
+						if err != nil {
+							return nil, err
+						}
+						out := operationsPayload(exact, names, total)
+						out["resolved_from"] = service
+						return out, nil
+					case len(cands) > 1:
+						return nil, fmt.Errorf("service %q birden çok servise oturuyor — adaylar: %s; operatöre sor, sonra tam adla çağır (list_services)", service, strings.Join(cands, ", "))
+					}
+				}
+			}
 			return operationsPayload(service, names, total), nil
 		},
 	}

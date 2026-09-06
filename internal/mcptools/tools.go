@@ -164,6 +164,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -525,7 +526,7 @@ func listServicesTool(d Deps) mcp.Tool {
 			"properties": map[string]any{
 				"name_contains": map[string]any{
 					"type":        "string",
-					"description": "Substring match against service name (case-insensitive). Empty = all services.",
+					"description": "Case-insensitive substring of the service name. Pass the operator's phrase VERBATIM (e.g. \"mobile bff\"): when the substring matches nothing, the server falls back to token/fuzzy matching against the live catalogue and reports matched_names (resolved exact names) or candidates (ambiguous — ask the operator which one). Empty = all services.",
 				},
 				"env": map[string]any{
 					"type":        "string",
@@ -564,6 +565,25 @@ func listServicesTool(d Deps) mcp.Tool {
 				return nil, err
 			}
 			res := map[string]any{"services": rows, "count": len(rows), "source": src, "has_more": len(rows) >= limit} // v0.10.407 — sayfa doluysa "hepsi bu" değil (CoSRE denetimi M3)
+			// v0.10.464 (D3) — alt-dize eşleşmedi ("mobile bff" tireli adla asla
+			// eşleşmez): canlı katalogda jeton/bulanık eşleşme. Çözülen adlar
+			// pencerede trafiksiz olsa bile matched_names'te döner — model tam
+			// adı bir sonraki çağrıda kullanır; 2+ aday → candidates (sor).
+			if len(rows) == 0 && strings.TrimSpace(a.NameContains) != "" {
+				if exact, cands, ferr := resolveServiceFuzzy(ctx, d, a.NameContains); ferr == nil {
+					switch {
+					case exact != "":
+						frows, fsrc, rerr := readServicesIn(ctx, d, from, to, []string{exact}, a.Env, limit)
+						if rerr == nil {
+							res["services"], res["count"], res["source"], res["has_more"] = frows, len(frows), fsrc, false
+						}
+						res["matched_by"], res["matched_names"] = "fuzzy", []string{exact}
+					case len(cands) > 0:
+						res["matched_by"], res["candidates"] = "fuzzy", cands
+						res["hint"] = "name_contains birden çok servise oturuyor — operatöre hangisini kastettiğini sor ya da tam adla yeniden çağır"
+					}
+				}
+			}
 			if a.Env != "" {
 				res["env"] = a.Env // echo the applied narrowing
 			}
@@ -1274,10 +1294,17 @@ func renderChartTool(d Deps) mcp.Tool {
 				}
 			}
 			if !found {
-				return map[string]any{
-					"ok":    false,
-					"error": fmt.Sprintf("service %q not found — check the exact name with list_services", a.Service),
-				}, nil
+				// v0.10.464 (D3) — yakın adlar hatanın içinde: model bir sonraki
+				// çağrıda tam adı kullanabilsin (tek aday → doğrudan onu öner).
+				msg := fmt.Sprintf("service %q not found — check the exact name with list_services", a.Service)
+				if exact, cands, ferr := resolveServiceFuzzy(ctx, d, a.Service); ferr == nil {
+					if exact != "" {
+						msg = fmt.Sprintf("service %q not found — did you mean %q? call again with the exact name", a.Service, exact)
+					} else if len(cands) > 0 {
+						msg = fmt.Sprintf("service %q not found — candidates: %s (ask the operator which one, then call again with the exact name)", a.Service, strings.Join(cands, ", "))
+					}
+				}
+				return map[string]any{"ok": false, "error": msg}, nil
 			}
 			// spec keys mirror the frontend CosreChartSpec (service /
 			// operation / agg / rangeS) — copilot_chat.go re-parses this

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/cilcenk/coremetry/internal/ai/agent/blocks"
+	agentctx "github.com/cilcenk/coremetry/internal/ai/agent/context"
 	agenttools "github.com/cilcenk/coremetry/internal/ai/agent/tools"
 	"net/http"
 	"strings"
@@ -120,6 +121,11 @@ type chatRequest struct {
 		// Conversation (v0.10.478, Faz 4) — kalıcı konuşma kimliği; sunucu
 		// bağlam state'i (chat_context.go) buna bağlı. Boş = ilk tur.
 		Conversation string `json:"conversation,omitempty"`
+		// v0.10.539 (Faz 3.2) — sayfa bağlamı protokolü: istemcinin
+		// pageContext(pathname, search) çıktısı (her turda) ve varsa sabitlenmiş
+		// bağlam (pin). Eski düz alanlar guided/drawer için aynen kalır.
+		Page       *agentctx.PageContext `json:"page,omitempty"`
+		PinnedPage *agentctx.PageContext `json:"pinnedPage,omitempty"`
 	} `json:"context,omitempty"`
 }
 
@@ -448,6 +454,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	}
 	loopPrompt := copilot.SystemPromptChatAgentLoop() + // v0.10.482 — telemetri ajanı çekirdek döngüsü (Ek A)
 		screenContextPreambleTR(screenCtx) +
+		agentctx.PreambleTR(agentctx.Sanitize(req.Context.Page), agentctx.Sanitize(req.Context.PinnedPage)) + // v0.10.539 — sayfa bağlamı (pin önce)
 		chatContextPreambleTR(cst.ctx) + // v0.10.478 — aktif sohbet bağlamı (Ek A ACTIVE_CONTEXT)
 		withAddressee(addressee, copilot.SystemPromptChat())
 

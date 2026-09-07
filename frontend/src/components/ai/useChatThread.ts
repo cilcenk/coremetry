@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import type { PageContext } from '@/lib/types';
 import type { ChatMessage, ChatTurn } from '@/lib/types';
 import { isAbortError, settleStoppedTurn } from './chatAbort';
 import {
@@ -80,6 +81,9 @@ export interface ChatThreadOpts {
   title?: string;
   /** v0.10.183 — istek başına model profili; boş = sunucu varsayılanı / yüzey eşlemesi */
   profile?: string;
+  /** v0.10.539 — sayfa bağlamı (lib/pageContext, her turda) ve sabitlenmiş bağlam. */
+  page?: PageContext;
+  pinnedPage?: PageContext;
 }
 
 export function useChatThread(opts: ChatThreadOpts = {}) {
@@ -211,7 +215,8 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
       }, ac.signal, o.service || undefined, o.operation || undefined, o.explain || undefined,
         o.subject || undefined, o.rangeS || undefined, o.trace || undefined, o.env || undefined,
         o.toMs || undefined, o.profile || undefined, // v0.10.183 — model profili
-        convIdRef.current || undefined); // v0.10.478 — konuşma kimliği (sunucu bağlam state'i)
+        convIdRef.current || undefined, // v0.10.478 — konuşma kimliği (sunucu bağlam state'i)
+        o.page || undefined, o.pinnedPage || undefined); // v0.10.539 — sayfa bağlamı + pin
     } catch (err) {
       // v0.10.23 — İPTAL ARIZA DEĞİL. Durdurulan bir fetch AbortError
       // fırlatıyor; ayırmazsak operatörün kasıtlı eylemi kırmızı bir

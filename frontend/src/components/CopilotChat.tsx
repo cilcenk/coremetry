@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { mergeOpenHref } from '@/lib/openHref'; // v0.10.460
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
+import { pageContext } from '@/lib/pageContext';
 import { Button } from '@/components/ui/Button';
 import { Chip } from '@/components/ui/Chip';
 import { Drawer } from '@/components/ui/Drawer';
@@ -123,6 +124,9 @@ export function CopilotChat() {
   // adı taşımıyorsa backend guided router bunu varsayılan alır ("neden yavaş?"
   // servis sayfasında → o servis). Banner scope'u şeffaf gösterir.
   const loc = useLocation();
+  // v0.10.539 (Faz 3.2) — sayfa bağlamı: URL'den saf serileştirici; rota
+  // değişince yeniden hesaplanır (chat AppShell'de tek mount).
+  const page = useMemo(() => pageContext(loc.pathname, loc.search), [loc.pathname, loc.search]);
   const [sp, setSp] = useSearchParams();
   // v0.9.653 — ekrandaki özneden türeyen başlangıç çipi. Saf çözümleyici
   // (lib/chatContext.ts); rota değişince kendiliğinden güncelleniyor.
@@ -188,6 +192,7 @@ export function CopilotChat() {
   const { turns, busy, send, stop, clear, load, conversationId, last, showFollowups } =
     useChatThread({
       service: currentService, operation: currentOp, rangeS, toMs, trace: currentTrace, env,
+      page, // v0.10.539 — sayfa bağlamı protokolü (lib/pageContext, her turda)
       profile: profile || undefined,
       persist: true,
       onOpen: href => {

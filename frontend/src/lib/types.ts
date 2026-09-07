@@ -7080,3 +7080,37 @@ export interface TraceFacetsResponse {
   migrationSql: string;
   note?: string;
 }
+
+// ── Sayfa bağlamı protokolü (v0.10.538/539, CoSRE v2 Faz 3) — Go aynası:
+// internal/ai/agent/context.PageContext. Üretici lib/pageContext.ts (saf);
+// tüketici sohbet isteği context.page / context.pinnedPage.
+export type PageId =
+  | 'home' | 'trace' | 'trace-compare' | 'traces' | 'service' | 'service-backtrace' | 'services'
+  | 'problems' | 'anomalies' | 'inbox' | 'exceptions' | 'errors' | 'logs' | 'explore' | 'metrics'
+  | 'clusters' | 'pod' | 'entity' | 'hosts' | 'rollouts' | 'events' | 'deployment-report'
+  | 'endpoints' | 'endpoint' | 'databases' | 'database' | 'slow-queries' | 'statement'
+  | 'dashboards' | 'dashboard' | 'service-map' | 'topology' | 'messaging' | 'external' | 'profiling'
+  | 'slos' | 'alerts' | 'monitors' | 'watchers' | 'incidents' | 'incident' | 'runbooks' | 'runbook'
+  | 'runbook-exec' | 'shift' | 'status' | 'system' | 'admin' | 'ai' | 'settings' | 'users' | 'profile'
+  | 'login' | 'public-trace' | 'public-status' | 'unknown';
+/** Kodek bağımsız filtre: op FilterOp ya da EXISTS / NOT EXISTS. */
+export interface PageFilter { k: string; op: string; v: string[] }
+export interface PageContext {
+  page: PageId;
+  path: string;
+  env?: string;
+  cluster?: string;
+  namespace?: string;
+  service?: string;
+  workload?: string;
+  pod?: string;
+  operation?: string;
+  traceId?: string;
+  spanId?: string;
+  problemId?: string;
+  exceptionId?: string;
+  /** Yalnız ?range= varsa. */
+  timeRange?: TimeRange;
+  activeFilters?: PageFilter[];
+  search?: string;
+}

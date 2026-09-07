@@ -2087,6 +2087,9 @@ export const api = {
     contextProfile?: string, // v0.10.183 — istek başına model profili (çoklu model dilim C)
     // v0.10.478 (Faz 4) — konuşma kimliği: sunucu bağlam state'i buna bağlı.
     contextConversation?: string,
+    // v0.10.539 (Faz 3.2) — sayfa bağlamı (lib/pageContext) + sabitlenmiş bağlam.
+    contextPage?: import('./types').PageContext,
+    contextPinnedPage?: import('./types').PageContext,
   ): Promise<void> => {
     // v0.10.437 (D6) — tarayıcı saat dilimi: mutlak tarih/saat soruları
     // ("08/08/2026 04-08 arası") operatörün yerel saatinde yorumlanır.
@@ -2097,7 +2100,7 @@ export const api = {
     let tz = '';
     try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? ''; } catch { tz = ''; }
     const context =
-      contextService || contextOperation || contextExplain || contextSubject || contextRangeS || contextTrace || contextEnv || contextToMs || contextProfile || contextConversation || tzOffsetMin !== 0 || tz
+      contextService || contextOperation || contextExplain || contextSubject || contextRangeS || contextTrace || contextEnv || contextToMs || contextProfile || contextConversation || contextPage || contextPinnedPage || tzOffsetMin !== 0 || tz
         ? {
             ...(tzOffsetMin !== 0 ? { tzOffsetMin } : {}),
             ...(tz ? { tz } : {}),
@@ -2111,6 +2114,8 @@ export const api = {
             ...(contextToMs && contextToMs > 0 ? { toMs: contextToMs } : {}),
             ...(contextProfile ? { profile: contextProfile } : {}),
             ...(contextConversation ? { conversation: contextConversation } : {}),
+            ...(contextPage ? { page: contextPage } : {}),
+            ...(contextPinnedPage ? { pinnedPage: contextPinnedPage } : {}),
           }
         : undefined;
     const r = await fetch(API_BASE + '/api/copilot/chat', {

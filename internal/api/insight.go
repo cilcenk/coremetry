@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/cilcenk/coremetry/internal/ai/agent/blocks"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -579,7 +580,7 @@ func (s *Server) deliverInsight(w http.ResponseWriter, r *http.Request,
 		resp.AIOff = true
 	}
 
-	em, canStream := newSSEEmitter(w)
+	em, canStream := blocks.NewEmitter(w, blocks.Options{}) // v0.10.535 — tek SSE yazımı
 	if !explainWantsStream(r) || !canStream {
 		if run != nil {
 			out, err := run(nil)
@@ -593,22 +594,22 @@ func (s *Server) deliverInsight(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	em.emit("signals", resp.WithoutProse())
+	em.Emit("signals", resp.WithoutProse())
 	if run == nil {
-		em.emit("done", map[string]bool{"ok": true})
+		em.Emit("done", map[string]bool{"ok": true})
 		return
 	}
 	out, err := run(func(d string) {
 		if d == "" {
 			return
 		}
-		em.emit("delta", map[string]string{"text": d})
+		em.Emit("delta", map[string]string{"text": d})
 	})
 	if err != nil {
-		em.emit("error", map[string]string{"error": err.Error()})
-		em.emit("done", map[string]bool{"ok": false})
+		em.Emit("error", map[string]string{"error": err.Error()})
+		em.Emit("done", map[string]bool{"ok": false})
 		return
 	}
-	em.emit("answer", explainAnswerFrame(out, resp.ExchangeID, nil))
-	em.emit("done", map[string]bool{"ok": true})
+	em.Emit("answer", explainAnswerFrame(out, resp.ExchangeID, nil))
+	em.Emit("done", map[string]bool{"ok": true})
 }

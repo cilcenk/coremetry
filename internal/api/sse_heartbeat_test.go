@@ -182,21 +182,19 @@ func TestChatWiresHeartbeat(t *testing.T) {
 	}
 	src := stripGoCommentsAPI(string(b))
 
+	// v0.10.535 — heartbeat + yazım kilidi blocks.Emitter'ın içinde (kilit
+	// paylaşımı ve senkron Stop blocks/emitter_test.go'da kanıtlı); sohbet
+	// yalnız Heartbeat seçeneğiyle kurar ve Close'u ertelenmiş çağırır.
 	for _, must := range []string{
-		"startSSEHeartbeat(&wmu, w, flusher, sseHeartbeatEvery)",
-		"defer hb.Stop()",
-		"var wmu sync.Mutex",
-		"wmu.Lock()",
+		"blocks.NewEmitter(w, blocks.Options{EagerHeaders: true, Heartbeat: sseHeartbeatEvery})",
+		"defer em.Close()",
+		"emit := withStepIDs(em.Emit)",
 	} {
 		if !strings.Contains(src, must) {
-			t.Errorf("sohbet heartbeat'i kurmuyor, kayıp: %s", must)
+			t.Errorf("sohbet tek SSE emitter'ını kurmuyor, kayıp: %s", must)
 		}
 	}
-	// emit ile heartbeat AYNI kilidi paylaşmalı; ayrı kilit yarışı
-	// engellemez ve `-race` altında bile sessiz kalabilir.
-	iLock := strings.Index(src, "var wmu sync.Mutex")
-	iEmit := strings.Index(src, "emit := func(")
-	if iLock < 0 || iEmit < 0 || iLock > iEmit {
-		t.Error("yazım kilidi emit'ten ÖNCE kurulmuyor")
+	if strings.Contains(src, "var wmu sync.Mutex") || strings.Contains(src, "text/event-stream") {
+		t.Error("sohbette elle SSE gövdesi kalmamalı (blocks tek yazım)")
 	}
 }

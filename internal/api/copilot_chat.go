@@ -1,12 +1,12 @@
 package api
 
 import (
+	"github.com/cilcenk/coremetry/internal/ai/agent/blocks"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/ai/assemble"
@@ -159,43 +159,21 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		req.Messages = append([]copilot.ChatMessage{{Role: "user", Text: note}}, req.Messages...)
 	}
 
-	// SSE plumbing — same header set + flusher assert the sse.Broker
-	// handler uses.
-	flusher, ok := w.(http.Flusher)
+	// v0.10.535 — SSE çıkışı tek yazımda (ai/agent/blocks.Emitter): eager
+	// başlık + paylaşılan yazım kilidi + 15 s heartbeat (v0.10.27: serbest
+	// döngü buffered, ilk LLM çağrısı 180 s sürebilir, sessiz bağlantı
+	// proxy'de kopuyordu) + senkron Close. Çerçeve şekli explain/insight ile
+	// birebir aynı (emitter_test.go).
+	em, ok := blocks.NewEmitter(w, blocks.Options{EagerHeaders: true, Heartbeat: sseHeartbeatEvery})
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-	// v0.10.27 — YAZIM KİLİDİ. Heartbeat goroutine'i aynı ResponseWriter'a
-	// yazıyor ve http.ResponseWriter eşzamanlı yazıma GÜVENLİ DEĞİL;
-	// paylaşılmayan bir kilit yarışı engellemez, bozuk çerçeve üretir.
-	var wmu sync.Mutex
-	emit := func(event string, payload any) {
-		b, _ := json.Marshal(payload)
-		wmu.Lock()
-		defer wmu.Unlock()
-		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
-		flusher.Flush()
-	}
-	// v0.9.1229 — ⚙ çip kimliği TEK sayaçtan (chat_step_ids.go). Bir
-	// istekte birden çok yol adım yayınlayabiliyor (guided bağlam çipini
-	// basıp rotayı devredebilir, sonra çekmece ya da serbest döngü
-	// çalışır); ayrı sayaçlar aynı `i`yi iki kez üretir ve frontend
-	// kanıtı `i` ile eşlediği için YANLIŞ çipe yapıştırırdı.
-	emit = withStepIDs(emit)
-
-	// v0.10.27 — HEARTBEAT. Serbest döngü buffered; ilk LLM çağrısı
-	// bitene kadar (180s'e kadar) tek bayt gitmeyebiliyor ve sessiz bir
-	// bağlantı proxy arkasında koparıldığında operatör hiçbir hata
-	// görmüyordu — balon "yazıyor…"da asılı, `done` hiç gelmiyor.
-	// Stop() SENKRON: handler döndükten sonra yazılan bir ping,
-	// ResponseWriter'ı ömrünün dışında kullanmak olurdu.
-	hb := startSSEHeartbeat(&wmu, w, flusher, sseHeartbeatEvery)
-	defer hb.Stop()
+	defer em.Close()
+	// v0.9.1229 — ⚙ çip kimliği TEK sayaçtan (chat_step_ids.go): bir istekte
+	// birden çok yol adım yayınlayabiliyor; ayrı sayaçlar aynı `i`yi iki kez
+	// üretir ve frontend kanıtı yanlış çipe yapıştırırdı.
+	emit := withStepIDs(em.Emit)
 
 	// Attribution: tag ctx so RecordUsage attributes the exchange to
 	// the "chat" surface on the /ai page.

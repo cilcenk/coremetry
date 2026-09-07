@@ -100,15 +100,15 @@ func TestAICallMatrix(t *testing.T) {
 	schema := map[string]any{"type": "object", "properties": map[string]any{"ok": map[string]any{"type": "boolean"}}}
 
 	cases := []struct {
-		name        string
-		call        func() (string, error)
-		surface     string
-		xid         string
-		wantJSON    bool
-		wantSample  string // prompt_sample bu metni İÇERMELİ
-		wantNoCode  bool   // maskeli: gerçek kod örnekte OLMAMALI
-		wantDeltas  bool
-		wantUser    string
+		name       string
+		call       func() (string, error)
+		surface    string
+		xid        string
+		wantJSON   bool
+		wantSample string // prompt_sample bu metni İÇERMELİ
+		wantNoCode bool   // maskeli: gerçek kod örnekte OLMAMALI
+		wantDeltas bool
+		wantUser   string
 	}{
 		{"copilotExplain", func() (string, error) { return s.copilotExplain(reqWith("x1"), "SYS", "USER") }, "explain-problem", "x1", false, "USER", false, false, ""},
 		{"copilotExplainStream", func() (string, error) {

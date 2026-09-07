@@ -76,9 +76,9 @@ func TestBackendSlowSentinelClassifies(t *testing.T) {
 // birinin yanına eski satırı geri koymak kapıyı geçerdi.
 func TestToolErrorContractIsBound(t *testing.T) {
 	files := map[string]string{
-		"copilot_chat.go":  "sohbet döngüsünün ToolResult'ı",
-		"chat_step_ids.go": "operatörün ⚙ kanıt çipi",
-		"../mcp/mcp.go":    "MCP teli (tools/call isError content'i)",
+		"../ai/agent/tools/executor.go": "tool yürütücüsünün Outcome içeriği (v0.10.536: sohbet döngüsünden taşındı)",
+		"chat_step_ids.go":              "operatörün ⚙ kanıt çipi",
+		"../mcp/mcp.go":                 "MCP teli (tools/call isError content'i)",
 	}
 	for f, what := range files {
 		b, err := os.ReadFile(f)

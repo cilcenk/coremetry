@@ -1,10 +1,10 @@
 package api
 
 import (
-	"github.com/cilcenk/coremetry/internal/ai/agent/blocks"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/cilcenk/coremetry/internal/ai/agent/blocks"
 	"net/http"
 	"strings"
 	"sync"

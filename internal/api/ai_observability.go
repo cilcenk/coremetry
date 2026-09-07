@@ -97,16 +97,16 @@ func (s *Server) putAIRates(w http.ResponseWriter, r *http.Request) {
 // çağrı noktası dokunulmadı) ve yalnız seçeneği söyler.
 //
 // Sözleşme (ai_call_matrix_test.go pinler):
-//   • r != nil → surface istek path'inden (+ whitelist'li ?src=), kullanıcı
+//   - r != nil → surface istek path'inden (+ whitelist'li ?src=), kullanıcı
 //     auth claims'ten, ExchangeID ctx'teki meta'dan TAŞINIR (withExchange
 //     rayı), Shield yüzeye göre tohumlanır — explainCallCtx.
-//   • r == nil → meta ctx'ten (sohbet handler'ı kurmuştur), yalnız surface
+//   - r == nil → meta ctx'ten (sohbet handler'ı kurmuştur), yalnız surface
 //     ezilir; Shield yoksa yüzey kapılı varsayılan.
-//   • json → WithJSONMode / WithJSONSchema(surface, schema).
-//   • logUser → ai_calls örneği maskeli (PromptLogOverride), PromptChars
+//   - json → WithJSONMode / WithJSONSchema(surface, schema).
+//   - logUser → ai_calls örneği maskeli (PromptLogOverride), PromptChars
 //     gerçek prompt'tan sayılır.
-//   • onDelta → StreamText (akamayan uçta şeffaf buffered düşüş), yoksa Explain.
-//   • Span: r varsa ai.explain + kanıt attr'ları, yoksa ctx tabanlı ai.explain.
+//   - onDelta → StreamText (akamayan uçta şeffaf buffered düşüş), yoksa Explain.
+//   - Span: r varsa ai.explain + kanıt attr'ları, yoksa ctx tabanlı ai.explain.
 type aiCallOpts struct {
 	surface string
 	json    bool

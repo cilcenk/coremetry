@@ -191,10 +191,10 @@ func TestMcpBridgeIsReachable(t *testing.T) {
 	}
 	s := string(src)
 	for needle, why := range map[string]string{
-		"externalChatTools(":               "dış tool köprüsü döngüden çağrılmıyor — ölü yol",
-		"markRepeatedCall(seenToolCalls, tc.Name, tc.Input)": "tekrar muhafızı yürütme yolunda değil",
-		"s.mcpClient.Registry().Call":      "çağrılar Registry üzerinden gitmiyor",
-		`"mcp.call", "mcp_server"`:         "dış çağrı audit izi düşmüş",
+		"externalChatTools(":                "dış tool köprüsü döngüden çağrılmıyor — ölü yol",
+		"exec.Call(ctx, tc.Name, tc.Input)": "tekrar muhafızı (tools.Executor) yürütme yolunda değil", // v0.10.536
+		"s.mcpClient.Registry().Call":       "çağrılar Registry üzerinden gitmiyor",
+		`"mcp.call", "mcp_server"`:          "dış çağrı audit izi düşmüş",
 	} {
 		if !strings.Contains(s, needle) {
 			t.Errorf("%s (aranan: %q)", why, needle)

@@ -64,9 +64,13 @@ type fakeWriter struct {
 	flushes int
 }
 
-func (f *fakeWriter) Write(p []byte) (int, error) { f.mu.Lock(); defer f.mu.Unlock(); return f.buf.Write(p) }
-func (f *fakeWriter) Flush()                      { f.mu.Lock(); defer f.mu.Unlock(); f.flushes++ }
-func (f *fakeWriter) text() string                { f.mu.Lock(); defer f.mu.Unlock(); return f.buf.String() }
+func (f *fakeWriter) Write(p []byte) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.buf.Write(p)
+}
+func (f *fakeWriter) Flush()       { f.mu.Lock(); defer f.mu.Unlock(); f.flushes++ }
+func (f *fakeWriter) text() string { f.mu.Lock(); defer f.mu.Unlock(); return f.buf.String() }
 
 func TestHeartbeatPingsAndStopsSynchronously(t *testing.T) {
 	w := &fakeWriter{}

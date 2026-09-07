@@ -31,6 +31,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"github.com/cilcenk/coremetry/internal/ai/agent/tools"
 	"strings"
 
 	"github.com/cilcenk/coremetry/internal/auth"
@@ -68,41 +69,15 @@ func mcpToolAllowed(allow, deny []string, tool string) bool {
 	return false
 }
 
-// repeatCallKey — tekrar muhafızının anahtarı: ad + KANONİK argüman.
-// Kanonikleştirme unmarshal→marshal (encoding/json map anahtarlarını
-// sıralar); çözülemeyen argüman ham hâliyle anahtarlanır — muhafız
-// hiçbir çağrıyı sessizce YOK sayamaz.
-func repeatCallKey(name string, raw json.RawMessage) string {
-	var v any
-	if len(raw) > 0 && json.Unmarshal(raw, &v) == nil {
-		if b, err := json.Marshal(v); err == nil {
-			return name + "\x00" + string(b)
-		}
-	}
-	return name + "\x00" + strings.TrimSpace(string(raw))
-}
-
-// markRepeatedCall — çağrıyı kaydeder; aynı (tool, kanonik-argüman)
-// çiftinin İKİNCİ ve sonraki kopyalarında true döner. Döngüdeki tek
-// çağrı yeri bu — karar saf ki tablo testi haritayı gerçek akışla
-// sürebilsin (ChatWithTools somut tip, döngünün kendisi enjekte
-// edilemiyor).
+// Tekrar muhafızı v0.10.536'da ai/agent/tools'a taşındı (Executor.Call
+// içinde tek yürütme yolu); adlar testler için korunur.
 func markRepeatedCall(seen map[string]bool, name string, raw json.RawMessage) bool {
-	key := repeatCallKey(name, raw)
-	if seen[key] {
-		return true
-	}
-	seen[key] = true
-	return false
+	return tools.MarkRepeatedCall(seen, name, raw)
 }
 
-// repeatedCallJSON — muhafızın modele verdiği sonuç. mcp.ToolErrorJSON
-// sözleşmesinin alanları (error/retryable/hint): model iki ayrı hata
-// biçimi görmesin.
-const repeatedCallJSON = `{"error":"repeated_call","retryable":false,` +
-	`"hint":"Bu tool bu argümanlarla bu konuşmada zaten çağrıldı; sonucu yukarıdaki ` +
-	`turda duruyor. Farklı argüman dene (aralığı genişlet, filtreyi değiştir) ya da ` +
-	`eldeki veriyle cevap ver."}`
+const repeatedCallJSON = tools.RepeatedCallJSON
+
+func repeatCallKey(name string, raw json.RawMessage) string { return tools.RepeatCallKey(name, raw) }
 
 // externalChatTools — Registry kataloğunu mcp.Tool sarmalarına çevirir.
 // SAF kurulum: çağrı ve audit closure'ları enjekte edilir, test ağsız

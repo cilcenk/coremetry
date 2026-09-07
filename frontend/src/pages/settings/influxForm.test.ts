@@ -66,10 +66,11 @@ describe('TFAIL şablonu (v0.10.526 — GoldenGate ekibinin sorgusu, Coremetry u
     expect(TFAIL_TEMPLATE.attrMap?.TRACEID).toBe('trace_id');
     expect(TFAIL_TEMPLATE.attrMap?.INSTANCEID).toBe('k8s.pod.name');
   });
-  it('SORGU 1: ekibin süzgeçleri (TFAIL/ADET, KANALKOD =~ /^01/) + Coremetry uyarlamaları; Grafana değişkeni YOK', () => {
+  it('SORGU 1: TFAIL/ADET, kanal süzgeci YOK (v0.10.528) + Coremetry uyarlamaları; Grafana değişkeni YOK', () => {
     expect(TFAIL_TEMPLATE.flux).toContain('from(bucket: "GGFailTraceBckt")');
     expect(TFAIL_TEMPLATE.flux).toContain('r._measurement == "TFAIL" and r._field == "ADET"');
-    expect(TFAIL_TEMPLATE.flux).toContain('r.KANALKOD =~ /^01/');
+    expect(TFAIL_TEMPLATE.flux).not.toContain('KANALKOD =~'); // v0.10.528 kanal süzgeci yok
+    expect(TFAIL_TEMPLATE.name).toBe('tfail_adet');
     expect(TFAIL_TEMPLATE.flux).toContain('range(start: -2h)'); // v0.10.527 gecikmeli kaynak
     expect(TFAIL_TEMPLATE.flux).toContain('group(columns: ["KANALKOD", "OPERATIONCODE"])');
     expect(TFAIL_TEMPLATE.flux).toContain('aggregateWindow(every: 1m, fn: sum, createEmpty: false)');
@@ -89,12 +90,12 @@ describe('TFAIL şablonu (v0.10.526 — GoldenGate ekibinin sorgusu, Coremetry u
     for (const p of phs) expect(['from', 'to', ...(TFAIL_TEMPLATE.groupBy ?? [])]).toContain(p);
   });
   it('GoldenGate toplam şablonu: ekibin ikinci sorgusu, aynı süzgeç + gruplama, kanıt sorgusu yok', () => {
-    expect(GG_TOTAL_TEMPLATE.name).toBe('gg_01_adet_total');
+    expect(GG_TOTAL_TEMPLATE.name).toBe('gg_adet_total');
     expect(GG_TOTAL_TEMPLATE.flux).toContain('from(bucket: "GoldenGateBucket")');
     expect(GG_TOTAL_TEMPLATE.flux).toContain('r._field == "ADET"');
     expect(GG_TOTAL_TEMPLATE.flux).toContain('range(start: -2h)');
     expect(GG_TOTAL_TEMPLATE.flux).not.toContain('_measurement ==');
-    expect(GG_TOTAL_TEMPLATE.flux).toContain('r.KANALKOD =~ /^01/');
+    expect(GG_TOTAL_TEMPLATE.flux).not.toContain('KANALKOD =~');
     expect(GG_TOTAL_TEMPLATE.flux).toContain('aggregateWindow(every: 1m, fn: sum, createEmpty: false)');
     expect(GG_TOTAL_TEMPLATE.groupBy).toEqual(['KANALKOD', 'OPERATIONCODE']);
     expect(GG_TOTAL_TEMPLATE.enrichFlux).toBeUndefined();

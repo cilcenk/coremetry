@@ -16,7 +16,7 @@ import { fmtDateTime } from '@/lib/utils';
 import { useSettingsLoad, SettingsLoadError, FlashBox } from './shared';
 import {
   parseAttrMap, attrMapToText, parseList, listToText,
-  thresholdsToForm, thresholdsToWire, TFAIL_TEMPLATE, type ThresholdsForm, toggleGroupByTag, hasGroupByTag } from './influxForm';
+  thresholdsToForm, thresholdsToWire, TFAIL_TEMPLATE, GG_TOTAL_TEMPLATE, type ThresholdsForm, toggleGroupByTag, hasGroupByTag } from './influxForm';
 import type {
   InfluxQueryConfig, InfluxSourceInput, InfluxSourceSnapshot, InfluxStatusPayload, InfluxTestResult,
 } from '@/lib/types';
@@ -294,6 +294,12 @@ export function InfluxTab() {
                   onClick={() => patch(i, { queries: [...r.queries, queryFromWire(TFAIL_TEMPLATE)] })}>
                   + TFAIL şablonu
                 </Button>
+                {/* v0.10.526 — ekibin ikinci sorgusu: GoldenGate toplam ADET. */}
+                <Button type="button" variant="secondary" size="sm"
+                  disabled={r.queries.some(q => q.name === GG_TOTAL_TEMPLATE.name)}
+                  onClick={() => patch(i, { queries: [...r.queries, queryFromWire(GG_TOTAL_TEMPLATE)] })}>
+                  + GoldenGate toplam şablonu
+                </Button>
                 <Button type="button" variant="accent" size="sm" disabled={busy || !!(pr && 'pending' in pr)}
                   onClick={() => runTest(i)}>
                   Bağlantıyı dene
@@ -347,7 +353,7 @@ export function InfluxTab() {
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <Button type="button" variant="secondary" size="sm"
-            onClick={() => setRows(rs => [...rs, { ...EMPTY_SOURCE, queries: [queryFromWire(TFAIL_TEMPLATE)] }])}>
+            onClick={() => setRows(rs => [...rs, { ...EMPTY_SOURCE, queries: [queryFromWire(TFAIL_TEMPLATE), queryFromWire(GG_TOTAL_TEMPLATE)] }])}>
             + Kaynak ekle
           </Button>
           <Button type="button" variant="ghost" size="sm" onClick={loadStatus}

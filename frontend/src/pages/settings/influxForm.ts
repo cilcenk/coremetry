@@ -8,7 +8,8 @@
 //   • eşikler: '' = unset → tel'e YAZILMAZ (0/omitempty = global varsayılan).
 //     vmForm dersi: kutuya varsayılanı basmak sessiz ayar donması demek.
 //
-// TFAIL şablonu — v0.10.224: operatörün GERÇEK Grafana sorgusuyla hizalı
+// TFAIL şablonu — v0.10.224: operatörün GERÇEK Grafana sorgusuyla hizalı;
+// v0.10.526'da GoldenGate ekibinin sorgusuyla yenilendi (aşağıdaki not)
 // ("BAŞARISIZ FONKSİYON VE OPERASYONLAR", 2026-09-01). Bucket spec'teki
 // GGFailTraceBckt (TRACEID taşıyan); Grafana paneli GoldenGateBucket'tan
 // okuyor — farklıysa kutudan değiştir. Gürültü filtreleri (OPERATIONCODE != "0", FUNCTIONCODE
@@ -77,25 +78,37 @@ export function thresholdsToWire(f: ThresholdsForm): InfluxThresholds | undefine
   return Object.keys(out).length ? out : undefined;
 }
 
+// v0.10.526 — operatör (2026-09-07): GoldenGate ekibinin verdiği iki Grafana
+// sorgusu VARSAYILAN şablon oldu ("default bunlar olsun, Coremetry Influx
+// entegrasyonuna uygun"). Grafana kalıbından üç uyarlama: `v.timeRangeStart`
+// → göreli `range(start: -2m)` (poller watermark'la kovayı bir kez yazar),
+// `v.windowPeriod` → sabit `every: 1m` (Coremetry'deki dakika = Grafana'daki
+// dakika), `createEmpty: true` → `false` (null _value "kötü değer" diye
+// düşer; sıfır dolgusu D3 dedektöründe). Ekibin `group(columns:
+// ["_measurement"])`i tek seri verirdi; operatör kanal + operasyon istedi →
+// KANALKOD + OPERATIONCODE (sekmeden değiştirilebilir, 5.000 seri tavanı).
+// Kanal süzgeci ekibin verdiği gibi: KANALKOD =~ /^01/.
 export const TFAIL_TEMPLATE: InfluxQueryConfig = {
-  name: 'tfail_adet',
+  name: 'tfail_01_adet',
   flux: `from(bucket: "GGFailTraceBckt")
   |> range(start: -2m)
   |> filter(fn: (r) => r._measurement == "TFAIL" and r._field == "ADET")
-  |> filter(fn: (r) => r.OPERATIONCODE != "0" and r.FUNCTIONCODE != "N/A")
-  |> filter(fn: (r) => r.OPERATIONCODE !~ /------/)
-  |> group(columns: ["OPERATIONCODE", "ERRORCODE"])
+  |> filter(fn: (r) => r.KANALKOD =~ /^01/)
+  |> group(columns: ["KANALKOD", "OPERATIONCODE"])
   |> aggregateWindow(every: 1m, fn: sum, createEmpty: false)
   |> yield(name: "sum")`,
+  // SORGU 2 — kanıt: problem açılınca aynı grubun son 50 TRACEID'si.
+  // Yer tutucular groupBy tag adlarıyla (enrich.go: her groupBy tag'ı
+  // adıyla doldurulur) + {{from}}/{{to}}.
   enrichFlux: `from(bucket: "GGFailTraceBckt")
   |> range(start: {{from}}, stop: {{to}})
   |> filter(fn: (r) => r._measurement == "TFAIL" and r._field == "ADET")
-  |> filter(fn: (r) => r.OPERATIONCODE == "{{op}}" and r.ERRORCODE == "{{err}}")
+  |> filter(fn: (r) => r.KANALKOD == "{{KANALKOD}}" and r.OPERATIONCODE == "{{OPERATIONCODE}}")
   |> keep(columns: ["_time", "TRACEID", "INSTANCEID", "FUNCTIONCODE", "KANALKOD"])
   |> group()
   |> sort(columns: ["_time"], desc: true)
   |> limit(n: 50)`,
-  groupBy: ['OPERATIONCODE', 'ERRORCODE'],
+  groupBy: ['KANALKOD', 'OPERATIONCODE'],
   attrMap: {
     OPERATIONCODE: 'operation',
     FUNCTIONCODE: 'FUNCTION_CODE',
@@ -103,6 +116,28 @@ export const TFAIL_TEMPLATE: InfluxQueryConfig = {
     INSTANCEID: 'k8s.pod.name',
     TRACEID: 'trace_id',
     ERRORCODE: 'error.code',
+  },
+};
+
+// v0.10.526 — ekibin ikinci sorgusu: GoldenGateBucket, tüm operasyonların
+// ADET toplamı (başarılı + başarısız), aynı kanal süzgeci ve gruplama.
+// Hata oranı (TFAIL ÷ toplam) bugün türetilmiyor; iki seri ayrı izlenir,
+// Explore'da yan yana çizilir. Kanıt sorgusu YOK (TRACEID bu bucket'ta
+// spec'te yok).
+export const GG_TOTAL_TEMPLATE: InfluxQueryConfig = {
+  name: 'gg_01_adet_total',
+  flux: `from(bucket: "GoldenGateBucket")
+  |> range(start: -2m)
+  |> filter(fn: (r) => r._field == "ADET")
+  |> filter(fn: (r) => r.KANALKOD =~ /^01/)
+  |> group(columns: ["KANALKOD", "OPERATIONCODE"])
+  |> aggregateWindow(every: 1m, fn: sum, createEmpty: false)
+  |> yield(name: "sum")`,
+  groupBy: ['KANALKOD', 'OPERATIONCODE'],
+  attrMap: {
+    OPERATIONCODE: 'operation',
+    FUNCTIONCODE: 'FUNCTION_CODE',
+    KANALKOD: 'CHANNEL_CODE',
   },
 };
 

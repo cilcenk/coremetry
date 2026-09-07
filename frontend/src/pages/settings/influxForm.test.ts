@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseAttrMap, attrMapToText, parseList, listToText, numFromForm, numToForm,
-  thresholdsToForm, thresholdsToWire, TFAIL_TEMPLATE,
+  thresholdsToForm, thresholdsToWire, TFAIL_TEMPLATE, GG_TOTAL_TEMPLATE,
 } from './influxForm';
 
 // v0.10.222 — InfluxTab metin kutuları ↔ tel. Sessiz sınıf: boş eşik
@@ -58,44 +58,45 @@ describe('eşikler', () => {
   });
 });
 
-describe('TFAIL şablonu (spec)', () => {
-  it('gruplama v1: yalnız OPERATIONCODE + ERRORCODE; attrMap altı tag', () => {
-    expect(TFAIL_TEMPLATE.groupBy).toEqual(['OPERATIONCODE', 'ERRORCODE']);
+describe('TFAIL şablonu (v0.10.526 — GoldenGate ekibinin sorgusu, Coremetry uyarlaması)', () => {
+  it('gruplama kanal + operasyon; attrMap altı tag', () => {
+    expect(TFAIL_TEMPLATE.groupBy).toEqual(['KANALKOD', 'OPERATIONCODE']);
     expect(Object.keys(TFAIL_TEMPLATE.attrMap ?? {}).sort()).toEqual(
       ['ERRORCODE', 'FUNCTIONCODE', 'INSTANCEID', 'KANALKOD', 'OPERATIONCODE', 'TRACEID']);
     expect(TFAIL_TEMPLATE.attrMap?.TRACEID).toBe('trace_id');
     expect(TFAIL_TEMPLATE.attrMap?.INSTANCEID).toBe('k8s.pod.name');
   });
-  it('SORGU 1 Grafana ile hizalı: GoldenGateBucket + 1 dk aggregateWindow + gürültü filtreleri, _value tabanı YOK', () => {
+  it('SORGU 1: ekibin süzgeçleri (TFAIL/ADET, KANALKOD =~ /^01/) + Coremetry uyarlamaları; Grafana değişkeni YOK', () => {
     expect(TFAIL_TEMPLATE.flux).toContain('from(bucket: "GGFailTraceBckt")');
+    expect(TFAIL_TEMPLATE.flux).toContain('r._measurement == "TFAIL" and r._field == "ADET"');
+    expect(TFAIL_TEMPLATE.flux).toContain('r.KANALKOD =~ /^01/');
+    expect(TFAIL_TEMPLATE.flux).toContain('range(start: -2m)');
+    expect(TFAIL_TEMPLATE.flux).toContain('group(columns: ["KANALKOD", "OPERATIONCODE"])');
     expect(TFAIL_TEMPLATE.flux).toContain('aggregateWindow(every: 1m, fn: sum, createEmpty: false)');
-    expect(TFAIL_TEMPLATE.flux).toContain('r.OPERATIONCODE != "0"');
-    expect(TFAIL_TEMPLATE.flux).toContain('r.FUNCTIONCODE != "N/A"');
-    expect(TFAIL_TEMPLATE.flux).not.toContain('_value > 4');
-    expect(TFAIL_TEMPLATE.enrichFlux).toContain('from(bucket: "GGFailTraceBckt")');
-  });
-
-  it('SORGU 2 dört yer tutucuyu taşır, SORGU 1 hiçbirini taşımaz', () => {
-    for (const ph of ['{{from}}', '{{to}}', '{{op}}', '{{err}}']) {
-      expect(TFAIL_TEMPLATE.enrichFlux).toContain(ph);
+    for (const bad of ['v.timeRangeStart', 'v.windowPeriod', 'createEmpty: true', '_value > 4']) {
+      expect(TFAIL_TEMPLATE.flux).not.toContain(bad);
     }
-    expect(TFAIL_TEMPLATE.flux).not.toContain('{{');
+  });
+  it('SORGU 2 (kanıt) yer tutucuları groupBy tag adlarıyla + from/to; SORGU 1 hiçbirini taşımaz', () => {
+    for (const ph of ['{{from}}', '{{to}}', '{{KANALKOD}}', '{{OPERATIONCODE}}']) {
+      expect(TFAIL_TEMPLATE.enrichFlux).toContain(ph);
+      expect(TFAIL_TEMPLATE.flux).not.toContain(ph);
+    }
+    expect(TFAIL_TEMPLATE.enrichFlux).toContain('keep(columns: ["_time", "TRACEID", "INSTANCEID", "FUNCTIONCODE", "KANALKOD"])');
     expect(TFAIL_TEMPLATE.enrichFlux).toContain('limit(n: 50)');
+    // enrich.go her groupBy tag'ını adıyla doldurur; başka yer tutucu HATA olurdu.
+    const phs = [...(TFAIL_TEMPLATE.enrichFlux ?? '').matchAll(/\{\{\s*([A-Za-z_]+)\s*\}\}/g)].map(m => m[1]);
+    for (const p of phs) expect(['from', 'to', ...(TFAIL_TEMPLATE.groupBy ?? [])]).toContain(p);
   });
-});
-
-// v0.10.231 (D6) — KANALKOD seri-boyutu anahtarı
-import { toggleGroupByTag, hasGroupByTag } from './influxForm';
-describe('groupBy tag anahtarı', () => {
-  it('ekler (sona), çıkarır, sırayı korur, çift eklemez', () => {
-    expect(toggleGroupByTag('OPERATIONCODE, ERRORCODE', 'KANALKOD', true)).toBe('OPERATIONCODE, ERRORCODE, KANALKOD');
-    expect(toggleGroupByTag('OPERATIONCODE, KANALKOD, ERRORCODE', 'KANALKOD', true)).toBe('OPERATIONCODE, ERRORCODE, KANALKOD');
-    expect(toggleGroupByTag('OPERATIONCODE, KANALKOD, ERRORCODE', 'KANALKOD', false)).toBe('OPERATIONCODE, ERRORCODE');
-    expect(toggleGroupByTag('', 'KANALKOD', true)).toBe('KANALKOD');
-    expect(toggleGroupByTag('kanalkod', 'KANALKOD', false)).toBe('kanalkod');
-  });
-  it('hasGroupByTag', () => {
-    expect(hasGroupByTag('OPERATIONCODE, KANALKOD', 'KANALKOD')).toBe(true);
-    expect(hasGroupByTag('OPERATIONCODE', 'KANALKOD')).toBe(false);
+  it('GoldenGate toplam şablonu: ekibin ikinci sorgusu, aynı süzgeç + gruplama, kanıt sorgusu yok', () => {
+    expect(GG_TOTAL_TEMPLATE.name).toBe('gg_01_adet_total');
+    expect(GG_TOTAL_TEMPLATE.flux).toContain('from(bucket: "GoldenGateBucket")');
+    expect(GG_TOTAL_TEMPLATE.flux).toContain('r._field == "ADET"');
+    expect(GG_TOTAL_TEMPLATE.flux).not.toContain('_measurement ==');
+    expect(GG_TOTAL_TEMPLATE.flux).toContain('r.KANALKOD =~ /^01/');
+    expect(GG_TOTAL_TEMPLATE.flux).toContain('aggregateWindow(every: 1m, fn: sum, createEmpty: false)');
+    expect(GG_TOTAL_TEMPLATE.groupBy).toEqual(['KANALKOD', 'OPERATIONCODE']);
+    expect(GG_TOTAL_TEMPLATE.enrichFlux).toBeUndefined();
+    expect(GG_TOTAL_TEMPLATE.name).not.toBe(TFAIL_TEMPLATE.name);
   });
 });

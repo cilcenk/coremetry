@@ -2531,6 +2531,15 @@ export const api = {
         // the same shape the GET endpoint does.
         filters: body.filters ? JSON.parse(body.filters) : undefined,
         dsl:     body.dsl,
+        // v0.10.524 (operatör, prod: şerit 2,4M span sayarken liste 8 trace;
+        // DevTools payload'ında `search` yoktu) — gövde alan alan kuruluyor
+        // ve bu üçü HİÇ yazılmamıştı: v0.9.601'in "search batch'e eklendi"
+        // notu ile v0.10.484'ün Root/Errors bayrakları tip'te vardı, tel'de
+        // yoktu ([[feedback-tested-but-unreachable]]). Sunucu (api.go
+        // spanMetricBatch) üçünü de okur.
+        search:  body.search,
+        rootOnly: body.rootOnly,
+        hasError: body.hasError,
         rateWindow: body.rateWindow,
         aggs:    body.aggs,
       }),

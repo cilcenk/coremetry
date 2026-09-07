@@ -865,6 +865,13 @@ function TracesPageInner() {
     api.tracesCount({
       limit: 50, offset: 0, from, to,
       service: filter.service || undefined,
+      // v0.10.520 (operatör, prod: "2.4M span diyor ama 5 trace getirdi,
+      // 10,000+ demesine rağmen diğerleri gelmiyor") — arama sayıma
+      // GİTMİYORDU: sayım servisin tüm evrenini (≥10k) sayıyor, liste
+      // aramayla 5 trace buluyordu. Arama listeyle aynı evren; MV'yi
+      // düşürdüğünde sunucu dürüstçe "sayılamıyor" der, liste bitmişse
+      // kesin toplam listeden (aşağıda).
+      search: filter.search || undefined,
       minMs: filter.minMs || undefined,
       maxMs: filter.maxMs || undefined,
       hasError: filter.hasError || undefined,
@@ -880,7 +887,7 @@ function TracesPageInner() {
       .then(r => { if (!cancelled) setCountRes(r); })
       .catch((e: unknown) => { if (!cancelled && !isCanceled(e)) setCountRes(null); });
     return () => { cancelled = true; ctl.abort(); };
-  }, [showTotal, view, listRangeNs, filter.service, filter.minMs, filter.maxMs,
+  }, [showTotal, view, listRangeNs, filter.service, filter.search, filter.minMs, filter.maxMs,
       filter.hasError, filter.rootOnly, env, clusterScope, advFilters, advGroupParam]);
   // v0.9.1372 — sessiz geri dönüş. Koşul, aşağıdaki "no traces found" boş
   // durumunun GÖRÜNME koşuluyla aynı: liste görünümü, hata yok, veri geldi,
@@ -1474,7 +1481,13 @@ function TracesPageInner() {
               lastReachablePage={lastReachablePage(countRes?.value, countRes?.atLeast ?? false, 50)}
               extras={
                 <>
-                  {countRes?.reason ? (
+                  {countRes?.reason && !hasMore ? (
+                    /* v0.10.520 — liste bitti: kesin toplam listenin kendisinden
+                       (sayfa × 50 + bu sayfa); sunucu sayımı gerekmez. */
+                    <span title="Liste son sayfada; toplam listeden kesin.">
+                      {(page * 50 + traces.length).toLocaleString()} total
+                    </span>
+                  ) : countRes?.reason ? (
                     <span title={traceCountReasonHint(countRes.reason)}>
                       showing {traces.length}{hasMore ? '+' : ''} · toplam sayılamıyor
                     </span>

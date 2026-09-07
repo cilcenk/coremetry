@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -220,4 +221,30 @@ func TestServiceTest_WideProbeOnEmpty(t *testing.T) {
 	if p.Rows != 0 || p.WideWindow != "" || p.Hint != "" || len(queries) != 1 {
 		t.Fatalf("mutlak zamanlı sorguda deneme olmamalı (boş kalır, ipucu yok): %+v (%d sorgu)", p, len(queries))
 	}
+}
+
+// v0.10.527 — Test bütçeleri sorgu başına: ikinci sorgu ilkinin geniş
+// denemesinin arkasında zaman aşımına düşmesin (prod 2026-09-07). Kaynak pini.
+func TestTestBudgetsPerQuery(t *testing.T) {
+	b, err := readSrc("client.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"qctx, qcancel := context.WithTimeout(ctx, testQueryBudget)",
+		"wctx, wcancel := context.WithTimeout(ctx, testWideBudget)",
+		"context.WithTimeout(ctx, testTotalBudget)",
+	} {
+		if !strings.Contains(b, want) {
+			t.Errorf("client.go: %q yok", want)
+		}
+	}
+	if testQueryBudget+testWideBudget > testTotalBudget {
+		t.Error("tek sorgunun iki denemesi toplam tavanı aşmamalı")
+	}
+}
+
+func readSrc(name string) (string, error) {
+	b, err := os.ReadFile(name)
+	return string(b), err
 }

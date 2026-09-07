@@ -70,7 +70,7 @@ describe('REDACTED şablonu (v0.10.526 — GoldenGate ekibinin sorgusu, Coremetr
     REDACTED")');
     expect(REDACTEDTEMPLATE.flux).toContain('r._measurement == "REDACTED" and r._field == "REDACTED"');
     expect(REDACTEDTEMPLATE.flux).toContain('r.REDACTED =~ /^01/');
-    expect(REDACTEDTEMPLATE.flux).toContain('range(start: -2m)');
+    expect(REDACTEDTEMPLATE.flux).toContain('range(start: -2h)'); // v0.10.527 gecikmeli kaynak
     expect(REDACTEDTEMPLATE.flux).toContain('group(columns: ["REDACTED", "REDACTED"])');
     expect(REDACTEDTEMPLATE.flux).toContain('aggregateWindow(every: 1m, fn: sum, createEmpty: false)');
     for (const bad of ['v.timeRangeStart', 'v.windowPeriod', 'createEmpty: true', '_value > 4']) {
@@ -92,6 +92,7 @@ describe('REDACTED şablonu (v0.10.526 — GoldenGate ekibinin sorgusu, Coremetr
     expect(GG_TOTAL_TEMPLATE.name).toBe('gg_01_adet_total');
     REDACTED")');
     expect(GG_TOTAL_TEMPLATE.flux).toContain('r._field == "REDACTED"');
+    expect(GG_TOTAL_TEMPLATE.flux).toContain('range(start: -2h)');
     expect(GG_TOTAL_TEMPLATE.flux).not.toContain('_measurement ==');
     expect(GG_TOTAL_TEMPLATE.flux).toContain('r.REDACTED =~ /^01/');
     expect(GG_TOTAL_TEMPLATE.flux).toContain('aggregateWindow(every: 1m, fn: sum, createEmpty: false)');

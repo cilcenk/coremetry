@@ -88,10 +88,16 @@ export function thresholdsToWire(f: ThresholdsForm): InfluxThresholds | undefine
 // ["_measurement"])`i tek seri verirdi; operatör kanal + operasyon istedi →
 // REDACTED + REDACTED (sekmeden değiştirilebilir, 5.000 seri tavanı).
 // Kanal süzgeci ekibin verdiği gibi: REDACTED =~ /^01/.
+// v0.10.527 — poll penceresi 2 dk → 2 sa: prod "Bağlantıyı dene" (2026-09-07)
+// poll penceresinde 0 satır, 24 sa'te 8.414 satır ve en yeni _time probe
+// anından 50 dk geride gösterdi — GoldenGate kaynağı GECİKMELİ yazıyor.
+// Watermark aynı kovayı bir kez yazdığından geniş pencere güvenli; 2 sa
+// (6 satır/dk hacimde) ucuz. Kaynağın gecikmesi 2 sa'yi aşarsa sekmeden
+// büyüt.
 export const REDACTEDTEMPLATE: InfluxQueryConfig = {
   name: 'tfail_01_adet',
   REDACTED")
-  |> range(start: -2m)
+  |> range(start: -2h)
   |> filter(fn: (r) => r._measurement == "REDACTED" and r._field == "REDACTED")
   |> filter(fn: (r) => r.REDACTED =~ /^01/)
   |> group(columns: ["REDACTED", "REDACTED"])
@@ -127,7 +133,7 @@ REDACTED
 export const GG_TOTAL_TEMPLATE: InfluxQueryConfig = {
   name: 'gg_01_adet_total',
   REDACTED")
-  |> range(start: -2m)
+  |> range(start: -2h)
   |> filter(fn: (r) => r._field == "REDACTED")
   |> filter(fn: (r) => r.REDACTED =~ /^01/)
   |> group(columns: ["REDACTED", "REDACTED"])

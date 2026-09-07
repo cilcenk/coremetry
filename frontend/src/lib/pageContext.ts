@@ -13,42 +13,11 @@
 // onları sayfa yayınlar (Faz 3.x usePageContextPublisher). Filtreler üç
 // kodekten (FilterExpr JSON, LogFilter tuple, skaler param) tek şekle
 // {k, op, v[]} indirgenir — modele giden bağlam kodek bilmez.
-import type { FilterExpr, FilterGroup, TimeRange } from './types';
+import type { FilterExpr, FilterGroup, PageContext, PageFilter, PageId } from './types';
 import { decodeRange, decodeFilters, decodeFilterGroup } from './urlState';
 import { parseFiltersParam } from './logFilters';
 
-export type PageId =
-  | 'home' | 'trace' | 'trace-compare' | 'traces' | 'service' | 'service-backtrace' | 'services'
-  | 'problems' | 'anomalies' | 'inbox' | 'exceptions' | 'errors' | 'logs' | 'explore' | 'metrics'
-  | 'clusters' | 'pod' | 'entity' | 'hosts' | 'rollouts' | 'events' | 'deployment-report'
-  | 'endpoints' | 'endpoint' | 'databases' | 'database' | 'slow-queries' | 'statement'
-  | 'dashboards' | 'dashboard' | 'service-map' | 'topology' | 'messaging' | 'external' | 'profiling'
-  | 'slos' | 'alerts' | 'monitors' | 'watchers' | 'incidents' | 'incident' | 'runbooks' | 'runbook'
-  | 'runbook-exec' | 'shift' | 'status' | 'system' | 'admin' | 'ai' | 'settings' | 'users' | 'profile'
-  | 'login' | 'public-trace' | 'public-status' | 'unknown';
-
-/** Normalleştirilmiş filtre: kodek bağımsız. op FilterOp ya da EXISTS / NOT EXISTS. */
-export interface PageFilter { k: string; op: string; v: string[] }
-
-export interface PageContext {
-  page: PageId;
-  path: string;
-  env?: string;
-  cluster?: string;
-  namespace?: string;
-  service?: string;
-  workload?: string;
-  pod?: string;
-  operation?: string;
-  traceId?: string;
-  spanId?: string;
-  problemId?: string;
-  exceptionId?: string;
-  /** Yalnız ?range= varsa (sessionStorage yedeği burada OKUNMAZ — saf). */
-  timeRange?: TimeRange;
-  activeFilters?: PageFilter[];
-  search?: string;
-}
+export type { PageContext, PageFilter, PageId } from './types';
 
 // ── rota tablosu ─────────────────────────────────────────────────────────
 // Anahtar = App.tsx path'i (param'lı rotalar prefix'iyle). pageContext.test.ts

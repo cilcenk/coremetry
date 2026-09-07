@@ -6304,6 +6304,9 @@ export interface AnomalySensitivityConfig {
   // Bu yüzden okuma daima `!== false` ile yapılmalı, `=== true` ile
   // DEĞİL — ikincisi eski satırları sessizce kapalı gösterirdi.
   attachToIncident?: boolean;
+  // v0.10.543 — service_silent dedektörü; VARSAYILAN KAPALI (operatör kararı):
+  // okuma `=== true` (attachToIncident'ın tersi).
+  serviceSilent?: boolean;
   // v0.9.936 — davranış motoru AŞAMA 1'in vidaları. Üstteki alanlar
   // ANİ sapmayı (5-dk pencere, 24s geçmiş) ayarlıyor; bu bölüm KALICI
   // davranış değişimini (haftanın saati baseline'ı, 28 gün).

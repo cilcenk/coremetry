@@ -60,6 +60,20 @@ type AnomalySensitivityConfig struct {
 	// ESKİ her settings satırı sessizce davranış değiştirirdi. nil =
 	// "yazılmamış" = bugünkü davranış (bağla).
 	AttachToIncident *bool `json:"attachToIncident,omitempty"`
+	// ServiceSilent — v0.10.543 (operatör 2026-09-07: "Anomali service
+	// silent'lara ihtiyacım yok. Olmasınlar"): servisin trafiği tamamen
+	// kesilince açılan critical `service_silent` problemi (anomaly.go
+	// checkSilence). *bool ama bu kez VARSAYILAN KAPALI: nil = false. Prod'da
+	// 100+ açık "Anomaly · Service silent" incident'ı gürültüydü — servisler
+	// kapanıp açılıyor, span kesintisi bir arıza değil. Açmak için Settings →
+	// Anomaly. Kapalıyken dedektör AÇIK kalan service_silent problemlerini
+	// bir sonraki tikte çözer (incident kaskadı onları kapatır).
+	ServiceSilent *bool `json:"serviceSilent,omitempty"`
+}
+
+// ServiceSilentEnabled — nil ⇒ KAPALI (AttachToIncident'ın tersi; gerekçe alanda).
+func (c AnomalySensitivityConfig) ServiceSilentEnabled() bool {
+	return c.ServiceSilent != nil && *c.ServiceSilent
 }
 
 // AttachesToIncident — nil-güvenli okuma. Yazılmamış = BAĞLA (bugünkü
@@ -321,6 +335,7 @@ func DefaultAnomalySensitivity() AnomalySensitivityConfig {
 		// sürümü: var olan davranışı kapatılabilir yapıyor, kendiliğinden
 		// değiştirmiyor.
 		AttachToIncident: boolPtr(true),
+		ServiceSilent:    boolPtr(false), // v0.10.543 — operatör kararı
 	}
 }
 
@@ -344,6 +359,7 @@ func NormalizeAnomalySensitivity(c AnomalySensitivityConfig) AnomalySensitivityC
 		// bir sonraki okuyucu (ya da elle bakan operatör) varsayılanı
 		// tahmin etmek zorunda kalmaz.
 		AttachToIncident: boolPtr(c.AttachesToIncident()),
+		ServiceSilent:    boolPtr(c.ServiceSilentEnabled()),
 		// v0.9.935 — davranış bölümü kendi kelepçesinden geçer. Eksik
 		// bölüm (bu sürümden ESKİ her settings satırı) varsayılanını
 		// alır: sıfır-değerli bir AnomalyBehaviorConfig aralık dışıdır,

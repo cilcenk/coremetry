@@ -628,15 +628,23 @@ func (d *Detector) scan(ctx context.Context) {
 		}
 		d.applyOutcome(ctx, pa.service, pa.metric, pa.oc, snap, sens)
 	}
-	for _, svc := range services {
-		// v0.9.1051 (Faz 0.3) — servis-sustu kontrolü, servis başına BİR
-		// kez. Hacim serisi metrikten bağımsız (istek sayısı); ilk izlenen
-		// metriğin toplu okumasından gelir, ek sorgu yok. tracked boşsa
-		// (operatör her şeyi kapattıysa) bu kontrol de kapalı — bilinçli:
-		// izleme tamamen kapatılmışken arka kapıdan problem açmazız.
-		if len(tracked) > 0 {
-			if rates := seriesFor(ratesByMetric[tracked[0]], svc); len(rates) > 0 {
-				d.checkSilence(ctx, svc, rates, snap, sens)
+	// v0.10.543 — service_silent dedektörü VARSAYILAN KAPALI (operatör:
+	// "Olmasınlar"). Kapalıyken açık kalan service_silent problemleri bu
+	// tikte çözülür ki prod'daki 100+ "Anomaly · Service silent" incident'ı
+	// kaskadla kapansın; açıkken eski davranış aynen.
+	if !sens.ServiceSilentEnabled() {
+		d.resolveSilentProblems(ctx, snap)
+	} else {
+		for _, svc := range services {
+			// v0.9.1051 (Faz 0.3) — servis-sustu kontrolü, servis başına BİR
+			// kez. Hacim serisi metrikten bağımsız (istek sayısı); ilk izlenen
+			// metriğin toplu okumasından gelir, ek sorgu yok. tracked boşsa
+			// (operatör her şeyi kapattıysa) bu kontrol de kapalı — bilinçli:
+			// izleme tamamen kapatılmışken arka kapıdan problem açmazız.
+			if len(tracked) > 0 {
+				if rates := seriesFor(ratesByMetric[tracked[0]], svc); len(rates) > 0 {
+					d.checkSilence(ctx, svc, rates, snap, sens)
+				}
 			}
 		}
 	}
@@ -897,6 +905,33 @@ func silenceVerdict(rates []float64, trailing int, minActiveShare float64) (sile
 // yarı: silenceVerdict'e göre critical service_silent problemi açar/
 // tazeler, trafik dönünce hızlı-çözer. Ek CH okuması SIFIR — rates
 // serisi zaten tikin toplu okumasından geliyor.
+// silentProblemsToResolve — v0.10.543: açık service_silent problemleri
+// (RuleID soneki). SAF; tablo-testli.
+func silentProblemsToResolve(all []*chstore.Problem) []*chstore.Problem {
+	out := make([]*chstore.Problem, 0)
+	for _, p := range all {
+		if p != nil && p.ID != "" && strings.HasSuffix(p.RuleID, ":service_silent") {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// resolveSilentProblems — dedektör kapalıyken açık service_silent
+// problemlerini kapatır (gerekçe açıklamada; incident kaskadı evaluator
+// süpürmesinde). Snapshot bellekte: ek sorgu yok.
+func (d *Detector) resolveSilentProblems(ctx context.Context, openSnap *chstore.OpenProblems) {
+	for _, p := range silentProblemsToResolve(openSnap.All()) {
+		p.Description = strings.TrimRight(p.Description, " ") + " Resolved: service-silent detector disabled in Settings → Anomaly (v0.10.543)."
+		chstore.MarkResolved(p, time.Now().UnixNano())
+		if err := d.store.UpsertProblem(ctx, *p); err != nil {
+			log.Printf("[anomaly] resolve %s (service_silent disabled): %v", p.RuleID, err)
+			continue
+		}
+		log.Printf("[anomaly] RESOLVED %s · service_silent (detector disabled)", p.Service)
+	}
+}
+
 func (d *Detector) checkSilence(ctx context.Context, service string, rates []float64, openSnap *chstore.OpenProblems, cfg chstore.AnomalySensitivityConfig) {
 	ruleID := "anomaly:" + service + ":service_silent"
 	open := openSnap.ByKey(ruleID, service)

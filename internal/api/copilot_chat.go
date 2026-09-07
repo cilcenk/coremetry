@@ -377,6 +377,8 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// returns ok:false for those). Blocks accumulate across rounds,
 	// deduped by service+operation+agg.
 	var chartBlocks []string
+	// v0.10.541 (Faz 3.3a) — tipli bloklar (event: block), eski çerçevelerle paralel.
+	var blockSeq blocks.Sequencer
 	chartSeen := map[string]bool{}
 	appendCharts := func(text string) string {
 		// v0.10.47 — MODELİN KENDİ ÇİTİ ÖNCE SÖKÜLÜR.
@@ -582,6 +584,12 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 				if block, key := chatChartBlock(oc.Content); block != "" && !chartSeen[key] {
 					chartSeen[key] = true
 					chartBlocks = append(chartBlocks, block)
+					// v0.10.541 — aynı grafik tipli blok olarak da: pencere MUTLAK
+					// (fromNs/toNs = tool'un sorguladığı an), now-çapası yok; fence
+					// eski istemci/arşiv için aynen kalır.
+					if spec, ok := chatChartSpec(oc.Content, time.Now()); ok {
+						emit("block", blockSeq.Next(blocks.TypeChart, spec))
+					}
 				}
 			}
 			tr := copilot.ToolResult{CallID: tc.ID, Name: tc.Name, IsError: oc.IsError, Content: oc.Content}
@@ -609,9 +617,11 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 					stepEv["href"] = l.Href
 					loopLinks = mergeToolLinks(loopLinks, l)
 					loopOpen = l.Href
+					emit("block", blockSeq.Next(blocks.TypeLink, l)) // v0.10.541
 				} else if l, ok := toolCallLink(tc.Name, tc.Input, time.Now()); ok {
 					stepEv["href"] = l.Href
 					loopLinks = mergeToolLinks(loopLinks, l)
+					emit("block", blockSeq.Next(blocks.TypeLink, l)) // v0.10.541
 				}
 			}
 			emit("step-result", stepEv)
@@ -707,6 +717,28 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 // copilot_guided.go) plus a service+operation+agg dedup key. Empty
 // block = not renderable (ok:false, malformed, or incomplete spec).
 // Pure — table-tested in copilot_chat_test.go.
+// chatChartSpec — v0.10.541: render_chart çıktısından MUTLAK pencereli blok
+// gövdesi (fence'in aksine fromNs/toNs damgalı; CosreChart mutlak pencereyi
+// önceler). Saf; tablo-testli.
+func chatChartSpec(out string, now time.Time) (guidedChartSpec, bool) {
+	block, _ := chatChartBlock(out)
+	if block == "" {
+		return guidedChartSpec{}, false
+	}
+	var spec guidedChartSpec
+	j := strings.TrimSuffix(strings.TrimPrefix(block, "\n```chart\n"), "\n```\n")
+	if err := json.Unmarshal([]byte(j), &spec); err != nil {
+		return guidedChartSpec{}, false
+	}
+	rs := spec.RangeS
+	if rs <= 0 {
+		rs = 1800
+	}
+	spec.ToNs = now.UnixNano()
+	spec.FromNs = now.Add(-time.Duration(rs) * time.Second).UnixNano()
+	return spec, true
+}
+
 func chatChartBlock(out string) (block, key string) {
 	var rc struct {
 		OK   bool `json:"ok"`

@@ -8,8 +8,10 @@ package api
 // which must map to an empty block). Pure-function, table-driven.
 
 import (
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestChatChartBlock(t *testing.T) {
@@ -89,6 +91,28 @@ func TestChatChartBlock(t *testing.T) {
 		block, _ := chatChartBlock(`{"ok":true,"spec":{"service":"s","agg":"` + agg + `","rangeS":1800}}`)
 		if !strings.Contains(block, `"agg":"`+agg+`"`) {
 			t.Fatalf("agg %q not preserved in block %q", agg, block)
+		}
+	}
+}
+
+// v0.10.541 — tipli chart bloğu: fence ile aynı spec + MUTLAK pencere.
+func TestChatChartSpecAbsoluteWindow(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	out := `{"ok":true,"spec":{"service":"api","operation":"GET /x","agg":"p95","rangeS":3600,"groupBy":""}}`
+	spec, ok := chatChartSpec(out, now)
+	if !ok || spec.Service != "api" || spec.Agg != "p95" || spec.RangeS != 3600 {
+		t.Fatalf("spec: %+v %v", spec, ok)
+	}
+	if spec.ToNs != now.UnixNano() || spec.FromNs != now.Add(-time.Hour).UnixNano() {
+		t.Fatalf("mutlak pencere: from=%d to=%d", spec.FromNs, spec.ToNs)
+	}
+	if _, ok := chatChartSpec(`{"ok":false}`, now); ok {
+		t.Fatal("ok:false blok üretmez")
+	}
+	src, _ := os.ReadFile("copilot_chat.go")
+	for _, want := range []string{`emit("block", blockSeq.Next(blocks.TypeChart, spec))`, `emit("block", blockSeq.Next(blocks.TypeLink, l))`} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("blok yayını yok: %s", want)
 		}
 	}
 }

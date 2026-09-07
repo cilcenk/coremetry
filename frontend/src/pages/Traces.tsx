@@ -42,6 +42,7 @@ import type { DataTableColumn } from '@/lib/dataTable';
 import { formatSortParam } from '@/lib/dataTable';
 import { type AggSort, toAggSort, decodeLegacyAggSort } from './traces/aggSort';
 import { parseRootOnlyParam, rootOnlyUrlValue, shouldDropRootOnly } from './traces/rootOnlyFallback';
+import { tracesEmptyReason } from './traces/emptyReason';
 import { api, isCanceled } from '@/lib/api';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
@@ -1370,6 +1371,7 @@ function TracesPageInner() {
           <TracesEmpty service={filter.service} search={filter.search} range={range} onSwitchView={() => setView('aggregate')}
             explainHref={explainHref ?? undefined}
             matchingSpans={data?.emptyDiag?.matchingSpans}
+            serviceSpans={data?.emptyDiag?.serviceSpans}
             promotedDiag={data?.emptyDiag}
             identity={data?.identity}
             narrowedFromNs={data?.narrowedFromNs} />
@@ -1738,7 +1740,7 @@ export default function TracesPage() {
 
 // TracesEmpty — distinguishes "aged out of raw spans (MV still has it)" from
 // "search matched nothing" so the operator gets the right next step.
-function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, explainHref, matchingSpans, promotedDiag, identity }: {
+function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, explainHref, matchingSpans, serviceSpans, promotedDiag, identity }: {
   service: string; search: string; range: TimeRange; onSwitchView: () => void;
   // v0.10.339 — terfi kolonu probu (host başına kolon/dizi sayımı) — boş kaldıysa da göster.
   promotedDiag?: TracesResponse['emptyDiag'];
@@ -1750,6 +1752,8 @@ function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, exp
   explainHref?: string;
   // v0.10.329 — sunucu öz-teşhisi: aynı filtreyle eşleşen span sayısı (boş listede).
   matchingSpans?: number;
+  // v0.10.530 — servisin YÜKLEMSİZ ham span sayısı; "TTL" ile "yüklem"i ayırır.
+  serviceSpans?: number;
 }) {
   const [mvSpans, setMvSpans] = useState<number | null | undefined>(undefined);
   const rangeNs = useMemo(() => timeRangeToNs(range), [range]);
@@ -1765,21 +1769,33 @@ function TracesEmpty({ service, search, range, onSwitchView, narrowedFromNs, exp
       .catch(() => { if (!cancelled) setMvSpans(null); });
     return () => { cancelled = true; };
   }, [service, rangeNs]);
-  const aged = service && search && (mvSpans ?? 0) > 0;
+  // v0.10.530 — Operator-reported (prod, 1h): "TTL'i aştı" denildi, oysa
+  // pencere saklama içindeydi ve arama metni span'lerde geçmiyordu. Karar
+  // saf (pages/traces/emptyReason.ts): ham sayım ayırır, yoksa iddia yok.
+  const reason = tracesEmptyReason({ narrowed: !!narrowedFromNs, service, search, mvSpans, serviceSpans });
   return (
     <Empty icon="⋮" title={narrowedFromNs ? 'No traces in the shortened window' : 'No traces found'}>
       <div style={{ marginTop: 6, color: 'var(--text2)' }}>
-        {narrowedFromNs ? (
+        {reason === 'narrowed' ? (
           <>
             {/* v0.10.307 — Operator-reported: "3 saat seçince no traces". Sorgu kaynak
                 sınırına takılınca arka uç pencereyi kısaltır; bu boş sonuç "yok" değil
                 "bakılamadı"dır ve öyle söylenir. */}
-            The query hit its resource budget, so the backend only searched from <b>{tsLong(narrowedFromNs)}</b> onward — and found nothing there.
+            The query hit its resource budget, so the backend only searched from <b>{tsLong(narrowedFromNs!)}</b> onward — and found nothing there.{/* 'narrowed' yalnız narrowedFromNs doluyken döner (emptyReason.ts) */}
             Older traces in your range were <b>not</b> searched. Narrow the range (e.g. 1h) or simplify the filter; do not read this as "no matching traces".
           </>
-        ) : aged ? (
+        ) : reason === 'predicate' ? (
           <>
-            <b style={{ color: 'var(--warn)' }}>{mvSpans!.toLocaleString()}</b> spans recorded for <code>{service}</code> in this window via the 5-min MV, but no raw spans match the search. This usually means the span data aged out past the raw-spans TTL while the MV still holds the rollup.{' '}
+            <b>{mvSpans!.toLocaleString()}</b> spans recorded for <code>{service}</code> in this window (5-min MV) and <b>{serviceSpans!.toLocaleString()}</b> raw spans are still stored — none of them match the search <span className="mono">{search}</span>. The data is within retention; the search text does not occur in these spans' name, route or attribute values. Try a different or shorter term, or drop the search.
+          </>
+        ) : reason === 'aged' ? (
+          <>
+            <b style={{ color: 'var(--warn)' }}>{mvSpans!.toLocaleString()}</b> spans recorded for <code>{service}</code> in this window via the 5-min MV, but the raw spans table holds <b>none</b> for it here. The span data aged out past the raw-spans TTL (or never landed) while the MV still holds the rollup.{' '}
+            <Button variant="secondary" size="sm" onClick={onSwitchView} style={{ marginLeft: 4 }}>Switch to Aggregate view →</Button>
+          </>
+        ) : reason === 'unmeasured' ? (
+          <>
+            <b style={{ color: 'var(--warn)' }}>{mvSpans!.toLocaleString()}</b> spans recorded for <code>{service}</code> in this window via the 5-min MV, but no raw spans match the search. The server could not measure whether raw spans for this service are still stored, so this is either the search predicate or data aged out past the raw-spans TTL.{' '}
             <Button variant="secondary" size="sm" onClick={onSwitchView} style={{ marginLeft: 4 }}>Switch to Aggregate view →</Button>
           </>
         ) : (

@@ -3,6 +3,7 @@ package chstore
 import (
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -65,5 +66,79 @@ func TestEmptyDiagWantedAndCountSQL(t *testing.T) {
 	sql := countMatchingSpansSQL("WHERE time >= ? AND service_name = ?")
 	if !strings.HasPrefix(sql, "SELECT count() FROM spans WHERE") || !strings.Contains(sql, "max_execution_time = 10") {
 		t.Errorf("sayım SQL: %s", sql)
+	}
+}
+
+// v0.10.530 — Operator-reported (prod): 1 saatlik pencerede aramalı liste
+// boş; boş-durum metni "ham veri TTL'i aştı" dedi, oysa pencere saklama
+// içindeydi ve arama metni span'lerde geçmiyordu. Ayıran sayım YÜKLEMSİZ
+// olmalı: operatörün yazdığı hiçbir daraltma taşınmaz, yalnız kapsam taşınır.
+// Bir yüklem sızarsa sayım yine 0 döner ve ipucu yeniden yalan söyler.
+func TestServiceSpansFilterKeepsOnlyScope(t *testing.T) {
+	from := time.Date(2026, 9, 7, 9, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+	x := &TraceExplain{}
+	f := TraceFilter{
+		Service: "api-gateway", From: from, To: to, Env: "prod", Cluster: "ocp-a", Explain: x,
+		Search: "UPDATE", HasError: true, RootOnly: true, MinMs: 5, MaxMs: 900,
+		AttrKey: "k", AttrVal: "v", TraceID: strings.Repeat("a", 32),
+		TraceIDs: []string{"x"}, CandidateIDs: []string{"y"}, RequireServices: []string{"other"},
+		Filters:    []FilterExpr{{Key: "http.method", Op: "=", Values: []string{"GET"}}},
+		FilterRoot: &FilterGroup{Join: "AND", Filters: []FilterExpr{{Key: "k", Op: "=", Values: []string{"v"}}}},
+		ExtraAttrs: []string{"a"}, MVGap: true, NoPromoted: true,
+	}
+	lf := serviceSpansFilter(f)
+	keep := map[string]bool{"Service": true, "From": true, "To": true, "Env": true, "Cluster": true, "Explain": true}
+	rv := reflect.ValueOf(lf)
+	for i := 0; i < rv.NumField(); i++ {
+		name := rv.Type().Field(i).Name
+		if keep[name] {
+			if rv.Field(i).IsZero() {
+				t.Errorf("kapsam alanı %s taşınmadı", name)
+			}
+			continue
+		}
+		if !rv.Field(i).IsZero() {
+			t.Errorf("yüklem alanı %s sızdı: %v", name, rv.Field(i))
+		}
+	}
+	wc := buildGetTracesWhere(lf, clusterColExpr)
+	sql := countMatchingSpansSQL(wc.sql())
+	for _, want := range []string{"SELECT count() FROM spans", "time >= ?", "time <= ?", "service_name = ?", "deploy_env = ?", "max_execution_time = 10"} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("SQL %q eksik:\n%s", want, sql)
+		}
+	}
+	for _, bad := range []string{"trace_id", "status_code", "parent_id", "duration", "multiSearch", "service_name IN", "attr_", "http.method"} {
+		if strings.Contains(sql, bad) {
+			t.Errorf("SQL yüklem taşıyor %q:\n%s", bad, sql)
+		}
+	}
+	if got, want := len(wc.args), strings.Count(sql, "?"); got != want {
+		t.Errorf("arg sayısı %d, yer tutucu %d: %s", got, want, sql)
+	}
+	// RequireServices tek başına Service'i düşürür (WHERE switch'i) — kapsam
+	// filtresi onu taşımadığı için service_name = ? kalır.
+	if strings.Contains(sql, "IN (") {
+		t.Errorf("RequireServices sızdı: %s", sql)
+	}
+}
+
+// v0.10.530 — kaynak pini: handler ikinci sayımı yalnız servis seçili VE
+// eşleşen 0 iken ister; yanıt anahtarı serviceSpans.
+func TestEmptyDiagServiceSpansWired(t *testing.T) {
+	b, err := os.ReadFile("../api/api.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	for _, want := range []string{
+		`if f.Service != "" && cerr == nil && n == 0 {`,
+		`s.store.CountServiceSpans(ctx, f)`,
+		`diag["serviceSpans"] = sn`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("api.go %q içermiyor", want)
+		}
 	}
 }

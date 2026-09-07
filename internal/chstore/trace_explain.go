@@ -125,6 +125,40 @@ func (s *Store) CountMatchingSpans(ctx context.Context, f TraceFilter) (uint64, 
 	return n, err
 }
 
+// ── v0.10.530 — "TTL'i aştı" ipucu için ikinci sayım ─────────────────────
+// Operator-reported (prod, 1 saatlik pencere): aramalı liste boş, 5 dk MV'de
+// servis için span var → boş-durum metni "ham veri TTL'i aştı" dedi. Yanlıştı:
+// pencere saklama süresinin İÇİNDEYDİ, arama metni o span'lerde geçmiyordu.
+// "MV>0 ∧ eşleşen=0" iki nedeni AYIRAMAZ; ayıran soru "servisin ham span'i bu
+// pencerede var mı": var → yüklem, yok → saklama/ingest boşluğu.
+
+// serviceSpansFilter — saf: operatörün yazdığı HER yüklemi düşürür (arama,
+// çipler, kök, hata, süre, attr, kimlik setleri); yalnız KAPSAM kalır
+// (servis, pencere, env, cluster, explain kaydı). Sıfırdan kurulur, kopyalayıp
+// alan silmez: yeni bir yüklem alanı eklendiğinde kendiliğinden dışarıda
+// kalır (TestServiceSpansFilterKeepsOnlyScope bunu yansımayla pinler).
+func serviceSpansFilter(f TraceFilter) TraceFilter {
+	return TraceFilter{
+		Service: f.Service, From: f.From, To: f.To,
+		Env: f.Env, Cluster: f.Cluster, Explain: f.Explain,
+	}
+}
+
+// CountServiceSpans — servisin ham span sayısı, yüklemsiz. Yalnız Service
+// doluyken: servissiz sayım tüm pencerenin taraması olurdu.
+func (s *Store) CountServiceSpans(ctx context.Context, f TraceFilter) (uint64, error) {
+	if f.Service == "" {
+		return 0, fmt.Errorf("service required")
+	}
+	wc := buildGetTracesWhere(serviceSpansFilter(f), s.clusterExpr())
+	t0 := time.Now()
+	sql := countMatchingSpansSQL(wc.sql())
+	var n uint64
+	err := s.telemetryReadConn().QueryRow(ctx, sql, wc.args...).Scan(&n)
+	f.Explain.step("empty-diag-service-count", sql, wc.args, t0, int(n), err)
+	return n, err
+}
+
 // countMatchingTracesSQL — v0.10.341: trace-düzeyi teşhis sayımı.
 func countMatchingTracesSQL(whereSQL, havingSQL string) string {
 	return `SELECT count() FROM (SELECT trace_id FROM spans ` + whereSQL + ` GROUP BY trace_id` + havingSQL + `) SETTINGS max_execution_time = 10`

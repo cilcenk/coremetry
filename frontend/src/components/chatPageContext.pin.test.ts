@@ -14,3 +14,15 @@ describe('sayfa bağlamı kablolaması', () => {
     expect(hook).toContain('o.page || undefined, o.pinnedPage || undefined');
   });
 });
+
+// v0.10.540 — pin: eski alanlar pinden, pinnedPage gövdeye, çip/düğme, temizle pini düşürür.
+describe('pin kablolaması', () => {
+  it('pinnedLegacy ezmesi + pinnedPage + çip + clearAll', () => {
+    expect(shell).toContain("service: pinnedLegacy ? (pinnedLegacy.service ?? '') : currentService");
+    expect(shell).toContain('pinnedPage: pinned ?? undefined');
+    expect(shell).toContain('onRemove={() => setPinned(null)}');
+    expect(shell).toContain('hasPinnableContext(page) && (');
+    expect(shell).toContain('const clearAll = useCallback(() => { clear(); setPinned(null); }');
+    expect(shell).not.toContain('onClick={clear}');
+  });
+});

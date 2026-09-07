@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { mergeOpenHref } from '@/lib/openHref'; // v0.10.460
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { pageContext } from '@/lib/pageContext';
+import { hasPinnableContext, legacyFromPinned, pinLabelTR, readPin, writePin } from '@/lib/pinnedContext';
+import type { PageContext } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 import { Chip } from '@/components/ui/Chip';
 import { Drawer } from '@/components/ui/Drawer';
@@ -127,6 +129,13 @@ export function CopilotChat() {
   // v0.10.539 (Faz 3.2) — sayfa bağlamı: URL'den saf serileştirici; rota
   // değişince yeniden hesaplanır (chat AppShell'de tek mount).
   const page = useMemo(() => pageContext(loc.pathname, loc.search), [loc.pathname, loc.search]);
+  // v0.10.540 (Faz 3.2b) — PIN: operatör sayfa bağlamını sohbete sabitler;
+  // sayfa değişse de özne kalır. Eski düz alanlar pinden türetilir (guided/
+  // drawer kademeleri sunucu değişikliği olmadan pini izler); sunucu önsözde
+  // pini ÖNCE yazar. Oturuma bağlı (sessionStorage), konuşma temizlenince düşer.
+  const [pinned, setPinnedState] = useState<PageContext | null>(() => readPin());
+  const setPinned = useCallback((ctx: PageContext | null) => { setPinnedState(ctx); writePin(ctx); }, []);
+  const pinnedLegacy = useMemo(() => (pinned ? legacyFromPinned(pinned) : null), [pinned]);
   const [sp, setSp] = useSearchParams();
   // v0.9.653 — ekrandaki özneden türeyen başlangıç çipi. Saf çözümleyici
   // (lib/chatContext.ts); rota değişince kendiliğinden güncelleniyor.
@@ -191,8 +200,15 @@ export function CopilotChat() {
   // useChatThread'in dosya başında.
   const { turns, busy, send, stop, clear, load, conversationId, last, showFollowups } =
     useChatThread({
-      service: currentService, operation: currentOp, rangeS, toMs, trace: currentTrace, env,
+      // v0.10.540 — pin varken eski alanlar pinden (boş alan = kapsamsız, ekrandan DEĞİL).
+      service: pinnedLegacy ? (pinnedLegacy.service ?? '') : currentService,
+      operation: pinnedLegacy ? (pinnedLegacy.operation ?? '') : currentOp,
+      rangeS: pinnedLegacy ? pinnedLegacy.rangeS : rangeS,
+      toMs: pinnedLegacy ? pinnedLegacy.toMs : toMs,
+      trace: pinnedLegacy ? (pinnedLegacy.trace ?? '') : currentTrace,
+      env: pinnedLegacy ? (pinnedLegacy.env ?? '') : env,
       page, // v0.10.539 — sayfa bağlamı protokolü (lib/pageContext, her turda)
+      pinnedPage: pinned ?? undefined, // v0.10.540 — sabitlenmiş bağlam
       profile: profile || undefined,
       persist: true,
       onOpen: href => {
@@ -203,6 +219,8 @@ export function CopilotChat() {
         navigate(to, { replace: true });
       },
     });
+  // v0.10.540 — yeni konuşma pini de düşürür (pin thread'e bağlı).
+  const clearAll = useCallback(() => { clear(); setPinned(null); }, [clear, setPinned]);
 
   // v0.9.1258 — konuşma deep-link'i (?chat=<convId>): URL → state yarısı.
   // Ref sig-guard: aynı değer bir kez yüklenir; load zaten akış sürerken
@@ -269,7 +287,7 @@ export function CopilotChat() {
       setThreads(prev => (prev ?? []).filter(x => x.id !== t.id));
       // Ekrandaki konuşma silinen thread ise, kabuk artık ölü bir
       // kimliğe yazmaya devam etmemeli: yeni konuşma hâline dönüyoruz.
-      if (conversationId === t.id) clear();
+      if (conversationId === t.id) clearAll();
     } catch (e) {
       setHistErr(e instanceof Error ? e.message : String(e));
     }
@@ -379,8 +397,23 @@ export function CopilotChat() {
               }} title={subject ? `${aiSubjectTitle(subject)} · ${aiSubjectSubtitle(subject)}` : currentService ? `Sorular ${currentService} servisine kapsanır` : 'Filo geneli sorular'}>
                 {subject
                   ? `✨ ${aiSubjectTitle(subject)} · ${aiSubjectSubtitle(subject)}`
-                  : `${currentService ? `📍 ${currentService}` : 'filo geneli'}${env ? ` · env ${env}` : ''}`}
+                  : pinned
+                    ? ''
+                    : `${currentService ? `📍 ${currentService}` : 'filo geneli'}${env ? ` · env ${env}` : ''}`}
               </span>
+              {/* v0.10.540 — pin çipi / sabitle düğmesi (özne kipinde yok: Explain
+                  zaten özne-kilitli). */}
+              {!subject && pinned && (
+                <Chip pill size="sm" active onRemove={() => setPinned(null)} removeLabel="Sabitlemeyi kaldır"
+                  title={`Sabitlenmiş bağlam — sayfa değişse de sorular buna kapsanır: ${pinLabelTR(pinned)}`}
+                  style={{ flexShrink: 1, minWidth: 0, maxWidth: 260 }}>
+                  📌 {pinLabelTR(pinned)}
+                </Chip>
+              )}
+              {!subject && !pinned && hasPinnableContext(page) && (
+                <Button variant="ghost" size="sm" onClick={() => setPinned(page)}
+                  title={`Bu sayfanın bağlamını sohbete sabitle: ${pinLabelTR(page)}`} aria-label="Sayfa bağlamını sabitle">📌</Button>
+              )}
               {model && (
                 <span className="chip" style={{ flexShrink: 0, fontSize: 10.5 }} title="Cevapları üreten model">
                   <span className="k">model</span>
@@ -404,7 +437,7 @@ export function CopilotChat() {
                 title={expanded ? 'Daralt' : 'Genişlet'}>
                 {expanded ? '⊟' : '⤢'}</Button>
               {!subject && turns.length > 0 && (
-                <Button variant="secondary" size="sm" onClick={clear}
+                <Button variant="secondary" size="sm" onClick={clearAll}
                   title="Konuşmayı temizle ve yeni konuşma başlat">Temizle</Button>
               )}
             </div>
@@ -428,7 +461,7 @@ export function CopilotChat() {
                 </span>
                 <span style={{ flex: 1 }} />
                 <Button variant="secondary" size="xs"
-                  onClick={() => { clear(); setShowHistory(false); }}
+                  onClick={() => { clearAll(); setShowHistory(false); }}
                   title="Ekranı boşalt, yeni bir konuşma başlat">+ Yeni konuşma</Button>
               </div>
               {threads === undefined && (

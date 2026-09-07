@@ -425,6 +425,24 @@ function SensitivitySection() {
               ona ulaşmıyordu: üstteki "terfi ettir" kutucuğu BAŞKA bir
               hattı yönetiyor. Operatör onu kapatıp metrik dedektörünün
               incident açmaya devam ettiğini görüyordu. */}
+          {/* v0.10.543 — service_silent dedektörü: VARSAYILAN KAPALI (operatör
+              2026-09-07: "Anomali service silent'lara ihtiyacım yok"). Kapalıyken
+              açık kalan service_silent problemleri bir sonraki tikte çözülür. */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 4 }}>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input type="checkbox" checked={cfg.serviceSilent === true}
+                onChange={e => setCfg({ ...cfg, serviceSilent: e.target.checked })} />
+              <span style={{ fontSize: 13, color: 'var(--text)' }}>
+                Sessiz servis anomalisi (<code>service_silent</code>)
+              </span>
+            </label>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, marginLeft: 24, lineHeight: 1.5 }}>
+              Açıkken, 15 dakika boyunca hiç span üretmeyen (öncesinde düzenli trafiği olan)
+              servis için critical &quot;Anomaly · Service silent&quot; problemi açılır. Varsayılan
+              KAPALI: kapanıp açılan servisler incident listesini dolduruyordu. Kapatınca açık
+              kalanlar bir sonraki tikte çözülür.
+            </div>
+          </div>
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 4 }}>
             <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input type="checkbox" checked={cfg.attachToIncident !== false}

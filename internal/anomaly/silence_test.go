@@ -1,6 +1,12 @@
 package anomaly
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/cilcenk/coremetry/internal/chstore"
+)
 
 // v0.9.1051 (Faz 0.3) regresyon pini — service_silent dedektörü.
 // "Servis tamamen sustu" sınıfı varsayılan kurulumda tamamen kördü
@@ -57,3 +63,48 @@ func TestSilenceVerdict(t *testing.T) {
 		}
 	})
 }
+
+// v0.10.543 — operatör: "Anomali service silent'lara ihtiyacım yok. Olmasınlar."
+// Dedektör VARSAYILAN KAPALI (nil ⇒ false); kapalıyken açık service_silent
+// problemleri kapatılır; tik kapıyı ServiceSilentEnabled ile okur.
+func TestServiceSilentDisabledByDefault(t *testing.T) {
+	var c chstore.AnomalySensitivityConfig
+	if c.ServiceSilentEnabled() {
+		t.Fatal("nil ⇒ kapalı olmalı")
+	}
+	if chstore.DefaultAnomalySensitivity().ServiceSilentEnabled() {
+		t.Fatal("varsayılan kapalı")
+	}
+	on := chstore.NormalizeAnomalySensitivity(chstore.AnomalySensitivityConfig{ServiceSilent: boolPtrT(true)})
+	if !on.ServiceSilentEnabled() {
+		t.Fatal("açıkça true → açık")
+	}
+	off := chstore.NormalizeAnomalySensitivity(chstore.AnomalySensitivityConfig{})
+	if off.ServiceSilent == nil || *off.ServiceSilent {
+		t.Fatal("normalize kapalıyı açık yazmalı (blob dürüst)")
+	}
+	all := []*chstore.Problem{
+		{ID: "1", RuleID: "anomaly:api:service_silent", Service: "api"},
+		{ID: "2", RuleID: "anomaly:api:error_rate", Service: "api"},
+		nil,
+		{ID: "", RuleID: "anomaly:x:service_silent"},
+		{ID: "3", RuleID: "anomaly:pay:service_silent", Service: "pay"},
+	}
+	got := silentProblemsToResolve(all)
+	if len(got) != 2 || got[0].ID != "1" || got[1].ID != "3" {
+		t.Fatalf("yalnız açık service_silent: %+v", got)
+	}
+	src, err := os.ReadFile("anomaly.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	i := strings.Index(s, "if !sens.ServiceSilentEnabled() {")
+	j := strings.Index(s, "d.resolveSilentProblems(ctx, snap)")
+	k := strings.Index(s, "d.checkSilence(ctx, svc, rates, snap, sens)")
+	if i < 0 || j < 0 || k < 0 || !(i < j && j < k) {
+		t.Fatalf("tik kapısı: kapalı → çöz, açık → checkSilence (i=%d j=%d k=%d)", i, j, k)
+	}
+}
+
+func boolPtrT(b bool) *bool { return &b }

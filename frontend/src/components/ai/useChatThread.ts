@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import type { ChatMessage, ChatTurn } from '@/lib/types';
-import { rateTurn } from './ChatBubble';
 import { isAbortError, settleStoppedTurn } from './chatAbort';
 import {
   PERSIST_DEBOUNCE_MS, hasCompletedExchange, persistMessages, restoreTurns,
@@ -234,10 +233,6 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
     }
   }, [schedulePersist]);
 
-  const rate = useCallback((idx: number, verdict: 1 | -1) => {
-    rateTurn(turnsRef.current, idx, verdict, setTurns);
-  }, []);
-
   // clear = YENİ KONUŞMA (v0.9.1139'da anlamı genişledi). Turların
   // yanında kalıcı kimlik de düşer: aksi hâlde "Temizle" sonrası ilk
   // yazım, arşivdeki dolu thread'in ÜSTÜNE boş/yeni bir gövde yazardı.
@@ -281,5 +276,5 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
     abortRef.current?.abort();
   }, []);
 
-  return { turns, busy, send, stop, rate, clear, load, conversationId, last, showFollowups };
+  return { turns, busy, send, stop, clear, load, conversationId, last, showFollowups };
 }

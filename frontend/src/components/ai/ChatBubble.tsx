@@ -1,7 +1,7 @@
 import { Fragment, useState, type ReactNode } from 'react';
 import { chatErrorText } from './chatErrorText';
 import { Link, useNavigate } from 'react-router-dom';
-import { api } from '@/lib/api';
+import { AIFeedbackButtons } from './AIFeedbackButtons';
 import { escapeHTML } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import type { ChatTurn, ChatStepDetail } from '@/lib/types';
@@ -202,21 +202,6 @@ export function renderMessage(text: string, streaming = false) {
   return blocks.length === 0 ? <MdInline text={text} /> : <>{out}</>;
 }
 
-// rateTurn — 👍/👎 POST'u. İyimser güncelleme + hata hâlinde geri alma;
-// iki yüzey de aynı davranışı paylaşsın diye burada (v0.9.479).
-export function rateTurn(
-  turns: ChatTurn[], idx: number, verdict: 1 | -1,
-  setTurns: (fn: (prev: ChatTurn[]) => ChatTurn[]) => void,
-) {
-  const turn = turns[idx];
-  if (!turn?.exchangeId || turn.verdict === verdict) return;
-  const prior = turn.verdict;
-  const exchangeId = turn.exchangeId;
-  setTurns(prev => prev.map((t, i) => (i === idx ? { ...t, verdict } : t)));
-  api.postAIFeedback({ exchangeId, verdict }).catch(() => {
-    setTurns(prev => prev.map((t, i) => (i === idx ? { ...t, verdict: prior } : t)));
-  });
-}
 
 // ToolChips — ⚙ ilerleme çipleri + tıklayınca açılan KANIT bloğu
 // (v0.9.1181, AI Faz 4.3).
@@ -448,7 +433,7 @@ export function ToolStepsPanel({ details: allDetails, error, turnDone, evId, set
   );
 }
 
-export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | -1) => void }) {
+export function ChatBubble({ turn }: { turn: ChatTurn }) {
   const isUser = turn.role === 'user';
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
@@ -602,16 +587,9 @@ export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | 
         style={{ padding: '0 6px', fontSize: 12 }}>
             {copied ? '✓' : '⧉'}
           </Button>
-          {!!turn.exchangeId && onRate && (
-            <>
-              <Button variant="ghost" size="sm" onClick={() => onRate(1)}
-                title="Faydalı" aria-label="Cevabı faydalı işaretle"
-                style={{ padding: '0 6px', fontSize: 12, opacity: turn.verdict === 1 ? 1 : 0.4 }}>👍</Button>
-              <Button variant="ghost" size="sm" onClick={() => onRate(-1)}
-                title="Faydasız" aria-label="Cevabı faydasız işaretle"
-                style={{ padding: '0 6px', fontSize: 12, opacity: turn.verdict === -1 ? 1 : 0.4 }}>👎</Button>
-            </>
-          )}
+          {/* v0.10.537 — paylaşılan atom: 👎'de yorum kutusu (arşivden gelen
+              turn exchangeId taşımaz → atom hiç çizilmez, chatPersist sözleşmesi). */}
+          {!!turn.exchangeId && <AIFeedbackButtons exchangeId={turn.exchangeId} />}
         </div>
       )}
     </div>

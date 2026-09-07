@@ -25,6 +25,7 @@
 import { useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
 import { api } from '@/lib/api';
 import { verdictTone, verdictIsDegraded, verdictHasShieldWarning, measuredText, canRateVerdict } from './rcaVerdictView';
 import type { RCAVerdict } from '@/lib/types';
@@ -69,7 +70,6 @@ export function RCAVerdictPanel({ v, exchangeId }: { v: RCAVerdict; exchangeId?:
   const sh = v.shields;
   const degraded = verdictIsDegraded(v);
   // v0.9.592 — operatör oyu. undefined = henüz oy yok.
-  const [rated, setRated] = useState<1 | -1 | undefined>(undefined);
 
   return (
     <div style={{
@@ -271,39 +271,20 @@ export function RCAVerdictPanel({ v, exchangeId }: { v: RCAVerdict; exchangeId?:
           İyimser güncelleme + hata hâlinde geri alma — sohbetteki
           rateTurn (ChatBubble.tsx) ile aynı davranış. Ray da aynı:
           POST /api/ai/feedback, surface SUNUCUDA çözülür. */}
+      {/* v0.10.537 — paylaşılan atom (AIFeedbackButtons): 👎'de yorum kutusu da
+          gelir; elle yazılmış rateVerdict kopyası silindi. Kimlik yoksa soru
+          HİÇ sorulmaz (canRateVerdict). */}
       {canRateVerdict(exchangeId) && (
         <div style={{
           marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5,
+          display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 11.5,
           color: 'var(--text3)',
         }}>
-          <span>Bu değerlendirme doğru mu?</span>
-          <Button
-            variant="ghost" size="sm" aria-label="doğru"
-            aria-pressed={rated === 1}
-            className={rated === 1 ? 'is-ok' : undefined}
-            onClick={() => rateVerdict(exchangeId!, 1, rated, setRated)}>👍</Button>
-          <Button
-            variant="ghost" size="sm" aria-label="yanlış"
-            aria-pressed={rated === -1}
-            className={rated === -1 ? 'is-err' : undefined}
-            onClick={() => rateVerdict(exchangeId!, -1, rated, setRated)}>👎</Button>
-          {rated !== undefined && <span>Kaydedildi.</span>}
+          <span style={{ paddingTop: 12 }}>Bu değerlendirme doğru mu?</span>
+          <AIFeedbackButtons exchangeId={exchangeId!} />
         </div>
       )}
     </div>
   );
 }
 
-// rateVerdict — oyu gönderir. İyimser güncelleme, hata hâlinde GERİ
-// ALMA: başarısız bir POST'tan sonra "Kaydedildi." yazmak, düzeltmeye
-// çalıştığımız ölü affordance'ın daha sinsi bir biçimi olurdu.
-function rateVerdict(
-  exchangeId: string, verdict: 1 | -1,
-  prior: 1 | -1 | undefined,
-  setRated: (v: 1 | -1 | undefined) => void,
-) {
-  if (prior === verdict) return;
-  setRated(verdict);
-  api.postAIFeedback({ exchangeId, verdict }).catch(() => setRated(prior));
-}

@@ -2132,10 +2132,10 @@ export const api = {
   // summarises RED + baseline + top errors + deploys + neighbours and the
   // operator-configured model returns the {ozet, olasi_neden, kanit, oneriler,
   // guven} verdict. refresh bypasses the 5-min Redis cache.
-  analyzeService: (service: string, rangeS?: number, refresh?: boolean) =>
+  analyzeService: (service: string, rangeS?: number, refresh?: boolean, signal?: AbortSignal) =>
     request<import('./types').ServiceAnalysisResponse>(
       `/api/copilot/analyze-service?service=${encodeURIComponent(service)}${rangeS ? `&rangeS=${rangeS}` : ''}${refresh ? '&refresh=1' : ''}`,
-      { method: 'POST' },
+      { method: 'POST', signal }, // v0.10.537 — iptal (AIAnalysisPanel)
     ),
 
   // v0.9.831 — includeCode: opsiyonel gövde. Verilmediğinde istek

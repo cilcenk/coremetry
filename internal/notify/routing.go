@@ -2,6 +2,7 @@ package notify
 
 import (
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -127,6 +128,54 @@ const unmatchedChannelID = "__unmatched__"
 //   - (adresler, teamMailSent)    → ulaşılabilir; kapılar geçilirse
 //     gidecek. Çağıran dedup kapılarında bunu teamMailAlreadySent'e
 //     düşürebilir.
+//
+// teamMailReachRule — v0.10.519: kuralın kendi ekip hedefi (RuleNotify)
+// varsa alıcı kümesi ondan. Ana vida (tc.Enabled) yine kapıdır — kapalıysa
+// hiçbir ekip maili gitmez. minSeverity eşiği kural hedefinde UYGULANMAZ:
+// operatör kuralı bilerek o ekibe bağladı — yalnız "info" ciddiyeti yine
+// mail üretmez (sel koruması). rn nil / ekipsiz → eski yol birebir.
+func teamMailReachRule(tc chstore.TeamContacts, md *chstore.ServiceMetadata, severity string, rn *chstore.RuleNotify) ([]string, teamMailOutcome) {
+	if rn == nil || len(rn.Teams) == 0 {
+		return teamMailReach(tc, md, severity)
+	}
+	if !tc.Enabled || strings.EqualFold(strings.TrimSpace(severity), "info") {
+		return nil, teamMailOff
+	}
+	to := resolveRuleTeamRecipients(rn, md, tc)
+	if len(to) == 0 {
+		return nil, teamMailNoRecipients
+	}
+	return to, teamMailSent
+}
+
+// resolveRuleTeamRecipients — SAF: kural ekipleri (+ mode=add ise sahip +
+// SRE) → tekilleştirilmiş adres kümesi. Adresi olmayan ekip sessizce
+// düşer; Settings → Team routing boşluğu gösterir.
+func resolveRuleTeamRecipients(rn *chstore.RuleNotify, md *chstore.ServiceMetadata, tc chstore.TeamContacts) []string {
+	if rn == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var out []string
+	add := func(emails []string) {
+		for _, e := range emails {
+			k := strings.ToLower(strings.TrimSpace(e))
+			if k == "" || seen[k] {
+				continue
+			}
+			seen[k] = true
+			out = append(out, e)
+		}
+	}
+	if rn.Mode != chstore.RuleNotifyModeOnly {
+		add(resolveTeamRecipients(md, tc))
+	}
+	for _, team := range rn.Teams {
+		add(tc.EmailsForTeam(team))
+	}
+	return out
+}
+
 func teamMailReach(tc chstore.TeamContacts, md *chstore.ServiceMetadata, severity string) ([]string, teamMailOutcome) {
 	if !tc.Enabled || !tc.SeverityAllows(severity) {
 		return nil, teamMailOff

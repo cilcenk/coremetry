@@ -74,6 +74,9 @@ type AlertRule struct {
 	WatcherJSON string `json:"watcherJson,omitempty"`
 	// Target — v0.10.331: hedefli kural (alert_target.go); alert_rules.target_json.
 	Target    *RuleTarget `json:"target,omitempty"`
+	// Notify — v0.10.519: kural bazında ekip bildirimi (alert_notify.go);
+	// alert_rules.notify_json. nil = sahip + SRE (v0.8.429 varsayılanı).
+	Notify *RuleNotify `json:"notify,omitempty"`
 	CreatedAt int64       `json:"createdAt"` // unix nanoseconds
 }
 
@@ -755,7 +758,7 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, name, service, metric, comparator, threshold, window_sec,
 		       severity, enabled, built_in, runbook_url, for_sec, min_samples,
-		       cooldown_sec, log_query, watcher_json, `+s.alertRuleTargetSelect()+`, toUnixTimestamp64Nano(created_at)
+		       cooldown_sec, log_query, watcher_json, `+s.alertRuleTargetSelect()+`, `+s.alertRuleNotifySelect()+`, toUnixTimestamp64Nano(created_at)
 		FROM alert_rules FINAL
 		ORDER BY created_at DESC`)
 	if err != nil {
@@ -766,14 +769,15 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	for rows.Next() {
 		var r AlertRule
 		var enabled, builtIn uint8
-		var targetJSON string
+		var targetJSON, notifyJSON string
 		if err := rows.Scan(&r.ID, &r.Name, &r.Service, &r.Metric, &r.Comparator,
 			&r.Threshold, &r.WindowSec, &r.Severity, &enabled, &builtIn,
 			&r.RunbookURL, &r.ForSec, &r.MinSamples, &r.CooldownSec,
-			&r.LogQuery, &r.WatcherJSON, &targetJSON, &r.CreatedAt); err != nil {
+			&r.LogQuery, &r.WatcherJSON, &targetJSON, &notifyJSON, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		r.Target = decodeRuleTarget(targetJSON)
+		r.Notify = decodeRuleNotify(notifyJSON)
 		r.Enabled = enabled == 1
 		r.BuiltIn = builtIn == 1
 		out = append(out, r)
@@ -829,14 +833,21 @@ func (s *Store) UpsertAlertRule(ctx context.Context, r AlertRule) error {
 	if r.Target != nil && !s.hasAlertRuleTargetCol.Load() && !s.probeAlertRuleTargetCol(ctx) {
 		return ErrRuleTargetColumnMissing
 	}
+	// v0.10.519 — notify_json aynı kapı (alert_notify.go).
+	r.Notify = NormalizeRuleNotify(r.Notify)
+	if r.Notify != nil && !s.hasAlertRuleNotifyCol.Load() && !s.probeAlertRuleNotifyCol(ctx) {
+		return ErrRuleNotifyColumnMissing
+	}
 	cols := `(id, name, service, metric, comparator, threshold, window_sec,
 		 severity, enabled, built_in, runbook_url, for_sec, min_samples,
-		 cooldown_sec, log_query, watcher_json, created_at, version)`
+		 cooldown_sec, log_query, watcher_json`
 	if s.hasAlertRuleTargetCol.Load() {
-		cols = `(id, name, service, metric, comparator, threshold, window_sec,
-		 severity, enabled, built_in, runbook_url, for_sec, min_samples,
-		 cooldown_sec, log_query, watcher_json, target_json, created_at, version)`
+		cols += `, target_json`
 	}
+	if s.hasAlertRuleNotifyCol.Load() {
+		cols += `, notify_json`
+	}
+	cols += `, created_at, version)`
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO alert_rules `+cols)
 	if err != nil {
 		return err
@@ -847,6 +858,9 @@ func (s *Store) UpsertAlertRule(ctx context.Context, r AlertRule) error {
 		r.WatcherJSON}
 	if s.hasAlertRuleTargetCol.Load() {
 		args = append(args, encodeRuleTarget(r.Target))
+	}
+	if s.hasAlertRuleNotifyCol.Load() {
+		args = append(args, encodeRuleNotify(r.Notify))
 	}
 	args = append(args, time.Now().UTC(), uint64(time.Now().UnixNano()))
 	if err := batch.Append(args...); err != nil {
@@ -891,20 +905,21 @@ func (s *Store) SetAlertRuleEnabled(ctx context.Context, id string, enabled bool
 func (s *Store) GetAlertRule(ctx context.Context, id string) (*AlertRule, error) {
 	var r AlertRule
 	var enabled, builtIn uint8
-	var targetJSON string
+	var targetJSON, notifyJSON string
 	err := s.conn.QueryRow(ctx, `
 		SELECT id, name, service, metric, comparator, threshold, window_sec,
 		       severity, enabled, built_in, runbook_url, for_sec, min_samples,
-		       cooldown_sec, log_query, watcher_json, `+s.alertRuleTargetSelect()+`, toUnixTimestamp64Nano(created_at)
+		       cooldown_sec, log_query, watcher_json, `+s.alertRuleTargetSelect()+`, `+s.alertRuleNotifySelect()+`, toUnixTimestamp64Nano(created_at)
 		FROM alert_rules FINAL WHERE id = ? LIMIT 1`, id).
 		Scan(&r.ID, &r.Name, &r.Service, &r.Metric, &r.Comparator, &r.Threshold,
 			&r.WindowSec, &r.Severity, &enabled, &builtIn,
 			&r.RunbookURL, &r.ForSec, &r.MinSamples, &r.CooldownSec,
-			&r.LogQuery, &r.WatcherJSON, &targetJSON, &r.CreatedAt)
+			&r.LogQuery, &r.WatcherJSON, &targetJSON, &notifyJSON, &r.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	r.Target = decodeRuleTarget(targetJSON)
+	r.Notify = decodeRuleNotify(notifyJSON)
 	r.Enabled = enabled == 1
 	r.BuiltIn = builtIn == 1
 	return &r, nil

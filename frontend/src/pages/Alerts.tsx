@@ -19,6 +19,8 @@ import {
   type UserPreset, DB_STMT_METRICS, isDbStmtMetric } from './alerts/constants';
 import { ThresholdField } from './alerts/ThresholdField';
 import { StatementPicker } from './alerts/StatementPicker';
+import { NotifyTeamsField } from './alerts/NotifyTeamsField';
+import { notifySummary } from './alerts/notifyTeams';
 import { ConditionPreview } from './alerts/ConditionPreview';
 import { NoisyRulesPanel } from './alerts/NoisyRulesPanel';
 import { WatcherImportModal } from './alerts/WatcherImportModal';
@@ -554,6 +556,13 @@ export default function AlertsPage() {
                   style={{ width: '100%' }} />
               </Field>
             </div>
+            {/* v0.10.519 — kural bazında ekip bildirimi: bu kural açılınca hangi
+                ekip(ler) mail alır; boş = sahip + SRE (Settings → Team routing). */}
+            <div style={{ marginTop: 10 }}>
+              <Field label="Bildirim — ekipler (isteğe bağlı)">
+                <NotifyTeamsField value={draft.notify} onChange={n => setDraft(d => ({ ...d, notify: n }))} />
+              </Field>
+            </div>
             {/* Live condition preview — the rule's metric over the last hour with
                 the threshold line + a "would have fired N×" count, so the
                 operator tunes the threshold against real data before saving. */}
@@ -652,7 +661,13 @@ export default function AlertsPage() {
                   const isTarget = !!r.target;
                   return (
                   <tr key={r.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 40px' }}>
-                    <td><b>{r.name}</b></td>
+                    <td>
+                      <b>{r.name}</b>
+                      {/* v0.10.519 — kuralın ekip hedefi (boş = sahip + SRE). */}
+                      {r.notify?.teams?.length ? (
+                        <div className="mono" style={{ fontSize: 10, color: 'var(--text3)' }} title="Bu kural açılınca mail alacak ekipler (Settings → Team routing adresleri)">{notifySummary(r.notify)}</div>
+                      ) : null}
+                    </td>
                     <td className="mono">{isTarget ? '— all callers —' : (r.service || (isWatcher || isEsWatcher ? '— logs —' : '— all —'))}</td>
                     <td className="mono" style={{ maxWidth: 380 }}>
                       {isTarget ? (

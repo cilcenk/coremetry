@@ -726,17 +726,28 @@ func (s *Store) spanmetricsCoverageStart(ctx context.Context) time.Time {
 	s.smCovMu.RUnlock()
 
 	earliest := time.Now()
-	var probed time.Time
-	// v0.9.28 (second-resolution audit R3) — zaman-sınırlı WHERE:
-	// bağsız min(time_bucket) TTL-budanmış ama henüz merge edilmemiş
-	// part'ların BAYAT metadata'sından sahte-eski değer döndürüyordu
-	// (canlıda 00:16 vs gerçek 08:17 ölçüldü). 1m tier TTL 30g; 31g
-	// pencere yalnız CANLI en-erken bucket'ı görür (+ CH hard-
-	// constraint: spanmetrics sorgusu time-bounded WHERE ister).
-	row := s.conn.QueryRow(ctx, "SELECT min(time_bucket) FROM "+s.spanmetricsSourceFor("spanmetrics_1m")+
-		" WHERE time_bucket >= now() - INTERVAL 31 DAY SETTINGS max_execution_time = 5")
-	if err := row.Scan(&probed); err == nil && probed.Year() >= 2000 {
-		earliest = probed
+	// v0.10.520 — ÖNCE part üst verisi (system.parts min_date): tarama yok,
+	// milisaniye. Lokal ölçüm (2026-09-07): min(time_bucket) taraması yük
+	// altında 5 s tavanını aşıyor (7 s), fail-safe now() dönüyor ve SLO
+	// gecikme yolu (v0.10.518) ile metrik çözümleyici SESSİZCE ham yola
+	// düşüyordu — "doğruluk bir zamanlamaya asılı" sınıfı. Part yolu en
+	// erken TAM günü verir (ilk gün kısmi olabilir); ilk gün bugün/dünse
+	// tarama probu (o zaman zaten küçük) karar verir.
+	if d, ok := s.spanmetricsCoverageFromParts(ctx, time.Now()); ok {
+		earliest = d
+	} else {
+		var probed time.Time
+		// v0.9.28 (second-resolution audit R3) — zaman-sınırlı WHERE:
+		// bağsız min(time_bucket) TTL-budanmış ama henüz merge edilmemiş
+		// part'ların BAYAT metadata'sından sahte-eski değer döndürüyordu
+		// (canlıda 00:16 vs gerçek 08:17 ölçüldü). 1m tier TTL 30g; 31g
+		// pencere yalnız CANLI en-erken bucket'ı görür (+ CH hard-
+		// constraint: spanmetrics sorgusu time-bounded WHERE ister).
+		row := s.conn.QueryRow(ctx, "SELECT min(time_bucket) FROM "+s.spanmetricsSourceFor("spanmetrics_1m")+
+			" WHERE time_bucket >= now() - INTERVAL 31 DAY SETTINGS max_execution_time = 5")
+		if err := row.Scan(&probed); err == nil && probed.Year() >= 2000 {
+			earliest = probed
+		}
 	}
 
 	s.smCovMu.Lock()
@@ -744,6 +755,74 @@ func (s *Store) spanmetricsCoverageStart(ctx context.Context) time.Time {
 	s.smCovVal = earliest
 	s.smCovMu.Unlock()
 	return earliest
+}
+
+// spanmetricsCoverageFromParts — v0.10.520: kapsam başlangıcı system.parts
+// üst verisinden (PARTITION BY toDate(time_bucket) → min_date dolu). Küme
+// kipinde clusterAllReplicas (retention_mv.go emsali); spanmetrics_1m
+// terfi edilmemiş sınıf, adı her kipte bare (mvStorageName). Karar saf
+// coverageFromPartsDate'te.
+func (s *Store) spanmetricsCoverageFromParts(ctx context.Context, now time.Time) (time.Time, bool) {
+	// Combined MV'nin deposu `.inner_id.<uuid>` — system.parts.table MV adını
+	// DEĞİL iç tabloyu taşır (lokal ölçüm 2026-09-07: MV adıyla 0 part).
+	// Çözümleyici retention'ınki (mvInnerTablesCluster; küme kipinde tüm
+	// host'lar, uuid ayrışabilir).
+	// Ad her kümede aynı değil: bazı kurulumlarda MV bare adla (mvStorageName
+	// sözleşmesi), bazılarında `_local` + Distributed sarmalayıcı (lokal küme
+	// 2026-09-07: spanmetrics_1m = Distributed, spanmetrics_1m_local = MV).
+	// İkisi de denenir; sonuç birleşir.
+	var inners []string
+	seen := map[string]bool{}
+	for _, name := range []string{s.mvStorageName("spanmetrics_1m"), "spanmetrics_1m_local"} {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		inners = append(inners, s.mvInnerTablesCluster(ctx, name)...)
+	}
+	if len(inners) == 0 {
+		return time.Time{}, false
+	}
+	for i := range inners {
+		inners[i] = stripBackticks(inners[i])
+	}
+	src := "system.parts"
+	if s.clusterMode() {
+		src = fmt.Sprintf("clusterAllReplicas('%s', system.parts)", s.cfg.ClusterName)
+	}
+	// min_date/max_date `toDate(time_bucket)` partition ifadesinde DOLMUYOR
+	// (lokal ölçüm: 138 part, 1970-01-01). partition_id (`20260812`) her
+	// kurulumda dolu ve yyyymmdd sözlük sırası = tarih sırası.
+	var minPart string
+	var n uint64
+	err := s.conn.QueryRow(ctx, `
+		SELECT min(partition_id), count()
+		FROM `+src+`
+		WHERE database = currentDatabase() AND table IN (?) AND active = 1
+		SETTINGS max_execution_time = 5`, inners).Scan(&minPart, &n)
+	if err != nil || n == 0 {
+		return time.Time{}, false
+	}
+	minDate, perr := time.Parse("20060102", minPart)
+	if perr != nil {
+		return time.Time{}, false
+	}
+	return coverageFromPartsDate(minDate, now)
+}
+
+// coverageFromPartsDate — SAF: en erken partition günü → kapsam başlangıcı.
+// İlk gün KISMİ olabilir (forward-only cutover, TTL budaması) → en erken TAM
+// gün = minDate + 1 gün. O gün henüz gelmediyse (MV bir günlük) ya da tarih
+// sentinel (1970) ise false → çağıran tarama probuna düşer.
+func coverageFromPartsDate(minDate, now time.Time) (time.Time, bool) {
+	if minDate.Year() < 2000 {
+		return time.Time{}, false
+	}
+	d := time.Date(minDate.Year(), minDate.Month(), minDate.Day(), 0, 0, 0, 0, time.UTC).Add(24 * time.Hour)
+	if !d.Before(now) {
+		return time.Time{}, false
+	}
+	return d, true
 }
 
 // MetricPointBudget — v0.10.262 (perf §7 madde 6, CDV-2): açık adımda

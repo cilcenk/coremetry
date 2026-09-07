@@ -18,6 +18,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/devops"
 	"github.com/cilcenk/coremetry/internal/stackparse"
+	"os"
 )
 
 // copilot_code_test.go — v0.9.831 "Kodu da incele".
@@ -778,5 +779,17 @@ func TestCodeContextUsesStrictMetadataRead(t *testing.T) {
 	if strings.Contains(src, "GetServiceMetadata(") {
 		t.Fatal("kod bağlamı yolunda yumuşak GetServiceMetadata çağrısı var — " +
 			"o kapı her okuma arızasını 'pin yok' diye okur")
+	}
+}
+
+// v0.10.544 — kod alıntısı genişletme iki kodlu yolda da (tam + yarım pencere).
+func TestExplainEvidenceExpandsQuotes(t *testing.T) {
+	src, err := os.ReadFile("copilot_code.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	if !strings.Contains(s, "return devops.ExpandQuotes(out, cc), nil") || !strings.Contains(s, "out = devops.ExpandQuotes(out, half)") {
+		t.Fatal("copilotExplainEvidence kod alıntılarını pencereden genişletmeli (her iki kodlu yol)")
 	}
 }

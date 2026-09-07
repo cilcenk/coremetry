@@ -25,3 +25,21 @@ describe('Traces boş liste öz-teşhisi', () => {
     expect(src).toContain('nothing in this window matches search + filters (trace-level');
   });
 });
+
+// v0.10.530 — "TTL'i aştı" ipucu: karar saf modülde, ham sayım yanıttan
+// prop'la gelir; dört dal metinde ayrı yazılır (yüklem dalı Aggregate
+// düğmesi TAŞIMAZ — tavsiye aramayı değiştirmektir).
+describe('Traces boş-durum nedeni', () => {
+  it('serviceSpans prop + tracesEmptyReason + dört dal', () => {
+    expect(src).toContain('serviceSpans={data?.emptyDiag?.serviceSpans}');
+    expect(src).toContain("import { tracesEmptyReason } from './traces/emptyReason';");
+    expect(src).toContain('tracesEmptyReason({ narrowed: !!narrowedFromNs, service, search, mvSpans, serviceSpans })');
+    expect(src).toContain("reason === 'predicate'");
+    expect(src).toContain('none of them match the search');
+    expect(src).toContain("reason === 'aged'");
+    expect(src).toContain('the raw spans table holds <b>none</b> for it here');
+    expect(src).toContain("reason === 'unmeasured'");
+    expect(src).toContain('could not measure whether raw spans');
+    expect(src).not.toContain('const aged = service && search');
+  });
+});

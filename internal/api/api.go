@@ -4327,6 +4327,16 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 			if cerr != nil {
 				diag["error"] = cerr.Error()
 			}
+			// v0.10.530 — MV>0 ∧ eşleşen=0: "TTL" mi "yüklem" mi? Servisin
+			// yüklemsiz ham span sayısı ayırır (trace_explain.go §v0.10.530);
+			// yalnız eşleşen 0 ve servis seçiliyken (bir ek count(), PK öneki).
+			if f.Service != "" && cerr == nil && n == 0 {
+				if sn, serr := s.store.CountServiceSpans(ctx, f); serr == nil {
+					diag["serviceSpans"] = sn
+				} else {
+					diag["serviceSpansError"] = serr.Error()
+				}
+			}
 			// v0.10.339 — Operator-reported (prod): `channel_code = …` çipiyle
 			// liste boş, aynı span'ler çipsiz listede o değerle görünüyor.
 			// Filtre terfi kolonuna derlenmişti ve kolon o replikada değeri

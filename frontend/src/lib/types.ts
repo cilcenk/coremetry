@@ -2512,6 +2512,10 @@ export interface TracesResponse {
   // v0.10.329 — boş liste öz-teşhisi: aynı filtreyle eşleşen SPAN sayısı (yalnız boş sonuçta).
   emptyDiag?: {
     matchingSpans: number; error?: string;
+    // v0.10.530 — servisin YÜKLEMSİZ ham span sayısı (yalnız servis seçili ∧
+    // matchingSpans=0): >0 = yüklem (arama/çip) eşleşmiyor, 0 = ham veri bu
+    // pencerede yok (saklama/ingest). undefined = ölçülmedi.
+    serviceSpans?: number; serviceSpansError?: string;
     // v0.10.339 — terfi kolonu uyuşmazlığı: filtre terfi kolonuna derlenmiş
     // ama kolon bu değeri taşımıyor (host = replika). promotedFallback: aynı
     // istek dizi yoluyla yeniden koştu ve satırlar ondan geldi; sunucu

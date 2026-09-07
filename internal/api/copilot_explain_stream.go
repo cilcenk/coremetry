@@ -1,8 +1,7 @@
 package api
 
 import (
-	"encoding/json"
-	"fmt"
+	"github.com/cilcenk/coremetry/internal/ai/agent/blocks"
 	"net/http"
 	"strings"
 )
@@ -102,50 +101,10 @@ func explainAnswerFrame(text, xid string, extra map[string]any) map[string]any {
 	return m
 }
 
-// sseEmitter — SSE çerçeve yazıcısı, TEK yazılış (v0.9.1129'da
-// deliverExplain'in içinden çıkarıldı; ikinci tüketici insight kartı).
-//
-// BAŞLIKLAR TEMBEL yazılıyor ve bu bilinçli: ilk çerçeve düşene kadar
-// yanıt gövdesine tek bayt gitmez, dolayısıyla üretim İLK BAYTTAN ÖNCE
-// patlarsa (503 kota, bağlantı reddi, model hatası) istemci gerçek bir
-// HTTP hata kodu görür — buffered kiple bayt bayt aynı hata. 200 + SSE
-// içinde gizlenmiş bir hata, FE'nin retry/uyarı davranışını sessizce
-// değiştirirdi. Akış BAŞLADIKTAN sonraki hata artık statü koduyla
-// anlatılamaz; orada `error` + `done{ok:false}` çerçevesi düşer.
-//
-// newSSEEmitter ok=false döner: writer Flush edemiyorsa (ara katman /
-// proxy sarımı) çağıran buffered yola DÜŞMEK zorunda — asla flush
-// edilmeyen yarım bir SSE gövdesi istemciyi asar.
-type sseEmitter struct {
-	w       http.ResponseWriter
-	flusher http.Flusher
-	started bool
-}
-
-func newSSEEmitter(w http.ResponseWriter) (*sseEmitter, bool) {
-	f, ok := w.(http.Flusher)
-	if !ok {
-		return nil, false
-	}
-	return &sseEmitter{w: w, flusher: f}, true
-}
-
-func (e *sseEmitter) emit(event string, payload any) {
-	if !e.started {
-		e.w.Header().Set("Content-Type", "text/event-stream")
-		e.w.Header().Set("Cache-Control", "no-cache")
-		e.w.Header().Set("Connection", "keep-alive")
-		e.w.Header().Set("X-Accel-Buffering", "no")
-		e.started = true
-	}
-	b, _ := json.Marshal(payload)
-	fmt.Fprintf(e.w, "event: %s\ndata: %s\n\n", event, b)
-	e.flusher.Flush()
-}
-
-// wroteAnything — ilk çerçeve düştü mü? Hata yolunun "gerçek HTTP
-// hatası mı, error çerçevesi mi" kararı buna bakar.
-func (e *sseEmitter) wroteAnything() bool { return e.started }
+// SSE çerçeve yazıcısı v0.10.535'te ai/agent/blocks.Emitter'a taşındı (tek
+// yazım: sohbet + explain + insight). Explain TEMBEL başlık ister: ilk çerçeve
+// düşene kadar gövdeye bayt gitmez, üretim ilk bayttan önce patlarsa istemci
+// gerçek HTTP statüsü görür (Started() kararı aşağıda).
 
 // deliverExplain — bir explain cevabının TEK çıkışı.
 //
@@ -169,7 +128,7 @@ func (e *sseEmitter) wroteAnything() bool { return e.started }
 // servis edilir / oraya yazılır (explain_cache.go: anahtar prompt'un
 // tamamından türer, isabet etiketlenir, ?refresh=1 atlar).
 func (s *Server) deliverExplain(w http.ResponseWriter, r *http.Request, xid string, extra map[string]any, run explainRun, service, cacheKey string) {
-	em, canStream := newSSEEmitter(w)
+	em, canStream := blocks.NewEmitter(w, blocks.Options{})
 	// v0.10.35 — KİMLİK KÖPRÜSÜ TEK NOKTADAN. answerRequestIDLinks beş
 	// sohbet yüzeyinde kabloluydu (chat, drawer, guided, RAG) ama ✨ Explain
 	// yüzeylerinin HİÇBİRİNDE yoktu: operatör cevapta bir request_id
@@ -225,18 +184,18 @@ func (s *Server) deliverExplain(w http.ResponseWriter, r *http.Request, xid stri
 		if d == "" {
 			return
 		}
-		em.emit("delta", map[string]string{"text": d})
+		em.Emit("delta", map[string]string{"text": d})
 	})
 	if err != nil {
-		if !em.wroteAnything() {
+		if !em.Started() {
 			writeErr(w, err)
 			return
 		}
-		em.emit("error", map[string]string{"error": err.Error()})
-		em.emit("done", map[string]bool{"ok": false})
+		em.Emit("error", map[string]string{"error": err.Error()})
+		em.Emit("done", map[string]bool{"ok": false})
 		return
 	}
 	s.explainCacheSet(r.Context(), cacheKey, out, xid)
-	em.emit("answer", explainAnswerFrame(out, xid, withLinks(out)))
-	em.emit("done", map[string]bool{"ok": true})
+	em.Emit("answer", explainAnswerFrame(out, xid, withLinks(out)))
+	em.Emit("done", map[string]bool{"ok": true})
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/ai/agent/blocks"
 	agentctx "github.com/cilcenk/coremetry/internal/ai/agent/context"
 	agenttools "github.com/cilcenk/coremetry/internal/ai/agent/tools"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -487,6 +488,13 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		tctx, endTurn := cspan.turn(ctx, round, overflowRetried) // v0.10.425 — ai.chat.turn
 		turn, err := s.copilot.ChatWithTools(tctx, loopPrompt, conv, specs)
 		endTurn(turn.InputTokens, turn.OutputTokens, err)
+		if turn.ToolCallsFromText {
+			// v0.10.545 — sunucu tool_calls üretmedi, çağrı metinden ayrıştırıldı:
+			// operatör çipte görür, /ai için log. Sürekli görünüyorsa serving
+			// stack'te tool parser eksik (docs/audit/cosre-agent-session1.md §0.5).
+			log.Printf("[chat] tool çağrısı METİNDEN ayrıştırıldı (n=%d) — sunucu tool_calls üretmedi", len(turn.ToolCalls))
+			emit("step", map[string]string{"label": "tool çağrısı metinden ayrıştırıldı (sunucu parser yok)"})
+		}
 		totalIn += turn.InputTokens
 		totalOut += turn.OutputTokens
 		// v0.10.26 — BAĞLAM TAŞMASI. isContextOverflowErr yazılı ve

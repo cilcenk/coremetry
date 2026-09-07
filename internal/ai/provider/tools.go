@@ -86,18 +86,21 @@ type ChatRequest struct {
 	Temperature *float64
 	// ExtraBody — v0.10.534: bkz. Request.ExtraBody (yalnız openai-uyumlu gövde).
 	ExtraBody map[string]any
-	System      string
-	Messages    []ChatMessage
-	Tools       []ToolSpec
+	System    string
+	Messages  []ChatMessage
+	Tools     []ToolSpec
 }
 
 // ChatResponse — çözümlenmiş tur. ToolCalls doluysa çağıran onları
 // çalıştırıp döngüye devam eder; boşsa Text nihai cevaptır.
 type ChatResponse struct {
-	Text         string
-	ToolCalls    []ToolCall
-	InputTokens  int
-	OutputTokens int
+	Text      string
+	ToolCalls []ToolCall
+	// ToolCallsFromText — v0.10.545: tool_calls boştu, çağrılar content'ten
+	// ayrıştırıldı (Gemma 4 sınıfı sunucu parser eksikliği). Gözlem için.
+	ToolCallsFromText bool
+	InputTokens       int
+	OutputTokens      int
 }
 
 func (r ChatRequest) resolvedModel(cfg Config, fallback string) string {
@@ -429,6 +432,14 @@ func parseOpenAIToolsChat(respBody []byte, label string) (ChatResponse, error) {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{
 			ID: tc.ID, Name: tc.Function.Name, Input: json.RawMessage(args), Raw: rawCall,
 		})
+	}
+	// v0.10.545 — metin-gömülü çağrı geri düşüşü (toolcall_text.go): yalnız
+	// yapılandırılmış tool_calls YOKKEN; ad süzgeci yok (Executor bilinmeyen adı
+	// sözleşmeyle reddeder). Kesik JSON → çağrı yok, metin cevap sayılır.
+	if len(out.ToolCalls) == 0 {
+		if calls, rest, ok := ParseTextToolCalls(out.Text, nil); ok {
+			out.ToolCalls, out.Text, out.ToolCallsFromText = calls, rest, true
+		}
 	}
 	return out, nil
 }

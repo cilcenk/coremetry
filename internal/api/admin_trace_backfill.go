@@ -191,7 +191,7 @@ func (s *Server) postTraceBackfillApply(w http.ResponseWriter, r *http.Request) 
 	rowsByDay := map[string]uint64{}
 	if pf, err := s.store.TraceBackfillPreflight(r.Context(), 30); err == nil {
 		for _, d := range pf {
-			rowsByDay[d.Day] = d.SpanTraces
+			rowsByDay[d.Day] = d.SpanRows
 		}
 	}
 	go s.runTraceBackfill(runCtx, in.Days, rowsByDay, parallel)

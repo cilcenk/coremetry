@@ -40,10 +40,15 @@ import (
 // TraceBackfillDay — preflight'ın gün satırı.
 type TraceBackfillDay struct {
 	Day string `json:"day"` // "2026-08-26"
-	// SpanTraces — ham spans'teki yaklaşık trace sayısı (uniq).
-	SpanTraces uint64 `json:"spanTraces"`
-	// MVTraces — MV'de o gün görünen trace sayısı.
-	MVTraces uint64 `json:"mvTraces"`
+	// SpanRows — ham spans'ın o gün partition'ındaki AKTİF SATIR sayısı
+	// (system.parts). Trace sayısı DEĞİL: bir trace onlarca satırdır.
+	// v0.10.529: eski ad SpanTraces/"Spans ~trace" satırı trace diye
+	// sunuyordu (operatör "2.4 milyon spans diyor ama 5 trace" — iki
+	// sayı aynı birimde değildi).
+	SpanRows uint64 `json:"spanRows"`
+	// MVRows — trace_summary_5m iç tablosunun o gün aktif satır sayısı
+	// (5 dk kovası × servis × trace anahtarı satırları; trace sayısı DEĞİL).
+	MVRows uint64 `json:"mvRows"`
 	// Gap — MV'nin ham veriye oranla boş/zayıf olduğu hüküm satırı.
 	// Eşik %50: upgrade sonrası tam boş günler 0'dır; kısmi günler
 	// (upgrade günü) de yakalansın. Sağlıklı günlerde iki sayı ~eşittir.
@@ -123,7 +128,7 @@ func (s *Store) TraceBackfillPreflight(ctx context.Context, days int) ([]TraceBa
 			return nil, err
 		}
 		out = append(out, TraceBackfillDay{
-			Day: day, SpanTraces: spanRows, MVTraces: mvRows,
+			Day: day, SpanRows: spanRows, MVRows: mvRows,
 			Gap: spanRows > 0 && mvRows*50 < spanRows,
 		})
 	}

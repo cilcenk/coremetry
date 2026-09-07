@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parseAttrMap, attrMapToText, parseList, listToText, numFromForm, numToForm,
   thresholdsToForm, thresholdsToWire, REDACTEDTEMPLATE, GG_TOTAL_TEMPLATE,
+  REDACTEDRATIO_TEMPLATE, ratioToForm, ratioToWire, EMPTY_RATIO,
 } from './influxForm';
 
 // v0.10.222 — InfluxTab metin kutuları ↔ tel. Sessiz sınıf: boş eşik
@@ -100,5 +101,30 @@ describe('REDACTED şablonu (v0.10.526 — GoldenGate ekibinin sorgusu, Coremetr
     expect(GG_TOTAL_TEMPLATE.groupBy).toEqual(['REDACTED', 'REDACTED']);
     expect(GG_TOTAL_TEMPLATE.enrichFlux).toBeUndefined();
     expect(GG_TOTAL_TEMPLATE.name).not.toBe(REDACTEDTEMPLATE.name);
+  });
+});
+
+// v0.10.532 — türetilmiş oran: şablon iki girdiyi ADIYLA bağlar, aynı
+// gruplamayı taşır (sunucu groupBy eşitliğini reddeder), Flux boş; kutu
+// boş = sunucu varsayılanı (tel'e yazılmaz).
+describe('ratio', () => {
+  it('şablon: REDACTED ÷ gg_adet_total, aynı groupBy, flux boş, kanıt payın SORGU 2\'si', () => {
+    expect(REDACTEDRATIO_TEMPLATE.name).toBe('tfail_oran');
+    expect(REDACTEDRATIO_TEMPLATE.flux).toBe('');
+    expect(REDACTEDRATIO_TEMPLATE.ratio).toEqual({ numerator: REDACTEDTEMPLATE.name, denominator: GG_TOTAL_TEMPLATE.name });
+    expect(REDACTEDRATIO_TEMPLATE.groupBy).toEqual(REDACTEDTEMPLATE.groupBy);
+    expect(REDACTEDRATIO_TEMPLATE.groupBy).toEqual(GG_TOTAL_TEMPLATE.groupBy);
+    expect(REDACTEDRATIO_TEMPLATE.enrichFlux).toBe(REDACTEDTEMPLATE.enrichFlux);
+    // Varsayılanlar şablona BASILMAZ (min payda / bekletme sunucuda).
+    expect(REDACTEDRATIO_TEMPLATE.ratio?.minDenominator).toBeUndefined();
+    expect(REDACTEDRATIO_TEMPLATE.ratio?.settleBuckets).toBeUndefined();
+  });
+  it('form ↔ tel: boş kutu tel\'e gitmez, dolu kutu sayı olur', () => {
+    expect(ratioToForm(undefined)).toEqual(EMPTY_RATIO);
+    const f = ratioToForm({ numerator: 'a', denominator: 'b', minDenominator: 50, settleBuckets: 3 });
+    expect(f).toEqual({ numerator: 'a', denominator: 'b', minDenominator: '50', settleBuckets: '3' });
+    expect(ratioToWire(f)).toEqual({ numerator: 'a', denominator: 'b', minDenominator: 50, settleBuckets: 3 });
+    expect(ratioToWire({ numerator: ' a ', denominator: 'b', minDenominator: '', settleBuckets: '' }))
+      .toEqual({ numerator: 'a', denominator: 'b', minDenominator: undefined, settleBuckets: undefined });
   });
 });

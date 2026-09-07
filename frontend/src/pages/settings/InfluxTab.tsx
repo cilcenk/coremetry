@@ -10,13 +10,14 @@
 // Poller D2'de: bu sekme bugün yalnız yapılandırma + deneme.
 import { useEffect, useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
-import { Button, Field, TextareaField } from '@/components/ui';
+import { Button, Field, SelectField, TextareaField } from '@/components/ui';
 import { api } from '@/lib/api';
 import { fmtDateTime } from '@/lib/utils';
 import { useSettingsLoad, SettingsLoadError, FlashBox } from './shared';
 import {
   parseAttrMap, attrMapToText, parseList, listToText,
-  thresholdsToForm, thresholdsToWire, REDACTEDTEMPLATE, GG_TOTAL_TEMPLATE, type ThresholdsForm, toggleGroupByTag, hasGroupByTag } from './influxForm';
+  thresholdsToForm, thresholdsToWire, REDACTEDTEMPLATE, GG_TOTAL_TEMPLATE, REDACTEDRATIO_TEMPLATE,
+  ratioToForm, ratioToWire, type ThresholdsForm, type RatioForm, toggleGroupByTag, hasGroupByTag } from './influxForm';
 import type {
   InfluxQueryConfig, InfluxSourceInput, InfluxSourceSnapshot, InfluxStatusPayload, InfluxTestResult,
 } from '@/lib/types';
@@ -28,6 +29,9 @@ interface EditQuery {
   groupBy: string;   // "A, B"
   attrMap: string;   // satır başına TAG=attr
   thresholds: ThresholdsForm;
+  // v0.10.532 — tür: Flux (Influx'a gider) | oran (pay ÷ payda, bellekte).
+  kind: 'flux' | 'ratio';
+  ratio: RatioForm;
 }
 
 interface EditSource {
@@ -51,14 +55,16 @@ function queryFromWire(q: InfluxQueryConfig): EditQuery {
     name: q.name, flux: q.flux, enrichFlux: q.enrichFlux ?? '',
     groupBy: listToText(q.groupBy), attrMap: attrMapToText(q.attrMap),
     thresholds: thresholdsToForm(q.thresholds),
+    kind: q.ratio ? 'ratio' : 'flux', ratio: ratioToForm(q.ratio),
   };
 }
 
 function queryToWire(q: EditQuery): InfluxQueryConfig {
   return {
-    name: q.name.trim(), flux: q.flux, enrichFlux: q.enrichFlux.trim() || undefined,
+    name: q.name.trim(), flux: q.kind === 'ratio' ? '' : q.flux, enrichFlux: q.enrichFlux.trim() || undefined,
     groupBy: parseList(q.groupBy), attrMap: parseAttrMap(q.attrMap),
     thresholds: thresholdsToWire(q.thresholds),
+    ratio: q.kind === 'ratio' ? ratioToWire(q.ratio) : undefined,
   };
 }
 
@@ -184,7 +190,7 @@ export function InfluxTab() {
                   {st.worker && (
                     <> · işçi: {st.worker.lastError
                       ? <span className="is-err">{st.worker.lastError}</span>
-                      : <>son poll {st.worker.lastPollAt ? fmtDateTime(st.worker.lastPollAt) : '—'} · {st.worker.lastRows} satır → {st.worker.lastPoints} nokta{st.worker.lastDrops ? ` (${st.worker.lastDrops} düştü)` : ''}{st.worker.lastSkippedOld ? ` · ${st.worker.lastSkippedOld} kova zaten yazılı` : ''}{st.worker.lastSkippedPartial ? ` · ${st.worker.lastSkippedPartial} kısmi kova bekliyor` : ''}</>}
+                      : <>son poll {st.worker.lastPollAt ? fmtDateTime(st.worker.lastPollAt) : '—'} · {st.worker.lastRows} satır → {st.worker.lastPoints} nokta{st.worker.lastDrops ? ` (${st.worker.lastDrops} düştü)` : ''}{st.worker.lastSkippedOld ? ` · ${st.worker.lastSkippedOld} kova zaten yazılı` : ''}{st.worker.lastSkippedPartial ? ` · ${st.worker.lastSkippedPartial} kısmi kova bekliyor` : ''}{st.worker.lastRatioSkipped ? ` · ${st.worker.lastRatioSkipped} oran kovası atlandı (payda az / bekliyor)` : ''}</>}
                     </>
                   )}
                 </div>
@@ -258,9 +264,38 @@ export function InfluxTab() {
                       Sorguyu kaldır
                     </Button>
                   </div>
-                  <TextareaField label="Poll sorgusu (Flux, SORGU 1)" rows={6} value={q.flux}
-                    onChange={e => patchQ(i, k, { flux: e.target.value })}
-                    hint="Her poll'da koşar; `range(start: -2m)` + `sum()` → gauge (son 2 dk hata sayısı)." />
+                  {/* v0.10.532 — sorgu türü: Flux | Oran. Oran Influx'a gitmez;
+                      aynı kaynaktaki iki Flux sorgusunun kovaları birleşir. */}
+                  <div className="segmented sg-sm" role="group" aria-label="Sorgu türü" style={{ marginBottom: 8 }}
+                    title="Flux: Influx'ta koşar · Oran: iki Flux sorgusundan 100 × pay ÷ payda (kova + grup başına), Influx'a gitmez">
+                    <button type="button" className={q.kind === 'flux' ? 'active' : ''}
+                      onClick={() => patchQ(i, k, { kind: 'flux' })}>Flux</button>
+                    <button type="button" className={q.kind === 'ratio' ? 'active' : ''}
+                      onClick={() => patchQ(i, k, { kind: 'ratio' })}>Oran</button>
+                  </div>
+                  {q.kind === 'ratio' ? (
+                    <div className="influx-row">
+                      {(['numerator', 'denominator'] as const).map(side => (
+                        <SelectField key={side} label={side === 'numerator' ? 'Pay (sorgu)' : 'Payda (sorgu)'} className="is-narrow"
+                          value={q.ratio[side]} onChange={e => patchQ(i, k, { ratio: { ...q.ratio, [side]: e.target.value } })}>
+                          <option value="">— seç —</option>
+                          {r.queries.filter(o => o.kind === 'flux' && o.name.trim()).map(o => (
+                            <option key={o.name} value={o.name.trim()}>{o.name.trim()}</option>
+                          ))}
+                        </SelectField>
+                      ))}
+                      <Field label="Min. payda" value={q.ratio.minDenominator} inputMode="decimal" className="is-narrow"
+                        onChange={e => patchQ(i, k, { ratio: { ...q.ratio, minDenominator: e.target.value } })}
+                        placeholder="20" hint="Altındaki kova yazılmaz (1/2 = %50 gürültüsü)" />
+                      <Field label="Bekletme (kova)" value={q.ratio.settleBuckets} inputMode="numeric" className="is-narrow"
+                        onChange={e => patchQ(i, k, { ratio: { ...q.ratio, settleBuckets: e.target.value } })}
+                        placeholder="2" hint="Pay hiç satır vermediyse paydanın en yeni N kovası bekler" />
+                    </div>
+                  ) : (
+                    <TextareaField label="Poll sorgusu (Flux, SORGU 1)" rows={6} value={q.flux}
+                      onChange={e => patchQ(i, k, { flux: e.target.value })}
+                      hint="Her poll'da koşar; `range(start: -2m)` + `sum()` → gauge (son 2 dk hata sayısı)." />
+                  )}
                   <TextareaField label="Kanıt sorgusu (Flux, SORGU 2)" rows={8} value={q.enrichFlux}
                     onChange={e => patchQ(i, k, { enrichFlux: e.target.value })}
                     hint="Anomali açılınca {{from}} {{to}} {{op}} {{err}} doldurulur; TRACEID + REDACTED listesi." />
@@ -300,6 +335,15 @@ export function InfluxTab() {
                   onClick={() => patch(i, { queries: [...r.queries, queryFromWire(GG_TOTAL_TEMPLATE)] })}>
                   + GoldenGate toplam şablonu
                 </Button>
+                {/* v0.10.532 — hata oranı: REDACTED ÷ gg_adet_total; iki girdi yoksa devre dışı. */}
+                <Button type="button" variant="secondary" size="sm"
+                  disabled={r.queries.some(q => q.name === REDACTEDRATIO_TEMPLATE.name)
+                    || !r.queries.some(q => q.name === REDACTEDTEMPLATE.name)
+                    || !r.queries.some(q => q.name === GG_TOTAL_TEMPLATE.name)}
+                  title={`${REDACTEDTEMPLATE.name} ve ${GG_TOTAL_TEMPLATE.name} sorguları gerekir`}
+                  onClick={() => patch(i, { queries: [...r.queries, queryFromWire(REDACTEDRATIO_TEMPLATE)] })}>
+                  + Hata oranı şablonu
+                </Button>
                 <Button type="button" variant="accent" size="sm" disabled={busy || !!(pr && 'pending' in pr)}
                   onClick={() => runTest(i)}>
                   Bağlantıyı dene
@@ -318,6 +362,10 @@ export function InfluxTab() {
                       {p.error
                         ? <span style={{ color: 'var(--err)' }}>{p.error}</span>
                         : <span style={{ color: 'var(--text2)' }}>{p.rows} satır · {p.latencyMs} ms · kolonlar: {p.columns.join(', ') || '—'}</span>}
+                      {/* v0.10.532 — oran sorgusu: Influx'a gitmez, satır yerine açıklama. */}
+                      {!p.error && !p.wideWindow && p.hint && (
+                        <div style={{ marginTop: 4, color: 'var(--text2)' }}>{p.hint}</div>
+                      )}
                       {!p.error && p.wideWindow && (
                         <div style={{ marginTop: 4 }}>
                           <span style={{ color: 'var(--text2)' }}>
@@ -353,7 +401,7 @@ export function InfluxTab() {
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <Button type="button" variant="secondary" size="sm"
-            onClick={() => setRows(rs => [...rs, { ...EMPTY_SOURCE, queries: [queryFromWire(REDACTEDTEMPLATE), queryFromWire(GG_TOTAL_TEMPLATE)] }])}>
+            onClick={() => setRows(rs => [...rs, { ...EMPTY_SOURCE, queries: [queryFromWire(REDACTEDTEMPLATE), queryFromWire(GG_TOTAL_TEMPLATE), queryFromWire(REDACTEDRATIO_TEMPLATE)] }])}>
             + Kaynak ekle
           </Button>
           <Button type="button" variant="ghost" size="sm" onClick={loadStatus}

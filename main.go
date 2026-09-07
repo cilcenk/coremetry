@@ -1062,6 +1062,8 @@ func main() {
 		influxWorker.SetHook(func(ctx context.Context, src influx.SourceConfig, qc influx.QueryConfig) {
 			rep, err := extScanner.Scan(ctx, anomaly.ExternalTarget{
 				SourceID: src.ID, SourceName: src.Name, Query: qc.Name,
+				// v0.10.532 — oran sorgusu (qc.Ratio) da buradan tarar: yön zaten
+				// yalnız yükseliş (anomaly.directionFor: her ext:* "up"), düşüş = iyileşme.
 				GroupBy: qc.MetricGroupBy(), Thresholds: anomaly.ExternalThresholds(qc.Thresholds),
 				OnEvidence: func(ctx context.Context, ev anomaly.ExternalEvent) {
 					erep, eerr := influxEnricher.Enrich(ctx, influx.EnrichRequest{

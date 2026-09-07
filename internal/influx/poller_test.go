@@ -428,3 +428,101 @@ func TestQueryConfigMetricGroupBy_AppliesAttrMap(t *testing.T) {
 		t.Fatalf("no groupBy → empty, got %d", n)
 	}
 }
+
+// v0.10.532 — oran sorgusu tikte türetilir: Influx'a gitmez (poll sayısı
+// yalnız Flux sorguları kadar), aynı yazım yolundan `%` birimiyle geçer,
+// payda tabanının altındaki kova yazılmaz, hook oran için de koşar.
+func TestWorkerTick_RatioQueryDerivesPercent(t *testing.T) {
+	svc := New()
+	src := tfailSource()
+	src.Queries = []QueryConfig{
+		{REDACTED"}},
+		{REDACTED"}},
+		{Name: "tfail_oran", GroupBy: []string{"REDACTED"}, AttrMap: map[string]string{"REDACTED": "operation"},
+			Ratio: &RatioSpec{Numerator: "REDACTED", Denominator: "gg_adet_total", MinDenominator: 10}},
+	}
+	svc.Configure(Settings{Sources: []SourceConfig{src}})
+	now := time.Date(2026, 9, 7, 9, 45, 0, 0, time.UTC)
+	bt := "2026-09-07T09:41:00Z"
+	q := &fakeQueryAPI{recs: map[string][]Record{
+		"REDACTED}),
+		"REDACTED(
+			map[string]string{"_value": "50", "REDACTED": "OP1", "_time": bt},
+			map[string]string{"_value": "100", "REDACTED": "OP2", "_time": bt},
+			map[string]string{"_value": "4", "REDACTED": "OP3", "_time": bt}),
+	}}
+	sink := &fakeSink{}
+	w := NewWorker(svc, sink)
+	w.now = func() time.Time { return now }
+	w.queryAPIFor = func(SourceConfig) (QueryAPI, error) { return q, nil }
+	var hooked []string
+	w.SetHook(func(_ context.Context, _ SourceConfig, qc QueryConfig) { hooked = append(hooked, qc.Name) })
+
+	w.Tick(context.Background())
+	if q.n != 2 {
+		t.Fatalf("yalnız iki Flux sorgusu Influx'a gider, got %d", q.n)
+	}
+	var ratio []*chstore.MetricPoint
+	for _, p := range sink.pts {
+		if p.Metric == "ext:tfail_oran" {
+			ratio = append(ratio, p)
+		}
+	}
+	if len(sink.pts) != 6 || len(ratio) != 2 {
+		t.Fatalf("1 + 3 + 2 nokta (OP3 payda < 10 yazılmaz): toplam %d, oran %d", len(sink.pts), len(ratio))
+	}
+	attrOf := func(p *chstore.MetricPoint, key string) string {
+		for i, k := range p.AttrKeys {
+			if k == key && i < len(p.AttrValues) {
+				return p.AttrValues[i]
+			}
+		}
+		return ""
+	}
+	byOp := map[string]*chstore.MetricPoint{}
+	for _, p := range ratio {
+		byOp[attrOf(p, "operation")] = p
+	}
+	if byOp["OP1"] == nil || byOp["OP1"].Value != 10 || byOp["OP2"] == nil || byOp["OP2"].Value != 0 {
+		t.Fatalf("OP1 %%10, OP2 %%0 (pay yok): %+v", byOp)
+	}
+	if byOp["OP1"].Unit != "%" || byOp["OP1"].Instrument != "gauge" || !byOp["OP1"].Time.Equal(time.Date(2026, 9, 7, 9, 41, 0, 0, time.UTC)) {
+		t.Fatalf("birim %%, gauge, kova zamanı: %+v", byOp["OP1"])
+	}
+	st := w.Status()
+	if len(st) != 1 || st[0].LastRatioSkipped != 1 || st[0].LastPoints != 6 || st[0].LastRows != 4 || st[0].LastError != "" {
+		t.Fatalf("status: %+v", st)
+	}
+	if strings.Join(hooked, ",") != "REDACTED,gg_adet_total,tfail_oran" {
+		t.Fatalf("hook oran için de koşar: %v", hooked)
+	}
+	// İkinci tik: aynı kovalar watermark'ta → oran da dahil hiçbir şey yazılmaz.
+	now = now.Add(time.Minute)
+	w.Tick(context.Background())
+	if len(sink.pts) != 6 {
+		t.Fatalf("watermark oranı da mühürler: %d", len(sink.pts))
+	}
+}
+
+// Girdi sorgusu hata verirse oran o tik ATLANIR (sahte %0 yok); LastError
+// girdinin hatasını taşır, hook koşmaz.
+func TestWorkerTick_RatioSkippedWhenInputFails(t *testing.T) {
+	svc := New()
+	src := tfailSource()
+	src.Queries = []QueryConfig{
+		{REDACTED"}},
+		{REDACTED"}},
+		{Name: "tfail_oran", GroupBy: []string{"REDACTED"}, Ratio: &RatioSpec{Numerator: "REDACTED", Denominator: "gg_adet_total"}},
+	}
+	svc.Configure(Settings{Sources: []SourceConfig{src}})
+	now := time.Date(2026, 9, 7, 9, 45, 0, 0, time.UTC)
+	q := &fakeQueryAPI{err: errors.New("boom")}
+	sink := &fakeSink{}
+	w := NewWorker(svc, sink)
+	w.now = func() time.Time { return now }
+	w.queryAPIFor = func(SourceConfig) (QueryAPI, error) { return q, nil }
+	w.Tick(context.Background())
+	if len(sink.pts) != 0 || w.Status()[0].LastError == "" {
+		t.Fatalf("girdi hatasında oran yazılmaz: %d pts, %+v", len(sink.pts), w.Status())
+	}
+}

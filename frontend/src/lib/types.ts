@@ -1439,6 +1439,16 @@ export interface InfluxThresholds {
   minAbsDelta?: number;
   minMAD?: number;
 }
+/** influx.RatioSpec — v0.10.532: türetilmiş oran (Flux YOK): 100 × pay ÷ payda,
+ *  (groupBy değerleri, kova) anahtarında bellekte birleşir; Influx'a gitmez. */
+export interface InfluxRatioSpec {
+  numerator: string;
+  denominator: string;
+  /** Altında kalan kova YAZILMAZ (0 değil, boşluk). 0/yok = 20. */
+  minDenominator?: number;
+  /** Pay hiç satır vermediğinde bekletilen en yeni payda kovası. 0/yok = 2. */
+  settleBuckets?: number;
+}
 /** influx.QueryConfig — name metrik kuyruğu (`ext:<name>`); flux SORGU 1, enrichFlux SORGU 2. */
 export interface InfluxQueryConfig {
   name: string;
@@ -1447,6 +1457,8 @@ export interface InfluxQueryConfig {
   attrMap?: Record<string, string>;
   groupBy?: string[];
   thresholds?: InfluxThresholds;
+  /** Doluysa türetilmiş oran sorgusu; flux boş. */
+  ratio?: InfluxRatioSpec;
 }
 /** influx.SourceConfig — PUT gövdesi elemanı; id sunucu sahipli. */
 export interface InfluxSourceInput {
@@ -1504,6 +1516,7 @@ export interface InfluxSourceStatus {
   lastDrops: number;
   lastSkippedOld: number;     // v0.10.224 — zaten yazılmış kova
   lastSkippedPartial: number; // v0.10.224 — tamamlanmamış kova
+  lastRatioSkipped?: number;  // v0.10.532 — oran: payda az / bekliyor / paydasız pay
   lastError?: string;
 }
 /** api.influxStatusSource — ayar + metric_points izi (son 1 saat) + (varsa) işçi. */

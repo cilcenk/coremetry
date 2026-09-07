@@ -176,6 +176,7 @@ func BuildMetricsRequest(src SourceConfig, qc QueryConfig, recs []Record, now ti
 				Scope: &commonpb.InstrumentationScope{Name: "coremetry/influx"},
 				Metrics: []*metricspb.Metric{{
 					Name:        MetricPrefix + qc.Name,
+					Unit:        qc.unit(), // v0.10.532 — oran: "%"
 					Description: fmt.Sprintf("InfluxDB kaynağı %s — poll sorgusu %s (gauge; zaman = kova bitişi, yoksa poll anı)", src.Name, qc.Name),
 					Data:        &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: points}},
 				}},
@@ -197,7 +198,9 @@ type SourceStatus struct {
 	// v0.10.224 — watermark ayıklaması: zaten yazılmış / tamamlanmamış kova.
 	LastSkippedOld     int    `json:"lastSkippedOld"`
 	LastSkippedPartial int    `json:"lastSkippedPartial"`
-	LastError          string `json:"lastError,omitempty"`
+	// v0.10.532 — oran birleşiminde bilinçli atlanan kova (payda az / bekliyor / paydasız pay).
+	LastRatioSkipped int    `json:"lastRatioSkipped,omitempty"`
+	LastError        string `json:"lastError,omitempty"`
 }
 
 // Worker — leader-gated poll döngüsü.
@@ -340,7 +343,17 @@ func (w *Worker) pollSource(ctx context.Context, src SourceConfig, now time.Time
 	}
 	pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	// v0.10.532 — oran sorguları (Ratio) Influx'a gitmez: Flux sorgularının
+	// bu tikte çektiği HAM kayıtlar (watermark öncesi) tutulur, hepsi bitince
+	// pay/payda kovaları bellekte birleşir (ratio.go) ve aynı yazım yolundan
+	// KENDİ watermark anahtarıyla geçer. Hata veren girdi haritada YOKTUR →
+	// oran o tik atlanır (LastError girdinin hatasını zaten taşır); sıfır
+	// satırlı girdi haritada boş dizi olarak VARDIR (hata yok = sıfır hata).
+	fetched := map[string][]Record{}
 	for _, qc := range src.Queries {
+		if qc.Ratio != nil {
+			continue
+		}
 		w.count(w.mPolls, ctx, 1, attrs)
 		recs, qerr := q.Query(pctx, qc.Flux)
 		if qerr != nil {
@@ -349,48 +362,79 @@ func (w *Worker) pollSource(ctx context.Context, src SourceConfig, now time.Time
 			log.Printf("[influx] %s/%s: sorgu: %v", src.Name, qc.Name, qerr)
 			continue
 		}
+		if recs == nil {
+			recs = []Record{}
+		}
+		fetched[qc.Name] = recs
 		st.LastRows += len(recs)
-		if len(recs) == 0 {
-			continue // boş küme: satır yok, sıfır yazılmaz (D3 pad'ler)
+		w.ingest(pctx, ctx, src, qc, recs, now, &st, attrs)
+	}
+	for _, qc := range src.Queries {
+		if qc.Ratio == nil {
+			continue
 		}
-		wmKey := src.ID + "/" + qc.Name
-		w.mu.Lock()
-		wm := w.watermark[wmKey]
-		w.mu.Unlock()
-		kept, newWM, skips := SplitBuckets(recs, wm, now)
-		st.LastSkippedOld += skips.Old
-		st.LastSkippedPartial += skips.Partial
-		if len(kept) == 0 {
-			continue // hepsi ya yazılmış ya kısmi kova
+		num, okN := fetched[qc.Ratio.Numerator]
+		den, okD := fetched[qc.Ratio.Denominator]
+		if !okN || !okD {
+			continue // girdi bu tik koşmadı/hata verdi
 		}
-		req, drops := BuildMetricsRequest(src, qc, kept, now)
-		if n := drops.Total(); n > 0 {
+		recs, rs := BuildRatioRecords(num, den, qc.GroupBy, *qc.Ratio)
+		st.LastRatioSkipped += rs.Skipped()
+		if n := rs.BadValue + rs.MissingTag; n > 0 {
 			st.LastDrops += n
 			w.count(w.mDropped, ctx, int64(n), attrs)
-			log.Printf("[influx] %s/%s: %d satır düştü (kötü değer %d, eksik tag %d, tavan %d)",
-				src.Name, qc.Name, n, drops.BadValue, drops.MissingTag, drops.OverCap)
 		}
-		pts, _ := otlp.ConvertMetrics(req)
-		if len(pts) == 0 {
-			continue
+		if rs.Skipped() > 0 || rs.Joined > 0 {
+			log.Printf("[influx] %s/%s: oran %d kova (payda az %d, bekliyor %d, paydasız pay %d)",
+				src.Name, qc.Name, rs.Joined, rs.LowDen, rs.Unsettled, rs.NoDen)
 		}
-		if werr := w.sink.InsertMetrics(pctx, pts); werr != nil {
-			st.LastError = fmt.Sprintf("%s: yazım: %v", qc.Name, werr)
-			w.count(w.mErrors, ctx, 1, attrs)
-			log.Printf("[influx] %s/%s: metric_points yazım: %v", src.Name, qc.Name, werr)
-			continue
-		}
-		st.LastPoints += len(pts)
-		w.count(w.mPoints, ctx, int64(len(pts)), attrs)
-		// Watermark yalnız YAZIM başarılıysa ilerler; yazım düşerse kova bir
-		// sonraki poll'da yeniden denenir (kayıp değil, gecikme).
-		w.mu.Lock()
-		if newWM.After(w.watermark[wmKey]) {
-			w.watermark[wmKey] = newWM
-		}
-		w.mu.Unlock()
+		w.ingest(pctx, ctx, src, qc, recs, now, &st, attrs)
 	}
 	return st
+}
+
+// ingest — bir sorgunun kayıtlarını watermark'tan geçirip metric_points'e
+// yazar; Flux ve oran sorguları için TEK yol (v0.10.532).
+func (w *Worker) ingest(pctx, ctx context.Context, src SourceConfig, qc QueryConfig, recs []Record, now time.Time, st *SourceStatus, attrs metric.MeasurementOption) {
+	if len(recs) == 0 {
+		return // boş küme: satır yok, sıfır yazılmaz (D3 pad'ler)
+	}
+	wmKey := src.ID + "/" + qc.Name
+	w.mu.Lock()
+	wm := w.watermark[wmKey]
+	w.mu.Unlock()
+	kept, newWM, skips := SplitBuckets(recs, wm, now)
+	st.LastSkippedOld += skips.Old
+	st.LastSkippedPartial += skips.Partial
+	if len(kept) == 0 {
+		return // hepsi ya yazılmış ya kısmi kova
+	}
+	req, drops := BuildMetricsRequest(src, qc, kept, now)
+	if n := drops.Total(); n > 0 {
+		st.LastDrops += n
+		w.count(w.mDropped, ctx, int64(n), attrs)
+		log.Printf("[influx] %s/%s: %d satır düştü (kötü değer %d, eksik tag %d, tavan %d)",
+			src.Name, qc.Name, n, drops.BadValue, drops.MissingTag, drops.OverCap)
+	}
+	pts, _ := otlp.ConvertMetrics(req)
+	if len(pts) == 0 {
+		return
+	}
+	if werr := w.sink.InsertMetrics(pctx, pts); werr != nil {
+		st.LastError = fmt.Sprintf("%s: yazım: %v", qc.Name, werr)
+		w.count(w.mErrors, ctx, 1, attrs)
+		log.Printf("[influx] %s/%s: metric_points yazım: %v", src.Name, qc.Name, werr)
+		return
+	}
+	st.LastPoints += len(pts)
+	w.count(w.mPoints, ctx, int64(len(pts)), attrs)
+	// Watermark yalnız YAZIM başarılıysa ilerler; yazım düşerse kova bir
+	// sonraki poll'da yeniden denenir (kayıp değil, gecikme).
+	w.mu.Lock()
+	if newWM.After(w.watermark[wmKey]) {
+		w.watermark[wmKey] = newWM
+	}
+	w.mu.Unlock()
 }
 
 func (w *Worker) count(c metric.Int64Counter, ctx context.Context, n int64, opts ...metric.AddOption) {

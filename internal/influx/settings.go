@@ -56,6 +56,24 @@ type Thresholds struct {
 	MinMAD      float64 `json:"minMAD,omitempty"`
 }
 
+// RatioSpec — v0.10.532: TÜRETİLMİŞ oran sorgusu (Flux YOK). Aynı kaynaktaki
+// iki Flux sorgusunun kovaları (groupBy değerleri, _time) anahtarında bellekte
+// birleşir; değer = RatioScale × pay ÷ payda (yüzde). Influx'a ek sorgu gitmez;
+// seri `ext:<ad>` olarak aynı yazım/anomali/kanıt yolundan geçer (ratio.go).
+// Operatör kararı 2026-09-07 (hata oranı: REDACTED ÷ toplam).
+type RatioSpec struct {
+	Numerator   string `json:"numerator"`
+	Denominator string `json:"denominator"`
+	// MinDenominator — altında kalan kova YAZILMAZ (0 değil, boşluk): 1/2 =
+	// %50 gürültüsü. 0/yok = RatioDefaultMinDenominator.
+	MinDenominator float64 `json:"minDenominator,omitempty"`
+	// SettleBuckets — pay sorgusu hiç satır vermediğinde paydanın en yeni
+	// kaç kovasının bekletileceği (kaynak gecikmeli yazar; sahte %0 olmasın).
+	// Pay satır verdiyse kural sabittir: payın en yeni kovasından sonrası
+	// bekler. 0/yok = RatioDefaultSettle.
+	SettleBuckets int `json:"settleBuckets,omitempty"`
+}
+
 // QueryConfig — bir poll sorgusu. Name metrik adının kuyruğu olur
 // (`ext:<name>`, audit §7); Flux SORGU 1 (poll), EnrichFlux SORGU 2
 // ({{from}}/{{to}}/{{op}}/{{err}} yer tutucuları, template.go). GroupBy
@@ -70,6 +88,8 @@ type QueryConfig struct {
 	AttrMap    map[string]string `json:"attrMap,omitempty"`
 	GroupBy    []string          `json:"groupBy,omitempty"`
 	Thresholds Thresholds        `json:"thresholds,omitempty"`
+	// Ratio — doluysa bu sorgu türetilmiştir: Flux boş, Influx'a gitmez.
+	Ratio *RatioSpec `json:"ratio,omitempty"`
 }
 
 // SourceConfig — bir Influx kurulumu. ID sunucu sahipli ("i-" + 8 hex,
@@ -405,6 +425,7 @@ func Normalize(in Settings, prev Settings, newID func() string) (Settings, error
 				Flux:       strings.TrimSpace(q.Flux),
 				EnrichFlux: strings.TrimSpace(q.EnrichFlux),
 				Thresholds: q.Thresholds,
+				Ratio:      normalizeRatio(q.Ratio),
 			}
 			if !queryNameRe.MatchString(nq.Name) {
 				return Settings{}, fmt.Errorf("%s: sorgu adı slug olmalı (a-z, 0-9, _; ≤40)", qlabel)
@@ -426,8 +447,11 @@ func Normalize(in Settings, prev Settings, newID func() string) (Settings, error
 					}
 				}
 			}
+			if nq.Ratio != nil && nq.Flux != "" {
+				return Settings{}, fmt.Errorf("%s: oran sorgusunda flux boş kalır (pay/payda sorguları koşar)", qlabel)
+			}
 			if s.Enabled {
-				if nq.Flux == "" {
+				if nq.Ratio == nil && nq.Flux == "" {
 					return Settings{}, fmt.Errorf("%s: flux zorunlu", qlabel)
 				}
 				if len(nq.GroupBy) == 0 {
@@ -443,9 +467,85 @@ func Normalize(in Settings, prev Settings, newID func() string) (Settings, error
 			}
 			s.Queries = append(s.Queries, nq)
 		}
+		if err := validateRatios(s, label); err != nil {
+			return Settings{}, err
+		}
 		out.Sources = append(out.Sources, s)
 	}
 	return out, nil
+}
+
+func normalizeRatio(r *RatioSpec) *RatioSpec {
+	if r == nil {
+		return nil
+	}
+	return &RatioSpec{
+		Numerator: strings.TrimSpace(r.Numerator), Denominator: strings.TrimSpace(r.Denominator),
+		MinDenominator: r.MinDenominator, SettleBuckets: r.SettleBuckets,
+	}
+}
+
+// validateRatios — v0.10.532: oran sorgusunun girdileri AYNI kaynakta, Flux
+// türünde ve aynı groupBy ile olmalı; aksi hâlde birleşim sessizce boş
+// döner ve seri hiç doğmazdı. Sıra-duyarlı groupBy eşitliği: fingerprint
+// groupBy sırasına bağlı (BuildMetricsRequest).
+func validateRatios(src SourceConfig, label string) error {
+	byName := map[string]QueryConfig{}
+	for _, q := range src.Queries {
+		byName[q.Name] = q
+	}
+	for _, q := range src.Queries {
+		r := q.Ratio
+		if r == nil {
+			continue
+		}
+		ql := fmt.Sprintf("%s sorgu %q", label, q.Name)
+		if r.Numerator == "" || r.Denominator == "" {
+			return fmt.Errorf("%s: oran için pay ve payda sorgu adı zorunlu", ql)
+		}
+		if r.Numerator == r.Denominator {
+			return fmt.Errorf("%s: pay ve payda aynı sorgu olamaz", ql)
+		}
+		for _, side := range []struct{ role, name string }{{"pay", r.Numerator}, {"payda", r.Denominator}} {
+			in, ok := byName[side.name]
+			if !ok {
+				return fmt.Errorf("%s: %s sorgusu %q bu kaynakta yok", ql, side.role, side.name)
+			}
+			if in.Ratio != nil {
+				return fmt.Errorf("%s: %s sorgusu %q bir oran; oran orana bağlanamaz", ql, side.role, side.name)
+			}
+			if !sameStrings(in.GroupBy, q.GroupBy) {
+				return fmt.Errorf("%s: groupBy %s sorgusuyla aynı (ve aynı sırada) olmalı: %v ≠ %v", ql, side.role, q.GroupBy, in.GroupBy)
+			}
+		}
+		if r.MinDenominator < 0 {
+			return fmt.Errorf("%s: min payda negatif olamaz", ql)
+		}
+		if r.SettleBuckets < 0 || r.SettleBuckets > ratioMaxSettle {
+			return fmt.Errorf("%s: bekletme 0–%d kova", ql, ratioMaxSettle)
+		}
+	}
+	return nil
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// unit — metric_points birimi: oran yüzde, Flux sorgusu birimsiz (sayım).
+func (qc QueryConfig) unit() string {
+	if qc.Ratio != nil {
+		return "%"
+	}
+	return ""
 }
 
 // metricAttrKey — bir Influx tag'ının metric_points attr adı: attrMap'te

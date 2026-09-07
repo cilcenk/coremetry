@@ -27,8 +27,11 @@ func (s *Server) registerCHDDLQueueRoutes(mux *http.ServeMux) {
 // clusterAllReplicas fan-out'u her F5'te koşmamalı. Anahtar sabit —
 // girdisi yok (cluster adı süreç ömrü boyunca sabit).
 func (s *Server) getCHDDLQueueHealth(w http.ResponseWriter, r *http.Request) {
-	s.serveCached(w, r, "ch-ddl-queue", 15*time.Second, func(ctx context.Context) (any, error) {
-		ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	// v0.10.525 — prod'da kuyruk okuması 13,6 s (Keeper, 10k girdi): 12 s bütçe
+	// her seferinde "PROBE DÜŞTÜ" üretiyordu. Bütçe 30 s (sorgu tavanları 20 s),
+	// cache 60 s — teşhis paneli, canlı sayaç değil.
+	s.serveCached(w, r, "ch-ddl-queue", 60*time.Second, func(ctx context.Context) (any, error) {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		return s.store.GetDDLQueueHealth(ctx)
 	})

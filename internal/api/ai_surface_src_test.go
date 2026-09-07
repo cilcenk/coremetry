@@ -32,7 +32,12 @@ func TestAISurfaceFromRequestSrc(t *testing.T) {
 	if strings.Contains(string(src), "surface := aiSurfaceFromPath(r.URL.Path)") {
 		t.Fatal("ctx kurucuları aiSurfaceFromRequest(r) kullanmalı — src soneki düşer")
 	}
-	if n := strings.Count(string(src), "surface := aiSurfaceFromRequest(r)"); n < 3 {
-		t.Fatalf("üç ctx kurucusu da istekten türetmeli, %d", n)
+	// v0.10.533 — istekten türetme TEK yerde (explainCallCtx); r'li dört
+	// sarmalayıcı aiCall üzerinden oraya gider, src soneki hepsinde korunur.
+	if n := strings.Count(string(src), "surface := aiSurfaceFromRequest(r)"); n != 1 {
+		t.Fatalf("istekten türetme yalnız explainCallCtx'te olmalı, %d", n)
+	}
+	if !strings.Contains(string(src), "ctx = s.explainCallCtx(r)") {
+		t.Fatal("aiCall r'li yolda explainCallCtx'e delege etmeli")
 	}
 }

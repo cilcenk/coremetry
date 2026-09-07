@@ -87,37 +87,109 @@ func (s *Server) putAIRates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, cleaned)
 }
 
-// copilotExplain wraps copilot.Service.Explain with the surface +
-// user metadata that the recorder needs to attribute the call. All
-// existing s.copilot.Explain(r.Context(), …) call sites can be
-// search/replaced to s.copilotExplain(r, …) without touching the
-// rest of the handler — surface is derived from the request path
-// and the auth claims live in ctx via the auth middleware.
-func (s *Server) copilotExplain(r *http.Request, system, user string) (string, error) {
-	ctx, done := s.beginExplainSpan(r, s.explainCallCtx(r))
-	out, err := s.copilot.Explain(ctx, system, user)
+// ── v0.10.533 (CoSRE v2 Faz 2.1) — TEK attribution kurucu ─────────────────
+//
+// Yedi sarmalayıcı (buffered/stream × path-surface/explicit-surface ×
+// plain/json/masked) aynı karar matrisini elle 7 kez kuruyordu ve
+// "ExchangeID'yi ctx'ten TAŞI" satırı üç yerde kopyaydı — v0.9.593'ün
+// düzelttiği "aynı karar iki yerde yazılmıştı" hatasının kalıbı. Artık
+// matris `aiCall`'da tek kez yazılı; sarmalayıcılar imzalarını korur (42
+// çağrı noktası dokunulmadı) ve yalnız seçeneği söyler.
+//
+// Sözleşme (ai_call_matrix_test.go pinler):
+//   • r != nil → surface istek path'inden (+ whitelist'li ?src=), kullanıcı
+//     auth claims'ten, ExchangeID ctx'teki meta'dan TAŞINIR (withExchange
+//     rayı), Shield yüzeye göre tohumlanır — explainCallCtx.
+//   • r == nil → meta ctx'ten (sohbet handler'ı kurmuştur), yalnız surface
+//     ezilir; Shield yoksa yüzey kapılı varsayılan.
+//   • json → WithJSONMode / WithJSONSchema(surface, schema).
+//   • logUser → ai_calls örneği maskeli (PromptLogOverride), PromptChars
+//     gerçek prompt'tan sayılır.
+//   • onDelta → StreamText (akamayan uçta şeffaf buffered düşüş), yoksa Explain.
+//   • Span: r varsa ai.explain + kanıt attr'ları, yoksa ctx tabanlı ai.explain.
+type aiCallOpts struct {
+	surface string
+	json    bool
+	schema  map[string]any
+	logUser string
+	onDelta func(string)
+}
+
+func (s *Server) aiCall(ctx context.Context, r *http.Request, system, user string, o aiCallOpts) (string, error) {
+	surface := o.surface
+	if r != nil {
+		ctx = s.explainCallCtx(r)
+	}
+	meta := copilot.MetaFromContext(ctx)
+	if surface == "" {
+		surface = meta.Surface
+	}
+	meta.Surface = surface
+	if meta.Shield == nil || r != nil {
+		meta.Shield = s.aiShieldFor(ctx, surface) // v0.10.421 (E6); v0.10.431 tohumlu + yüzey kapısı
+	}
+	if o.logUser != "" && o.logUser != user {
+		// v0.9.831 — "Kodu da incele": kaynak kodu modele gider, ai_calls'a gitmez.
+		meta.PromptLogOverride = system + "\n\n" + o.logUser
+	}
+	if o.json {
+		// v0.9.517/527 — katı JSON; şema varsa o şekle kilit.
+		if len(o.schema) > 0 {
+			ctx = copilot.WithJSONSchema(ctx, surface, o.schema)
+		} else {
+			ctx = copilot.WithJSONMode(ctx)
+		}
+	}
+	ctx = copilot.WithMeta(ctx, meta)
+	var done func(error)
+	if r != nil {
+		ctx, done = s.beginExplainSpan(r, ctx)
+	} else {
+		ctx, done = s.beginExplainSpanCtx(ctx) // v0.10.425 (O2)
+	}
+	var out string
+	var err error
+	if o.onDelta != nil {
+		out, err = s.copilot.StreamText(ctx, system, user, o.onDelta)
+	} else {
+		out, err = s.copilot.Explain(ctx, system, user)
+	}
 	done(err)
 	return out, err
 }
 
-// copilotExplainStream (v0.9.1127, Faz 1.5) — copilotExplain'in AKAN
-// ikizi. Aynı atıf sözleşmesi (surface path'ten, kullanıcı claims'ten,
-// ctx'teki ExchangeID taşınır → tek ai_calls satırı); tek fark cevabın
-// token token onDelta'dan geçmesi.
-//
-// TEK yazılış BİLİNÇLİ: meta kurulumu copilotExplain ile ortak
-// explainCallCtx'ten geliyor. İki ayrı yazılış olsaydı, v0.9.593'ün
-// düzelttiği "ExchangeID sessizce düşüyor" hatası akan yolda yeniden
-// doğardı — o hata tam olarak "aynı karar iki yerde yazılmıştı" hatasıydı.
-//
-// StreamText, akıyamayan uçta ŞEFFAF biçimde buffered çağrıya düşer
-// (sıfır delta + tam metin), yani çağıran her iki durumda da aynı
-// "cevap metni doğrunun kaynağıdır" sözleşmesini korur.
+// copilotExplain — surface path'ten, kullanıcı claims'ten; make audit
+// CHECK 4 her Copilot rotasını bu aileden geçirir (doğrudan
+// s.copilot.Explain ai_calls satırını atlar).
+func (s *Server) copilotExplain(r *http.Request, system, user string) (string, error) {
+	return s.aiCall(r.Context(), r, system, user, aiCallOpts{})
+}
+
+// copilotExplainStream (v0.9.1127) — copilotExplain'in akan ikizi; aynı
+// atıf, cevap token token onDelta'dan.
 func (s *Server) copilotExplainStream(r *http.Request, system, user string, onDelta func(string)) (string, error) {
-	ctx, done := s.beginExplainSpan(r, s.explainCallCtx(r))
-	out, err := s.copilot.StreamText(ctx, system, user, onDelta)
-	done(err)
-	return out, err
+	return s.aiCall(r.Context(), r, system, user, aiCallOpts{onDelta: onDelta})
+}
+
+// copilotExplainMasked (v0.9.831) — ai_calls örneği logUser'dan (kod maskesi).
+func (s *Server) copilotExplainMasked(r *http.Request, system, user, logUser string) (string, error) {
+	return s.aiCall(r.Context(), r, system, user, aiCallOpts{logUser: logUser})
+}
+
+// copilotExplainJSON (v0.9.517) — katı JSON; schema (v0.9.527) verilirse o şekle.
+func (s *Server) copilotExplainJSON(r *http.Request, system, user string, schema map[string]any) (string, error) {
+	return s.aiCall(r.Context(), r, system, user, aiCallOpts{json: true, schema: schema})
+}
+
+// copilotExplainSurface (v0.8.397) — surface path'ten türemeyen çağıranlar
+// (guided sohbet "chat-guided"); meta ctx'te kurulu, yalnız surface ezilir.
+func (s *Server) copilotExplainSurface(ctx context.Context, surface, system, user string) (string, error) {
+	return s.aiCall(ctx, nil, system, user, aiCallOpts{surface: surface})
+}
+
+// copilotStreamSurface (v0.8.404) — copilotExplainSurface'in akan ikizi.
+func (s *Server) copilotStreamSurface(ctx context.Context, surface, system, user string, onDelta func(string)) (string, error) {
+	return s.aiCall(ctx, nil, system, user, aiCallOpts{surface: surface, onDelta: onDelta})
 }
 
 // explainCallCtx — tek-atış ✨ çağrısının atıf bağlamı: surface (istek
@@ -153,133 +225,6 @@ func withExchange(r *http.Request) (*http.Request, string) {
 	xid := newRandID(16)
 	return r.WithContext(copilot.WithMeta(r.Context(),
 		copilot.CallMeta{ExchangeID: xid})), xid
-}
-
-// copilotExplainMasked (v0.9.831) — copilotExplain'in, ai_calls
-// kaydına prompt'un MASKELİ bir kopyasını yazan ikizi. Aynı /ai atıf
-// yolu; tek fark, kaydedilen örneğin `logUser`dan kurulması.
-//
-// Neden var: "Kodu da incele" yolunda prompt müşterinin KAYNAK KODUNU
-// taşıyor. Kod modele gitmek zorunda — özelliğin tamamı bu. ai_calls'a
-// gitmek zorunda DEĞİL: o tablo /ai sayfasında render ediliyor,
-// ClickHouse'ta saklanıyor ve admin export'una giriyor. Kaynak kodu
-// telemetri deposuna kopyalamak, kimsenin istemediği bir yerde ikinci
-// bir kod deposu yaratır.
-//
-// logUser boşsa ya da gerçekle aynıysa hiçbir override yazılmaz —
-// maskeleme yalnız gerçekten maskelenecek bir şey varken devrede.
-// PromptChars maskelenmez (bkz. copilot.CallMeta.PromptLogOverride):
-// çağrının maliyeti gerçek prompt üzerinden raporlanır.
-func (s *Server) copilotExplainMasked(r *http.Request, system, user, logUser string) (string, error) {
-	c := auth.FromContext(r.Context())
-	uid, email := "", ""
-	if c != nil {
-		uid, email = c.UserID, c.Email
-	}
-	surface := aiSurfaceFromRequest(r)
-	meta := copilot.CallMeta{
-		Surface:   surface,
-		UserID:    uid,
-		UserEmail: email,
-		// Çağıran ctx'e bir exchange kimliği koyduysa TAŞI (v0.9.593
-		// ile aynı sözleşme — geri bildirim rayı kopmasın).
-		ExchangeID: copilot.MetaFromContext(r.Context()).ExchangeID,
-		Shield:     s.aiShieldFor(r.Context(), surface), // v0.10.421 (E6) — GERÇEK prompt'la sayar, maskeli örnekle değil; v0.10.431 tohumlu
-	}
-	if logUser != "" && logUser != user {
-		meta.PromptLogOverride = system + "\n\n" + logUser
-	}
-	ctx, done := s.beginExplainSpan(r, copilot.WithMeta(r.Context(), meta))
-	out, err := s.copilot.Explain(ctx, system, user)
-	done(err)
-	return out, err
-}
-
-// copilotExplainJSON (v0.9.517) — modelden KATI JSON bekleyen yüzeyler
-// için. copilotExplain ile aynı /ai atıf yolu, tek farkı sunucu tarafında
-// çözümlemenin JSON'a kısıtlanması.
-//
-// Neden: JSON kaçakları (fence, önsöz cümlesi, kesik gövde) nadir ama
-// SESSİZ — yüzey "model geçerli JSON üretmedi" der ve operatör sebebini
-// göremez. Kısıt o sınıfı sunucu tarafında kapatıyor. Desteklemeyen uçta
-// sessizce eski davranışa düşer (bir kez yoklanır, karar önbelleklenir).
-//
-// v0.9.527 — `schema` verilirse çözümleme yalnız JSON'a değil o ŞEKLE
-// kilitlenir (bkz. copilot_schemas.go). nil geçmek eski davranıştır;
-// şema desteklemeyen uç zaten kendiliğinden json_object'e düşer.
-func (s *Server) copilotExplainJSON(r *http.Request, system, user string, schema map[string]any) (string, error) {
-	surface := aiSurfaceFromRequest(r)
-	c := auth.FromContext(r.Context())
-	uid, email := "", ""
-	if c != nil {
-		uid, email = c.UserID, c.Email
-	}
-	jctx := copilot.WithJSONMode(r.Context())
-	if len(schema) > 0 {
-		jctx = copilot.WithJSONSchema(r.Context(), surface, schema)
-	}
-	ctx := copilot.WithMeta(jctx, copilot.CallMeta{
-		Surface:   surface,
-		UserID:    uid,
-		UserEmail: email,
-		// v0.9.593 — çağıran ctx'e bir exchange kimliği koyduysa TAŞI.
-		//
-		// Bu sarmalayıcı CallMeta'yı sıfırdan kuruyordu, yani ctx'teki
-		// kimlik sessizce düşüyordu. Sonucu: tek-atış ✨ Explain
-		// yüzeylerinin hiçbiri geri bildirim rayına (v0.8.399
-		// ai_calls.exchange_id ↔ ai_feedback) binemiyordu.
-		//
-		// Tek satır ama kapıyı TÜM tek-atış yüzeylere açıyor: bundan
-		// sonra bir handler kimliği ctx'e koyup yanıtında döndürdüğü
-		// anda o cevap oylanabilir hale geliyor.
-		ExchangeID: copilot.MetaFromContext(r.Context()).ExchangeID,
-		Shield:     s.aiShieldFor(r.Context(), surface), // v0.10.421 (E6); v0.10.431 tohumlu
-	})
-	ctx, done := s.beginExplainSpan(r, ctx)
-	out, err := s.copilot.Explain(ctx, system, user)
-	done(err)
-	return out, err
-}
-
-// copilotExplainSurface (v0.8.397) — sibling wrapper for handlers
-// whose surface label is NOT derivable from the URL path: the guided
-// chat mode answers on POST /api/copilot/chat but must land in
-// ai_calls as "chat-guided" so the /ai page can track guided-path
-// quality separately from the free tool loop's "chat" rows. The ctx
-// must already carry the user meta (copilot.WithMeta, as the chat
-// handler sets); only the surface is overridden here. Lives in the
-// wrapper's own file so CHECK 4 (make audit) keeps guarding every
-// other call site against direct s.copilot.Explain use.
-func (s *Server) copilotExplainSurface(ctx context.Context, surface, system, user string) (string, error) {
-	meta := copilot.MetaFromContext(ctx)
-	meta.Surface = surface
-	if meta.Shield == nil {
-		meta.Shield = s.aiShieldFor(ctx, surface) // v0.10.421 (E6); v0.10.431 tohumlu + yüzey kapısı
-	}
-	sctx, done := s.beginExplainSpanCtx(copilot.WithMeta(ctx, meta)) // v0.10.425 (O2)
-	out, err := s.copilot.Explain(sctx, system, user)
-	done(err)
-	return out, err
-}
-
-// copilotStreamSurface (v0.8.404) — streaming twin of
-// copilotExplainSurface: same surface-override + attribution contract
-// (one self-recorded ai_calls row), but answer tokens stream through
-// onDelta as they arrive. StreamText falls back to the buffered call
-// TRANSPARENTLY when the endpoint can't stream (some vLLM builds 400
-// on stream:true) — zero deltas fire and the returned full text is
-// identical to what Explain would have produced, so callers keep the
-// existing answer contract either way.
-func (s *Server) copilotStreamSurface(ctx context.Context, surface, system, user string, onDelta func(string)) (string, error) {
-	meta := copilot.MetaFromContext(ctx)
-	meta.Surface = surface
-	if meta.Shield == nil {
-		meta.Shield = s.aiShieldFor(ctx, surface) // v0.10.421 (E6); v0.10.431 tohumlu + yüzey kapısı
-	}
-	sctx, done := s.beginExplainSpanCtx(copilot.WithMeta(ctx, meta)) // v0.10.425 (O2)
-	out, err := s.copilot.StreamText(sctx, system, user, onDelta)
-	done(err)
-	return out, err
 }
 
 // aiSurfaceFromPath maps the request path to a short stable
@@ -500,17 +445,5 @@ func (s *Server) aiRouterGaps(w http.ResponseWriter, r *http.Request) {
 //
 // Meta ctx'ten gelir; yalnız surface ve JSON kipi burada set edilir.
 func (s *Server) copilotExplainJSONSurface(ctx context.Context, surface, system, user string, schema map[string]any) (string, error) {
-	jctx := copilot.WithJSONMode(ctx)
-	if len(schema) > 0 {
-		jctx = copilot.WithJSONSchema(ctx, surface, schema)
-	}
-	meta := copilot.MetaFromContext(ctx)
-	meta.Surface = surface
-	if meta.Shield == nil {
-		meta.Shield = s.aiShieldFor(ctx, surface) // v0.10.421 (E6); v0.10.431 tohumlu + yüzey kapısı
-	}
-	sctx, done := s.beginExplainSpanCtx(copilot.WithMeta(jctx, meta)) // v0.10.425 (O2)
-	out, err := s.copilot.Explain(sctx, system, user)
-	done(err)
-	return out, err
+	return s.aiCall(ctx, nil, system, user, aiCallOpts{surface: surface, json: true, schema: schema})
 }

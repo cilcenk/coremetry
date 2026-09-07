@@ -379,6 +379,13 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	var chartBlocks []string
 	// v0.10.541 (Faz 3.3a) — tipli bloklar (event: block), eski çerçevelerle paralel.
 	var blockSeq blocks.Sequencer
+	// v0.10.542 (Faz 3.4) — açık sayfa yolu: aynı sayfaya giden tool linki
+	// "bu sayfada uygula" aksiyonuna dönüşür (chat_actions.go).
+	pageCtx := agentctx.Sanitize(req.Context.Page)
+	pagePath := ""
+	if pageCtx != nil {
+		pagePath = pageCtx.Path
+	}
 	chartSeen := map[string]bool{}
 	appendCharts := func(text string) string {
 		// v0.10.47 — MODELİN KENDİ ÇİTİ ÖNCE SÖKÜLÜR.
@@ -456,7 +463,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	}
 	loopPrompt := copilot.SystemPromptChatAgentLoop() + // v0.10.482 — telemetri ajanı çekirdek döngüsü (Ek A)
 		screenContextPreambleTR(screenCtx) +
-		agentctx.PreambleTR(agentctx.Sanitize(req.Context.Page), agentctx.Sanitize(req.Context.PinnedPage)) + // v0.10.539 — sayfa bağlamı (pin önce)
+		agentctx.PreambleTR(pageCtx, agentctx.Sanitize(req.Context.PinnedPage)) + // v0.10.539 — sayfa bağlamı (pin önce)
 		chatContextPreambleTR(cst.ctx) + // v0.10.478 — aktif sohbet bağlamı (Ek A ACTIVE_CONTEXT)
 		withAddressee(addressee, copilot.SystemPromptChat())
 
@@ -618,10 +625,16 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 					loopLinks = mergeToolLinks(loopLinks, l)
 					loopOpen = l.Href
 					emit("block", blockSeq.Next(blocks.TypeLink, l)) // v0.10.541
+					if act, ok := actionForLink(l, pagePath); ok {
+						emit("block", blockSeq.Next(blocks.TypeAction, act)) // v0.10.542
+					}
 				} else if l, ok := toolCallLink(tc.Name, tc.Input, time.Now()); ok {
 					stepEv["href"] = l.Href
 					loopLinks = mergeToolLinks(loopLinks, l)
 					emit("block", blockSeq.Next(blocks.TypeLink, l)) // v0.10.541
+					if act, ok := actionForLink(l, pagePath); ok {
+						emit("block", blockSeq.Next(blocks.TypeAction, act)) // v0.10.542
+					}
 				}
 			}
 			emit("step-result", stepEv)

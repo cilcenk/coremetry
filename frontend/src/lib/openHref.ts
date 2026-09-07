@@ -15,6 +15,10 @@ const pageOwnedParams: Record<string, readonly string[]> = {
     'minMs', 'maxMs', 'sort', 'order', 'page', 'view', 'groupBy', 'groupAttr', 'having',
     'aggSort', 'aggOrder', 'cluster', 'traceId',
   ],
+  // v0.10.542 (Faz 3.4) — /logs sahipli süzgeç param'ları (lib/logsUrl LogsUrlFilter
+  // + ?filters=); range/env/cols yabancı kalır. Aksiyon "filtreyi uygula" eski
+  // süzgecin üstüne BİNMEZ, yerine geçer.
+  '/logs': ['service', 'cluster', 'q', 'severity', 'traceId', 'spanId', 'hasTrace', 'filters', 'doc', 'docsvc'],
 };
 
 export function mergeOpenHref(href: string, currentPathname: string, currentSearch: string): string | null {

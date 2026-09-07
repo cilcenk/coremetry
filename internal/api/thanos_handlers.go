@@ -66,7 +66,16 @@ func clusterCfgDigest(c thanos.ClusterConfig) string {
 // bir hata üretir. Bugünkü davranış ise sessiz yalan: seçici ölü.
 // Sıradaki adım (ayrı sürüm, ölçüm gerektirir): geniş pencerede
 // max_source_resolution ile downsample'lı blokları kullanmak.
-const thanosMaxWindow = 24 * time.Hour
+//
+// v0.10.531 (operatör kararı 2026-09-07: "tavanı 30 güne çıkaralım"):
+// tavan 30g. Ham tarama endişesi query_range'e `max_source_resolution=auto`
+// ile karşılandı (thanos/client.go doQueryWith): auto = step/5, yani ≤24h
+// pencerede (step ≤300s → ≤60s) yine HAM blok, 7g'de (1800s → 360s) ve
+// 30g'de (7200s → 1440s) 5 dk downsample'lı blok — varsa; yoksa Thanos
+// ham bloğa düşer. Nokta bütçesi stepForWindow'da: 30g → 7200s = 360
+// nokta/seri. Kaynağın retention'ı kısaysa grafik yalnız tutulan kısmı
+// gösterir; bu, tavanın değil kaynağın sınırıdır.
+const thanosMaxWindow = 30 * 24 * time.Hour
 
 // clampThanosWindow — tavanı uygulayan TEK gövde.
 //

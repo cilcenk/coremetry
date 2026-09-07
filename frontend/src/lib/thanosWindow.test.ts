@@ -23,10 +23,12 @@ describe('clampThanosWindow', () => {
     ['6s — ESKİ tavan, artık kelepçe değil', 6, 6, false],
     ['6s+1dk — eskiden kırpılırdı', 6 + 1 / 60, 6 + 1 / 60, false],
     ['12s', 12, 12, false],
-    ['24s — TAM tavan', 24, 24, false],
-    ['24s+1dk — kelepçe başlar', 24 + 1 / 60, 24, true],
-    ['7g', 24 * 7, 24, true],
-    ['30g', 24 * 30, 24, true],
+    ['24s — eski tavan, artık geçer', 24, 24, false],
+    ['24s+1dk — eskiden kırpılırdı (v0.10.531 öncesi)', 24 + 1 / 60, 24 + 1 / 60, false],
+    ['7g — geçer (operatör 2026-09-07)', 24 * 7, 24 * 7, false],
+    ['30g — TAM tavan', 24 * 30, 24 * 30, false],
+    ['30g+1dk — kelepçe başlar', 24 * 30 + 1 / 60, 24 * 30, true],
+    ['90g — tavana iner', 24 * 90, 24 * 30, true],
   ];
 
   it.each(cases)('%s', (_n, spanH, wantH, wantClamped) => {
@@ -40,7 +42,7 @@ describe('clampThanosWindow', () => {
 
   it('geçmişe fırçalanmış pencere BUGÜNE kaymaz', () => {
     const pastTo = to - 90 * 24 * H;       // 90 gün önce
-    const { cFrom, cTo, clamped } = clampThanosWindow(pastTo - 7 * 24 * H, pastTo);
+    const { cFrom, cTo, clamped } = clampThanosWindow(pastTo - 60 * 24 * H, pastTo);
     expect(clamped).toBe(true);
     expect(cTo).toBe(pastTo);              // ← asıl sözleşme
     expect(cFrom).toBe(pastTo - THANOS_MAX_WINDOW_NS);
@@ -53,9 +55,11 @@ describe('clampThanosWindow', () => {
 });
 
 describe('clampSuffix — başlık sabitten TÜRETİLİR', () => {
-  it('kelepçe varsa tavanı söyler', () => {
-    expect(clampSuffix(true)).toBe(` (last ${THANOS_MAX_WINDOW_HOURS}h)`);
-    expect(clampSuffix(true)).toContain(THANOS_MAX_WINDOW_LABEL);
+  it('kelepçe varsa tavanı söyler — gün katı ise "d" (v0.10.531: 720h değil 30d)', () => {
+    expect(THANOS_MAX_WINDOW_HOURS % 24).toBe(0);
+    expect(THANOS_MAX_WINDOW_LABEL).toBe(`${THANOS_MAX_WINDOW_HOURS / 24}d`);
+    expect(clampSuffix(true)).toBe(` (last ${THANOS_MAX_WINDOW_LABEL})`);
+    expect(clampSuffix(true)).not.toContain('720');
   });
   it('kelepçe yoksa başlık HİÇ uzamaz', () => {
     expect(clampSuffix(false)).toBe('');

@@ -33,10 +33,12 @@ func TestClampThanosWindow(t *testing.T) {
 		{"6s — dokunulmaz (eski tavan artık kelepçe DEĞİL)", 6 * time.Hour, 6 * time.Hour, false},
 		{"6s+1sn — eskiden kelepçelenirdi, artık geçer", 6*time.Hour + time.Second, 6*time.Hour + time.Second, false},
 		{"12s — yeni tavanın altı, tam geçer", 12 * time.Hour, 12 * time.Hour, false},
-		{"24s — TAM tavan, kelepçe yok", 24 * time.Hour, 24 * time.Hour, false},
-		{"24s+1sn — kelepçe başlar", 24*time.Hour + time.Second, 24 * time.Hour, true},
-		{"7g — tavana iner", 7 * 24 * time.Hour, 24 * time.Hour, true},
-		{"30g — tavana iner", 30 * 24 * time.Hour, 24 * time.Hour, true},
+		{"24s — eski tavan, artık geçer", 24 * time.Hour, 24 * time.Hour, false},
+		{"24s+1sn — eskiden kelepçelenirdi (v0.10.531 öncesi), artık geçer", 24*time.Hour + time.Second, 24*time.Hour + time.Second, false},
+		{"7g — geçer (operatör 2026-09-07: 7 günlük gösterim)", 7 * 24 * time.Hour, 7 * 24 * time.Hour, false},
+		{"30g — TAM tavan, kelepçe yok", 30 * 24 * time.Hour, 30 * 24 * time.Hour, false},
+		{"30g+1sn — kelepçe başlar", 30*24*time.Hour + time.Second, 30 * 24 * time.Hour, true},
+		{"90g — tavana iner", 90 * 24 * time.Hour, 30 * 24 * time.Hour, true},
 	}
 
 	for _, c := range cases {
@@ -62,19 +64,19 @@ func TestClampThanosWindow(t *testing.T) {
 }
 
 // Geçmişe bakan (brush'lanmış) pencere: çapa "şimdi" DEĞİL. Kelepçe o
-// pencerenin SON 24 saatini vermeli — bugüne kaydırmamalı.
+// pencerenin SON 30 gününü vermeli — bugüne kaydırmamalı.
 func TestClampThanosWindowPastAnchor(t *testing.T) {
 	to := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) // aylar öncesi
-	from := to.Add(-7 * 24 * time.Hour)
+	from := to.Add(-90 * 24 * time.Hour)
 
 	gotFrom, gotTo, clamped := clampThanosWindow(from, to)
 	if !clamped {
-		t.Fatal("7g pencere kelepçelenmeliydi")
+		t.Fatal("90g pencere kelepçelenmeliydi")
 	}
 	if !gotTo.Equal(to) {
 		t.Errorf("to = %v, want %v — geçmiş pencere bugüne kaydırılamaz", gotTo, to)
 	}
-	if want := to.Add(-24 * time.Hour); !gotFrom.Equal(want) {
+	if want := to.Add(-30 * 24 * time.Hour); !gotFrom.Equal(want) {
 		t.Errorf("from = %v, want %v", gotFrom, want)
 	}
 }
@@ -82,8 +84,8 @@ func TestClampThanosWindowPastAnchor(t *testing.T) {
 // Tavan tek gövdeden okunur; sayı testte de kaynakta da elle yazılıp
 // sürüklenmesin.
 func TestThanosMaxWindowValue(t *testing.T) {
-	if thanosMaxWindow != 24*time.Hour {
-		t.Fatalf("thanosMaxWindow = %v, want 24h", thanosMaxWindow)
+	if thanosMaxWindow != 30*24*time.Hour {
+		t.Fatalf("thanosMaxWindow = %v, want 30d (v0.10.531)", thanosMaxWindow)
 	}
 }
 

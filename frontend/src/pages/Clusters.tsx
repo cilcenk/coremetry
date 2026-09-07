@@ -1142,11 +1142,11 @@ export default function ClustersPage() {
                         useUrlRange'ten geliyor). */}
                     {/* Madde 4 sweep — ortak 'clusters' crosshair grubu +
                         çift-tık zoom geri-yığını (chartZoomReset). */}
-                    <MetricArea title="CPU usage (cores)" byLabel="By node"
+                    <MetricArea title={`CPU usage (cores)${clampSuffix(netClamped)}`} byLabel="By node"
                       by={cpuByNode} onToggle={setCpuByNode} onZoom={chartZoom} onZoomReset={chartZoomReset}
                       syncKey="clusters" xRange={trendXRange}
                       series={cpuTrendQ.data?.series} seriesName="CPU" />
-                    <MetricArea title="Memory usage" byLabel="By node"
+                    <MetricArea title={`Memory usage${clampSuffix(netClamped)}`} byLabel="By node"
                       by={memByNode} onToggle={setMemByNode} onZoom={chartZoom} onZoomReset={chartZoomReset}
                       syncKey="clusters" xRange={trendXRange}
                       series={memTrendQ.data?.series} seriesName="Memory" unit="bytes" />

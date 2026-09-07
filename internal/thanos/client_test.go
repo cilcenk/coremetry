@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -988,5 +989,40 @@ func TestStepForWindowMDP(t *testing.T) {
 		if got := TrendMaxDataPointsRung(tc.want); got != tc.rung {
 			t.Errorf("TrendMaxDataPointsRung(%d) = %d; want %d", tc.want, got, tc.rung)
 		}
+	}
+}
+
+// v0.10.531 — tavan 30g (api.thanosMaxWindow): geniş pencerede ham blok
+// taraması yerine downsample'lı blok. query_range her zaman
+// `max_source_resolution=auto` taşır (auto = step/5: ≤24h'te yine ham),
+// anlık /query taşımaz, çağıranın açık değeri korunur.
+func TestRangeQueriesAskAutoDownsampling(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.URL.Path+"|"+r.URL.Query().Get("max_source_resolution"))
+		fmt.Fprint(w, `{"status":"success","data":{"resultType":"matrix","result":[]}}`)
+	}))
+	defer srv.Close()
+	s := New()
+	c := ClusterConfig{Name: "prod-ist", URL: srv.URL, Enabled: true}
+	ctx := context.Background()
+	rng := url.Values{"query": {"up"}, "start": {"1"}, "end": {"2"}, "step": {"1"}}
+	if _, err := s.doQuery(ctx, c, "/api/v1/query_range", rng); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {"up"}}); err != nil {
+		t.Fatal(err)
+	}
+	explicit := url.Values{"query": {"up"}, "start": {"1"}, "end": {"2"}, "step": {"1"}, "max_source_resolution": {"0s"}}
+	if _, err := s.doQuery(ctx, c, "/api/v1/query_range", explicit); err != nil {
+		t.Fatal(err)
+	}
+	// Çağıranın kendi Values'u kirlenmez (cloneValues).
+	if rng.Get("max_source_resolution") != "" {
+		t.Errorf("çağıranın params'ı mutasyona uğradı: %v", rng)
+	}
+	want := []string{"/api/v1/query_range|auto", "/api/v1/query|", "/api/v1/query_range|0s"}
+	if strings.Join(seen, ",") != strings.Join(want, ",") {
+		t.Fatalf("istekler %v, want %v", seen, want)
 	}
 }

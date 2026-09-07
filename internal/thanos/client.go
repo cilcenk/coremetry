@@ -544,6 +544,15 @@ func (s *Service) doQueryWith(ctx context.Context, c ClusterConfig, path string,
 			params.Set("query", withClusterMatcher(q, label, value))
 		}
 	}
+	// v0.10.531 — tavan 30g (api.thanosMaxWindow): geniş pencerede ham
+	// blok taraması yerine downsample'lı blok. `auto` = step/5: ≤24h'te
+	// (step ≤300s) yine ham, 7g/30g'de 5 dk blok — varsa; yoksa Thanos
+	// ham bloğa düşer, Prometheus parametreyi yok sayar. Çağıran açıkça
+	// verdiyse dokunulmaz; anlık /query'ye eklenmez (step yok).
+	if path == "/api/v1/query_range" && params.Get("max_source_resolution") == "" {
+		params = cloneValues(params)
+		params.Set("max_source_resolution", "auto")
+	}
 	u := strings.TrimRight(c.URL, "/") + path + "?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {

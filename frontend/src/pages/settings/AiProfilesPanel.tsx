@@ -8,7 +8,7 @@ import { Button, Badge, Modal, SelectField, useConfirm } from '@/components/ui';
 import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
-import type { AIModelProfile, AIModelProfileInput, AIProfilesPayload, AIProvider, AIProfileTestResult } from '@/lib/types';
+import type { AIModelProfile, AIModelProfileInput, AIProfilesPayload, AIProvider, AIProfileTestResult, AIThinking } from '@/lib/types';
 import { Field2, FlashBox, Row } from './shared';
 import { slugifyProfileId, PROFILE_ID_RE, tuningSummary, endpointLabel, profileUsable } from './aiProfiles';
 
@@ -21,11 +21,12 @@ const COLS: DataTableColumn<AIModelProfile>[] = [
   { id: 'tuning',   label: 'Tuning',    sortValue: p => tuningSummary(p),                width: 130 },
 ];
 
-type Draft = { id: string; label: string; provider: AIProvider; baseUrl: string; apiKey: string; model: string; skipTls: boolean; maxTokens: string; temperature: string; timeoutS: string };
-const emptyDraft = (): Draft => ({ id: '', label: '', provider: 'openai', baseUrl: '', apiKey: '', model: '', skipTls: false, maxTokens: '', temperature: '', timeoutS: '' });
+type Draft = { id: string; label: string; provider: AIProvider; baseUrl: string; apiKey: string; model: string; skipTls: boolean; maxTokens: string; temperature: string; timeoutS: string; thinking: AIThinking };
+const emptyDraft = (): Draft => ({ id: '', label: '', provider: 'openai', baseUrl: '', apiKey: '', model: '', skipTls: false, maxTokens: '', temperature: '', timeoutS: '', thinking: '' });
 const draftOf = (p: AIModelProfile): Draft => ({
   id: p.id, label: p.label ?? '', provider: p.provider, baseUrl: p.baseUrl ?? '', apiKey: '', model: p.model ?? '', skipTls: !!p.skipTls,
   maxTokens: p.maxTokens ? String(p.maxTokens) : '', temperature: p.temperature === undefined || p.temperature === null ? '' : String(p.temperature), timeoutS: p.timeoutS ? String(p.timeoutS) : '',
+  thinking: p.thinking ?? '',
 });
 
 export function AiProfilesPanel({ payload, onChange }: { payload: AIProfilesPayload; onChange: (p: AIProfilesPayload) => void }) {
@@ -57,6 +58,7 @@ export function AiProfilesPanel({ payload, onChange }: { payload: AIProfilesPayl
       maxTokens: draft.maxTokens ? Number(draft.maxTokens) : undefined,
       temperature: draft.temperature === '' ? undefined : Number(draft.temperature),
       timeoutS: draft.timeoutS ? Number(draft.timeoutS) : undefined,
+      thinking: draft.thinking || undefined,
     };
     await run(() => api.putAIProfile(id, body), isNew ? `Profil eklendi: ${id}` : `Profil güncellendi: ${id}`);
     setDraft(null);
@@ -152,6 +154,17 @@ export function AiProfilesPanel({ payload, onChange }: { payload: AIProfilesPayl
               <Field2 label="Temperature" small hint="boş = küresel; 0 bir değerdir"><input value={draft.temperature} onChange={e => setDraft({ ...draft, temperature: e.target.value })} inputMode="decimal" /></Field2>
               <Field2 label="Timeout (s)" small hint="boş = küresel"><input value={draft.timeoutS} onChange={e => setDraft({ ...draft, timeoutS: e.target.value })} inputMode="numeric" /></Field2>
             </Row>
+            {/* v0.10.534 (modelcaps) — düşünme anahtarı modelin ailesine göre gövdeye iner
+                (Qwen3: chat_template_kwargs.enable_thinking); anahtarı bilinmeyen ailede
+                sunucu bir kez uyarır, gövde değişmez. Boş = modele dokunma. */}
+            {draft.provider === 'openai' && (
+              <SelectField label="Düşünme (thinking)" value={draft.thinking} onChange={e => setDraft({ ...draft, thinking: e.target.value as AIThinking })}
+                hint="Qwen3 gibi düşünen modellerde 'kapalı' boş cevap riskini keser; gemma/llama'da etkisiz. Boş = varsayılan.">
+                <option value="">varsayılan (dokunma)</option>
+                <option value="off">kapalı (enable_thinking=false)</option>
+                <option value="on">açık</option>
+              </SelectField>
+            )}
           </form>
         )}
       </Modal>

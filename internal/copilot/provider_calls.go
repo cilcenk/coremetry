@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/cilcenk/coremetry/internal/ai/modelcaps"
 	"github.com/cilcenk/coremetry/internal/ai/provider"
 )
 
@@ -72,6 +73,10 @@ func (s *Service) callSnapshot(ctx context.Context) (cfg provider.Config, req pr
 		temp := t
 		req.Temperature = &temp
 	}
+	// v0.10.534 — model-farkında yetenekler (modelcaps): profilin thinking
+	// ayarı ailenin gövde anahtarına çevrilir; aile anahtar bilmiyorsa ya da
+	// düşünen model küçük bütçeyle koşuyorsa modele göre BİR kez uyarılır.
+	req.ExtraBody = s.thinkingBody(model, p.Thinking, maxTok)
 	return cfg, req, prov, base, model
 }
 
@@ -262,4 +267,30 @@ func clampTokens(n int) uint32 {
 		return maxU32
 	}
 	return uint32(n)
+}
+
+// thinkingBody — v0.10.534: modelcaps çözümü + tek-seferlik uyarılar
+// (warnedModels; anahtar model+konu). callSnapshot RLock altında çağırır;
+// sync.Map kilitsiz.
+func (s *Service) thinkingBody(model, thinking string, budget int) map[string]any {
+	caps := modelcaps.For(model)
+	eb, ok := modelcaps.ExtraBody(caps, modelcaps.Thinking(thinking))
+	if !ok {
+		s.warnOnce(model+"|thinking", "[copilot] model %q (aile %s): thinking=%q istendi ama bu aile için gövde anahtarı bilinmiyor — ayar uygulanmadı", model, caps.Family, thinking)
+	}
+	if caps.Reasoning && modelcaps.Thinking(thinking) != modelcaps.ThinkingOff && budget > 0 && budget <= modelcapsReasoningBudgetHint {
+		s.warnOnce(model+"|budget", "[copilot] model %q düşünen bir aile (%s) ve completion bütçesi %d — düşünme fazı bütçeyi yiyip boş cevap üretebilir; profilde maxTokens'ı yükselt ya da thinking=off ver", model, caps.Family, budget)
+	}
+	return eb
+}
+
+// modelcapsReasoningBudgetHint — bu tavanın altında düşünen modelde uyarı
+// (bugünkü varsayılan 4096; uyarı davranışı DEĞİŞTİRMEZ).
+const modelcapsReasoningBudgetHint = 4096
+
+func (s *Service) warnOnce(key, format string, args ...any) {
+	if _, seen := s.warnedModels.LoadOrStore(key, struct{}{}); seen {
+		return
+	}
+	log.Printf(format, args...)
 }

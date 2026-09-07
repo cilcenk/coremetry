@@ -426,6 +426,7 @@ func StreamOpenAI(ctx context.Context, cfg Config, req Request, onDelta func(str
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
 	}
+	applyExtraBody(body, req.ExtraBody) // v0.10.534
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return Response{}, err

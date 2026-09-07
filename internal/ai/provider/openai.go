@@ -87,6 +87,7 @@ func DoOpenAI(ctx context.Context, cfg Config, req Request) (Response, error) {
 	if rf != nil {
 		body["response_format"] = rf
 	}
+	applyExtraBody(body, req.ExtraBody) // v0.10.534
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return Response{}, err

@@ -1278,6 +1278,8 @@ export interface AISettings {
   surfaceMap?: AISurfaceMap;
 }
 export type AIIntentClassify = 'off' | 'on' | 'on_no_loop';
+/** v0.10.534 (modelcaps) — profil düşünme anahtarı: '' dokunma, off/on ailenin gövde anahtarına çevrilir (Qwen3). */
+export type AIThinking = '' | 'off' | 'on';
 export interface AIModelProfile {
   id: string;
   label?: string;
@@ -1290,6 +1292,7 @@ export interface AIModelProfile {
   maxTokens?: number;
   temperature?: number | null;
   timeoutS?: number;
+  thinking?: AIThinking; // v0.10.534
   default?: boolean;
 }
 /** Yüzey grubu → profil kimliği ('' = varsayılan). intent = chat-intent; background = *-auto-explain. */
@@ -1305,6 +1308,7 @@ export interface AIModelProfileInput {
   maxTokens?: number;
   temperature?: number | null;
   timeoutS?: number;
+  thinking?: AIThinking; // v0.10.534
 }
 export interface AIProfilesPayload { profiles: AIModelProfile[]; defaultProfile: string; surfaceMap: AISurfaceMap }
 export interface AIProfileTestResult { ok: boolean; ms: number; profile: string; error?: string; sample?: string }

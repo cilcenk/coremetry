@@ -51,6 +51,7 @@ type aiProfileView struct {
 	MaxTokens   int      `json:"maxTokens,omitempty"`
 	Temperature *float64 `json:"temperature,omitempty"`
 	TimeoutS    int      `json:"timeoutS,omitempty"`
+	Thinking    string   `json:"thinking,omitempty"` // v0.10.534 (modelcaps): "" | off | on
 	Default     bool     `json:"default,omitempty"`
 }
 
@@ -60,7 +61,7 @@ func aiProfileViews(profiles []copilot.ModelProfile, defaultID string) []aiProfi
 		out = append(out, aiProfileView{
 			ID: p.ID, Label: p.Label, Provider: p.Provider, BaseURL: p.BaseURL, Model: p.Model, SkipTLS: p.SkipTLS,
 			HasKey: p.APIKey != "", MaxTokens: p.MaxTokens, Temperature: p.Temperature, TimeoutS: p.TimeoutS,
-			Default: p.ID == defaultID,
+			Thinking: p.Thinking, Default: p.ID == defaultID,
 		})
 	}
 	return out
@@ -111,6 +112,7 @@ func (s *Server) putAIProfile(w http.ResponseWriter, r *http.Request) {
 		MaxTokens   int      `json:"maxTokens"`
 		Temperature *float64 `json:"temperature"`
 		TimeoutS    int      `json:"timeoutS"`
+		Thinking    string   `json:"thinking"` // v0.10.534
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "geçersiz JSON: "+err.Error())
@@ -120,6 +122,7 @@ func (s *Server) putAIProfile(w http.ResponseWriter, r *http.Request) {
 		ID: id, Label: strings.TrimSpace(in.Label), Provider: strings.TrimSpace(in.Provider), BaseURL: strings.TrimSpace(in.BaseURL),
 		APIKey: in.APIKey, Model: strings.TrimSpace(in.Model), SkipTLS: in.SkipTLS,
 		MaxTokens: in.MaxTokens, Temperature: in.Temperature, TimeoutS: in.TimeoutS,
+		Thinking: strings.TrimSpace(in.Thinking),
 	}
 	if err := copilot.ValidateProfile(p); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())

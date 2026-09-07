@@ -68,6 +68,11 @@ type Request struct {
 	// buradaki denetim o sözleşmenin ikinci kilidi.
 	JSONSchemaName string
 	JSONSchema     map[string]any
+	// ExtraBody — v0.10.534 (modelcaps): openai-uyumlu gövdeye eklenen ek
+	// alanlar (ör. Qwen3 `chat_template_kwargs.enable_thinking`). Çekirdek
+	// anahtarları (model/max_tokens/messages/stream/…) EZEMEZ; anthropic ve
+	// github gövdeleri yok sayar. nil = gövde değişmez.
+	ExtraBody map[string]any
 	// Effort — v0.10.253 (prompt audit D3): Anthropic 4.6+ ailesinde
 	// output_config.effort ("low" | "medium" | "high" | "max"). Boş =
 	// gönderilmez (sağlayıcı varsayılanı). Derinlik prompt'la değil
@@ -95,4 +100,15 @@ type Config struct {
 	APIKey     string
 	Model      string
 	HTTPClient *http.Client
+}
+
+// applyExtraBody — Request.ExtraBody'yi gövdeye ekler; var olan (çekirdek)
+// anahtarlar korunur. Üç openai-uyumlu gövde (buffered/stream/tools) bunu
+// çağırır (extra_body_test.go pinler).
+func applyExtraBody(body map[string]any, extra map[string]any) {
+	for k, v := range extra {
+		if _, taken := body[k]; !taken {
+			body[k] = v
+		}
+	}
 }

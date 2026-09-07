@@ -15,11 +15,12 @@ describe('/traces sayımı listeyle aynı evren', () => {
     const i = src.indexOf('api.tracesCount({');
     expect(i).toBeGreaterThan(0);
     const call = src.slice(i, src.indexOf('}, ctl.signal)', i));
-    expect(call).toContain('search: filter.search || undefined');
+    expect(call).toContain('search: effectiveTraceSearch(filter)'); // v0.10.523 tek terim
     expect(call).toContain('service: filter.service || undefined');
     expect(call).toContain('filters: advGroupParam ? undefined');
     const deps = src.slice(src.indexOf('}, [showTotal, view, listRangeNs', i), src.indexOf(']);', src.indexOf('}, [showTotal, view, listRangeNs', i)));
     expect(deps).toContain('filter.search');
+    expect(deps).toContain('filter.traceId'); // v0.10.523 kimlik kutusu da sayımı yeniler
   });
   it('liste bitmişse (hasMore=false) kesin toplam listeden; sayılamıyor metni yalnız devam eden listede', () => {
     expect(src).toContain("{countRes?.reason && !hasMore ? (");

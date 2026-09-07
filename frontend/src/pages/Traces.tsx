@@ -49,6 +49,7 @@ import { tsDateTime, tsLong, timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils
 import { alignTraceWindow } from '@/lib/traceWindow';
 import { suggestAttrKey, type AttrKeySuggestion } from '@/lib/attrKeySuggest';
 import { traceCountReasonHint } from '@/lib/traceCountReason';
+import { effectiveTraceSearch } from '@/lib/traceSearchTerm';
 import { lastReachablePage } from '@/lib/traceReach';
 import type { TraceCountResponse } from '@/lib/types';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery, rebuildPreserving } from '@/lib/urlState';
@@ -530,13 +531,15 @@ function TracesPageInner() {
     // bir değer KİMLİKTİR (function_id gibi): arama terimi olarak gider,
     // sunucu kimlik-önce yolunu (v0.10.342) koşar. Ham hâli — eşitlik
     // büyük/küçük harf duyarlı, o yüzden lowercase edilmiş `tid` değil.
-    const identityTerm = !traceIdExact && filter.traceId.trim() ? filter.traceId.trim() : undefined;
+    // v0.10.523 — dört yüzeyin (liste / şerit / sayım / RED) TEK arama terimi:
+    // lib/traceSearchTerm.effectiveTraceSearch (v0.10.343 kimlik terimini
+    // yalnız listeye eklemişti; şerit aramasız kalıyordu — prod 2,4M/8).
     const useTimeRange = !traceIdExact;
     const { from, to } = useTimeRange ? listRangeNs : { from: undefined, to: undefined };
     const listParams: TracesParams = {
       limit: 50, offset: page * 50, from, to, sort, order,
       service: filter.service || undefined,
-      search: filter.search || identityTerm || undefined,
+      search: effectiveTraceSearch(filter),
       traceId: traceIdExact,
       minMs: filter.minMs || undefined,
       maxMs: filter.maxMs || undefined,
@@ -662,7 +665,7 @@ function TracesPageInner() {
     // gelmiyor") — kind kısıtı YALNIZ filtre giriş span'ında yaşayan
     // anahtarlardaysa; db./messaging./… ya da serbest metin varsa şerit
     // eşleşen span'leri sayar (volumeSeries.ts stripScope başlığı).
-    if (stripScope(chartFilters, filter.search ?? '') === 'entry') {
+    if (stripScope(chartFilters, effectiveTraceSearch(filter) ?? '') === 'entry') {
       chartFilters.push({ k: 'kind', op: 'IN', v: ['server', 'consumer'] });
     }
     if (env) chartFilters.push({ k: 'deployment.environment', op: '=', v: [env] });
@@ -672,7 +675,8 @@ function TracesPageInner() {
     if (clusterScope) chartFilters.push({ k: 'cluster', op: '=', v: [clusterScope] });
     const common = {
       from, to, step,
-      search: filter.search || undefined,
+      // v0.10.523 — listeyle AYNI terim (kimlik kutusundaki değer dahil).
+      search: effectiveTraceSearch(filter),
       filters: chartFilters.length ? JSON.stringify(chartFilters) : undefined,
       dsl: filter.service ? `service.name = "${filter.service.replace(/"/g, '\\"')}"` : undefined,
     };
@@ -713,7 +717,7 @@ function TracesPageInner() {
       })
       .catch((e: unknown) => { if (!cancelled && !isCanceled(e)) setVolSeries(null); });
     return () => { cancelled = true; ctl.abort(); };
-  }, [view, listRangeNs, filter.service, filter.search, filter.rootOnly, filter.hasError, env, clusterScope, advFilters, grouped, stripStat]); // v0.10.484, v0.10.513 stripStat
+  }, [view, listRangeNs, filter.service, filter.search, filter.traceId, filter.rootOnly, filter.hasError, env, clusterScope, advFilters, grouped, stripStat]); // v0.10.484, v0.10.513 stripStat, v0.10.523 traceId
 
   // v0.9.637 — anahtar önerisi YALNIZ boş sonuçta çekilir. CLAUDE.md
   // ES/CH maliyet disiplini: liste boyunca prefetch yok, poll yok —
@@ -751,7 +755,7 @@ function TracesPageInner() {
       groupBy: safeGroup, sort: aggSort, order: aggOrder, limit: 200, from, to,
       groupAttr: safeAttr || undefined,
       service: filter.service || undefined,
-      search: filter.search || undefined,
+      search: effectiveTraceSearch(filter),
       hasError: filter.hasError || undefined,
       minMs: filter.minMs || undefined,
       maxMs: filter.maxMs || undefined,
@@ -871,7 +875,7 @@ function TracesPageInner() {
       // aramayla 5 trace buluyordu. Arama listeyle aynı evren; MV'yi
       // düşürdüğünde sunucu dürüstçe "sayılamıyor" der, liste bitmişse
       // kesin toplam listeden (aşağıda).
-      search: filter.search || undefined,
+      search: effectiveTraceSearch(filter),
       minMs: filter.minMs || undefined,
       maxMs: filter.maxMs || undefined,
       hasError: filter.hasError || undefined,
@@ -887,7 +891,7 @@ function TracesPageInner() {
       .then(r => { if (!cancelled) setCountRes(r); })
       .catch((e: unknown) => { if (!cancelled && !isCanceled(e)) setCountRes(null); });
     return () => { cancelled = true; ctl.abort(); };
-  }, [showTotal, view, listRangeNs, filter.service, filter.search, filter.minMs, filter.maxMs,
+  }, [showTotal, view, listRangeNs, filter.service, filter.search, filter.traceId, filter.minMs, filter.maxMs,
       filter.hasError, filter.rootOnly, env, clusterScope, advFilters, advGroupParam]);
   // v0.9.1372 — sessiz geri dönüş. Koşul, aşağıdaki "no traces found" boş
   // durumunun GÖRÜNME koşuluyla aynı: liste görünümü, hata yok, veri geldi,

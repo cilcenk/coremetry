@@ -26,6 +26,7 @@ package copilot
 // SetProfiles'ta korunur (30 s'lik config refresh istemciyi yeniden kurmaz).
 
 import (
+	"github.com/cilcenk/coremetry/internal/ai/modelcaps"
 	"context"
 	"errors"
 	"fmt"
@@ -58,13 +59,17 @@ type ModelProfile struct {
 	MaxTokens   int      `json:"maxTokens,omitempty"`
 	Temperature *float64 `json:"temperature,omitempty"`
 	TimeoutS    int      `json:"timeoutS,omitempty"`
+	// Thinking — v0.10.534 (modelcaps): "" dokunma | "off" | "on". Ailenin
+	// anahtarı biliniyorsa (Qwen3: chat_template_kwargs.enable_thinking)
+	// gövdeye iner; bilinmiyorsa bir kez uyarılır, gövde değişmez.
+	Thinking string `json:"thinking,omitempty"`
 }
 
 // sameProfile — Temperature işaretçi olduğu için == kullanılamaz.
 func sameProfile(a, b ModelProfile) bool {
 	if a.ID != b.ID || a.Label != b.Label || a.Provider != b.Provider || a.BaseURL != b.BaseURL ||
 		a.APIKey != b.APIKey || a.Model != b.Model || a.SkipTLS != b.SkipTLS ||
-		a.MaxTokens != b.MaxTokens || a.TimeoutS != b.TimeoutS {
+		a.MaxTokens != b.MaxTokens || a.TimeoutS != b.TimeoutS || a.Thinking != b.Thinking {
 		return false
 	}
 	if (a.Temperature == nil) != (b.Temperature == nil) {
@@ -124,6 +129,9 @@ func ValidateProfile(p ModelProfile) error {
 	}
 	if len(p.Label) > 60 {
 		return errors.New("label ≤ 60 karakter")
+	}
+	if !modelcaps.ValidThinking(p.Thinking) {
+		return errors.New("thinking boş, 'off' ya da 'on' olmalı")
 	}
 	return ValidateTuning(p.MaxTokens, p.Temperature, p.TimeoutS)
 }

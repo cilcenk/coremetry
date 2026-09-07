@@ -13,11 +13,12 @@ export function slugifyProfileId(label: string): string {
 export const PROFILE_ID_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 
 /** Tuning özeti: "8k tok · t=0 · 60 s" — eksikler küresel değere düşer, yazılmaz. */
-export function tuningSummary(p: Pick<AIModelProfile, 'maxTokens' | 'temperature' | 'timeoutS'>): string {
+export function tuningSummary(p: Pick<AIModelProfile, 'maxTokens' | 'temperature' | 'timeoutS' | 'thinking'>): string {
   const parts: string[] = [];
   if (p.maxTokens) parts.push(p.maxTokens >= 1000 ? `${Math.round(p.maxTokens / 1000)}k tok` : `${p.maxTokens} tok`);
   if (p.temperature !== undefined && p.temperature !== null) parts.push(`t=${p.temperature}`);
   if (p.timeoutS) parts.push(`${p.timeoutS} s`);
+  if (p.thinking) parts.push(`think=${p.thinking}`); // v0.10.534
   return parts.length ? parts.join(' · ') : 'küresel';
 }
 

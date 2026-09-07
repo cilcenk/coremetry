@@ -304,3 +304,38 @@ func TestProbeProfileBypassesMasterSwitchAndDefaultCreds(t *testing.T) {
 		t.Fatalf("ai_calls satırı: surface=%q model=%q base=%q", r.Surface, r.Model, r.BaseURL)
 	}
 }
+
+// v0.10.534 — profil thinking: doğrulama + eşitlik + gövde çözümü (modelcaps).
+func TestProfileThinking(t *testing.T) {
+	if err := ValidateProfile(ModelProfile{ID: "ok-1", Provider: ProviderOpenAI, Thinking: "auto"}); err == nil || !strings.Contains(err.Error(), "thinking") {
+		t.Fatalf("thinking=auto reddedilmeli: %v", err)
+	}
+	for _, th := range []string{"", "off", "on"} {
+		if err := ValidateProfile(ModelProfile{ID: "ok-1", Provider: ProviderOpenAI, Thinking: th}); err != nil {
+			t.Fatalf("thinking=%q geçerli olmalı: %v", th, err)
+		}
+	}
+	a := ModelProfile{ID: "p", Provider: ProviderOpenAI, Thinking: "off"}
+	b := a
+	b.Thinking = "on"
+	if sameProfile(a, b) {
+		t.Fatal("thinking farkı sameProfile'ı ayırmalı (blob yeniden yazılmalı)")
+	}
+	s := New(ProviderOpenAI, "k", "qwen3-8b")
+	if eb := s.thinkingBody("qwen3-8b", "off", 4096); eb == nil || eb["chat_template_kwargs"].(map[string]any)["enable_thinking"] != false {
+		t.Fatalf("qwen3 off → chat_template_kwargs: %v", eb)
+	}
+	if eb := s.thinkingBody("qwen3-8b", "", 4096); eb != nil {
+		t.Fatalf("thinking boş → gövde değişmez: %v", eb)
+	}
+	if eb := s.thinkingBody("gemma4", "off", 4096); eb != nil {
+		t.Fatalf("gemma anahtar bilmez → nil (uyarı loglanır): %v", eb)
+	}
+	// Uyarılar model+konu başına bir kez.
+	s.thinkingBody("gemma4", "off", 4096)
+	n := 0
+	s.warnedModels.Range(func(k, _ any) bool { n++; return true })
+	if n != 2 { // gemma4|thinking + qwen3-8b|budget
+		t.Fatalf("uyarı anahtarı sayısı %d, want 2", n)
+	}
+}

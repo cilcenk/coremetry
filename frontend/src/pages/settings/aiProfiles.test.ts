@@ -24,3 +24,12 @@ describe('aiProfiles yardımcıları', () => {
     expect(profileUsable({ provider: 'anthropic', hasKey: true })).toBe(true);
   });
 });
+
+// v0.10.534 — thinking özetin parçası; boş yazılmaz.
+describe('tuningSummary thinking', () => {
+  it('off/on özete girer, boş girmez', () => {
+    expect(tuningSummary({ thinking: 'off' })).toBe('think=off');
+    expect(tuningSummary({ maxTokens: 8192, thinking: 'on' })).toBe('8k tok · think=on');
+    expect(tuningSummary({ thinking: '' })).toBe('küresel');
+  });
+});

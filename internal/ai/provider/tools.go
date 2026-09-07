@@ -84,6 +84,8 @@ type ChatRequest struct {
 	MaxTokens int
 	// Temperature nil = gövdeye HİÇ koyma (bkz. Request.Temperature).
 	Temperature *float64
+	// ExtraBody — v0.10.534: bkz. Request.ExtraBody (yalnız openai-uyumlu gövde).
+	ExtraBody map[string]any
 	System      string
 	Messages    []ChatMessage
 	Tools       []ToolSpec
@@ -357,6 +359,7 @@ func buildOpenAIToolsBody(cfg Config, req ChatRequest, fallbackModel string) map
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
 	}
+	applyExtraBody(body, req.ExtraBody) // v0.10.534
 	return body
 }
 

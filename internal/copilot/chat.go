@@ -131,6 +131,7 @@ func chatRequest(req aiprov.Request, system string, msgs []ChatMessage, tools []
 		Model:       req.Model,
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
+		ExtraBody:   req.ExtraBody, // v0.10.534 — thinking anahtarı tool döngüsüne de iner
 		System:      system,
 		Messages:    msgs,
 		Tools:       tools,

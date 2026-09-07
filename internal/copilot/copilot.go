@@ -116,6 +116,8 @@ type Service struct {
 	// is read at request start, but the shared client is swapped
 	// wholesale so in-flight calls keep the deadline they started with.
 	timeoutS int
+	// warnedModels — v0.10.534: modelcaps uyarıları model+konu başına bir kez (provider_calls.go thinkingBody).
+	warnedModels sync.Map
 	// autoExplain — v0.9.1138 (bkz. SetAutoExplain). nil ⇒ açık.
 	autoExplain *bool
 	// intentClassify — v0.10.172 (bkz. SetIntentClassify). "" ⇒ IntentOnNoLoop.

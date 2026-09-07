@@ -154,6 +154,22 @@ func (s *Store) ComputeSLOStatus(ctx context.Context, o SLO) (*SLOStatus, error)
 			return nil, err
 		}
 	case SLITypeLatency:
+		// v0.10.518 — spanmetrics_1m t-digest inverse CDF (slo_latency_mv.go)
+		// when the MV covers the window; raw spans only as the cutover/TTL
+		// fallback. Prod: 140-SLO fan-out timed out at 20 s on the raw scan.
+		if sloLatencyMVEligible(since, s.spanmetricsCoverageStart(ctx)) {
+			q := sloLatencyMVSQL(s.spanmetricsSourceFor("spanmetrics_1m"), o.Operation != "", false, 20)
+			args := []any{o.Service, since}
+			if o.Operation != "" {
+				args = append(args, o.Operation)
+			}
+			var qs []float64
+			if err := s.conn.QueryRow(ctx, q, args...).Scan(&total, &qs); err != nil {
+				return nil, err
+			}
+			good = sloGoodCount(total, sloGoodFraction(sloLatencyLevels, qs, o.ThresholdMs*1e6))
+			break
+		}
 		// "good" = duration under the threshold — a per-span compare the MVs
 		// don't pre-compute, so raw spans, but BOUNDED (this was an uncapped
 		// 30-day scan before v0.8.200). service_name + time prefix-prunes.
@@ -253,7 +269,16 @@ func (s *Store) ComputeSLOBurnSeries(ctx context.Context, o SLO, days int) ([]Bu
 			args = append(args, o.Operation)
 		}
 	} else if o.SLIType == SLITypeLatency {
-		// Per-span threshold compare — no MV pre-computes it.
+		// v0.10.518 — per-day t-digest merge on spanmetrics_1m when covered
+		// (slo_latency_mv.go); the raw per-span compare stays as the
+		// cutover/TTL fallback.
+		if sloLatencyMVEligible(since, s.spanmetricsCoverageStart(ctx)) {
+			if o.Operation != "" {
+				args = append(args, o.Operation)
+			}
+			return s.sloBurnSeriesFromMV(ctx, o, sloLatencyMVSQL(
+				s.spanmetricsSourceFor("spanmetrics_1m"), o.Operation != "", true, 15), args)
+		}
 		q = `
 		SELECT toStartOfDay(time)            AS bucket,
 		       count()                       AS total,
@@ -292,6 +317,33 @@ func (s *Store) ComputeSLOBurnSeries(ctx context.Context, o SLO, days int) ([]Bu
 			sli := float64(good) / float64(total)
 			used := 1.0 - sli
 			bp.BurnRate = used / budget
+		}
+		out = append(out, bp)
+	}
+	return out, rows.Err()
+}
+
+// sloBurnSeriesFromMV — v0.10.518: per-day latency burn points from the
+// spanmetrics_1m quantile curve (one row per day: bucket, total, qs).
+func (s *Store) sloBurnSeriesFromMV(ctx context.Context, o SLO, q string, args []any) ([]BurnPoint, error) {
+	rows, err := s.conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	budget := 1.0 - o.Target
+	out := []BurnPoint{}
+	for rows.Next() {
+		var bucket time.Time
+		var total uint64
+		var qs []float64
+		if err := rows.Scan(&bucket, &total, &qs); err != nil {
+			return nil, err
+		}
+		good := sloGoodCount(total, sloGoodFraction(sloLatencyLevels, qs, o.ThresholdMs*1e6))
+		bp := BurnPoint{Time: bucket.UnixNano(), Total: total, Good: good}
+		if total > 0 && budget > 0 {
+			bp.BurnRate = (1.0 - float64(good)/float64(total)) / budget
 		}
 		out = append(out, bp)
 	}
@@ -398,7 +450,22 @@ func (s *Store) ComputeSLOBurnRate(ctx context.Context, o SLO, window time.Durat
 	//
 	// Sub-5m windows can't be reconstructed from 5m buckets, so those still
 	// go raw — the same boundary UseSummaryMV draws for the evaluator.
-	if o.SLIType == SLITypeAvailability && UseSummaryMV(window) {
+	// v0.10.518 — latency rides spanmetrics_1m too (same 5m-aligned window
+	// start as availability; the evaluator calls this four times per SLO
+	// per tick). Sub-5m and pre-coverage windows stay raw below.
+	if o.SLIType == SLITypeLatency && UseSummaryMV(window) &&
+		sloLatencyMVEligible(MVWindowStart(time.Now(), window), s.spanmetricsCoverageStart(ctx)) {
+		q := sloLatencyMVSQL(s.spanmetricsSourceFor("spanmetrics_1m"), o.Operation != "", false, 10)
+		args := []any{o.Service, MVWindowStart(time.Now(), window)}
+		if o.Operation != "" {
+			args = append(args, o.Operation)
+		}
+		var qs []float64
+		if err := s.conn.QueryRow(ctx, q, args...).Scan(&total, &qs); err != nil {
+			return 0, 0, err
+		}
+		good = sloGoodCount(total, sloGoodFraction(sloLatencyLevels, qs, o.ThresholdMs*1e6))
+	} else if o.SLIType == SLITypeAvailability && UseSummaryMV(window) {
 		mv := "service_summary_5m"
 		nameClause := ""
 		args := []any{o.Service, MVWindowStart(time.Now(), window)}

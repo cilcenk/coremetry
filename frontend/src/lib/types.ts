@@ -6670,8 +6670,10 @@ export interface McpServerTestResult {
 // chstore.TraceBackfillDay + api.traceBackfillRun ────────────────────────
 export interface TraceBackfillDay {
   day: string;        // "2026-08-26"
-  spanTraces: number; // ham spans'teki ~trace sayısı
-  mvTraces: number;   // MV'de görünen
+  // v0.10.529 — İKİSİ DE system.parts aktif satır sayısı, trace sayısı değil
+  // (bir trace onlarca span satırı; MV satırı = 5 dk kovası × servis × trace).
+  spanRows: number;   // ham spans partition satırı
+  mvRows: number;     // trace_summary_5m iç tablosu partition satırı
   gap: boolean;       // MV ham veriye göre boş/zayıf
 }
 export interface TraceBackfillRun {

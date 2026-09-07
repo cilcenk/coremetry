@@ -2745,8 +2745,10 @@ function TraceBackfillWizardPanel() {
             <thead><tr>
               <th style={{ textAlign: 'left', padding: '2px 10px 2px 0' }}></th>
               <th style={{ textAlign: 'left', padding: '2px 10px 2px 0' }}>Gün</th>
-              <th style={{ textAlign: 'right', padding: '2px 10px 2px 0' }}>Spans ~trace</th>
-              <th style={{ textAlign: 'right', padding: '2px 10px 2px 0' }}>MV trace</th>
+              {/* v0.10.529 — satır sayıları (system.parts), trace sayısı değil; eski
+                  başlık "Spans ~trace" iki farklı birimi trace diye sunuyordu. */}
+              <th style={{ textAlign: 'right', padding: '2px 10px 2px 0' }} title="Ham spans partition'ının aktif satır sayısı (system.parts). Trace sayısı değil: bir trace onlarca span satırıdır.">Spans (satır)</th>
+              <th style={{ textAlign: 'right', padding: '2px 10px 2px 0' }} title="trace_summary_5m iç tablosunun aktif satır sayısı: 5 dk kovası × servis × trace. Trace sayısı değil; sağlıklı günde ham satırın küçük bir kesridir.">MV (satır)</th>
               <th style={{ textAlign: 'left', padding: '2px 0' }}>Durum</th>
             </tr></thead>
             <tbody>
@@ -2758,8 +2760,8 @@ function TraceBackfillWizardPanel() {
                       onChange={e => setSel(s2 => ({ ...s2, [d.day]: e.target.checked }))} />
                   </td>
                   <td style={{ padding: '2px 10px 2px 0', fontFamily: 'ui-monospace, monospace' }}>{d.day}</td>
-                  <td style={{ padding: '2px 10px 2px 0', textAlign: 'right' }}>{d.spanTraces.toLocaleString()}</td>
-                  <td style={{ padding: '2px 10px 2px 0', textAlign: 'right' }}>{d.mvTraces.toLocaleString()}</td>
+                  <td style={{ padding: '2px 10px 2px 0', textAlign: 'right' }}>{d.spanRows.toLocaleString()}</td>
+                  <td style={{ padding: '2px 10px 2px 0', textAlign: 'right' }}>{d.mvRows.toLocaleString()}</td>
                   <td style={{ padding: '2px 0' }}>
                     {d.gap
                       ? <span className="badge b-warn">boşluk</span>

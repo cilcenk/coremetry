@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { tsShort } from '@/lib/utils';
@@ -12,7 +12,8 @@ import { Button } from '@/components/ui/Button';
 // (rcaVerdictView.ts) ve vitest ile pinli; ikinci bir kopya yazmak
 // aynı sözleşmenin iki yerde ayrışması demekti.
 import { canRateVerdict } from './rcaVerdictView';
-import { IconButton } from '@/components/ui/IconButton';
+import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
+import { isAbortError } from '@/components/ai/chatAbort';
 
 // AIAnalysisPanel — embedded "AI ile analiz et" affordance for a service /
 // incident / error-group (NOT logs). The operator clicks; the screen context
@@ -22,18 +23,6 @@ import { IconButton } from '@/components/ui/IconButton';
 // analysis content. Colour is used ONLY for the güven (confidence) badge.
 
 const GUVEN_BADGE: Record<string, string> = { yuksek: 'b-ok', orta: 'b-warn', dusuk: 'b-err' };
-// rateAnalysis — oyu gönderir. İyimser güncelleme, hata hâlinde GERİ
-// ALMA: başarısız bir POST'tan sonra "Kaydedildi." yazmak, düzelttiğimiz
-// ölü affordance'ın daha sinsi bir biçimi olurdu.
-function rateAnalysis(
-  exchangeId: string, verdict: 1 | -1,
-  prior: 1 | -1 | null,
-  setFb: (v: 1 | -1 | null) => void,
-) {
-  if (prior === verdict) return;
-  setFb(verdict);
-  api.postAIFeedback({ exchangeId, verdict }).catch(() => setFb(prior));
-}
 
 const GUVEN_LABEL: Record<string, string> = { yuksek: 'YÜKSEK GÜVEN', orta: 'ORTA GÜVEN', dusuk: 'DÜŞÜK GÜVEN' };
 
@@ -79,14 +68,22 @@ export function AIAnalysisPanel({ service, rangeS = 1800 }: { service: string; r
   // HİÇBİR YERE yazmıyordu. Sistem topladığını iddia ettiği şeyi
   // toplamıyordu — dürüstlük hatası, üstelik ölçmek istediğimiz tam
   // olarak buydu.
-  const [fb, setFb] = useState<1 | -1 | null>(null);
+  // v0.10.537 — iptal: yeni istek öncekini keser, unmount'ta kesilir;
+  // iptal hatası ne "error" ne "done" (chatAbort sınıflandırıcısı).
+  const acRef = useRef<AbortController | null>(null);
+  useEffect(() => () => acRef.current?.abort(), []);
 
   const run = async (refresh = false) => {
-    setState('loading'); setErrMsg(''); setFb(null);
+    acRef.current?.abort();
+    const ac = new AbortController();
+    acRef.current = ac;
+    setState('loading'); setErrMsg('');
     try {
-      const r = await api.analyzeService(service, rangeS, refresh);
+      const r = await api.analyzeService(service, rangeS, refresh, ac.signal);
+      if (ac.signal.aborted) return;
       setRes(r); setState('done');
     } catch (e) {
+      if (isAbortError(e) || ac.signal.aborted) return;
       setErrMsg(e instanceof Error ? e.message : String(e)); setState('error');
     }
   };
@@ -148,7 +145,7 @@ export function AIAnalysisPanel({ service, rangeS = 1800 }: { service: string; r
         )}
 
         {state === 'done' && res?.parsed && res.analysis && (
-          <Result res={res} fb={fb} setFb={setFb} showCtx={showCtx} setShowCtx={setShowCtx}
+          <Result res={res} showCtx={showCtx} setShowCtx={setShowCtx}
             kibanaHref={kibanaHref} service={service} />
         )}
       </div>
@@ -156,10 +153,8 @@ export function AIAnalysisPanel({ service, rangeS = 1800 }: { service: string; r
   );
 }
 
-function Result({ res, fb, setFb, showCtx, setShowCtx, kibanaHref, service }: {
+function Result({ res, showCtx, setShowCtx, kibanaHref, service }: {
   res: ServiceAnalysisResponse;
-  fb: 1 | -1 | null;
-  setFb: (v: 1 | -1 | null) => void;
   showCtx: boolean;
   setShowCtx: (v: boolean) => void;
   // v0.9.658 — dış sistem köprüleri üst bileşende hesaplanıyor
@@ -251,15 +246,10 @@ function Result({ res, fb, setFb, showCtx, setShowCtx, kibanaHref, service }: {
           kaydedemeyeceğimiz bir soruyu sormak, bu düzeltmenin ortadan
           kaldırdığı hatanın ta kendisiydi. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+        {/* v0.10.537 — paylaşılan atom (👎'de yorum kutusu); elle yazılmış kopya silindi. */}
         {canRateVerdict(res.exchangeId) && (<>
           <span style={{ fontSize: 11.5, color: 'var(--text3)' }}>Bu analiz yararlı mıydı?</span>
-          <IconButton variant="secondary" size="sm" active={fb === 1}
-            onClick={() => rateAnalysis(res.exchangeId!, 1, fb, setFb)}
-            aria-label="faydalı" icon="👍" />
-          <IconButton variant="secondary" size="sm" active={fb === -1}
-            onClick={() => rateAnalysis(res.exchangeId!, -1, fb, setFb)}
-            aria-label="faydasız" icon="👎" />
-          {fb && <span style={{ fontSize: 11, color: 'var(--text3)' }}>Kaydedildi.</span>}
+          <AIFeedbackButtons exchangeId={res.exchangeId!} />
         </>)}
         <span style={{ flex: 1 }} />
         <Button variant="secondary" size="sm" onClick={() => setShowCtx(!showCtx)}>

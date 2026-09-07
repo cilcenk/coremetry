@@ -185,7 +185,7 @@ export function CopilotChat() {
   // persist: true — KALICILIK YALNIZ BURADA (v0.9.1139, Faz 4.1).
   // AI çekmecesindeki özne sohbeti efemer kalıyor; gerekçe
   // useChatThread'in dosya başında.
-  const { turns, busy, send, stop, rate, clear, load, conversationId, last, showFollowups } =
+  const { turns, busy, send, stop, clear, load, conversationId, last, showFollowups } =
     useChatThread({
       service: currentService, operation: currentOp, rangeS, toMs, trace: currentTrace, env,
       profile: profile || undefined,
@@ -526,7 +526,7 @@ export function CopilotChat() {
               </div>
             )}
             {turns.map((t, i) => (
-              <ChatBubble key={i} turn={t} onRate={v => rate(i, v)} />
+              <ChatBubble key={i} turn={t} />
             ))}
           </div>
 

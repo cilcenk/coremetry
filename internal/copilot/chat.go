@@ -55,6 +55,8 @@ type ChatTurn struct {
 	ToolCalls    []ToolCall
 	InputTokens  uint32
 	OutputTokens uint32
+	// ToolCallsFromText — v0.10.545: bkz. provider.ChatResponse.ToolCallsFromText.
+	ToolCallsFromText bool
 }
 
 // ChatWithTools runs ONE model turn over the conversation with the
@@ -140,10 +142,11 @@ func chatRequest(req aiprov.Request, system string, msgs []ChatMessage, tools []
 
 func chatTurnFrom(r aiprov.ChatResponse) ChatTurn {
 	return ChatTurn{
-		Text:         r.Text,
-		ToolCalls:    r.ToolCalls,
-		InputTokens:  clampTokens(r.InputTokens),
-		OutputTokens: clampTokens(r.OutputTokens),
+		Text:              r.Text,
+		ToolCalls:         r.ToolCalls,
+		InputTokens:       clampTokens(r.InputTokens),
+		OutputTokens:      clampTokens(r.OutputTokens),
+		ToolCallsFromText: r.ToolCallsFromText,
 	}
 }
 

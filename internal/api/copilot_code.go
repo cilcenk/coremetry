@@ -271,7 +271,11 @@ func (s *Server) copilotExplainEvidence(r *http.Request, systemNoCode, systemWit
 		return s.explainMissingCode(r, systemWithCode, user, cc, se)
 	}
 	out, err := s.explainWithCodeBlock(r, systemWithCode, user, block+se.Block, cc.LogSummary()+se.Summary)
-	if err == nil || !isContextOverflowErr(err) {
+	if err == nil {
+		// v0.10.544 — kod alıntıları ±1 satır bağlam + vurgu (pencereden).
+		return devops.ExpandQuotes(out, cc), nil
+	}
+	if !isContextOverflowErr(err) {
 		return out, err
 	}
 	half := cc.Halved()
@@ -287,7 +291,11 @@ func (s *Server) copilotExplainEvidence(r *http.Request, systemNoCode, systemWit
 		return s.explainNoCode(r, systemNoCode, user+dropped.MissingBlock()+se.Block,
 			devops.FormatCodeMissNote("", "bağlam taşması — kod bloğu prompt'a sığmadı")+se.Summary)
 	}
-	return s.explainWithCodeBlock(r, systemWithCode, user, hb+se.Block, half.LogSummary()+se.Summary)
+	out, err = s.explainWithCodeBlock(r, systemWithCode, user, hb+se.Block, half.LogSummary()+se.Summary)
+	if err == nil {
+		out = devops.ExpandQuotes(out, half) // v0.10.544
+	}
+	return out, err
 }
 
 // explainMissingCode (v0.10.112) — kod istendi, çözülemedi: gerçek

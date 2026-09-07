@@ -188,3 +188,63 @@ func TestSnapshot_TokenResolvedFlag(t *testing.T) {
 		t.Fatalf("HasEnabledSources")
 	}
 }
+
+// v0.10.532 — oran sorgusu doğrulaması: girdiler aynı kaynakta, Flux türünde,
+// aynı groupBy; oran sorgusunda Flux boş. Sızan bir kural birleşimi sessizce
+// boş bırakır (seri hiç doğmaz) — o yüzden PUT anında reddedilir.
+func TestNormalize_Ratio(t *testing.T) {
+	base := func() SourceConfig {
+		s := validSource()
+		s.Queries = append(s.Queries, QueryConfig{
+			Name: "gg_adet_total", Flux: `from(bucket: "GoldenGateBucket") |> range(start: -2h)`,
+			GroupBy: []string{"OPERATIONCODE", "ERRORCODE"},
+		}, QueryConfig{
+			Name: "tfail_oran", GroupBy: []string{"OPERATIONCODE", "ERRORCODE"},
+			Ratio: &RatioSpec{Numerator: " tfail_adet ", Denominator: "gg_adet_total"},
+		})
+		return s
+	}
+	newID := func() string { return "i-cccccccc" }
+	out, err := Normalize(Settings{Sources: []SourceConfig{base()}}, Settings{}, newID)
+	if err != nil {
+		t.Fatalf("geçerli oran reddedildi: %v", err)
+	}
+	r := out.Sources[0].Queries[2].Ratio
+	if r == nil || r.Numerator != "tfail_adet" || r.Denominator != "gg_adet_total" {
+		t.Fatalf("oran taşınmadı/kırpılmadı: %+v", r)
+	}
+	if out.Sources[0].Queries[2].Flux != "" || out.Sources[0].Queries[2].unit() != "%" {
+		t.Fatalf("oran: flux boş, birim %%: %+v", out.Sources[0].Queries[2])
+	}
+	if out.Sources[0].Queries[0].unit() != "" {
+		t.Fatalf("flux sorgusu birimsiz")
+	}
+
+	cases := []struct {
+		name string
+		mut  func(*SourceConfig)
+		want string
+	}{
+		{"pay yok", func(s *SourceConfig) { s.Queries[2].Ratio.Numerator = "yok" }, "bu kaynakta yok"},
+		{"aynı sorgu", func(s *SourceConfig) { s.Queries[2].Ratio.Denominator = "tfail_adet" }, "aynı sorgu olamaz"},
+		{"boş ad", func(s *SourceConfig) { s.Queries[2].Ratio.Denominator = "" }, "zorunlu"},
+		{"groupBy farklı", func(s *SourceConfig) { s.Queries[2].GroupBy = []string{"ERRORCODE", "OPERATIONCODE"} }, "groupBy"},
+		{"oranda flux", func(s *SourceConfig) { s.Queries[2].Flux = "from(bucket: \"x\")" }, "flux boş kalır"},
+		{"oran orana", func(s *SourceConfig) {
+			s.Queries = append(s.Queries, QueryConfig{Name: "oran2", GroupBy: s.Queries[2].GroupBy,
+				Ratio: &RatioSpec{Numerator: "tfail_oran", Denominator: "gg_adet_total"}})
+		}, "bir oran"},
+		{"negatif min payda", func(s *SourceConfig) { s.Queries[2].Ratio.MinDenominator = -1 }, "negatif"},
+		{"bekletme tavanı", func(s *SourceConfig) { s.Queries[2].Ratio.SettleBuckets = 61 }, "bekletme"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := base()
+			c.mut(&s)
+			_, err := Normalize(Settings{Sources: []SourceConfig{s}}, Settings{}, newID)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("want %q, got %v", c.want, err)
+			}
+		})
+	}
+}

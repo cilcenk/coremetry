@@ -20,7 +20,7 @@
 // eşiklerdeki MinAbsDelta'nın işi. groupBy v1'de OPERATIONCODE+ERRORCODE
 // (spec); Grafana KANALKOD+FUNCTIONCODE+OPERATIONCODE gruplar — kutudan
 // değiştirilebilir (kardinalite notu sekmede).
-import type { InfluxQueryConfig, InfluxThresholds } from '@/lib/types';
+import type { InfluxQueryConfig, InfluxRatioSpec, InfluxThresholds } from '@/lib/types';
 
 export function parseAttrMap(text: string): Record<string, string> | undefined {
   const out: Record<string, string> = {};
@@ -146,6 +146,39 @@ export const GG_TOTAL_TEMPLATE: InfluxQueryConfig = {
     FUNCTIONCODE: 'FUNCTION_CODE',
     KANALKOD: 'CHANNEL_CODE',
   },
+};
+
+// v0.10.532 — türetilmiş oran (operatör 2026-09-07: hata oranı). Flux YOK:
+// sunucu pay/payda sorgularının aynı tikteki kovalarını birleştirir. Kutu
+// boş = sunucu varsayılanı (min payda 20, bekletme 2) — kutuya varsayılanı
+// basmak sessiz ayar donması (vmForm dersi), placeholder söyler.
+export interface RatioForm { numerator: string; denominator: string; minDenominator: string; settleBuckets: string }
+export const EMPTY_RATIO: RatioForm = { numerator: '', denominator: '', minDenominator: '', settleBuckets: '' };
+
+export function ratioToForm(r: InfluxRatioSpec | undefined): RatioForm {
+  if (!r) return { ...EMPTY_RATIO };
+  return {
+    numerator: r.numerator ?? '', denominator: r.denominator ?? '',
+    minDenominator: numToForm(r.minDenominator), settleBuckets: numToForm(r.settleBuckets),
+  };
+}
+
+export function ratioToWire(f: RatioForm): InfluxRatioSpec {
+  return {
+    numerator: f.numerator.trim(), denominator: f.denominator.trim(),
+    minDenominator: numFromForm(f.minDenominator), settleBuckets: numFromForm(f.settleBuckets),
+  };
+}
+
+/** Hata oranı şablonu: tfail_adet ÷ gg_adet_total × 100, aynı gruplama; kanıt
+ *  sorgusu payın SORGU 2'si (TRACEID pay bucket'ında). */
+export const TFAIL_RATIO_TEMPLATE: InfluxQueryConfig = {
+  name: 'tfail_oran',
+  flux: '',
+  ratio: { numerator: TFAIL_TEMPLATE.name, denominator: GG_TOTAL_TEMPLATE.name },
+  enrichFlux: TFAIL_TEMPLATE.enrichFlux,
+  groupBy: [...(TFAIL_TEMPLATE.groupBy ?? [])],
+  attrMap: { ...(TFAIL_TEMPLATE.attrMap ?? {}) },
 };
 
 /** v0.10.231 (D6) — groupBy metnine bir tag ekler/çıkarır (KANALKOD anahtarı).

@@ -248,6 +248,10 @@ func (s *Service) Test(ctx context.Context, src SourceConfig) TestResult {
 	defer cancel()
 	ok := true
 	for _, qc := range src.Queries {
+		if qc.Ratio != nil { // v0.10.532 — türetilmiş: Influx'a gitmez
+			res.Queries = append(res.Queries, ratioProbe(qc))
+			continue
+		}
 		flux := strings.TrimRight(qc.Flux, " \t\r\n") + "\n  |> limit(n: 20)"
 		start := time.Now()
 		qctx, qcancel := context.WithTimeout(ctx, testQueryBudget)
@@ -274,6 +278,17 @@ func (s *Service) Test(ctx context.Context, src SourceConfig) TestResult {
 		res.Error = "bir ya da daha çok sorgu başarısız"
 	}
 	return res
+}
+
+// ratioProbe — v0.10.532: oran sorgusunun test satırı; Influx'a gitmediğini
+// ve neye baktığını söyler.
+func ratioProbe(qc QueryConfig) QueryProbe {
+	r := qc.Ratio
+	return QueryProbe{
+		Name: qc.Name, Columns: []string{},
+		Hint: fmt.Sprintf("türetilmiş oran: %s ÷ %s × %.0f — Influx'a gitmez; girdi sorgularının satırlarına bakın (min payda %.0f, bekletme %d kova)",
+			r.Numerator, r.Denominator, RatioScale, r.minDen(), r.settle()),
+	}
 }
 
 func columnsOf(recs []Record) []string {

@@ -248,3 +248,18 @@ func readSrc(name string) (string, error) {
 	b, err := os.ReadFile(name)
 	return string(b), err
 }
+
+// v0.10.532 — Test: oran sorgusu Influx'a gitmez, probe satırı bunu söyler.
+func TestRatioProbeSaysDerived(t *testing.T) {
+	p := ratioProbe(QueryConfig{Name: "tfail_oran", Ratio: &RatioSpec{Numerator: "a", Denominator: "b"}})
+	if p.Name != "tfail_oran" || p.Error != "" || !strings.Contains(p.Hint, "a ÷ b × 100") || !strings.Contains(p.Hint, "min payda 20") || !strings.Contains(p.Hint, "bekletme 2") {
+		t.Fatalf("%+v", p)
+	}
+	src, err := os.ReadFile("client.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "if qc.Ratio != nil { // v0.10.532") {
+		t.Fatal("Test döngüsü oran sorgusunu atlamıyor")
+	}
+}

@@ -294,7 +294,15 @@ func TestToolLoopStepResultCarriesDuration(t *testing.T) {
 	if !strings.Contains(s, `"durationMs": toolDur.Milliseconds(),`) {
 		t.Fatal("copilot_chat.go: step-result stepEv durationMs taşımıyor")
 	}
-	if !regexp.MustCompile(`toolT0 := time\.Now\(\)\s*\n\s*out, herr := runChatTool\(`).MatchString(s) {
-		t.Fatal("copilot_chat.go: süre ölçümü runChatTool çağrısını sarmalamıyor")
+	// v0.10.536 — ölçüm tools.Executor'da (runTool'u sarar), döngü Outcome.Duration okur.
+	if !strings.Contains(s, "toolDur := oc.Duration") {
+		t.Fatal("copilot_chat.go: süre Executor Outcome'undan okunmuyor")
+	}
+	ex, err := os.ReadFile("../ai/agent/tools/executor.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`t0 := time\.Now\(\)\s*\n\s*out, herr := runTool\(`).MatchString(string(ex)) {
+		t.Fatal("tools/executor.go: süre ölçümü runTool çağrısını sarmalamıyor")
 	}
 }

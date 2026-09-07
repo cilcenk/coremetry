@@ -166,7 +166,9 @@ func TestSourceNoteCountsOnlyToolsThatReturnedData(t *testing.T) {
 			"yeri, başarısız dalın da künyeye sızması demek", n)
 	}
 	// Kayıt, bilinmeyen-araç dalından SONRA gelmeli.
-	unknown := strings.Index(src, `msg := fmt.Sprintf("unknown tool %q", tc.Name)`)
+	// v0.10.536 — bilinmeyen araç dalı tools.Executor'da (Kind "unknown"); döngüde
+	// yürütülmeyen sonuç `if !oc.Executed` dalıyla ayrılır.
+	unknown := strings.Index(src, "if !oc.Executed {")
 	record := strings.Index(src, "calledTools = append(calledTools, tc.Name)")
 	if unknown < 0 {
 		t.Fatal("bilinmeyen-araç dalı bulunamadı — test bayatlamış")
@@ -176,7 +178,7 @@ func TestSourceNoteCountsOnlyToolsThatReturnedData(t *testing.T) {
 			"araç adı 'Kaynak:' diye gösterilir")
 	}
 	// Ve hata dalından SONRA: `tr.Content = out` yalnız başarıda çalışır.
-	success := strings.Index(src, "tr.Content = out")
+	success := strings.Index(src, "IsError: oc.IsError, Content: oc.Content}")
 	if success < 0 {
 		t.Fatal("başarı dalı bulunamadı — test bayatlamış")
 	}

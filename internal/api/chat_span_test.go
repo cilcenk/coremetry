@@ -149,8 +149,10 @@ func TestChatSpanWiring(t *testing.T) {
 	if n := strings.Count(b, "s.copilot.ChatWithTools("); n != 2 {
 		t.Fatalf("ChatWithTools çağrı sayısı değişti (%d) — tur span'ı eşlemesini güncelle", n)
 	}
-	if !strings.Contains(b, "cspan.tool(ctx, tc.Name, extNames[tc.Name])") || !strings.Contains(b, "runChatTool(tctx, h, tc.Input)") || !strings.Contains(b, "endTool(len(tr.Content), tr.IsError)") {
-		t.Fatal("araç span'ı runChatTool'u sarmıyor")
+	// v0.10.536 — araç span'ı tools.Executor'ın Span kancasından (executor_test.go
+	// sarmayı ve bayt+ok kapanışını pinler); sohbet kancayı cspan.tool ile verir.
+	if !strings.Contains(b, "Span: cspan.tool,") || !strings.Contains(b, "exec.Call(ctx, tc.Name, tc.Input)") {
+		t.Fatal("araç span'ı Executor kancasına bağlı değil")
 	}
 	for _, tier := range []string{`cspan.tier("guided"`, `cspan.tier("drawer"`, `cspan.tier("rag"`, `cspan.tier("intent"`} {
 		if !strings.Contains(b, tier) {

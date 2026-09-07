@@ -126,13 +126,20 @@ func TestHandlerAppliesTheDeadline(t *testing.T) {
 	}
 	// Tool bağlamı deadline'lı ctx'ten türemeli.
 	iDeadline := strings.Index(src, "context.WithTimeout(r.Context(), exchangeMax)")
-	// v0.10.401 — araç bütçesi mcp.ToolCallBudget (telle aynı sayı).
-	iTool := strings.Index(src, "context.WithTimeout(ctx, mcp.ToolCallBudget)")
+	// v0.10.401 — araç bütçesi mcp.ToolCallBudget (telle aynı sayı);
+	// v0.10.536 — bütçe tools.Executor'da (NewExecutor budget: mcp.ToolCallBudget,
+	// runTool context.WithTimeout(ctx, budget)); sohbet yürütücüyü deadline'lı
+	// ctx kurulduktan SONRA kurar ve exec.Call'a o ctx'i verir.
+	iTool := strings.Index(src, "agenttools.NewExecutor(byName, extNames,")
 	if iDeadline < 0 || iTool < 0 {
-		t.Fatal("deadline ya da tool timeout'u bulunamadı")
+		t.Fatal("deadline ya da tool yürütücüsü bulunamadı")
 	}
 	if iTool < iDeadline {
-		t.Error("tool bağlamı deadline'dan ÖNCE kuruluyor — tavana tabi olmaz")
+		t.Error("tool yürütücüsü deadline'dan ÖNCE kuruluyor — tavana tabi olmaz")
+	}
+	ex := readSourceFile(t, "../ai/agent/tools/executor.go")
+	if !strings.Contains(ex, "budget: mcp.ToolCallBudget") || !strings.Contains(ex, "context.WithTimeout(ctx, budget)") {
+		t.Error("tools.Executor araç bütçesini mcp.ToolCallBudget ile kurmuyor")
 	}
 	// Tavan dolduğunda ham Go metni değil, eyleme dönük cümle.
 	if !strings.Contains(src, "chatDeadlineMessageTR(exchangeMax)") {

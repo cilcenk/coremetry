@@ -1,10 +1,10 @@
 package api
 
 import (
-	"github.com/cilcenk/coremetry/internal/ai/agent/blocks"
 	"context"
 	"encoding/json"
-	"fmt"
+	"github.com/cilcenk/coremetry/internal/ai/agent/blocks"
+	agenttools "github.com/cilcenk/coremetry/internal/ai/agent/tools"
 	"net/http"
 	"strings"
 	"time"
@@ -313,7 +313,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		role = c.Role
 	}
 	tools := toolsForRole(mcptools.ToolList(s.mcpDeps()), role)
-	byName := make(map[string]func(context.Context, json.RawMessage) (any, error), len(tools))
+	byName := make(map[string]mcp.ToolHandler, len(tools))
 	specs := make([]copilot.ToolSpec, 0, len(tools))
 	// v0.9.1230 (AI perf) — katalog DİYETİ: spec'e t.Description değil
 	// t.ChatDescription() girer.
@@ -456,7 +456,16 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// yasağı ZORLAMAYA çevirir (devops huntWindows `tried` deseni).
 	// Dış tool'da bedel ağ + audit satırı, yerlide CH sorgusu — ikisi de
 	// aynı cevabı ikinci kez satın almaya değmez.
-	seenToolCalls := map[string]bool{}
+	// v0.10.536 (Faz 2.3) — tool YÜRÜTME tek yol (ai/agent/tools.Executor):
+	// bilinmeyen ad, tekrar muhafızı, kapsam (bugün kısıtsız), 20 s bütçe,
+	// JSON'lama, ToolErrorJSON, ai.tool span'ı ve audit satırı orada; döngü
+	// yalnız Outcome'u yayınlar (çip, kanıt, köprü) ve konuşmaya ekler.
+	exec := agenttools.NewExecutor(byName, extNames, agenttools.Hooks{
+		Span: cspan.tool,
+		Audit: func(name string, args json.RawMessage, dur time.Duration, err error, bytes int) {
+			s.audit(r, "mcp.tool.call", "mcp_tool", name, chatToolAuditDetails(name, args, dur, err, bytes))
+		},
+	})
 
 	for round := 0; round < chatMaxToolRounds; round++ {
 		tctx, endTurn := cspan.turn(ctx, round, overflowRetried) // v0.10.425 — ai.chat.turn
@@ -544,83 +553,35 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			// burada çıkıyor: operatör modelin NE DENEDİĞİNİ görmeli,
 			// başarısız denemeler dâhil — o ayrı bir soru.
 			stepN = emitStepChip(emit, tc.Name, string(tc.Input))
-			h, found := byName[tc.Name]
-			if !found {
-				msg := fmt.Sprintf("unknown tool %q", tc.Name)
+			oc := exec.Call(ctx, tc.Name, tc.Input)
+			if !oc.Executed {
+				// bilinmeyen ad / tekrar muhafızı / kapsam reddi: yürütülmedi,
+				// süre yazılmaz (v0.10.161 — Σ süre hesaplanabilir kalsın).
+				preview, truncated := clipStepPreview(oc.Content)
 				emit("step-result", map[string]any{
 					"i": stepN, "tool": tc.Name, "ok": false,
-					"preview": msg, "truncated": false, "bytes": len(msg),
-					"durationMs": 0, // v0.10.161 — yürütülmedi; Σ süre hesaplanabilir kalsın
+					"preview": preview, "truncated": truncated, "bytes": len(oc.Content),
+					"durationMs": 0,
 				})
 				results = append(results, copilot.ToolResult{
-					CallID: tc.ID, Name: tc.Name, IsError: true,
-					Content: msg,
+					CallID: tc.ID, Name: tc.Name, IsError: true, Content: oc.Content,
 				})
 				continue
 			}
-			// v0.10.88 — aynı çağrının ikinci kopyası YÜRÜTÜLMEZ; model
-			// ToolErrorJSON sözleşmesindeki alanlarla (error/retryable/
-			// hint) yönlendirilir. Anahtar kanonik: JSON anahtar sırası
-			// değişse de aynı çağrıdır (chat_mcp_bridge.go).
-			if markRepeatedCall(seenToolCalls, tc.Name, tc.Input) {
-				preview, _ := clipStepPreview(repeatedCallJSON)
-				emit("step-result", map[string]any{
-					"i": stepN, "tool": tc.Name, "ok": false,
-					"preview": preview, "truncated": false, "bytes": len(repeatedCallJSON),
-					"durationMs": 0, // v0.10.161 — tekrar koruması, yürütülmedi
-				})
-				results = append(results, copilot.ToolResult{
-					CallID: tc.ID, Name: tc.Name, IsError: true,
-					Content: repeatedCallJSON,
-				})
-				continue
-			}
-			// v0.10.161 — araç çağrısı SÜRESİ tele biner (step-result.durationMs):
-			// şeffaflık paneli «N araç · M hata · Σ s» ve satır başına çubuk
-			// bundan; alan yoksa frontend «—» çizer (guided ön-yüklemeleri
-			// ölçülmez). Ölçüm yalnız gerçekten çalışan araç için — bilinmeyen
-			// araç / tekrar koruması yürütülmez, süre yazılmaz.
-			tctx, endTool := cspan.tool(ctx, tc.Name, extNames[tc.Name]) // v0.10.425 — ai.tool
-			toolT0 := time.Now()
-			out, herr := runChatTool(tctx, h, tc.Input)
-			toolDur := time.Since(toolT0)
-			// CoSRE Faz-2 — intercept render_chart: parse the handler's
-			// validated output (never tc.Input — the model's raw args may
-			// name a service that doesn't exist) into a ```chart``` fence.
-			if tc.Name == "render_chart" && herr == nil {
-				if block, key := chatChartBlock(out); block != "" && !chartSeen[key] {
+			toolDur := oc.Duration
+			// CoSRE Faz-2 — render_chart: handler'ın DOĞRULANMIŞ çıktısı
+			// (tc.Input değil) ```chart``` fence'ine dönüşür.
+			if tc.Name == "render_chart" && !oc.IsError {
+				if block, key := chatChartBlock(oc.Content); block != "" && !chartSeen[key] {
 					chartSeen[key] = true
 					chartBlocks = append(chartBlocks, block)
 				}
 			}
-			tr := copilot.ToolResult{CallID: tc.ID, Name: tc.Name}
-			if herr != nil {
-				tr.IsError = true
-				// v0.9.1234 — MCP telinin gördüğü sözleşmenin AYNISI
-				// (mcp.ToolErrorJSON): sınıf + tekrar denenebilirlik +
-				// Türkçe "şimdi ne yap" ipucu + kırpılmış ham metin.
-				// Öncesinde ham sürücü dökümü doğrudan gemma4'e ve
-				// oradan ⚙ çipine gidiyordu. Çipin kendisi aşağıda bu
-				// metni okuyor, yani operatör modelin GÖRDÜĞÜNÜ görür.
-				tr.Content = mcp.ToolErrorJSON(herr)
-			} else {
-				tr.Content = out
-				// v0.10.53 — künyeye YALNIZ buradan giriliyor: araç vardı,
-				// çalıştı ve veri döndürdü. Çip zaten tc.Name basıyor; künye
-				// AYNI adı kullanıyor ki cevabın altındaki atıf ile üstündeki
-				// çipler ayrışmasın.
+			tr := copilot.ToolResult{CallID: tc.ID, Name: tc.Name, IsError: oc.IsError, Content: oc.Content}
+			if !tr.IsError {
+				// v0.10.53 — künyeye YALNIZ buradan: araç vardı, çalıştı, veri döndürdü.
 				calledTools = append(calledTools, tc.Name)
 			}
-			// Kanıt tele biner: modelin GÖRDÜĞÜ metnin ta kendisi, kırpılmışsa
-			// kırpıldığı SÖYLENEREK. Özet göndermek daha ucuz olurdu ama
-			// özetlenmiş kanıt kanıt değildir — operatörün sınayacağı şey
-			// modelin okuduğu şey olmalı. `bytes` kırpılmamış gerçek boy,
-			// yani "ne kadarını görmüyorum" cevaplanabilir.
-			endTool(len(tr.Content), tr.IsError) // v0.10.425 — bayt + ok; gövde yok
-			// v0.10.480 (Faz 4, G12) — in-app tool çağrısı da AUDIT satırı yazar: tel
-			// (mcp_observe.go) yazıyordu, yerel çağrı yalnız span'di — asimetri.
-			// Aynı ayrıntı biçimi (arg önizlemesi ≤256 rune, gövde yok), transport farkı.
-			s.audit(r, "mcp.tool.call", "mcp_tool", tc.Name, chatToolAuditDetails(tc.Name, tc.Input, toolDur, herr, len(tr.Content)))
 			preview, truncated := clipStepPreview(tr.Content)
 			stepEv := map[string]any{
 				"i": stepN, "tool": tc.Name, "ok": !tr.IsError,
@@ -731,24 +692,6 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	s.copilot.RecordUsage(ctx, chatT0, totalIn, totalOut, status, errMsg, lastUserText(req.Messages), finalText)
 
 	emit("done", map[string]bool{"ok": lastErr == nil})
-}
-
-// runChatTool invokes a tool handler with a bounded timeout and
-// JSON-stringifies the result for feeding back to the LLM. The
-// per-tool clampLimit caps (in mcptools) already bound result size;
-// the timeout guards a slow CH query from stalling the whole chat.
-func runChatTool(ctx context.Context, h func(context.Context, json.RawMessage) (any, error), args json.RawMessage) (string, error) {
-	tctx, cancel := context.WithTimeout(ctx, mcp.ToolCallBudget) // v0.10.401 — telle aynı bütçe
-	defer cancel()
-	out, err := h(tctx, args)
-	if err != nil {
-		return "", err
-	}
-	b, merr := json.Marshal(out)
-	if merr != nil {
-		return "", merr
-	}
-	return string(b), nil
 }
 
 // chatChartBlock (CoSRE Faz-2) parses the render_chart handler's output

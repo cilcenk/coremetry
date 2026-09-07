@@ -88,10 +88,16 @@ export function thresholdsToWire(f: ThresholdsForm): InfluxThresholds | undefine
 // ["_measurement"])`i tek seri verirdi; operatör kanal + operasyon istedi →
 // KANALKOD + OPERATIONCODE (sekmeden değiştirilebilir, 5.000 seri tavanı).
 // Kanal süzgeci ekibin verdiği gibi: KANALKOD =~ /^01/.
+// v0.10.527 — poll penceresi 2 dk → 2 sa: prod "Bağlantıyı dene" (2026-09-07)
+// poll penceresinde 0 satır, 24 sa'te 8.414 satır ve en yeni _time probe
+// anından 50 dk geride gösterdi — GoldenGate kaynağı GECİKMELİ yazıyor.
+// Watermark aynı kovayı bir kez yazdığından geniş pencere güvenli; 2 sa
+// (6 satır/dk hacimde) ucuz. Kaynağın gecikmesi 2 sa'yi aşarsa sekmeden
+// büyüt.
 export const TFAIL_TEMPLATE: InfluxQueryConfig = {
   name: 'tfail_01_adet',
   flux: `from(bucket: "GGFailTraceBckt")
-  |> range(start: -2m)
+  |> range(start: -2h)
   |> filter(fn: (r) => r._measurement == "TFAIL" and r._field == "ADET")
   |> filter(fn: (r) => r.KANALKOD =~ /^01/)
   |> group(columns: ["KANALKOD", "OPERATIONCODE"])
@@ -127,7 +133,7 @@ export const TFAIL_TEMPLATE: InfluxQueryConfig = {
 export const GG_TOTAL_TEMPLATE: InfluxQueryConfig = {
   name: 'gg_01_adet_total',
   flux: `from(bucket: "GoldenGateBucket")
-  |> range(start: -2m)
+  |> range(start: -2h)
   |> filter(fn: (r) => r._field == "ADET")
   |> filter(fn: (r) => r.KANALKOD =~ /^01/)
   |> group(columns: ["KANALKOD", "OPERATIONCODE"])

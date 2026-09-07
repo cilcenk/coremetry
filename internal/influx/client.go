@@ -137,6 +137,14 @@ type QueryProbe struct {
 // ad uyuşmazlığında 24 saat de boş döner — ayrım tam bu.
 const wideProbeWindow = "24h"
 
+// Test bütçeleri (v0.10.527): sorgu başına ana probe 15 s, geniş deneme
+// 20 s, toplam 90 s — operatör başlattığı bir teşhis, canlı yol değil.
+const (
+	testQueryBudget = 15 * time.Second
+	testWideBudget  = 20 * time.Second
+	testTotalBudget = 90 * time.Second
+)
+
 // wideRangeRe — yalnız GÖRELİ başlangıç: `range(start: -2m`. Mutlak zaman ya
 // da {{from}} placeholder'ı (kanıt sorgusu) eşleşmez → deneme atlanır.
 var wideRangeRe = regexp.MustCompile(`range\(\s*start:\s*-\d+(?:ns|us|µs|ms|s|m|h|d|w|mo|y)\b`)
@@ -232,13 +240,19 @@ func (s *Service) Test(ctx context.Context, src SourceConfig) TestResult {
 		return res
 	}
 	res.TokenResolved = true
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	// v0.10.527 (prod 2026-09-07): 20 s bütçe TÜM sorgular + geniş denemeler
+	// arasında paylaşılıyordu; ilk sorgunun 24 sa denemesi bütçeyi yiyince
+	// ikinci sorgu "context deadline exceeded" ile düşüyordu — kaynağın değil
+	// bizim bütçemizin hatası. Sorgu başına ayrı bütçe, toplam tavan yine var.
+	ctx, cancel := context.WithTimeout(ctx, testTotalBudget)
 	defer cancel()
 	ok := true
 	for _, qc := range src.Queries {
 		flux := strings.TrimRight(qc.Flux, " \t\r\n") + "\n  |> limit(n: 20)"
 		start := time.Now()
-		recs, qerr := q.Query(ctx, flux)
+		qctx, qcancel := context.WithTimeout(ctx, testQueryBudget)
+		recs, qerr := q.Query(qctx, flux)
+		qcancel()
 		p := QueryProbe{Name: qc.Name, LatencyMs: time.Since(start).Milliseconds(), Columns: []string{}}
 		if qerr != nil {
 			p.Error = qerr.Error()
@@ -248,7 +262,9 @@ func (s *Service) Test(ctx context.Context, src SourceConfig) TestResult {
 			p.Columns = columnsOf(recs)
 			p.Sample = sampleOf(recs, 3)
 			if len(recs) == 0 {
-				wideProbe(ctx, q, qc.Flux, &p) // v0.10.335 — boşluğun sebebini ayırt et
+				wctx, wcancel := context.WithTimeout(ctx, testWideBudget)
+				wideProbe(wctx, q, qc.Flux, &p)
+				wcancel() // v0.10.335 — boşluğun sebebini ayırt et
 			}
 		}
 		res.Queries = append(res.Queries, p)

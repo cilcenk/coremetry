@@ -38,11 +38,13 @@ func TestEveryExplainWrapperCarriesShield(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(b)
-	if n := strings.Count(src, "Shield:     s.aiShieldFor("); n < 3 {
-		t.Fatalf("CallMeta kurucularının 3'ü tohumlu Shield taşımalı, %d", n)
+	// v0.10.533 — karar matrisi tek kurucuda: yedi sarmalayıcı aiCall'a delege
+	// eder, Shield tohumlaması iki yerde (explainCallCtx + aiCall) yazılıdır.
+	if n := strings.Count(src, "s.aiCall("); n != 7 {
+		t.Fatalf("yedi sarmalayıcı da aiCall'a delege etmeli, %d", n)
 	}
-	if n := strings.Count(src, "meta.Shield = s.aiShieldFor(ctx, surface)"); n < 3 {
-		t.Fatalf("surface/JSONSurface/stream sarmalayıcıları yüzey kapılı varsayılan Shield vermeli, %d", n)
+	if !strings.Contains(src, "meta.Shield = s.aiShieldFor(ctx, surface)") || !strings.Contains(src, "Shield:     s.aiShieldFor(r.Context(), surface)") {
+		t.Fatal("aiCall ve explainCallCtx yüzey kapılı tohumlu Shield vermeli")
 	}
 	if strings.Contains(src, "= aiShield\n") || strings.Contains(src, "Shield:     aiShield,") {
 		t.Fatal("tohumsuz aiShield sarmalayıcılarda kalmamalı (v0.10.431)")

@@ -157,8 +157,13 @@ func TestChatSpanWiring(t *testing.T) {
 			t.Errorf("kademe işareti yok: %s", tier)
 		}
 	}
+	// v0.10.533 — span açma tek kurucuda (aiCall): r'li yol beginExplainSpan,
+	// ctx'li yol beginExplainSpanCtx; üç ctx sarmalayıcısı oraya delege eder.
 	obs, _ := os.ReadFile("ai_observability.go")
-	if n := strings.Count(string(obs), "s.beginExplainSpanCtx("); n != 3 {
-		t.Fatalf("üç ctx sarmalayıcısı da explain span'ı açmalı, %d", n)
+	if n := strings.Count(string(obs), "s.beginExplainSpanCtx("); n != 1 {
+		t.Fatalf("ctx explain span'ı yalnız aiCall'da açılmalı, %d", n)
+	}
+	if n := strings.Count(string(obs), "aiCallOpts{surface: surface"); n != 3 {
+		t.Fatalf("üç ctx sarmalayıcısı aiCall'a surface ile delege etmeli, %d", n)
 	}
 }

@@ -66,10 +66,11 @@ describe('REDACTED şablonu (v0.10.526 — GoldenGate ekibinin sorgusu, Coremetr
     expect(REDACTEDTEMPLATE.attrMap?.TRACEID).toBe('trace_id');
     expect(REDACTEDTEMPLATE.attrMap?.REDACTED).toBe('k8s.pod.name');
   });
-  it('SORGU 1: ekibin süzgeçleri (REDACTED/REDACTED, REDACTED =~ /^01/) + Coremetry uyarlamaları; Grafana değişkeni YOK', () => {
+  it('SORGU 1: REDACTED/REDACTED, kanal süzgeci YOK (v0.10.528) + Coremetry uyarlamaları; Grafana değişkeni YOK', () => {
     REDACTED")');
     expect(REDACTEDTEMPLATE.flux).toContain('r._measurement == "REDACTED" and r._field == "REDACTED"');
-    expect(REDACTEDTEMPLATE.flux).toContain('r.REDACTED =~ /^01/');
+    expect(REDACTEDTEMPLATE.flux).not.toContain('REDACTED =~'); // v0.10.528 kanal süzgeci yok
+    expect(REDACTEDTEMPLATE.name).toBe('REDACTED');
     expect(REDACTEDTEMPLATE.flux).toContain('range(start: -2h)'); // v0.10.527 gecikmeli kaynak
     expect(REDACTEDTEMPLATE.flux).toContain('group(columns: ["REDACTED", "REDACTED"])');
     expect(REDACTEDTEMPLATE.flux).toContain('aggregateWindow(every: 1m, fn: sum, createEmpty: false)');
@@ -89,12 +90,12 @@ describe('REDACTED şablonu (v0.10.526 — GoldenGate ekibinin sorgusu, Coremetr
     for (const p of phs) expect(['from', 'to', ...(REDACTEDTEMPLATE.groupBy ?? [])]).toContain(p);
   });
   it('GoldenGate toplam şablonu: ekibin ikinci sorgusu, aynı süzgeç + gruplama, kanıt sorgusu yok', () => {
-    expect(GG_TOTAL_TEMPLATE.name).toBe('gg_01_adet_total');
+    expect(GG_TOTAL_TEMPLATE.name).toBe('gg_adet_total');
     REDACTED")');
     expect(GG_TOTAL_TEMPLATE.flux).toContain('r._field == "REDACTED"');
     expect(GG_TOTAL_TEMPLATE.flux).toContain('range(start: -2h)');
     expect(GG_TOTAL_TEMPLATE.flux).not.toContain('_measurement ==');
-    expect(GG_TOTAL_TEMPLATE.flux).toContain('r.REDACTED =~ /^01/');
+    expect(GG_TOTAL_TEMPLATE.flux).not.toContain('REDACTED =~');
     expect(GG_TOTAL_TEMPLATE.flux).toContain('aggregateWindow(every: 1m, fn: sum, createEmpty: false)');
     expect(GG_TOTAL_TEMPLATE.groupBy).toEqual(['REDACTED', 'REDACTED']);
     expect(GG_TOTAL_TEMPLATE.enrichFlux).toBeUndefined();

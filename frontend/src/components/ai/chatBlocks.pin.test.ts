@@ -19,3 +19,12 @@ describe('blok protokolü kablolaması', () => {
     expect(bubble).not.toContain('turn.links.map(');
   });
 });
+
+// v0.10.542 — action bloğu: parseAction + görünürlük + applyActionHref + replace:true.
+describe('action bloğu kablolaması', () => {
+  it('balon aksiyonu yalnız açık sayfada, URL birleşimiyle uygular', () => {
+    expect(bubble).toContain("filter(b => b.type === 'action')");
+    expect(bubble).toContain('actionVisible(a, loc.pathname)');
+    expect(bubble).toContain('applyActionHref(a, loc.pathname, loc.search); if (to) navigate(to, { replace: true });');
+  });
+});

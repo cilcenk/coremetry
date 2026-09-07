@@ -1,8 +1,9 @@
 import { Fragment, useState, type ReactNode } from 'react';
 import { chatErrorText } from './chatErrorText';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { AIFeedbackButtons } from './AIFeedbackButtons';
 import { chartBlocks, mergeBlockLinks } from '@/lib/chatBlocks';
+import { parseAction, actionVisible, applyActionHref } from '@/lib/pageActions';
 import { escapeHTML } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import type { ChatTurn, ChatStepDetail, ChatTypedBlock } from '@/lib/types';
@@ -442,6 +443,7 @@ export function ChatBubble({ turn }: { turn: ChatTurn }) {
   const effLinks = mergeBlockLinks(turn.links, turn.blocks); // v0.10.541 — link blokları çiplere katılır
   const isUser = turn.role === 'user';
   const navigate = useNavigate();
+  const loc = useLocation(); // v0.10.542 — aksiyon görünürlüğü/uygulaması açık sayfaya göre
   const [copied, setCopied] = useState(false);
   // v0.10.161 — açık kanıt kimliği (d.i): çip şeridi ve şeffaflık paneli paylaşır.
   const [evId, setEvId] = useState<number | null>(null);
@@ -519,6 +521,20 @@ export function ChatBubble({ turn }: { turn: ChatTurn }) {
             {renderMessage(turn.text, turn.pending, turn.blocks)}
             {/* v0.10.541 — tipli chart blokları (mutlak pencere; CosreChart fromNs/toNs'i önceler) */}
             {!turn.pending && chartBlocks(turn.blocks).map((spec, i) => <CosreChart key={`blk-${i}`} spec={spec as CosreChartSpec} />)}
+            {/* v0.10.542 — action bloğu: yalnız tool sonucundan (sunucu chat_actions.go),
+                yalnız hedef sayfa açıkken; URL birleşimi + replace:true, yeni sekme yok. */}
+            {!turn.pending && (turn.blocks ?? []).filter(b => b.type === 'action').map(b => {
+              const a = parseAction(b.payload);
+              if (!a || !actionVisible(a, loc.pathname)) return null;
+              return (
+                <div key={b.id} style={{ marginTop: 6 }}>
+                  <Button variant="secondary" size="sm" title={a.href}
+                    onClick={() => { const to = applyActionHref(a, loc.pathname, loc.search); if (to) navigate(to, { replace: true }); }}>
+                    ⚡ {a.label}
+                  </Button>
+                </div>
+              );
+            })}
             {turn.pending && <span className="cm-ai-cursor" />}
             {/* v0.10.63 — YARIM CEVAP TAM GİBİ OKUNMASIN.
                 `stopped` bayrağı v0.10.23'ten beri YAZILIYOR ama hiçbir yer

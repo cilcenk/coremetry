@@ -1503,6 +1503,13 @@ function TracesPageInner() {
                         title="Tavanlı sayım — MV'den okur, listeyi yavaşlatmaz">Show total</a>
                     </>
                   )}
+                  {/* v0.10.522 (operatör: "steps rows göremedim") — teşhis linki
+                      yalnız boş sonuçta vardı; dolu listede de admin'e (aynı
+                      lastListParams, yeni sekme). */}
+                  {explainHref && (
+                    <>{' · '}<a href={explainHref} target="_blank" rel="noreferrer"
+                      title="Aynı sorgunun teşhisi: seçilen yol, her ClickHouse adımı, süre, satır (yalnız admin)">teşhis</a></>
+                  )}
                   {' · '}sorted by <b>{sort}</b> {order}
                   {/* v0.10.124 — MV boşluğu: ham yoldan okundu, dürüstçe söyle. */}
                   {data?.mvGap && (

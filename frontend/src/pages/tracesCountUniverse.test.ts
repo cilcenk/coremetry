@@ -27,3 +27,17 @@ describe('/traces sayımı listeyle aynı evren', () => {
     expect(src).toContain("showing {traces.length}{hasMore ? '+' : ''} · toplam sayılamıyor");
   });
 });
+
+// v0.10.522 — teşhis (explain) linki dolu listede de (admin): operatör dolu
+// sayfada explain'e ulaşamadı ("steps rows göremedim"); link yalnız boş
+// sonuç bileşenindeydi.
+describe('/traces teşhis linki', () => {
+  it('Pager extras içinde explainHref varsa "teşhis" linki; boş sonuç bileşeninde de kalır', () => {
+    const i = src.indexOf('<Pager mode="offset" count="skip"');
+    expect(i).toBeGreaterThan(0);
+    const extras = src.slice(i, src.indexOf('</Pager>', i) > 0 ? src.indexOf('</Pager>', i) : i + 4000);
+    expect(extras).toContain('{explainHref && (');
+    expect(extras).toContain('>teşhis</a>');
+    expect(src).toContain('Teşhis (explain) →');
+  });
+});

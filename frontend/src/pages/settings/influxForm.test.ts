@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseAttrMap, attrMapToText, parseList, listToText, numFromForm, numToForm,
-  thresholdsToForm, thresholdsToWire, REDACTEDTEMPLATE,
+  thresholdsToForm, thresholdsToWire, REDACTEDTEMPLATE, GG_TOTAL_TEMPLATE,
 } from './influxForm';
 
 // v0.10.222 — InfluxTab metin kutuları ↔ tel. Sessiz sınıf: boş eşik
@@ -58,44 +58,45 @@ describe('eşikler', () => {
   });
 });
 
-describe('REDACTED şablonu (spec)', () => {
-  it('gruplama v1: yalnız REDACTED + REDACTED; attrMap altı tag', () => {
+describe('REDACTED şablonu (v0.10.526 — GoldenGate ekibinin sorgusu, Coremetry uyarlaması)', () => {
+  it('gruplama kanal + operasyon; attrMap altı tag', () => {
     expect(REDACTEDTEMPLATE.groupBy).toEqual(['REDACTED', 'REDACTED']);
     expect(Object.keys(REDACTEDTEMPLATE.attrMap ?? {}).sort()).toEqual(
       ['REDACTED', 'REDACTED', 'REDACTED', 'REDACTED', 'REDACTED', 'TRACEID']);
     expect(REDACTEDTEMPLATE.attrMap?.TRACEID).toBe('trace_id');
     expect(REDACTEDTEMPLATE.attrMap?.REDACTED).toBe('k8s.pod.name');
   });
-  REDACTED{
+  it('SORGU 1: ekibin süzgeçleri (REDACTED/REDACTED, REDACTED =~ /^01/) + Coremetry uyarlamaları; Grafana değişkeni YOK', () => {
     REDACTED")');
+    expect(REDACTEDTEMPLATE.flux).toContain('r._measurement == "REDACTED" and r._field == "REDACTED"');
+    expect(REDACTEDTEMPLATE.flux).toContain('r.REDACTED =~ /^01/');
+    expect(REDACTEDTEMPLATE.flux).toContain('range(start: -2m)');
+    expect(REDACTEDTEMPLATE.flux).toContain('group(columns: ["REDACTED", "REDACTED"])');
     expect(REDACTEDTEMPLATE.flux).toContain('aggregateWindow(every: 1m, fn: sum, createEmpty: false)');
-    expect(REDACTEDTEMPLATE.flux).toContain('r.REDACTED != "0"');
-    expect(REDACTEDTEMPLATE.flux).toContain('r.REDACTED != "N/A"');
-    expect(REDACTEDTEMPLATE.flux).not.toContain('_value > 4');
-    REDACTED")');
-  });
-
-  it('SORGU 2 dört yer tutucuyu taşır, SORGU 1 hiçbirini taşımaz', () => {
-    for (const ph of ['{{from}}', '{{to}}', '{{op}}', '{{err}}']) {
-      expect(REDACTEDTEMPLATE.enrichFlux).toContain(ph);
+    for (const bad of ['v.timeRangeStart', 'v.windowPeriod', 'createEmpty: true', '_value > 4']) {
+      expect(REDACTEDTEMPLATE.flux).not.toContain(bad);
     }
-    expect(REDACTEDTEMPLATE.flux).not.toContain('{{');
+  });
+  it('SORGU 2 (kanıt) yer tutucuları groupBy tag adlarıyla + from/to; SORGU 1 hiçbirini taşımaz', () => {
+    for (const ph of ['{{from}}', '{{to}}', '{{REDACTED}}', '{{REDACTED}}']) {
+      expect(REDACTEDTEMPLATE.enrichFlux).toContain(ph);
+      expect(REDACTEDTEMPLATE.flux).not.toContain(ph);
+    }
+    expect(REDACTEDTEMPLATE.enrichFlux).toContain('keep(columns: ["_time", "TRACEID", "REDACTED", "REDACTED", "REDACTED"])');
     expect(REDACTEDTEMPLATE.enrichFlux).toContain('limit(n: 50)');
+    // enrich.go her groupBy tag'ını adıyla doldurur; başka yer tutucu HATA olurdu.
+    const phs = [...(REDACTEDTEMPLATE.enrichFlux ?? '').matchAll(/\{\{\s*([A-Za-z_]+)\s*\}\}/g)].map(m => m[1]);
+    for (const p of phs) expect(['from', 'to', ...(REDACTEDTEMPLATE.groupBy ?? [])]).toContain(p);
   });
-});
-
-// v0.10.231 (D6) — REDACTED seri-boyutu anahtarı
-import { toggleGroupByTag, hasGroupByTag } from './influxForm';
-describe('groupBy tag anahtarı', () => {
-  it('ekler (sona), çıkarır, sırayı korur, çift eklemez', () => {
-    expect(toggleGroupByTag('REDACTED, REDACTED', 'REDACTED', true)).toBe('REDACTED, REDACTED, REDACTED');
-    expect(toggleGroupByTag('REDACTED, REDACTED, REDACTED', 'REDACTED', true)).toBe('REDACTED, REDACTED, REDACTED');
-    expect(toggleGroupByTag('REDACTED, REDACTED, REDACTED', 'REDACTED', false)).toBe('REDACTED, REDACTED');
-    expect(toggleGroupByTag('', 'REDACTED', true)).toBe('REDACTED');
-    expect(toggleGroupByTag('kanalkod', 'REDACTED', false)).toBe('kanalkod');
-  });
-  it('hasGroupByTag', () => {
-    expect(hasGroupByTag('REDACTED, REDACTED', 'REDACTED')).toBe(true);
-    expect(hasGroupByTag('REDACTED', 'REDACTED')).toBe(false);
+  it('GoldenGate toplam şablonu: ekibin ikinci sorgusu, aynı süzgeç + gruplama, kanıt sorgusu yok', () => {
+    expect(GG_TOTAL_TEMPLATE.name).toBe('gg_01_adet_total');
+    REDACTED")');
+    expect(GG_TOTAL_TEMPLATE.flux).toContain('r._field == "REDACTED"');
+    expect(GG_TOTAL_TEMPLATE.flux).not.toContain('_measurement ==');
+    expect(GG_TOTAL_TEMPLATE.flux).toContain('r.REDACTED =~ /^01/');
+    expect(GG_TOTAL_TEMPLATE.flux).toContain('aggregateWindow(every: 1m, fn: sum, createEmpty: false)');
+    expect(GG_TOTAL_TEMPLATE.groupBy).toEqual(['REDACTED', 'REDACTED']);
+    expect(GG_TOTAL_TEMPLATE.enrichFlux).toBeUndefined();
+    expect(GG_TOTAL_TEMPLATE.name).not.toBe(REDACTEDTEMPLATE.name);
   });
 });

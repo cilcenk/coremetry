@@ -8,7 +8,8 @@
 //   • eşikler: '' = unset → tel'e YAZILMAZ (0/omitempty = global varsayılan).
 //     vmForm dersi: kutuya varsayılanı basmak sessiz ayar donması demek.
 //
-// REDACTED şablonu — v0.10.224: operatörün GERÇEK Grafana sorgusuyla hizalı
+// REDACTED şablonu — v0.10.224: operatörün GERÇEK Grafana sorgusuyla hizalı;
+// v0.10.526'da GoldenGate ekibinin sorgusuyla yenilendi (aşağıdaki not)
 // ("BAŞARISIZ FONKSİYON VE OPERASYONLAR", 2026-09-01). Bucket spec'teki
 REDACTED
 // okuyor — farklıysa kutudan değiştir. Gürültü filtreleri (REDACTED != "0", REDACTED
@@ -77,20 +78,32 @@ export function thresholdsToWire(f: ThresholdsForm): InfluxThresholds | undefine
   return Object.keys(out).length ? out : undefined;
 }
 
+// v0.10.526 — operatör (2026-09-07): GoldenGate ekibinin verdiği iki Grafana
+// sorgusu VARSAYILAN şablon oldu ("default bunlar olsun, Coremetry Influx
+// entegrasyonuna uygun"). Grafana kalıbından üç uyarlama: `v.timeRangeStart`
+// → göreli `range(start: -2m)` (poller watermark'la kovayı bir kez yazar),
+// `v.windowPeriod` → sabit `every: 1m` (Coremetry'deki dakika = Grafana'daki
+// dakika), `createEmpty: true` → `false` (null _value "kötü değer" diye
+// düşer; sıfır dolgusu D3 dedektöründe). Ekibin `group(columns:
+// ["_measurement"])`i tek seri verirdi; operatör kanal + operasyon istedi →
+// REDACTED + REDACTED (sekmeden değiştirilebilir, 5.000 seri tavanı).
+// Kanal süzgeci ekibin verdiği gibi: REDACTED =~ /^01/.
 export const REDACTEDTEMPLATE: InfluxQueryConfig = {
-  name: 'REDACTED',
+  name: 'tfail_01_adet',
   REDACTED")
   |> range(start: -2m)
   |> filter(fn: (r) => r._measurement == "REDACTED" and r._field == "REDACTED")
-  |> filter(fn: (r) => r.REDACTED != "0" and r.REDACTED != "N/A")
-  |> filter(fn: (r) => r.REDACTED !~ /------/)
+  |> filter(fn: (r) => r.REDACTED =~ /^01/)
   |> group(columns: ["REDACTED", "REDACTED"])
   |> aggregateWindow(every: 1m, fn: sum, createEmpty: false)
   |> yield(name: "sum")`,
+  // SORGU 2 — kanıt: problem açılınca aynı grubun son 50 TRACEID'si.
+  // Yer tutucular groupBy tag adlarıyla (enrich.go: her groupBy tag'ı
+  // adıyla doldurulur) + {{from}}/{{to}}.
   REDACTED")
   |> range(start: {{from}}, stop: {{to}})
   |> filter(fn: (r) => r._measurement == "REDACTED" and r._field == "REDACTED")
-  |> filter(fn: (r) => r.REDACTED == "{{op}}" and r.REDACTED == "{{err}}")
+  |> filter(fn: (r) => r.REDACTED == "{{REDACTED}}" and r.REDACTED == "{{REDACTED}}")
   |> keep(columns: ["_time", "TRACEID", "REDACTED", "REDACTED", "REDACTED"])
   |> group()
   |> sort(columns: ["_time"], desc: true)
@@ -103,6 +116,28 @@ export const REDACTEDTEMPLATE: InfluxQueryConfig = {
     REDACTED: 'k8s.pod.name',
     TRACEID: 'trace_id',
     REDACTED: 'error.code',
+  },
+};
+
+REDACTED
+// REDACTED toplamı (başarılı + başarısız), aynı kanal süzgeci ve gruplama.
+// Hata oranı (REDACTED ÷ toplam) bugün türetilmiyor; iki seri ayrı izlenir,
+// Explore'da yan yana çizilir. Kanıt sorgusu YOK (TRACEID bu bucket'ta
+// spec'te yok).
+export const GG_TOTAL_TEMPLATE: InfluxQueryConfig = {
+  name: 'gg_01_adet_total',
+  REDACTED")
+  |> range(start: -2m)
+  |> filter(fn: (r) => r._field == "REDACTED")
+  |> filter(fn: (r) => r.REDACTED =~ /^01/)
+  |> group(columns: ["REDACTED", "REDACTED"])
+  |> aggregateWindow(every: 1m, fn: sum, createEmpty: false)
+  |> yield(name: "sum")`,
+  groupBy: ['REDACTED', 'REDACTED'],
+  attrMap: {
+    REDACTED: 'operation',
+    REDACTED: 'FUNCTION_CODE',
+    REDACTED: 'CHANNEL_CODE',
   },
 };
 

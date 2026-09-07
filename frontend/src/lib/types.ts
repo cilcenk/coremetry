@@ -5450,7 +5450,14 @@ export interface ExplainAnswerBase {
 // (ChatMessage) + yalnız UI'ın bildiği alanlar. İKİ yüzey paylaşır —
 // global CoSRE penceresi (CopilotChat) ve AI çekmecesi içindeki sohbet
 // (AIDrawer) — bu yüzden bileşen dosyasında değil burada yaşar.
+export type ChatBlockType = 'text' | 'table' | 'chart' | 'trace_list' | 'link' | 'action' | 'evidence';
+/** chart bloğunun gövdesi — components/cosreChartSpec.ts CosreChartSpec ile aynı alanlar (Go guidedChartSpec). */
+export interface CosreChartSpecLike { title?: string; service: string; operation?: string; agg: string; unit?: string; rangeS?: number; groupBy?: string; fromNs?: number; toNs?: number }
+export interface ChatTypedBlock { id: string; type: ChatBlockType; seq: number; final: boolean; payload: unknown }
+
 export interface ChatTurn extends ChatMessage {
+  /** v0.10.541 — tipli bloklar (seq sıralı, id tekil); arşiv taşımaz (fence yeter). */
+  blocks?: ChatTypedBlock[];
   steps?: string[];
   // v0.9.1181 (Faz 4.3) — çiplerin arkasındaki kanıt. `steps` (etiketler)
   // AYRI kalıyor ve bilerek: arşivden geri yüklenen turlar detay taşımaz
@@ -5564,6 +5571,9 @@ export type ChatStreamEvent =
   // evidenceSpanIds / cached (v0.10.453) — trace açıklaması Explain çekirdeğinden:
   // kanıt span'leri ve önbellek isabeti (sohbet ile ✨ Explain aynı cevabı paylaşır).
   | { kind: 'answer'; text: string; exchangeId?: string; sources?: RagSource[]; suggestions?: string[]; links?: ChatAnswerLink[]; open?: string; evidenceSpanIds?: string[]; cached?: boolean }
+  // v0.10.541 (Faz 3.3a) — tipli blok: model yalnız metin üretir; chart/link
+  // (ileride trace_list/table/action/evidence) deterministik, tool sonucundan.
+  | { kind: 'block'; id: string; type: ChatBlockType; seq: number; final: boolean; payload: unknown }
   | { kind: 'error'; error: string }
   | { kind: 'done'; ok: boolean };
 

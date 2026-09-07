@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { appendChatBlock } from '@/lib/chatBlocks';
 import type { PageContext } from '@/lib/types';
 import type { ChatMessage, ChatTurn } from '@/lib/types';
 import { isAbortError, settleStoppedTurn } from './chatAbort';
@@ -201,6 +202,9 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
                 ? { ...d, ok: e.ok, preview: e.preview, truncated: e.truncated, bytes: e.bytes, href: e.href, durationMs: e.durationMs }
                 : d),
           }));
+        } else if (e.kind === 'block') {
+          // v0.10.541 — tipli blok (chart/link/…): metinden bağımsız biriktirilir.
+          patchLast(t => ({ ...t, blocks: appendChatBlock(t.blocks, { id: e.id, type: e.type, seq: e.seq, final: e.final, payload: e.payload }) }));
         } else if (e.kind === 'delta') {
           patchLast(t => ({ ...t, text: (t.text ?? '') + e.text }));
         } else if (e.kind === 'answer') {

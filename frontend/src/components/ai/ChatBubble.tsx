@@ -2,9 +2,10 @@ import { Fragment, useState, type ReactNode } from 'react';
 import { chatErrorText } from './chatErrorText';
 import { Link, useNavigate } from 'react-router-dom';
 import { AIFeedbackButtons } from './AIFeedbackButtons';
+import { chartBlocks, mergeBlockLinks } from '@/lib/chatBlocks';
 import { escapeHTML } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
-import type { ChatTurn, ChatStepDetail } from '@/lib/types';
+import type { ChatTurn, ChatStepDetail, ChatTypedBlock } from '@/lib/types';
 import { traceHref } from '@/lib/traceHref';
 import { CosreChart, type CosreChartSpec } from '@/components/CosreChart';
 import { parseChatBlocks, type ChatBlock } from './chatMarkdown';
@@ -145,7 +146,10 @@ const H_TAG = { 1: 'h4', 2: 'h5', 3: 'h6' } as const;
 //   kapandı + geçerli spec → grafik. Kapandı + bozuk → atlanır
 //     (v0.9.183 kararı, aynen korundu: deterministik üreticinin bozuk
 //     çıktısı operatörün sorunu değil).
-export function renderMessage(text: string, streaming = false) {
+export function renderMessage(text: string, streaming = false, typed?: ChatTypedBlock[]) {
+  // v0.10.541 — tipli chart blokları varsa fence grafikleri ÇİZİLMEZ (aynı grafik,
+  // mutlak pencereli hâli aşağıda); arşiv turn'ü blok taşımaz → fence yine çizilir.
+  const typedCharts = chartBlocks(typed);
   const blocks = parseChatBlocks(text, streaming);
   const out: ReactNode[] = [];
   blocks.forEach((b, i) => {
@@ -177,6 +181,7 @@ export function renderMessage(text: string, streaming = false) {
               break;
             }
           } else {
+            if (typedCharts.length > 0) break; // v0.10.541 — tipli blok kazanır
             try {
               const spec = JSON.parse(b.code.trim()) as CosreChartSpec;
               if (spec && typeof spec.service === 'string' && typeof spec.agg === 'string') {
@@ -434,6 +439,7 @@ export function ToolStepsPanel({ details: allDetails, error, turnDone, evId, set
 }
 
 export function ChatBubble({ turn }: { turn: ChatTurn }) {
+  const effLinks = mergeBlockLinks(turn.links, turn.blocks); // v0.10.541 — link blokları çiplere katılır
   const isUser = turn.role === 'user';
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
@@ -510,7 +516,9 @@ export function ChatBubble({ turn }: { turn: ChatTurn }) {
           // ChatBubble.render.test.tsx bunu pending=true/false çiftiyle
           // çalışma zamanında ölçüyor ("saf test ≠ BAĞLANMA" dersi).
           <>
-            {renderMessage(turn.text, turn.pending)}
+            {renderMessage(turn.text, turn.pending, turn.blocks)}
+            {/* v0.10.541 — tipli chart blokları (mutlak pencere; CosreChart fromNs/toNs'i önceler) */}
+            {!turn.pending && chartBlocks(turn.blocks).map((spec, i) => <CosreChart key={`blk-${i}`} spec={spec as CosreChartSpec} />)}
             {turn.pending && <span className="cm-ai-cursor" />}
             {/* v0.10.63 — YARIM CEVAP TAM GİBİ OKUNMASIN.
                 `stopped` bayrağı v0.10.23'ten beri YAZILIYOR ama hiçbir yer
@@ -554,9 +562,9 @@ export function ChatBubble({ turn }: { turn: ChatTurn }) {
 
       {/* Derin-link çipleri (v0.9.419) — cevabın konusuna tek tık.
           Sunucu rotadan deterministik üretir; SPA Link, chat yaşar. */}
-      {!isUser && !!turn.links?.length && !turn.pending && !turn.error && (
+      {!isUser && !!effLinks.length && !turn.pending && !turn.error && (
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
-          {turn.links.map((l, i) => (
+          {effLinks.map((l, i) => (
             // v0.9.709 — DIŞ URL çipi (log köprüsü, https://...) SPA
             // <Link>'e verilemez: router onu path sanıp uygulama içinde
             // gezinir ve link kırılır. Dış href <a target=_blank>.

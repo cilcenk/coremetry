@@ -3868,6 +3868,13 @@ thead th:hover .th-remove { opacity: 1; }
 /* CoSRE cevap kartı anatomisi: Karar + Kanıt satırları */
 /* v0.10.461 — AI cevap kartı: Explain paneli (CopilotExplain) ve asistan
    sohbet turu (ChatBubble) AYNI kart. answerCard.ts açıklar. */
+/* v0.10.546 — sohbet cevabı link satırı (operatör: "çipler fark edilmiyor").
+   Etiket + kenarlıklı pill; iç/dış aynı boy, kaynak/model çiplerinden ayrışır. */
+.ai-links { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-4); }
+.ai-links__cap { font-size: var(--fs-xs); font-weight: 600; color: var(--text3); letter-spacing: 0.02em; }
+.ai-link { display: inline-flex; align-items: center; gap: var(--sp-2); padding: 3px 9px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--accent2) 45%, transparent); background: color-mix(in srgb, var(--accent2) 10%, transparent); color: var(--accent2); font-size: 12px; font-weight: 600; text-decoration: none; line-height: 1.3; }
+.ai-link:hover, .ai-link:focus-visible { background: color-mix(in srgb, var(--accent2) 20%, transparent); text-decoration: none; }
+
 .ai-answer-card {
   padding: var(--sp-6); border-radius: var(--radius-sm);
   font-size: var(--fs-md); line-height: 1.5; color: var(--text);

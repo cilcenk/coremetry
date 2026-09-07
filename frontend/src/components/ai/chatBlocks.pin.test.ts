@@ -28,3 +28,14 @@ describe('action bloğu kablolaması', () => {
     expect(bubble).toContain('applyActionHref(a, loc.pathname, loc.search); if (to) navigate(to, { replace: true });');
   });
 });
+
+// v0.10.546 — link satırı: etiketli, iç/dış çip aynı sınıf; eski 10 px rozet yok.
+describe('cevap link satırı', () => {
+  it('"Aç →" başlığı + .ai-link çipler; badge b-info kalmadı', () => {
+    expect(bubble).toContain('className="ai-links" role="group" aria-label="İlgili sayfalar"');
+    expect(bubble).toContain('<span className="ai-links__cap">Aç →</span>');
+    expect(bubble.split('className="ai-link"').length - 1).toBe(2);
+    // (badge b-info başka çiplerde meşru; link satırındaki 10 px rozet kalktı)
+    expect(bubble).not.toContain("className=\"badge b-info\"\n                style={{ textDecoration: 'none', fontSize: 10 }}");
+  });
+});

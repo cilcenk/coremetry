@@ -578,24 +578,22 @@ export function ChatBubble({ turn }: { turn: ChatTurn }) {
 
       {/* Derin-link çipleri (v0.9.419) — cevabın konusuna tek tık.
           Sunucu rotadan deterministik üretir; SPA Link, chat yaşar. */}
+      {/* v0.10.546 — Operator-reported: "servis overview vb. çipler çıkıyor ama
+          kullanıcılar fark etmiyor". İç çipler 10 px `badge b-info` idi (kaynak/model
+          çipleriyle aynı ağırlık, başlıksız). Artık etiketli "Aç →" satırı; iç ve
+          dış çipler aynı boyda, kenarlıklı (.ai-link). Dış URL yine <a target=_blank>
+          (v0.9.709: router path sanıp kırıyordu), iç link SPA <Link>. */}
       {!isUser && !!effLinks.length && !turn.pending && !turn.error && (
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+        <div className="ai-links" role="group" aria-label="İlgili sayfalar">
+          <span className="ai-links__cap">Aç →</span>
           {effLinks.map((l, i) => (
-            // v0.9.709 — DIŞ URL çipi (log köprüsü, https://...) SPA
-            // <Link>'e verilemez: router onu path sanıp uygulama içinde
-            // gezinir ve link kırılır. Dış href <a target=_blank>.
             /^https?:/i.test(l.href) ? (
-              // v0.9.1143 — dış çip (Logizleme köprüsü) kanıta atlama
-              // yolu; operatör isteğiyle iç çiplerden belirgin büyük.
-              <a key={i} href={l.href} target="_blank" rel="noopener noreferrer"
-                className="badge b-info"
-                style={{ textDecoration: 'none', fontSize: 12, padding: '3px 8px' }}>
+              <a key={i} href={l.href} target="_blank" rel="noopener noreferrer" className="ai-link" title={l.href}>
                 🔗 {l.label}
               </a>
             ) : (
-              <Link key={i} to={l.href} className="badge b-info"
-                style={{ textDecoration: 'none', fontSize: 10 }}>
-                🔗 {l.label}
+              <Link key={i} to={l.href} className="ai-link" title={l.href}>
+                ↗ {l.label}
               </Link>
             )
           ))}

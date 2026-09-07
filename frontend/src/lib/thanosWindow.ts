@@ -17,8 +17,10 @@
 // Sabitin adı o kapının sözleşmesidir: yeniden adlandırılırsa test
 // açıkça kırılır ve sessizce ayrışma olmaz.
 
-/** Tavan, SAAT cinsinden. Go tarafı bu sayıyı kaynaktan okur. */
-export const THANOS_MAX_WINDOW_HOURS = 24;
+/** Tavan, SAAT cinsinden. Go tarafı bu sayıyı kaynaktan okur.
+ *  v0.10.531 — operatör kararı (2026-09-07): 24h → 30 gün; sunucu geniş
+ *  pencerede downsample'lı blok ister (max_source_resolution=auto). */
+export const THANOS_MAX_WINDOW_HOURS = 720; // 30 gün — Go kapısı düz sayı okur (thanos_window_test.go)
 
 /** Tavan, nanosaniye — sayfa aralıkları ns taşıyor (timeRangeToNs). */
 export const THANOS_MAX_WINDOW_NS = THANOS_MAX_WINDOW_HOURS * 3600 * 1e9;
@@ -26,7 +28,9 @@ export const THANOS_MAX_WINDOW_NS = THANOS_MAX_WINDOW_HOURS * 3600 * 1e9;
 /** Başlıklarda görünen etiket ("… (last 24h)"). Sabitten TÜRETİLİR:
  *  elle yazılsaydı tavan değişince başlık yalan söylerdi — bu kusur
  *  sınıfının ta kendisi. */
-export const THANOS_MAX_WINDOW_LABEL = `${THANOS_MAX_WINDOW_HOURS}h`;
+export const THANOS_MAX_WINDOW_LABEL = THANOS_MAX_WINDOW_HOURS % 24 === 0
+  ? `${THANOS_MAX_WINDOW_HOURS / 24}d`
+  : `${THANOS_MAX_WINDOW_HOURS}h`;
 
 export interface ClampedWindow {
   /** Kelepçelenmiş başlangıç (ns). */

@@ -93,7 +93,11 @@ type DDLQueueHealth struct {
 func ddlQueueVerdict(stuck uint64, approx bool, hosts []DDLHostProgress,
 	unreachable []string, queueFailed, progressErrored bool) (string, string) {
 	if queueFailed {
-		return "probe_failed", "Kuyruk okunamadı — teşhis yapılamıyor. Keeper erişimi ya da system.distributed_ddl_queue sorgusu başarısız (ProbeErrors'a bak)."
+		// v0.10.525 (prod 2026-09-07): 10k girdilik kuyrukta system.distributed_ddl_queue
+		// okuması Keeper'dan 13,6 s sürdü; 3 s sorgu tavanı + 12 s handler bütçesi
+		// "PROBE DÜŞTÜ" bastı, oysa kuyrukta bitmemiş girdi yoktu. Tavanlar 20/30 s;
+		// metin artık "okuma zaman aşımı ≠ kuyruk tıkalı" der.
+		return "probe_failed", "Kuyruk okunamadı — teşhis yapılamıyor. Keeper erişimi yavaş ya da system.distributed_ddl_queue sorgusu 20 s tavanını aştı (ProbeErrors'a bak). Bu, kuyruğun TIKALI olduğu anlamına gelmez; SQL Console'da `SELECT count() FROM system.distributed_ddl_queue WHERE status != 'Finished'` kesin cevabı verir."
 	}
 	if stuck == 0 {
 		return "healthy", "Bekleyen dağıtık DDL yok."
@@ -175,7 +179,7 @@ func (s *Store) GetDDLQueueHealth(ctx context.Context) (DDLQueueHealth, error) {
 		WHERE status IS NULL OR status != 'Finished'
 		ORDER BY query_create_time ASC
 		LIMIT 20
-		SETTINGS max_execution_time = 3`)
+		SETTINGS max_execution_time = 20`)
 	if err != nil {
 		queueFailed = true
 		out.ProbeErrors = append(out.ProbeErrors, "kuyruk: "+err.Error())
@@ -211,7 +215,7 @@ func (s *Store) GetDDLQueueHealth(ctx context.Context) (DDLQueueHealth, error) {
 			if err := s.conn.QueryRow(ctx, `
 				SELECT toUInt64(uniqExact(entry)) FROM system.distributed_ddl_queue
 				WHERE status IS NULL OR status != 'Finished'
-				SETTINGS max_execution_time = 3`).Scan(&out.StuckCount); err != nil {
+				SETTINGS max_execution_time = 20`).Scan(&out.StuckCount); err != nil {
 				out.ProbeErrors = append(out.ProbeErrors, "kuyruk sayısı: "+err.Error())
 				uniq := map[string]bool{}
 				for _, e := range out.Entries {
@@ -237,7 +241,7 @@ func (s *Store) GetDDLQueueHealth(ctx context.Context) (DDLQueueHealth, error) {
 			FROM clusterAllReplicas(%s, system.metrics)
 			WHERE metric IN ('MaxDDLEntryID', 'MaxPushedDDLEntryID')
 		) AS b
-		SETTINGS skip_unavailable_shards = 1, max_execution_time = 3`, cl, cl))
+		SETTINGS skip_unavailable_shards = 1, max_execution_time = 20`, cl, cl))
 	respondingHosts := map[string]bool{}
 	var metricHead int64
 	if err != nil {
@@ -279,7 +283,7 @@ func (s *Store) GetDDLQueueHealth(ctx context.Context) (DDLQueueHealth, error) {
 	crows, err := s.conn.Query(ctx, `
 		SELECT DISTINCT host_name FROM system.clusters
 		WHERE cluster = ?
-		SETTINGS max_execution_time = 3`, s.cfg.ClusterName)
+		SETTINGS max_execution_time = 20`, s.cfg.ClusterName)
 	if err != nil {
 		out.ProbeErrors = append(out.ProbeErrors, "cluster tanımı: "+err.Error())
 	} else {

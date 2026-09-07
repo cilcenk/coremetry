@@ -496,7 +496,7 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 	// "bu problem kimseye gitmedi" sorusu sorulamıyordu bile.
 	var facts routingFacts
 	if p.Status == "open" {
-		facts.Team = n.sendTeamMail(ctx, p, n.teamMetadata(ctx, p, md))
+		facts.Team = n.sendTeamMail(ctx, p, n.teamMetadata(ctx, p, md), n.ruleNotifyFor(ctx, p))
 	}
 	// relKind yukarı taşındı (v0.9.1344): kanal listesi boş çıktığında da
 	// yönlendirme işareti yazılabilmesi için gerekli. Yalnız p.Metric'i
@@ -823,7 +823,21 @@ func (n *Notifier) awaitAISummary(ctx context.Context, p chstore.Problem) chstor
 // GetServiceMetadata(p.Service)'ten çözüyor, db-konulu bir problemin
 // (db:oracle@corebank-scan.prod, v0.9.1338) katalog satırı yok → md nil
 // → ekip yok → mail yok. Çağıran bunu bilemiyordu; artık biliyor.
-func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chstore.ServiceMetadata) teamMailOutcome {
+// ruleNotifyFor — v0.10.519: problemi açan kuralın ekip hedefi. RuleID
+// dedektör kimliği (exception-storm vb.) ya da silinmiş kural olabilir →
+// nil = varsayılan yol. Soft-fail: CH hatası yönlendirmeyi durdurmaz.
+func (n *Notifier) ruleNotifyFor(ctx context.Context, p chstore.Problem) *chstore.RuleNotify {
+	if strings.TrimSpace(p.RuleID) == "" {
+		return nil
+	}
+	r, err := n.store.GetAlertRule(ctx, p.RuleID)
+	if err != nil || r == nil {
+		return nil
+	}
+	return r.Notify
+}
+
+func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chstore.ServiceMetadata, rn *chstore.RuleNotify) teamMailOutcome {
 	tc, err := n.store.GetTeamContacts(ctx)
 	if err != nil {
 		// Ayar okunamadı — vidanın açık mı kapalı mı olduğunu BİLMİYORUZ.
@@ -832,7 +846,7 @@ func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chst
 		log.Printf("[notify] team-routing settings: %v", err)
 		return teamMailOff
 	}
-	to, reach := teamMailReach(tc, md, p.Severity)
+	to, reach := teamMailReachRule(tc, md, p.Severity, rn)
 	if len(to) == 0 {
 		return reach
 	}

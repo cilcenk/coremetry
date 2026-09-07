@@ -14,8 +14,9 @@ func TestAlertRuleHandlersAcceptTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(b)
-	if strings.Count(src, "if !s.acceptRuleTarget(w, rule) {") != 2 {
-		t.Error("create ve update hedef doğrulamasından geçmeli")
+	// v0.10.519 — aynı kapıda ekip-bildirimi doğrulaması (acceptRuleNotify).
+	if strings.Count(src, "if !s.acceptRuleTarget(w, rule) || !s.acceptRuleNotify(w, &rule) {") != 2 {
+		t.Error("create ve update hedef + bildirim doğrulamasından geçmeli")
 	}
 	if strings.Count(src, "s.writeRuleErr(w, err)") != 2 {
 		t.Error("create ve update Upsert hatasını writeRuleErr ile yazmalı")

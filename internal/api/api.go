@@ -10605,7 +10605,7 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if !s.acceptRuleTarget(w, rule) {
+	if !s.acceptRuleTarget(w, rule) || !s.acceptRuleNotify(w, &rule) {
 		return
 	}
 	if s.rejectDeadLogQuery(w, rule) {
@@ -10617,7 +10617,7 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 		s.writeRuleErr(w, err)
 		return
 	}
-	details, _ := json.Marshal(map[string]any{"name": rule.Name, "service": rule.Service, "metric": rule.Metric})
+	details, _ := json.Marshal(map[string]any{"name": rule.Name, "service": rule.Service, "metric": rule.Metric, "notify": rule.Notify})
 	s.audit(r, "alert_rule.create", "alert_rule", rule.ID, string(details))
 	writeJSON(w, rule)
 }
@@ -10653,7 +10653,7 @@ func (s *Server) updateAlertRule(w http.ResponseWriter, r *http.Request) {
 	// Create ile AYNI kapı. Yalnız create'i kapatmak, kuralı önce boş
 	// bırakıp sonra düzenleyerek geçilebilir bir kapı olurdu — ve o yol
 	// bir kaçamak değil, düzenlemenin NORMAL akışıdır.
-	if !s.acceptRuleTarget(w, rule) {
+	if !s.acceptRuleTarget(w, rule) || !s.acceptRuleNotify(w, &rule) {
 		return
 	}
 	if s.rejectDeadLogQuery(w, rule) {
@@ -10663,7 +10663,7 @@ func (s *Server) updateAlertRule(w http.ResponseWriter, r *http.Request) {
 		s.writeRuleErr(w, err)
 		return
 	}
-	details, _ := json.Marshal(map[string]any{"name": rule.Name, "service": rule.Service, "metric": rule.Metric})
+	details, _ := json.Marshal(map[string]any{"name": rule.Name, "service": rule.Service, "metric": rule.Metric, "notify": rule.Notify})
 	s.audit(r, "alert_rule.update", "alert_rule", rule.ID, string(details))
 	writeJSON(w, rule)
 }
@@ -10678,9 +10678,20 @@ func (s *Server) acceptRuleTarget(w http.ResponseWriter, rule chstore.AlertRule)
 	return true
 }
 
+// acceptRuleNotify — v0.10.519: kural bazında ekip bildirimi doğrulaması
+// (400). Normalize edip kurala geri yazar (kırpma, kopya, varsayılan kip).
+func (s *Server) acceptRuleNotify(w http.ResponseWriter, rule *chstore.AlertRule) bool {
+	rule.Notify = chstore.NormalizeRuleNotify(rule.Notify)
+	if err := chstore.ValidateRuleNotify(rule.Notify); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	return true
+}
+
 // writeRuleErr — kolon henüz yoksa (ertelenmiş DDL, iki-boot) 409 + net metin.
 func (s *Server) writeRuleErr(w http.ResponseWriter, err error) {
-	if errors.Is(err, chstore.ErrRuleTargetColumnMissing) {
+	if errors.Is(err, chstore.ErrRuleTargetColumnMissing) || errors.Is(err, chstore.ErrRuleNotifyColumnMissing) {
 		writeJSONError(w, http.StatusConflict, err.Error())
 		return
 	}

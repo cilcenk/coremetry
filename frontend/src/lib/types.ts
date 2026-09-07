@@ -3383,6 +3383,13 @@ export interface StatementSearchRow {
   p95Ms: number;
   services: string[];
 }
+// v0.10.519 — kuralın ekip-maili hedefi. mode: 'add' = sahip + SRE'ye ek
+// (varsayılan), 'only' = yalnız bu ekipler. Adresler Settings → Team routing.
+export interface RuleNotify {
+  teams: string[];
+  mode?: 'add' | 'only';
+}
+
 export interface AlertRule {
   id: string;
   name: string;
@@ -3401,6 +3408,8 @@ export interface AlertRule {
   runbookUrl?: string;
   // v0.10.331 — hedefli kural (DB ifadesi); yoksa sıradan servis kuralı.
   target?: RuleTarget;
+  // v0.10.519 — kural bazında ekip bildirimi; yoksa sahip + SRE (varsayılan).
+  notify?: RuleNotify;
   // Noise-dampening knobs (v0.5.127-129). All default to 0 =
   // legacy fire-immediately behaviour; operators opt in per rule.
   forSec?: number;       // sustained breach gate

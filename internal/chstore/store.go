@@ -224,6 +224,9 @@ type Store struct {
 	// atomic — ertelenmiş DDL boot'tan sonra indiğinde UpsertAlertRule yeniden
 	// probe eder (tek restart yeter); okuma/yazma yarışsız.
 	hasAlertRuleTargetCol atomic.Bool
+	// hasAlertRuleNotifyCol — v0.10.519: alert_rules.notify_json probu (aynı
+	// iki-boot sözleşmesi, alert_notify.go).
+	hasAlertRuleNotifyCol atomic.Bool
 	// v0.9.1097 — db_statement_summary_5m exemplar state kolonları var mı?
 	// (0.5 Alternatif-B; okuma MV-önce, yoksa ham fallback.)
 	hasDBStmtExemplarCols bool
@@ -1475,6 +1478,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			log_query    String       DEFAULT '',     -- saved-search log alert (v0.5.242)
 			watcher_json String       DEFAULT '',     -- imported ES Watcher definition, verbatim (v0.9.x)
 			target_json  String       DEFAULT '',     -- v0.10.331 hedefli kural (RuleTarget JSON)
+			notify_json  String       DEFAULT '',     -- v0.10.519 kural bazında ekip bildirimi (RuleNotify JSON)
 			created_at   DateTime64(9) DEFAULT now64(9),
 			version      UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
@@ -2600,6 +2604,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		// switches paths based on len(log_query) > 0.
 		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS log_query String DEFAULT ''`,
 		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS target_json String DEFAULT ''`, // v0.10.331
+		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS notify_json String DEFAULT ''`, // v0.10.519
 		// v0.9.x — ES Watcher birebir-JSON import (Faz-1). The verbatim
 		// PUT _watcher/watch body; empty for native rules. The evaluator
 		// switches to the watcher path on len(watcher_json) > 0, exactly
@@ -3202,6 +3207,10 @@ func (s *Store) migrate(ctx context.Context) error {
 	// okumalar '' ile sürer (iki-boot sözleşmesi, CLAUDE.md §3).
 	if !s.probeAlertRuleTargetCol(ctx) {
 		log.Printf("[chstore] alert_rules.target_json not yet present — DB-statement alert rules re-probe on save once the deferred DDL lands")
+	}
+	// v0.10.519 — notify_json aynı sözleşme.
+	if !s.probeAlertRuleNotifyCol(ctx) {
+		log.Printf("[chstore] alert_rules.notify_json not yet present — team-routed alert rules re-probe on save once the deferred DDL lands")
 	}
 	if !s.hasDBStmtHashCol {
 		log.Printf("[chstore] `db_stmt_hash` column not resolvable on spans (%v) — db_statement_summary_5m MV disabled, /slow-queries reads stay on the raw-spans path (expected on an external Distributed cluster with cluster_name unset)", dhErr)

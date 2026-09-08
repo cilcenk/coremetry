@@ -89,7 +89,7 @@ func problemView(p chstore.Problem) map[string]any {
 func getProblemTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:             "get_problem",
-		ShortDescription: "Tek Problem'in tam kaydı (id): özne, ölçü/eşik, durum, atanan, süre, ekipler, deploy.",
+		ShortDescription: "Tek Problem'in tam kaydı (id): özne, ölçü/eşik, durum, atanan, süre, deploy.",
 		Description:      "Return ONE Problem by id with every field the problem drawer shows: subject (service or DB subject + kind), rule, metric/value/threshold/comparator, status, pod, assignee, startedAt/resolvedAt (+durationS when resolved), runbook URL, clusters, owner/SRE teams and the recent deploy the opener recorded. Use after list_problems (or when the user pastes a problem id / link) before get_problem_root_cause or get_correlation_evidence. Read-only, one lookup. Returns found=false when the id does not exist. The description is truncated to 600 characters.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -205,7 +205,7 @@ func evidenceSection(de *chstore.DeepEvidence, name string) (val any, total int,
 func getCorrelationEvidenceTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:             "get_correlation_evidence",
-		ShortDescription: "Problem hipotezinin kanıt bölümleri (checked, exceptions, templates, traceIds, rollouts…); found=false sebep değildir.",
+		ShortDescription: "Problem hipotezinin kanıt bölümleri (checked, exceptions, traceIds, rollouts…).",
 		Description:      "Return the correlation worker's DEEP EVIDENCE for a Problem, section by section, so you can cite exactly what was inspected instead of re-querying: `checked` (every signal family the worker looked at, found=true/false — found=false is NOT evidence for a cause), `exceptions` (new/spiking exception groups), `templates` (log templates that changed), `slowOps` (operations that slowed), `business` (breakdown by channel/function code), `external` (external metric anomaly, e.g. Influx REDACTED, with trace pivots), `traceIds` (exemplar traces), `affectedPods`, `logSignatures`, `rollouts` (K8s rollouts near the onset with match reason), `heap`/`gcPause`/`runtime` (JVM). Use after get_problem_root_cause when you need the underlying facts, or to build an evidence block for the user. Each list is capped at 10 items; `totals` carries the uncapped counts. computed=false when no hypothesis exists yet; sections is optional (default: all non-empty).",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -277,7 +277,7 @@ type similarProblemsArgs struct {
 func similarProblemsTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:             "similar_problems",
-		ShortDescription: "Aynı servis+kural anahtarında çözülmüş geçmiş problemler: zaman, süre, kim aldı.",
+		ShortDescription: "Aynı servis+kural anahtarında çözülmüş geçmiş problemler.",
 		Description:      "List past RESOLVED problems with the same symptom key — (service, rule) — newest first, so you can answer 'has this happened before, how long did it last, who handled it'. Give either problem_id (the key is read from that problem) or service + rule_id. Each row carries startedAt/resolvedAt/durationS, assignee, teams and the recent deploy recorded at the time; use get_problem_root_cause on a past id for its cause. Read-only, one lookup; limit default 5, max 20. Note: the key is exact (same service AND same rule) — a different rule on the same service is not 'similar' here.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -409,7 +409,7 @@ func capabilitiesFrom(d Deps) map[string]Capability {
 func getCapabilitiesTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:             "get_capabilities",
-		ShortDescription: "Açık katmanlar: entity, rollouts, Thanos, metrik/log deposu, RAG, model; kapalıyı çağırma.",
+		ShortDescription: "Açık katmanlar (entity, rollouts, Thanos, VM, log, RAG, model); kapalıyı çağırma.",
 		Description:      "Return which optional signal layers are enabled on THIS install so you can pick tools that will answer instead of returning disabled/empty: `entity` (namespace/workload/pod catalogue), `rollouts` (K8s rollout history in list_deployments), `thanos` (remote clusters → pod/node/cluster metrics), `metrics` + `victoriametrics` (which store query_metric reads), `logs` (backend), `rag` (document knowledge), `copilot` (model), `chatContext` (conversation memory available). Each entry has enabled plus a reason when disabled or unknown. Zero cost (no query) — call once at the start of an investigation, not per step.",
 		InputSchema:      map[string]any{"type": "object", "properties": map[string]any{}},
 		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {

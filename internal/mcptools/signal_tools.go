@@ -108,7 +108,7 @@ func filterLogPatterns(hits []anomaly.LogPatternAnomaly, service, kind string, m
 func logPatternsTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:             "log_patterns",
-		ShortDescription: "Son pencerede yeni/patlayan log desenleri (örneklem; servis süzgeci).",
+		ShortDescription: "Yeni/patlayan log desenleri (örneklem; servis süzgeci): loglarda ne değişti.",
 		Description:      "Return log patterns that are NEW (absent from the trailing baseline) or SPIKING (ratio vs baseline) in the last window — the same detector the /logs page strip uses: pattern name, kind new|spike, current/baseline counts, ratio, dominant service, per-service breakdown and one sample body (200 chars). Use it to answer 'what changed in the logs' before search_logs; filter with service. SAMPLE-BASED (Drain templating over a bounded sample, never a full scan) and cached 60 s server-side; window snaps to 1/5/15/30 min rungs. Silenced patterns are excluded. Rows sorted by ratio; default 20, max 50.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -214,7 +214,7 @@ func validateClusterMetricArgs(a clusterMetricArgs) error {
 func clusterMetricTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:             "cluster_metric",
-		ShortDescription: "Thanos pod/namespace/deployment CPU-bellek ya da cluster ağ trendi; ham PromQL yok.",
+		ShortDescription: "Thanos pod/namespace/deployment CPU-bellek ya da ağ trendi; ham PromQL yok.",
 		Description:      "Read Kubernetes resource trends from the configured Thanos clusters WITHOUT writing PromQL — a parametric mirror of the fixed /api/clusters handlers: kind=pod (namespace+pod → CPU cores + memory bytes per bucket), kind=namespace (namespace totals), kind=deploy (namespace+workload → cpu|mem|netin|netout, optionally by_pod → one series per pod, server-capped), kind=network (cluster in/out bytes/s). cluster is the Remote Cluster id or name (get_capabilities → thanos lists names). Window range_s ≤ 7 days (server clamps to its own 30-day ceiling), points thinned to ≤60 per series; totals are reported. Use after get_correlation_evidence names affected pods / rollouts, or for 'is the pod saturated' questions. Returns disabled=true when no Thanos cluster is configured.",
 		InputSchema: map[string]any{
 			"type": "object",

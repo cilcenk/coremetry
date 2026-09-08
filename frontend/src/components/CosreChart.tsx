@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Spinner } from '@/components/Spinner';
 import type { CorePanelMultiItem } from '@/components/chart/corePanelEntry';
-import { cosreChartDSL, cosreChartItems, cosreEmptyNoteTR, COSRE_SERIES_CAP } from './cosreChartSpec';
+import { cosreChartDSL, cosreChartItems, cosreEmptyNoteTR, COSRE_SERIES_CAP, compareLabelTR, metricRedSeries, metricRedUnit, shiftSeries } from './cosreChartSpec';
+import type { SpanMetricSeries } from '@/lib/types';
 
 // CosreChart — sohbete gömülen CANLI grafik (```chart``` çiti).
 //
@@ -33,29 +34,51 @@ export function CosreChart({ spec }: { spec: CosreChartSpec }) {
   const absolute = !!(spec.fromNs && spec.toNs && spec.toNs > spec.fromNs);
   const groupBy = spec.groupBy ?? '';
 
+  // v0.10.547 (Faz 3.5) — kaynak: 'metric' = metrik deposu (VM) /metric-red,
+  // aksi hâlde span rollup. Karşılaştırma: aynı pencere shiftS önce, aynı
+  // kaynaktan, kesikli ikinci seri (CorePanelMulti dashed).
+  const source: 'span' | 'metric' = spec.source === 'metric' ? 'metric' : 'span';
+  const shiftS = spec.compare?.shiftS && spec.compare.shiftS > 0 ? spec.compare.shiftS : 0;
+  const fetchWindow = async (from: number, to: number): Promise<{ series: SpanMetricSeries[]; unit?: string }> => {
+    if (source === 'metric') {
+      const resp = await api.serviceMetricRED(spec.service, from, to, 300);
+      return { series: metricRedSeries(resp, spec.agg), unit: metricRedUnit(resp, spec.agg) };
+    }
+    const d = await api.spanMetricBatch({
+      from, to,
+      dsl: cosreChartDSL(spec),
+      ...(groupBy && !shiftS ? { groupBy: [groupBy] } : {}),
+      maxDataPoints: 300,
+      aggs: [{ name: 'v', agg: spec.agg, field: AGG_FIELD[spec.agg] }],
+    });
+    return { series: d.series?.v ?? [] };
+  };
+  const windowNs = () => {
+    const to = absolute ? spec.toNs! : Date.now() * 1e6;
+    return { from: absolute ? spec.fromNs! : to - rangeS * 1e9, to };
+  };
   const q = useQuery({
-    // Anahtar HER girdiyi taşır (v0.5.187 sınıfı): kırılım ya da mutlak
-    // pencere anahtara girmezse iki farklı kart aynı cache satırını okur.
-    queryKey: ['cosre-chart', spec.service, spec.operation ?? '', spec.agg,
+    queryKey: ['cosre-chart', source, spec.service, spec.operation ?? '', spec.agg,
       rangeS, groupBy, absolute ? spec.fromNs : 0, absolute ? spec.toNs : 0],
-    queryFn: () => {
-      const to = absolute ? spec.toNs! : Date.now() * 1e6;
-      const from = absolute ? spec.fromNs! : to - rangeS * 1e9;
-      return api.spanMetricBatch({
-        from, to,
-        dsl: cosreChartDSL(spec),
-        ...(groupBy ? { groupBy: [groupBy] } : {}),
-        // v0.9.391 — sohbet içi ~560px kart; sabit küçük bütçe yeterli.
-        maxDataPoints: 300,
-        aggs: [{ name: 'v', agg: spec.agg, field: AGG_FIELD[spec.agg] }],
-      });
-    },
-    select: d => d.series,
+    queryFn: () => { const w = windowNs(); return fetchWindow(w.from, w.to); },
     enabled: !!spec.service,
     staleTime: 30_000,
   });
-
-  const { items, unit, truncated, total } = cosreChartItems(spec, q.data?.v ?? []);
+  const qc = useQuery({
+    queryKey: ['cosre-chart-cmp', source, spec.service, spec.operation ?? '', spec.agg,
+      rangeS, shiftS, absolute ? spec.fromNs : 0, absolute ? spec.toNs : 0],
+    queryFn: () => { const w = windowNs(); const sh = shiftS * 1e9; return fetchWindow(w.from - sh, w.to - sh); },
+    enabled: !!spec.service && shiftS > 0,
+    staleTime: 30_000,
+  });
+  const base = cosreChartItems(spec, q.data?.series ?? []);
+  const unit = q.data?.unit || base.unit;
+  const { truncated, total } = base;
+  const items: CorePanelMultiItem[] = [...base.items];
+  if (shiftS > 0 && (qc.data?.series?.length ?? 0) > 0) {
+    // Karşılaştırma tek seri: kırılım karşılaştırmayla birlikte okunmaz (sunucu da kırılımı düşürür).
+    items.push({ series: shiftSeries(qc.data!.series.slice(0, 1), shiftS * 1e9), name: compareLabelTR(shiftS), role: 'muted', dashed: true });
+  }
 
   // v0.10.46 — SESSİZ BOŞ TUVAL YOK.
   //
@@ -134,7 +157,10 @@ const AGG_FIELD: Record<string, string | undefined> = {
 
 function defaultTitle(spec: CosreChartSpec): string {
   const base = spec.operation || spec.service;
-  return spec.groupBy ? `${base} · ${spec.agg} · ${spec.groupBy}` : `${base} · ${spec.agg}`;
+  const t = spec.groupBy ? `${base} · ${spec.agg} · ${spec.groupBy}` : `${base} · ${spec.agg}`;
+  const cmp = spec.compare?.shiftS ? ` · ${compareLabelTR(spec.compare.shiftS)}` : ''; // v0.10.547
+  const src = spec.source === 'metric' ? ' · metrik' : '';
+  return t + cmp + src;
 }
 
 export type { CorePanelMultiItem };

@@ -116,3 +116,21 @@ func TestChatChartSpecAbsoluteWindow(t *testing.T) {
 		}
 	}
 }
+
+// v0.10.547 — chart fence/blok compare + source taşır; başlık karşılaştırma ekini alır.
+func TestChatChartBlockCarriesCompare(t *testing.T) {
+	out := `{"ok":true,"spec":{"service":"api","agg":"p95","rangeS":3600,"groupBy":"","compare":{"kind":"prev_day","shiftS":86400},"source":"metric"}}`
+	block, _ := chatChartBlock(out)
+	for _, want := range []string{`"compare":{"kind":"prev_day","shiftS":86400}`, `"source":"metric"`, "dün aynı saat"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("fence %q taşımalı:\n%s", want, block)
+		}
+	}
+	spec, ok := chatChartSpec(out, time.Unix(1_700_000_000, 0))
+	if !ok || spec.Compare == nil || spec.Compare.ShiftS != 86400 || spec.Source != "metric" {
+		t.Fatalf("blok spec: %+v", spec)
+	}
+	if b, _ := chatChartBlock(`{"ok":true,"spec":{"service":"api","agg":"rate","rangeS":600}}`); strings.Contains(b, "compare") {
+		t.Fatal("compare yokken alan yazılmaz")
+	}
+}

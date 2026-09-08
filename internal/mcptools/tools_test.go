@@ -297,3 +297,35 @@ func TestRootCauseToolDescribesAuditTrail(t *testing.T) {
 		t.Error("açıklama uydurma yasağını taşımıyor — izi veri olarak vermek tek başına yetmez")
 	}
 }
+
+// v0.10.547 — render_chart compare/source: geçersiz değer reddedilir, compare
+// varsa kaynak varsayılanı metric (VM) ve kırılım düşer; spec çıktısı taşır.
+func TestRenderChartCompareAndSource(t *testing.T) {
+	a, msg := normalizeRenderChart(renderChartArgs{Service: "api", Compare: "prev_day", GroupBy: "http.route"})
+	if msg != "" || a.Source != "metric" || a.GroupBy != "" || a.Metric != "error_rate" {
+		t.Fatalf("compare varsayılanları: %+v %q", a, msg)
+	}
+	if _, msg := normalizeRenderChart(renderChartArgs{Service: "api", Compare: "last_month"}); !strings.Contains(msg, "unknown compare") {
+		t.Fatalf("geçersiz compare: %q", msg)
+	}
+	if _, msg := normalizeRenderChart(renderChartArgs{Service: "api", Source: "ch"}); !strings.Contains(msg, "unknown source") {
+		t.Fatalf("geçersiz source: %q", msg)
+	}
+	if a, _ := normalizeRenderChart(renderChartArgs{Service: "api"}); a.Source != "" || a.Compare != "" {
+		t.Fatalf("compare yokken kaynak/kırılım aynen: %+v", a)
+	}
+	c := renderChartCompare(renderChartArgs{Compare: "prev_week"}).(map[string]any)
+	if c["kind"] != "prev_week" || c["shiftS"] != int64(604800) {
+		t.Fatalf("compare nesnesi: %v", c)
+	}
+	if renderChartCompare(renderChartArgs{}) != nil {
+		t.Fatal("compare yok → nil")
+	}
+	tool := toolByName(t, ToolList(Deps{}), "render_chart")
+	props := tool.InputSchema["properties"].(map[string]any)
+	for _, k := range []string{"compare", "source"} {
+		if _, ok := props[k]; !ok {
+			t.Errorf("şema %s taşımalı", k)
+		}
+	}
+}

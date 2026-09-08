@@ -48,7 +48,12 @@ const STATUSES = ['', 'in_progress', 'completed', 'rolled_back', 'superseded', '
 // taşıyacak kadar geniş.
 const COLS: DataTableColumn<WorkloadRollout>[] = [
   { id: 'status', label: 'Durum', width: 120, minWidth: 96 },
-  { id: 'workload', label: 'Workload', width: 300, minWidth: 200 },
+  { id: 'workload', label: 'Workload', width: 260, minWidth: 180 },
+  // v0.10.565 (operatör-raporlu): cluster adı Workload hücresinin SONUNDA
+  // soluk ek olarak duruyordu ve 300px kolonda ellipsis'e kurban gidiyordu
+  // ("workload · ns · c…"). Kendi kolonu: her zaman okunur, ayrı
+  // genişletilebilir, üstteki Cluster süzgeciyle aynı adı gösterir.
+  { id: 'cluster', label: 'Cluster', width: 150, minWidth: 110 },
   { id: 'kind', label: 'Tür', width: 100, minWidth: 64 },
   { id: 'change', label: 'Değişiklik', width: 130, minWidth: 100 }, // v0.10.234 — imaj değişti mi (Deployment) / aynı mı (config)
   { id: 'revision', label: 'Revizyon', width: 150, minWidth: 120 },
@@ -181,8 +186,10 @@ export default function RolloutsPage() {
                           <td><Badge tone={statusTone(r.status)} title={[statusTitle(r.status), r.completedAt ? `tamamlandı ${fmtDateTime(new Date(r.completedAt))}` : ''].filter(Boolean).join(' · ') || undefined}>{statusLabel(r.status)}</Badge></td>
                           <td title={`${cname} / ${r.namespace} / ${r.workload}`} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             <Link to={wlHref} className="sec">{r.workload}</Link>
-                            <span className="field-hint"> · {r.namespace} · {cname}</span>
+                            <span className="field-hint"> · {r.namespace}</span>
                           </td>
+                          {/* v0.10.565 — cluster kendi kolonunda; ad çözülemezse ham id (clusterName). */}
+                          <td title={cname} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cname}</td>
                           <td className="field-hint">{r.kind || '—'}</td>
                           <td>{(() => { const k = rolloutChangeKind(r); return <Badge tone={changeKindTone(k)} title={changeKindTitle(k)}>{changeKindLabel(k)}</Badge>; })()}</td>
                           <td className="mono" title={r.revision} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{shortRevision(r.revision, r.workload)}{r.prevRevision ? <span className="field-hint"> ← {shortRevision(r.prevRevision, r.workload)}</span> : null}</td>

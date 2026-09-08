@@ -12,10 +12,11 @@ import { traceRepeatGroups, type TraceRepeatGroup } from '@/lib/traceRepeats';
 import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
 import { AIExplainButton } from '@/components/ai/AIExplainButton';
-import { renderExternalLink, collectLinkCtx, pickGroupedLinks } from '@/lib/externalLinks';
+import { renderExternalLink, collectLinkCtx, pickGroupedLinks, identityKeysFromLinks, identityOverrideCtx, shortIdentity, identityRoleTR, type ExternalLinkCtx } from '@/lib/externalLinks';
 import { useAiEvidence, useAiFocus } from '@/components/ai/aiEvents';
 import { IconLink, IconCheck, IconDownload, IconSparkles } from '@/components/icons';
 import { Button } from '@/components/ui/Button';
+import { IconButton, MenuItem } from '@/components/ui'; // v0.10.568 — kimlik menüsü tetiği + satırları
 import { useAuth } from '@/components/AuthProvider';
 import { useShortcuts } from '@/lib/keyboard';
 import { api } from '@/lib/api';
@@ -27,7 +28,7 @@ import { useCorrelatedLogs, spanHasError, traceLogWindow } from '@/lib/otel';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
 import { traceBackHref } from '@/lib/traceBackHref';
 import { SvcBadge } from '@/components/traces/shared';
-import type { LogRow, SpanRow, TimeRange, TraceAnalysis } from '@/lib/types';
+import type { ExternalLink, LogRow, SpanRow, TimeRange, TraceAnalysis, TraceLinkCandidate } from '@/lib/types';
 import { TraceWaterfall, TraceServiceBreakdown } from '@/components/TraceWaterfall';
 import { SpanDetail } from '@/components/SpanDetail';
 import { TraceHonesty } from '@/components/traces/TraceHonesty';
@@ -1309,13 +1310,20 @@ function KPI({ label, value, tone }: {
 // belirler. Descriptor yoksa/hata verirse eski yola düşülür (geriye dönük).
 function ExternalLinkButtons({ spans, traceId, selectedSpanId }: { spans: SpanRow[]; traceId: string; selectedSpanId: string | null }) {
   const q = useQuery({ queryKey: ['external-links'], queryFn: () => api.externalLinks(), staleTime: 5 * 60_000 });
+  const links = q.data?.links ?? [];
+  // v0.10.568 — sunucuya HANGİ attribute anahtarlarını arayacağını söyleriz:
+  // şablonların `requires` alanı. Anahtar kümesi sorgu ANAHTARINA da girer;
+  // girmezse admin bir şablona yeni bir `requires` eklediğinde React Query
+  // eski (dar) cevabı taze sayar ve menü o anahtarı ASLA göstermezdi —
+  // "kural var, ekranda yok" sınıfı.
+  const idKeys = identityKeysFromLinks(links);
+  const keysParam = idKeys.join(',');
   const identQ = useQuery({
-    queryKey: ['trace-link-identity', traceId, selectedSpanId ?? ''],
-    queryFn: ({ signal }) => api.traceLinkIdentity(traceId, selectedSpanId ?? undefined, signal),
+    queryKey: ['trace-link-identity', traceId, selectedSpanId ?? '', keysParam],
+    queryFn: ({ signal }) => api.traceLinkIdentity(traceId, selectedSpanId ?? undefined, idKeys, signal),
     enabled: !!traceId,
     staleTime: 30_000,
   });
-  const links = q.data?.links ?? [];
   const base = collectLinkCtx(spans);
   const ident = identQ.data;
   // Descriptor attrs BASE'i EZER: sunucu kazanan span önceliğiyle birleştirdi,
@@ -1339,23 +1347,164 @@ function ExternalLinkButtons({ spans, traceId, selectedSpanId }: { spans: SpanRo
   // Kimliğin nereden geldiğini tooltip söyler — operatör "neden bu link?"
   // sorusunu ekranda cevaplasın (log gövdesi mi, span attribute'u mu).
   const srcNote = ident ? `kimlik: ${ident.source === 'log' ? 'log gövdesi' : ident.source === 'span' ? 'span attribute' : 'yok'}${ident.note ? ` — ${ident.note}` : ''}` : '';
+  // ASLA null sözleşmesi sunucuda; istemci yine de eski (identities taşımayan)
+  // bir sürüme karşı dayanıklı: `?? []` → aday yok → bugünkü tek düğme.
+  const identities = ident?.identities ?? [];
   return (
     <>
-      {rows.map(({ link: l, url, missing }) => {
-        const ok = !!url;
-        // Renk AYARDAN gelir (veri), token değil: marka rengi araca özgü; yazı --on-accent.
-        const fill = l.color ? { background: l.color, borderColor: l.color, color: 'var(--on-accent)' } : undefined;
-        const tip = ok
-          ? `${l.label} — yeni sekmede: ${url}`
-          : `${l.label}: bu trace'te çözülemeyen alanlar — ${missing.join(', ')}`;
-        // v0.10.348 (operatör) — "Explain this trace" ile aynı boyut (md).
-        return ok
-          ? <Button key={l.label} variant="secondary" size="md" title={srcNote ? `${tip}\n${srcNote}` : tip} style={fill}
-              onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}>{l.label} ↗</Button>
-          : <Button key={l.label} variant="secondary" size="md" disabled style={fill ? { ...fill, opacity: 0.55 } : undefined}
-              title={srcNote ? `${tip}\n${srcNote}` : tip}>{l.label} ↗</Button>;
-      })}
+      {rows.map(({ link: l, url, missing }) => (
+        <ExternalLinkRow key={l.label} link={l} url={url} missing={missing}
+          ctx={ctx} identities={identities} srcNote={srcNote} />
+      ))}
     </>
   );
 }
 
+// ExternalLinkRow — v0.10.568 (operatör, 2026-09-08): "Farklı function_id'ler
+// alt span'lerde ama aynı trace'te olabilir… kullanıcıya hangi function_id'ye
+// gitmek istersin diye seçenek verelim."
+//
+// v0.10.566'da kazananı sunucu seçiyordu ve seçim EKRANDA GÖRÜNMÜYORDU:
+// operatör düğmeye basıyor, üç adaydan birine gidiyor, hangisine gittiğini
+// bilmiyordu. Menü o sessiz seçimi görünür kılar.
+//
+// İki kural bilinçli:
+//   • Aday ≤ 1 ise BUGÜNKÜ tek düğme, ok YOK — tek seçenekli bir menü,
+//     operatöre olmayan bir karar sordurur.
+//   • Ana tık DEĞİŞMEZ: kazanan kimliğin linkini açar. Ok ayrı bir hedef,
+//     yani bugünkü kas hafızası bozulmaz.
+//
+// Satır tıklaması AYNI şablonu çözer, yalnız ctx'in kimlik alanı değişir
+// (identityOverrideCtx) — düğme ile menü zamanla ayrışamaz, çünkü tek
+// render yolu var.
+function ExternalLinkRow({ link: l, url, missing, ctx, identities, srcNote }: {
+  link: ExternalLink;
+  url?: string;
+  missing: string[];
+  ctx: ExternalLinkCtx | null;
+  identities: TraceLinkCandidate[];
+  srcNote: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useOutsideClose(wrapRef, open, close);
+  // v0.9.950 KATMAN disiplini: menü en son açılan katman olarak yığına girer,
+  // yani Esc span seçimini değil MENÜYÜ kapatır. Odak tetiğe döner.
+  useEscLayer(open, () => { setOpen(false); triggerRef.current?.focus(); });
+
+  const ok = !!url;
+  // Renk AYARDAN gelir (veri), token değil: marka rengi araca özgü; yazı --on-accent.
+  const fill = l.color ? { background: l.color, borderColor: l.color, color: 'var(--on-accent)' } : undefined;
+  const tip = ok
+    ? `${l.label} — yeni sekmede: ${url}`
+    : `${l.label}: bu trace'te çözülemeyen alanlar — ${missing.join(', ')}`;
+  const title = srcNote ? `${tip}\n${srcNote}` : tip;
+  // v0.10.348 (operatör) — "Explain this trace" ile aynı boyut (md).
+  const mainBtn = (withArrow: boolean) => {
+    // Ok bitişikse ana düğmenin SAĞ köşeleri düzleşir: iki ayrı hedef ama
+    // tek bir kontrol gibi okunur (split button).
+    const joined = withArrow ? { borderTopRightRadius: 0, borderBottomRightRadius: 0 } : undefined;
+    return ok
+      ? <Button variant="secondary" size="md" title={title} style={{ ...fill, ...joined }}
+          onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}>{l.label} ↗</Button>
+      : <Button variant="secondary" size="md" disabled title={title}
+          style={fill ? { ...fill, opacity: 0.55, ...joined } : joined}>{l.label} ↗</Button>;
+  };
+
+  if (identities.length <= 1) return mainBtn(false);
+
+  // Her aday, düğmenin ÇİZDİĞİ şablonla çözülür (grup seçimi v0.10.566
+  // korunur: `l` zaten o grupta çizilen link). Çözülmeyen aday PASİF satır
+  // olur ve title eksikleri söyler — sessizce kaybolmaz.
+  const resolved = identities.map(cand => {
+    const octx = identityOverrideCtx(ctx, cand);
+    const r = octx ? renderExternalLink(l.urlTemplate, octx) : { url: undefined, missing: ['span yok'] as string[] };
+    return { cand, url: r.url, missing: r.missing };
+  });
+  // request_id adayları üstte (birincil yol), span adayları anahtar anahtar altta.
+  const logItems = resolved.filter(r => r.cand.source === 'log');
+  const spanSections: Array<{ title: string; items: typeof resolved }> = [];
+  for (const r of resolved) {
+    if (r.cand.source === 'log') continue;
+    const key = r.cand.key || 'span attribute';
+    const g = spanSections.find(x => x.title === key);
+    if (g) g.items.push(r); else spanSections.push({ title: key, items: [r] });
+  }
+  const sections = logItems.length ? [{ title: 'log gövdesinden', items: logItems }, ...spanSections] : spanSections;
+
+  return (
+    <span ref={wrapRef} style={{ position: 'relative', display: 'inline-flex' }}>
+      {mainBtn(true)}
+      <IconButton
+        ref={triggerRef}
+        aria-label={`${l.label}: kimlik seç (${identities.length} aday)`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        icon="▾"
+        variant="secondary"
+        size="md"
+        title={`${identities.length} farklı kimlik — hangi işleme gidileceğini seç`}
+        onClick={() => setOpen(o => !o)}
+        style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, marginLeft: -1, ...fill }}
+      />
+      {open && (
+        <div
+          role="menu"
+          aria-label={`${l.label} — kimlik seçimi`}
+          style={{
+            position: 'absolute', top: '100%', right: 0, marginTop: 4,
+            minWidth: 300, maxWidth: 420, background: 'var(--bg2)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+            boxShadow: 'var(--shadow-pop)', padding: 4, zIndex: 'var(--z-dropdown)',
+            textAlign: 'left',
+          }}>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12,
+            padding: '4px 10px 6px', borderBottom: '1px solid var(--border)', marginBottom: 4,
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>Hangi işlem?</span>
+            {/* v0.10.568 — sunucu aday listesini 10'da kesebilir; sayıyı "tamam"
+                sanmasın diye kesilme notu BAŞLIKTA (tooltip'te kalsa menü açıkken
+                görünmezdi). */}
+            <span style={{ fontSize: 11, color: 'var(--text3)' }} title={srcNote || undefined}>
+              {identities.length} farklı kimlik{srcNote.includes('gösterilmiyor') ? ' · liste kesildi' : ''}
+            </span>
+          </div>
+          {sections.map((sec, si) => (
+            <div key={sec.title}>
+              {si > 0 && <div style={{ height: 1, background: 'var(--border)', margin: '4px 6px' }} />}
+              <div style={{ fontSize: 10.5, color: 'var(--text3)', padding: '4px 10px 2px', letterSpacing: .3 }}>{sec.title}</div>
+              {sec.items.map(({ cand, url: cu, missing: cm }) => (
+                <MenuItem
+                  key={`${cand.key}:${cand.spanId ?? ''}:${cand.value}`}
+                  disabled={!cu}
+                  // Boş dize de yuvayı çizdirir: bazı satırlarda girinti olup
+                  // bazılarında olmaması menüyü bozuk gösterirdi (.menuitem-icon).
+                  icon={cand.used ? '●' : cand.isError ? '⚠' : ''}
+                  // TAM değer title'da — kısaltma bilgi saklamaz.
+                  title={cu ? `${cand.value}\n${l.label} — yeni sekmede: ${cu}` : `${cand.value}\nbu kimlikle çözülemeyen alanlar — ${cm.join(', ')}`}
+                  onClick={() => {
+                    if (!cu) return;
+                    setOpen(false);
+                    window.open(cu, '_blank', 'noopener,noreferrer');
+                  }}>
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
+                    <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', minWidth: 0 }}>
+                      <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, color: 'var(--text)' }}>{shortIdentity(cand.value)}</span>
+                      <span style={{ fontSize: 11, color: 'var(--text3)' }}>{identityRoleTR(cand.role)}</span>
+                    </span>
+                    <span style={{ fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {[cand.service, cand.spanName].filter(Boolean).join(' · ')}
+                    </span>
+                  </span>
+                </MenuItem>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}

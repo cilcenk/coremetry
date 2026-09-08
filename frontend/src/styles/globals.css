@@ -3918,3 +3918,16 @@ thead th:hover .th-remove { opacity: 1; }
 .stmt-pick-row { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; padding: 6px 8px; background: transparent; border: 0; border-bottom: 1px solid var(--border); color: var(--text); cursor: pointer; font: inherit; }
 .stmt-pick-row:last-child { border-bottom: 0; }
 .stmt-pick-row:hover, .stmt-pick-row:focus-visible { background: var(--bg2); outline: none; }
+
+/* v0.10.551 — /messaging çekmecesi «Kafka istemcileri · METRİK» bölümü (KafkaClientsSection) */
+.kc-sec { margin-bottom: var(--sp-6); }
+.kc-head { display: flex; align-items: center; gap: var(--sp-4); font-size: var(--fs-xs); font-weight: 700; color: var(--text2); margin-bottom: var(--sp-3); }
+.kc-dot { width: 8px; height: 8px; border-radius: var(--radius-xs); background: var(--accent2); }
+.kc-note { font-size: var(--fs-2xs); color: var(--text3); margin-bottom: var(--sp-4); }
+.kc-line { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-2xs); color: var(--text3); margin-bottom: var(--sp-6); }
+.kc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--sp-4); margin-bottom: var(--sp-4); }
+.kc-fallback { height: 170px; display: grid; place-items: center; }
+.kc-table { min-width: 0; }
+.kc-subhead { font-size: var(--fs-2xs); font-weight: 600; color: var(--text2); margin-bottom: var(--sp-2); }
+.kc-empty { font-size: var(--fs-2xs); color: var(--text3); }
+.kc-key { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

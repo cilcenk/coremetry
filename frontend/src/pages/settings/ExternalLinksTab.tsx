@@ -34,6 +34,8 @@ const PREVIEW_CTX = {
   // Önizleme ÖRNEK değerlerle çalışır; gerçek trace'te request_id log
   // gövdesinden gelir ve olmayabilir (o zaman gruptaki yedek çizilir).
   requestId: 'a1b2c3d4-0000-4f00-9c00-000000000042',
+  // v0.10.567 — önizleme de kurumun dilimini gösterir (gerçekte reqid.timezone).
+  tz: 'Europe/Istanbul',
 };
 
 export function ExternalLinksTab() {

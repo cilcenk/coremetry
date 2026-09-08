@@ -1327,6 +1327,9 @@ function ExternalLinkButtons({ spans, traceId, selectedSpanId }: { spans: SpanRo
         attrs: Object.entries(ident.attrs ?? {}).reduce(
           (acc, [k, v]) => (v ? { ...acc, [k]: v } : acc), { ...base.attrs } as Record<string, string>),
         requestId: ident.requestId,
+        // v0.10.567 — tarih dilimi sunucudan (reqid.timezone); descriptor
+        // yoksa renderer varsayılana (Europe/Istanbul) düşer.
+        tz: ident.tz,
       }
     : base;
   if (links.length === 0) return null;

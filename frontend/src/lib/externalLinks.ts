@@ -20,6 +20,8 @@ export interface ExternalLinkCtx {
   startMs: number;
   /** Trace bitişi (ms). Süre bilinmiyorsa startMs. */
   endMs: number;
+  /** v0.10.567 — {{time}}/{{endTime}} bu IANA diliminde biçimlenir; boş = Europe/Istanbul. */
+  tz?: string;
   attrs: Record<string, string>;
   /**
    * v0.10.566 — log gövdesinden gelen istek kimliği. Yoksa `{{requestId}}`
@@ -62,6 +64,45 @@ function localParts(ms: number) {
   return { y: dt.getFullYear(), M: dt.getMonth() + 1, d: dt.getDate(), H: dt.getHours(), m: dt.getMinutes(), s: dt.getSeconds() };
 }
 
+/** v0.10.567 — kurumun saat dilimi. */
+export const DEFAULT_LINK_TZ = 'Europe/Istanbul';
+
+/**
+ * zonedParts — ms → SABİT bir IANA diliminde tarih parçaları.
+ *
+ * v0.10.567 (operatör kararı): tarih TARAYICI yerel saatinden üretiliyordu;
+ * makinesi UTC olan bir VDI'da ya da yurt dışından bakan operatörde link
+ * yanlış dakika penceresini açıyor ve "log yok" görünüyordu — aynı trace,
+ * iki kişi, iki farklı link. Dilim sunucudan (reqid.timezone ayarı) gelir,
+ * yoksa Europe/Istanbul.
+ *
+ * hourCycle 'h23': `hour12:false` bazı ICU sürümlerinde gece yarısını "24"
+ * verir ve ddMMyyyyHHmm dizesi bir saat ileri kayardı.
+ *
+ * Geçersiz dilim adı → önce VARSAYILANA düşer (tarayıcı yereline DEĞİL:
+ * sessizce eski hataya dönmek düzeltmeyi geri alırdı); o da olmazsa yerel.
+ */
+export function zonedParts(ms: number, tz?: string): { y: number; M: number; d: number; H: number; m: number; s: number } {
+  for (const zone of [(tz ?? '').trim(), DEFAULT_LINK_TZ]) {
+    if (!zone) continue;
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: zone, hourCycle: 'h23',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      }).formatToParts(new Date(ms));
+      const p: Record<string, string> = {};
+      for (const part of parts) p[part.type] = part.value;
+      if (p.year && p.month && p.day) {
+        return { y: +p.year, M: +p.month, d: +p.day, H: +(p.hour ?? 0), m: +(p.minute ?? 0), s: +(p.second ?? 0) };
+      }
+    } catch {
+      // geçersiz/desteklenmeyen dilim — sıradaki adaya
+    }
+  }
+  return localParts(ms);
+}
+
 export function renderExternalLink(template: string, ctx: ExternalLinkCtx): { url?: string; missing: string[] } {
   const missing: string[] = [];
   const url = template.replace(VAR_RE, (_all, kind: string, key: string | undefined, fmt: string | undefined) => {
@@ -79,10 +120,10 @@ export function renderExternalLink(template: string, ctx: ExternalLinkCtx): { ur
       }
       case 'time':
         if (!fmt) { missing.push('time'); return ''; }
-        return encodeURIComponent(formatParts(localParts(ctx.startMs), fmt));
+        return encodeURIComponent(formatParts(zonedParts(ctx.startMs, ctx.tz), fmt));
       case 'endTime':
         if (!fmt) { missing.push('endTime'); return ''; }
-        return encodeURIComponent(formatParts(localParts(ctx.endMs), fmt));
+        return encodeURIComponent(formatParts(zonedParts(ctx.endMs, ctx.tz), fmt));
       case 'traceId': return encodeURIComponent(ctx.traceId);
       case 'service': return encodeURIComponent(ctx.service);
       // v0.10.566 — argümansız token; boşsa link çözülmez, grubun yedeği çizilir.

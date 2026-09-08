@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/cilcenk/coremetry/internal/reqid"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -448,5 +449,22 @@ func TestTraceLinkIdentityHandlerWiring(t *testing.T) {
 	}
 	if strings.Contains(string(api), "link-identity") {
 		t.Error("api.go link-identity rotasını tanımamalı (kayıt route_registry defterinde)")
+	}
+}
+
+// v0.10.567 — dilim ADI taşınır (çözülmüş Location değil): sunucuda tzdata
+// yoksa reqid.Location "+03"a düşer ve o ad tarayıcının Intl'ine verilemez.
+// Boş ayar → Europe/Istanbul.
+func TestResolveTraceLinkIdentityCarriesTZ(t *testing.T) {
+	s := &Server{}
+	if got := s.resolveTraceLinkIdentity(context.Background(), "abc", "", linkIdentitySpans(), " Europe/Berlin "); got.TZ != "Europe/Berlin" {
+		t.Fatalf("ayar dilimi taşınmalı (trim): %q", got.TZ)
+	}
+	if got := s.resolveTraceLinkIdentity(context.Background(), "abc", "", linkIdentitySpans(), ""); got.TZ != reqid.DefaultTZ {
+		t.Fatalf("boş ayar → %s, geldi %q", reqid.DefaultTZ, got.TZ)
+	}
+	// Span yokken de dilim dolu: FE her hâlde bir dilim görmeli.
+	if got := s.resolveTraceLinkIdentity(context.Background(), "abc", "", nil, ""); got.TZ != reqid.DefaultTZ {
+		t.Fatalf("span yokken de dilim dolu olmalı: %+v", got)
 	}
 }

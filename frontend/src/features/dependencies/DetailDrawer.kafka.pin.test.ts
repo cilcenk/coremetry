@@ -20,6 +20,10 @@ describe('KafkaClientsSection yerleşimi', () => {
   it('pod hücresi podDetailPath ile linkli', () => {
     expect(drawer).toContain("podDetailPath({ pod: c.pod, service: c.service");
   });
+  it('v0.10.553 — Top-ops operasyon türü kolonu yalnız queue kipinde', () => {
+    expect(drawer).toContain("kind === 'queue'\n      ? [{ id: 'op', label: 'Type'");
+    expect(drawer).toContain("{o.operation ?? '—'}");
+  });
   it('liste sayfasına grafik/bölüm girmez', () => {
     expect(list).not.toContain('KafkaClientsSection');
     expect(list).not.toContain('CorePanelMulti');

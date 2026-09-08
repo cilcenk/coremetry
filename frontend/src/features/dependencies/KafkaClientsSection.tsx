@@ -4,7 +4,9 @@
 // servis·istemci) + iki "son değer" tablosu (useDataTable). available=false →
 // TEK satır soluk not (bölüm gizlenmez, sebep title'da). Liste sayfasına grafik
 // KONMAZ (v0.9.834 kararı) — yalnız çekmece.
-import { lazy, Suspense, useMemo } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
+import { Button } from '@/components/ui/Button';
+import { KafkaAlertModal } from '@/pages/alerts/KafkaAlertModal'; // v0.10.554
 import { Spinner } from '@/components/Spinner';
 import { LazyMount } from '@/components/LazyMount';
 import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/ui/DataTable';
@@ -27,6 +29,7 @@ export function KafkaClientsSection({ system, cluster, destination, range, xRang
   // timeRangeToNs MEMO içinde (v0.5.184 sonsuz refetch sınıfı).
   const win = useMemo(() => timeRangeToNs(range), [range]);
   const q = useMessagingClients({ system, cluster, destination, fromNs: win.from, toNs: win.to });
+  const [alertOpen, setAlertOpen] = useState(false); // v0.10.554 — lag alarmı modalı
   if (q.isPending) {
     return <div className="kc-line" role="status" aria-busy="true"><Spinner /> Kafka istemci metrikleri…</div>;
   }
@@ -46,7 +49,17 @@ export function KafkaClientsSection({ system, cluster, destination, range, xRang
       <div className="kc-head">
         <span aria-hidden className="kc-dot" />
         Kafka istemcileri · METRİK ({data.source})
+        {data.consumers.length > 0 && (
+          <Button variant="secondary" size="sm" style={{ marginLeft: 'auto' }} onClick={() => setAlertOpen(true)}
+            title="Bu topic için tüketici lag alarmı (istemcinin gördüğü lag; consumer group lag'i değil)">
+            Lag alarmı
+          </Button>
+        )}
       </div>
+      {alertOpen && (
+        <KafkaAlertModal open onClose={() => setAlertOpen(false)} services={data.consumers}
+          target={{ topic: destination }} defaultMetric="kafka_lag_max" />
+      )}
       <div className="kc-note">
         {data.note}
       </div>

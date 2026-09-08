@@ -3429,11 +3429,16 @@ export interface HistogramResult {
 // v0.10.331 — hedefli kural: belirli bir DB ifadesi (stmt_hash) için eşik.
 // Ölçü db_statement_summary_5m (tüm çağıranlar); metrik db_stmt_{p95,p99,max,avg}_ms.
 export interface RuleTarget {
-  kind: 'db_statement';
+  // v0.10.554 — kafka_client: servisin Kafka istemcisi (topic/clientId isteğe
+  // bağlı daraltma); değer VM'den. db_statement: stmtHash zorunlu.
+  kind: 'db_statement' | 'kafka_client';
   dbSystem?: string;
   dbName?: string;
-  stmtHash: string;
+  stmtHash?: string;
   sample?: string;
+  service?: string;
+  topic?: string;
+  clientId?: string;
 }
 // /api/db/statements/search satırı (SQL arama seçici).
 export interface StatementSearchRow {

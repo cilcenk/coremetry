@@ -12,9 +12,11 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/vmetrics"
 )
 
 // targetSubject — Problem öznesi: DB kimliği kurulabiliyorsa Kind=db; değilse
@@ -58,10 +60,20 @@ func describeTargetProblem(r chstore.AlertRule, st chstore.StatementWindowStats,
 		r.Name, label, fmtMsShort(value), r.Comparator, fmtMsShort(r.Threshold), r.WindowSec, st.Count, callers, sample)
 }
 
+// evaluateTargetRule — hedefli kural dağıtımı (evaluator.go tek dal): kind'a göre.
 func (e *Evaluator) evaluateTargetRule(ctx context.Context, r chstore.AlertRule, openSnap *chstore.OpenProblems) {
-	if r.Target == nil || r.Target.Kind != chstore.RuleTargetDBStatement {
+	if r.Target == nil {
 		return
 	}
+	switch r.Target.Kind {
+	case chstore.RuleTargetDBStatement:
+		e.evaluateDBStatementTargetRule(ctx, r, openSnap)
+	case chstore.RuleTargetKafkaClient: // v0.10.554
+		e.evaluateKafkaTargetRule(ctx, r, openSnap)
+	}
+}
+
+func (e *Evaluator) evaluateDBStatementTargetRule(ctx context.Context, r chstore.AlertRule, openSnap *chstore.OpenProblems) {
 	window := time.Duration(r.WindowSec) * time.Second
 	st, err := e.store.StatementWindowStats(ctx, *r.Target, window)
 	if err != nil {
@@ -77,6 +89,17 @@ func (e *Evaluator) evaluateTargetRule(ctx context.Context, r chstore.AlertRule,
 	}
 	value := chstore.TargetMetricValue(st, r.Metric)
 	breached := st.Count > 0 && compare(value, r.Comparator, r.Threshold)
+	e.settleTargetBreach(ctx, r, key, subject, kind, value, breached, now,
+		func() string { return describeTargetProblem(r, st, value) }, openSnap, "db statement rule")
+}
+
+// settleTargetBreach — hedefli kuralın ortak ihlal/for/cooldown/aç-yenile-kapat
+// yarısı (v0.10.554'te DB ifadesi gövdesinden çıkarıldı; davranış bayt-bayt aynı,
+// yalnız açıklama üreticisi ve log etiketi parametre). Her hedef türü değeri
+// kendi kaynağından okur, buraya "value + breached" ile gelir.
+func (e *Evaluator) settleTargetBreach(ctx context.Context, r chstore.AlertRule, key breachKey, subject, kind string,
+	value float64, breached bool, now time.Time, describe func() string, openSnap *chstore.OpenProblems, tag string) {
+	var err error
 	if breached && r.ForSec > 0 {
 		first, existing := e.breachStart(ctx, key, now, r.ForSec)
 		if !existing || now.Sub(first) < time.Duration(r.ForSec)*time.Second {
@@ -108,7 +131,7 @@ func (e *Evaluator) evaluateTargetRule(ctx context.Context, r chstore.AlertRule,
 			ID: newID(), RuleID: r.ID, RuleName: r.Name, Severity: r.Severity,
 			Service: subject, Kind: kind, Metric: r.Metric, Value: value,
 			Comparator: r.Comparator, Threshold: r.Threshold, Status: "open",
-			Description: describeTargetProblem(r, st, value),
+			Description: describe(),
 			StartedAt:   now.UnixNano(),
 		}
 		if err := e.store.UpsertProblem(ctx, p); err != nil {
@@ -116,7 +139,7 @@ func (e *Evaluator) evaluateTargetRule(ctx context.Context, r chstore.AlertRule,
 			return
 		}
 		e.countOpened()
-		log.Printf("[evaluator] PROBLEM OPENED (db statement rule): %s", p.Description)
+		log.Printf("[evaluator] PROBLEM OPENED (%s): %s", tag, p.Description)
 		if _, err := e.store.AttachProblemToIncident(ctx, p); err != nil {
 			log.Printf("[evaluator] target rule incident attach: %v", err)
 		}
@@ -127,7 +150,7 @@ func (e *Evaluator) evaluateTargetRule(ctx context.Context, r chstore.AlertRule,
 		open.Value = value
 		open.Threshold = r.Threshold
 		open.Severity = effectiveSeverity(r.Severity, time.Since(time.Unix(0, open.StartedAt)), e.escalationCfg(ctx))
-		open.Description = describeTargetProblem(r, st, value)
+		open.Description = describe()
 		if err := e.store.UpsertProblem(ctx, *open); err != nil {
 			log.Printf("[evaluator] target rule refresh %s: %v", r.ID, err)
 		}
@@ -139,6 +162,106 @@ func (e *Evaluator) evaluateTargetRule(ctx context.Context, r chstore.AlertRule,
 		}
 		e.countResolved()
 		e.stampResolved(ctx, key, now, r.CooldownSec)
-		log.Printf("[evaluator] PROBLEM RESOLVED (db statement rule): %s on %s", r.Name, subject)
+		log.Printf("[evaluator] PROBLEM RESOLVED (%s): %s on %s", tag, r.Name, subject)
 	}
+}
+
+// ── Kafka istemci hedefi (v0.10.554, Messaging Kafka Faz 5) ─────────────────
+//
+// Değer VM seam'inden: vmetrics.KafkaQuery (katalog toplaması: lag → max,
+// üretici hata oranı → sum; gauge'a rate() yok) tek seri, pencere = kural
+// penceresi, kova ≈ 1 dk (≤60). Pencere değeri = serilerin EN KÖTÜ noktası;
+// MinSamples = nokta (kova) sayısı. Özne = servis (Problem servis altında).
+// VM yapılandırılmamışsa kural sessizce atlanmaz: bir kez loglanır.
+
+var kafkaTargetVMWarn sync.Once
+
+func kafkaTargetMaxDataPoints(windowSec uint32) int {
+	n := int(windowSec / 60)
+	if n < 1 {
+		n = 1
+	}
+	if n > 60 {
+		n = 60
+	}
+	return n
+}
+
+// kafkaTargetValue — en kötü nokta + nokta sayısı.
+func kafkaTargetValue(series []chstore.SpanMetricSeries) (float64, uint32) {
+	var worst float64
+	var n uint32
+	for _, s := range series {
+		for _, p := range s.Points {
+			if n == 0 || p.Value > worst {
+				worst = p.Value
+			}
+			n++
+		}
+	}
+	return worst, n
+}
+
+func describeKafkaTargetProblem(r chstore.AlertRule, value float64, samples uint32) string {
+	scope, label, unit := "", "Kafka istemci metriği", ""
+	if t := r.Target; t != nil {
+		scope = t.Service
+		if t.Topic != "" {
+			scope += " · topic " + t.Topic
+		}
+		if t.ClientID != "" {
+			scope += " · istemci " + t.ClientID
+		}
+	}
+	switch r.Metric {
+	case "kafka_lag_max":
+		label, unit = "istemcinin gördüğü en yüksek lag (partition; consumer group lag'i değil)", "kayıt"
+	case "kafka_producer_error_rate":
+		label, unit = "gönderim hatası", "kayıt/sn"
+	}
+	return fmt.Sprintf("%s — %s: %s %.0f %s, eşik %s %.0f, %ds pencere (%d kova)",
+		r.Name, scope, label, value, unit, r.Comparator, r.Threshold, r.WindowSec, samples)
+}
+
+func (e *Evaluator) evaluateKafkaTargetRule(ctx context.Context, r chstore.AlertRule, openSnap *chstore.OpenProblems) {
+	t := r.Target
+	if e.vmetrics == nil || !e.vmetrics.Configured() {
+		kafkaTargetVMWarn.Do(func() {
+			log.Printf("[evaluator] kafka_client rule %s (%s): VictoriaMetrics yapılandırılmamış, kural değerlendirilmiyor", r.ID, r.Name)
+		})
+		return
+	}
+	m, ok := vmetrics.KafkaMetricByName(chstore.KafkaTargetMetricName(r.Metric))
+	if !ok {
+		log.Printf("[evaluator] kafka_client rule %s: metric %q katalogda yok", r.ID, r.Metric)
+		return
+	}
+	window := time.Duration(r.WindowSec) * time.Second
+	if window < time.Minute {
+		window = time.Minute
+	}
+	now := time.Now()
+	f, err := vmetrics.KafkaQuery(m, vmetrics.KafkaScope{
+		Services: []string{t.Service}, Topic: t.Topic, ClientID: t.ClientID,
+		From: now.Add(-window), To: now, MaxDataPoints: kafkaTargetMaxDataPoints(r.WindowSec),
+	}, nil)
+	if err != nil {
+		log.Printf("[evaluator] kafka_client rule %s: %v", r.ID, err)
+		return
+	}
+	series, err := e.vmetrics.QueryMetric(ctx, f)
+	if err != nil {
+		log.Printf("[evaluator] kafka_client rule %s (%s): %v", r.ID, r.Name, err)
+		return
+	}
+	value, samples := kafkaTargetValue(series)
+	subject, kind := t.Service, chstore.ProblemKindService
+	key := breachKey{RuleID: r.ID, Service: subject}
+	if r.MinSamples > 0 && samples < r.MinSamples {
+		e.clearBreach(ctx, key)
+		return
+	}
+	breached := samples > 0 && compare(value, r.Comparator, r.Threshold)
+	e.settleTargetBreach(ctx, r, key, subject, kind, value, breached, now,
+		func() string { return describeKafkaTargetProblem(r, value, samples) }, openSnap, "kafka client rule")
 }

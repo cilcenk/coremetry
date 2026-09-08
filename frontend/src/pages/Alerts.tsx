@@ -16,7 +16,7 @@ import type { AlertRule } from '@/lib/types';
 import { logsHref } from '@/lib/logsUrl';
 import {
   METRICS, COMPARATORS, SEVERITIES, WINDOWS, emptyDraft, TEMPLATES,
-  type UserPreset, DB_STMT_METRICS, isDbStmtMetric } from './alerts/constants';
+  type UserPreset, DB_STMT_METRICS, isDbStmtMetric, targetMetrics } from './alerts/constants';
 import { ThresholdField } from './alerts/ThresholdField';
 import { StatementPicker } from './alerts/StatementPicker';
 import { NotifyTeamsField } from './alerts/NotifyTeamsField';
@@ -32,7 +32,8 @@ import { PageShell } from '@/components/ui/PageShell';
 // buradan okuyor ki kolon GÖRÜNENE göre sıralansın (ham `metric` alanı
 // 'log_query' / 'watcher' değerleriyle rozetlerden bambaşka bir düzen verir).
 function alertTypeLabel(r: AlertRule): string {
-  return r.target ? 'DB STATEMENT'
+  return r.target?.kind === 'kafka_client' ? 'KAFKA CLIENT' // v0.10.554
+    : r.target ? 'DB STATEMENT'
     : r.metric === 'watcher' ? 'ES WATCHER'
     : r.metric === 'log_query' ? 'WATCHER'
     : r.builtIn ? 'BUILT-IN'
@@ -458,7 +459,12 @@ export default function AlertsPage() {
                   placeholder="e.g. High error rate on api-gateway" />
               </Field>
               <Field label={draft.target ? 'Service' : 'Service (empty = all)'}>
-                {draft.target
+                {draft.target?.kind === 'kafka_client'
+                  ? <div className="mono" style={{ fontSize: 12, color: 'var(--text2)', padding: '6px 0' }}
+                      title="Kafka istemci hedefi çekmece/Infra panelinden kurulur; kapsam burada değiştirilmez.">
+                      {draft.target.service}{draft.target.topic ? ` · topic ${draft.target.topic}` : ' · tüm topic\'ler'}{draft.target.clientId ? ` · istemci ${draft.target.clientId}` : ''}
+                    </div>
+                  : draft.target
                   ? <div style={{ fontSize: 12, color: 'var(--text3)', padding: '6px 0' }}>— all callers of the statement —</div>
                   : <ServicePicker value={draft.service ?? ''} onChange={v => setDraft({ ...draft, service: v })}
                       placeholder="Service…" width="100%" />}
@@ -471,6 +477,7 @@ export default function AlertsPage() {
               </Field>
               {/* v0.10.331 — hedef: belirli bir DB ifadesi (SQL arayıp seç). Seçilince
                   metrik ailesi db_stmt_* (p95 varsayılan), servis = tüm çağıranlar. */}
+              {draft.target?.kind !== 'kafka_client' && (
               <Field label="Target — DB statement (optional)">
                 <StatementPicker value={draft.target} service={draft.service ?? ''} onChange={t => setDraft(d => ({
                   ...d, target: t, service: t ? '' : d.service,
@@ -480,10 +487,11 @@ export default function AlertsPage() {
                   name: t && !d.name ? `Slow SQL: ${(t.sample || '').replace(/\s+/g, ' ').slice(0, 60)}` : d.name,
                 }))} />
               </Field>
+              )}
               <Field label="Metric">
                 <select value={draft.metric}
                   onChange={e => setDraft({ ...draft, metric: e.target.value })}>
-                  {(draft.target ? DB_STMT_METRICS : METRICS).map(m => <option key={m.v} value={m.v}>{m.label}</option>)}
+                  {targetMetrics(draft.target?.kind).map(m => <option key={m.v} value={m.v}>{m.label}</option>)}
                 </select>
               </Field>
               <Field label="Comparator">
@@ -492,7 +500,7 @@ export default function AlertsPage() {
                   {COMPARATORS.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </Field>
-              <Field label={draft.target ? 'Threshold (ms)' : 'Threshold'}>
+              <Field label={draft.target?.kind === 'kafka_client' ? 'Threshold' : draft.target ? 'Threshold (ms)' : 'Threshold'}>
                 {draft.target ? (
                   <input type="number" min={1} step={50} value={draft.threshold ?? 1000}
                     onChange={e => setDraft({ ...draft, threshold: Number(e.target.value) })} />

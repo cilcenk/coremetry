@@ -24,13 +24,41 @@ import (
 
 const RuleTargetDBStatement = "db_statement"
 
+// RuleTargetKafkaClient — v0.10.554 (Messaging Kafka Faz 5): hedef bir
+// SERVİSİN Kafka istemcisi (isteğe bağlı topic / client_id daraltması).
+// Değer VM seam'inden (vmetrics.KafkaQuery) okunur; kapsamsız kafka_* sorgusu
+// tüm filoyu topladığı için service ZORUNLU. Metrikler: kafka_lag_max
+// (istemcinin gördüğü partition lag'i — consumer group lag'i DEĞİL),
+// kafka_producer_error_rate (kayıt/sn).
+const RuleTargetKafkaClient = "kafka_client"
+
 // RuleTarget — kuralın hedefi. Sample yalnız görüntü (normalize SQL, kısa).
 type RuleTarget struct {
 	Kind     string `json:"kind"`
 	DBSystem string `json:"dbSystem,omitempty"`
 	DBName   string `json:"dbName,omitempty"`
-	StmtHash string `json:"stmtHash"`
+	StmtHash string `json:"stmtHash,omitempty"`
 	Sample   string `json:"sample,omitempty"`
+	// kafka_client alanları (v0.10.554); db_statement'ta boş.
+	Service  string `json:"service,omitempty"`
+	Topic    string `json:"topic,omitempty"`
+	ClientID string `json:"clientId,omitempty"`
+}
+
+// IsKafkaClientMetric — kafka_client hedefinin metrik ailesi.
+func IsKafkaClientMetric(m string) bool {
+	return KafkaTargetMetricName(m) != ""
+}
+
+// KafkaTargetMetricName — kural metriği → OTel katalog adı (vmetrics.KafkaCatalog).
+func KafkaTargetMetricName(m string) string {
+	switch m {
+	case "kafka_lag_max":
+		return "kafka.consumer.records_lag_max"
+	case "kafka_producer_error_rate":
+		return "kafka.producer.record_error_rate"
+	}
+	return ""
 }
 
 // ErrRuleTargetColumnMissing — küme kipinde iki-boot sözleşmesi: kolon
@@ -51,25 +79,46 @@ func ValidateRuleTarget(r AlertRule) error {
 		if IsDBStatementMetric(r.Metric) {
 			return fmt.Errorf("metric %s requires a db_statement target", r.Metric)
 		}
+		if IsKafkaClientMetric(r.Metric) {
+			return fmt.Errorf("metric %s requires a kafka_client target", r.Metric)
+		}
 		return nil
 	}
 	t := r.Target
-	if t.Kind != RuleTargetDBStatement {
-		return fmt.Errorf("unknown target kind %q", t.Kind)
+	switch t.Kind {
+	case RuleTargetDBStatement:
+		if _, err := strconv.ParseUint(strings.TrimSpace(t.StmtHash), 10, 64); err != nil || strings.TrimSpace(t.StmtHash) == "" {
+			return fmt.Errorf("target.stmtHash must be a decimal uint64 statement hash")
+		}
+		if !IsDBStatementMetric(r.Metric) {
+			return fmt.Errorf("db_statement target requires a db_stmt_* metric, got %q", r.Metric)
+		}
+		if r.Threshold <= 0 {
+			return fmt.Errorf("threshold must be > 0 ms")
+		}
+		if len(t.Sample) > 2000 {
+			return fmt.Errorf("target.sample too long")
+		}
+		return nil
+	case RuleTargetKafkaClient: // v0.10.554
+		if strings.TrimSpace(t.Service) == "" {
+			return fmt.Errorf("target.service is required for a kafka_client target")
+		}
+		if !IsKafkaClientMetric(r.Metric) {
+			return fmt.Errorf("kafka_client target requires a kafka_* metric (kafka_lag_max | kafka_producer_error_rate), got %q", r.Metric)
+		}
+		if r.Threshold <= 0 {
+			return fmt.Errorf("threshold must be > 0")
+		}
+		if len(t.Topic) > 200 {
+			return fmt.Errorf("target.topic too long")
+		}
+		if len(t.ClientID) > 200 {
+			return fmt.Errorf("target.clientId too long")
+		}
+		return nil
 	}
-	if _, err := strconv.ParseUint(strings.TrimSpace(t.StmtHash), 10, 64); err != nil || strings.TrimSpace(t.StmtHash) == "" {
-		return fmt.Errorf("target.stmtHash must be a decimal uint64 statement hash")
-	}
-	if !IsDBStatementMetric(r.Metric) {
-		return fmt.Errorf("db_statement target requires a db_stmt_* metric, got %q", r.Metric)
-	}
-	if r.Threshold <= 0 {
-		return fmt.Errorf("threshold must be > 0 ms")
-	}
-	if len(t.Sample) > 2000 {
-		return fmt.Errorf("target.sample too long")
-	}
-	return nil
+	return fmt.Errorf("unknown target kind %q", t.Kind)
 }
 
 func encodeRuleTarget(t *RuleTarget) string {

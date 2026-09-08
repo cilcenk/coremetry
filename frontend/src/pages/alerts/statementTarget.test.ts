@@ -27,7 +27,7 @@ describe('DB statement hedefli kural', () => {
   });
   it('Alerts formu: seçici, metrik ailesi, düz eşik, koşul hücresi, tür etiketi', () => {
     expect(alerts).toContain('<StatementPicker value={draft.target}');
-    expect(alerts).toContain('(draft.target ? DB_STMT_METRICS : METRICS)');
+    expect(alerts).toContain('targetMetrics(draft.target?.kind)'); // v0.10.554 — metrik ailesi hedef türüne göre
     expect(alerts).toContain("r.target ? 'DB STATEMENT'");
     expect(alerts).toContain("isTarget ? '— all callers —'");
   });
@@ -43,7 +43,7 @@ describe('DB statement hedefli kural', () => {
     const picker = readFileSync(resolve(__dirname, 'StatementPicker.tsx'), 'utf8');
     expect(picker).toContain('api.searchStatements(term, 20, ctl.signal, service)');
     expect(alerts).toContain("service={draft.service ?? ''}");
-    expect(types).toMatch(/export interface RuleTarget \{\s*kind: 'db_statement';/);
+    expect(types).toMatch(/export interface RuleTarget \{[\s\S]*?kind: 'db_statement' \| 'kafka_client';/); // v0.10.554
     expect(types).toMatch(/export interface AlertRule \{[^}]*target\?: RuleTarget;/);
   });
 });

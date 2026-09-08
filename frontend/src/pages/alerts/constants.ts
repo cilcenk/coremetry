@@ -33,6 +33,16 @@ export const DB_STMT_METRICS = [
   { v: 'db_stmt_avg_ms', label: 'Statement avg (ms)' },
 ];
 export const isDbStmtMetric = (m: string | undefined) => !!m && m.startsWith('db_stmt_');
+
+// v0.10.554 — Kafka istemci hedefli kural metrikleri (Messaging Kafka Faz 5).
+// Lag = bu istemcinin gördüğü partition lag'i; consumer group lag'i DEĞİL.
+export const KAFKA_METRICS = [
+  { v: 'kafka_lag_max', label: 'İstemcinin gördüğü en yüksek lag (kayıt)' },
+  { v: 'kafka_producer_error_rate', label: 'Gönderim hatası (kayıt/sn)' },
+];
+export const isKafkaMetric = (m: string | undefined) => !!m && m.startsWith('kafka_');
+export const targetMetrics = (kind: string | undefined) =>
+  kind === 'kafka_client' ? KAFKA_METRICS : kind === 'db_statement' ? DB_STMT_METRICS : METRICS;
 export const COMPARATORS = ['>', '>=', '<', '<='];
 export const SEVERITIES = ['info', 'warning', 'critical'];
 

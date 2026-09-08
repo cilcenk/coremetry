@@ -4,7 +4,9 @@
 // MetricArea (sekmenin CPU/Mem panelleriyle aynı bileşen, aynı imleç senkronu
 // `infra:<service>`). Thanos'tan BAĞIMSIZ: sekme Thanos yokken Empty çizse de
 // bu panel kendi verisiyle çizilir. Metrik yoksa tek satır soluk not.
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { Button } from '@/components/ui/Button';
+import { KafkaAlertModal } from '@/pages/alerts/KafkaAlertModal'; // v0.10.554
 import { StatTile } from '@/components/ui/StatTile';
 import { Spinner } from '@/components/Spinner';
 import { MetricArea } from '@/pages/clusters/MetricArea';
@@ -26,6 +28,7 @@ export function ServiceKafkaClientsPanel({ service, range, onZoom, onZoomReset }
   const [env] = useUrlEnv();
   const win = useMemo(() => timeRangeToNs(range), [range]); // v0.5.184: memo içinde
   const q = useServiceKafkaClients({ service, fromNs: win.from, toNs: win.to, env: env || undefined });
+  const [alertOpen, setAlertOpen] = useState(false); // v0.10.554
   if (q.isPending) {
     return <div className="kc-line" role="status" aria-busy="true"><Spinner /> Kafka istemci metrikleri…</div>;
   }
@@ -52,7 +55,14 @@ export function ServiceKafkaClientsPanel({ service, range, onZoom, onZoomReset }
             env uygulanmadı
           </span>
         )}
+        <Button variant="secondary" size="sm" style={{ marginLeft: 8 }} onClick={() => setAlertOpen(true)}
+          title="Bu servisin Kafka istemcisi için alarm kuralı (lag ya da gönderim hatası)">
+          Alarm kur
+        </Button>
       </h3>
+      {alertOpen && (
+        <KafkaAlertModal open onClose={() => setAlertOpen(false)} target={{ service }} />
+      )}
       <div className="kc-note">{data.note}</div>
       {!kafkaStripEmpty(strip) && (
         <div className="kc-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' }}>

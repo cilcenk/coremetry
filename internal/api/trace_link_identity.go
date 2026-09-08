@@ -447,6 +447,62 @@ type linkIdentityLogHit struct {
 	// (reqid.FindLooseToken). Link için değer yeterli, ama "çözümledim"
 	// İDDİA ETMİYORUZ — operatör bunu görmeli.
 	Loose bool
+	// Key — v0.10.572: token'ı taşıyan JSON alanının GERÇEK adı
+	// ("BsaRequestId"). Tarayıcı alan adına bakmaz, şekli tanır; ama
+	// operatörün logunda gördüğü ad neyse menü onu yazmalı. Boş =
+	// gövde JSON değil ya da ad çözülemedi.
+	Key string
+}
+
+// jsonKeyMaxLen — geriye doğru anahtar taraması sınırı.
+const jsonKeyMaxLen = 64
+
+// jsonKeyForToken — SAF: gövdede token'ı taşıyan JSON alan adı.
+//
+// v0.10.572 (operatör: "bazen requestid BsaRequestId olarak logta yazıyor").
+// Kimlik ARAMASI ad-bağımsız kalır (şekil tanınır); bu yalnız ETİKET içindir.
+// Desen token'dan GERİYE: `"<anahtar>"` boşluk `:` boşluk `"` token.
+// Uymuyorsa "" — ad UYDURULMAZ, çağıran nötr etikete düşer.
+func jsonKeyForToken(body, token string) string {
+	if token == "" {
+		return ""
+	}
+	i := strings.Index(body, token)
+	if i <= 0 || body[i-1] != '"' {
+		return "" // değer tırnak içinde değil (düz metin log)
+	}
+	p := i - 2
+	skipSpace := func(p int) int {
+		for p >= 0 && (body[p] == ' ' || body[p] == '\t') {
+			p--
+		}
+		return p
+	}
+	if p = skipSpace(p); p < 0 || body[p] != ':' {
+		return ""
+	}
+	if p = skipSpace(p - 1); p < 0 || body[p] != '"' {
+		return ""
+	}
+	end := p
+	start := -1
+	for k := 0; p > 0 && k <= jsonKeyMaxLen; k, p = k+1, p-1 {
+		if body[p-1] == '"' {
+			start = p
+			break
+		}
+	}
+	if start < 0 || start >= end {
+		return ""
+	}
+	key := body[start:end]
+	for i := 0; i < len(key); i++ {
+		c := key[i]
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '.' || c == '-') {
+			return ""
+		}
+	}
+	return key
 }
 
 // linkIdentitySpanRoles — SAF: `ordered` ile AYNI uzunlukta rol dilimi.
@@ -546,9 +602,14 @@ func buildLinkIdentityCandidates(ordered []chstore.SpanRow, selected string, hit
 	}
 	// 1) request_id adayları — log gövdesinden çözülenler.
 	for _, h := range hits {
+		// v0.10.572 — logdaki GERÇEK alan adı ("BsaRequestId"); yoksa nötr ad.
+		key := h.Key
+		if key == "" {
+			key = linkIdentityKeyRequestID
+		}
 		c := traceLinkCandidate{
 			Value:  h.Value,
-			Key:    linkIdentityKeyRequestID,
+			Key:    key,
 			Source: linkIdentitySourceLog,
 			Role:   linkIdentityRoleSpan,
 		}
@@ -692,7 +753,7 @@ func (s *Server) resolveTraceLinkIdentity(ctx context.Context, traceID, selected
 					if lSpan == "" {
 						lSpan = fallbackSpan
 					}
-					looseHits = append(looseHits, linkIdentityLogHit{Value: tok, SpanID: lSpan, Loose: true})
+					looseHits = append(looseHits, linkIdentityLogHit{Value: tok, SpanID: lSpan, Loose: true, Key: jsonKeyForToken(rec.Body, tok)})
 				}
 				continue
 			}
@@ -702,7 +763,7 @@ func (s *Server) resolveTraceLinkIdentity(ctx context.Context, traceID, selected
 			}
 			if !seenHit[id.Raw] {
 				seenHit[id.Raw] = true
-				hits = append(hits, linkIdentityLogHit{Value: id.Raw, SpanID: recSpan})
+				hits = append(hits, linkIdentityLogHit{Value: id.Raw, SpanID: recSpan, Key: jsonKeyForToken(rec.Body, id.Raw)})
 			}
 			if !found {
 				found = true

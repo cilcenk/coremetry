@@ -1424,23 +1424,20 @@ function ExternalLinkRow({ link: l, url, missing, ctx, identities, srcNote }: {
     return { cand, url: r.url, missing: r.missing };
   });
   // request_id adayları üstte (birincil yol), span adayları anahtar anahtar altta.
-  const logItems = resolved.filter(r => r.cand.source === 'log');
+  // v0.10.572 (operatör: "bazen requestid BsaRequestId olarak logta yazıyor")
+  // — log başlığı sunucunun okuduğu GERÇEK alan adını taşır ve log tarafı da
+  // anahtara göre gruplanır: aynı trace'te iki farklı ad geçebilir.
+  const logSections: Array<{ title: string; items: typeof resolved }> = [];
   const spanSections: Array<{ title: string; items: typeof resolved }> = [];
   for (const r of resolved) {
-    if (r.cand.source === 'log') continue;
-    const key = r.cand.key || 'span attribute';
-    const g = spanSections.find(x => x.title === key);
-    if (g) g.items.push(r); else spanSections.push({ title: key, items: [r] });
+    const isLog = r.cand.source === 'log';
+    const bucket = isLog ? logSections : spanSections;
+    const key = r.cand.key || (isLog ? 'request_id' : 'span attribute');
+    const title = isLog ? `${key} · log gövdesinden` : key;
+    const g = bucket.find(x => x.title === title);
+    if (g) g.items.push(r); else bucket.push({ title, items: [r] });
   }
-  // v0.10.571 (operatör: "log gövdesinden requestId yazsın yanında") — log
-  // bölümü de ANAHTARINI söyler: span bölümleri zaten function_id /
-  // channel_code diye başlıklanıyordu, log bölümü yalnız kaynağını
-  // söyleyince tek başlık anahtarsız kalıyordu. Anahtar sunucudan gelir
-  // (uydurma yok); kaynak ekte kalır.
-  const logKey = logItems[0]?.cand.key || 'request_id';
-  const sections = logItems.length
-    ? [{ title: `${logKey} · log gövdesinden`, items: logItems }, ...spanSections]
-    : spanSections;
+  const sections = [...logSections, ...spanSections];
 
   return (
     <span ref={wrapRef} style={{ position: 'relative', display: 'inline-flex' }}>

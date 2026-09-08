@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderExternalLink, attrTimeParts, formatParts, collectLinkCtx, pickGroupedLinks } from './externalLinks';
+import { renderExternalLink, attrTimeParts, formatParts, collectLinkCtx, pickGroupedLinks, zonedParts } from './externalLinks';
 
 // v0.10.345 — dış link şablonu (operatörün log platformu örneği: date=ddMMyyyyHHmm,
 // functionId, channelCode; tarih function_id içindeki zamandan).
@@ -188,5 +188,37 @@ describe('pickGroupedLinks (v0.10.566)', () => {
     expect(noReq).toHaveLength(1);
     expect(noReq[0].link.label).toBe('Log (functionId)');
     expect(noReq[0].url).toBe('https://logs/?date=060920261020&functionId=F&channelCode=060201');
+  });
+});
+
+// v0.10.567 — tarih artık TARAYICI dilimi değil, kurumun dilimi.
+// Sabit an: 2026-01-15T22:30:00Z. Türkiye kalıcı +03 (2016'dan beri DST yok),
+// yani Istanbul'da 16 Ocak 01:30 — gün DE değişiyor, bu yüzden vaka seçildi:
+// tarayıcı UTC ise eski kod "15..2230" üretip log platformunda yanlış
+// pencereyi açıyordu.
+describe('zonedParts / sabit saat dilimi', () => {
+  const MS = Date.UTC(2026, 0, 15, 22, 30, 0);
+  it('Istanbul: gün sınırını doğru geçer', () => {
+    expect(zonedParts(MS, 'Europe/Istanbul')).toEqual({ y: 2026, M: 1, d: 16, H: 1, m: 30, s: 0 });
+  });
+  it('UTC istenirse UTC', () => {
+    expect(zonedParts(MS, 'UTC')).toEqual({ y: 2026, M: 1, d: 15, H: 22, m: 30, s: 0 });
+  });
+  it('boş/geçersiz dilim VARSAYILANA düşer (tarayıcı yereline DEĞİL)', () => {
+    const ist = zonedParts(MS, 'Europe/Istanbul');
+    expect(zonedParts(MS, undefined)).toEqual(ist);
+    expect(zonedParts(MS, '   ')).toEqual(ist);
+    expect(zonedParts(MS, 'Mars/Olympus')).toEqual(ist);
+  });
+  it('gece yarısı 24 değil 00 (hourCycle h23)', () => {
+    const mid = Date.UTC(2026, 0, 15, 21, 0, 0); // Istanbul 16 Ocak 00:00
+    expect(zonedParts(mid, 'Europe/Istanbul')).toMatchObject({ d: 16, H: 0 });
+  });
+  it('{{time:FMT}} ctx.tz ile biçimlenir; ctx.tz yoksa Istanbul', () => {
+    const ctx = { traceId: 't', service: 's', startMs: MS, endMs: MS, attrs: {} };
+    expect(renderExternalLink('https://x/?d={{time:ddMMyyyyHHmm}}', ctx).url)
+      .toBe('https://x/?d=160120260130');
+    expect(renderExternalLink('https://x/?d={{time:ddMMyyyyHHmm}}', { ...ctx, tz: 'UTC' }).url)
+      .toBe('https://x/?d=150120262230');
   });
 });

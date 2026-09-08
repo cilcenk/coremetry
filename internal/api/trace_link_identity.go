@@ -91,6 +91,13 @@ type traceLinkIdentity struct {
 	// "bakamadım" diyoruz.
 	Partial bool   `json:"partial,omitempty"`
 	Note    string `json:"note"`
+	// TZ — v0.10.567 (operatör kararı 2026-09-08: "Europe/Istanbul olsun").
+	// Dış link şablonundaki {{time:FMT}} / {{endTime:FMT}} bu dilimde
+	// biçimlenir. AYARIN ADI taşınır, çözülmüş Location DEĞİL: sunucuda
+	// tzdata yoksa reqid.Location "+03" sabit dilimine düşer ve o ad
+	// tarayıcının Intl'ine verilemez — ad taşırsak tarayıcı kendi
+	// tzdata'sıyla doğru biçimler.
+	TZ string `json:"tz"`
 }
 
 func (s *Server) registerTraceLinkIdentityRoutes(mux *http.ServeMux) {
@@ -299,6 +306,9 @@ func (s *Server) resolveTraceLinkIdentity(ctx context.Context, traceID, selected
 		Attrs:      map[string]string{},
 		Candidates: []string{},
 		Source:     linkIdentitySourceNone,
+	}
+	if out.TZ = strings.TrimSpace(tz); out.TZ == "" {
+		out.TZ = reqid.DefaultTZ
 	}
 	ordered := orderTraceSpans(spans, selected)
 	if len(ordered) == 0 {

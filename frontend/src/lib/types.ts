@@ -3007,6 +3007,8 @@ export interface TraceLinkIdentity {
   attrs: Record<string, string>;
   candidates: string[];
   distinctRequestIds: number;
+  /** v0.10.567 — {{time}}/{{endTime}} bu IANA diliminde biçimlenir (reqid.timezone; varsayılan Europe/Istanbul). */
+  tz?: string;
   /** Arama kapsamı kırpıldıysa (log penceresi / span limiti). */
   partial?: boolean;
   note: string;

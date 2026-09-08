@@ -3,6 +3,8 @@ import { chatErrorText } from './chatErrorText';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { AIFeedbackButtons } from './AIFeedbackButtons';
 import { chartBlocks, mergeBlockLinks } from '@/lib/chatBlocks';
+import { evidenceBlocks } from '@/lib/chatEvidence'; // v0.10.558
+import { EvidenceCard } from './EvidenceCard';
 import { parseAction, actionVisible, applyActionHref } from '@/lib/pageActions';
 import { escapeHTML } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
@@ -521,6 +523,8 @@ export function ChatBubble({ turn }: { turn: ChatTurn }) {
             {renderMessage(turn.text, turn.pending, turn.blocks)}
             {/* v0.10.541 — tipli chart blokları (mutlak pencere; CosreChart fromNs/toNs'i önceler) */}
             {!turn.pending && chartBlocks(turn.blocks).map((spec, i) => <CosreChart key={`blk-${i}`} spec={spec as CosreChartSpec} />)}
+            {/* v0.10.558 — kök-neden rotasının yapısal kanıt kartı (operatör mockup onayı) */}
+            {!turn.pending && evidenceBlocks(turn.blocks).map((ev, i) => <EvidenceCard key={`ev-${i}`} ev={ev} />)}
             {/* v0.10.542 — action bloğu: yalnız tool sonucundan (sunucu chat_actions.go),
                 yalnız hedef sayfa açıkken; URL birleşimi + replace:true, yeni sekme yok. */}
             {!turn.pending && (turn.blocks ?? []).filter(b => b.type === 'action').map(b => {

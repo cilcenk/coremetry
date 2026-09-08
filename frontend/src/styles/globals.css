@@ -3931,3 +3931,23 @@ thead th:hover .th-remove { opacity: 1; }
 .kc-subhead { font-size: var(--fs-2xs); font-weight: 600; color: var(--text2); margin-bottom: var(--sp-2); }
 .kc-empty { font-size: var(--fs-2xs); color: var(--text3); }
 .kc-key { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* v0.10.558 — sohbet kanıt kartı (EvidenceCard; guided kök-neden evidence bloğu) */
+.ev-card { margin-top: var(--sp-4); padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg2); font-size: var(--fs-xs); display: grid; gap: var(--sp-3); }
+.ev-head { font-weight: 700; color: var(--text2); }
+.ev-verdict { color: var(--text); }
+.ev-verdict--none { color: var(--text3); }
+.ev-table { border-collapse: collapse; width: auto; }
+.ev-table th, .ev-table td { padding: 2px var(--sp-4) 2px 0; text-align: left; font-weight: 400; color: var(--text2); }
+.ev-table th { font-size: var(--fs-2xs); color: var(--text3); text-transform: uppercase; letter-spacing: 0.02em; }
+.ev-table td.num, .ev-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.ev-delta--up { color: var(--err); }
+.ev-delta--down { color: var(--ok); }
+.ev-delta--new { color: var(--warn); }
+.ev-delta--flat { color: var(--text3); }
+.ev-sub { font-size: var(--fs-2xs); font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.02em; margin-top: var(--sp-2); }
+.ev-list { margin: 0; padding-left: var(--sp-5); display: grid; gap: 2px; color: var(--text2); }
+.ev-empty { color: var(--text3); }
+.ev-foot { color: var(--text3); display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: center; }
+.ev-link { color: var(--accent2); text-decoration: none; }
+.ev-link:hover { text-decoration: underline; }

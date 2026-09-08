@@ -5501,6 +5501,21 @@ export type ChatBlockType = 'text' | 'table' | 'chart' | 'trace_list' | 'link' |
 export interface CosreChartSpecLike { title?: string; service: string; operation?: string; agg: string; unit?: string; rangeS?: number; groupBy?: string; fromNs?: number; toNs?: number; compare?: { kind?: string; shiftS: number }; source?: 'span' | 'metric' }
 export interface ChatTypedBlock { id: string; type: ChatBlockType; seq: number; final: boolean; payload: unknown }
 
+// ChatEvidence — v0.10.558: guided kök-neden rotasının yapısal kanıt bloğu
+// (internal/api/copilot_guided.go guidedEvidencePayload, v0.10.557). Listeler
+// sunucuda tavanlı (problems ≤5, changes ≤8, logPatterns ≤5).
+export interface ChatEvidenceRED { spans: number; rate: number; errorRate: number; p95Ms: number; p99Ms: number }
+export interface ChatEvidence {
+  question: string;
+  service: string;
+  rangeS: number;
+  red?: { current: ChatEvidenceRED; baseline: ChatEvidenceRED };
+  problems: Array<{ id: string; ruleName: string; severity: string; status: string; startedAt: number; metric: string; value: number; threshold: number; topSuspect?: string; confidence?: number }>;
+  changes: Array<{ source: string; timeUnixNs: number; workload?: string; service?: string; version?: string; status?: string; namespace?: string }>;
+  logPatterns: Array<{ pattern: string; kind: string; currentCount: number; baselineCount: number; ratio: number; service: string }>;
+  verdict: string;
+}
+
 export interface ChatTurn extends ChatMessage {
   /** v0.10.541 — tipli bloklar (seq sıralı, id tekil); arşiv taşımaz (fence yeter). */
   blocks?: ChatTypedBlock[];

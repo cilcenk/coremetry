@@ -2622,6 +2622,15 @@ type guidedChartSpec struct {
 	// bilen taraf yazsın, modelden istemeyelim.
 	FromNs int64 `json:"fromNs,omitempty"`
 	ToNs   int64 `json:"toNs,omitempty"`
+	// v0.10.547 (Faz 3.5) — karşılaştırma (kesikli ikinci seri, shiftS s önce)
+	// ve kaynak ("metric" = metrik deposu / VM; boş = span rollup).
+	Compare *guidedChartCompare `json:"compare,omitempty"`
+	Source  string              `json:"source,omitempty"`
+}
+
+type guidedChartCompare struct {
+	Kind   string `json:"kind"`
+	ShiftS int64  `json:"shiftS"`
 }
 
 func chartFence(spec guidedChartSpec) string {

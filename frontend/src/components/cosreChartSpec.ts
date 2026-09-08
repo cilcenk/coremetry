@@ -8,7 +8,7 @@
 // düşer (v0.9.187'nin dersi) ve tavan yanlışsa operatör eksik bir kırılıma
 // "evren bu" diye bakar.
 
-import type { SpanMetricSeries } from '@/lib/types';
+import type { ServiceMetricRED, SpanMetricSeries } from '@/lib/types';
 import type { CorePanelMultiItem } from '@/components/chart/corePanelEntry';
 
 export interface CosreChartSpec {
@@ -24,6 +24,11 @@ export interface CosreChartSpec {
   // Tek, çünkü sohbet balonundaki ~560px kartta iki anahtarlı kırılım
   // seri sayısını çarpar ve kırılım tam da okunabilirlik için var.
   groupBy?: string;
+  // v0.10.547 (Faz 3.5) — karşılaştırma: aynı pencere shiftS saniye önce, KESİKLİ
+  // ikinci seri ("dün aynı saat"); source: 'metric' = metrik deposu (VM) /metric-red,
+  // boş/'span' = span rollup (spanMetricBatch). Operatör kararı: karşılaştırma VM'den.
+  compare?: { kind?: string; shiftS: number };
+  source?: 'span' | 'metric';
   // Mutlak pencere (unix ns). Doluysa rangeS'i EZER — guided/insight
   // yolları olayın penceresini zaten biliyor, "son 30dk" cevabı kaydırırdı.
   fromNs?: number;
@@ -152,4 +157,29 @@ function seriesLabel(spec: CosreChartSpec, s: SpanMetricSeries, i: number, total
   // groupKey boş geldiyse (sunucu kırılımı uygulayamadı) indeksle ayır:
   // aynı adlı iki çizgi lejantta birbirinin üstüne biner.
   return total > 1 ? `(boş) ${i + 1}` : '(boş)';
+}
+
+// ── v0.10.547 — karşılaştırma + metrik kaynağı yardımcıları (SAF) ─────────
+
+/** Kesikli seri etiketi. */
+export function compareLabelTR(shiftS: number): string {
+  if (shiftS === 86400) return 'dün aynı saat';
+  if (shiftS === 604800) return 'geçen hafta aynı saat';
+  return `${Math.round(shiftS / 3600)} saat önce`;
+}
+
+/** Geçmiş pencerenin noktalarını şimdiki pencereye hizalar (time + shift). */
+export function shiftSeries(series: SpanMetricSeries[] | null | undefined, shiftNs: number): SpanMetricSeries[] {
+  return (series ?? []).map(s => ({ ...s, points: (s.points ?? []).map(p => ({ ...p, time: p.time + shiftNs })) }));
+}
+
+/** /metric-red yanıtından agg serisi (rate | error_rate | p50 | p95 | p99). */
+export function metricRedSeries(resp: ServiceMetricRED | null | undefined, agg: CosreChartSpec['agg']): SpanMetricSeries[] {
+  return resp?.series?.[agg] ?? [];
+}
+
+/** Metrik kaynağında gecikme birimi yanıttan (bilinmiyorsa AGG_UNIT). */
+export function metricRedUnit(resp: ServiceMetricRED | null | undefined, agg: CosreChartSpec['agg']): string {
+  if ((agg === 'p50' || agg === 'p95' || agg === 'p99') && resp?.latencyUnitKnown && resp.latencyUnit) return resp.latencyUnit;
+  return AGG_UNIT[agg] ?? '';
 }

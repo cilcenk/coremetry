@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { cosreChartDSL, cosreChartItems, cosreEmptyNoteTR, COSRE_SERIES_CAP } from './cosreChartSpec';
+import { cosreChartDSL, cosreChartItems, cosreEmptyNoteTR, COSRE_SERIES_CAP, compareLabelTR, shiftSeries, metricRedSeries, metricRedUnit } from './cosreChartSpec';
 import type { SpanMetricSeries } from '@/lib/types';
 
 // v0.9.1186 (AI Faz 4.4) — sohbet grafiğinin saf yarısı.
@@ -219,5 +219,27 @@ describe('boş dal çizim yolundan önce', () => {
   it('kapsamsız çit de yakalanıyor', () => {
     expect(src).toContain('const noScope = !spec.service');
     expect(src).toContain('noScope ||');
+  });
+});
+
+// v0.10.547 — karşılaştırma yardımcıları: etiket, kaydırma (hizalama), metrik seri/birim.
+describe('compare + metric kaynağı', () => {
+  it('etiket', () => {
+    expect(compareLabelTR(86400)).toBe('dün aynı saat');
+    expect(compareLabelTR(604800)).toBe('geçen hafta aynı saat');
+    expect(compareLabelTR(7200)).toBe('2 saat önce');
+  });
+  it('shiftSeries noktaları şimdiki pencereye hizalar, grup anahtarı korunur', () => {
+    const s: SpanMetricSeries[] = [{ groupKey: ['a'], points: [{ time: 1_000, value: 2 }, { time: 2_000, value: 3 }] }];
+    expect(shiftSeries(s, 500)).toEqual([{ groupKey: ['a'], points: [{ time: 1_500, value: 2 }, { time: 2_500, value: 3 }] }]);
+    expect(shiftSeries(undefined, 5)).toEqual([]);
+  });
+  it('metricRedSeries agg anahtarını okur; birim gecikmede yanıttan', () => {
+    const resp = { series: { p95: [{ groupKey: [], points: [{ time: 1, value: 9 }] }], rate: [] }, latencyUnitKnown: true, latencyUnit: 's' } as unknown as import('@/lib/types').ServiceMetricRED;
+    expect(metricRedSeries(resp, 'p95').length).toBe(1);
+    expect(metricRedSeries(resp, 'error_rate')).toEqual([]);
+    expect(metricRedUnit(resp, 'p95')).toBe('s');
+    expect(metricRedUnit(resp, 'rate')).toBe('req/s');
+    expect(metricRedUnit(undefined, 'p99')).toBe('ms');
   });
 });

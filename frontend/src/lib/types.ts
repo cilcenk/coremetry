@@ -5452,7 +5452,7 @@ export interface ExplainAnswerBase {
 // (AIDrawer) — bu yüzden bileşen dosyasında değil burada yaşar.
 export type ChatBlockType = 'text' | 'table' | 'chart' | 'trace_list' | 'link' | 'action' | 'evidence';
 /** chart bloğunun gövdesi — components/cosreChartSpec.ts CosreChartSpec ile aynı alanlar (Go guidedChartSpec). */
-export interface CosreChartSpecLike { title?: string; service: string; operation?: string; agg: string; unit?: string; rangeS?: number; groupBy?: string; fromNs?: number; toNs?: number }
+export interface CosreChartSpecLike { title?: string; service: string; operation?: string; agg: string; unit?: string; rangeS?: number; groupBy?: string; fromNs?: number; toNs?: number; compare?: { kind?: string; shiftS: number }; source?: 'span' | 'metric' }
 export interface ChatTypedBlock { id: string; type: ChatBlockType; seq: number; final: boolean; payload: unknown }
 
 export interface ChatTurn extends ChatMessage {

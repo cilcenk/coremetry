@@ -1222,7 +1222,25 @@ type renderChartArgs struct {
 	// beyaz liste: sohbet balonundaki ~560px kartta iki anahtarlı kırılım
 	// seri sayısını çarpar, kırılım ise tam da okunabilirlik için var.
 	GroupBy string `json:"group_by,omitempty"`
+	// v0.10.545 (CoSRE v2 Faz 3.5) — karşılaştırma: aynı pencere bir gün /
+	// bir hafta önce, KESİKLİ ikinci seri. Source: "span" (CH rollup) |
+	// "metric" (VictoriaMetrics / metrik deposu, metric-red ucu). Operatör
+	// kararı 2026-09-07: karşılaştırma VM'den → compare verilince source
+	// varsayılanı "metric".
+	Compare string `json:"compare,omitempty"`
+	Source  string `json:"source,omitempty"`
 }
+
+// renderChartCompare — spec çıktısındaki compare nesnesi (nil = yok).
+func renderChartCompare(a renderChartArgs) any {
+	if a.Compare == "" {
+		return nil
+	}
+	return map[string]any{"kind": a.Compare, "shiftS": renderChartCompareShift[a.Compare]}
+}
+
+// renderChartCompareShift — compare enum → saniye kaydırma.
+var renderChartCompareShift = map[string]int64{"prev_day": 86400, "prev_week": 604800}
 
 // renderChartGroupKeys — kırılım beyaz listesi.
 //
@@ -1263,6 +1281,20 @@ func normalizeRenderChart(a renderChartArgs) (norm renderChartArgs, errMsg strin
 	if a.GroupBy != "" && !renderChartGroupKeys[a.GroupBy] {
 		return a, fmt.Sprintf("unknown group_by %q — must be one of http.route, name, kind, status, peer", a.GroupBy)
 	}
+	if a.Compare != "" {
+		if _, ok := renderChartCompareShift[a.Compare]; !ok {
+			return a, fmt.Sprintf("unknown compare %q — must be prev_day or prev_week", a.Compare)
+		}
+		if a.Source == "" {
+			a.Source = "metric" // v0.10.545 — karşılaştırma metrik deposundan (VM)
+		}
+		a.GroupBy = "" // kırılım + karşılaştırma aynı grafikte okunmaz
+	}
+	switch a.Source {
+	case "", "span", "metric":
+	default:
+		return a, fmt.Sprintf("unknown source %q — must be span or metric", a.Source)
+	}
 	return a, ""
 }
 
@@ -1292,6 +1324,16 @@ func renderChartTool(d Deps) mcp.Tool {
 					"minimum":     0,
 					"maximum":     604800,
 					"description": "Chart window in seconds. Default 1800 (30min), max 604800 (7d).",
+				},
+				"compare": map[string]any{
+					"type":        "string",
+					"enum":        []string{"prev_day", "prev_week"},
+					"description": "Overlay the SAME window one day (prev_day) or one week (prev_week) earlier as a dashed second line. Use when the operator asks 'dün bu saatte de böyle miydi?', 'geçen haftaya göre', 'was it like this yesterday'. Reads the metrics store (VictoriaMetrics); group_by is ignored with compare.",
+				},
+				"source": map[string]any{
+					"type":        "string",
+					"enum":        []string{"span", "metric"},
+					"description": "Data source: span (trace-derived rollups, default) or metric (metrics store / VictoriaMetrics — the same numbers Grafana shows). compare defaults to metric.",
 				},
 				"group_by": map[string]any{
 					"type":        "string",
@@ -1351,6 +1393,12 @@ func renderChartTool(d Deps) mcp.Tool {
 			}
 			if a.GroupBy != "" {
 				spec["groupBy"] = a.GroupBy
+			}
+			if c := renderChartCompare(a); c != nil { // v0.10.545 — karşılaştırma + kaynak
+				spec["compare"] = c
+			}
+			if a.Source != "" {
+				spec["source"] = a.Source
 			}
 			return map[string]any{
 				"ok":   true,

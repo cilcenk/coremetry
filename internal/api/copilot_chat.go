@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/cilcenk/coremetry/internal/ai/agent/blocks"
 	agentctx "github.com/cilcenk/coremetry/internal/ai/agent/context"
 	agenttools "github.com/cilcenk/coremetry/internal/ai/agent/tools"
@@ -760,15 +761,28 @@ func chatChartSpec(out string, now time.Time) (guidedChartSpec, bool) {
 	return spec, true
 }
 
+// compareTitleTR — v0.10.547: karşılaştırma başlık eki.
+func compareTitleTR(shiftS int64) string {
+	switch shiftS {
+	case 86400:
+		return "dün aynı saat"
+	case 604800:
+		return "geçen hafta aynı saat"
+	}
+	return fmt.Sprintf("%d saat önce", shiftS/3600)
+}
+
 func chatChartBlock(out string) (block, key string) {
 	var rc struct {
 		OK   bool `json:"ok"`
 		Spec struct {
-			Service   string `json:"service"`
-			Operation string `json:"operation"`
-			Agg       string `json:"agg"`
-			RangeS    int64  `json:"rangeS"`
-			GroupBy   string `json:"groupBy"`
+			Service   string              `json:"service"`
+			Operation string              `json:"operation"`
+			Agg       string              `json:"agg"`
+			RangeS    int64               `json:"rangeS"`
+			GroupBy   string              `json:"groupBy"`
+			Compare   *guidedChartCompare `json:"compare"` // v0.10.547
+			Source    string              `json:"source"`
 		} `json:"spec"`
 	}
 	if err := json.Unmarshal([]byte(out), &rc); err != nil || !rc.OK || rc.Spec.Service == "" || rc.Spec.Agg == "" {
@@ -782,6 +796,9 @@ func chatChartBlock(out string) (block, key string) {
 	if rc.Spec.GroupBy != "" {
 		title += " · " + rc.Spec.GroupBy
 	}
+	if rc.Spec.Compare != nil && rc.Spec.Compare.ShiftS > 0 {
+		title += " · " + compareTitleTR(rc.Spec.Compare.ShiftS)
+	}
 	fence := chartFence(guidedChartSpec{
 		Title:     title,
 		Service:   rc.Spec.Service,
@@ -789,6 +806,8 @@ func chatChartBlock(out string) (block, key string) {
 		Agg:       rc.Spec.Agg,
 		RangeS:    rc.Spec.RangeS,
 		GroupBy:   rc.Spec.GroupBy,
+		Compare:   rc.Spec.Compare, // v0.10.547
+		Source:    rc.Spec.Source,
 	})
 	// v0.9.1186 — kırılım DEDUP anahtarına girdi. Girmeseydi aynı servis+
 	// agg'ın kırılımlı ve kırılımsız hâli "aynı kart" sayılır, ikincisi

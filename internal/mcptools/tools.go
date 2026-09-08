@@ -57,7 +57,7 @@
 //     doğru çağrının koşulu, orada kazanılan bayt yanlış argümanla
 //     harcanan bir tura değmez.
 //
-// Tool catalogue (52 tools; v0.10.555 — 48 → 52: problem_tools.go get_problem / get_correlation_evidence / similar_problems / get_capabilities; v0.10.545 — 47 → 48: list_deployments.go; v0.10.478 — 44 → 47: context_tools.go; v0.10.475 — 43 → 44: build_link.go; v0.10.474 — 42 → 43: trace_stats.go; v0.10.472 — 40 → 42: attr_discovery.go; v0.10.469 — 39 → 40: resolve_entity.go; v0.10.468 — 36 → 39: entity_catalog.go list_namespaces / list_workloads / list_pods; sayım v0.9.1050'de düzeltildi — blok
+// Tool catalogue (54 tools; v0.10.556 — 52 → 54: signal_tools.go log_patterns / cluster_metric; v0.10.555 — 48 → 52: problem_tools.go get_problem / get_correlation_evidence / similar_problems / get_capabilities; v0.10.545 — 47 → 48: list_deployments.go; v0.10.478 — 44 → 47: context_tools.go; v0.10.475 — 43 → 44: build_link.go; v0.10.474 — 42 → 43: trace_stats.go; v0.10.472 — 40 → 42: attr_discovery.go; v0.10.469 — 39 → 40: resolve_entity.go; v0.10.468 — 36 → 39: entity_catalog.go list_namespaces / list_workloads / list_pods; sayım v0.9.1050'de düzeltildi — blok
 // v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu;
 // v0.9.1227'de get_operation_health ile 33; v0.9.1233'te
 // get_exception_samples ile 34; v0.9.1244'te list_teams +
@@ -71,6 +71,7 @@
 //   - list_problems
 //   - get_problem_root_cause (v0.9.160)
 //   - get_problem / get_correlation_evidence / similar_problems / get_capabilities (v0.10.555, problem_tools.go)
+//   - log_patterns / cluster_metric (v0.10.556, signal_tools.go)
 //   - list_anomalies
 //   - search_logs
 //   - get_trace
@@ -211,6 +212,9 @@ type Deps struct {
 	MetricsName     func() string // seam adı: "vm" | "ch"
 	RAGReady        func() bool
 	CopilotModel    func() string // "" = yapılandırılmamış
+	// v0.10.556 (Faz 4b) — cluster_metric: Thanos sabit handler aynası; nil =
+	// Thanos yok (tool disabled döner). api/mcp_deps.go mcpClusterMetrics.
+	ClusterMetrics ClusterMetricReader
 }
 
 // MetricSource is the metric-read half of Deps, satisfied by
@@ -355,6 +359,9 @@ func ToolList(d Deps) []mcp.Tool {
 		getCorrelationEvidenceTool(d),
 		similarProblemsTool(d),
 		getCapabilitiesTool(d),
+		// v0.10.556 (Faz 4b) — signal_tools.go: log desenleri + Thanos trend aynası.
+		logPatternsTool(d),
+		clusterMetricTool(d),
 		// v0.8.333 — cross-signal pivot tools (pivots.go, pivot Phase 4):
 		// trace↔log↔metric moves at MCP/copilot parity with the UI.
 		getLogsForTraceTool(d),

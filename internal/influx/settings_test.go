@@ -219,6 +219,13 @@ func TestNormalize_Ratio(t *testing.T) {
 	if out.Sources[0].Queries[0].unit() != "" {
 		t.Fatalf("flux sorgusu birimsiz")
 	}
+	// v0.10.548 — pay fazla boyut taşıyabilir (REDACTED üç boyutlu, toplam iki):
+	// oran paydanın taneciğinde, fazla boyut birleşimde toplanır.
+	sup := base()
+	sup.Queries[0].GroupBy = []string{"REDACTED", "REDACTED", "REDACTED"}
+	if _, err := Normalize(Settings{Sources: []SourceConfig{sup}}, Settings{}, newID); err != nil {
+		t.Fatalf("pay üst küme reddedildi: %v", err)
+	}
 
 	cases := []struct {
 		name string
@@ -229,6 +236,9 @@ func TestNormalize_Ratio(t *testing.T) {
 		{"aynı sorgu", func(s *SourceConfig) { s.Queries[2].Ratio.Denominator = "REDACTED" }, "aynı sorgu olamaz"},
 		{"boş ad", func(s *SourceConfig) { s.Queries[2].Ratio.Denominator = "" }, "zorunlu"},
 		{"groupBy farklı", func(s *SourceConfig) { s.Queries[2].GroupBy = []string{"REDACTED", "REDACTED"} }, "groupBy"},
+		// v0.10.548 — pay oranın anahtarını taşımıyorsa red; payda birebir şart.
+		{"pay anahtar eksik", func(s *SourceConfig) { s.Queries[0].GroupBy = []string{"REDACTED"} }, "pay sorgusunun groupBy"},
+		{"REDACTED"},
 		{"oranda flux", func(s *SourceConfig) { s.Queries[2].Flux = "from(bucket: \"x\")" }, "flux boş kalır"},
 		{"oran orana", func(s *SourceConfig) {
 			s.Queries = append(s.Queries, QueryConfig{Name: "oran2", GroupBy: s.Queries[2].GroupBy,

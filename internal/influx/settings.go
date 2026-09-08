@@ -97,15 +97,15 @@ type QueryConfig struct {
 // tanıyorsa korur, tanımıyorsa ada göre saklı kayıttan alır, yoksa
 // türetir. Name `service_name` olur (audit K4) — tekil.
 type SourceConfig struct {
-	ID                 string        `json:"id,omitempty"`
-	Name               string        `json:"name"`
-	URL                string        `json:"url"`
-	Org                string        `json:"org"`
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	Org  string `json:"org"`
 	// Token — saklı düz token (GET'te ASLA; Snapshot HasToken). Boş PUT
 	// saklıyı korur (Normalize prev'den taşır).
-	Token    string `json:"token,omitempty"`
+	Token string `json:"token,omitempty"`
 	// TokenRef — `env:NAME` | `file:/path`; doluysa Token'a tercih edilir.
-	TokenRef string `json:"tokenRef,omitempty"`
+	TokenRef           string        `json:"tokenRef,omitempty"`
 	IntervalSec        int           `json:"intervalSec,omitempty"`
 	InsecureSkipVerify bool          `json:"insecureSkipVerify,omitempty"`
 	Enabled            bool          `json:"enabled"`
@@ -485,10 +485,15 @@ func normalizeRatio(r *RatioSpec) *RatioSpec {
 	}
 }
 
-// validateRatios — v0.10.532: oran sorgusunun girdileri AYNI kaynakta, Flux
-// türünde ve aynı groupBy ile olmalı; aksi hâlde birleşim sessizce boş
-// döner ve seri hiç doğmazdı. Sıra-duyarlı groupBy eşitliği: fingerprint
-// groupBy sırasına bağlı (BuildMetricsRequest).
+// validateRatios — v0.10.532: oran sorgusunun girdileri AYNI kaynakta ve Flux
+// türünde olmalı; aksi hâlde birleşim sessizce boş döner ve seri hiç doğmazdı.
+// groupBy sözleşmesi (v0.10.548): oranın taneciği PAYDANIN taneciğidir —
+// payda groupBy'ı oranınkiyle birebir + aynı sırada (fingerprint groupBy
+// sırasına bağlı, BuildMetricsRequest); PAY oranın her anahtarını taşımak
+// zorunda ama fazlasını da taşıyabilir — fazla boyut birleşimde toplanır
+// (ratioKey yalnız oranın anahtarlarını okur, numBy[k] += v). Gerekçe: REDACTED
+// üç boyutlu (REDACTED × REDACTED × REDACTED, ekibin paneli), toplam
+// bucket'ında REDACTED tag'ı DOĞRULANMADI; oran kanal × operasyonda kalır.
 func validateRatios(src SourceConfig, label string) error {
 	byName := map[string]QueryConfig{}
 	for _, q := range src.Queries {
@@ -514,6 +519,12 @@ func validateRatios(src SourceConfig, label string) error {
 			if in.Ratio != nil {
 				return fmt.Errorf("%s: %s sorgusu %q bir oran; oran orana bağlanamaz", ql, side.role, side.name)
 			}
+			if side.role == "pay" {
+				if missing := missingStrings(q.GroupBy, in.GroupBy); len(missing) > 0 {
+					return fmt.Errorf("%s: pay sorgusunun groupBy'ı oranın her anahtarını taşımalı; eksik %v (pay %v)", ql, missing, in.GroupBy)
+				}
+				continue
+			}
 			if !sameStrings(in.GroupBy, q.GroupBy) {
 				return fmt.Errorf("%s: groupBy %s sorgusuyla aynı (ve aynı sırada) olmalı: %v ≠ %v", ql, side.role, q.GroupBy, in.GroupBy)
 			}
@@ -526,6 +537,21 @@ func validateRatios(src SourceConfig, label string) error {
 		}
 	}
 	return nil
+}
+
+// missingStrings — want'ın have'de bulunmayan öğeleri (sıra önemsiz).
+func missingStrings(want, have []string) []string {
+	set := make(map[string]bool, len(have))
+	for _, h := range have {
+		set[h] = true
+	}
+	var out []string
+	for _, w := range want {
+		if !set[w] {
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 func sameStrings(a, b []string) bool {

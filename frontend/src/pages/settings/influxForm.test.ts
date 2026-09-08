@@ -60,8 +60,8 @@ describe('eşikler', () => {
 });
 
 describe('REDACTED şablonu (v0.10.526 — GoldenGate ekibinin sorgusu, Coremetry uyarlaması)', () => {
-  it('gruplama kanal + operasyon; attrMap altı tag', () => {
-    expect(REDACTEDTEMPLATE.groupBy).toEqual(['REDACTED', 'REDACTED']);
+  it('gruplama kanal + fonksiyon + operasyon (v0.10.548, ekibin paneli); attrMap altı tag', () => {
+    expect(REDACTEDTEMPLATE.groupBy).toEqual(['REDACTED', 'REDACTED', 'REDACTED']);
     expect(Object.keys(REDACTEDTEMPLATE.attrMap ?? {}).sort()).toEqual(
       ['REDACTED', 'REDACTED', 'REDACTED', 'REDACTED', 'REDACTED', 'TRACEID']);
     expect(REDACTEDTEMPLATE.attrMap?.TRACEID).toBe('trace_id');
@@ -73,14 +73,14 @@ describe('REDACTED şablonu (v0.10.526 — GoldenGate ekibinin sorgusu, Coremetr
     expect(REDACTEDTEMPLATE.flux).not.toContain('REDACTED =~'); // v0.10.528 kanal süzgeci yok
     expect(REDACTEDTEMPLATE.name).toBe('REDACTED');
     expect(REDACTEDTEMPLATE.flux).toContain('range(start: -2h)'); // v0.10.527 gecikmeli kaynak
-    expect(REDACTEDTEMPLATE.flux).toContain('group(columns: ["REDACTED", "REDACTED"])');
+    expect(REDACTEDTEMPLATE.flux).toContain('group(columns: ["REDACTED", "REDACTED", "REDACTED"])');
     expect(REDACTEDTEMPLATE.flux).toContain('aggregateWindow(every: 1m, fn: sum, createEmpty: false)');
     for (const bad of ['v.timeRangeStart', 'v.windowPeriod', 'createEmpty: true', '_value > 4']) {
       expect(REDACTEDTEMPLATE.flux).not.toContain(bad);
     }
   });
   it('SORGU 2 (kanıt) yer tutucuları groupBy tag adlarıyla + from/to; SORGU 1 hiçbirini taşımaz', () => {
-    for (const ph of ['{{from}}', '{{to}}', '{{REDACTED}}', '{{REDACTED}}']) {
+    for (const ph of ['{{from}}', '{{to}}', '{{REDACTED}}', '{{REDACTED}}', '{{REDACTED}}']) {
       expect(REDACTEDTEMPLATE.enrichFlux).toContain(ph);
       expect(REDACTEDTEMPLATE.flux).not.toContain(ph);
     }
@@ -112,9 +112,15 @@ describe('ratio', () => {
     expect(REDACTEDRATIO_TEMPLATE.name).toBe('tfail_oran');
     expect(REDACTEDRATIO_TEMPLATE.flux).toBe('');
     expect(REDACTEDRATIO_TEMPLATE.ratio).toEqual({ numerator: REDACTEDTEMPLATE.name, denominator: GG_TOTAL_TEMPLATE.name });
-    expect(REDACTEDRATIO_TEMPLATE.groupBy).toEqual(REDACTEDTEMPLATE.groupBy);
+    // v0.10.548 — oran PAYDANIN taneciğinde; pay üst küme (sunucu fazlayı toplar).
     expect(REDACTEDRATIO_TEMPLATE.groupBy).toEqual(GG_TOTAL_TEMPLATE.groupBy);
-    expect(REDACTEDRATIO_TEMPLATE.enrichFlux).toBe(REDACTEDTEMPLATE.enrichFlux);
+    for (const g of REDACTEDRATIO_TEMPLATE.groupBy ?? []) expect(REDACTEDTEMPLATE.groupBy).toContain(g);
+    expect(REDACTEDTEMPLATE.groupBy?.length).toBeGreaterThan(REDACTEDRATIO_TEMPLATE.groupBy?.length ?? 0);
+    // Kanıt sorgusu yer tutucuları yalnız ORANIN tag'ları + from/to (enrich.go
+    // oranın groupBy'ını doldurur; {{REDACTED}} kalsaydı boş süzgeç = 0 satır).
+    const phs = [...(REDACTEDRATIO_TEMPLATE.enrichFlux ?? '').matchAll(/\{\{\s*([A-Za-z_]+)\s*\}\}/g)].map(m => m[1]);
+    expect(phs.sort()).toEqual(['REDACTED', 'REDACTED', 'from', 'to'].sort());
+    expect(REDACTEDRATIO_TEMPLATE.enrichFlux).not.toBe(REDACTEDTEMPLATE.enrichFlux);
     // Varsayılanlar şablona BASILMAZ (min payda / bekletme sunucuda).
     expect(REDACTEDRATIO_TEMPLATE.ratio?.minDenominator).toBeUndefined();
     expect(REDACTEDRATIO_TEMPLATE.ratio?.settleBuckets).toBeUndefined();

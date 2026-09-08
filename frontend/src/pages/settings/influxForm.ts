@@ -97,26 +97,43 @@ export function thresholdsToWire(f: ThresholdsForm): InfluxThresholds | undefine
 // Watermark aynı kovayı bir kez yazdığından geniş pencere güvenli; 2 sa
 // (6 satır/dk hacimde) ucuz. Kaynağın gecikmesi 2 sa'yi aşarsa sekmeden
 // büyüt.
+// v0.10.548 — operatör (2026-09-08, ekibin Grafana panelinin Query
+// inspector'ı): "bu sorguyu traceler için baz alabiliriz" → gruplama REDACTED
+// + REDACTED + REDACTED (ekibin paneli üç boyutlu). Panelin ^01 kanal
+// süzgeci (528 kararı) ve 500 ms / createEmpty:true (Grafana çözünürlüğü;
+// poller 1 dk, sıfır dolgusu D3'te) alınmadı. Oran (tfail_oran) PAYDANIN
+// taneciğinde kalır (kanal × operasyon): sunucu payın fazla boyutunu toplar;
+// toplam bucket'ında REDACTED doğrulanmadı, varsa sekmeden eklenir.
+// Kardinalite: kanal × fonksiyon × operasyon 5.000 satır tavanını aşarsa
+// gruplamadan önce REDACTED'u çıkar.
+
+/** SORGU 2 (kanıt) — verilen tag'lar için eşitlik süzgeci; yer tutucular
+ *  yalnız o sorgunun groupBy tag adları + from/to (enrich.go sözleşmesi). */
+export function tfailEnrichFlux(tags: string[]): string {
+  const where = tags.map(t => `r.${t} == "{{${t}}}"`).join(' and ');
+  REDACTED")
+  |> range(start: {{from}}, stop: {{to}})
+  |> filter(fn: (r) => r._measurement == "REDACTED" and r._field == "REDACTED")
+  |> filter(fn: (r) => ${where})
+  |> keep(columns: ["_time", "TRACEID", "REDACTED", "REDACTED", "REDACTED"])
+  |> group()
+  |> sort(columns: ["_time"], desc: true)
+  |> limit(n: 50)`;
+}
+
+export const REDACTEDGROUP_BY = ['REDACTED', 'REDACTED', 'REDACTED'] as const;
+
 export const REDACTEDTEMPLATE: InfluxQueryConfig = {
   name: 'REDACTED',
   REDACTED")
   |> range(start: -2h)
   |> filter(fn: (r) => r._measurement == "REDACTED" and r._field == "REDACTED")
-  |> group(columns: ["REDACTED", "REDACTED"])
+  |> group(columns: ["REDACTED", "REDACTED", "REDACTED"])
   |> aggregateWindow(every: 1m, fn: sum, createEmpty: false)
   |> yield(name: "sum")`,
   // SORGU 2 — kanıt: problem açılınca aynı grubun son 50 TRACEID'si.
-  // Yer tutucular groupBy tag adlarıyla (enrich.go: her groupBy tag'ı
-  // adıyla doldurulur) + {{from}}/{{to}}.
-  REDACTED")
-  |> range(start: {{from}}, stop: {{to}})
-  |> filter(fn: (r) => r._measurement == "REDACTED" and r._field == "REDACTED")
-  |> filter(fn: (r) => r.REDACTED == "{{REDACTED}}" and r.REDACTED == "{{REDACTED}}")
-  |> keep(columns: ["_time", "TRACEID", "REDACTED", "REDACTED", "REDACTED"])
-  |> group()
-  |> sort(columns: ["_time"], desc: true)
-  |> limit(n: 50)`,
-  groupBy: ['REDACTED', 'REDACTED'],
+  enrichFlux: tfailEnrichFlux([...REDACTEDGROUP_BY]),
+  groupBy: [...REDACTEDGROUP_BY],
   attrMap: {
     REDACTED: 'operation',
     REDACTED: 'FUNCTION_CODE',
@@ -128,10 +145,11 @@ export const REDACTEDTEMPLATE: InfluxQueryConfig = {
 };
 
 REDACTED
-// REDACTED toplamı (başarılı + başarısız), aynı gruplama (kanal süzgeci yok, v0.10.528).
-// Hata oranı (REDACTED ÷ toplam) bugün türetilmiyor; iki seri ayrı izlenir,
-// Explore'da yan yana çizilir. Kanıt sorgusu YOK (TRACEID bu bucket'ta
-// spec'te yok).
+// REDACTED toplamı (başarılı + başarısız), kanal × operasyon (kanal süzgeci yok,
+// v0.10.528). Hata oranı v0.10.532'den beri tfail_oran ile türetilir; oranın
+// taneciği bu sorgununki. Kanıt sorgusu YOK (TRACEID bu bucket'ta spec'te
+// yok). REDACTED tag'ı bu bucket'ta doğrulanmadı (v0.10.548) — varsa
+// sekmeden gruplamaya eklenir, oran da üç boyuta çıkar.
 export const GG_TOTAL_TEMPLATE: InfluxQueryConfig = {
   name: 'gg_adet_total',
   REDACTED")
@@ -170,14 +188,15 @@ export function ratioToWire(f: RatioForm): InfluxRatioSpec {
   };
 }
 
-/** Hata oranı şablonu: REDACTED ÷ gg_adet_total × 100, aynı gruplama; kanıt
- *  sorgusu payın SORGU 2'si (TRACEID pay bucket'ında). */
+/** Hata oranı şablonu: REDACTED ÷ gg_adet_total × 100, PAYDANIN gruplaması
+ *  (v0.10.548: pay üç boyutlu, fazlası sunucuda toplanır); kanıt sorgusu payın
+ *  SORGU 2'si oranın tag'larıyla (TRACEID pay bucket'ında). */
 export const REDACTEDRATIO_TEMPLATE: InfluxQueryConfig = {
   name: 'tfail_oran',
   flux: '',
   ratio: { numerator: REDACTEDTEMPLATE.name, denominator: GG_TOTAL_TEMPLATE.name },
-  enrichFlux: REDACTEDTEMPLATE.enrichFlux,
-  groupBy: [...(REDACTEDTEMPLATE.groupBy ?? [])],
+  enrichFlux: tfailEnrichFlux([...(GG_TOTAL_TEMPLATE.groupBy ?? [])]),
+  groupBy: [...(GG_TOTAL_TEMPLATE.groupBy ?? [])],
   attrMap: { ...(REDACTEDTEMPLATE.attrMap ?? {}) },
 };
 

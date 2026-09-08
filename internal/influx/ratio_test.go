@@ -133,3 +133,26 @@ func TestBuildRatioRecords_NoTime(t *testing.T) {
 		t.Fatalf("%v %+v", out, st)
 	}
 }
+
+// v0.10.548 — pay oranın anahtarından FAZLA boyut taşıyorsa (REDACTED: REDACTED ×
+// REDACTED × REDACTED; toplam: REDACTED × REDACTED) birleşim
+// paydanın anahtarında toplar: aynı kanal/operasyon/zaman kovasındaki iki
+// fonksiyon satırı (2 + 3) ÷ 50 = %10. Fazla boyut çıktıda yer almaz.
+func TestBuildRatioRecords_NumeratorExtraDimensionSums(t *testing.T) {
+	gb := []string{"REDACTED", "REDACTED"}
+	num := []Record{
+		REDACTED"),
+		REDACTED"),
+	}
+	den := []Record{rr("2026-09-08T06:00:00Z", "50", "REDACTED", "01", "REDACTED", "op1")}
+	out, st := BuildRatioRecords(num, den, gb, RatioSpec{})
+	if st.Joined != 1 || st.MissingTag != 0 || len(out) != 1 {
+		t.Fatalf("birleşim: %+v %d", st, len(out))
+	}
+	if v := out[0].Values["_value"]; v != "10" {
+		t.Fatalf("oran %s, 10 bekleniyordu", v)
+	}
+	if _, ok := out[0].Values["REDACTED"]; ok {
+		t.Fatal("fazla boyut çıktıya sızmamalı")
+	}
+}

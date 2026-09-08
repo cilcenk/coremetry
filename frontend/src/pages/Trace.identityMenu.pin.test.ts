@@ -101,3 +101,15 @@ describe('Trace kimlik seçim menüsü (v0.10.568)', () => {
     for (const o of opens) expect(o).toContain("'_blank', 'noopener,noreferrer'");
   });
 });
+
+// v0.10.570 — operatör-raporlu (prod ekran görüntüsü): ok düğmesi ana
+// düğmeden kısa kalıp basamak yapıyordu (.btn-icon.ib-md sabit 28×28 kare,
+// Button md dolgudan daha uzun). Yükseklik kardeşten gelmeli.
+describe('split düğme hizası', () => {
+  it('ok yüksekliği kardeşten alır (stretch + height auto)', () => {
+    expect(src).toContain("alignSelf: 'stretch'");
+    expect(src).toContain("height: 'auto'");
+    // Ortak kenarlık hâlâ tek piksel: iki hedef, tek kontrol.
+    expect(src).toContain('marginLeft: -1');
+  });
+});

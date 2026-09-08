@@ -55,7 +55,12 @@ const (
 	linkIdentityLogsPerSpan = 20
 	// linkIdentityLogsPerTrace — span_id taşımayan logları da gören TEK
 	// trace-geneli geçiş.
-	linkIdentityLogsPerTrace = 50
+	//
+	// v0.10.569: 50 → 150 (operatör: "request_id logta herhangi bir yerde
+	// varsa bulacak değil mi"). Konuşkan bir trace'te kimlik 60. satırda
+	// geçiyorsa 50 tavanı onu kaçırıyordu. Bu TEK bir ES turu; tavanı
+	// üçe katlamanın maliyeti aynı sorgunun sayfa boyutu, ek tur değil.
+	linkIdentityLogsPerTrace = 150
 	// linkIdentityAttrMax — birleştirilmiş attribute tavanı (bağlam
 	// bütçesi; şablon en çok birkaç anahtar ister).
 	linkIdentityAttrMax = 200
@@ -115,6 +120,8 @@ type traceLinkCandidate struct {
 	// UYDURULMAZ.
 	Role    string `json:"role"`
 	IsError bool   `json:"isError,omitempty"`
+	// Loose — v0.10.569: biçim doğrulanamadı (gevşek eşleşme).
+	Loose bool `json:"loose,omitempty"`
 	// Used — bu değer BUGÜNKÜ linkte kullanılıyor mu (anahtar başına ilk
 	// aday + çözülen request_id). Birden çok anahtar varsa birden çok
 	// true olabilir; alan adı "seçili" değil "kullanılan", çünkü seçim
@@ -158,6 +165,10 @@ type traceLinkIdentity struct {
 	// tarayıcının Intl'ine verilemez — ad taşırsak tarayıcı kendi
 	// tzdata'sıyla doğru biçimler.
 	TZ string `json:"tz"`
+	// RequestIDLoose — v0.10.569: kullanılan request_id GEVŞEK eşleşmeyle
+	// bulundu (biçim doğrulanamadı). Link üretilir, ama düğme ipucu bunu
+	// söyler: "buldum" ile "doğruladım" ayrı şeyler.
+	RequestIDLoose bool `json:"requestIdLoose,omitempty"`
 }
 
 func (s *Server) registerTraceLinkIdentityRoutes(mux *http.ServeMux) {
@@ -432,6 +443,10 @@ func traceLinkWindow(spans []chstore.SpanRow) (time.Time, time.Time) {
 type linkIdentityLogHit struct {
 	Value  string
 	SpanID string
+	// Loose — v0.10.569: token kimlik ŞEKLİNDE ama sabit biçime UYMUYOR
+	// (reqid.FindLooseToken). Link için değer yeterli, ama "çözümledim"
+	// İDDİA ETMİYORUZ — operatör bunu görmeli.
+	Loose bool
 }
 
 // linkIdentitySpanRoles — SAF: `ordered` ile AYNI uzunlukta rol dilimi.
@@ -537,6 +552,7 @@ func buildLinkIdentityCandidates(ordered []chstore.SpanRow, selected string, hit
 			Source: linkIdentitySourceLog,
 			Role:   linkIdentityRoleSpan,
 		}
+		c.Loose = h.Loose
 		if i, ok := idx[h.SpanID]; ok {
 			sp := ordered[i]
 			c.SpanID, c.SpanName, c.Service = sp.SpanID, sp.Name, sp.ServiceName
@@ -616,6 +632,10 @@ func (s *Server) resolveTraceLinkIdentity(ctx context.Context, traceID, selected
 	// sırasıyla (map değil dilim: sıra cevabın parçası).
 	var hits []linkIdentityLogHit
 	seenHit := make(map[string]bool)
+	// v0.10.569 — GEVŞEK adaylar: katı tarayıcı hiçbir şey bulamazsa
+	// kullanılır. Aynı gezinmede toplanır, EK ES TURU YOK.
+	var looseHits []linkIdentityLogHit
+	seenLoose := make(map[string]bool)
 	// finish — HER dönüş noktası aday listesini taşır (v0.10.568).
 	// Kimlik çözülemese de (log arka ucu yok / okuma düştü) operatörün
 	// seçebileceği span attribute'ları vardır; boş bir menü göstermek
@@ -663,6 +683,17 @@ func (s *Server) resolveTraceLinkIdentity(ctx context.Context, traceID, selected
 			}
 			id, ok := reqid.Find(rec.Body, loc)
 			if !ok {
+				// v0.10.569 — katı biçim tutmadı: kimliğe BENZEYEN token'ı
+				// (47-64 alnum, ≥33 rakam) yedeğe yaz. Kazanan seçilmez,
+				// yalnız hiçbir katı eşleşme çıkmazsa kullanılır.
+				if tok, lok := reqid.FindLooseToken(rec.Body); lok && !seenLoose[tok] {
+					seenLoose[tok] = true
+					lSpan := rec.SpanID
+					if lSpan == "" {
+						lSpan = fallbackSpan
+					}
+					looseHits = append(looseHits, linkIdentityLogHit{Value: tok, SpanID: lSpan, Loose: true})
+				}
 				continue
 			}
 			recSpan := rec.SpanID
@@ -710,6 +741,13 @@ func (s *Server) resolveTraceLinkIdentity(ctx context.Context, traceID, selected
 	if id, spanID, ok := scan(page, ""); ok {
 		out.RequestID, out.SpanID, out.Source = id, spanID, linkIdentitySourceLog
 	}
+	// v0.10.569 — katı tarayıcı boş döndüyse gevşek yedek. Sıra korunur:
+	// gevşek aday ASLA katı bir eşleşmenin önüne geçmez.
+	if out.Source != linkIdentitySourceLog && len(looseHits) > 0 {
+		out.RequestID, out.SpanID = looseHits[0].Value, looseHits[0].SpanID
+		out.Source, out.RequestIDLoose = linkIdentitySourceLog, true
+		hits = append(hits, looseHits...)
+	}
 	out.DistinctRequestIDs = len(hits)
 	out.Note = linkIdentityNote(out, len(ordered))
 	return finish(out)
@@ -728,6 +766,11 @@ func linkIdentityNote(id traceLinkIdentity, spanCount int) string {
 		return b.String()
 	}
 	b.WriteString("request_id log gövdesinden çözüldü")
+	if id.RequestIDLoose {
+		// "Buldum" ile "doğruladım" AYRI: gevşek eşleşme linki üretir ama
+		// biçim iddiası taşımaz.
+		b.WriteString(" — BİÇİM DOĞRULANAMADI (gevşek eşleşme)")
+	}
 	if id.SpanID != "" {
 		b.WriteString(" (span " + id.SpanID + ")")
 	}

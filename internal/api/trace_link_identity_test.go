@@ -39,10 +39,12 @@ type scriptLogStore struct {
 	bySpan map[string][]*logstore.LogRecord
 	err    error
 	calls  []string // Search çağrılarının span_id sırası (kanıt)
+	limits []int    // v0.10.569 — istenen sayfa boyutu (trace geçişi tavanı kanıtı)
 }
 
 func (f *scriptLogStore) Search(_ context.Context, flt logstore.Filter) (*logstore.Page, error) {
 	f.calls = append(f.calls, flt.SpanID)
+	f.limits = append(f.limits, flt.Limit)
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -926,5 +928,59 @@ func TestGetTraceLinkIdentity_Keys(t *testing.T) {
 	}
 	if got.Identities == nil {
 		t.Fatalf("identities nil: %s", w.Body.String())
+	}
+}
+
+// v0.10.569 — operatör: "request_id logta herhangi bir yerde varsa bulacak
+// değil mi". İki iyileştirme: (1) katı biçim tutmazsa GEVŞEK ikinci tur
+// (kimliğe benzeyen token; link üretilir ama biçim İDDİA EDİLMEZ),
+// (2) trace-geneli geçiş 50 → 150 satır.
+//
+// ridLoose: ridA'nın şekli ama takvim dışı tarih (13. ay, 45. gün) — 47
+// karakter, ≥33 rakam, yani FindLooseToken yakalar, Parse yakalamaz.
+const ridLoose = "ABCD001" + "059931" + "0513" + "0000000042" + "20261345" + "093440812" + "086"
+
+func TestResolveTraceLinkIdentity_LooseFallback(t *testing.T) {
+	f := &scriptLogStore{bySpan: map[string][]*logstore.LogRecord{
+		"b": {lidRec("b", `{"msg":"basarisiz","islem":"`+ridLoose+`"}`)},
+	}}
+	got := (&Server{logs: f}).resolveTraceLinkIdentity(context.Background(), "abc", "", linkIdentitySpans(), "", []string{"function_id"})
+	if got.Source != linkIdentitySourceLog || got.RequestID != ridLoose {
+		t.Fatalf("gevşek token linke girmeli: %+v", got)
+	}
+	if !got.RequestIDLoose {
+		t.Fatal("gevşek eşleşme İLAN EDİLMELİ (buldum ≠ doğruladım)")
+	}
+	if !strings.Contains(got.Note, "BİÇİM DOĞRULANAMADI") {
+		t.Fatalf("not gevşekliği söylemeli: %q", got.Note)
+	}
+	var loose *traceLinkCandidate
+	for i := range got.Identities {
+		if got.Identities[i].Key == linkIdentityKeyRequestID {
+			loose = &got.Identities[i]
+			break
+		}
+	}
+	if loose == nil || !loose.Loose {
+		t.Fatalf("aday gevşek işaretlenmeli: %+v", got.Identities)
+	}
+	// Attribute yolu kapanmaz.
+	if got.Attrs["function_id"] != "F-ROOT" {
+		t.Fatalf("attrs dolu kalmalı: %v", got.Attrs)
+	}
+	// Trace geçişi 150 satır ister (kimlik "herhangi bir yerde" olabilir).
+	if len(f.limits) == 0 || f.limits[len(f.limits)-1] != linkIdentityLogsPerTrace || linkIdentityLogsPerTrace != 150 {
+		t.Fatalf("trace geçişi tavanı: %v (sabit %d)", f.limits, linkIdentityLogsPerTrace)
+	}
+}
+
+func TestResolveTraceLinkIdentity_StrictBeatsLoose(t *testing.T) {
+	// Gevşek token ÖNDEKİ span'de, katı olan arkadaki: katı yine kazanır.
+	got := (&Server{logs: &scriptLogStore{bySpan: map[string][]*logstore.LogRecord{
+		"b": {lidRec("b", "bozuk "+ridLoose)},
+		"r": {lidRec("r", "saglam "+ridA)},
+	}}}).resolveTraceLinkIdentity(context.Background(), "abc", "", linkIdentitySpans(), "", nil)
+	if got.RequestID != ridA || got.RequestIDLoose {
+		t.Fatalf("katı eşleşme gevşeğin önüne geçmeli: %+v", got)
 	}
 }

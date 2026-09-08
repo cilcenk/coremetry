@@ -24,6 +24,7 @@ package api
 // numarayı alır.
 
 import (
+	"github.com/cilcenk/coremetry/internal/ai/agent/blocks"
 	"strings"
 
 	"github.com/cilcenk/coremetry/internal/mcp"
@@ -121,4 +122,19 @@ func emitStepEvidence(emit func(string, any), i int, tool, text string, err erro
 		"i": i, "tool": tool, "ok": ok,
 		"preview": preview, "truncated": truncated, "bytes": len(text),
 	})
+}
+
+// withBlockSeq — v0.10.557 (CoSRE Faz 4c): guided demetlerin yapısal kanıtı TEK
+// sıralayıcıdan geçsin. Demet `emit("evidence", payload)` der; sarmalayıcı bunu
+// chat'in blockSeq'iyle `block{type:"evidence"}` olarak yayar — chart/link/action
+// bloklarıyla aynı id/seq uzayı (iki sıralayıcı = FE'de id çakışması, blok
+// birbirini ezer). seq nil ise olay olduğu gibi geçer (harici/hafif yollar).
+func withBlockSeq(emit func(string, any), seq *blocks.Sequencer) func(string, any) {
+	return func(kind string, payload any) {
+		if kind == "evidence" && seq != nil {
+			emit("block", seq.Next(blocks.TypeEvidence, payload))
+			return
+		}
+		emit(kind, payload)
+	}
 }

@@ -66,7 +66,7 @@ export function kafkaPanelUnit(unit: string | null | undefined): string | undefi
 }
 
 /** null = bölüm tam çizilir; string = tek satırlık düşüş metni. */
-export function kafkaDegradeTR(r: MessagingClients | null | undefined): string | null {
+export function kafkaDegradeTR(r: Pick<MessagingClients, 'available'> | null | undefined): string | null {
   if (r === null) return 'Kafka istemci metriği okunamadı (kaynak hatası) — span türevli görünüm.';
   if (!r) return null;
   if (!r.available) {

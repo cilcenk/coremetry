@@ -15,3 +15,15 @@ export function useMessagingClients(p: {
     staleTime: 30_000,
   });
 }
+
+// v0.10.552 — servis Infra sekmesi "Kafka client" paneli. Sekme açıkken bir
+// kez; staleTime = sunucu TTL (30 s); polling yok (Infra sekmesinin diğer
+// sorguları da poll'suz, 60 s stale).
+export function useServiceKafkaClients(p: { service: string; fromNs: number; toNs: number; env?: string }) {
+  return useQuery({
+    queryKey: ['service', 'kafka-clients', p.service, p.fromNs, p.toNs, p.env ?? ''],
+    queryFn: ({ signal }) => api.serviceKafkaClients(p.service, p.fromNs, p.toNs, p.env, signal),
+    enabled: !!p.service,
+    staleTime: 30_000,
+  });
+}

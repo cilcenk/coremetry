@@ -15,6 +15,7 @@ import { useServicePods } from '@/pages/service/useServicePods';
 import { useEntityEnabled } from '@/lib/queries';
 import { Link } from 'react-router-dom';
 import type { TimeRange } from '@/lib/types';
+import { ServiceKafkaClientsPanel } from './ServiceKafkaClientsPanel'; // v0.10.552
 
 // ServiceInfraTab — servis detayının Infrastructure sekmesi. CLUSTER-SEVİYESİ
 // altyapı: eşleşme notu, cluster çipleri (?icluster), KPI satırı, CPU/Mem
@@ -143,152 +144,163 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
     : null;
 
   // ── Kapılar (hook'lardan SONRA) ──
-  if (metaQ.isPending || sourcesPending) return <Spinner />;
-  if (noClusters) {
-    return <Empty icon="▦" title="No Thanos clusters configured">
-      Add a remote cluster under Settings → Remote clusters to see pod-level infrastructure here.{entityHint}
-    </Empty>;
-  }
-  if (rows.length === 0) {
-    // v0.9.538 — spinner YALNIZ hiç eşleşme yokken; gelen cluster'lar
-    // hemen çizilir (tek yavaş cluster tüm sayfayı bekletmesin).
-    if (podsBlocking) return <Spinner />;
-    return <Empty icon="▦" title="No pods matched">
-      {/* v0.9.536 — gerçek aday kalıbı (ServicePodsTab ile aynı düzeltme). */}
-      Tried {ns && deploy ? `k8s.namespace=${ns} · ${deploy}` : 'the k8s metadata mapping'}
-      {' '}and pod-name matching (<span className="mono">{servicePodRegex(service, deploy)}</span>) across{' '}
-      {matched.length} Thanos cluster{matched.length > 1 ? 's' : ''} — nothing matched.
-      Check that the pods follow the <span className="mono">&lt;service&gt;-&lt;hash&gt;-&lt;rand&gt;</span> naming
-      or curate namespace/deployment in the service catalog.{entityHint}
-    </Empty>;
-  }
+  // v0.10.552 — Thanos gövdesi (erken dönüşler dahil) ayrı bir kapanışta; Kafka
+  // client paneli ondan BAĞIMSIZ altta çizilir (Thanos yokken de).
+  const thanosBody = (() => {
+    if (metaQ.isPending || sourcesPending) return <Spinner />;
+    if (noClusters) {
+      return <Empty icon="▦" title="No Thanos clusters configured">
+        Add a remote cluster under Settings → Remote clusters to see pod-level infrastructure here.{entityHint}
+      </Empty>;
+    }
+    if (rows.length === 0) {
+      // v0.9.538 — spinner YALNIZ hiç eşleşme yokken; gelen cluster'lar
+      // hemen çizilir (tek yavaş cluster tüm sayfayı bekletmesin).
+      if (podsBlocking) return <Spinner />;
+      return <Empty icon="▦" title="No pods matched">
+        {/* v0.9.536 — gerçek aday kalıbı (ServicePodsTab ile aynı düzeltme). */}
+        Tried {ns && deploy ? `k8s.namespace=${ns} · ${deploy}` : 'the k8s metadata mapping'}
+        {' '}and pod-name matching (<span className="mono">{servicePodRegex(service, deploy)}</span>) across{' '}
+        {matched.length} Thanos cluster{matched.length > 1 ? 's' : ''} — nothing matched.
+        Check that the pods follow the <span className="mono">&lt;service&gt;-&lt;hash&gt;-&lt;rand&gt;</span> naming
+        or curate namespace/deployment in the service catalog.{entityHint}
+      </Empty>;
+    }
 
-  const phaseKnown = visRows.some(r => r.phase);
-  const running = visRows.filter(r => r.phase === 'Running').length;
-  const cpuSum = visRows.reduce((a, r) => a + r.cpuCores, 0);
-  const memSum = visRows.reduce((a, r) => a + r.memBytes, 0);
-  const restartSum = visRows.reduce((a, r) => a + (r.restarts ?? 0), 0);
-  const kpiVal = { fontSize: 26, fontWeight: 700 } as const;
-  const kpiSub = { fontSize: 11, color: 'var(--text3)', marginTop: 4 } as const;
+    const phaseKnown = visRows.some(r => r.phase);
+    const running = visRows.filter(r => r.phase === 'Running').length;
+    const cpuSum = visRows.reduce((a, r) => a + r.cpuCores, 0);
+    const memSum = visRows.reduce((a, r) => a + r.memBytes, 0);
+    const restartSum = visRows.reduce((a, r) => a + (r.restarts ?? 0), 0);
+    const kpiVal = { fontSize: 26, fontWeight: 700 } as const;
+    const kpiSub = { fontSize: 11, color: 'var(--text3)', marginTop: 4 } as const;
+
+    return (
+      <>
+        {/* Drill breadcrumb — All clusters › cluster, ?icluster'dan (çip filtresi). */}
+        {icluster && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12, marginBottom: 10 }}>
+            <LinkButton title="Clear cluster filter" onClick={() => setICluster('')}>
+              All clusters
+            </LinkButton>
+            <span style={{ color: 'var(--text3)' }}>›</span>
+            <span className="mono" style={{ color: 'var(--text)' }}>{icluster}</span>
+          </div>
+        )}
+        <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
+          {ns && deploy ? (
+            <>Pods matched to <span className="mono">{service}</span> via{' '}
+            k8s.namespace=<span className="mono">{ns}</span> · <span className="mono">{deploy}</span></>
+          ) : (
+            <>Pods matched to <span className="mono">{service}</span> by pod name{' '}
+            (<span className="mono">{service}-*</span>{effNs ? <> · ns:<span className="mono">{effNs}</span></> : null} — no k8s metadata from spans)</>
+          )}{' '}
+          across {clustersWithPods.length} cluster{clustersWithPods.length > 1 ? 's' : ''}
+        </div>
+
+        {/* Cluster çipleri — tıklanınca grafikler o cluster'a daralır. */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          {clustersWithPods.map(c => {
+            const rs = rows.filter(r => r.cluster === c);
+            const failing = rs.filter(r =>
+              r.phase && r.phase !== 'Running' && r.phase !== 'Succeeded').length;
+            const active = icluster === c;
+            return (
+              <Chip key={c} active={active}
+                onClick={() => setICluster(active ? '' : c)}
+                title={active ? 'Click to clear the cluster filter' : 'Filter to this cluster'}>
+                <span className="mono" style={{ fontWeight: 600 }}>{c}</span>
+                <span style={{ color: 'var(--text3)' }}>{rs.length} pods · {fmtCores(rs.reduce((a, r) => a + r.cpuCores, 0))} CPU</span>
+                {failing > 0 && <span className="badge b-err">{failing} failing</span>}
+              </Chip>
+            );
+          })}
+        </div>
+
+        {/* KPI satırı: Running / CPU / Memory / Restarts. */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
+          <Card density="tight" header={phaseKnown ? 'Running pods' : 'Pods'} {...podsClick}
+            title="Go to the Pods tab">
+            <div className="mono" style={{ ...kpiVal, color: phaseKnown ? 'var(--ok)' : undefined }}>
+              {fmtNum(phaseKnown ? running : visRows.length)}
+            </div>
+            <div style={kpiSub}>{phaseKnown
+              ? (visRows.length - running > 0 ? `${fmtNum(visRows.length - running)} not running` : 'all pods healthy')
+              : 'status unknown — kube-state-metrics not visible on this cluster'}</div>
+          </Card>
+          <Card density="tight" header="CPU used (cores)" {...chartClick('cpu')} title="Go to the CPU chart">
+            <div className="mono" style={kpiVal}>{visRows.length ? fmtCores(cpuSum) : '—'}</div>
+          </Card>
+          <Card density="tight" header="Memory used" {...chartClick('mem')} title="Go to the memory chart">
+            <div className="mono" style={kpiVal}>{visRows.length ? fmtBytes(memSum) : '—'}</div>
+          </Card>
+          <Card density="tight" header="Restarts (total)" {...podsClick}
+            title="Go to the Pods tab">
+            <div className="mono" style={{ ...kpiVal, color: restartColor(restartSum) }}>{fmtNum(restartSum)}</div>
+          </Card>
+        </div>
+
+        {/* CPU/Mem area — MetricArea (Clusters ile ortak), By pod toggle. */}
+        {((cpuTrendQ.data?.series?.length ?? 0) > 0 || (memTrendQ.data?.series?.length ?? 0) > 0) && (
+          <div className="grid-2" style={{ display: 'grid', gap: 14, marginTop: 14 }}>
+            <div ref={cpuChartRef} style={flashStyle('cpu')}>
+              <MetricArea title={`CPU (cores) · ${chartCluster}${clampSuffix(clamped)}`} byLabel="By pod"
+                by={cpuByPod} onToggle={setCpuByPod} onZoom={onZoom} onZoomReset={onZoomReset}
+                syncKey={`infra:${service}`} totalSeries={cpuTrendQ.data?.totalSeries}
+                labelTrimPrefix={effDeploy}
+                series={cpuTrendQ.data?.series} seriesName="CPU" />
+            </div>
+            <div ref={memChartRef} style={flashStyle('mem')}>
+              <MetricArea title={`Memory · ${chartCluster}${clampSuffix(clamped)}`} byLabel="By pod"
+                by={memByPod} onToggle={setMemByPod} onZoom={onZoom} onZoomReset={onZoomReset}
+                syncKey={`infra:${service}`} totalSeries={memTrendQ.data?.totalSeries}
+                labelTrimPrefix={effDeploy}
+                series={memTrendQ.data?.series} seriesName="Memory" unit="bytes" />
+            </div>
+          </div>
+        )}
+
+        {/* v0.9.534 — Router / HAProxy: namespace'in route'ları, router
+            gözünden. Seri adı = route; 2xx trafiğin kendisi, yokluğu da
+            sinyal (operatör onaylı üçlü: 2xx + 5xx + gecikme). */}
+        {haproxyAny && (
+          <div style={{ marginTop: 14 }}>
+            <h3 style={{ fontSize: 13, margin: '4px 0 8px' }}>
+              Router / HAProxy · {effNs}
+              <span className="badge b-gray" style={{ marginLeft: 8 }}
+                title="Kaynak: OpenShift router'ının (HAProxy) backend metrikleri, Thanos üzerinden. Namespace kapsamlı — servisin route'u değil, namespace'in tüm route'ları.">
+                Thanos · router
+              </span>
+            </h3>
+            <div className="grid-2" style={{ display: 'grid', gap: 14 }}>
+              <MetricArea title={`HTTP 2xx (req/s) · ${chartCluster}${clampSuffix(clamped)}`}
+                subtitle="haproxy_backend_http_responses_total{code=2xx} · by route"
+                series={hap2xxQ.data?.series} seriesName="2xx"
+                onZoom={onZoom} onZoomReset={onZoomReset} syncKey={`infra:${service}`} />
+              <MetricArea title={`HTTP 5xx (req/s) · ${chartCluster}${clampSuffix(clamped)}`}
+                subtitle="haproxy_backend_http_responses_total{code=5xx} · by route"
+                series={hap5xxQ.data?.series} seriesName="5xx"
+                onZoom={onZoom} onZoomReset={onZoomReset} syncKey={`infra:${service}`} />
+              <MetricArea title={`Backend gecikme (ms) · ${chartCluster}${clampSuffix(clamped)}`}
+                subtitle="haproxy_backend_http_average_response_latency_milliseconds · by route"
+                series={hapLatQ.data?.series} seriesName="latency" unit="ms"
+                onZoom={onZoom} onZoomReset={onZoomReset} syncKey={`infra:${service}`} />
+            </div>
+          </div>
+        )}
+
+        {/* v0.9.574 — servis-kapsamlı PromQL kartı KALDIRILDI (operatör:
+            "services infrada benzerini kaldıralım"). Clusters sayfasındaki
+            ikiziyle aynı gerekçe: kopyala-yapıştır sorgu örnekleri bir
+            referanstı, bir gözlem değil. */}
+      </>
+    );
+  })();
 
   return (
     <>
-      {/* Drill breadcrumb — All clusters › cluster, ?icluster'dan (çip filtresi). */}
-      {icluster && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12, marginBottom: 10 }}>
-          <LinkButton title="Clear cluster filter" onClick={() => setICluster('')}>
-            All clusters
-          </LinkButton>
-          <span style={{ color: 'var(--text3)' }}>›</span>
-          <span className="mono" style={{ color: 'var(--text)' }}>{icluster}</span>
-        </div>
-      )}
-      <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
-        {ns && deploy ? (
-          <>Pods matched to <span className="mono">{service}</span> via{' '}
-          k8s.namespace=<span className="mono">{ns}</span> · <span className="mono">{deploy}</span></>
-        ) : (
-          <>Pods matched to <span className="mono">{service}</span> by pod name{' '}
-          (<span className="mono">{service}-*</span>{effNs ? <> · ns:<span className="mono">{effNs}</span></> : null} — no k8s metadata from spans)</>
-        )}{' '}
-        across {clustersWithPods.length} cluster{clustersWithPods.length > 1 ? 's' : ''}
-      </div>
-
-      {/* Cluster çipleri — tıklanınca grafikler o cluster'a daralır. */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-        {clustersWithPods.map(c => {
-          const rs = rows.filter(r => r.cluster === c);
-          const failing = rs.filter(r =>
-            r.phase && r.phase !== 'Running' && r.phase !== 'Succeeded').length;
-          const active = icluster === c;
-          return (
-            <Chip key={c} active={active}
-              onClick={() => setICluster(active ? '' : c)}
-              title={active ? 'Click to clear the cluster filter' : 'Filter to this cluster'}>
-              <span className="mono" style={{ fontWeight: 600 }}>{c}</span>
-              <span style={{ color: 'var(--text3)' }}>{rs.length} pods · {fmtCores(rs.reduce((a, r) => a + r.cpuCores, 0))} CPU</span>
-              {failing > 0 && <span className="badge b-err">{failing} failing</span>}
-            </Chip>
-          );
-        })}
-      </div>
-
-      {/* KPI satırı: Running / CPU / Memory / Restarts. */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
-        <Card density="tight" header={phaseKnown ? 'Running pods' : 'Pods'} {...podsClick}
-          title="Go to the Pods tab">
-          <div className="mono" style={{ ...kpiVal, color: phaseKnown ? 'var(--ok)' : undefined }}>
-            {fmtNum(phaseKnown ? running : visRows.length)}
-          </div>
-          <div style={kpiSub}>{phaseKnown
-            ? (visRows.length - running > 0 ? `${fmtNum(visRows.length - running)} not running` : 'all pods healthy')
-            : 'status unknown — kube-state-metrics not visible on this cluster'}</div>
-        </Card>
-        <Card density="tight" header="CPU used (cores)" {...chartClick('cpu')} title="Go to the CPU chart">
-          <div className="mono" style={kpiVal}>{visRows.length ? fmtCores(cpuSum) : '—'}</div>
-        </Card>
-        <Card density="tight" header="Memory used" {...chartClick('mem')} title="Go to the memory chart">
-          <div className="mono" style={kpiVal}>{visRows.length ? fmtBytes(memSum) : '—'}</div>
-        </Card>
-        <Card density="tight" header="Restarts (total)" {...podsClick}
-          title="Go to the Pods tab">
-          <div className="mono" style={{ ...kpiVal, color: restartColor(restartSum) }}>{fmtNum(restartSum)}</div>
-        </Card>
-      </div>
-
-      {/* CPU/Mem area — MetricArea (Clusters ile ortak), By pod toggle. */}
-      {((cpuTrendQ.data?.series?.length ?? 0) > 0 || (memTrendQ.data?.series?.length ?? 0) > 0) && (
-        <div className="grid-2" style={{ display: 'grid', gap: 14, marginTop: 14 }}>
-          <div ref={cpuChartRef} style={flashStyle('cpu')}>
-            <MetricArea title={`CPU (cores) · ${chartCluster}${clampSuffix(clamped)}`} byLabel="By pod"
-              by={cpuByPod} onToggle={setCpuByPod} onZoom={onZoom} onZoomReset={onZoomReset}
-              syncKey={`infra:${service}`} totalSeries={cpuTrendQ.data?.totalSeries}
-              labelTrimPrefix={effDeploy}
-              series={cpuTrendQ.data?.series} seriesName="CPU" />
-          </div>
-          <div ref={memChartRef} style={flashStyle('mem')}>
-            <MetricArea title={`Memory · ${chartCluster}${clampSuffix(clamped)}`} byLabel="By pod"
-              by={memByPod} onToggle={setMemByPod} onZoom={onZoom} onZoomReset={onZoomReset}
-              syncKey={`infra:${service}`} totalSeries={memTrendQ.data?.totalSeries}
-              labelTrimPrefix={effDeploy}
-              series={memTrendQ.data?.series} seriesName="Memory" unit="bytes" />
-          </div>
-        </div>
-      )}
-
-      {/* v0.9.534 — Router / HAProxy: namespace'in route'ları, router
-          gözünden. Seri adı = route; 2xx trafiğin kendisi, yokluğu da
-          sinyal (operatör onaylı üçlü: 2xx + 5xx + gecikme). */}
-      {haproxyAny && (
-        <div style={{ marginTop: 14 }}>
-          <h3 style={{ fontSize: 13, margin: '4px 0 8px' }}>
-            Router / HAProxy · {effNs}
-            <span className="badge b-gray" style={{ marginLeft: 8 }}
-              title="Kaynak: OpenShift router'ının (HAProxy) backend metrikleri, Thanos üzerinden. Namespace kapsamlı — servisin route'u değil, namespace'in tüm route'ları.">
-              Thanos · router
-            </span>
-          </h3>
-          <div className="grid-2" style={{ display: 'grid', gap: 14 }}>
-            <MetricArea title={`HTTP 2xx (req/s) · ${chartCluster}${clampSuffix(clamped)}`}
-              subtitle="haproxy_backend_http_responses_total{code=2xx} · by route"
-              series={hap2xxQ.data?.series} seriesName="2xx"
-              onZoom={onZoom} onZoomReset={onZoomReset} syncKey={`infra:${service}`} />
-            <MetricArea title={`HTTP 5xx (req/s) · ${chartCluster}${clampSuffix(clamped)}`}
-              subtitle="haproxy_backend_http_responses_total{code=5xx} · by route"
-              series={hap5xxQ.data?.series} seriesName="5xx"
-              onZoom={onZoom} onZoomReset={onZoomReset} syncKey={`infra:${service}`} />
-            <MetricArea title={`Backend gecikme (ms) · ${chartCluster}${clampSuffix(clamped)}`}
-              subtitle="haproxy_backend_http_average_response_latency_milliseconds · by route"
-              series={hapLatQ.data?.series} seriesName="latency" unit="ms"
-              onZoom={onZoom} onZoomReset={onZoomReset} syncKey={`infra:${service}`} />
-          </div>
-        </div>
-      )}
-
-      {/* v0.9.574 — servis-kapsamlı PromQL kartı KALDIRILDI (operatör:
-          "services infrada benzerini kaldıralım"). Clusters sayfasındaki
-          ikiziyle aynı gerekçe: kopyala-yapıştır sorgu örnekleri bir
-          referanstı, bir gözlem değil. */}
+      {thanosBody}
+      <ServiceKafkaClientsPanel service={service} range={range} onZoom={onZoom} onZoomReset={onZoomReset} />
     </>
   );
 }

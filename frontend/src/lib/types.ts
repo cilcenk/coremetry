@@ -768,6 +768,16 @@ export interface MessagingClients {
   consumers: string[];
   blocks: Record<string, KafkaMetricBlock>;
 }
+// ServiceKafkaClients — GET /api/services/{name}/kafka-clients (v0.10.550);
+// servis sayfası Infra sekmesi "Kafka client" paneli (v0.10.552).
+export interface ServiceKafkaClients {
+  service: string;
+  source: string;
+  available: boolean;
+  envAmbiguous?: boolean;
+  note: string;
+  blocks: Record<string, KafkaMetricBlock>;
+}
 
 export interface MessagingOverview {
   rows: MessagingInstance[];

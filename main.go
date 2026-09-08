@@ -788,6 +788,7 @@ func main() {
 	// natural fit.
 	if mode.worker {
 		go store.StartRetentionEnforcer(ctx, time.Hour, lockImpl)
+		go store.StartAIChatSweeper(ctx, time.Hour, lockImpl) // v0.10.561 — saved_views(page='ai-chat') süpürücüsü
 	}
 
 	// ── Optional OIDC ─────────────────────────────────────────────────────────
@@ -1290,6 +1291,8 @@ func main() {
 	// varsayılanlarda kalır (yani v0.9.838 öncesi davranış).
 	srv.LoadProblemPriority(ctx)
 	go srv.StartProblemPriorityRefresh(ctx, 30*time.Second)
+	srv.LoadAIChatRetention(ctx) // v0.10.561 — sohbet arşivi saklama (ai_chat_retention)
+	go srv.StartAIChatRetentionRefresh(ctx, 30*time.Second)
 	// v0.9.797 — metrik route dışlama kuralları, AYNI kablo. Derlenmiş set
 	// Store'a yayınlanır; okuma yolları (metricquery / metricrate /
 	// metrichist / route-tier) her sorguda oradan okur, yani ayar sıcak

@@ -5501,6 +5501,9 @@ export type ChatBlockType = 'text' | 'table' | 'chart' | 'trace_list' | 'link' |
 export interface CosreChartSpecLike { title?: string; service: string; operation?: string; agg: string; unit?: string; rangeS?: number; groupBy?: string; fromNs?: number; toNs?: number; compare?: { kind?: string; shiftS: number }; source?: 'span' | 'metric' }
 export interface ChatTypedBlock { id: string; type: ChatBlockType; seq: number; final: boolean; payload: unknown }
 
+// AIChatRetention — /api/ai/chat-retention (v0.10.561): sohbet arşivi saklama; days 0 = süpürme kapalı.
+export interface AIChatRetention { days: number }
+
 // ChatEvidence — v0.10.558: guided kök-neden rotasının yapısal kanıt bloğu
 // (internal/api/copilot_guided.go guidedEvidencePayload, v0.10.557). Listeler
 // sunucuda tavanlı (problems ≤5, changes ≤8, logPatterns ≤5).

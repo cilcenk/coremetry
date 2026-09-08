@@ -1212,6 +1212,10 @@ export const api = {
     }),
   // v0.10.411 — AI bütçesi: tavanlar + son 24 saat kullanımı.
   aiBudget: () => get<import('./types').AIBudgetStatus>(`/api/ai/budget`),
+  // v0.10.561 — sohbet arşivi saklama süresi (admin).
+  aiChatRetention: () => get<import('./types').AIChatRetention>(`/api/ai/chat-retention`),
+  putAIChatRetention: (c: import('./types').AIChatRetention) =>
+    request<import('./types').AIChatRetention>(`/api/ai/chat-retention`, { method: 'PUT', body: JSON.stringify(c) }),
   putAIBudget: (b: import('./types').AIBudget) =>
     request<import('./types').AIBudget>(`/api/ai/budget`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },

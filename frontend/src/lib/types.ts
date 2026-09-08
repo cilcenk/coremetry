@@ -2996,6 +2996,33 @@ export interface ExternalLinkSettings { links: ExternalLink[] }
 // channel_code) çalışır. Bir trace'te birden fazla request_id / function_id
 // olabildiği için seçim span önceliğiyle yapılır, `candidates` ile
 // `distinctRequestIds` operatöre kaç aday olduğunu dürüstçe söyler.
+// TraceLinkCandidate — v0.10.568 (operatör): "farklı function_id'ler alt
+// span'lerde ama aynı trace'te olabilir… kullanıcıya hangi function_id'ye
+// gitmek istersin diye seçenek verelim."
+//
+// v0.10.566'da kazanan kimliği SUNUCU seçiyordu ve seçim ekranda hiç
+// görünmüyordu: operatör linke basıyor, üç adaydan birine gidiyor, hangisine
+// gittiğini bilmiyordu. Aday listesi o sessiz seçimi görünür kılar — kazanan
+// `used` ile işaretli, ötekiler tek tıkla açılabilir.
+//
+// `role` adayın NEDEN listede olduğunu söyler (seçili span / ilk hatalı span /
+// root / öteki alt span); `source` ise değerin nereden geldiğini: log gövdesi
+// (`request_id`) mi, span attribute'u mu — ikisi farklı şablon değişkenine
+// (`{{requestId}}` / `{{attr.KEY}}`) bağlanır.
+export interface TraceLinkCandidate {
+  value: string;
+  /** 'request_id' (log gövdesi) ya da span attribute anahtarı (ör. function_id). */
+  key: string;
+  source: 'log' | 'span';
+  spanId?: string;
+  spanName?: string;
+  service?: string;
+  role: 'selected' | 'error' | 'root' | 'span';
+  isError?: boolean;
+  /** Bugünkü linkte kullanılan değer (sunucunun seçtiği kazanan). */
+  used?: boolean;
+}
+
 export interface TraceLinkIdentity {
   traceId: string;
   requestId?: string;
@@ -3007,6 +3034,12 @@ export interface TraceLinkIdentity {
   attrs: Record<string, string>;
   candidates: string[];
   distinctRequestIds: number;
+  /**
+   * v0.10.568 — kimlik seçim menüsünün adayları. ASLA null: sunucu aday
+   * bulamazsa BOŞ dilim döner, böylece istemci `?? []` yazmadan da
+   * `.length` okuyabilir ve "menü yok" kararı tek yerde verilir.
+   */
+  identities?: TraceLinkCandidate[];
   /** v0.10.567 — {{time}}/{{endTime}} bu IANA diliminde biçimlenir (reqid.timezone; varsayılan Europe/Istanbul). */
   tz?: string;
   /** Arama kapsamı kırpıldıysa (log penceresi / span limiti). */

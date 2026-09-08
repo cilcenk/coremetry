@@ -822,11 +822,19 @@ export const api = {
   // varsa onu, yoksa span attribute'larını (function_id/channel_code) döner.
   // `span` seçili span id'si: kazanan span önceliği (seçili → ilk hatalı →
   // root) sunucuda uygulanır, çünkü aynı trace'te birden fazla kimlik olabilir.
-  traceLinkIdentity: (traceId: string, spanId?: string, signal?: AbortSignal) =>
-    get<import('./types').TraceLinkIdentity>(
-      `/api/traces/${encodeURIComponent(traceId)}/link-identity${spanId ? `?span=${encodeURIComponent(spanId)}` : ''}`,
+  // v0.10.568 — `keys`: menüde gösterilecek span attribute anahtarları
+  // (şablonların `requires` alanından türer). BOŞSA parametre HİÇ
+  // gönderilmez — sunucu kendi varsayılan kümesini kullanır ve boş bir
+  // `keys=` dizesi "hiçbir anahtar istemiyorum" diye okunmaz.
+  traceLinkIdentity: (traceId: string, spanId?: string, keys?: string[], signal?: AbortSignal) => {
+    const parts: string[] = [];
+    if (spanId) parts.push(`span=${encodeURIComponent(spanId)}`);
+    if (keys && keys.length) parts.push(`keys=${encodeURIComponent(keys.join(','))}`);
+    return get<import('./types').TraceLinkIdentity>(
+      `/api/traces/${encodeURIComponent(traceId)}/link-identity${parts.length ? `?${parts.join('&')}` : ''}`,
       signal,
-    ),
+    );
+  },
 
   // v0.9.1094 — liste POST gövdesiyle: ES keyset cursor'ı (PIT id)
   // KB'larca olabilir; GET URL'si prod ingress sınırını aşıp "Failed to

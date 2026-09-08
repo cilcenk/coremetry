@@ -36,8 +36,10 @@ describe('Trace dış link kimliği (v0.10.566)', () => {
     expect(src).toContain('selectedSpanId={selectedId}');
     expect(src).toContain('traceId={id}');
     // Sorgu anahtarı seçili span'i taşır — span değişince kimlik yeniden sorulur.
-    expect(src).toMatch(/queryKey: \['trace-link-identity', traceId, selectedSpanId \?\? ''\]/);
-    expect(src).toContain('api.traceLinkIdentity(traceId, selectedSpanId ?? undefined, signal)');
+    // v0.10.568: anahtar kümesi (idKeys) sorgu anahtarının 4. bileşeni oldu;
+    // seçili span'in 3. bileşen olarak orada durması bu testin PİN'i.
+    expect(src).toMatch(/queryKey: \['trace-link-identity', traceId, selectedSpanId \?\? '', keysParam\]/);
+    expect(src).toContain('api.traceLinkIdentity(traceId, selectedSpanId ?? undefined, idKeys, signal)');
   });
 
   it('descriptor attrs BASE’i ezer ve requestId descriptor’dan gelir', () => {
@@ -60,7 +62,8 @@ describe('Trace dış link kimliği (v0.10.566)', () => {
   });
 
   it('düğme listesi pickGroupedLinks üzerinden çiziliyor', () => {
-    expect(src).toContain("import { renderExternalLink, collectLinkCtx, pickGroupedLinks } from '@/lib/externalLinks';");
+    // v0.10.568 ile aynı import satırına kimlik menüsünün saf yardımcıları eklendi.
+    expect(src).toMatch(/import \{ renderExternalLink, collectLinkCtx, pickGroupedLinks[^}]*\} from '@\/lib\/externalLinks';/);
     expect(src).toContain('const rows = pickGroupedLinks(links, l =>');
     expect(src).toContain('rows.map(({ link: l, url, missing })');
     // Ham links üzerinde map YOK (grup seçimi atlanamaz).

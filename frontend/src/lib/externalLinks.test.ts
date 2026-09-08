@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderExternalLink, attrTimeParts, formatParts, collectLinkCtx, pickGroupedLinks, zonedParts } from './externalLinks';
+import { renderExternalLink, attrTimeParts, formatParts, collectLinkCtx, pickGroupedLinks, zonedParts, identityKeysFromLinks, identityOverrideCtx, shortIdentity, identityRoleTR } from './externalLinks';
 
 // v0.10.345 — dış link şablonu (operatörün log platformu örneği: date=ddMMyyyyHHmm,
 // functionId, channelCode; tarih function_id içindeki zamandan).
@@ -220,5 +220,77 @@ describe('zonedParts / sabit saat dilimi', () => {
       .toBe('https://x/?d=160120260130');
     expect(renderExternalLink('https://x/?d={{time:ddMMyyyyHHmm}}', { ...ctx, tz: 'UTC' }).url)
       .toBe('https://x/?d=150120262230');
+  });
+});
+
+// v0.10.568 — kimlik SEÇİM menüsü (operatör: "kullanıcıya hangi function_id'ye
+// gitmek istersin diye seçenek verelim"). Menünün KARARLARI burada saf test
+// edilir; Trace.tsx yalnız çizer.
+describe('identityKeysFromLinks', () => {
+  it('requires birleşir, sıra korunur, tekilleşir', () => {
+    expect(identityKeysFromLinks([
+      { requires: ['function_id', 'channel_code'] },
+      { requires: ['channel_code', 'msisdn'] },
+      {},
+    ])).toEqual(['function_id', 'channel_code', 'msisdn']);
+  });
+  it('EN ÇOK 5 anahtar (sunucu taramasının maliyeti sabit kalsın)', () => {
+    expect(identityKeysFromLinks([{ requires: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }]))
+      .toEqual(['a', 'b', 'c', 'd', 'e']);
+    // Sınır çok linke yayıldığında da geçerli — link başına değil TOPLAMDA 5.
+    expect(identityKeysFromLinks([
+      { requires: ['a', 'b'] }, { requires: ['c', 'd'] }, { requires: ['e', 'f'] },
+    ])).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+  it('boş/whitespace anahtar düşer; requires yoksa boş dilim', () => {
+    expect(identityKeysFromLinks([{ requires: ['', '  ', ' k '] }])).toEqual(['k']);
+    expect(identityKeysFromLinks([])).toEqual([]);
+    expect(identityKeysFromLinks([{}, {}])).toEqual([]);
+  });
+});
+
+describe('identityOverrideCtx', () => {
+  const ctx = { traceId: 't', service: 's', startMs: 0, endMs: 0, attrs: { function_id: 'F1', channel_code: '060201' }, requestId: 'R-1' };
+  it("source 'log' → requestId ezilir, attrs'a DOKUNULMAZ", () => {
+    const o = identityOverrideCtx(ctx, { value: 'R-9', key: 'request_id', source: 'log' })!;
+    expect(o.requestId).toBe('R-9');
+    expect(o.attrs).toEqual(ctx.attrs);
+    expect(ctx.requestId).toBe('R-1'); // girdi mutasyona uğramaz
+  });
+  it("source 'span' → yalnız O anahtar ezilir, öteki attribute'lar kalır", () => {
+    const o = identityOverrideCtx(ctx, { value: 'F2', key: 'function_id', source: 'span' })!;
+    expect(o.attrs).toEqual({ function_id: 'F2', channel_code: '060201' });
+    expect(o.requestId).toBe('R-1');
+    expect(ctx.attrs.function_id).toBe('F1');
+  });
+  it('ctx yoksa null (satır pasif çizilir)', () => {
+    expect(identityOverrideCtx(null, { value: 'x', key: 'k', source: 'span' })).toBeNull();
+    expect(identityOverrideCtx(undefined, { value: 'x', key: 'k', source: 'log' })).toBeNull();
+  });
+  it('AYNI şablon override ile başka kimliğe çözülür (menü satırının sözleşmesi)', () => {
+    const tpl = 'https://logs/?functionId={{attr.function_id}}&channelCode={{attr.channel_code}}';
+    const alt = identityOverrideCtx(ctx, { value: 'F2', key: 'function_id', source: 'span' })!;
+    expect(renderExternalLink(tpl, alt).url).toBe('https://logs/?functionId=F2&channelCode=060201');
+    // Çözülemeyen aday → url yok, eksikler söylenir (satır pasif).
+    const bare = identityOverrideCtx({ ...ctx, attrs: {} }, { value: 'F2', key: 'function_id', source: 'span' })!;
+    expect(renderExternalLink(tpl, bare).missing).toEqual(['channel_code']);
+  });
+});
+
+describe('shortIdentity / identityRoleTR', () => {
+  it('>18 karakter: baş 8 + … + son 6', () => {
+    expect(shortIdentity('060201dfii0013680164202609041614442481')).toBe('060201df…442481');
+  });
+  it('≤18 karakter aynen', () => {
+    expect(shortIdentity('R-42')).toBe('R-42');
+    expect(shortIdentity('123456789012345678')).toBe('123456789012345678'); // tam 18
+    expect(shortIdentity('1234567890123456789')).toBe('12345678…456789');   // 19 → kısalır
+    expect(shortIdentity('')).toBe('');
+  });
+  it('rol etiketleri Türkçe', () => {
+    expect(identityRoleTR('selected')).toBe('seçili span');
+    expect(identityRoleTR('error')).toBe('ilk hatalı span');
+    expect(identityRoleTR('root')).toBe('root span');
+    expect(identityRoleTR('span')).toBe('alt span');
   });
 });

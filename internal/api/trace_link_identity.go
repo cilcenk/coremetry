@@ -21,6 +21,14 @@ package api
 // en çok ilk 5 aday span (span başına 20 kayıt) ve gerekirse TEK bir
 // trace-geneli geçiş (50 kayıt). Pencere trace'in kendi zamanı ±1 dk.
 //
+// v0.10.568 — KAZANAN ARTIK GİZLİ DEĞİL. Operatör (2026-09-08):
+// "Farklı function_id'ler alt span'lerde ama aynı trace'te olabilir…
+// kullanıcıya hangi function_id'ye gitmek istersin diye seçenek
+// verelim." Kural (4. madde) AYNEN duruyor — link hâlâ kazananla
+// üretiliyor — ama yanıt artık `identities` ile TÜM adayları taşıyor ve
+// `used` bayrağı bugünkü linkin hangisini kullandığını söylüyor. Seçim
+// UI'ı ayrı dilim; bu dosya VERİYİ üretir.
+//
 // Rota salt-okunur: rol kapısı YOK, /api/traces/{id} ile aynı duruş.
 
 import (
@@ -57,7 +65,31 @@ const (
 	// linkIdentityIDMax — trace/span id için bayt tavanı. Cache anahtarı
 	// TÜM girdileri taşıdığı için sınırsız girdi = sınırsız anahtar.
 	linkIdentityIDMax = 64
+	// linkIdentityCandidateMax — v0.10.568: yanıttaki aday tavanı. Bir
+	// menü 10 satırdan sonra seçim aracı olmaktan çıkar; kesilen sayı
+	// Note'ta DÜRÜSTÇE söylenir.
+	linkIdentityCandidateMax = 10
+	// linkIdentityKeysMax — `keys` sorgusundaki anahtar tavanı. Şablonun
+	// Requires listesi pratikte 1-2 anahtar; 5 bol pay.
+	linkIdentityKeysMax = 5
+	// linkIdentityKeyLenMax — tek bir anahtar adı için bayt tavanı.
+	linkIdentityKeyLenMax = 64
 )
+
+// Rol değerleri — adayın trace'teki YERİ (orderTraceSpans basamakları).
+// İstemci bunu rozet olarak gösterir: operatör "hangi function_id" diye
+// sorulduğunda hangisinin hatalı/kök/baktığı span olduğunu görmeli.
+const (
+	linkIdentityRoleSelected = "selected"
+	linkIdentityRoleError    = "error"
+	linkIdentityRoleRoot     = "root"
+	linkIdentityRoleSpan     = "span"
+)
+
+// linkIdentityKeyRequestID — log gövdesinden çözülen kimliğin aday
+// anahtarı. Span attribute anahtarlarıyla AYNI ad alanında yaşar, bu
+// yüzden sabit: (Key, Value) tekilleştirmesi ona da uygulanır.
+const linkIdentityKeyRequestID = "request_id"
 
 // Source değerleri — istemci rozeti.
 const (
@@ -65,6 +97,30 @@ const (
 	linkIdentitySourceSpan = "span" // kimlik yok; şablon attribute yoluna düşer
 	linkIdentitySourceNone = "none" // trace'te span yok
 )
+
+// traceLinkCandidate — v0.10.568: operatörün SEÇEBİLECEĞİ bir kimlik.
+//
+// Bir trace birden çok isteği taşıyabilir (farklı request_id) ve alt
+// span'ler farklı function_id'ler tutabilir. v0.10.566 kuralı kazananı
+// seçiyor; bu tip kazananı SEÇENEKLERİN İÇİNDE gösteriyor.
+type traceLinkCandidate struct {
+	Value    string `json:"value"`
+	Key      string `json:"key"`    // "request_id" | istenen attribute anahtarı
+	Source   string `json:"source"` // "log" | "span"
+	SpanID   string `json:"spanId,omitempty"`
+	SpanName string `json:"spanName,omitempty"`
+	Service  string `json:"service,omitempty"`
+	// Role — "selected" | "error" | "root" | "span". Span'i bilinmeyen
+	// (trace-geneli geçişte bulunmuş) bir kimlik "span" sayılır: rol
+	// UYDURULMAZ.
+	Role    string `json:"role"`
+	IsError bool   `json:"isError,omitempty"`
+	// Used — bu değer BUGÜNKÜ linkte kullanılıyor mu (anahtar başına ilk
+	// aday + çözülen request_id). Birden çok anahtar varsa birden çok
+	// true olabilir; alan adı "seçili" değil "kullanılan", çünkü seçim
+	// operatörün.
+	Used bool `json:"used,omitempty"`
+}
 
 // traceLinkIdentity — /api/traces/{id}/link-identity yanıtı.
 type traceLinkIdentity struct {
@@ -82,6 +138,10 @@ type traceLinkIdentity struct {
 	// araması tavanı kadar). Operatör "neden bu kimlik" diye sorduğunda
 	// cevabı budur.
 	Candidates []string `json:"candidates"`
+	// Identities — v0.10.568: seçilebilir kimlikler, öncelik sırasıyla.
+	// ASLA nil (istemci dizi bekliyor); kimlik çözülemese bile span
+	// attribute adaylarını taşır.
+	Identities []traceLinkCandidate `json:"identities"`
 	// DistinctRequestIDs — okunan log kayıtlarında görülen FARKLI kimlik
 	// sayısı. Dürüstlük alanı: 1'den büyükse trace birden çok isteği
 	// taşıyor ve seçim ÖNCELİKLE yapıldı, "tek doğru" olduğu için değil.
@@ -107,8 +167,72 @@ func (s *Server) registerTraceLinkIdentityRoutes(mux *http.ServeMux) {
 // traceLinkIdentityCacheKey — SAF: TÜM girdiler anahtarda (v0.5.187
 // sınıfı). tz de girdi: saat dilimi kimliğin gömülü zamanını ±3 saat
 // kaydırır, yani AYNI trace için BAŞKA bir cevap üretebilir.
-func traceLinkIdentityCacheKey(traceID, spanID, tz string) string {
-	return fmt.Sprintf("trace-link-id:v1:%s:%s:%s", traceID, spanID, tz)
+//
+// v0.10.568: keys de girdi — farklı anahtar kümesi FARKLI `identities`
+// üretir, aynı gövdeyi alması tam v0.5.187 sınıfı bir zehirlenme olurdu.
+// keys SIRALANMAZ: aday listesindeki anahtar sırası istenen sıradır,
+// yani ["a","b"] ile ["b","a"] farklı gövde döndürür — küme değil dizi.
+// fnvStr her parçadan sonra NUL yazar, "a","bc" ile "ab","c" çakışmaz.
+// Sürüm v1→v2: gövde şekli değişti, bayat girdiler `identities`siz.
+func traceLinkIdentityCacheKey(traceID, spanID, tz string, keys []string) string {
+	return fmt.Sprintf("trace-link-id:v2:%s:%s:%s:%s", traceID, spanID, tz, fnvStr(keys...))
+}
+
+// linkIdentityKeyOK — SAF: attribute anahtarı hijyeni ([A-Za-z0-9_.-]).
+func linkIdentityKeyOK(k string) bool {
+	if k == "" {
+		return false
+	}
+	for i := 0; i < len(k); i++ {
+		c := k[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '_' || c == '.' || c == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// parseLinkIdentityKeys — SAF: `keys` sorgu parametresi → anahtar dizisi.
+//
+// Anahtar ADLARI ÜRÜNE GÖMÜLMEZ: istemci bunları yapılandırılmış link
+// şablonlarının Requires listesinden türetip gönderir (function_id /
+// channel_code gibi adlar müşteriye özgü, depoya girmez). Bu yüzden
+// burada beyaz liste değil HİJYEN var — serbest metin hem cache
+// anahtarına hem yanıta giriyor.
+//
+// Boşluklar kırpılır, boş parçalar (sondaki virgül) atlanır, tekrarlar
+// SIRAYI bozmadan tekilleşir. Boş/parametresiz = nil: aday listesi
+// yalnız request_id'lerden oluşur.
+func parseLinkIdentityKeys(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var out []string
+	seen := make(map[string]bool)
+	for _, part := range strings.Split(raw, ",") {
+		k := strings.TrimSpace(part)
+		if k == "" {
+			continue
+		}
+		if len(k) > linkIdentityKeyLenMax {
+			// Değer YANKILANMAZ: doğrulanmamış, sınırsız uzunlukta.
+			return nil, fmt.Errorf("keys: attribute key too long (≤%d)", linkIdentityKeyLenMax)
+		}
+		if !linkIdentityKeyOK(k) {
+			return nil, fmt.Errorf("keys: %q invalid (allowed: A-Za-z0-9_.-)", k)
+		}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+		if len(out) > linkIdentityKeysMax {
+			return nil, fmt.Errorf("keys: at most %d attribute keys", linkIdentityKeysMax)
+		}
+	}
+	return out, nil
 }
 
 // linkIdentityIDOK — trace/span id hijyeni: boş ya da onaltılık, tavan
@@ -139,16 +263,23 @@ func (s *Server) getTraceLinkIdentity(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "span must be hex, ≤64")
 		return
 	}
+	// keys — istemcinin şablon Requires'ından türettiği attribute
+	// anahtarları (v0.10.568). Yoksa aday listesi yalnız request_id.
+	keys, kerr := parseLinkIdentityKeys(r.URL.Query().Get("keys"))
+	if kerr != nil {
+		writeJSONError(w, http.StatusBadRequest, kerr.Error())
+		return
+	}
 	tz := ""
 	if s.store != nil {
 		tz = s.reqidTZSetting(r.Context())
 	}
-	s.serveCached(w, r, traceLinkIdentityCacheKey(id, span, tz), 30*time.Second, func(ctx context.Context) (any, error) {
+	s.serveCached(w, r, traceLinkIdentityCacheKey(id, span, tz, keys), 30*time.Second, func(ctx context.Context) (any, error) {
 		spans, err := s.traceLinkSpans(ctx, id)
 		if err != nil {
 			return nil, err
 		}
-		return s.resolveTraceLinkIdentity(ctx, id, span, spans, tz), nil
+		return s.resolveTraceLinkIdentity(ctx, id, span, spans, tz, keys), nil
 	})
 }
 
@@ -295,25 +426,209 @@ func traceLinkWindow(spans []chstore.SpanRow) (time.Time, time.Time) {
 	return time.Unix(0, minNs).Add(-linkIdentityWindowPad), time.Unix(0, maxNs).Add(linkIdentityWindowPad)
 }
 
+// linkIdentityLogHit — SAF veri: log çözümlemesinde görülen bir kimlik ve
+// geldiği kayıt span'i (kayıt span taşımıyorsa sorgulanan span, o da
+// yoksa boş).
+type linkIdentityLogHit struct {
+	Value  string
+	SpanID string
+}
+
+// linkIdentitySpanRoles — SAF: `ordered` ile AYNI uzunlukta rol dilimi.
+//
+// orderTraceSpans'in basamaklarını okur (seçili → ilk hatalı → root →
+// kalanlar) ama KONUMA değil VERİYE bakar: "ilk hatalı" ve "root" en
+// erken (StartTime, SpanID) satırdır — tıpkı orderTraceSpans'in taban
+// sırasında olduğu gibi. Konuma bakan bir uygulama, seçili span araya
+// girdiğinde bir satır kayardı.
+//
+// Öncelik ATAMA SIRASINDA yaşıyor: root önce yazılır, hatalı üstüne,
+// seçili en son — yani hem hatalı hem root olan bir span "error",
+// seçilmiş olan her şeye rağmen "selected".
+func linkIdentitySpanRoles(ordered []chstore.SpanRow, selected string) []string {
+	roles := make([]string, len(ordered))
+	earlier := func(a, b chstore.SpanRow) bool {
+		if a.StartTime != b.StartTime {
+			return a.StartTime < b.StartTime
+		}
+		return a.SpanID < b.SpanID
+	}
+	errIdx, rootIdx := -1, -1
+	for i, sp := range ordered {
+		roles[i] = linkIdentityRoleSpan
+		if sp.StatusCode == "error" && (errIdx < 0 || earlier(sp, ordered[errIdx])) {
+			errIdx = i
+		}
+		if sp.ParentSpanID == "" && (rootIdx < 0 || earlier(sp, ordered[rootIdx])) {
+			rootIdx = i
+		}
+	}
+	if rootIdx >= 0 {
+		roles[rootIdx] = linkIdentityRoleRoot
+	}
+	if errIdx >= 0 {
+		roles[errIdx] = linkIdentityRoleError
+	}
+	if selected != "" {
+		for i := range ordered {
+			if ordered[i].SpanID == selected {
+				roles[i] = linkIdentityRoleSelected
+				break
+			}
+		}
+	}
+	return roles
+}
+
+// buildLinkIdentityCandidates — SAF: operatörün SEÇEBİLECEĞİ kimlikler +
+// tavan yüzünden gösterilmeyen aday sayısı.
+//
+// Sıra = öncelik. Önce request_id'ler (v0.10.566 kuralı request_id'yi
+// önceler), sonra span attribute'ları orderTraceSpans sırasıyla. Span
+// tarafında probe tavanı YOK: attribute'lar zaten bellekte, ES turu
+// değil — 5 span probu LOG maliyeti içindi, aday listesi için değil.
+//
+// Tekilleştirme (Key, Value) ikilisinde ve İLK görülen kazanır: aynı
+// function_id on span'de tekrar ediyorsa operatöre on kez sorulmaz, ama
+// aynı değeri taşıyan FARKLI anahtarlar ayrı seçenektir.
+//
+// Used = "bugünkü link bunu kullanıyor", "seçili" DEĞİL — seçim
+// operatörün. Anahtar başına TEK bayrak: attribute yolunda mergeSpanAttrs
+// ilk DOLU değeri alır (bu da spans-dış/keys-iç gezinme yüzünden
+// listedeki ilk adaydır), request_id yolunda çözülen kimlik.
+func buildLinkIdentityCandidates(ordered []chstore.SpanRow, selected string, hits []linkIdentityLogHit, keys []string, usedRequestID string) ([]traceLinkCandidate, int) {
+	out := make([]traceLinkCandidate, 0, linkIdentityCandidateMax)
+	dropped := 0
+	seen := make(map[string]bool)
+	roles := linkIdentitySpanRoles(ordered, selected)
+	// idx — span_id → ordered dizini (rol/ad/servis için). Boş span_id
+	// anahtar olmaz: "bilinmiyor" ile "boş id'li satır" karışmasın.
+	idx := make(map[string]int, len(ordered))
+	for i, sp := range ordered {
+		if sp.SpanID == "" {
+			continue
+		}
+		if _, dup := idx[sp.SpanID]; !dup {
+			idx[sp.SpanID] = i
+		}
+	}
+	add := func(c traceLinkCandidate) {
+		if c.Key == "" || c.Value == "" {
+			return
+		}
+		dk := c.Key + "\x00" + c.Value
+		if seen[dk] {
+			return
+		}
+		seen[dk] = true
+		// Tavan aşıldığında da tekilleştirme sürer: "+N" DÜRÜST bir sayı,
+		// aynı değerin tekrarı değil.
+		if len(out) >= linkIdentityCandidateMax {
+			dropped++
+			return
+		}
+		out = append(out, c)
+	}
+	// 1) request_id adayları — log gövdesinden çözülenler.
+	for _, h := range hits {
+		c := traceLinkCandidate{
+			Value:  h.Value,
+			Key:    linkIdentityKeyRequestID,
+			Source: linkIdentitySourceLog,
+			Role:   linkIdentityRoleSpan,
+		}
+		if i, ok := idx[h.SpanID]; ok {
+			sp := ordered[i]
+			c.SpanID, c.SpanName, c.Service = sp.SpanID, sp.Name, sp.ServiceName
+			c.Role, c.IsError = roles[i], sp.StatusCode == "error"
+		}
+		add(c)
+	}
+	// 2) span attribute adayları — span dışta, anahtar içte. Bu sıra
+	//    mergeSpanAttrs ile AYNI kuralı üretir (ilk dolu değer kazanır),
+	//    yani anahtar başına ilk aday = bugünkü linkin kullandığı değer.
+	for i, sp := range ordered {
+		for _, k := range keys {
+			v := sp.Attributes[k]
+			if v == "" {
+				continue
+			}
+			add(traceLinkCandidate{
+				Value: v, Key: k, Source: linkIdentitySourceSpan,
+				SpanID: sp.SpanID, SpanName: sp.Name, Service: sp.ServiceName,
+				Role: roles[i], IsError: sp.StatusCode == "error",
+			})
+		}
+	}
+	// 3) Used — anahtar başına TEK. Varsayılan ilk aday; request_id'de
+	//    çözülen kimlik varsa O işaretlenir (bayrak "kullanılan"ı
+	//    göstermeli, listedeki konumu değil).
+	usedAt := make(map[string]int, len(out))
+	for i, c := range out {
+		if _, ok := usedAt[c.Key]; !ok {
+			usedAt[c.Key] = i
+		}
+	}
+	if usedRequestID != "" {
+		for i, c := range out {
+			if c.Key == linkIdentityKeyRequestID && c.Value == usedRequestID {
+				usedAt[c.Key] = i
+				break
+			}
+		}
+	}
+	for _, i := range usedAt {
+		out[i].Used = true
+	}
+	return out, dropped
+}
+
+// linkIdentityDroppedNote — SAF: tavana çarpan aday sayısını nota ekler.
+// "Bulamadım" ile "gösteremedim" ayrı şeyler (linkIdentityNote doktrini).
+func linkIdentityDroppedNote(note string, dropped int) string {
+	if dropped <= 0 {
+		return note
+	}
+	if note == "" {
+		return fmt.Sprintf("+%d aday gösterilmiyor", dropped)
+	}
+	return fmt.Sprintf("%s; +%d aday gösterilmiyor", note, dropped)
+}
+
 // ── Çözümleme ───────────────────────────────────────────────────────────────
 
 // resolveTraceLinkIdentity — span'ler ELDE, log tarafı burada çözülür.
 // CH okuması çağıranda (traceLinkSpans) kaldığı için bu fonksiyon sahte
 // bir logstore ile uçtan uca test edilebilir.
-func (s *Server) resolveTraceLinkIdentity(ctx context.Context, traceID, selected string, spans []chstore.SpanRow, tz string) traceLinkIdentity {
+func (s *Server) resolveTraceLinkIdentity(ctx context.Context, traceID, selected string, spans []chstore.SpanRow, tz string, keys []string) traceLinkIdentity {
 	out := traceLinkIdentity{
 		TraceID:    traceID,
 		Attrs:      map[string]string{},
 		Candidates: []string{},
+		Identities: []traceLinkCandidate{},
 		Source:     linkIdentitySourceNone,
 	}
 	if out.TZ = strings.TrimSpace(tz); out.TZ == "" {
 		out.TZ = reqid.DefaultTZ
 	}
 	ordered := orderTraceSpans(spans, selected)
+	// hits — log çözümlemesinde görülen FARKLI kimlikler, GÖRÜLME
+	// sırasıyla (map değil dilim: sıra cevabın parçası).
+	var hits []linkIdentityLogHit
+	seenHit := make(map[string]bool)
+	// finish — HER dönüş noktası aday listesini taşır (v0.10.568).
+	// Kimlik çözülemese de (log arka ucu yok / okuma düştü) operatörün
+	// seçebileceği span attribute'ları vardır; boş bir menü göstermek
+	// "aday yok" yalanı olurdu.
+	finish := func(o traceLinkIdentity) traceLinkIdentity {
+		ids, dropped := buildLinkIdentityCandidates(ordered, selected, hits, keys, o.RequestID)
+		o.Identities = ids
+		o.Note = linkIdentityDroppedNote(o.Note, dropped)
+		return o
+	}
 	if len(ordered) == 0 {
 		out.Note = "trace'te span yok — kimlik çözümlenemedi"
-		return out
+		return finish(out)
 	}
 	out.Attrs = mergeSpanAttrs(ordered)
 	probe := ordered
@@ -327,15 +642,15 @@ func (s *Server) resolveTraceLinkIdentity(ctx context.Context, traceID, selected
 	out.Source = linkIdentitySourceSpan
 	if s == nil || s.logs == nil {
 		out.Note = "log arka ucu yapılandırılmamış — kimlik span attribute'larından"
-		return out
+		return finish(out)
 	}
 
 	loc := reqid.Location(tz)
 	from, to := traceLinkWindow(spans)
-	distinct := map[string]bool{}
 	// scan — bir sayfadaki kayıtları gezer; İLK bulan kazanır ama sayfanın
 	// KALANI da taranır: farklı kimlik sayımı bedava (sayfa zaten elde) ve
-	// "requestId dolu, distinct 0" gibi yalan bir alan üretmeyiz.
+	// "requestId dolu, distinct 0" gibi yalan bir alan üretmeyiz. v0.10.568:
+	// görülen her FARKLI kimlik `hits`e de yazılır — aday listesi bu.
 	scan := func(page *logstore.Page, fallbackSpan string) (string, string, bool) {
 		if page == nil {
 			return "", "", false
@@ -350,14 +665,17 @@ func (s *Server) resolveTraceLinkIdentity(ctx context.Context, traceID, selected
 			if !ok {
 				continue
 			}
-			distinct[id.Raw] = true
+			recSpan := rec.SpanID
+			if recSpan == "" {
+				recSpan = fallbackSpan
+			}
+			if !seenHit[id.Raw] {
+				seenHit[id.Raw] = true
+				hits = append(hits, linkIdentityLogHit{Value: id.Raw, SpanID: recSpan})
+			}
 			if !found {
 				found = true
-				winID = id.Raw
-				winSpan = rec.SpanID
-				if winSpan == "" {
-					winSpan = fallbackSpan
-				}
+				winID, winSpan = id.Raw, recSpan
 			}
 		}
 		return winID, winSpan, found
@@ -373,13 +691,13 @@ func (s *Server) resolveTraceLinkIdentity(ctx context.Context, traceID, selected
 			// ama "kimlik yok" demiyoruz — "bakamadım" diyoruz.
 			out.Partial = true
 			out.Note = "log okuması başarısız (" + err.Error() + ") — kimlik span attribute'larından"
-			return out
+			return finish(out)
 		}
 		if id, spanID, ok := scan(page, sp.SpanID); ok {
 			out.RequestID, out.SpanID, out.Source = id, spanID, linkIdentitySourceLog
-			out.DistinctRequestIDs = len(distinct)
+			out.DistinctRequestIDs = len(hits)
 			out.Note = linkIdentityNote(out, len(ordered))
-			return out
+			return finish(out)
 		}
 	}
 	// span_id taşımayan loglar için TEK trace-geneli geçiş.
@@ -387,14 +705,14 @@ func (s *Server) resolveTraceLinkIdentity(ctx context.Context, traceID, selected
 	if err != nil {
 		out.Partial = true
 		out.Note = "log okuması başarısız (" + err.Error() + ") — kimlik span attribute'larından"
-		return out
+		return finish(out)
 	}
 	if id, spanID, ok := scan(page, ""); ok {
 		out.RequestID, out.SpanID, out.Source = id, spanID, linkIdentitySourceLog
 	}
-	out.DistinctRequestIDs = len(distinct)
+	out.DistinctRequestIDs = len(hits)
 	out.Note = linkIdentityNote(out, len(ordered))
-	return out
+	return finish(out)
 }
 
 // linkIdentityNote — SAF: operatöre "neden bu kimlik" cevabı.

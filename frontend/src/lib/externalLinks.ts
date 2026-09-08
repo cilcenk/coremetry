@@ -192,3 +192,88 @@ export function pickGroupedLinks<T extends { label: string; urlTemplate: string;
   }
   return out;
 }
+
+// ── v0.10.568 — kimlik SEÇİM menüsü (SAF yardımcılar) ────────────────────
+//
+// Operatör (2026-09-08): "Farklı function_id'ler alt span'lerde ama aynı
+// trace'te olabilir… kullanıcıya hangi function_id'ye gitmek istersin diye
+// seçenek verelim." v0.10.566'da kazananı sunucu SESSİZCE seçiyordu; menü o
+// seçimi görünür kılar ve ötekine gitmeyi tek tık yapar.
+//
+// Dördü de saf: DOM yok, tarih yok, ağ yok — menünün karar mantığı burada
+// test edilir, Trace.tsx yalnız çizer.
+
+/**
+ * identityKeysFromLinks — şablonların `requires` alanlarından sunucuya
+ * sorulacak attribute anahtar kümesi.
+ *
+ * Neden `requires`: menüde gösterilecek adaylar, LİNKİN gerçekten kullandığı
+ * anahtarlar olmalı. Trace'teki tüm attribute'ları istemek, operatöre
+ * şablonun umursamadığı onlarca değeri seçenek diye sunardı.
+ *
+ * Sıra korunur (ayardaki sıra = operatörün önceliği), tekilleştirilir ve EN
+ * ÇOK 5 anahtar döner: sınır sunucu tarafında span taramasının maliyetini
+ * sabitler; sınırsız bir liste, 5000 span'lik bir trace'te anahtar başına bir
+ * tarama demekti. Boş/whitespace anahtarlar düşer.
+ */
+export function identityKeysFromLinks(links: { requires?: string[] }[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const l of links) {
+    for (const raw of l.requires ?? []) {
+      const k = (raw ?? '').trim();
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      out.push(k);
+      if (out.length >= 5) return out;
+    }
+  }
+  return out;
+}
+
+/**
+ * identityOverrideCtx — bir adayı seçmek, ctx'in TEK bir alanını değiştirmek
+ * demektir; şablon aynı kalır.
+ *
+ *   source 'log'  → `{{requestId}}` yolunu besler (ctx.requestId)
+ *   source 'span' → `{{attr.KEY}}` yolunu besler (ctx.attrs[key])
+ *
+ * Şablonu yeniden yazmak yerine ctx'i değiştirmek bilinçli: menü satırı,
+ * düğmenin AÇTIĞI linkin ta kendisini açar — yalnız kimliği başkadır. İki
+ * ayrı render yolu olsaydı düğme ile menü zamanla ayrışırdı.
+ *
+ * ctx yoksa (span gelmemiş trace) null döner: çağıran satırı pasif çizer.
+ */
+export function identityOverrideCtx(
+  ctx: ExternalLinkCtx | null | undefined,
+  cand: { value: string; key: string; source: 'log' | 'span' },
+): ExternalLinkCtx | null {
+  if (!ctx) return null;
+  if (cand.source === 'log') return { ...ctx, requestId: cand.value };
+  return { ...ctx, attrs: { ...ctx.attrs, [cand.key]: cand.value } };
+}
+
+/**
+ * shortIdentity — menüde okunabilir kısaltma: 38 haneli bir function_id satırı
+ * taşırıp iki adayı görsel olarak ayırt edilemez hale getiriyordu. Baş 8 +
+ * '…' + son 6, çünkü ayırt eden kısım genelde uçlarda (önek = kanal, sonek =
+ * sayaç). TAM değer satırın `title`'ında kalır — kısaltma bilgi saklamaz.
+ *
+ * ≤18 karakter aynen döner: kısaltma uzunluğu (15) ile kısaltılan değer
+ * arasında kazanç kalmadığı sınır.
+ */
+export function shortIdentity(value: string): string {
+  const v = value ?? '';
+  if (v.length <= 18) return v;
+  return `${v.slice(0, 8)}…${v.slice(-6)}`;
+}
+
+/** identityRoleTR — adayın NEDEN listede olduğunun operatör dilindeki karşılığı. */
+export function identityRoleTR(role: 'selected' | 'error' | 'root' | 'span'): string {
+  switch (role) {
+    case 'selected': return 'seçili span';
+    case 'error': return 'ilk hatalı span';
+    case 'root': return 'root span';
+    case 'span': return 'alt span';
+  }
+}

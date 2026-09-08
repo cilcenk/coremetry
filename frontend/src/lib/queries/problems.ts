@@ -150,3 +150,14 @@ export function useBlastRadiusBatch(services: string[], since: GoDuration = '1h'
     enabled: services.length > 0,
   });
 }
+
+// v0.10.562 — Problem detayı insight şeridi. staleTime = sunucu TTL (30 s);
+// 'problems' ağacında: problem değişince toplu invalidate bunu da tazeler.
+export function useProblemInsight(id: string) {
+  return useQuery({
+    queryKey: keys.problems.insight(id),
+    queryFn: ({ signal }) => api.problemInsight(id, signal),
+    enabled: !!id,
+    staleTime: 30_000,
+  });
+}

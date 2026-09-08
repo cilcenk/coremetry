@@ -23,6 +23,7 @@ import { fmtDurationNs, fmtStartedTs } from './problemTime';
 import { emptySamplesNote } from './exceptionSamples';
 import { ExceptionPodsPanel } from './ExceptionPodsPanel';
 import { ExternalEvidencePanel } from './ExternalEvidencePanel';
+import { ProblemInsightStrip } from './ProblemInsightStrip'; // v0.10.562
 import type { ExceptionGroup, ExceptionGroupState, Problem, RolloutEvidence } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 import { PageShell } from '@/components/ui/PageShell';
@@ -754,6 +755,9 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
         )}
       </div>
 
+      {/* v0.10.562 — deterministik insight şeridi (şüpheli · ilk anomali ·
+          rollout · daha önce); ilk ekranın üstünde, sormadan dolar. */}
+      <ProblemInsightStrip problemId={problem.id} />
       {/* v0.9.983 (D5.1 / A2) — aynı gerekçe: bildirim linkinden gelen
           operatörün telefonda gördüğü İLK ekran bu (RootCausePanel + AI
           özeti solda, offender listesi sağda). */}

@@ -1456,6 +1456,11 @@ export const api = {
   messagingClients: (system: string, cluster: string, destination: string, fromNs: number, toNs: number, signal?: AbortSignal) =>
     get<import('./types').MessagingClients | null>(
       `/api/messaging/clients?system=${encodeURIComponent(system)}&cluster=${encodeURIComponent(cluster)}&destination=${encodeURIComponent(destination)}&from=${fromNs}&to=${toNs}`, signal),
+  // v0.10.552 — servisin Kafka istemci sağlığı (Infra sekmesi paneli). env
+  // verilirse sunucu VM'de ifade edemezse envAmbiguous ilan eder.
+  serviceKafkaClients: (svc: string, fromNs: number, toNs: number, env?: string, signal?: AbortSignal) =>
+    get<import('./types').ServiceKafkaClients | null>(
+      `/api/services/${encodeURIComponent(svc)}/kafka-clients?from=${fromNs}&to=${toNs}${env ? `&env=${encodeURIComponent(env)}` : ''}`, signal),
   // Oracle DB receiver drill-down — sessions, processes, cumulative
   // counter rates, tablespace usage. Backend falls back to
   // deterministic synthetic data when the oracledb receiver

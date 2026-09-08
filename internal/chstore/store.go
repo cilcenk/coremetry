@@ -3862,10 +3862,35 @@ func (s *Store) migrate(ctx context.Context) error {
 		// query because the dimension lives in attr_keys/attr_values
 		// rather than dedicated columns. We materialise the resolved
 		// values so the read path joins on plain string equality.
+		//
+		// v0.10.563 — `operation` boyutu eklendi (Faz 4b). Zincir
+		// dependencies.go'daki msgOperationExpr ile BİREBİR aynı sırada:
+		// messaging.operation.type → .operation.name → .operation → ''.
+		// Boş dize SDK'nın hiçbirini yaymadığı anlamına gelir ve satır
+		// KALIR — okuma tarafı onu '(bilinmiyor)'a çevirmez, boş bırakır
+		// (etiketleme frontend'in işi). Boyut ORDER BY'da destination'dan
+		// SONRA duruyor: filtre öznesi msg_system önde kalsın ve mevcut
+		// (system, cluster, destination) okumaları PK önekini kaybetmesin.
+		//
+		// ⚠ GEÇİŞ MALİYETİ: bu boyutu eklemek DROP + RECREATE gerektirir
+		// (boot geçişi aşağıda, mvDimMigrations) ve 90 günlük messaging
+		// kovalarını SİLER; MV ileriye doğru yeniden dolar. Kesintisiz
+		// alternatif yerinde geçiştir: depo tablosuna (`.inner_id.<uuid>`,
+		// cluster modunda `_local`) `ALTER TABLE … ADD COLUMN operation
+		// String AFTER destination` + `ALTER TABLE … MODIFY ORDER BY` +
+		// `ALTER TABLE … MODIFY QUERY <yeni SELECT>`. DİKKAT: MODIFY ORDER BY
+		// yalnız anahtarın SONUNA kolon ekleyebilir, yani yerinde geçen bir
+		// kurulumun sıralama anahtarı (…, destination, time_bucket, operation)
+		// olur — buradaki taze DDL'den (…, destination, operation, time_bucket)
+		// AYRIŞIR. Sıralama anahtarına eklemek şart: operation anahtarda
+		// olmazsa AggregatingMergeTree birleşmesi farklı operasyonları TEK
+		// satıra çökertir ve boyut sessizce yok olur. Emsal:
+		// `reference-ch-inplace-mv-column-add`. Kolon zaten varsa boot geçişi
+		// HİÇ dokunmaz (no-op) — yerinde geçen kurulum ikinci kez düşmez.
 		`CREATE MATERIALIZED VIEW IF NOT EXISTS messaging_summary_5m
 		 ENGINE = AggregatingMergeTree
 		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (msg_system, cluster, destination, time_bucket)
+		 ORDER BY (msg_system, cluster, destination, operation, time_bucket)
 		 TTL toDate(time_bucket) + INTERVAL 90 DAY
 		 SETTINGS index_granularity = 8192
 		 AS SELECT
@@ -3882,6 +3907,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		     nullIf(peer_service, ''),
 		     'unknown'
 		   ) AS destination,
+		   coalesce(
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.operation.type')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.operation.name')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.operation')], ''),
+		     ''
+		   ) AS operation,
 		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
 		   countState()                               AS span_count_state,
 		   countIfState(status_code = 'error')        AS error_count_state,
@@ -3889,7 +3920,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)  AS duration_q_state
 		 FROM spans
 		 WHERE msg_system != ''
-		 GROUP BY msg_system, cluster, destination, time_bucket`,
+		 GROUP BY msg_system, cluster, destination, operation, time_bucket`,
 
 		// messaging_caller_summary_5m: per-(msg_system, cluster,
 		// destination, service_name, host_name, kind, 5-min). Kind
@@ -4277,36 +4308,49 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 
-	// v0.5.327 — db_summary_5m + db_caller_summary_5m gained a
-	// db_name dimension so one host serving multiple databases
-	// surfaces as distinct rows. Detect via system.columns: if
-	// the older two-key schema is in place (no db_name column),
-	// drop both MVs and re-create from the updated definitions,
-	// resolved BY NAME via findMV (v0.8.52 — never by slice
-	// position). Past 5-min buckets are dropped but only
-	// recent windows are operator-visible so the cost is hidden
-	// behind the next merge cycle (~5 min).
-	dbMigrations := []string{"db_summary_5m", "db_caller_summary_5m"}
-	for _, table := range dbMigrations {
-		var hasDBName uint8
+	// Sonradan BOYUT kazanan MV'ler — tek döngü, tek defter
+	// (mvDimMigrations). Her satır bir system.columns probe'u: kolon
+	// yoksa MV DROP + RECREATE edilir, adı findMV ile çözülür (v0.8.52
+	// — asla dilim pozisyonuyla). Geçmiş 5 dakikalık kovalar düşer;
+	// yalnız yakın pencereler operatöre görünür olduğundan maliyet bir
+	// sonraki birleşme döngüsünde (~5 dk) kapanır.
+	for _, m := range mvDimMigrations {
+		var hasCol uint8
+		// Probe ÇIPLAK adla: cluster modunda çıplak ad Distributed
+		// sarmalayıcı olsa bile kolon listesi yerel tabloyla aynıdır
+		// (v0.5.436'nın create_table_query probe'unu yakan tuzak
+		// system.columns'ta YOK).
 		probe := fmt.Sprintf(`
 			SELECT count() > 0
 			FROM system.columns
 			WHERE database = currentDatabase()
 			  AND table    = '%s'
-			  AND name     = 'db_name'`, table)
-		if err := s.conn.QueryRow(ctx, probe).Scan(&hasDBName); err == nil && hasDBName == 0 {
-			log.Printf("[chstore] upgrading %s MV (adding db_name dim) — past 5-min buckets will be dropped", table)
-			dropTarget := table
+			  AND name     = '%s'`, m.Table, m.Column)
+		if err := s.conn.QueryRow(ctx, probe).Scan(&hasCol); err == nil && mvDimNeedsMigration(hasCol != 0) {
+			log.Printf("[chstore] upgrading %s MV (adding %s dim) — past 5-min buckets will be dropped", m.Table, m.Dim)
+			dropTarget := m.Table
 			if s.clusterMode() {
-				dropTarget = table + "_local"
+				dropTarget = m.Table + "_local"
+				// v0.10.563 — DAĞITIK GÜVENLİK. Cluster modunda çıplak
+				// ad bir Distributed SARMALAYICI ve o sarmalayıcı KENDİ
+				// kolon listesini taşır. adaptDDL sarmalayıcıyı
+				// `CREATE TABLE IF NOT EXISTS` ile yeniden kurar, yani
+				// eskisi ayakta kalırsa recreate NO-OP olur: `_local`
+				// yeni kolonu kazanır, sarmalayıcı KAZANMAZ ve çıplak
+				// addan gelen her `SELECT operation` CH kod 47
+				// ("Identifier … cannot be resolved") verir — v0.8.162
+				// sınıfı, prod'u iki kez kıran şekil. Sarmalayıcı
+				// metadata-only (0 bayt), drop'u veri kaybı DEĞİL.
+				if e := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+m.Table+s.onCluster()+" SYNC"); e != nil {
+					return fmt.Errorf("drop distributed wrapper of %s: %w", m.Table, e)
+				}
 			}
 			// v0.5.436 — SYNC; see apdex upgrade above.
 			if err := s.dropCombinedMV(ctx, dropTarget); err != nil {
-				return fmt.Errorf("drop old %s for upgrade: %w", table, err)
+				return fmt.Errorf("drop old %s for upgrade: %w", m.Table, err)
 			}
-			if err := s.execDDL(ctx, findMV(table)); err != nil {
-				return fmt.Errorf("recreate %s with db_name: %w", table, err)
+			if err := s.execDDL(ctx, findMV(m.Table)); err != nil {
+				return fmt.Errorf("recreate %s with %s: %w", m.Table, m.Column, err)
 			}
 		}
 	}

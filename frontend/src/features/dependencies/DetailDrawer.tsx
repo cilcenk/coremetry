@@ -6,9 +6,9 @@ import { Spinner } from '@/components/Spinner';
 import { LazyMount } from '@/components/LazyMount';
 import { api } from '@/lib/api';
 import { fmtNum, fmtNs, timeRangeToNs } from '@/lib/utils';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { TimeRange, DBDetail, MessagingDetail, SpanMetricSeries, DBOpStat } from '@/lib/types';
+import type { TimeRange, DBDetail, MessagingDetail, SpanMetricSeries, DBOpStat, MsgOperationStat } from '@/lib/types';
 import { Stat } from './panels/shared';
 import { serviceHref } from '@/lib/serviceHref';
 import { traceHref } from '@/lib/traceHref';
@@ -17,6 +17,7 @@ import { PostgresPanel } from './panels/PostgresPanel';
 import { MySQLPanel } from './panels/MySQLPanel';
 import { RedisPanel } from './panels/RedisPanel';
 import { KafkaClientsSection } from './KafkaClientsSection'; // v0.10.551
+import { opLabelTR, isOpMissing, msgOperationRows, OP_MISSING_TITLE } from './msgOperations'; // v0.10.563
 import { podDetailPath } from '@/pages/service/podDetailPath';
 import { encodeRange } from '@/lib/urlState';
 
@@ -135,6 +136,32 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
   ], [kind]);
   const topOpsDt = useDataTable<DBOpStat>({
     storageKey: `deps-topops-${kind}`, columns: topOpsCols, rows: allTopOps,
+    initialSort: { id: 'count', dir: 'desc' },
+  });
+
+  // v0.10.563 (Faz 4b) — messaging_summary_5m'in OPERATION kırılımı.
+  // ERKEN DÖNÜŞLERDEN ÖNCE (rules-of-hooks): `data` burada undefined
+  // (yükleniyor) ya da null (sorgu düştü) olabilir; o hâlde rows [] —
+  // hook sırası sabit kalır. Bu dosya v0.9.873'te tam bu tuzağa düşmüştü.
+  const msgOps = useMemo<MsgOperationStat[]>(
+    () => msgOperationRows(kind === 'queue' && data && 'operations' in data
+      ? (data as MessagingDetail).operations
+      : undefined),
+    [kind, data]);
+  // Kolonlar SABİT (kind'e bağlı değil): tablo yalnız queue dalında
+  // render ediliyor, o yüzden storageKey'i türetmeye gerek yok — tek
+  // kolon kümesi, tek anahtar.
+  const msgOpsCols = useMemo<DataTableColumn<MsgOperationStat>[]>(() => [
+    { id: 'operation', label: 'Operasyon', sortValue: o => o.operation, naturalDir: 'asc', flex: true, minWidth: 140 },
+    { id: 'count',   label: 'Calls', sortValue: o => o.spanCount,      numeric: true, naturalDir: 'desc', width: 90 },
+    { id: 'errRate', label: 'Err %', sortValue: o => o.errorRate,      numeric: true, naturalDir: 'desc', width: 90 },
+    { id: 'avg',     label: 'Avg',   sortValue: o => o.avgDurationMs,  numeric: true, naturalDir: 'desc', width: 84 },
+    { id: 'p50',     label: 'P50',   sortValue: o => o.p50DurationMs,  numeric: true, naturalDir: 'desc', width: 84 },
+    { id: 'p95',     label: 'P95',   sortValue: o => o.p95DurationMs,  numeric: true, naturalDir: 'desc', width: 84 },
+    { id: 'p99',     label: 'P99',   sortValue: o => o.p99DurationMs,  numeric: true, naturalDir: 'desc', width: 84 },
+  ], []);
+  const msgOpsDt = useDataTable<MsgOperationStat>({
+    storageKey: 'deps-msg-ops', columns: msgOpsCols, rows: msgOps,
     initialSort: { id: 'count', dir: 'desc' },
   });
 
@@ -416,6 +443,74 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
               emptyMessage=""
               tone="other" range={range} />
           )}
+          {/* v0.10.563 (Faz 4b) — OPERASYON kırılımı, messaging_summary_5m'in
+              kendi operation boyutundan. Yukarıdaki Publishers/Consumers
+              tabloları messaging_caller_summary_5m'den geliyor (çağıran
+              boyutu); bu tablo AYNI pencereyi BAŞKA bir eksende kesiyor, o
+              yüzden toplamlar birebir tutmayabilir ve bu bir hata DEĞİL.
+
+              TRACE PİVOTU YOK — bilerek. messagingTracesHref'in `operation`
+              parametresi span ADINA (`name` = …) çeviriyor; buradaki değer
+              ise operasyon TÜRÜ (messaging.operation.type coalesce'u).
+              İkisini eşitleyen bir link, var olamayacak satırlara işaret
+              eden ölü bir link olurdu — v0.9.256'nın tam olarak kapattığı
+              sınıf. Tür bazlı bir pivot ancak /traces o niteliği indeksli
+              anahtar olarak kabul edince gelir. */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              fontSize: 12, fontWeight: 700, marginBottom: 6, color: 'var(--text2)',
+            }}>
+              <span aria-hidden style={{
+                width: 8, height: 8, borderRadius: 2, background: 'var(--purple)',
+              }} />
+              Operasyonlar · MV · {msgOps.length} satır
+              <span style={{ marginLeft: 'auto' }}>
+                <ResetLayoutButton dt={msgOpsDt} />
+              </span>
+            </div>
+            {msgOps.length === 0 ? (
+              // Bölüm GİZLENMİYOR: yokluğu söylemek, bakılmamış gibi
+              // görünmekten iyidir (boş küme kaybolur, sıfır olmaz).
+              <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                Bu pencerede MV&#39;de operasyon satırı yok.
+              </div>
+            ) : (
+              <div className="table-wrap">
+                <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                  <DataTableColgroup dt={msgOpsDt} />
+                  <DataTableHead dt={msgOpsDt} />
+                  <tbody>
+                    {msgOpsDt.sortedRows.map((o, i) => {
+                      const errCls = o.errorRate > 5 ? 'err' : o.errorRate > 0 ? 'warn' : 'ok';
+                      const missing = isOpMissing(o.operation);
+                      return (
+                        <tr key={`${o.operation}|${i}`}>
+                          <td className="mono" style={{
+                            fontSize: 11,
+                            color: missing ? 'var(--text3)' : 'var(--text2)',
+                          }} title={missing ? OP_MISSING_TITLE : o.operation}>
+                            {opLabelTR(o.operation)}
+                          </td>
+                          <td className="num mono">{fmtNum(o.spanCount)}</td>
+                          <td className="num mono">
+                            <span className={`badge b-${errCls}`} style={{ fontSize: 9 }}
+                                  title={`${fmtNum(o.errorCount)} hatalı span`}>
+                              {o.errorRate.toFixed(2)}%
+                            </span>
+                          </td>
+                          <td className="num mono">{o.avgDurationMs.toFixed(1)}ms</td>
+                          <td className="num mono">{o.p50DurationMs.toFixed(1)}ms</td>
+                          <td className="num mono">{o.p95DurationMs.toFixed(1)}ms</td>
+                          <td className="num mono">{o.p99DurationMs.toFixed(1)}ms</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
           {/* v0.10.551 — Kafka istemci metrikleri (VM seam): span tarafından
               SONRA, Top operations'tan ÖNCE (operatör mockup onayı). */}
           <KafkaClientsSection system={system} cluster={cluster} destination={name}

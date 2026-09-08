@@ -114,7 +114,12 @@ func TestConnStrategySplit(t *testing.T) {
 // v0.9.486'nın /users tutarsızlığı geri gelir.
 func TestTelemetryReadConnCallSurface(t *testing.T) {
 	allowed := map[string]bool{
-		"messaging_clients.go":         true, // v0.10.550 — messaging_caller_summary_5m (telemetri MV) servis+rol okuması
+		"messaging_clients.go": true, // v0.10.550 — messaging_caller_summary_5m (telemetri MV) servis+rol okuması
+		// v0.10.563 — SAF telemetri: tek FROM'u messaging_summary_5m
+		// (AggregatingMergeTree telemetri MV'si, state tablosu DEĞİL).
+		// dependencies.go'daki kardeş messaging okumalarıyla aynı havuz —
+		// aynı çekmecenin iki yarısı farklı replikadan okunmasın.
+		"messaging_operations.go":      true,
 		"store.go":                     true, // tanım + fallback
 		"rollout_problem_telemetry.go": true, // workload_revision_activity_1m + spans pod→revizyon (v0.10.241 Problem↔Rollout)
 		"summary.go":                   true, // service_summary_5m / operation_summary_5m / spans (v0.9.496 dilim 1)

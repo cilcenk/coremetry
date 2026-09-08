@@ -512,6 +512,14 @@ type MessagingDetail struct {
 	P99Ms   float64             `json:"p99DurationMs"`
 	Callers []DBCallerBreakdown `json:"callers"` // same shape — service / pod / RED
 	TopOps  []DBOpStat          `json:"topOps"`  // statement = span name (send / receive / process)
+	// Operations — v0.10.563 (Faz 4b). messaging_summary_5m'in yeni
+	// `operation` boyutundan gelen operasyon düzeyi RED (publish /
+	// receive / process / settle). TopOps'tan FARKLI: orada pivot span
+	// ADI ve okuma ham `spans` üzerinde; burası MV-only ve pivot yalnız
+	// operasyon türü. Boş operation satırı KALIR (SDK yaymamış demektir)
+	// ve etiketlemesi frontend'e ait. Okuma best-effort: hata dönerse
+	// dilim boş kalır, çekmecenin geri kalanı bloklanmaz.
+	Operations []MsgOperationStat `json:"operations"`
 	// Series — v0.8.364 (Stage-2 M1). Per-5-minute produce/consume
 	// counts across the window, straight off
 	// messaging_caller_summary_5m (kind + time_bucket are both
@@ -569,9 +577,10 @@ func (s *Store) GetMessagingDetail(
 
 	out := &MessagingDetail{
 		System: system, Cluster: cluster, Destination: destination,
-		Callers: []DBCallerBreakdown{},
-		TopOps:  []DBOpStat{},
-		Series:  []MsgKindPoint{},
+		Callers:    []DBCallerBreakdown{},
+		TopOps:     []DBOpStat{},
+		Operations: []MsgOperationStat{},
+		Series:     []MsgKindPoint{},
 	}
 
 	// MV-backed aggregate over messaging_caller_summary_5m. The
@@ -710,6 +719,12 @@ func (s *Store) GetMessagingDetail(
 	// without the section — it never blocks the detail payload.
 	if e2e, err := s.getMessagingE2E(ctx, system, cluster, destination, from, to); err == nil {
 		out.E2E = e2e
+	}
+
+	// Operasyon düzeyi RED — v0.10.563 (Faz 4b). MV-only okuma
+	// (messaging_operations.go); best-effort, hata çekmeceyi bloklamaz.
+	if ops, err := s.MessagingOperationRED(ctx, system, cluster, destination, from, to); err == nil && ops != nil {
+		out.Operations = ops
 	}
 
 	// Top operations — for messaging the span name is the

@@ -29,6 +29,7 @@ const HEAVY: { file: string; hooks: string[] }[] = [
   { file: 'prefs.ts', hooks: ['api.getPreference('] }, // v0.10.248 — kişisel tercih okuma; sekme kapanınca iptal
   { file: 'problems.ts', hooks: ['api.blastRadiusBatch('] }, // v0.10.260 — inbox toplu blast-radius (MV, ≤200 servis)
   { file: 'endpoints.ts', hooks: ['api.endpoints(', 'api.endpointDetail(', 'api.endpointSplit(', 'api.endpointDownstream('] },
+  { file: 'messaging.ts', hooks: ['api.messagingClients('] }, // v0.10.551
   // v0.9.810 — Explore'un fan-out'u. Bu dosya lib/queries'te DEĞİL
   // (pages/explore altında) ama kusur sınıfı birebir aynı ve ölçeği daha
   // büyük: operatör her aralık/filtre/viz dokunuşunda DÖRT sorguyu birden

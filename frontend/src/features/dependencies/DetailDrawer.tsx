@@ -16,6 +16,9 @@ import { OraclePanel } from './panels/OraclePanel';
 import { PostgresPanel } from './panels/PostgresPanel';
 import { MySQLPanel } from './panels/MySQLPanel';
 import { RedisPanel } from './panels/RedisPanel';
+import { KafkaClientsSection } from './KafkaClientsSection'; // v0.10.551
+import { podDetailPath } from '@/pages/service/podDetailPath';
+import { encodeRange } from '@/lib/urlState';
 
 // v0.9.814 — drawer'ın mini panelleri de CorePanel. LAZY: @grafana/*
 // statik import edilseydi /messaging + /databases vendor chunk'ı ~1 MB
@@ -408,6 +411,10 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
               emptyMessage=""
               tone="other" range={range} />
           )}
+          {/* v0.10.551 — Kafka istemci metrikleri (VM seam): span tarafından
+              SONRA, Top operations'tan ÖNCE (operatör mockup onayı). */}
+          <KafkaClientsSection system={system} cluster={cluster} destination={name}
+            range={range} xRange={drawerXRange} syncKey={drawerSync} />
         </>
       ) : (
         <CallerSection
@@ -647,7 +654,14 @@ function CallerSection({ title, rows, emptyMessage, tone, range }: {
                       </Link>
                     </td>
                     <td style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text2)' }}>
-                      {c.pod}
+                      {/* v0.10.551 — pod hücresi pivot (audit E11): host_name = pod adı;
+                          bilinmeyen/boş pod düz metin kalır. */}
+                      {c.pod && c.pod !== '(unknown)' ? (
+                        <Link to={podDetailPath({ pod: c.pod, service: c.service, range: encodeRange(range) || null })}
+                              style={{ color: 'inherit' }} title="Pod detayı">
+                          {c.pod}
+                        </Link>
+                      ) : c.pod}
                     </td>
                     {hasRole && (
                       <td>

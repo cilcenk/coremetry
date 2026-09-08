@@ -1451,6 +1451,11 @@ export const api = {
   messagingDetail: (system: string, cluster: string, destination: string, fromNs: number, toNs: number) =>
     get<import('./types').MessagingDetail | null>(
       `/api/messaging/detail?system=${encodeURIComponent(system)}&cluster=${encodeURIComponent(cluster)}&destination=${encodeURIComponent(destination)}&from=${fromNs}&to=${toNs}`),
+  // v0.10.551 — topic'in Kafka istemci metrikleri (VM seam; Faz 2). Kapsam
+  // sunucuda span tarafından (caller MV) çıkar; çekmece açılınca çekilir.
+  messagingClients: (system: string, cluster: string, destination: string, fromNs: number, toNs: number, signal?: AbortSignal) =>
+    get<import('./types').MessagingClients | null>(
+      `/api/messaging/clients?system=${encodeURIComponent(system)}&cluster=${encodeURIComponent(cluster)}&destination=${encodeURIComponent(destination)}&from=${fromNs}&to=${toNs}`, signal),
   // Oracle DB receiver drill-down — sessions, processes, cumulative
   // counter rates, tablespace usage. Backend falls back to
   // deterministic synthetic data when the oracledb receiver

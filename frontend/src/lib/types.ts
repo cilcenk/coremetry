@@ -741,6 +741,34 @@ export interface MessagingInstance {
 // topic'li bir kurulumda operatör 200 satır görüp listeyi TAM sanıyordu.
 // rowsCapped o kesmeyi İLAN eder; rowLimit sayıyı taşır ki UI şeridi
 // 200'ü hardcode etmesin.
+// KafkaMetricBlock / MessagingClients — internal/api/messaging_metric.go
+// (v0.10.550, Faz 1). Bir soru = bir blok; `error` doluysa o soru gelmedi,
+// diğerleri geçerli. `available` false = hiç seri yok → FE bölümü tek satıra
+// düşürür (audit §3.4 graceful degrade). Lag = bu istemcinin gördüğü partition
+// lag'i; consumer group lag'i DEĞİL (audit §3.1-3.2).
+export interface KafkaMetricBlock {
+  metric: string;
+  label: string;
+  unit: string;
+  kind: string;      // gauge | counter
+  agg: string;       // sum | avg | max | rate
+  groupBy: string[];
+  series: SpanMetricSeries[];
+  error?: string;
+}
+export interface MessagingClients {
+  system: string;
+  cluster: string;
+  destination: string;
+  source: string;    // vm | ch
+  available: boolean;
+  envAmbiguous?: boolean;
+  note: string;
+  producers: string[];
+  consumers: string[];
+  blocks: Record<string, KafkaMetricBlock>;
+}
+
 export interface MessagingOverview {
   rows: MessagingInstance[];
   rowsCapped?: boolean;

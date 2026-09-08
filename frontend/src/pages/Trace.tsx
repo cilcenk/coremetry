@@ -1493,7 +1493,11 @@ function ExternalLinkRow({ link: l, url, missing, ctx, identities, srcNote }: {
                   <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
                     <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', minWidth: 0 }}>
                       <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, color: 'var(--text)' }}>{shortIdentity(cand.value)}</span>
-                      <span style={{ fontSize: 11, color: 'var(--text3)' }}>{identityRoleTR(cand.role)}</span>
+                      {/* v0.10.569 — gevşek eşleşme İLAN EDİLİR: "buldum" ile
+                          "doğruladım" ayrı şeyler; operatör tıklamadan önce bilsin. */}
+                      <span style={{ fontSize: 11, color: cand.loose ? 'var(--warn)' : 'var(--text3)' }}>
+                        {identityRoleTR(cand.role)}{cand.loose ? ' · biçim doğrulanmadı' : ''}
+                      </span>
                     </span>
                     <span style={{ fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {[cand.service, cand.spanName].filter(Boolean).join(' · ')}

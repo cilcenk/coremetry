@@ -3021,6 +3021,8 @@ export interface TraceLinkCandidate {
   isError?: boolean;
   /** Bugünkü linkte kullanılan değer (sunucunun seçtiği kazanan). */
   used?: boolean;
+  /** v0.10.569 — biçim doğrulanamadı (gevşek eşleşme); link üretilir ama iddia taşımaz. */
+  loose?: boolean;
 }
 
 export interface TraceLinkIdentity {
@@ -3042,6 +3044,8 @@ export interface TraceLinkIdentity {
   identities?: TraceLinkCandidate[];
   /** v0.10.567 — {{time}}/{{endTime}} bu IANA diliminde biçimlenir (reqid.timezone; varsayılan Europe/Istanbul). */
   tz?: string;
+  /** v0.10.569 — kullanılan request_id gevşek eşleşmeyle bulundu (biçim doğrulanamadı). */
+  requestIdLoose?: boolean;
   /** Arama kapsamı kırpıldıysa (log penceresi / span limiti). */
   partial?: boolean;
   note: string;

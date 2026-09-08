@@ -40,6 +40,16 @@ func (s *Server) mcpDeps() mcptools.Deps {
 		EntityEnabled: func() bool { return s.entitySettings != nil && s.entitySettings.Resolved().Enabled },
 		// v0.10.478 (Faz 4, F4-1) — sohbet bağlamı (chat_context.go); ctx'te state yoksa tool dürüst hata.
 		CtxGet: s.chatContextGet, CtxSet: s.chatContextSet, CtxClear: s.chatContextClear,
+		// v0.10.555 (Faz 4a) — get_capabilities probları.
+		RolloutsEnabled: func() bool { return s.rolloutCfg != nil && s.rolloutCfg.Resolved().Enabled },
+		MetricsName:     func() string { return s.metricSource().Name() },
+		RAGReady:        func() bool { return s.rag != nil && s.rag.Ready() },
+		CopilotModel: func() string {
+			if s.copilot == nil || !s.copilot.Configured() {
+				return ""
+			}
+			return s.copilot.ActiveModel()
+		},
 	}
 }
 

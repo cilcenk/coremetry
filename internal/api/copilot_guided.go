@@ -1861,22 +1861,90 @@ func (s *Server) guidedEnvNames(ctx context.Context) []string {
 // (biri alias'ları birleştirir, öbürü birleştirmez) sessiz bir sapma
 // olurdu.
 func (s *Server) guidedTeamNames(ctx context.Context) []string {
-	const key = "copilot:guided:teamnames"
+	return mcptools.TeamCatalogueNames(s.guidedTeamCatalogue(ctx))
+}
+
+// guidedTeamCatalogue — v0.10.559: takım kataloğu TÜR sayaçlarıyla (owner/sre),
+// 60 s cache (anahtar v2: eski değer yalnız ad dizisiydi).
+func (s *Server) guidedTeamCatalogue(ctx context.Context) []mcptools.TeamCatalogueEntry {
+	const key = "copilot:guided:teamcat:v2"
 	if b, ok, _ := s.cache.Get(ctx, key); ok && len(b) > 0 {
-		var names []string
-		if json.Unmarshal(b, &names) == nil {
-			return names
+		var rows []mcptools.TeamCatalogueEntry
+		if json.Unmarshal(b, &rows) == nil {
+			return rows
 		}
 	}
 	data, err := mcptools.ReadTeamCatalogue(ctx, s.mcpDeps())
 	if err != nil {
 		return nil
 	}
-	names := mcptools.TeamCatalogueNames(data.Teams)
-	if b, merr := json.Marshal(names); merr == nil {
+	if b, merr := json.Marshal(data.Teams); merr == nil {
 		_ = s.cache.Set(ctx, key, b, 60*time.Second)
 	}
-	return names
+	return data.Teams
+}
+
+// teamAskOptions — v0.10.559 (operatör-raporlu: "yalnız SY takımları çıkıyor, UG
+// çıkmıyor"). SAF. Katalog servis sayısına göre sıralı; SRE takımları çok
+// servise sahip olduğundan ilk N'i tek başına dolduruyordu. Seçenekler iki
+// gruptan DÖNÜŞÜMLÜ seçilir: uygulama takımları (ownerTeam olduğu servis var)
+// önce, sonra SRE takımları (yalnız sreTeam) — her tür temsil edilir, aynı takım
+// bir kez, toplam tavan korunur. rest = listeye girmeyen takım sayısı.
+func teamAskOptions(entries []mcptools.TeamCatalogueEntry, max int) (opts, owner, sre []string, rest int) {
+	sorted := append([]mcptools.TeamCatalogueEntry(nil), entries...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Services > sorted[j].Services }) // çağıran sırasına güvenme
+	for _, e := range sorted {
+		switch {
+		case e.Owner > 0:
+			owner = append(owner, e.Team)
+		case e.SRE > 0:
+			sre = append(sre, e.Team)
+		}
+	}
+	for i, j := 0, 0; len(opts) < max && (i < len(owner) || j < len(sre)); {
+		if i < len(owner) {
+			opts = append(opts, owner[i])
+			i++
+		}
+		if len(opts) < max && j < len(sre) {
+			opts = append(opts, sre[j])
+			j++
+		}
+	}
+	rest = len(owner) + len(sre) - len(opts)
+	if rest < 0 {
+		rest = 0
+	}
+	return opts, owner, sre, rest
+}
+
+// renderTeamAskEvidenceTR — v0.10.559: iki grup + dışarıda kalan sayısı.
+func renderTeamAskEvidenceTR(entries []mcptools.TeamCatalogueEntry, max int) string {
+	opts, owner, sre, rest := teamAskOptions(entries, max)
+	in := make(map[string]bool, len(opts))
+	for _, o := range opts {
+		in[o] = true
+	}
+	pick := func(src []string) []string {
+		out := make([]string, 0, len(src))
+		for _, t := range src {
+			if in[t] {
+				out = append(out, t)
+			}
+		}
+		return out
+	}
+	var b strings.Builder
+	if o := pick(owner); len(o) > 0 {
+		fmt.Fprintf(&b, "Uygulama takımları (ownerTeam, %d/%d): %s\n", len(o), len(owner), strings.Join(o, ", "))
+	}
+	if s := pick(sre); len(s) > 0 {
+		fmt.Fprintf(&b, "SRE takımları (sreTeam, %d/%d): %s\n", len(s), len(sre), strings.Join(s, ", "))
+	}
+	if rest > 0 {
+		fmt.Fprintf(&b, "Katalogda %d takım daha var — listede yoksa kullanıcı adını yazabilir.\n", rest)
+	}
+	return b.String()
 }
 
 // emitGuidedStep — guided kanıt paketinin ⚙ çipi. v0.9.1229'dan beri
@@ -2383,10 +2451,11 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 }
 
 // guidedTeamAskMax — "hangi takım?" turunda sunulan çip sayısı. 8, çip
-// şeridinin tek satırda okunabildiği üst sınır; katalog sırası servis
-// sayısına göre azalan olduğu için operatörün takımı büyük olasılıkla
-// içinde. Liste dışında bir takımı YAZABİLECEĞİ de kanıtta söyleniyor —
-// çipler bir menü değil, kısayol.
+// şeridinin tek satırda okunabildiği üst sınır. v0.10.559: seçim türe göre
+// DÖNÜŞÜMLÜ (uygulama takımı, SRE takımı, …) — yalnız servis sayısına göre
+// alınınca SRE takımları tavanı tek başına dolduruyordu (operatör-raporlu).
+// Liste dışında bir takımı YAZABİLECEĞİ de kanıtta söyleniyor — çipler bir
+// menü değil, kısayol.
 const guidedTeamAskMax = 8
 
 // guidedAskTeamEvidence (v0.9.1134, operatör istegi: "takım bilinmiyorsa
@@ -2400,10 +2469,8 @@ const guidedTeamAskMax = 8
 // adını guidedTeamServices'e yönlendirir. Sunucuda konuşma durumu YOK —
 // tek dayanak "çıplak takım adı kendi başına yönlenebilir" olması.
 func (s *Server) guidedAskTeamEvidence(ctx context.Context, route *guidedRoute, why string) (string, string, error) {
-	opts := s.guidedTeamNames(ctx)
-	if len(opts) > guidedTeamAskMax {
-		opts = opts[:guidedTeamAskMax]
-	}
+	entries := s.guidedTeamCatalogue(ctx)
+	opts, _, _, _ := teamAskOptions(entries, guidedTeamAskMax) // v0.10.559 — tür dönüşümlü
 	route.TeamOptions = opts
 	var b strings.Builder
 	b.WriteString(why)
@@ -2414,8 +2481,8 @@ func (s *Server) guidedAskTeamEvidence(ctx context.Context, route *guidedRoute, 
 	}
 	b.WriteString("KULLANICIYA SOR: hangi takımda çalışıyor? Takım adını söylediğinde o takımın servislerini " +
 		"EN ÇOK HATA ALAN önce sıralayıp getireceğim.\n")
-	fmt.Fprintf(&b, "Katalogdaki en büyük takımlar (%d): %s\n", len(opts), strings.Join(opts, ", "))
-	b.WriteString("Bu adlar cevabın altında ÇİP olarak da duruyor — tıklaması yeter; listede yoksa adı yazabileceğini de söyle.\n")
+	b.WriteString(renderTeamAskEvidenceTR(entries, guidedTeamAskMax)) // v0.10.559 — iki grup
+	b.WriteString("Bu adlar cevabın altında ÇİP olarak da duruyor — tıklaması yeter; listede yoksa adı yazabileceğini de söyle. İki grubu da say (uygulama VE SRE).\n")
 	b.WriteString("KURAL: takım adı UYDURMA, yalnız yukarıdaki listeyi say.\n")
 	return b.String(), "servis kataloğu takım listesi (takım sorusu)", nil
 }

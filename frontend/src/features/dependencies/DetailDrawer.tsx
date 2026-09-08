@@ -125,6 +125,11 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
   const topOpsCols = useMemo<DataTableColumn<DBOpStat>[]>(() => [
     { id: 'statement', label: kind === 'db' ? 'Statement' : 'Operation',
       sortValue: o => o.statement, naturalDir: 'asc', flex: true },
+    // v0.10.553 — messaging: operasyon türü (messaging.operation.type → .name
+    // → .operation, okuma-anında coalesce). DB kipinde kolon yok.
+    ...(kind === 'queue'
+      ? [{ id: 'op', label: 'Type', sortValue: (o: DBOpStat) => o.operation ?? '', naturalDir: 'asc', width: 96 } as DataTableColumn<DBOpStat>]
+      : []),
     { id: 'count', label: 'Count', sortValue: o => o.count,          numeric: true, width: 110 },
     { id: 'avg',   label: 'Avg',   sortValue: o => o.avgDurationMs,  numeric: true, width: 110 },
   ], [kind]);
@@ -506,6 +511,9 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
                         )
                         : <span style={{ color: 'var(--text3)' }}>(empty)</span>}
                     </td>
+                    {kind === 'queue' && (
+                      <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}>{o.operation ?? '—'}</td>
+                    )}
                     <td className="num mono">{fmtNum(o.count)}</td>
                     <td className="num mono">{o.avgDurationMs.toFixed(1)}ms</td>
                   </tr>

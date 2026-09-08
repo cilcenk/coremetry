@@ -206,6 +206,35 @@ type DBOpStat struct {
 	Statement string  `json:"statement"`
 	Count     uint64  `json:"count"`
 	AvgMs     float64 `json:"avgDurationMs"`
+	// Operation — v0.10.553, yalnız messaging: messaging.operation.type →
+	// .operation.name → .operation coalesce'u (okuma-anında; ingest'te ad
+	// dayatması yok). publish / receive / process / settle / create; boş =
+	// SDK yaymamış.
+	Operation string `json:"operation,omitempty"`
+}
+
+// msgOperationExpr — messaging span'in operasyon türü, yeni semconv önce.
+const msgOperationExpr = `coalesce(
+		nullIf(attr_values[indexOf(attr_keys, 'messaging.operation.type')], ''),
+		nullIf(attr_values[indexOf(attr_keys, 'messaging.operation.name')], ''),
+		nullIf(attr_values[indexOf(attr_keys, 'messaging.operation')], ''),
+		''
+	)`
+
+// msgTopOpsSQL — messaging çekmecesinin Top operations sorgusu (SAF;
+// messaging_topops_test.go pinler). Ham spans ama zaman-sınırlı + LIMIT +
+// max_execution_time; span adı ana pivot, operation ikinci boyut.
+func msgTopOpsSQL(destExpr string) string {
+	return `
+		SELECT name AS stmt, ` + msgOperationExpr + ` AS operation, count(), avg(duration) / 1e6
+		FROM spans
+		WHERE time >= ? AND time <= ? AND msg_system = ?
+		  AND ` + msgClusterExpr + ` = ?
+		  AND ` + destExpr + ` = ?
+		GROUP BY stmt, operation
+		ORDER BY count() DESC
+		LIMIT 20
+		SETTINGS max_execution_time = 15`
 }
 
 // DBDetail is the full payload for /api/databases/detail. The
@@ -687,16 +716,8 @@ func (s *Store) GetMessagingDetail(
 	// useful pivot (e.g. "publish kafka.orders" / "consume
 	// kafka.orders"). No truncation needed; OTel span names
 	// are short by spec.
-	opRows, err := s.telemetryReadConn().Query(ctx, `
-		SELECT name AS stmt, count(), avg(duration) / 1e6
-		FROM spans
-		WHERE time >= ? AND time <= ? AND msg_system = ?
-		  AND `+msgClusterExpr+` = ?
-		  AND `+destExpr+` = ?
-		GROUP BY stmt
-		ORDER BY count() DESC
-		LIMIT 20
-		SETTINGS max_execution_time = 15`,
+	// v0.10.553 — operation kırılımı (msgTopOpsSQL, test pinli).
+	opRows, err := s.telemetryReadConn().Query(ctx, msgTopOpsSQL(destExpr),
 		from, to, system, cluster, destination)
 	if err != nil {
 		return out, nil
@@ -704,7 +725,7 @@ func (s *Store) GetMessagingDetail(
 	defer opRows.Close()
 	for opRows.Next() {
 		var op DBOpStat
-		if err := opRows.Scan(&op.Statement, &op.Count, &op.AvgMs); err != nil {
+		if err := opRows.Scan(&op.Statement, &op.Operation, &op.Count, &op.AvgMs); err != nil {
 			continue
 		}
 		out.TopOps = append(out.TopOps, op)

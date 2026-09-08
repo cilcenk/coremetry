@@ -384,6 +384,9 @@ export interface DBOpStat {
   statement: string;
   count: number;
   avgDurationMs: number;
+  // v0.10.553 — yalnız messaging: messaging.operation.type → .name →
+  // .operation coalesce'u (publish / receive / process …); SDK yaymadıysa yok.
+  operation?: string;
 }
 
 // ServiceClusterStat — one row of the per-cluster RED

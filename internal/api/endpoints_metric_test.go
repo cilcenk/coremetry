@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +27,8 @@ type fakeEPSource struct {
 	queryFn func(f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error)
 	calls   []string
 	filters [][]chstore.FilterExpr
+	queries []chstore.MetricQueryFilter // v0.10.550 — QueryMetric süzgeçleri (Kafka testleri)
+	mu      sync.Mutex                  // v0.10.550 — Kafka soruları paralel sorulur
 }
 
 func (f *fakeEPSource) Name() string                      { return f.name }
@@ -51,7 +54,10 @@ func (f *fakeEPSource) QueryMetricCountRate(_ context.Context, q chstore.MetricQ
 	return f.rateFn(q, mode)
 }
 func (f *fakeEPSource) QueryMetric(_ context.Context, q chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, "query:"+q.Aggregation+":"+q.Name)
+	f.queries = append(f.queries, q)
+	f.mu.Unlock()
 	return f.queryFn(q)
 }
 

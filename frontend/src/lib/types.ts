@@ -2981,8 +2981,36 @@ export interface ServiceMetricRED {
 }
 
 // v0.10.345 — trace sayfası dış link şablonları (system_settings['external_links']).
-export interface ExternalLink { label: string; urlTemplate: string; requires?: string[]; color?: string } // color: #rrggbb dolgu (v0.10.346)
+// v0.10.566 — `group`: aynı gruptaki linklerden AYARDAKİ SIRAYLA yalnız ilk
+// ÇÖZÜLEN çizilir (birincil = {{requestId}}, yedek = {{attr.function_id}}…).
+// Boş grup = link tek başına (bugünkü davranış).
+export interface ExternalLink { label: string; urlTemplate: string; requires?: string[]; color?: string; group?: string } // color: #rrggbb dolgu (v0.10.346)
 export interface ExternalLinkSettings { links: ExternalLink[] }
+
+// TraceLinkIdentity — v0.10.566: dış link kimliği için trace'in KAZANAN
+// span'i (seçili span → ilk hatalı span → root) ve o span'in loglarının
+// gövdesinden çıkarılan request_id.
+//
+// Operatör kuralı: request_id varsa link ONUNLA üretilir (channelCode
+// gönderilmez); yoksa bugünkü span-attribute yolu (function_id +
+// channel_code) çalışır. Bir trace'te birden fazla request_id / function_id
+// olabildiği için seçim span önceliğiyle yapılır, `candidates` ile
+// `distinctRequestIds` operatöre kaç aday olduğunu dürüstçe söyler.
+export interface TraceLinkIdentity {
+  traceId: string;
+  requestId?: string;
+  /** Kimliğin nereden geldiği: log gövdesi, span attribute'u ya da hiç. */
+  source: 'log' | 'span' | 'none';
+  /** Kimliği veren span. */
+  spanId?: string;
+  /** Span önceliğiyle birleştirilmiş attribute'lar (kazanan span önce). */
+  attrs: Record<string, string>;
+  candidates: string[];
+  distinctRequestIds: number;
+  /** Arama kapsamı kırpıldıysa (log penceresi / span limiti). */
+  partial?: boolean;
+  note: string;
+}
 
 export interface ServiceMetricThroughput {
   service: string;

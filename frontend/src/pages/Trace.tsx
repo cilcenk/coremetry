@@ -12,7 +12,7 @@ import { traceRepeatGroups, type TraceRepeatGroup } from '@/lib/traceRepeats';
 import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
 import { AIExplainButton } from '@/components/ai/AIExplainButton';
-import { renderExternalLink, collectLinkCtx } from '@/lib/externalLinks';
+import { renderExternalLink, collectLinkCtx, pickGroupedLinks } from '@/lib/externalLinks';
 import { useAiEvidence, useAiFocus } from '@/components/ai/aiEvents';
 import { IconLink, IconCheck, IconDownload, IconSparkles } from '@/components/icons';
 import { Button } from '@/components/ui/Button';
@@ -558,7 +558,7 @@ function TraceDetailInner() {
               {/* v0.10.346 (operatör) — dış linkler satırın EN SAĞINDA; renk ayardan
                   (aracın marka rengi), yazı --on-accent. */}
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <ExternalLinkButtons spans={spans ?? []} />
+                <ExternalLinkButtons spans={spans ?? []} traceId={id} selectedSpanId={selectedId} />
               </span>
             </div>
 
@@ -1299,24 +1299,58 @@ function KPI({ label, value, tone }: {
 
 // ExternalLinkButtons — v0.10.345. Şablonlar 5 dk taze (admin değiştirince
 // sayfa yenilemesi yeter); render saf (lib/externalLinks.ts, test).
-function ExternalLinkButtons({ spans }: { spans: SpanRow[] }) {
+//
+// v0.10.566 (operatör) — kimlik ARTIK ÖNCE LOG GÖVDESİNDEN: trace'in
+// loglarında request_id varsa link onunla üretilir (channelCode gönderilmez),
+// yoksa bugünkü span-attribute yolu (function_id + channel_code) aynen çalışır.
+// Bir trace'te birden fazla request_id / function_id olabildiği için kazanan
+// span'i sunucu seçer (seçili span → ilk hatalı span → root); seçili span
+// değişince sorgu anahtarı da değişir, yani operatörün baktığı span kimliği
+// belirler. Descriptor yoksa/hata verirse eski yola düşülür (geriye dönük).
+function ExternalLinkButtons({ spans, traceId, selectedSpanId }: { spans: SpanRow[]; traceId: string; selectedSpanId: string | null }) {
   const q = useQuery({ queryKey: ['external-links'], queryFn: () => api.externalLinks(), staleTime: 5 * 60_000 });
+  const identQ = useQuery({
+    queryKey: ['trace-link-identity', traceId, selectedSpanId ?? ''],
+    queryFn: ({ signal }) => api.traceLinkIdentity(traceId, selectedSpanId ?? undefined, signal),
+    enabled: !!traceId,
+    staleTime: 30_000,
+  });
   const links = q.data?.links ?? [];
+  const base = collectLinkCtx(spans);
+  const ident = identQ.data;
+  // Descriptor attrs BASE'i EZER: sunucu kazanan span önceliğiyle birleştirdi,
+  // istemci ise kök-span önceliğiyle. Yalnız DOLU değerler ezer — boş bir
+  // sunucu değeri, çözülen bir attribute'u sessizce düşürmesin.
+  const ctx = base && ident
+    ? {
+        ...base,
+        attrs: Object.entries(ident.attrs ?? {}).reduce(
+          (acc, [k, v]) => (v ? { ...acc, [k]: v } : acc), { ...base.attrs } as Record<string, string>),
+        requestId: ident.requestId,
+      }
+    : base;
   if (links.length === 0) return null;
-  const ctx = collectLinkCtx(spans);
+  // v0.10.566 — grup: aynı gruptan yalnız ÇÖZÜLEN ilk link çizilir (birincil
+  // {{requestId}}, yedek {{attr.function_id}}); grupsuz link bugünkü gibi tekil.
+  const rows = pickGroupedLinks(links, l => (ctx ? renderExternalLink(l.urlTemplate, ctx) : { url: undefined, missing: ['span yok'] as string[] }));
+  // Kimliğin nereden geldiğini tooltip söyler — operatör "neden bu link?"
+  // sorusunu ekranda cevaplasın (log gövdesi mi, span attribute'u mu).
+  const srcNote = ident ? `kimlik: ${ident.source === 'log' ? 'log gövdesi' : ident.source === 'span' ? 'span attribute' : 'yok'}${ident.note ? ` — ${ident.note}` : ''}` : '';
   return (
     <>
-      {links.map(l => {
-        const r = ctx ? renderExternalLink(l.urlTemplate, ctx) : { missing: ['span yok'] as string[] };
-        const ok = !!r.url;
+      {rows.map(({ link: l, url, missing }) => {
+        const ok = !!url;
         // Renk AYARDAN gelir (veri), token değil: marka rengi araca özgü; yazı --on-accent.
         const fill = l.color ? { background: l.color, borderColor: l.color, color: 'var(--on-accent)' } : undefined;
+        const tip = ok
+          ? `${l.label} — yeni sekmede: ${url}`
+          : `${l.label}: bu trace'te çözülemeyen alanlar — ${missing.join(', ')}`;
         // v0.10.348 (operatör) — "Explain this trace" ile aynı boyut (md).
         return ok
-          ? <Button key={l.label} variant="secondary" size="md" title={`${l.label} — yeni sekmede: ${r.url}`} style={fill}
-              onClick={() => window.open(r.url, '_blank', 'noopener,noreferrer')}>{l.label} ↗</Button>
+          ? <Button key={l.label} variant="secondary" size="md" title={srcNote ? `${tip}\n${srcNote}` : tip} style={fill}
+              onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}>{l.label} ↗</Button>
           : <Button key={l.label} variant="secondary" size="md" disabled style={fill ? { ...fill, opacity: 0.55 } : undefined}
-              title={`${l.label}: bu trace'te çözülemeyen alanlar — ${r.missing.join(', ')}`}>{l.label} ↗</Button>;
+              title={srcNote ? `${tip}\n${srcNote}` : tip}>{l.label} ↗</Button>;
       })}
     </>
   );

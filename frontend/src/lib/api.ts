@@ -818,6 +818,16 @@ export const api = {
   traceLinks: (id: string) =>
     get<TraceLinks>(`/api/traces/${encodeURIComponent(id)}/links`),
 
+  // v0.10.566 — dış link kimliği: trace'in loglarının gövdesinde request_id
+  // varsa onu, yoksa span attribute'larını (function_id/channel_code) döner.
+  // `span` seçili span id'si: kazanan span önceliği (seçili → ilk hatalı →
+  // root) sunucuda uygulanır, çünkü aynı trace'te birden fazla kimlik olabilir.
+  traceLinkIdentity: (traceId: string, spanId?: string, signal?: AbortSignal) =>
+    get<import('./types').TraceLinkIdentity>(
+      `/api/traces/${encodeURIComponent(traceId)}/link-identity${spanId ? `?span=${encodeURIComponent(spanId)}` : ''}`,
+      signal,
+    ),
+
   // v0.9.1094 — liste POST gövdesiyle: ES keyset cursor'ı (PIT id)
   // KB'larca olabilir; GET URL'si prod ingress sınırını aşıp "Failed to
   // fetch" ile ölüyordu (Load more'un ilk sayfada değil 2. sayfada

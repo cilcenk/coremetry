@@ -182,6 +182,8 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// birden çok yol adım yayınlayabiliyor; ayrı sayaçlar aynı `i`yi iki kez
 	// üretir ve frontend kanıtı yanlış çipe yapıştırırdı.
 	emit := withStepIDs(em.Emit)
+	var blockSeq blocks.Sequencer // v0.10.557 — tek sıralayıcı (chart/link/action + guided evidence)
+	emit = withBlockSeq(emit, &blockSeq)
 
 	// Attribution: tag ctx so RecordUsage attributes the exchange to
 	// the "chat" surface on the /ai page.
@@ -380,7 +382,6 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// deduped by service+operation+agg.
 	var chartBlocks []string
 	// v0.10.541 (Faz 3.3a) — tipli bloklar (event: block), eski çerçevelerle paralel.
-	var blockSeq blocks.Sequencer
 	// v0.10.542 (Faz 3.4) — açık sayfa yolu: aynı sayfaya giden tool linki
 	// "bu sayfada uygula" aksiyonuna dönüşür (chat_actions.go).
 	pageCtx := agentctx.Sanitize(req.Context.Page)

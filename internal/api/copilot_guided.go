@@ -2030,11 +2030,42 @@ func (s *Server) guidedRootCauseBundle(ctx context.Context, emit func(string, an
 		b.WriteString(dep)
 	}
 
+	// v0.10.557 (Faz 4c) — penceredeki DEĞİŞİKLİKLER: deploy olayı + çıkarımsal
+	// deploy + K8s rollout (list_deployments aynası; rollouts katmanı kapalıysa
+	// metin bunu söyler). recent_deploys servis-kapsamlı sürüm listesi; bu adım
+	// rollout'ları ve olayları da katar.
+	nChg := emitGuidedStep(emit, "list_deployments", `{"service":"`+service+`"}`)
+	chgOut, cerr := mcptools.ListDeploymentsWindow(ctx, s.mcpDeps(), mcptools.ListDeploymentsArgs{Service: service, Limit: 8}, from, to)
+	var changes []mcptools.ChangeRow
+	chgText := ""
+	if cerr == nil {
+		changes = mcptools.ChangesOf(chgOut)
+		chgText = mcptools.RenderChangesTR(chgOut)
+	}
+	emitGuidedStepResult(emit, nChg, "list_deployments", chgText, cerr)
+	if cerr == nil && chgText != "" {
+		b.WriteString("\n")
+		b.WriteString(chgText)
+	}
+
+	// v0.10.557 (Faz 4c) — log desenleri (yeni / patlayan), servise dokunanlar.
+	nPat := emitGuidedStep(emit, "log_patterns", `{"service":"`+service+`"}`)
+	pats, perr := s.guidedServicePatterns(ctx, service, rangeS)
+	patText := renderLogPatternsTR(pats, service, rangeS)
+	emitGuidedStepResult(emit, nPat, "log_patterns", patText, perr)
+	if perr == nil {
+		b.WriteString("\n")
+		b.WriteString(patText)
+	}
+
+	// v0.10.557 — yapısal kanıt bloğu (FE kartı; anlatımdan bağımsız, tek sıralayıcı).
+	emit("evidence", guidedEvidencePayload(service, rangeS, cx, probs, changes, pats))
+
 	b.WriteString("\nKURAL: Yukarıdaki kök-neden hipotezi HESAPLANMIŞ bir sıralamadır, tahmin değil. " +
 		"Onu anlat ve güven skorunu birlikte ver. Hipotez yoksa ya da güveni düşükse sebep UYDURMA — " +
 		"hangi kanıta baktığını yaz ve 'kesin sebep için yeterli kanıt yok' de.\n")
 
-	src := fmt.Sprintf("kök-neden hipotezi + açık problemler + servis RED değişimi + deploy geçmişi (son %s)", fmtAgoTR(rangeS))
+	src := fmt.Sprintf("kök-neden hipotezi + açık problemler + servis RED değişimi + deploy geçmişi + pencere değişiklikleri (rollout) + log desenleri (son %s)", fmtAgoTR(rangeS))
 	if env != "" {
 		src += fmt.Sprintf("; problemler ortam: %s", env)
 	}
@@ -3055,30 +3086,7 @@ func (s *Server) guidedLogErrorsBundle(ctx context.Context, emit func(string, an
 		return "", "", err
 	}
 	nPat := emitGuidedStep(emit, "log_patterns", "")
-	pats, perr := anomaly.DetectLogPatterns(ctx, s.logs, snapAnomalyWindow(time.Duration(rangeS)*time.Second))
-	if perr != nil {
-		pats = nil // patterns are additive evidence — soft-fail
-	}
-	if service != "" {
-		kept := pats[:0]
-		for _, p := range pats {
-			if p.Service == service {
-				kept = append(kept, p)
-				continue
-			}
-			for _, ts := range p.TopServices {
-				if ts.Service == service {
-					kept = append(kept, p)
-					break
-				}
-			}
-		}
-		pats = kept
-	}
-	sort.Slice(pats, func(i, j int) bool { return pats[i].CurrentCount > pats[j].CurrentCount })
-	if len(pats) > 5 {
-		pats = pats[:5]
-	}
+	pats, perr := s.guidedServicePatterns(ctx, service, rangeS) // v0.10.557 — ortak yardımcı
 	src := fmt.Sprintf("log severity histogramı + hata pattern tespitleri (son %s)", fmtAgoTR(rangeS))
 	if env != "" {
 		src += "; ortam filtresi uygulanamadı (log verisi ortam boyutu taşımıyor)"
@@ -3095,6 +3103,111 @@ func (s *Server) guidedLogErrorsBundle(ctx context.Context, emit func(string, an
 }
 
 // ─── Evidence renderers (pure, table-tested) ────────────────────────
+
+// guidedServicePatterns — v0.10.557: servise dokunan (ana ya da topServices'te)
+// yeni/patlayan log desenleri, sayıya göre azalan, en çok 5. Desenler EK kanıt:
+// dedektör hatası yumuşak (nil, err) döner. Örneklem tabanlı (Drain), tam tarama
+// yok; pencere basamaklı (snapAnomalyWindow).
+func (s *Server) guidedServicePatterns(ctx context.Context, service string, rangeS int64) ([]anomaly.LogPatternAnomaly, error) {
+	pats, perr := anomaly.DetectLogPatterns(ctx, s.logs, snapAnomalyWindow(time.Duration(rangeS)*time.Second))
+	if perr != nil {
+		return nil, perr
+	}
+	pats = filterGuidedPatterns(pats, service, 5)
+	return pats, nil
+}
+
+// filterGuidedPatterns — SAF yarı (test pinli).
+func filterGuidedPatterns(pats []anomaly.LogPatternAnomaly, service string, max int) []anomaly.LogPatternAnomaly {
+	if service != "" {
+		kept := make([]anomaly.LogPatternAnomaly, 0, len(pats))
+		for _, p := range pats {
+			if p.Service == service {
+				kept = append(kept, p)
+				continue
+			}
+			for _, ts := range p.TopServices {
+				if ts.Service == service {
+					kept = append(kept, p)
+					break
+				}
+			}
+		}
+		pats = kept
+	}
+	sort.SliceStable(pats, func(i, j int) bool { return pats[i].CurrentCount > pats[j].CurrentCount })
+	if len(pats) > max {
+		pats = pats[:max]
+	}
+	return pats
+}
+
+// renderLogPatternsTR — v0.10.557: kök-neden rotasının desen satırları (histogramsız).
+func renderLogPatternsTR(pats []anomaly.LogPatternAnomaly, service string, rangeS int64) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Log desenleri (son %s, %s): ", fmtAgoTR(rangeS), service)
+	if len(pats) == 0 {
+		b.WriteString("yeni ya da patlayan desen yok (örneklem).\n")
+		return b.String()
+	}
+	b.WriteString("\n")
+	for _, p := range pats {
+		fmt.Fprintf(&b, "- %s ×%d (%s", p.Pattern, p.CurrentCount, p.Kind)
+		if p.BaselineCount > 0 {
+			fmt.Fprintf(&b, ", baseline %d, ×%.1f", p.BaselineCount, p.Ratio)
+		}
+		b.WriteString(")\n")
+	}
+	return b.String()
+}
+
+// guidedEvidencePayload — v0.10.557: kök-neden rotasının YAPISAL kanıt bloğu
+// (event: block, type evidence). Anlatım metninin ikizi değil, FE kartının verisi:
+// RED şimdi/taban, açık problemler + hipotez, penceredeki değişiklikler, log
+// desenleri; hipotez yoksa verdict bunu söyler. SAF (test pinli), listeler tavanlı.
+func guidedEvidencePayload(service string, rangeS int64, cx *aiServiceContext, probs []chstore.Problem, changes []mcptools.ChangeRow, pats []anomaly.LogPatternAnomaly) map[string]any {
+	out := map[string]any{"question": "root_cause", "service": service, "rangeS": rangeS}
+	if cx != nil {
+		red := func(r aiRED) map[string]any {
+			return map[string]any{"spans": r.Spans, "rate": r.Rate, "errorRate": r.ErrorRate, "p95Ms": r.P95Ms, "p99Ms": r.P99Ms}
+		}
+		out["red"] = map[string]any{"current": red(cx.Current), "baseline": red(cx.Baseline)}
+	}
+	pl := make([]map[string]any, 0, len(probs))
+	for i, p := range probs {
+		if i >= 5 {
+			break
+		}
+		row := map[string]any{"id": p.ID, "ruleName": p.RuleName, "severity": p.Severity, "status": p.Status, "startedAt": p.StartedAt, "metric": p.Metric, "value": p.Value, "threshold": p.Threshold}
+		if p.RootCause != nil {
+			row["topSuspect"], row["confidence"] = p.RootCause.TopSuspect, p.RootCause.Confidence
+		}
+		pl = append(pl, row)
+	}
+	out["problems"] = pl
+	cl := make([]map[string]any, 0, len(changes))
+	for i, c := range changes {
+		if i >= 8 {
+			break
+		}
+		cl = append(cl, map[string]any{"source": c.Source, "timeUnixNs": c.TimeUnixNs, "workload": c.Workload, "service": c.Service, "version": c.Version, "status": c.Status, "namespace": c.Namespace})
+	}
+	out["changes"] = cl
+	ll := make([]map[string]any, 0, len(pats))
+	for _, p := range pats {
+		ll = append(ll, map[string]any{"pattern": p.Pattern, "kind": p.Kind, "currentCount": p.CurrentCount, "baselineCount": p.BaselineCount, "ratio": p.Ratio, "service": p.Service})
+	}
+	out["logPatterns"] = ll
+	verdict := "hipotez yok — açık problem yok ya da korelatör henüz hesaplamadı"
+	for _, p := range probs {
+		if p.RootCause != nil && p.RootCause.TopSuspect != "" {
+			verdict = fmt.Sprintf("kök-neden şüphelisi %s (güven %.2f)", p.RootCause.TopSuspect, p.RootCause.Confidence)
+			break
+		}
+	}
+	out["verdict"] = verdict
+	return out
+}
 
 const guidedMaxLines = 10
 

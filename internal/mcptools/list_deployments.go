@@ -37,7 +37,7 @@ type ListDeploymentsArgs struct {
 	Limit     int    `json:"limit,omitempty"`
 }
 
-type changeRow struct {
+type ChangeRow struct {
 	Source     string `json:"source"` // inferred | event | rollout
 	TimeISO    string `json:"time_iso"`
 	TimeUnixNs int64  `json:"time_unix_ns"`
@@ -54,8 +54,8 @@ type changeRow struct {
 // (cluster/namespace/workload), zamana göre azalan, limit. service verildiyse
 // inferred tam ad eşleşmesi, rollout workload eşleşmesi. includeInferred=false
 // (namespace/cluster daraltması + servissiz) inferred/event satırlarını düşürür.
-func mergeChanges(inferred []chstore.RecentDeployEntry, rollouts []chstore.RolloutRow, service string, includeInferred bool, limit int) []changeRow {
-	rows := make([]changeRow, 0, len(inferred)+len(rollouts))
+func mergeChanges(inferred []chstore.RecentDeployEntry, rollouts []chstore.RolloutRow, service string, includeInferred bool, limit int) []ChangeRow {
+	rows := make([]ChangeRow, 0, len(inferred)+len(rollouts))
 	if includeInferred {
 		for _, d := range inferred {
 			if service != "" && d.Service != service {
@@ -65,7 +65,7 @@ func mergeChanges(inferred []chstore.RecentDeployEntry, rollouts []chstore.Rollo
 			if d.Source == "event" {
 				src = "event"
 			}
-			rows = append(rows, changeRow{
+			rows = append(rows, ChangeRow{
 				Source: src, TimeUnixNs: d.FirstSeenNs, TimeISO: time.Unix(0, d.FirstSeenNs).UTC().Format(time.RFC3339),
 				Service: d.Service, Version: d.Version, SpanCount: int64(d.SpanCount),
 			})
@@ -79,7 +79,7 @@ func mergeChanges(inferred []chstore.RecentDeployEntry, rollouts []chstore.Rollo
 		if r.ImageTag != "" {
 			ver = r.ImageTag
 		}
-		rows = append(rows, changeRow{
+		rows = append(rows, ChangeRow{
 			Source: "rollout", TimeUnixNs: r.StartedAt.UnixNano(), TimeISO: r.StartedAt.UTC().Format(time.RFC3339),
 			Cluster: r.ClusterID, Namespace: r.Namespace, Workload: r.Workload, Version: ver, Status: r.Status, SpanCount: r.SpanCount,
 		})
@@ -175,4 +175,60 @@ func listDeploymentsTool(d Deps) mcp.Tool {
 			return ListDeploymentsWindow(ctx, d, a, now.Add(-time.Duration(windowS)*time.Second), now)
 		},
 	}
+}
+
+// ChangesOf — v0.10.557: ListDeploymentsWindow zarfından satırlar (guided rota
+// yapısal kanıt bloğu için).
+func ChangesOf(out map[string]any) []ChangeRow {
+	rows, _ := out["rows"].([]ChangeRow)
+	return rows
+}
+
+// RenderChangesTR — v0.10.557: zarfı anlatım için kompakt TR metne çevirir
+// (guided kök-neden rotası). Rollouts katmanı kapalıysa bunu SÖYLER.
+func RenderChangesTR(out map[string]any) string {
+	rows := ChangesOf(out)
+	var b strings.Builder
+	layer := ""
+	if src, ok := out["sources"].(map[string]any); ok {
+		if st, ok := src["rollouts_layer"].(string); ok {
+			layer = st
+		}
+	}
+	if len(rows) == 0 {
+		b.WriteString("Pencerede kayıtlı değişiklik yok (deploy olayı / çıkarımsal deploy / rollout).")
+		if layer != "" && layer != "on" {
+			b.WriteString(" Rollouts katmanı: " + layer + ".")
+		}
+		b.WriteString("\n")
+		return b.String()
+	}
+	b.WriteString("Penceredeki değişiklikler (yeni → eski):\n")
+	for i, r := range rows {
+		if i >= 8 {
+			fmt.Fprintf(&b, "- … +%d satır daha\n", len(rows)-i)
+			break
+		}
+		fmt.Fprintf(&b, "- %s [%s]", r.TimeISO, r.Source)
+		if r.Workload != "" {
+			b.WriteString(" " + r.Workload)
+		}
+		if r.Service != "" && r.Service != r.Workload {
+			b.WriteString(" (" + r.Service + ")")
+		}
+		if r.Version != "" {
+			b.WriteString(" → " + r.Version)
+		}
+		if r.Status != "" {
+			b.WriteString(" · " + r.Status)
+		}
+		if r.Namespace != "" {
+			b.WriteString(" · ns " + r.Namespace)
+		}
+		b.WriteString("\n")
+	}
+	if layer != "" && layer != "on" {
+		b.WriteString("Rollouts katmanı: " + layer + " — yalnız çıkarımsal deploy'lar/olaylar listelendi.\n")
+	}
+	return b.String()
 }

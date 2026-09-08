@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderExternalLink, attrTimeParts, formatParts, collectLinkCtx } from './externalLinks';
+import { renderExternalLink, attrTimeParts, formatParts, collectLinkCtx, pickGroupedLinks } from './externalLinks';
 
 // v0.10.345 — dış link şablonu (operatörün log platformu örneği: date=ddMMyyyyHHmm,
 // functionId, channelCode; tarih function_id içindeki zamandan).
@@ -79,5 +79,114 @@ describe('endTime (v0.10.371)', () => {
     expect(ctx.startMs).toBe(Math.round(t0 / 1e6));
     expect(ctx.endMs).toBe(Math.round((t0 + 500_000_000 + 900_000_000) / 1e6)); // çocuk daha geç bitiyor
     expect(ctx.endMs).toBeGreaterThan(ctx.startMs);
+  });
+});
+
+// v0.10.566 — operatör: "trace'in loglarının gövdesinde request_id varsa link
+// ONUNLA üretilsin (channelCode gönderme); yoksa bugünkü function_id yolu."
+// İki şablon aynı düğmeyi iki kez çizmesin diye grup: aynı gruptan yalnız
+// çözülen ilk link çizilir.
+describe('{{requestId}} (v0.10.566)', () => {
+  const base = { traceId: 'abc', service: 'svc', startMs: 0, endMs: 0, attrs: {} };
+  it('dolu → URL-kodlu yazılır', () => {
+    const r = renderExternalLink('https://logs/?requestId={{requestId}}', { ...base, requestId: 'RQ 1/2' });
+    expect(r.missing).toEqual([]);
+    expect(r.url).toBe('https://logs/?requestId=RQ%201%2F2');
+  });
+  it('boş → çözülmez, eksik olarak requestId söyler', () => {
+    const r = renderExternalLink('https://logs/?requestId={{requestId}}', base);
+    expect(r.url).toBeUndefined();
+    expect(r.missing).toEqual(['requestId']);
+  });
+  it('yok (alan hiç verilmemiş) → yine eksik', () => {
+    expect(renderExternalLink('{{requestId}}', base).missing).toEqual(['requestId']);
+  });
+});
+
+describe('pickGroupedLinks (v0.10.566)', () => {
+  type L = { label: string; urlTemplate: string; group?: string };
+  // resolve: şablonu "OK" içeriyorsa çözülür — saf seçiciyi render'dan ayırır.
+  const resolve = (l: L) => (l.urlTemplate.includes('OK')
+    ? { url: `https://x/${l.label}`, missing: [] as string[] }
+    : { url: undefined, missing: ['function_id'] });
+
+  it('gruplanmamış davranış BUGÜNKÜYLE aynı: her link kendi başına, sırayla', () => {
+    const links: L[] = [
+      { label: 'a', urlTemplate: 'OK' },
+      { label: 'b', urlTemplate: 'no' },
+      { label: 'c', urlTemplate: 'OK', group: '  ' }, // yalnız boşluk = grupsuz
+    ];
+    const out = pickGroupedLinks(links, resolve);
+    expect(out.map(o => o.link.label)).toEqual(['a', 'b', 'c']);
+    expect(out[1].url).toBeUndefined();
+    expect(out[1].missing).toEqual(['function_id']);
+  });
+
+  it('grupta ikinci link çözülüyorsa O gelir (birincil requestId boşsa yedek)', () => {
+    const out = pickGroupedLinks([
+      { label: 'birincil', urlTemplate: 'no', group: 'log' },
+      { label: 'yedek', urlTemplate: 'OK', group: 'log' },
+    ], resolve);
+    expect(out).toHaveLength(1);
+    expect(out[0].link.label).toBe('yedek');
+    expect(out[0].url).toBe('https://x/yedek');
+  });
+
+  it('grupta ilk link çözülüyorsa yedek ÇİZİLMEZ (ayardaki sıra kazanır)', () => {
+    const out = pickGroupedLinks([
+      { label: 'birincil', urlTemplate: 'OK', group: 'log' },
+      { label: 'yedek', urlTemplate: 'OK', group: 'log' },
+    ], resolve);
+    expect(out.map(o => o.link.label)).toEqual(['birincil']);
+  });
+
+  it('hiçbiri çözülmezse grubun İLK linki missing ile BİR KEZ gelir', () => {
+    const out = pickGroupedLinks([
+      { label: 'birincil', urlTemplate: 'no', group: 'log' },
+      { label: 'yedek', urlTemplate: 'no', group: 'log' },
+    ], resolve);
+    expect(out).toHaveLength(1);
+    expect(out[0].link.label).toBe('birincil');
+    expect(out[0].url).toBeUndefined();
+    expect(out[0].missing).toEqual(['function_id']);
+  });
+
+  it('grup sırası İLK GÖRÜLME sırası; grupsuzlar araya yerinde girer', () => {
+    const out = pickGroupedLinks([
+      { label: 'g1-a', urlTemplate: 'no', group: 'g1' },
+      { label: 'tek', urlTemplate: 'OK' },
+      { label: 'g2-a', urlTemplate: 'OK', group: 'g2' },
+      { label: 'g1-b', urlTemplate: 'OK', group: 'g1' },
+    ], resolve);
+    expect(out.map(o => o.link.label)).toEqual(['g1-b', 'tek', 'g2-a']);
+  });
+
+  it('deterministik: aynı girdi aynı çıktı', () => {
+    const links: L[] = [
+      { label: 'p', urlTemplate: 'no', group: ' log ' },
+      { label: 's', urlTemplate: 'OK', group: 'log' }, // trim'lenmiş anahtar aynı gruptur
+    ];
+    const a = pickGroupedLinks(links, resolve);
+    const b = pickGroupedLinks(links, resolve);
+    expect(a.map(o => o.link.label)).toEqual(['s']);
+    expect(a).toEqual(b);
+  });
+
+  it('gerçek render ile: requestId varsa birincil, yoksa function_id yedeği', () => {
+    const PRIMARY = 'https://logs/?date={{time:ddMMyyyyHHmm}}&requestId={{requestId}}';
+    const FALLBACK = 'https://logs/?date={{time:ddMMyyyyHHmm}}&functionId={{attr.function_id}}&channelCode={{attr.channel_code}}';
+    const links: L[] = [
+      { label: 'Log (requestId)', urlTemplate: PRIMARY, group: 'log' },
+      { label: 'Log (functionId)', urlTemplate: FALLBACK, group: 'log' },
+    ];
+    const ctx = { traceId: 't', service: 'svc', startMs: new Date(2026, 8, 6, 10, 20).getTime(), endMs: 0, attrs: { function_id: 'F', channel_code: '060201' } };
+    const withReq = pickGroupedLinks(links, l => renderExternalLink(l.urlTemplate, { ...ctx, requestId: 'R-42' }));
+    expect(withReq).toHaveLength(1);
+    expect(withReq[0].link.label).toBe('Log (requestId)');
+    expect(withReq[0].url).toBe('https://logs/?date=060920261020&requestId=R-42');
+    const noReq = pickGroupedLinks(links, l => renderExternalLink(l.urlTemplate, ctx));
+    expect(noReq).toHaveLength(1);
+    expect(noReq[0].link.label).toBe('Log (functionId)');
+    expect(noReq[0].url).toBe('https://logs/?date=060920261020&functionId=F&channelCode=060201');
   });
 });

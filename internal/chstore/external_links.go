@@ -16,6 +16,17 @@ package chstore
 //	{{time:FMT}}            trace başlangıcı (tarayıcı yerel saati), FMT
 //	{{endTime:FMT}}         trace bitişi (en geç span sonu), FMT — v0.10.371
 //	{{traceId}} {{service}} kimlik
+//	{{requestId}}           trace'in LOGLARININ GÖVDESİNDEN çözülen istek
+//	                        kimliği (v0.10.566). Attribute DEĞİL — bu yüzden
+//	                        Requires'a GİRMEZ; sunucu
+//	                        GET /api/traces/{id}/link-identity ile çözer,
+//	                        çözemezse istemci düğmeyi pasif bırakır.
+//
+// Group (v0.10.566) — aynı gruptaki linklerden ÇÖZÜLEN İLKİ çizilir
+// (seçimi istemci yapar). Kullanımı: aynı log platformuna iki şablon —
+// biri {{requestId}} ile, öteki {{attr.function_id}} fallback'i — tek
+// düğme yerinde yarışır; operatör iki düğme görmez. Boş = gruplanmamış
+// (link kendi başına çizilir).
 //
 // Örnek (log platformu): .../masterlog?date={{time:ddMMyyyyHHmm}}
 //   &functionId={{attr.function_id}}&channelCode={{attr.channel_code}}
@@ -31,6 +42,7 @@ import (
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 )
 
 const externalLinksSettingKey = "external_links"
@@ -39,6 +51,10 @@ const (
 	externalLinksMax        = 16
 	externalLinkLabelMax    = 64
 	externalLinkTemplateMax = 2048
+	// externalLinkGroupMax — grup adı bir ETİKET, cümle değil (v0.10.566).
+	// Tavan KARAKTER (rune) cinsinden ölçülür: "Ödeme İzleme" gibi Türkçe
+	// bir ad bayt saymada haksız yere sınıra yaklaşırdı.
+	externalLinkGroupMax = 40
 )
 
 // ExternalLink — bir düğme.
@@ -49,8 +65,13 @@ type ExternalLink struct {
 	// yazı, aracın renklerine uygun"): düğme dolgu rengi (#rrggbb); boş =
 	// ikincil düğme. Yazı rengi --on-accent (beyaz), araç başına marka rengi.
 	Color string `json:"color,omitempty"`
+	// Group — v0.10.566: aynı gruptaki linklerden ÇÖZÜLEN İLKİ çizilir.
+	// Boş = gruplanmamış (kendi başına). Anlamı istemcide uygulanır;
+	// burada yalnız normalize + tavan (dosya başlığındaki sözleşme).
+	Group string `json:"group,omitempty"`
 	// Requires — türetilmiş: şablondaki attribute anahtarları (attr.* ve
 	// attrTime.*); istemci hepsi çözülmeden düğmeyi etkinleştirmez.
+	// {{requestId}} BURAYA GİRMEZ: attribute değil, sunucu çözer.
 	Requires []string `json:"requires,omitempty"`
 }
 
@@ -91,7 +112,10 @@ func ExternalLinkVars(tpl string) ([]string, error) {
 			if key != "" || format == "" || !externalLinkFmtRe.MatchString(format) {
 				return nil, fmt.Errorf("{{%s:FMT}} bekleniyor (FMT: dd MM yyyy yy HH mm ss): %s", kind, m[0])
 			}
-		case "traceId", "service":
+		case "traceId", "service", "requestId":
+			// requestId (v0.10.566) — argümansız kimlik sınıfı. Değeri
+			// loglardan çözüldüğü için Requires'a girmez; aşağıdaki
+			// `key != ""` koşulu zaten anahtarsız tokenı dışarıda tutar.
 			if key != "" || format != "" {
 				return nil, fmt.Errorf("{{%s}} argüman almaz: %s", kind, m[0])
 			}
@@ -140,7 +164,11 @@ func NormalizeExternalLinks(in ExternalLinkSettings) (ExternalLinkSettings, erro
 		if color != "" && !externalLinkColorRe.MatchString(color) {
 			return out, fmt.Errorf("link %d (%s): renk #rrggbb biçiminde olmalı", i+1, label)
 		}
-		out.Links = append(out.Links, ExternalLink{Label: label, URLTemplate: tpl, Requires: req, Color: color})
+		group := strings.TrimSpace(l.Group)
+		if utf8.RuneCountInString(group) > externalLinkGroupMax {
+			return out, fmt.Errorf("link %d (%s): grup adı en çok %d karakter", i+1, label, externalLinkGroupMax)
+		}
+		out.Links = append(out.Links, ExternalLink{Label: label, URLTemplate: tpl, Requires: req, Color: color, Group: group})
 	}
 	return out, nil
 }

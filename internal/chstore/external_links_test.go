@@ -83,3 +83,66 @@ func TestExternalLinkVarsEndTime(t *testing.T) {
 		}
 	}
 }
+
+// v0.10.566 — {{requestId}}: trace'in LOGLARININ gövdesinden çözülen istek
+// kimliği. Operatör kuralı: log gövdesinde request_id varsa link onunla
+// üretilir, yoksa mevcut function_id/channel_code yolu sürer. Attribute
+// OLMADIĞI için Requires'a girmemeli — girerse istemci "eksik alan" deyip
+// düğmeyi kalıcı pasif bırakırdı (çözüm sunucuda, span'de değil).
+func TestExternalLinkVarsRequestID(t *testing.T) {
+	req, err := ExternalLinkVars("https://x/?rid={{requestId}}&t={{traceId}}")
+	if err != nil {
+		t.Fatalf("{{requestId}} kabul edilmeli: %v", err)
+	}
+	if len(req) != 0 {
+		t.Fatalf("requestId attribute DEĞİL; Requires boş olmalı, oysa %v", req)
+	}
+	// Karışık şablon: requestId Requires'ı KİRLETMEZ, attr.* yine girer.
+	req, err = ExternalLinkVars("https://x/?rid={{requestId}}&f={{attr.function_id}}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(req, ",") != "function_id" {
+		t.Fatalf("Requires yalnız attribute anahtarları olmalı: %v", req)
+	}
+	for _, bad := range []string{
+		"https://x/{{requestId.x}}",  // anahtar almaz
+		"https://x/{{requestId:dd}}", // biçim almaz
+		"https://x/{{requestID}}",    // bilinmeyen değişken (yazım)
+	} {
+		if _, err := ExternalLinkVars(bad); err == nil {
+			t.Fatalf("%q reddedilmeli", bad)
+		}
+	}
+}
+
+// v0.10.566 — Group: aynı gruptaki linklerden çözülen İLKİ çizilir.
+// Normalize + tavan burada; anlam istemcide.
+func TestNormalizeExternalLinksGroup(t *testing.T) {
+	cfg, err := NormalizeExternalLinks(ExternalLinkSettings{Links: []ExternalLink{
+		{Label: "rid", URLTemplate: "https://x/?r={{requestId}}", Group: "  log-izleme  "},
+		{Label: "fid", URLTemplate: "https://x/?f={{attr.function_id}}", Group: "log-izleme"},
+		{Label: "yalnız", URLTemplate: "https://x/?t={{traceId}}", Group: "   "},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Links[0].Group != "log-izleme" || cfg.Links[1].Group != "log-izleme" {
+		t.Fatalf("grup trim edilip aynen korunmalı (aynı grup TEKRAR EDEBİLİR): %+v", cfg.Links)
+	}
+	if cfg.Links[2].Group != "" {
+		t.Fatalf("yalnız boşluktan oluşan grup boşa inmeli: %q", cfg.Links[2].Group)
+	}
+	// Tavan RUNE cinsinden: 40 Türkçe karakter geçer, 41 geçmez.
+	ok40 := strings.Repeat("ö", externalLinkGroupMax)
+	if _, err := NormalizeExternalLinks(ExternalLinkSettings{Links: []ExternalLink{
+		{Label: "a", URLTemplate: "https://x", Group: ok40},
+	}}); err != nil {
+		t.Fatalf("%d karakterlik grup kabul edilmeli (bayt değil rune sayılır): %v", externalLinkGroupMax, err)
+	}
+	if _, err := NormalizeExternalLinks(ExternalLinkSettings{Links: []ExternalLink{
+		{Label: "a", URLTemplate: "https://x", Group: ok40 + "ö"},
+	}}); err == nil {
+		t.Fatalf("%d+1 karakterlik grup reddedilmeli", externalLinkGroupMax)
+	}
+}

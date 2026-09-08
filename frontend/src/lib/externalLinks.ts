@@ -9,6 +9,8 @@
 //                         function_id'nin gömülü zamanından (istek üretimi) sonra
 //                         biten trace'in loglarını kaçırıyordu)
 //   {{traceId}} {{service}}
+//   {{requestId}}         trace'in loglarının gövdesinden çıkarılan istek
+//                         kimliği (v0.10.566 — sunucu /link-identity)
 // Eksik/çözülemeyen değişken → `missing` dolar, url yok; düğme pasif ve
 // sebebini söyler. Çözülen değerler encodeURIComponent ile kodlanır.
 
@@ -19,6 +21,11 @@ export interface ExternalLinkCtx {
   /** Trace bitişi (ms). Süre bilinmiyorsa startMs. */
   endMs: number;
   attrs: Record<string, string>;
+  /**
+   * v0.10.566 — log gövdesinden gelen istek kimliği. Yoksa `{{requestId}}`
+   * taşıyan şablon ÇÖZÜLMEZ (missing) ve grubun yedeği devreye girer.
+   */
+  requestId?: string;
 }
 
 const VAR_RE = /\{\{\s*([A-Za-z]+)(?:\.([A-Za-z0-9_.-]+))?(?::([A-Za-z]+))?\s*\}\}/g; // anahtarda ':' yok (biçim ayracı)
@@ -78,6 +85,12 @@ export function renderExternalLink(template: string, ctx: ExternalLinkCtx): { ur
         return encodeURIComponent(formatParts(localParts(ctx.endMs), fmt));
       case 'traceId': return encodeURIComponent(ctx.traceId);
       case 'service': return encodeURIComponent(ctx.service);
+      // v0.10.566 — argümansız token; boşsa link çözülmez, grubun yedeği çizilir.
+      case 'requestId': {
+        const v = ctx.requestId;
+        if (!v) { missing.push('requestId'); return ''; }
+        return encodeURIComponent(v);
+      }
     }
     missing.push(kind);
     return '';
@@ -103,4 +116,38 @@ export function collectLinkCtx(spans: { traceId: string; serviceName: string; st
     traceId: root.traceId, service: root.serviceName,
     startMs: Math.round(startNs / 1e6), endMs: Math.round(Math.max(startNs, endNs) / 1e6), attrs,
   };
+}
+
+// pickGroupedLinks — v0.10.566: bir grubun ÇİZİLECEK tek linkini seçer (SAF).
+//
+// Operatör kuralı: aynı log platformuna iki yol var — birincil `{{requestId}}`
+// (log gövdesinden gelen istek kimliği), yedek `{{attr.function_id}}` +
+// `{{attr.channel_code}}` (span attribute'ları). İkisi de düğme olarak
+// çizilirse operatör aynı şeyi iki kez görür; hangisinin çalıştığını da
+// bilemez. Grup, "ikisinden hangisi bu trace'te çözülüyorsa O" demenin yolu.
+//
+// Sözleşme:
+//   - Grup anahtarı `group?.trim()`; BOŞ (ya da yok) = link kendi başına
+//     (bugünkü davranış birebir korunur — tekil linkler asla eşleşmez).
+//   - Aynı grupta AYARDAKİ SIRAYLA ilk ÇÖZÜLEN (url dolu) link döner.
+//   - Hiçbiri çözülmezse grubun İLK linki `missing` ile döner: pasif düğme
+//     operatöre nedeni söylemeye devam etsin (sessizce kaybolmasın).
+//   - Grupların sırası ilk görülme sırası; sonuç deterministik.
+export function pickGroupedLinks<T extends { label: string; urlTemplate: string; group?: string }>(
+  links: T[],
+  resolve: (l: T) => { url?: string; missing: string[] },
+): Array<{ link: T; url?: string; missing: string[] }> {
+  const out: Array<{ link: T; url?: string; missing: string[] }> = [];
+  // Grup anahtarı → out içindeki yeri (ilk görülme sırası korunur).
+  const slot = new Map<string, number>();
+  for (const l of links) {
+    const key = l.group?.trim() ?? '';
+    const r = resolve(l);
+    if (!key) { out.push({ link: l, ...r }); continue; }
+    const at = slot.get(key);
+    if (at === undefined) { slot.set(key, out.length); out.push({ link: l, ...r }); continue; }
+    // Yer zaten dolu: yalnız oradaki çözülmemişken ve bu çözülüyorsa değiştir.
+    if (!out[at].url && r.url) out[at] = { link: l, ...r };
+  }
+  return out;
 }

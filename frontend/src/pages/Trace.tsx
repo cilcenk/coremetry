@@ -1447,7 +1447,16 @@ function ExternalLinkRow({ link: l, url, missing, ctx, identities, srcNote }: {
         size="md"
         title={`${identities.length} farklı kimlik — hangi işleme gidileceğini seç`}
         onClick={() => setOpen(o => !o)}
-        style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, marginLeft: -1, ...fill }}
+        // v0.10.570 (operatör: "üst üste bindi sanki") — .btn-icon.ib-md SABİT
+        // 28×28 kare; yanındaki Button md dolgudan daha uzun, yani ok kısa
+        // kalıp basamak yapıyordu ve dolgulu renkte iki parça üst üste binmiş
+        // gibi okunuyordu. Yükseklik KARDEŞTEN gelsin: alignSelf stretch +
+        // height auto sınıfın height:28px'ini ezer (satır içi stil > sınıf).
+        // Genişlik kare kalır, ok dar bir şerit olarak durur.
+        style={{
+          borderTopLeftRadius: 0, borderBottomLeftRadius: 0, marginLeft: -1,
+          alignSelf: 'stretch', height: 'auto', ...fill,
+        }}
       />
       {open && (
         <div

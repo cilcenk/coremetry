@@ -60,8 +60,8 @@ describe('eşikler', () => {
 });
 
 describe('TFAIL şablonu (v0.10.526 — GoldenGate ekibinin sorgusu, Coremetry uyarlaması)', () => {
-  it('gruplama kanal + operasyon; attrMap altı tag', () => {
-    expect(TFAIL_TEMPLATE.groupBy).toEqual(['KANALKOD', 'OPERATIONCODE']);
+  it('gruplama kanal + fonksiyon + operasyon (v0.10.548, ekibin paneli); attrMap altı tag', () => {
+    expect(TFAIL_TEMPLATE.groupBy).toEqual(['KANALKOD', 'FUNCTIONCODE', 'OPERATIONCODE']);
     expect(Object.keys(TFAIL_TEMPLATE.attrMap ?? {}).sort()).toEqual(
       ['ERRORCODE', 'FUNCTIONCODE', 'INSTANCEID', 'KANALKOD', 'OPERATIONCODE', 'TRACEID']);
     expect(TFAIL_TEMPLATE.attrMap?.TRACEID).toBe('trace_id');
@@ -73,14 +73,14 @@ describe('TFAIL şablonu (v0.10.526 — GoldenGate ekibinin sorgusu, Coremetry u
     expect(TFAIL_TEMPLATE.flux).not.toContain('KANALKOD =~'); // v0.10.528 kanal süzgeci yok
     expect(TFAIL_TEMPLATE.name).toBe('tfail_adet');
     expect(TFAIL_TEMPLATE.flux).toContain('range(start: -2h)'); // v0.10.527 gecikmeli kaynak
-    expect(TFAIL_TEMPLATE.flux).toContain('group(columns: ["KANALKOD", "OPERATIONCODE"])');
+    expect(TFAIL_TEMPLATE.flux).toContain('group(columns: ["KANALKOD", "FUNCTIONCODE", "OPERATIONCODE"])');
     expect(TFAIL_TEMPLATE.flux).toContain('aggregateWindow(every: 1m, fn: sum, createEmpty: false)');
     for (const bad of ['v.timeRangeStart', 'v.windowPeriod', 'createEmpty: true', '_value > 4']) {
       expect(TFAIL_TEMPLATE.flux).not.toContain(bad);
     }
   });
   it('SORGU 2 (kanıt) yer tutucuları groupBy tag adlarıyla + from/to; SORGU 1 hiçbirini taşımaz', () => {
-    for (const ph of ['{{from}}', '{{to}}', '{{KANALKOD}}', '{{OPERATIONCODE}}']) {
+    for (const ph of ['{{from}}', '{{to}}', '{{KANALKOD}}', '{{FUNCTIONCODE}}', '{{OPERATIONCODE}}']) {
       expect(TFAIL_TEMPLATE.enrichFlux).toContain(ph);
       expect(TFAIL_TEMPLATE.flux).not.toContain(ph);
     }
@@ -112,9 +112,15 @@ describe('ratio', () => {
     expect(TFAIL_RATIO_TEMPLATE.name).toBe('tfail_oran');
     expect(TFAIL_RATIO_TEMPLATE.flux).toBe('');
     expect(TFAIL_RATIO_TEMPLATE.ratio).toEqual({ numerator: TFAIL_TEMPLATE.name, denominator: GG_TOTAL_TEMPLATE.name });
-    expect(TFAIL_RATIO_TEMPLATE.groupBy).toEqual(TFAIL_TEMPLATE.groupBy);
+    // v0.10.548 — oran PAYDANIN taneciğinde; pay üst küme (sunucu fazlayı toplar).
     expect(TFAIL_RATIO_TEMPLATE.groupBy).toEqual(GG_TOTAL_TEMPLATE.groupBy);
-    expect(TFAIL_RATIO_TEMPLATE.enrichFlux).toBe(TFAIL_TEMPLATE.enrichFlux);
+    for (const g of TFAIL_RATIO_TEMPLATE.groupBy ?? []) expect(TFAIL_TEMPLATE.groupBy).toContain(g);
+    expect(TFAIL_TEMPLATE.groupBy?.length).toBeGreaterThan(TFAIL_RATIO_TEMPLATE.groupBy?.length ?? 0);
+    // Kanıt sorgusu yer tutucuları yalnız ORANIN tag'ları + from/to (enrich.go
+    // oranın groupBy'ını doldurur; {{FUNCTIONCODE}} kalsaydı boş süzgeç = 0 satır).
+    const phs = [...(TFAIL_RATIO_TEMPLATE.enrichFlux ?? '').matchAll(/\{\{\s*([A-Za-z_]+)\s*\}\}/g)].map(m => m[1]);
+    expect(phs.sort()).toEqual(['KANALKOD', 'OPERATIONCODE', 'from', 'to'].sort());
+    expect(TFAIL_RATIO_TEMPLATE.enrichFlux).not.toBe(TFAIL_TEMPLATE.enrichFlux);
     // Varsayılanlar şablona BASILMAZ (min payda / bekletme sunucuda).
     expect(TFAIL_RATIO_TEMPLATE.ratio?.minDenominator).toBeUndefined();
     expect(TFAIL_RATIO_TEMPLATE.ratio?.settleBuckets).toBeUndefined();

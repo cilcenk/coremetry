@@ -35,7 +35,7 @@ func TestBuildRatioRecords_JoinAndGuards(t *testing.T) {
 		rr(t1, "5", "KANALKOD", "01", "OPERATIONCODE", "OP1"),
 		rr(t2, "3", "KANALKOD", "01", "OPERATIONCODE", "OP1"),
 		rr(t1, "x", "KANALKOD", "01", "OPERATIONCODE", "OP9"), // kötü değer
-		rr(t1, "1", "KANALKOD", "", "OPERATIONCODE", "OP1"),  // eksik tag
+		rr(t1, "1", "KANALKOD", "", "OPERATIONCODE", "OP1"),   // eksik tag
 		rr(t1, "2", "KANALKOD", "01", "OPERATIONCODE", "OPX"), // paydasız pay
 	}
 	den := []Record{
@@ -131,5 +131,28 @@ func TestBuildRatioRecords_NoTime(t *testing.T) {
 	out, st := BuildRatioRecords([]Record{rr("", "1", "OP", "A")}, []Record{rr("", "25", "OP", "A")}, gb, RatioSpec{MinDenominator: 1})
 	if len(out) != 1 || out[0].Values["_value"] != "4" || out[0].Values["_time"] != "" || st.Unsettled != 0 {
 		t.Fatalf("%v %+v", out, st)
+	}
+}
+
+// v0.10.548 — pay oranın anahtarından FAZLA boyut taşıyorsa (TFAIL: KANALKOD ×
+// FUNCTIONCODE × OPERATIONCODE; toplam: KANALKOD × OPERATIONCODE) birleşim
+// paydanın anahtarında toplar: aynı kanal/operasyon/zaman kovasındaki iki
+// fonksiyon satırı (2 + 3) ÷ 50 = %10. Fazla boyut çıktıda yer almaz.
+func TestBuildRatioRecords_NumeratorExtraDimensionSums(t *testing.T) {
+	gb := []string{"KANALKOD", "OPERATIONCODE"}
+	num := []Record{
+		rr("2026-09-08T06:00:00Z", "2", "KANALKOD", "01", "OPERATIONCODE", "op1", "FUNCTIONCODE", "f1"),
+		rr("2026-09-08T06:00:00Z", "3", "KANALKOD", "01", "OPERATIONCODE", "op1", "FUNCTIONCODE", "f2"),
+	}
+	den := []Record{rr("2026-09-08T06:00:00Z", "50", "KANALKOD", "01", "OPERATIONCODE", "op1")}
+	out, st := BuildRatioRecords(num, den, gb, RatioSpec{})
+	if st.Joined != 1 || st.MissingTag != 0 || len(out) != 1 {
+		t.Fatalf("birleşim: %+v %d", st, len(out))
+	}
+	if v := out[0].Values["_value"]; v != "10" {
+		t.Fatalf("oran %s, 10 bekleniyordu", v)
+	}
+	if _, ok := out[0].Values["FUNCTIONCODE"]; ok {
+		t.Fatal("fazla boyut çıktıya sızmamalı")
 	}
 }

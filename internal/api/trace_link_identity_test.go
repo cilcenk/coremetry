@@ -956,13 +956,18 @@ func TestResolveTraceLinkIdentity_LooseFallback(t *testing.T) {
 	}
 	var loose *traceLinkCandidate
 	for i := range got.Identities {
-		if got.Identities[i].Key == linkIdentityKeyRequestID {
+		if got.Identities[i].Source == linkIdentitySourceLog {
 			loose = &got.Identities[i]
 			break
 		}
 	}
 	if loose == nil || !loose.Loose {
 		t.Fatalf("aday gevşek işaretlenmeli: %+v", got.Identities)
+	}
+	// v0.10.572 — anahtar logdaki GERÇEK alan adı ("islem"), uydurulmuş
+	// "request_id" değil.
+	if loose.Key != "islem" {
+		t.Fatalf("aday anahtarı log alan adı olmalı: %q", loose.Key)
 	}
 	// Attribute yolu kapanmaz.
 	if got.Attrs["function_id"] != "F-ROOT" {
@@ -983,4 +988,52 @@ func TestResolveTraceLinkIdentity_StrictBeatsLoose(t *testing.T) {
 	if got.RequestID != ridA || got.RequestIDLoose {
 		t.Fatalf("katı eşleşme gevşeğin önüne geçmeli: %+v", got)
 	}
+}
+
+// v0.10.572 — operatör: "bazen requestid BsaRequestId olarak logta yazıyor".
+// ARAMA ad-bağımsız (şekil tanınır); bu yalnız ETİKET: token'ı taşıyan JSON
+// alanının gerçek adı okunur, çözülemezse ad UYDURULMAZ.
+func TestJSONKeyForToken(t *testing.T) {
+	const tok = "BKRM032060203MGie0018328324206090816550266120"
+	cases := []struct{ name, body, want string }{
+		{"bitişik", `{"BsaRequestId":"` + tok + `","CustomerNumber":"1"}`, "BsaRequestId"},
+		{"boşluklu", `{ "BsaRequestId" : "` + tok + `" }`, "BsaRequestId"},
+		{"snake", `{"request_id":"` + tok + `"}`, "request_id"},
+		{"nokta/tire", `{"bsa.request-id":"` + tok + `"}`, "bsa.request-id"},
+		{"düz metin", "islem tamam id=" + tok, ""},
+		{"tırnaksız değer", `{"k":` + tok + `}`, ""},
+		{"iki nokta yok", `{"k" "` + tok + `"}`, ""},
+		{"anahtarda boşluk", `{"iki kelime":"` + tok + `"}`, ""},
+		{"token yok", `{"k":"v"}`, ""},
+		{"başta", tok, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := jsonKeyForToken(c.body, tok); got != c.want {
+				t.Fatalf("jsonKeyForToken = %q, beklenen %q", got, c.want)
+			}
+		})
+	}
+	if jsonKeyForToken(`{"k":"x"}`, "") != "" {
+		t.Fatal("boş token → boş ad")
+	}
+}
+
+// Katı yolda da gerçek alan adı taşınır.
+func TestResolveTraceLinkIdentity_LogKeyIsRealFieldName(t *testing.T) {
+	got := (&Server{logs: &scriptLogStore{bySpan: map[string][]*logstore.LogRecord{
+		"b": {lidRec("b", `{"BsaRequestId":"`+ridA+`","SessionId":"x"}`)},
+	}}}).resolveTraceLinkIdentity(context.Background(), "abc", "", linkIdentitySpans(), "", nil)
+	if got.RequestID != ridA {
+		t.Fatalf("kimlik bulunmalı: %+v", got)
+	}
+	for _, c := range got.Identities {
+		if c.Source == linkIdentitySourceLog {
+			if c.Key != "BsaRequestId" {
+				t.Fatalf("anahtar logdaki ad olmalı: %q", c.Key)
+			}
+			return
+		}
+	}
+	t.Fatal("log adayı yok")
 }

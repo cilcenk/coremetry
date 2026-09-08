@@ -87,11 +87,11 @@ describe('Trace kimlik seçim menüsü (v0.10.568)', () => {
     expect(src).toContain('const rows = pickGroupedLinks(links, l =>');
     expect(src).toContain('<ExternalLinkRow key={l.label} link={l} url={url} missing={missing}');
     // request_id adayları üstte, span adayları anahtar anahtar altta.
-    expect(src).toContain("const logItems = resolved.filter(r => r.cand.source === 'log');");
+    expect(src).toContain("const isLog = r.cand.source === 'log';");
     // v0.10.571 — başlık METNİ değişti (anahtar eklendi); burada korunan
     // sözleşme SIRA: log adayları üstte, span bölümleri altta. Başlık
     // biçimini kendi testi çiviliyor.
-    expect(src).toContain('items: logItems }, ...spanSections]');
+    expect(src).toContain('const sections = [...logSections, ...spanSections];');
   });
 
   it('Esc KATMANI bağlı, dışa tık kapatır, window.open noopener taşır', () => {
@@ -121,7 +121,9 @@ describe('split düğme hizası', () => {
 // bölümleri function_id / channel_code diyor). Anahtar SUNUCUDAN gelir.
 describe('log bölümü başlığı', () => {
   it('anahtar + kaynak', () => {
-    expect(src).toContain('${logKey} · log gövdesinden');
-    expect(src).toContain("logItems[0]?.cand.key || 'request_id'");
+    // v0.10.572 — başlık logdaki GERÇEK alan adını taşır (BsaRequestId);
+    // log tarafı da anahtara göre gruplanır.
+    expect(src).toContain('${key} · log gövdesinden');
+    expect(src).toContain("r.cand.key || (isLog ? 'request_id' : 'span attribute')");
   });
 });

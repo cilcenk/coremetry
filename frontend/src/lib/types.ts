@@ -5501,6 +5501,23 @@ export type ChatBlockType = 'text' | 'table' | 'chart' | 'trace_list' | 'link' |
 export interface CosreChartSpecLike { title?: string; service: string; operation?: string; agg: string; unit?: string; rangeS?: number; groupBy?: string; fromNs?: number; toNs?: number; compare?: { kind?: string; shiftS: number }; source?: 'span' | 'metric' }
 export interface ChatTypedBlock { id: string; type: ChatBlockType; seq: number; final: boolean; payload: unknown }
 
+// ProblemInsight — GET /api/problems/{id}/insight (v0.10.562, internal/api/problem_insight.go):
+// deterministik insight şeridi; hücre bilinmiyorsa null (şerit "—" basar).
+export interface ProblemInsight {
+  problemId: string;
+  service: string;
+  kind: string;
+  status: string;
+  startedAt: number;
+  hypothesisComputed: boolean;
+  topSuspect?: string;
+  confidence?: number;
+  firstAnomaly: { at: number; kind: string; service: string } | null;
+  rollout: { workload: string; version: string; timeUnixNs: number; cluster?: string; namespace?: string; matchedBy?: string; band?: string; deltaS: number } | null;
+  similar: { count: number; lastId: string; lastResolvedAt: number; lastDurationS: number; lastAssignee?: string } | null;
+  note: string;
+}
+
 // AIChatRetention — /api/ai/chat-retention (v0.10.561): sohbet arşivi saklama; days 0 = süpürme kapalı.
 export interface AIChatRetention { days: number }
 

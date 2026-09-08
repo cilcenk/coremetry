@@ -1212,6 +1212,9 @@ export const api = {
     }),
   // v0.10.411 — AI bütçesi: tavanlar + son 24 saat kullanımı.
   aiBudget: () => get<import('./types').AIBudgetStatus>(`/api/ai/budget`),
+  // v0.10.562 — Problem detayı insight şeridi (deterministik, 30 s cache).
+  problemInsight: (id: string, signal?: AbortSignal) =>
+    get<import('./types').ProblemInsight>(`/api/problems/${encodeURIComponent(id)}/insight`, signal),
   // v0.10.561 — sohbet arşivi saklama süresi (admin).
   aiChatRetention: () => get<import('./types').AIChatRetention>(`/api/ai/chat-retention`),
   putAIChatRetention: (c: import('./types').AIChatRetention) =>

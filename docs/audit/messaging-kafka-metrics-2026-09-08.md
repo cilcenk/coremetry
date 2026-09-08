@@ -382,7 +382,9 @@ okuyucular (liste, trend) operation'sız GROUP BY ile aynı sonucu verir (state'
 `dropCombinedMV` + yeniden CREATE. **Bu yol 90 günlük messaging 5-dk kovalarını siler**
 (ileriye dönük yeniden dolar). Kolon zaten varsa boot HİÇ dokunmaz.
 
-**Prod için önerilen: yerinde geçiş (geçmiş korunur), deploy'dan ÖNCE elle** —
+**Prod için önerilen: yerinde geçiş (geçmiş korunur), deploy'dan ÖNCE** — v0.10.564'ten
+itibaren Admin → ClickHouse → "messaging_summary_5m operation boyutu" sihirbazı (durum probu,
+önizleme = tam SQL, Uygula, audit) aynı üç adımı koşar; elle yordam aşağıda aynen geçerli —
 `reference-ch-inplace-mv-column-add` yordamı, CH 24.8'de doğrulanmış (v0.8.52,
 `trace_summary_5m`); küme kipinde replika başına inner tablo (`.inner_id.<uuid>`,
 `clusterAllReplicas(system.tables)` ile bul):
@@ -403,9 +405,21 @@ ALTER TABLE `.inner_id.<uuid>`
   ADD COLUMN IF NOT EXISTS operation String DEFAULT '' AFTER destination,
   MODIFY ORDER BY (msg_system, cluster, destination, time_bucket, operation);
 
--- 3) MV sorgusunu değiştir (store.go v0.10.563 SELECT metni birebir)
+-- 3) MV sorgusunu değiştir (store.go v0.10.563 SELECT metni birebir; küme kipinde MV adı _local
+--    ve FROM spans_local)
 ALTER TABLE messaging_summary_5m MODIFY QUERY <yeni SELECT>;
+
+-- 4) YALNIZ küme kipinde: çıplak addaki Distributed sarmalayıcıya da kolon — boot probe çıplak ada
+--    bakar; sarmalayıcı kolon listesini dondurduğu için bu adım atlanırsa boot yine DROP+RECREATE
+--    yapar ve yerinde geçiş boşa gider (v0.10.564 sihirbaz bulgusu).
+ALTER TABLE messaging_summary_5m ON CLUSTER `<cluster>` ADD COLUMN IF NOT EXISTS operation String DEFAULT '' AFTER destination;
 ```
+
+⚠ **Yarım durum yeniden koşulamaz:** ClickHouse `MODIFY ORDER BY`'a yalnız AYNI ALTER'da eklenen
+kolonu kabul eder. Kolonu tek başına eklemiş bir kurulumda birleşik ALTER düşer (`ADD COLUMN IF
+NOT EXISTS` no-op, `MODIFY ORDER BY` mevcut kolonu reddeder). Çıkış: `ALTER TABLE <inner> DROP
+COLUMN operation`, sonra 2. adımı birleşik olarak yeniden koş. Sihirbazın ön kontrolü bu durumu
+ayrı hata olarak bildirir ve Uygula'yı 409 ile durdurur.
 
 Sonra deploy: boot probe kolonu görür → no-op, geçmiş kalır. Yerinde geçiş yapılmazsa
 deploy DROP+RECREATE ile temiz başlar (dürüst log satırı). **Küme kipi düzeltmesi

@@ -3349,6 +3349,21 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cluster }), timeoutMs: 200_000,
     }),
+  // v0.10.564 — messaging_summary_5m operation boyutu yerinde geçişi
+  // (admin_messaging_opdim.go; 0013/0014 aynası ama rollback/materialize YOK:
+  // kolon + sıralama anahtarı + MODIFY QUERY tek yönlü, geri alma geçmişi
+  // zaten kurtarmaz). Deploy'dan ÖNCE koşulur; koşulmazsa boot MV'yi
+  // DROP+RECREATE eder ve 90 günlük messaging kovaları gider.
+  messagingOpDimStatus: () =>
+    get<import('./types').MessagingOpDimStatusResult>('/api/admin/messaging-opdim/status'),
+  messagingOpDimPreflight: () =>
+    get<import('./types').MessagingOpDimPreflightResult>('/api/admin/messaging-opdim/preflight'),
+  /** cluster '' = tek düğüm (ON CLUSTER yok). */
+  messagingOpDimApply: (cluster: string) =>
+    request<import('./types').RollupActionResult & { note?: string }>('/api/admin/messaging-opdim/apply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster }), timeoutMs: 330_000, // sunucu bütçesi 5 dk (ON CLUSTER ALTER + MODIFY QUERY)
+    }),
   rolloutLayerStatus: () =>
     get<import('./types').RolloutLayerStatusResult>('/api/admin/rollout-layer/status'),
   rolloutLayerPreflight: () =>

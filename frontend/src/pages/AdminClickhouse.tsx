@@ -14,6 +14,7 @@ import type {
   RolloutLayerStatusResult, RolloutLayerPreflightResult,
   FunctionIDColumnStatusResult, FunctionIDColumnPreflightResult,
   AttrIndexStatusResult, AttrIndexPreflightResult,
+  MessagingOpDimStatusResult, MessagingOpDimPreflightResult,
   StateUnifyPreflightResult, StateUnifyRun, StateUnifyTable,
   StateRepartPreflightResult, StateRepartRun, StateRepartTable,
   TraceBackfillDay, TraceBackfillRun,
@@ -738,6 +739,8 @@ export default function AdminClickhousePage() {
             <FunctionIdColumnWizardPanel />
             {/* v0.10.306 — 0014 attribute hash indeksi (operatör: "14 için sihirbaz göremedim"). */}
             <AttrIndexWizardPanel />
+            {/* v0.10.564 — messaging_summary_5m operation boyutu yerinde geçişi (Faz 4b). */}
+            <MessagingOpDimWizardPanel />
 
             {/* v0.9.1341 — 0010 partition sökme sihirbazı. 0009'un
                 hemen ALTINDA ve bu SIRA anlamlı: 0010'un önkoşulu
@@ -3125,6 +3128,186 @@ function AttrIndexWizardPanel() {
           </div>
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11.5 }}>
             {action.res.statements.map((st, i) => (
+              <li key={i} className="mono" style={{ color: st.ok ? 'var(--text2)' : 'var(--err)' }}>{st.head}{st.err ? ` — ${st.err}` : ''}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+// ── messaging_summary_5m operation boyutu yerinde geçişi — v0.10.564 ──
+// FunctionIdColumnWizardPanel'in daraltılmış ikizi: TEK eylem var (Uygula),
+// rollback/materialize YOK. Gerekçe: geçiş tek yönlü — kolonu geri düşürmek
+// zaten silinmiş bir geçmişi geri getirmez, düşürülen anahtar da MV'yi
+// yeniden kurdurur. Sıra AttrIndexWizardPanel'in HEMEN ardında: ikisi de
+// deploy ÖNCESİ koşulan, boot'un davranışını değiştiren sihirbaz.
+function MessagingOpDimWizardPanel() {
+  const [status, setStatus] = useState<MessagingOpDimStatusResult | null>(null);
+  const [statusErr, setStatusErr] = useState<string | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [pre, setPre] = useState<MessagingOpDimPreflightResult | null>(null);
+  const [preBusy, setPreBusy] = useState(false);
+  const [preErr, setPreErr] = useState<string | null>(null);
+  const [cluster, setCluster] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [action, setAction] = useState<(RollupActionResult & { note?: string }) | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const rows = status?.objects ?? [];
+  const dt = useDataTable<EntityLayerObjectStatus>({ storageKey: 'ch-msg-opdim-status', columns: ENTITY_LAYER_COLS, rows });
+  const loadStatus = async () => {
+    setStatusBusy(true); setStatusErr(null);
+    try { setStatus(await api.messagingOpDimStatus()); }
+    catch (e: unknown) { setStatusErr(e instanceof Error ? e.message : String(e)); }
+    finally { setStatusBusy(false); }
+  };
+  useEffect(() => { void loadStatus(); }, []);
+  const runPreflight = async () => {
+    setPreBusy(true); setPreErr(null);
+    try {
+      const r = await api.messagingOpDimPreflight();
+      setPre(r);
+      const suggested = r.suggestedCluster && r.clusters.includes(r.suggestedCluster)
+        ? r.suggestedCluster : r.clusters.length === 1 ? r.clusters[0] : '';
+      setCluster(suggested);
+    } catch (e: unknown) { setPreErr(e instanceof Error ? e.message : String(e)); setPre(null); }
+    finally { setPreBusy(false); }
+  };
+  const runApply = async () => {
+    setConfirming(false); setBusy(true); setActionErr(null); setAction(null);
+    try { setAction(await api.messagingOpDimApply(cluster)); }
+    catch (e: unknown) { setActionErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); void loadStatus(); void runPreflight(); }
+  };
+  // Tek düğümde cluster '' geçerli bir seçim — bu yüzden kapı cluster'a DEĞİL,
+  // preflight hükmüne bakar (v0.10.252 panelinde !!cluster şartı vardı; orada
+  // ON CLUSTER zorunluydu, burada değil).
+  const canApply = !!pre?.supported && !pre.alreadyDone && !busy;
+  return (
+    <Section title="messaging_summary_5m operation boyutu (yerinde geçiş)">
+      <p style={{ fontSize: 12, color: 'var(--text2)', margin: '0 0 10px', lineHeight: 1.55 }}>
+        v0.10.563 ile <code className="mono">messaging_summary_5m</code> MV'si <code className="mono">operation</code> boyutu kazandı.
+        Deploy'da boot bu kolonu depo tablosunda bulamazsa MV'yi DROP+RECREATE eder — 90 günlük messaging kovaları SİLİNİR.
+        Bu sihirbaz deploy'dan ÖNCE koşulur: depo tablosuna kolon + sıralama anahtarına ekleme (SONA eklenir; anahtar taze
+        kurulumdakinden farklı sırada olur ama okuma aynı) + <code className="mono">MODIFY QUERY</code>. Sonrasında boot no-op'a düşer,
+        geçmiş korunur. Atlanırsa hiçbir şey kırılmaz — yalnız geçmiş gider. Geri alma YOK.
+      </p>
+      {statusBusy && !status && <Spinner />}
+      {statusErr && <Empty icon="⚠" title="Durum okunamadı">{statusErr}</Empty>}
+      {status && (
+        <>
+          <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>küme <span className="mono">{status.cluster || '(tek düğüm)'}</span></span>
+            <span>·</span>
+            {status.state === 'done' ? <span className="badge b-ok">UYGULANMIŞ</span>
+              : status.state === 'missing' ? <span className="badge b-gray">UYGULANMADI</span>
+              : status.state === 'partial' ? <span className="badge b-warn" title={status.detail}>KISMİ</span>
+              : <span className="badge b-warn" title={status.detail}>OKUNAMADI</span>}
+            <span>·</span>
+            {status.bootWouldDrop
+              ? <span className="badge b-err" title="Bu hâlde bir deploy MV'yi düşürüp yeniden kurar — 90 günlük messaging kovaları silinir. Önce «Uygula» koş.">DEPLOY GEÇMİŞİ SİLER</span>
+              : <span className="badge b-ok" title="boot MV'yi olduğu gibi bırakır; geçmiş korunur">BOOT NO-OP</span>}
+            {status.divergent && (
+              <>
+                <span>·</span>
+                <span className="badge b-warn" title="Depo tablosu host'lar arasında farklı uuid'lerle kurulmuş: her uuid için ayrı ALTER gider, o uuid'in olmadığı host'ta hata beklenir.">AYRIŞMIŞ UUID</span>
+              </>
+            )}
+            <span>·</span>
+            <span className="mono">{status.mv}</span>
+            <span className="mono" style={{ color: 'var(--text3)' }}>{status.inner.join(' · ') || '—'}</span>
+          </div>
+          <div className="table-wrap is-fit" style={{ marginBottom: 10 }}>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} />
+              <DataTableHead dt={dt} />
+              <tbody>
+                {dt.sortedRows.map(o => (
+                  <tr key={`${o.kind}:${o.name}`}>
+                    <td className="mono">{o.name}</td>
+                    <td style={{ fontSize: 11, color: 'var(--text3)' }}>{o.kind}{o.table ? ` · ${o.table}` : ''}</td>
+                    <td>
+                      {o.state === 'ok' ? <span className="badge b-ok">VAR</span>
+                        : o.state === 'partial' ? <span className="badge b-warn" title="bazı host'larda yok — dağıtık DDL yarım kalmış">KISMİ</span>
+                        : o.state === 'missing' ? <span className="badge b-gray">YOK</span>
+                        : <span className="badge b-warn" title={o.err}>OKUNAMADI</span>}
+                    </td>
+                    <td className="num mono">{o.haveHosts}/{o.hosts}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+        <Button variant="secondary" size="sm" onClick={runPreflight} loading={preBusy}>Ön kontrol</Button>
+        <Button variant="ghost" size="sm" onClick={() => void loadStatus()} disabled={statusBusy}>Durumu yenile</Button>
+        {preErr && <span style={{ color: 'var(--err)', fontSize: 12 }}>{preErr}</span>}
+      </div>
+      {pre && (
+        <div style={{
+          padding: '12px 14px', borderRadius: 6, marginBottom: 12,
+          border: `1px solid ${pre.supported ? 'var(--ok)' : 'var(--warn)'}`,
+          background: pre.supported ? 'color-mix(in srgb, var(--ok) 8%, transparent)' : 'color-mix(in srgb, var(--warn) 10%, transparent)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span className={`badge ${pre.supported ? 'b-ok' : 'b-warn'}`}>{pre.supported ? 'UYGULANABİLİR' : 'UYGULANAMAZ'}</span>
+            {pre.alreadyDone && <span className="badge b-ok" title="kolon + anahtar + MV sorgusu yerinde; boot no-op">ZATEN UYGULANMIŞ</span>}
+            <span style={{ fontSize: 12.5, color: 'var(--text2)', lineHeight: 1.5 }}>{pre.detail}</span>
+          </div>
+          <div className="table-wrap" style={{ marginBottom: 8 }}>
+            <table style={{ width: '100%' }}>
+              <thead><tr><th>Kontrol</th><th>Sonuç</th></tr></thead>
+              <tbody>
+                <PreRow label="Depo tablosu çözüldü" ok={pre.inner.length > 0} note={pre.inner.join(', ') || pre.mv} />
+                <PreRow label="Tanımlı küme" ok={pre.clusters.length > 0 || cluster === ''} note={pre.clusters.join(', ') || '(tek düğüm)'} />
+                <PreRow label="Ayrışmış uuid" ok={!pre.divergent} neutral
+                  note={pre.divergent ? 'her uuid için ayrı ALTER — olmayan host\'ta hata beklenir' : 'tek uuid'} />
+                <PreRow label="İfadeler" ok={pre.statements.length > 0} note={`${fmtNum(pre.statements.length)} ifade`} />
+              </tbody>
+            </table>
+          </div>
+          {pre.statements.length > 0 && (
+            <pre className="mono" title="apply'ın koşacağı TAM SQL — operatör kopyalayıp elle de koşabilir"
+              style={{ fontSize: 11, whiteSpace: 'pre-wrap', maxHeight: 260, overflow: 'auto' }}>{pre.statements.join(';\n\n')}</pre>
+          )}
+          {pre.probeErrors && pre.probeErrors.length > 0 && (
+            <div style={{ fontSize: 11.5, color: 'var(--warn)' }}>Probe hataları: {pre.probeErrors.join(' · ')}</div>
+          )}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text3)' }}>
+          Küme
+          <select value={cluster} onChange={e => setCluster(e.target.value)} disabled={!pre || busy}>
+            <option value="">(tek düğüm)</option>
+            {(pre?.clusters ?? []).map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </label>
+        {!confirming ? (
+          <Button variant="primary" size="sm" disabled={!canApply} onClick={() => setConfirming(true)}>Uygula (yerinde geçiş)</Button>
+        ) : (
+          <>
+            <span style={{ fontSize: 12 }}>
+              MV depo tablosuna kolon + sıralama anahtarı eklenecek ve MV sorgusu değiştirilecek. Geri alma yok. Deploy'dan ÖNCE koş. Emin misin?
+            </span>
+            <Button variant="primary" size="sm" loading={busy} onClick={() => void runApply()}>Evet</Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirming(false)}>Vazgeç</Button>
+          </>
+        )}
+        {actionErr && <span style={{ color: 'var(--err)', fontSize: 12 }}>{actionErr}</span>}
+      </div>
+      {action && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, marginBottom: 6 }}>
+            Uygula (yerinde geçiş): {action.ok ? <span className="badge b-ok">TAMAM</span> : <span className="badge b-err">HATA</span>}
+            {action.note && <span className="field-hint"> · {action.note}</span>}
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11.5 }}>
+            {action.statements.map((st, i) => (
               <li key={i} className="mono" style={{ color: st.ok ? 'var(--text2)' : 'var(--err)' }}>{st.head}{st.err ? ` — ${st.err}` : ''}</li>
             ))}
           </ul>

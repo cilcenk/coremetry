@@ -1006,6 +1006,851 @@ func (s *Store) dropCombinedMV(ctx context.Context, mv string) error {
 	return nil
 }
 
+// canonicalMVs — boot'ta yaratılan materialized view kataloğu (TEK GÖVDE).
+//
+// v0.10.564: katalog migrate() içinde YEREL bir dilimdi. Admin → ClickHouse
+// sihirbazları (messaging_opdim_admin.go) yerinde geçiş için `ALTER TABLE …
+// MODIFY QUERY <SELECT>` üretiyor ve o SELECT'in kanonik CREATE ile BİREBİR
+// aynı olması şart — ikinci bir kopya yazmak "aynalı kural iki gövde" sınıfı
+// (kopyalar ayrışır, kimse fark etmez). Bu yüzden katalog paket düzeyine
+// çıkarıldı; migrate() yalnız `mvs := canonicalMVs()` çağırır ve koşullu
+// eklemeleri (entity_seen, workload_revision) üstüne append eder.
+//
+// DİKKAT: `mvs := []string{…}` literali BU DOSYADA kalmak zorunda —
+// mv_positional_test.go store.go'yu AST ile ayrıştırıp kataloğu tam bu
+// literalden okuyor (v0.9.1319 pozisyonel-indeks muhafızı). Başka bir
+// dosyaya taşımak muhafızı sessizce kör eder.
+func canonicalMVs() []string {
+	// Materialized views — pre-aggregate the high-volume spans table into
+	// summary tables that read paths can hit instead of scanning raw rows.
+	// New MVs go here; AggregatingMergeTree lets us combine count/sum/quantile
+	// states across partitions cheaply at query time via *Merge() finalisers.
+	//
+	// service_summary_5m: per-(service, 5min) counts + duration quantiles.
+	// Used by /services and the anomaly baseline scan to avoid touching the
+	// raw spans table for time-bucketed queries that span hours/days.
+	// Apdex thresholds — keep in sync with the raw-spans path in
+	// repo.go (GetServices). 200ms satisfied / 800ms tolerating is the
+	// industry-standard default; making them MV-baked means /api/services
+	// can serve 10s of thousands of services in sub-second time.
+	const apdexT = 200 * 1_000_000  // ns
+	const apdex4T = 800 * 1_000_000 // ns
+	mvs := []string{
+		fmt.Sprintf(`CREATE MATERIALIZED VIEW IF NOT EXISTS service_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)  AS time_bucket,
+		   countState()                                AS span_count_state,
+		   countIfState(status_code = 'error')         AS error_count_state,
+		   sumState(duration)                          AS duration_sum_state,
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)   AS duration_q_state,
+		   countIfState(duration <= %d)                AS apdex_satisfied_state,
+		   countIfState(duration > %d AND duration <= %d) AS apdex_tolerating_state
+		 FROM spans
+		 GROUP BY service_name, time_bucket`, apdexT, apdexT, apdex4T),
+
+		// operation_summary_5m: per-(service, operation, 5min) pre-
+		// aggregation that powers the OperationsTable on the
+		// service detail page. Pre-v0.4.99 GetOperationSummary
+		// scanned raw spans GROUP BY name over the entire window,
+		// which on a billion-spans/day service detail page took
+		// ~500ms cold. Reading the MV instead drops it to single-
+		// digit ms because the projection is already pre-aggregated
+		// by name within each 5-min slot. Same aggregate states as
+		// service_summary_5m (count + error + sum/duration +
+		// quantiles + apdex satisfied/tolerating) so the read path
+		// can compute the same numeric set the raw-spans query
+		// produced, just from a much smaller dataset.
+		fmt.Sprintf(`CREATE MATERIALIZED VIEW IF NOT EXISTS operation_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, name, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   name,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)  AS time_bucket,
+		   countState()                                AS span_count_state,
+		   countIfState(status_code = 'error')         AS error_count_state,
+		   sumState(duration)                          AS duration_sum_state,
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)   AS duration_q_state,
+		   countIfState(duration <= %d)                AS apdex_satisfied_state,
+		   countIfState(duration > %d AND duration <= %d) AS apdex_tolerating_state
+		 FROM spans
+		 GROUP BY service_name, name, time_bucket`, apdexT, apdexT, apdex4T),
+
+		// operation_group_summary_5m: per-(service, op_group, 5min)
+		// pre-aggregation — the normalized-operation-clustering twin of
+		// operation_summary_5m (group_id rel B). Where operation_summary_5m
+		// keys by the RAW operation name, this one keys by op_group, the
+		// normalized operation-shape column the ingest normalizer
+		// (templater.NormalizeOperation) writes per span (group_id rel A,
+		// v0.8.x). The whole point is to fold the long tail of
+		// high-cardinality raw names (GET /orders/8421, GET /orders/9134, …)
+		// into one shape row (GET /orders/:id), so the operator's
+		// Operations table groups by behaviour, not by accidental id
+		// variance. Same aggregate states as operation_summary_5m (count +
+		// error + sum/duration + quantiles + apdex satisfied/tolerating) so
+		// the read path computes the identical numeric set, just keyed by
+		// shape. ORDER BY mirrors the GROUP BY (service_name, op_group,
+		// time_bucket) with op_group in name's slot — service filters get a
+		// tight prefix prune, exactly like operation_summary_5m.
+		//
+		// Forward-only (like every MV here): rolls ONLY spans inserted after
+		// this CREATE runs. Pre-Release-A spans have op_group = '' and the
+		// read path excludes that bucket (WHERE op_group != '') so the
+		// normalized list is clean — the ungrouped '' rows are never
+		// surfaced as a phantom operation. Issued through execDDL so external
+		// Distributed installs get the spans_local + ON CLUSTER + Replicated
+		// rewrite, identical to operation_summary_5m's issuance.
+		fmt.Sprintf(`CREATE MATERIALIZED VIEW IF NOT EXISTS operation_group_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, op_group, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   op_group,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)  AS time_bucket,
+		   countState()                                AS span_count_state,
+		   countIfState(status_code = 'error')         AS error_count_state,
+		   sumState(duration)                          AS duration_sum_state,
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)   AS duration_q_state,
+		   countIfState(duration <= %d)                AS apdex_satisfied_state,
+		   countIfState(duration > %d AND duration <= %d) AS apdex_tolerating_state
+		 FROM spans
+		 GROUP BY service_name, op_group, time_bucket`, apdexT, apdexT, apdex4T),
+
+		// spanmetrics_{1m,10s,1s}: "every metric is a doorway" multi-grain
+		// span-metrics rollups (v0.8.50, doorway Phase D). A SUPERSET of
+		// operation_summary_5m's dims — adds kind / status_code / http_route so
+		// the Metric Explorer can filter/group on any of them, at finer grains
+		// (the resolver reads the coarsest tier that satisfies the range/step).
+		// Native latency histogram via quantilesState; exemplars via
+		// argMax(State)/argMaxIfState(trace_id,…) so a bucket hands back a slow /
+		// errored trace_id ("click metric → see the trace"). Forward-only
+		// (combined MV+target): only spans inserted after creation roll in; the
+		// resolver falls back to operation_summary_5m / raw for older windows
+		// during cutover. 1s DROPS http_route to bound cardinality (route
+		// filters fall to the 10s tier). 1s TTL is ROW-LEVEL
+		// (time_bucket + INTERVAL 6 HOUR) — never toDate()+INTERVAL hours, the
+		// v0.6.36 unit-mixing trap.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_1m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, name, kind, status_code, http_route, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 30 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name, name, kind, status_code, http_route,
+		   toStartOfInterval(time, INTERVAL 1 MINUTE)      AS time_bucket,
+		   countState()                                    AS calls_state,
+		   countIfState(status_code = 'error')             AS error_state,
+		   sumState(duration)                              AS duration_sum_state,
+		   quantilesTDigestState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
+		   argMaxState(trace_id, duration)                 AS slow_exemplar_state,
+		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
+		 FROM spans
+		 GROUP BY service_name, name, kind, status_code, http_route, time_bucket`,
+
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_10s
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, name, kind, status_code, http_route, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 2 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name, name, kind, status_code, http_route,
+		   toStartOfInterval(time, INTERVAL 10 SECOND)     AS time_bucket,
+		   countState()                                    AS calls_state,
+		   countIfState(status_code = 'error')             AS error_state,
+		   sumState(duration)                              AS duration_sum_state,
+		   quantilesTDigestState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
+		   argMaxState(trace_id, duration)                 AS slow_exemplar_state,
+		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
+		 FROM spans
+		 GROUP BY service_name, name, kind, status_code, http_route, time_bucket`,
+
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_1s
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, name, kind, status_code, time_bucket)
+		 TTL time_bucket + INTERVAL 6 HOUR
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name, name, kind, status_code,
+		   toStartOfInterval(time, INTERVAL 1 SECOND)      AS time_bucket,
+		   countState()                                    AS calls_state,
+		   countIfState(status_code = 'error')             AS error_state,
+		   sumState(duration)                              AS duration_sum_state,
+		   quantilesTDigestState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
+		   argMaxState(trace_id, duration)                 AS slow_exemplar_state,
+		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
+		 FROM spans
+		 GROUP BY service_name, name, kind, status_code, time_bucket`,
+
+		// trace_summary_1d: per-day distinct trace count via HLL.
+		// Lets /admin/stats history show traces-per-day without a
+		// uniqExact pass over billions of rows. uniqState writes a
+		// HLL12 sketch (~2.5 KiB per day per service); merging across
+		// 30 days is sub-millisecond.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS trace_summary_1d
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toYYYYMM(day)
+		 ORDER BY day
+		 TTL day + INTERVAL 365 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   toDate(time)        AS day,
+		   uniqState(trace_id) AS trace_count_state
+		 FROM spans
+		 GROUP BY day`,
+
+		// db_summary_5m: per-(db_system, peer_service, 5-min) pre-
+		// aggregation powering /api/databases. Pre-v0.5.9 every
+		// page load issued two raw-spans GROUP BYs over a 1h
+		// window — ~40M rows scanned twice on a billion-span/day
+		// deployment. Reading the MV instead drops that to
+		// thousands of rows. Aggregate states (countState /
+		// quantilesState / sumState) compose across partitions
+		// so 1h / 6h / 24h all merge sub-millisecond.
+		//
+		// The COALESCE for "unknown" mirrors the raw query so the
+		// MV's instance column is comparable to the raw output —
+		// keeps the read path's SQL near-identical.
+		// v0.5.327 — db.name dimension added so one DB host
+		// serving multiple databases (Oracle SIDs, PostgreSQL /
+		// MongoDB / MSSQL databases) doesn't collapse into a
+		// single row. Replaces the raw-spans GROUP BY path
+		// v0.5.315 used as a stopgap. The MV expression
+		// coalesces missing db.name to 'default' so spans
+		// without the attr still surface.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS db_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (db_system, instance, db_name, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   db_system,
+		   -- v0.5.349 — extended fallback chain. peer.service is
+		   -- the canonical OTel attr but many SDK auto-instrumentations
+		   -- (Spring Cloud Sleuth on JDBC, .NET activity source,
+		   -- pg / mysql clients without DI-time service wiring) emit
+		   -- it empty. server.address / net.peer.name / db.host
+		   -- cover the autoinstrumented path; db.name surfaces the
+		   -- database identity when even the host is anonymous;
+		   -- service_name caller is the last resort so a row never
+		   -- collapses to 'unknown' if there's any signal to attribute.
+		   coalesce(
+		     nullIf(peer_service, ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'db.host')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''),
+		     nullIf(service_name, ''),
+		     'unknown'
+		   )                                                                       AS instance,
+		   coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default') AS db_name,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
+		   countState()                                  AS span_count_state,
+		   countIfState(status_code = 'error')           AS error_count_state,
+		   sumState(duration)                            AS duration_sum_state,
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)     AS duration_q_state
+		 FROM spans
+		 WHERE db_system != ''
+		 GROUP BY db_system, instance, db_name, time_bucket`,
+
+		// db_caller_summary_5m: per-(db_system, peer_service,
+		// service_name, host_name, 5-min) — drives the row-click
+		// detail drawer on /databases. host_name carries the
+		// resource.host.name = k8s pod name in containerised
+		// deployments, which is the resolution the drawer's
+		// per-pod breakdown wants.
+		//
+		// v0.5.327 — db.name dim added here too so the per-DB
+		// caller list is precise. Frontend drawer can render
+		// "service X calls postgresql/host-A/billing" vs
+		// "service X calls postgresql/host-A/orders" separately.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS db_caller_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (db_system, instance, db_name, service_name, host_name, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   db_system,
+		   -- v0.5.349 — same fallback chain as db_summary_5m so
+		   -- row identities match across the two MVs.
+		   coalesce(
+		     nullIf(peer_service, ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'db.host')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''),
+		     nullIf(service_name, ''),
+		     'unknown'
+		   )                                                                       AS instance,
+		   coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default') AS db_name,
+		   service_name,
+		   coalesce(nullIf(host_name, ''), '(unknown)')  AS host_name,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
+		   countState()                                  AS span_count_state,
+		   countIfState(status_code = 'error')           AS error_count_state,
+		   sumState(duration)                            AS duration_sum_state,
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)     AS duration_q_state
+		 FROM spans
+		 WHERE db_system != ''
+		 GROUP BY db_system, instance, db_name, service_name, host_name, time_bucket`,
+
+		// db_statement_summary_5m — v0.8.375, Stage-2 D1: per-(db_system,
+		// db.name, service, statement-hash, 5-min) rollup keyed by the
+		// PERSISTENT statement identity spans.db_stmt_hash (xxHash64 of the
+		// literal-normalized db.statement, computed at insert — dbstmt.go).
+		// Gives the /slow-queries global catalog an MV read — the raw path
+		// regex-normalized + GROUP BY'd every db-span in the window per page
+		// load — and gives D2 its statement detail/trend/caller source
+		// (service is a dim, so per-statement caller breakdown is a GROUP BY
+		// away). Dims follow the db_caller_summary_5m style (db_system +
+		// db.name + service); stmt_hash carries the identity. One capped
+		// sample statement per bucket via anyState — the read path
+		// re-normalizes the sample Go-side (NormalizeDBStatement) for the
+		// display form, which is hash-consistent with the grouping by
+		// construction (the parity contract in dbstmt.go). duration_max_state
+		// keeps the catalog's MaxMs column intact — quantile states can't
+		// produce a true max. WHERE db_stmt_hash != 0 ⇔ db_statement != ''
+		// (the raw path's filter; the 0 sentinel is pinned in dbstmt_test.go).
+		//
+		// GATED: created ONLY while hasDBStmtHashCol is true (see the
+		// creation loop) — its SELECT references db_stmt_hash, so creating it
+		// against a column-less spans table would code-16 every span INSERT
+		// and block ALL ingest (the op_group / v0.8.186 lesson). In cluster
+		// mode this is a proper highVolumeTables member (_local + Distributed
+		// wrapper via adaptDDL) — NOT the spanmetrics_* per-shard mistake
+		// (v0.8.356/358 one-shard undercount class).
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS db_statement_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (db_system, db_name, service_name, stmt_hash, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   db_system,
+		   coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default') AS db_name,
+		   service_name,
+		   db_stmt_hash                                  AS stmt_hash,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
+		   anyState(substring(db_statement, 1, 8192))    AS sample_stmt_state,
+		   countState()                                  AS span_count_state,
+		   countIfState(status_code = 'error')           AS error_count_state,
+		   sumState(duration)                            AS duration_sum_state,
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)  AS duration_q_state,
+		   maxState(duration)                            AS duration_max_state,
+		   argMaxState(trace_id, duration)               AS slow_exemplar_state,
+		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
+		 FROM spans
+		 WHERE db_stmt_hash != 0
+		 GROUP BY db_system, db_name, service_name, stmt_hash, time_bucket`,
+
+		// service_version_5m (v0.9.249) — per-(service, version, 5min)
+		// deploy rollup. Exists because GetServiceDeploys had to scan RAW
+		// spans over a 48h lookback (deployLookback, the v0.9.205
+		// phantom-marker fix) and burned its whole 15s budget on every
+		// prod service, gating the /bundle response behind it.
+		//
+		// The cost was never the row scan — measured on live CH, a bare
+		// count over the same window is ~30ms while the version
+		// expression pushes it to ~430ms, because effectiveVersionExpr
+		// runs 14 indexOf() array probes PER ROW. An MV moves that work
+		// to insert time, once per incoming block, and collapses the
+		// read to (service, version, bucket) rows: ~2 versions x 288
+		// buckets per service per day instead of tens of millions of
+		// spans.
+		//
+		// minState(time) rather than min(time_bucket) so a deploy marker
+		// keeps exact placement — the bucket alone would round every
+		// rollout to a 5-minute grid.
+		//
+		// Registered in highVolumeTables + defaultShardPolicy +
+		// tablesWithoutTraceID day one (v0.5.426 / v0.8.375 lesson).
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS service_version_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, version, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 45 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   ` + effectiveVersionExpr + `                 AS version,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
+		   minState(time)                                AS first_seen_state,
+		   countState()                                  AS span_count_state
+		 FROM spans
+		 WHERE (has(res_keys, 'service.version')
+		     OR has(res_keys, 'container.image.tag')
+		     OR has(res_keys, 'k8s.container.image.tag')
+		     OR has(res_keys, 'k8s.deployment.labels.app_kubernetes_io_version')
+		     OR has(res_keys, 'k8s.pod.labels.app_kubernetes_io_version')
+		     OR has(res_keys, 'k8s.deployment.labels.version')
+		     OR has(res_keys, 'helm.chart.version'))
+		 GROUP BY service_name, version, time_bucket`,
+
+		// spanmetrics_calls_5m: per-(service, status_code, 5min)
+		// pre-aggregation of the spanmetrics processor's calls
+		// counter. v0.5.357 — the v0.5.355 top-N workaround keeps
+		// the /span-metrics page fast at 10k+ services by hard-
+		// capping the result; this MV is the proper fix —
+		// aggregates at INSERT time so even an "all services"
+		// scan reads pre-aggregated state instead of every
+		// metric_point row in the window.
+		//
+		// Why TWO MVs (calls + duration) instead of one: a
+		// spanmetrics processor's counter emits a single
+		// `value` column; the duration histogram emits
+		// (count, sum_value, max_value). Combining both shapes
+		// in one MV would inflate the row size and force the
+		// read path to filter on metric name regardless. Keeping
+		// them separate lets each MV use the smallest possible
+		// aggregate states.
+		//
+		// Trigger filter (in the WHERE) covers the four spanmetrics
+		// naming conventions across processor versions: the
+		// fully-qualified dotted form, the underscored form,
+		// the bare "spanmetrics.*" form, and the bare
+		// "calls" / "duration". metric is LowCardinality so
+		// the predicate evaluates once per distinct name.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_calls_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 30 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
+		   sumState(value)                            AS calls_state,
+		   sumIfState(value,
+		     attr_values[indexOf(attr_keys, 'status.code')] = 'STATUS_CODE_ERROR'
+		   )                                          AS errors_state
+		 FROM metric_points
+		 WHERE metric IN (
+		     'traces.spanmetrics.calls.total',
+		     'traces_spanmetrics_calls_total',
+		     'spanmetrics.calls',
+		     'spanmetrics_calls_total',
+		     'calls'
+		   )
+		 GROUP BY service_name, time_bucket`,
+
+		// spanmetrics_hist_5m: per-(service, 5min) pre-aggregation
+		// of the histogram bucket layout. v0.5.359 — the
+		// v0.5.358 quantile stage reads raw metric_points
+		// (sumForEach across the window); at scale that's the
+		// slowest of the four stages. This MV moves the
+		// element-wise bucket sum into the aggregating engine
+		// via sumMapState so the read collapses to a single
+		// sumMapMerge — sub-second even on the full top-N set.
+		//
+		// bounds is anyState: we assume the (service, metric)
+		// tuple uses one consistent bucket layout per emitter
+		// run. If the layout ever changes mid-run the MV's
+		// reduce picks the first one — same trade-off the
+		// histQuantile() consumer already accepts.
+		//
+		// counts uses sumMapState(keys, values) — element-wise
+		// sum keyed by bucket index. Different-length bucket
+		// arrays across data points (rare but possible) sum
+		// cleanly via the map abstraction.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_hist_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 30 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
+		   anyState(bucket_bounds)                    AS bounds_state,
+		   sumMapState(
+		     arrayMap(i -> toUInt32(i), range(0, toUInt32(length(bucket_counts)))),
+		     bucket_counts
+		   )                                          AS counts_state
+		 FROM metric_points
+		 WHERE metric IN (
+		     'traces.spanmetrics.duration',
+		     'traces.spanmetrics.duration.seconds.sum',
+		     'traces_spanmetrics_duration',
+		     'spanmetrics.duration',
+		     'duration'
+		   )
+		   AND length(bucket_counts) > 0
+		 GROUP BY service_name, time_bucket`,
+
+		// spanmetrics_duration_5m: per-(service, 5min)
+		// pre-aggregation of the histogram-shaped duration
+		// metric. Stores sum + count + max from the
+		// metric_points columns the OTLP convert path fills
+		// in for histogram data points (otlp/convert.go).
+		// avgMs is derived at read time as sum/count×1000;
+		// maxMs is max×1000.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_duration_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 30 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
+		   sumState(sum_value)  AS sum_state,
+		   sumState(count)      AS count_state,
+		   maxState(max_value)  AS max_state
+		 FROM metric_points
+		 WHERE metric IN (
+		     'traces.spanmetrics.duration',
+		     'traces.spanmetrics.duration.seconds.sum',
+		     'traces_spanmetrics_duration',
+		     'spanmetrics.duration',
+		     'duration'
+		   )
+		 GROUP BY service_name, time_bucket`,
+
+		// messaging_summary_5m: structural parallel for /api/messaging.
+		// Cluster + destination are derived expressions in the source
+		// query because the dimension lives in attr_keys/attr_values
+		// rather than dedicated columns. We materialise the resolved
+		// values so the read path joins on plain string equality.
+		//
+		// v0.10.563 — `operation` boyutu eklendi (Faz 4b). Zincir
+		// dependencies.go'daki msgOperationExpr ile BİREBİR aynı sırada:
+		// messaging.operation.type → .operation.name → .operation → ''.
+		// Boş dize SDK'nın hiçbirini yaymadığı anlamına gelir ve satır
+		// KALIR — okuma tarafı onu '(bilinmiyor)'a çevirmez, boş bırakır
+		// (etiketleme frontend'in işi). Boyut ORDER BY'da destination'dan
+		// SONRA duruyor: filtre öznesi msg_system önde kalsın ve mevcut
+		// (system, cluster, destination) okumaları PK önekini kaybetmesin.
+		//
+		// ⚠ GEÇİŞ MALİYETİ: bu boyutu eklemek DROP + RECREATE gerektirir
+		// (boot geçişi aşağıda, mvDimMigrations) ve 90 günlük messaging
+		// kovalarını SİLER; MV ileriye doğru yeniden dolar. Kesintisiz
+		// alternatif yerinde geçiştir: depo tablosuna (`.inner_id.<uuid>`,
+		// cluster modunda `_local`) `ALTER TABLE … ADD COLUMN operation
+		// String AFTER destination` + `ALTER TABLE … MODIFY ORDER BY` +
+		// `ALTER TABLE … MODIFY QUERY <yeni SELECT>`. DİKKAT: MODIFY ORDER BY
+		// yalnız anahtarın SONUNA kolon ekleyebilir, yani yerinde geçen bir
+		// kurulumun sıralama anahtarı (…, destination, time_bucket, operation)
+		// olur — buradaki taze DDL'den (…, destination, operation, time_bucket)
+		// AYRIŞIR. Sıralama anahtarına eklemek şart: operation anahtarda
+		// olmazsa AggregatingMergeTree birleşmesi farklı operasyonları TEK
+		// satıra çökertir ve boyut sessizce yok olur. Emsal:
+		// `reference-ch-inplace-mv-column-add`. Kolon zaten varsa boot geçişi
+		// HİÇ dokunmaz (no-op) — yerinde geçen kurulum ikinci kez düşmez.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS messaging_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (msg_system, cluster, destination, operation, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   msg_system,
+		   coalesce(
+		     nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.kafka.bootstrap.servers')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.kafka.cluster.name')], ''),
+		     '(default)'
+		   ) AS cluster,
+		   coalesce(
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.destination.name')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.destination')], ''),
+		     nullIf(peer_service, ''),
+		     'unknown'
+		   ) AS destination,
+		   coalesce(
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.operation.type')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.operation.name')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.operation')], ''),
+		     ''
+		   ) AS operation,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
+		   countState()                               AS span_count_state,
+		   countIfState(status_code = 'error')        AS error_count_state,
+		   sumState(duration)                         AS duration_sum_state,
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)  AS duration_q_state
+		 FROM spans
+		 WHERE msg_system != ''
+		 GROUP BY msg_system, cluster, destination, operation, time_bucket`,
+
+		// messaging_caller_summary_5m: per-(msg_system, cluster,
+		// destination, service_name, host_name, kind, 5-min). Kind
+		// rides the dim so the messaging drawer can split
+		// Producers / Consumers without a second pass.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS messaging_caller_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (msg_system, cluster, destination, service_name, host_name, kind, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   msg_system,
+		   coalesce(
+		     nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.kafka.bootstrap.servers')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.kafka.cluster.name')], ''),
+		     '(default)'
+		   ) AS cluster,
+		   coalesce(
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.destination.name')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.destination')], ''),
+		     nullIf(peer_service, ''),
+		     'unknown'
+		   ) AS destination,
+		   service_name,
+		   coalesce(nullIf(host_name, ''), '(unknown)') AS host_name,
+		   kind,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)   AS time_bucket,
+		   countState()                                 AS span_count_state,
+		   countIfState(status_code = 'error')          AS error_count_state,
+		   sumState(duration)                           AS duration_sum_state,
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)    AS duration_q_state
+		 FROM spans
+		 WHERE msg_system != ''
+		 GROUP BY msg_system, cluster, destination, service_name, host_name, kind, time_bucket`,
+
+		// trace_summary_5m — per-(trace_id, 5min bucket) rollup
+		// of everything the /traces list needs: root span info,
+		// span count, error flag, duration. The /traces query
+		// used to GROUP BY trace_id over raw spans, which on a
+		// 7-day window with one service touched 10–100M rows
+		// even with the (service_name, time) primary key prune.
+		// Reading the MV slashes that to thousands of state rows
+		// — sub-second 7-day queries at billion-spans/day scale.
+		//
+		// A single trace can span multiple 5-min buckets when
+		// it's long-running (background jobs / batch ETL); the
+		// read path GROUPs BY trace_id across buckets and
+		// merges state. The merge is closed under * so 6
+		// buckets of one trace produce identical results to
+		// scanning the spans directly.
+		//
+		// argMaxIfState picks the value from the *root* span
+		// (parent_id empty/zero) when present, falling back to
+		// any span's value via the secondary maxStateIf branch.
+		// Traces with no root span (orphans / Tempo-style
+		// partials) still get a service name from this fallback
+		// instead of rendering as "(unknown)".
+		//
+		// entry_route_state (v0.8.52, doorway D3) carries the root
+		// span's http.route — the trace's entry endpoint — via the
+		// same root-span argMaxIf predicate. It's the one field the
+		// §6 trace-level metrics table was missing: the tracemetrics
+		// source (D4) re-aggregates these per-trace rows by
+		// (root_service, entry_route) at read time for trace-level
+		// RED-by-endpoint without a second rollup.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS trace_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (time_bucket, trace_id)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   trace_id,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
+		   argMaxIfState(service_name, time,
+		     (parent_id = '' OR parent_id = '0000000000000000') AND name != '') AS root_service_state,
+		   argMaxIfState(name, time,
+		     (parent_id = '' OR parent_id = '0000000000000000') AND name != '') AS root_name_state,
+		   minState(time)                            AS trace_start_state,
+		   maxState(toUnixTimestamp64Nano(time) + duration) AS trace_end_state,
+		   countState()                              AS span_count_state,
+		   countIfState(status_code = 'error')       AS error_count_state,
+		   argMaxIfState(http_route, time,
+		     (parent_id = '' OR parent_id = '0000000000000000') AND name != '') AS entry_route_state,
+		   -- entry_service_state (v0.10.97, operatör-raporlu "iframe
+		   -- trace'leri"): EN ERKEN server/consumer span'in servisi —
+		   -- entry-span ilkesinin trace-listesi yarısı. Mobil web/iframe
+		   -- telemetrisi service.name'siz span'i trace'in MUTLAK köküne
+		   -- koyunca liste "unknown" basıyordu; görüntüleme zinciri kök
+		   -- 'unknown'/boşken buna düşer (traceDisplaySvcExpr). argMIN:
+		   -- giriş = ilk sunucu tarafı span; 'unknown' bilinçli dışarıda.
+		   argMinIfState(service_name, time,
+		     (kind = 'server' OR kind = 'consumer')
+		     AND service_name != '' AND service_name != 'unknown') AS entry_service_state
+		 FROM spans
+		 GROUP BY trace_id, time_bucket`,
+
+		// trace_service_index_5m — sparse (service_name,
+		// trace_id) mapping. Lets a service-filtered /traces
+		// query find the relevant trace_ids without scanning
+		// spans. Two-stage read pattern:
+		//   1. SELECT trace_id FROM this MV WHERE service_name=?
+		//      AND time_bucket >= ? GROUP BY trace_id ORDER BY
+		//      latest_bucket DESC LIMIT N — uses the
+		//      (service_name, time_bucket) prefix for partition
+		//      + sort access.
+		//   2. SELECT * FROM trace_summary_5m WHERE
+		//      trace_id IN (Stage 1) GROUP BY trace_id — bounded
+		//      to N traces, uses the bloom filter on trace_id.
+		//
+		// Both stages bypass the raw spans table entirely. End-
+		// to-end time on a 7-day window with service filter
+		// drops from ~30-60s (raw scan) to <1s.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS trace_service_index_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, time_bucket, trace_id)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
+		   trace_id,
+		   countState()                          AS span_count_state,
+		   maxState(time)                        AS last_seen_state
+		 FROM spans
+		 GROUP BY service_name, time_bucket, trace_id`,
+
+		// metric_catalog — v0.8.396 (operator-reported PROD bug:
+		// /api/metrics/names errored — the picker's GROUP BY metric over
+		// RAW metric_points with the 7-day v0.8.311 lookback outgrew
+		// max_execution_time at 1B+ points/day). One row per
+		// (service_name, metric): the picker/catalogue read becomes an
+		// instant scan over a few thousand rows at ANY ingest volume.
+		// No PARTITION BY / TTL on purpose — cardinality is bounded by
+		// the metric catalogue itself (state-table sized); freshness is
+		// enforced read-side via maxMerge(last_seen_state) >= now()-7d,
+		// so a long-silent metric ages out of the PICKER without ever
+		// leaving the table. Registered in highVolumeTables +
+		// defaultShardPolicy + tablesWithoutTraceID day one (the D1
+		// v0.8.375 rule; the spanmetrics per-shard undercount is the
+		// counter-example). Reads fall back to the bounded raw scan
+		// while the catalog is empty (first minutes after upgrade —
+		// the MV populates forward only).
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS metric_catalog
+		 ENGINE = AggregatingMergeTree
+		 ORDER BY (service_name, metric)
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   metric,
+		   anyState(description)  AS description_state,
+		   anyState(unit)         AS unit_state,
+		   anyState(instrument)   AS instrument_state,
+		   maxState(time)         AS last_seen_state
+		 FROM metric_points
+		 GROUP BY service_name, metric`,
+
+		// span_links_reverse_mv — v0.8.329, cross-signal pivot Phase 1b.
+		// Copies every span_links row into span_links_reverse verbatim so the
+		// backlink direction ("what links TO this trace") has its own primary
+		// key — see the span_links CREATE for the both-directions-as-PK-scan
+		// rationale. TO-form ON PURPOSE (the first in this codebase; every
+		// other MV is combined): the target is a real table we also TTL /
+		// purge / retain independently, and the MV itself keeps no storage.
+		// Cluster mode (adaptDDL): the FROM rewrites to span_links_local
+		// (each shard triggers on its own slice) while the TO target stays
+		// the bare span_links_reverse — the Distributed wrapper — so reverse
+		// rows RE-SHARD by cityHash64(linked_trace_id) and LinksToTrace stays
+		// a single-shard PK scan. No ENGINE clause, so the Replicated engine
+		// swap correctly never touches it.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS span_links_reverse_mv
+		 TO span_links_reverse
+		 AS SELECT
+		   trace_id, span_id, linked_trace_id, linked_span_id,
+		   time, service_name, attr_keys, attr_values
+		 FROM span_links`,
+
+		// service_seen — v0.9.1317, entity-model slice A2
+		// (docs/audit/entity-model-audit-2026-08-23.md §7.2). The service
+		// LIFECYCLE pair: first_seen / last_seen, Dynatrace's
+		// firstSeenTms/lastSeenTms equivalent. Until this MV, the only
+		// answer to "was this service here yesterday?" was "does it have a
+		// row in the window", which cannot distinguish a service that
+		// never existed from one that died.
+		//
+		// NO time dimension in the key. ORDER BY (service_name) alone, so
+		// the table collapses to ONE row per service ever seen — thousands
+		// of rows, not millions. Shape precedent: metric_catalog
+		// (v0.8.396), the other catalogue-sized MV here with no PARTITION
+		// BY and no TTL. State precedent: service_version_5m (v0.9.249),
+		// which already uses minState(time) — and for the same reason
+		// v0.9.250 spells out: the state's own min is EXACT, while a
+		// bucket label would round every birth to a 5-minute grid.
+		//
+		// NO TTL and NO PARTITION BY, deliberately and load-bearing. A
+		// disappeared service MUST stay in this table — "which services
+		// vanished" is precisely the question the MV exists to answer, and
+		// a row that ages out takes the answer with it. Bucketing by time
+		// and adding a TTL would silently redefine first_seen as "first
+		// seen within the retention window": a number that reads like a
+		// fact, is a lie, and that an operator would act on.
+		//
+		// The growth that buys: one row per distinct service.name ever
+		// observed. Two 8-byte DateTime64(9) aggregate states plus a
+		// LowCardinality name — call it ~50 B/row with part overhead, so
+		// 10k services ≈ 500 KB and even 100k (10x the design ceiling)
+		// ≈ 5 MB. Cardinality carries no NEW risk either: service_summary_5m
+		// is already keyed on service_name, so a fleet that could blow this
+		// up would have broken that MV first. The one honest difference is
+		// that service_summary_5m sheds names at its 90-day TTL and this
+		// table does not — a fleet that churns service NAMES (svc-v1,
+		// svc-v2, ...) accumulates here forever. At ~50 B/row that is a
+		// rounding error against a single day of spans.
+		//
+		// Insert-side cost, which is the number that actually matters at
+		// 1B spans/day: this MV emits one row per distinct service IN THE
+		// INCOMING BLOCK, which is the same per-block row count
+		// service_summary_5m already emits (that one groups by service +
+		// bucket, and a single block spans one or two buckets). So the
+		// write amplification is a proven quantity here, not an estimate —
+		// and unlike its sibling this MV's merge target collapses to N
+		// rows instead of N x buckets, so the steady state it settles into
+		// is strictly SMALLER than the MV beside it.
+		//
+		// NO kind filter, unlike every RED-metric MV in this file. The
+		// entry-span principle (kind IN ('server','consumer')) governs
+		// METRICS — throughput, error rate, latency — because those need a
+		// consistent population. Existence is not a metric: any span a
+		// service emits proves it was alive, including a purely internal
+		// one. Borrowing the server+consumer filter here would make a
+		// worker that only ever emits internal spans look like it was
+		// never born.
+		//
+		// NO countState(). Nothing reads it — a lifetime span count over
+		// an unbounded window is not a number any surface asks for — and
+		// min/max are the only states whose cross-shard merge is
+		// idempotent by construction, so keeping the column set to exactly
+		// what a read consumes is also the safest set.
+		//
+		// Registered in highVolumeTables + defaultShardPolicy +
+		// tablesWithoutTraceID day one (the v0.5.426 / v0.8.375 rule that
+		// v0.8.185 and v0.8.186 both broke prod by skipping). Shard key
+		// cityHash64(service_name) is inside ORDER BY, so rule O5 holds.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS service_seen
+		 ENGINE = AggregatingMergeTree
+		 ORDER BY (service_name)
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   minState(time)  AS first_seen_state,
+		   maxState(time)  AS last_seen_state
+		 FROM spans
+		 GROUP BY service_name`,
+	}
+	return mvs
+}
+
+// canonicalMVDDL — katalogdan ada göre TEK MV'nin CREATE metni ("" = yok).
+// Sihirbazların (yerinde geçiş) kanonik SELECT kaynağı; ad eşleşmesi tam
+// (mvDDLByName: "spanmetrics_1" asla "spanmetrics_1m" ile eşleşmez).
+func canonicalMVDDL(name string) string { return mvDDLByName(canonicalMVs(), name) }
+
 func (s *Store) migrate(ctx context.Context) error {
 	sd, ld, md := s.ret.SpansDays, s.ret.LogsDays, s.ret.MetricsDays
 	if sd == 0 {
@@ -3356,828 +4201,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 
-	// Materialized views — pre-aggregate the high-volume spans table into
-	// summary tables that read paths can hit instead of scanning raw rows.
-	// New MVs go here; AggregatingMergeTree lets us combine count/sum/quantile
-	// states across partitions cheaply at query time via *Merge() finalisers.
-	//
-	// service_summary_5m: per-(service, 5min) counts + duration quantiles.
-	// Used by /services and the anomaly baseline scan to avoid touching the
-	// raw spans table for time-bucketed queries that span hours/days.
-	// Apdex thresholds — keep in sync with the raw-spans path in
-	// repo.go (GetServices). 200ms satisfied / 800ms tolerating is the
-	// industry-standard default; making them MV-baked means /api/services
-	// can serve 10s of thousands of services in sub-second time.
-	const apdexT = 200 * 1_000_000  // ns
-	const apdex4T = 800 * 1_000_000 // ns
-	mvs := []string{
-		fmt.Sprintf(`CREATE MATERIALIZED VIEW IF NOT EXISTS service_summary_5m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (service_name, time_bucket)
-		 TTL toDate(time_bucket) + INTERVAL 90 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   service_name,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE)  AS time_bucket,
-		   countState()                                AS span_count_state,
-		   countIfState(status_code = 'error')         AS error_count_state,
-		   sumState(duration)                          AS duration_sum_state,
-		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)   AS duration_q_state,
-		   countIfState(duration <= %d)                AS apdex_satisfied_state,
-		   countIfState(duration > %d AND duration <= %d) AS apdex_tolerating_state
-		 FROM spans
-		 GROUP BY service_name, time_bucket`, apdexT, apdexT, apdex4T),
-
-		// operation_summary_5m: per-(service, operation, 5min) pre-
-		// aggregation that powers the OperationsTable on the
-		// service detail page. Pre-v0.4.99 GetOperationSummary
-		// scanned raw spans GROUP BY name over the entire window,
-		// which on a billion-spans/day service detail page took
-		// ~500ms cold. Reading the MV instead drops it to single-
-		// digit ms because the projection is already pre-aggregated
-		// by name within each 5-min slot. Same aggregate states as
-		// service_summary_5m (count + error + sum/duration +
-		// quantiles + apdex satisfied/tolerating) so the read path
-		// can compute the same numeric set the raw-spans query
-		// produced, just from a much smaller dataset.
-		fmt.Sprintf(`CREATE MATERIALIZED VIEW IF NOT EXISTS operation_summary_5m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (service_name, name, time_bucket)
-		 TTL toDate(time_bucket) + INTERVAL 90 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   service_name,
-		   name,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE)  AS time_bucket,
-		   countState()                                AS span_count_state,
-		   countIfState(status_code = 'error')         AS error_count_state,
-		   sumState(duration)                          AS duration_sum_state,
-		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)   AS duration_q_state,
-		   countIfState(duration <= %d)                AS apdex_satisfied_state,
-		   countIfState(duration > %d AND duration <= %d) AS apdex_tolerating_state
-		 FROM spans
-		 GROUP BY service_name, name, time_bucket`, apdexT, apdexT, apdex4T),
-
-		// operation_group_summary_5m: per-(service, op_group, 5min)
-		// pre-aggregation — the normalized-operation-clustering twin of
-		// operation_summary_5m (group_id rel B). Where operation_summary_5m
-		// keys by the RAW operation name, this one keys by op_group, the
-		// normalized operation-shape column the ingest normalizer
-		// (templater.NormalizeOperation) writes per span (group_id rel A,
-		// v0.8.x). The whole point is to fold the long tail of
-		// high-cardinality raw names (GET /orders/8421, GET /orders/9134, …)
-		// into one shape row (GET /orders/:id), so the operator's
-		// Operations table groups by behaviour, not by accidental id
-		// variance. Same aggregate states as operation_summary_5m (count +
-		// error + sum/duration + quantiles + apdex satisfied/tolerating) so
-		// the read path computes the identical numeric set, just keyed by
-		// shape. ORDER BY mirrors the GROUP BY (service_name, op_group,
-		// time_bucket) with op_group in name's slot — service filters get a
-		// tight prefix prune, exactly like operation_summary_5m.
-		//
-		// Forward-only (like every MV here): rolls ONLY spans inserted after
-		// this CREATE runs. Pre-Release-A spans have op_group = '' and the
-		// read path excludes that bucket (WHERE op_group != '') so the
-		// normalized list is clean — the ungrouped '' rows are never
-		// surfaced as a phantom operation. Issued through execDDL so external
-		// Distributed installs get the spans_local + ON CLUSTER + Replicated
-		// rewrite, identical to operation_summary_5m's issuance.
-		fmt.Sprintf(`CREATE MATERIALIZED VIEW IF NOT EXISTS operation_group_summary_5m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (service_name, op_group, time_bucket)
-		 TTL toDate(time_bucket) + INTERVAL 90 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   service_name,
-		   op_group,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE)  AS time_bucket,
-		   countState()                                AS span_count_state,
-		   countIfState(status_code = 'error')         AS error_count_state,
-		   sumState(duration)                          AS duration_sum_state,
-		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)   AS duration_q_state,
-		   countIfState(duration <= %d)                AS apdex_satisfied_state,
-		   countIfState(duration > %d AND duration <= %d) AS apdex_tolerating_state
-		 FROM spans
-		 GROUP BY service_name, op_group, time_bucket`, apdexT, apdexT, apdex4T),
-
-		// spanmetrics_{1m,10s,1s}: "every metric is a doorway" multi-grain
-		// span-metrics rollups (v0.8.50, doorway Phase D). A SUPERSET of
-		// operation_summary_5m's dims — adds kind / status_code / http_route so
-		// the Metric Explorer can filter/group on any of them, at finer grains
-		// (the resolver reads the coarsest tier that satisfies the range/step).
-		// Native latency histogram via quantilesState; exemplars via
-		// argMax(State)/argMaxIfState(trace_id,…) so a bucket hands back a slow /
-		// errored trace_id ("click metric → see the trace"). Forward-only
-		// (combined MV+target): only spans inserted after creation roll in; the
-		// resolver falls back to operation_summary_5m / raw for older windows
-		// during cutover. 1s DROPS http_route to bound cardinality (route
-		// filters fall to the 10s tier). 1s TTL is ROW-LEVEL
-		// (time_bucket + INTERVAL 6 HOUR) — never toDate()+INTERVAL hours, the
-		// v0.6.36 unit-mixing trap.
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_1m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (service_name, name, kind, status_code, http_route, time_bucket)
-		 TTL toDate(time_bucket) + INTERVAL 30 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   service_name, name, kind, status_code, http_route,
-		   toStartOfInterval(time, INTERVAL 1 MINUTE)      AS time_bucket,
-		   countState()                                    AS calls_state,
-		   countIfState(status_code = 'error')             AS error_state,
-		   sumState(duration)                              AS duration_sum_state,
-		   quantilesTDigestState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
-		   argMaxState(trace_id, duration)                 AS slow_exemplar_state,
-		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
-		 FROM spans
-		 GROUP BY service_name, name, kind, status_code, http_route, time_bucket`,
-
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_10s
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (service_name, name, kind, status_code, http_route, time_bucket)
-		 TTL toDate(time_bucket) + INTERVAL 2 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   service_name, name, kind, status_code, http_route,
-		   toStartOfInterval(time, INTERVAL 10 SECOND)     AS time_bucket,
-		   countState()                                    AS calls_state,
-		   countIfState(status_code = 'error')             AS error_state,
-		   sumState(duration)                              AS duration_sum_state,
-		   quantilesTDigestState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
-		   argMaxState(trace_id, duration)                 AS slow_exemplar_state,
-		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
-		 FROM spans
-		 GROUP BY service_name, name, kind, status_code, http_route, time_bucket`,
-
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_1s
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (service_name, name, kind, status_code, time_bucket)
-		 TTL time_bucket + INTERVAL 6 HOUR
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   service_name, name, kind, status_code,
-		   toStartOfInterval(time, INTERVAL 1 SECOND)      AS time_bucket,
-		   countState()                                    AS calls_state,
-		   countIfState(status_code = 'error')             AS error_state,
-		   sumState(duration)                              AS duration_sum_state,
-		   quantilesTDigestState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
-		   argMaxState(trace_id, duration)                 AS slow_exemplar_state,
-		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
-		 FROM spans
-		 GROUP BY service_name, name, kind, status_code, time_bucket`,
-
-		// trace_summary_1d: per-day distinct trace count via HLL.
-		// Lets /admin/stats history show traces-per-day without a
-		// uniqExact pass over billions of rows. uniqState writes a
-		// HLL12 sketch (~2.5 KiB per day per service); merging across
-		// 30 days is sub-millisecond.
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS trace_summary_1d
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toYYYYMM(day)
-		 ORDER BY day
-		 TTL day + INTERVAL 365 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   toDate(time)        AS day,
-		   uniqState(trace_id) AS trace_count_state
-		 FROM spans
-		 GROUP BY day`,
-
-		// db_summary_5m: per-(db_system, peer_service, 5-min) pre-
-		// aggregation powering /api/databases. Pre-v0.5.9 every
-		// page load issued two raw-spans GROUP BYs over a 1h
-		// window — ~40M rows scanned twice on a billion-span/day
-		// deployment. Reading the MV instead drops that to
-		// thousands of rows. Aggregate states (countState /
-		// quantilesState / sumState) compose across partitions
-		// so 1h / 6h / 24h all merge sub-millisecond.
-		//
-		// The COALESCE for "unknown" mirrors the raw query so the
-		// MV's instance column is comparable to the raw output —
-		// keeps the read path's SQL near-identical.
-		// v0.5.327 — db.name dimension added so one DB host
-		// serving multiple databases (Oracle SIDs, PostgreSQL /
-		// MongoDB / MSSQL databases) doesn't collapse into a
-		// single row. Replaces the raw-spans GROUP BY path
-		// v0.5.315 used as a stopgap. The MV expression
-		// coalesces missing db.name to 'default' so spans
-		// without the attr still surface.
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS db_summary_5m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (db_system, instance, db_name, time_bucket)
-		 TTL toDate(time_bucket) + INTERVAL 90 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   db_system,
-		   -- v0.5.349 — extended fallback chain. peer.service is
-		   -- the canonical OTel attr but many SDK auto-instrumentations
-		   -- (Spring Cloud Sleuth on JDBC, .NET activity source,
-		   -- pg / mysql clients without DI-time service wiring) emit
-		   -- it empty. server.address / net.peer.name / db.host
-		   -- cover the autoinstrumented path; db.name surfaces the
-		   -- database identity when even the host is anonymous;
-		   -- service_name caller is the last resort so a row never
-		   -- collapses to 'unknown' if there's any signal to attribute.
-		   coalesce(
-		     nullIf(peer_service, ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'db.host')], ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''),
-		     nullIf(service_name, ''),
-		     'unknown'
-		   )                                                                       AS instance,
-		   coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default') AS db_name,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
-		   countState()                                  AS span_count_state,
-		   countIfState(status_code = 'error')           AS error_count_state,
-		   sumState(duration)                            AS duration_sum_state,
-		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)     AS duration_q_state
-		 FROM spans
-		 WHERE db_system != ''
-		 GROUP BY db_system, instance, db_name, time_bucket`,
-
-		// db_caller_summary_5m: per-(db_system, peer_service,
-		// service_name, host_name, 5-min) — drives the row-click
-		// detail drawer on /databases. host_name carries the
-		// resource.host.name = k8s pod name in containerised
-		// deployments, which is the resolution the drawer's
-		// per-pod breakdown wants.
-		//
-		// v0.5.327 — db.name dim added here too so the per-DB
-		// caller list is precise. Frontend drawer can render
-		// "service X calls postgresql/host-A/billing" vs
-		// "service X calls postgresql/host-A/orders" separately.
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS db_caller_summary_5m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (db_system, instance, db_name, service_name, host_name, time_bucket)
-		 TTL toDate(time_bucket) + INTERVAL 90 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   db_system,
-		   -- v0.5.349 — same fallback chain as db_summary_5m so
-		   -- row identities match across the two MVs.
-		   coalesce(
-		     nullIf(peer_service, ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'db.host')], ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''),
-		     nullIf(service_name, ''),
-		     'unknown'
-		   )                                                                       AS instance,
-		   coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default') AS db_name,
-		   service_name,
-		   coalesce(nullIf(host_name, ''), '(unknown)')  AS host_name,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
-		   countState()                                  AS span_count_state,
-		   countIfState(status_code = 'error')           AS error_count_state,
-		   sumState(duration)                            AS duration_sum_state,
-		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)     AS duration_q_state
-		 FROM spans
-		 WHERE db_system != ''
-		 GROUP BY db_system, instance, db_name, service_name, host_name, time_bucket`,
-
-		// db_statement_summary_5m — v0.8.375, Stage-2 D1: per-(db_system,
-		// db.name, service, statement-hash, 5-min) rollup keyed by the
-		// PERSISTENT statement identity spans.db_stmt_hash (xxHash64 of the
-		// literal-normalized db.statement, computed at insert — dbstmt.go).
-		// Gives the /slow-queries global catalog an MV read — the raw path
-		// regex-normalized + GROUP BY'd every db-span in the window per page
-		// load — and gives D2 its statement detail/trend/caller source
-		// (service is a dim, so per-statement caller breakdown is a GROUP BY
-		// away). Dims follow the db_caller_summary_5m style (db_system +
-		// db.name + service); stmt_hash carries the identity. One capped
-		// sample statement per bucket via anyState — the read path
-		// re-normalizes the sample Go-side (NormalizeDBStatement) for the
-		// display form, which is hash-consistent with the grouping by
-		// construction (the parity contract in dbstmt.go). duration_max_state
-		// keeps the catalog's MaxMs column intact — quantile states can't
-		// produce a true max. WHERE db_stmt_hash != 0 ⇔ db_statement != ''
-		// (the raw path's filter; the 0 sentinel is pinned in dbstmt_test.go).
-		//
-		// GATED: created ONLY while hasDBStmtHashCol is true (see the
-		// creation loop) — its SELECT references db_stmt_hash, so creating it
-		// against a column-less spans table would code-16 every span INSERT
-		// and block ALL ingest (the op_group / v0.8.186 lesson). In cluster
-		// mode this is a proper highVolumeTables member (_local + Distributed
-		// wrapper via adaptDDL) — NOT the spanmetrics_* per-shard mistake
-		// (v0.8.356/358 one-shard undercount class).
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS db_statement_summary_5m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (db_system, db_name, service_name, stmt_hash, time_bucket)
-		 TTL toDate(time_bucket) + INTERVAL 90 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   db_system,
-		   coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default') AS db_name,
-		   service_name,
-		   db_stmt_hash                                  AS stmt_hash,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
-		   anyState(substring(db_statement, 1, 8192))    AS sample_stmt_state,
-		   countState()                                  AS span_count_state,
-		   countIfState(status_code = 'error')           AS error_count_state,
-		   sumState(duration)                            AS duration_sum_state,
-		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)  AS duration_q_state,
-		   maxState(duration)                            AS duration_max_state,
-		   argMaxState(trace_id, duration)               AS slow_exemplar_state,
-		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
-		 FROM spans
-		 WHERE db_stmt_hash != 0
-		 GROUP BY db_system, db_name, service_name, stmt_hash, time_bucket`,
-
-		// service_version_5m (v0.9.249) — per-(service, version, 5min)
-		// deploy rollup. Exists because GetServiceDeploys had to scan RAW
-		// spans over a 48h lookback (deployLookback, the v0.9.205
-		// phantom-marker fix) and burned its whole 15s budget on every
-		// prod service, gating the /bundle response behind it.
-		//
-		// The cost was never the row scan — measured on live CH, a bare
-		// count over the same window is ~30ms while the version
-		// expression pushes it to ~430ms, because effectiveVersionExpr
-		// runs 14 indexOf() array probes PER ROW. An MV moves that work
-		// to insert time, once per incoming block, and collapses the
-		// read to (service, version, bucket) rows: ~2 versions x 288
-		// buckets per service per day instead of tens of millions of
-		// spans.
-		//
-		// minState(time) rather than min(time_bucket) so a deploy marker
-		// keeps exact placement — the bucket alone would round every
-		// rollout to a 5-minute grid.
-		//
-		// Registered in highVolumeTables + defaultShardPolicy +
-		// tablesWithoutTraceID day one (v0.5.426 / v0.8.375 lesson).
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS service_version_5m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (service_name, version, time_bucket)
-		 TTL toDate(time_bucket) + INTERVAL 45 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   service_name,
-		   ` + effectiveVersionExpr + `                 AS version,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
-		   minState(time)                                AS first_seen_state,
-		   countState()                                  AS span_count_state
-		 FROM spans
-		 WHERE (has(res_keys, 'service.version')
-		     OR has(res_keys, 'container.image.tag')
-		     OR has(res_keys, 'k8s.container.image.tag')
-		     OR has(res_keys, 'k8s.deployment.labels.app_kubernetes_io_version')
-		     OR has(res_keys, 'k8s.pod.labels.app_kubernetes_io_version')
-		     OR has(res_keys, 'k8s.deployment.labels.version')
-		     OR has(res_keys, 'helm.chart.version'))
-		 GROUP BY service_name, version, time_bucket`,
-
-		// spanmetrics_calls_5m: per-(service, status_code, 5min)
-		// pre-aggregation of the spanmetrics processor's calls
-		// counter. v0.5.357 — the v0.5.355 top-N workaround keeps
-		// the /span-metrics page fast at 10k+ services by hard-
-		// capping the result; this MV is the proper fix —
-		// aggregates at INSERT time so even an "all services"
-		// scan reads pre-aggregated state instead of every
-		// metric_point row in the window.
-		//
-		// Why TWO MVs (calls + duration) instead of one: a
-		// spanmetrics processor's counter emits a single
-		// `value` column; the duration histogram emits
-		// (count, sum_value, max_value). Combining both shapes
-		// in one MV would inflate the row size and force the
-		// read path to filter on metric name regardless. Keeping
-		// them separate lets each MV use the smallest possible
-		// aggregate states.
-		//
-		// Trigger filter (in the WHERE) covers the four spanmetrics
-		// naming conventions across processor versions: the
-		// fully-qualified dotted form, the underscored form,
-		// the bare "spanmetrics.*" form, and the bare
-		// "calls" / "duration". metric is LowCardinality so
-		// the predicate evaluates once per distinct name.
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_calls_5m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (service_name, time_bucket)
-		 TTL toDate(time_bucket) + INTERVAL 30 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   service_name,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
-		   sumState(value)                            AS calls_state,
-		   sumIfState(value,
-		     attr_values[indexOf(attr_keys, 'status.code')] = 'STATUS_CODE_ERROR'
-		   )                                          AS errors_state
-		 FROM metric_points
-		 WHERE metric IN (
-		     'traces.spanmetrics.calls.total',
-		     'traces_spanmetrics_calls_total',
-		     'spanmetrics.calls',
-		     'spanmetrics_calls_total',
-		     'calls'
-		   )
-		 GROUP BY service_name, time_bucket`,
-
-		// spanmetrics_hist_5m: per-(service, 5min) pre-aggregation
-		// of the histogram bucket layout. v0.5.359 — the
-		// v0.5.358 quantile stage reads raw metric_points
-		// (sumForEach across the window); at scale that's the
-		// slowest of the four stages. This MV moves the
-		// element-wise bucket sum into the aggregating engine
-		// via sumMapState so the read collapses to a single
-		// sumMapMerge — sub-second even on the full top-N set.
-		//
-		// bounds is anyState: we assume the (service, metric)
-		// tuple uses one consistent bucket layout per emitter
-		// run. If the layout ever changes mid-run the MV's
-		// reduce picks the first one — same trade-off the
-		// histQuantile() consumer already accepts.
-		//
-		// counts uses sumMapState(keys, values) — element-wise
-		// sum keyed by bucket index. Different-length bucket
-		// arrays across data points (rare but possible) sum
-		// cleanly via the map abstraction.
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_hist_5m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (service_name, time_bucket)
-		 TTL toDate(time_bucket) + INTERVAL 30 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   service_name,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
-		   anyState(bucket_bounds)                    AS bounds_state,
-		   sumMapState(
-		     arrayMap(i -> toUInt32(i), range(0, toUInt32(length(bucket_counts)))),
-		     bucket_counts
-		   )                                          AS counts_state
-		 FROM metric_points
-		 WHERE metric IN (
-		     'traces.spanmetrics.duration',
-		     'traces.spanmetrics.duration.seconds.sum',
-		     'traces_spanmetrics_duration',
-		     'spanmetrics.duration',
-		     'duration'
-		   )
-		   AND length(bucket_counts) > 0
-		 GROUP BY service_name, time_bucket`,
-
-		// spanmetrics_duration_5m: per-(service, 5min)
-		// pre-aggregation of the histogram-shaped duration
-		// metric. Stores sum + count + max from the
-		// metric_points columns the OTLP convert path fills
-		// in for histogram data points (otlp/convert.go).
-		// avgMs is derived at read time as sum/count×1000;
-		// maxMs is max×1000.
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_duration_5m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (service_name, time_bucket)
-		 TTL toDate(time_bucket) + INTERVAL 30 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   service_name,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
-		   sumState(sum_value)  AS sum_state,
-		   sumState(count)      AS count_state,
-		   maxState(max_value)  AS max_state
-		 FROM metric_points
-		 WHERE metric IN (
-		     'traces.spanmetrics.duration',
-		     'traces.spanmetrics.duration.seconds.sum',
-		     'traces_spanmetrics_duration',
-		     'spanmetrics.duration',
-		     'duration'
-		   )
-		 GROUP BY service_name, time_bucket`,
-
-		// messaging_summary_5m: structural parallel for /api/messaging.
-		// Cluster + destination are derived expressions in the source
-		// query because the dimension lives in attr_keys/attr_values
-		// rather than dedicated columns. We materialise the resolved
-		// values so the read path joins on plain string equality.
-		//
-		// v0.10.563 — `operation` boyutu eklendi (Faz 4b). Zincir
-		// dependencies.go'daki msgOperationExpr ile BİREBİR aynı sırada:
-		// messaging.operation.type → .operation.name → .operation → ''.
-		// Boş dize SDK'nın hiçbirini yaymadığı anlamına gelir ve satır
-		// KALIR — okuma tarafı onu '(bilinmiyor)'a çevirmez, boş bırakır
-		// (etiketleme frontend'in işi). Boyut ORDER BY'da destination'dan
-		// SONRA duruyor: filtre öznesi msg_system önde kalsın ve mevcut
-		// (system, cluster, destination) okumaları PK önekini kaybetmesin.
-		//
-		// ⚠ GEÇİŞ MALİYETİ: bu boyutu eklemek DROP + RECREATE gerektirir
-		// (boot geçişi aşağıda, mvDimMigrations) ve 90 günlük messaging
-		// kovalarını SİLER; MV ileriye doğru yeniden dolar. Kesintisiz
-		// alternatif yerinde geçiştir: depo tablosuna (`.inner_id.<uuid>`,
-		// cluster modunda `_local`) `ALTER TABLE … ADD COLUMN operation
-		// String AFTER destination` + `ALTER TABLE … MODIFY ORDER BY` +
-		// `ALTER TABLE … MODIFY QUERY <yeni SELECT>`. DİKKAT: MODIFY ORDER BY
-		// yalnız anahtarın SONUNA kolon ekleyebilir, yani yerinde geçen bir
-		// kurulumun sıralama anahtarı (…, destination, time_bucket, operation)
-		// olur — buradaki taze DDL'den (…, destination, operation, time_bucket)
-		// AYRIŞIR. Sıralama anahtarına eklemek şart: operation anahtarda
-		// olmazsa AggregatingMergeTree birleşmesi farklı operasyonları TEK
-		// satıra çökertir ve boyut sessizce yok olur. Emsal:
-		// `reference-ch-inplace-mv-column-add`. Kolon zaten varsa boot geçişi
-		// HİÇ dokunmaz (no-op) — yerinde geçen kurulum ikinci kez düşmez.
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS messaging_summary_5m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (msg_system, cluster, destination, operation, time_bucket)
-		 TTL toDate(time_bucket) + INTERVAL 90 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   msg_system,
-		   coalesce(
-		     nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'messaging.kafka.bootstrap.servers')], ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'messaging.kafka.cluster.name')], ''),
-		     '(default)'
-		   ) AS cluster,
-		   coalesce(
-		     nullIf(attr_values[indexOf(attr_keys, 'messaging.destination.name')], ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'messaging.destination')], ''),
-		     nullIf(peer_service, ''),
-		     'unknown'
-		   ) AS destination,
-		   coalesce(
-		     nullIf(attr_values[indexOf(attr_keys, 'messaging.operation.type')], ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'messaging.operation.name')], ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'messaging.operation')], ''),
-		     ''
-		   ) AS operation,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
-		   countState()                               AS span_count_state,
-		   countIfState(status_code = 'error')        AS error_count_state,
-		   sumState(duration)                         AS duration_sum_state,
-		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)  AS duration_q_state
-		 FROM spans
-		 WHERE msg_system != ''
-		 GROUP BY msg_system, cluster, destination, operation, time_bucket`,
-
-		// messaging_caller_summary_5m: per-(msg_system, cluster,
-		// destination, service_name, host_name, kind, 5-min). Kind
-		// rides the dim so the messaging drawer can split
-		// Producers / Consumers without a second pass.
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS messaging_caller_summary_5m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (msg_system, cluster, destination, service_name, host_name, kind, time_bucket)
-		 TTL toDate(time_bucket) + INTERVAL 90 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   msg_system,
-		   coalesce(
-		     nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'messaging.kafka.bootstrap.servers')], ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'messaging.kafka.cluster.name')], ''),
-		     '(default)'
-		   ) AS cluster,
-		   coalesce(
-		     nullIf(attr_values[indexOf(attr_keys, 'messaging.destination.name')], ''),
-		     nullIf(attr_values[indexOf(attr_keys, 'messaging.destination')], ''),
-		     nullIf(peer_service, ''),
-		     'unknown'
-		   ) AS destination,
-		   service_name,
-		   coalesce(nullIf(host_name, ''), '(unknown)') AS host_name,
-		   kind,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE)   AS time_bucket,
-		   countState()                                 AS span_count_state,
-		   countIfState(status_code = 'error')          AS error_count_state,
-		   sumState(duration)                           AS duration_sum_state,
-		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)    AS duration_q_state
-		 FROM spans
-		 WHERE msg_system != ''
-		 GROUP BY msg_system, cluster, destination, service_name, host_name, kind, time_bucket`,
-
-		// trace_summary_5m — per-(trace_id, 5min bucket) rollup
-		// of everything the /traces list needs: root span info,
-		// span count, error flag, duration. The /traces query
-		// used to GROUP BY trace_id over raw spans, which on a
-		// 7-day window with one service touched 10–100M rows
-		// even with the (service_name, time) primary key prune.
-		// Reading the MV slashes that to thousands of state rows
-		// — sub-second 7-day queries at billion-spans/day scale.
-		//
-		// A single trace can span multiple 5-min buckets when
-		// it's long-running (background jobs / batch ETL); the
-		// read path GROUPs BY trace_id across buckets and
-		// merges state. The merge is closed under * so 6
-		// buckets of one trace produce identical results to
-		// scanning the spans directly.
-		//
-		// argMaxIfState picks the value from the *root* span
-		// (parent_id empty/zero) when present, falling back to
-		// any span's value via the secondary maxStateIf branch.
-		// Traces with no root span (orphans / Tempo-style
-		// partials) still get a service name from this fallback
-		// instead of rendering as "(unknown)".
-		//
-		// entry_route_state (v0.8.52, doorway D3) carries the root
-		// span's http.route — the trace's entry endpoint — via the
-		// same root-span argMaxIf predicate. It's the one field the
-		// §6 trace-level metrics table was missing: the tracemetrics
-		// source (D4) re-aggregates these per-trace rows by
-		// (root_service, entry_route) at read time for trace-level
-		// RED-by-endpoint without a second rollup.
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS trace_summary_5m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (time_bucket, trace_id)
-		 TTL toDate(time_bucket) + INTERVAL 90 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   trace_id,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
-		   argMaxIfState(service_name, time,
-		     (parent_id = '' OR parent_id = '0000000000000000') AND name != '') AS root_service_state,
-		   argMaxIfState(name, time,
-		     (parent_id = '' OR parent_id = '0000000000000000') AND name != '') AS root_name_state,
-		   minState(time)                            AS trace_start_state,
-		   maxState(toUnixTimestamp64Nano(time) + duration) AS trace_end_state,
-		   countState()                              AS span_count_state,
-		   countIfState(status_code = 'error')       AS error_count_state,
-		   argMaxIfState(http_route, time,
-		     (parent_id = '' OR parent_id = '0000000000000000') AND name != '') AS entry_route_state,
-		   -- entry_service_state (v0.10.97, operatör-raporlu "iframe
-		   -- trace'leri"): EN ERKEN server/consumer span'in servisi —
-		   -- entry-span ilkesinin trace-listesi yarısı. Mobil web/iframe
-		   -- telemetrisi service.name'siz span'i trace'in MUTLAK köküne
-		   -- koyunca liste "unknown" basıyordu; görüntüleme zinciri kök
-		   -- 'unknown'/boşken buna düşer (traceDisplaySvcExpr). argMIN:
-		   -- giriş = ilk sunucu tarafı span; 'unknown' bilinçli dışarıda.
-		   argMinIfState(service_name, time,
-		     (kind = 'server' OR kind = 'consumer')
-		     AND service_name != '' AND service_name != 'unknown') AS entry_service_state
-		 FROM spans
-		 GROUP BY trace_id, time_bucket`,
-
-		// trace_service_index_5m — sparse (service_name,
-		// trace_id) mapping. Lets a service-filtered /traces
-		// query find the relevant trace_ids without scanning
-		// spans. Two-stage read pattern:
-		//   1. SELECT trace_id FROM this MV WHERE service_name=?
-		//      AND time_bucket >= ? GROUP BY trace_id ORDER BY
-		//      latest_bucket DESC LIMIT N — uses the
-		//      (service_name, time_bucket) prefix for partition
-		//      + sort access.
-		//   2. SELECT * FROM trace_summary_5m WHERE
-		//      trace_id IN (Stage 1) GROUP BY trace_id — bounded
-		//      to N traces, uses the bloom filter on trace_id.
-		//
-		// Both stages bypass the raw spans table entirely. End-
-		// to-end time on a 7-day window with service filter
-		// drops from ~30-60s (raw scan) to <1s.
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS trace_service_index_5m
-		 ENGINE = AggregatingMergeTree
-		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (service_name, time_bucket, trace_id)
-		 TTL toDate(time_bucket) + INTERVAL 90 DAY
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   service_name,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
-		   trace_id,
-		   countState()                          AS span_count_state,
-		   maxState(time)                        AS last_seen_state
-		 FROM spans
-		 GROUP BY service_name, time_bucket, trace_id`,
-
-		// metric_catalog — v0.8.396 (operator-reported PROD bug:
-		// /api/metrics/names errored — the picker's GROUP BY metric over
-		// RAW metric_points with the 7-day v0.8.311 lookback outgrew
-		// max_execution_time at 1B+ points/day). One row per
-		// (service_name, metric): the picker/catalogue read becomes an
-		// instant scan over a few thousand rows at ANY ingest volume.
-		// No PARTITION BY / TTL on purpose — cardinality is bounded by
-		// the metric catalogue itself (state-table sized); freshness is
-		// enforced read-side via maxMerge(last_seen_state) >= now()-7d,
-		// so a long-silent metric ages out of the PICKER without ever
-		// leaving the table. Registered in highVolumeTables +
-		// defaultShardPolicy + tablesWithoutTraceID day one (the D1
-		// v0.8.375 rule; the spanmetrics per-shard undercount is the
-		// counter-example). Reads fall back to the bounded raw scan
-		// while the catalog is empty (first minutes after upgrade —
-		// the MV populates forward only).
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS metric_catalog
-		 ENGINE = AggregatingMergeTree
-		 ORDER BY (service_name, metric)
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   service_name,
-		   metric,
-		   anyState(description)  AS description_state,
-		   anyState(unit)         AS unit_state,
-		   anyState(instrument)   AS instrument_state,
-		   maxState(time)         AS last_seen_state
-		 FROM metric_points
-		 GROUP BY service_name, metric`,
-
-		// span_links_reverse_mv — v0.8.329, cross-signal pivot Phase 1b.
-		// Copies every span_links row into span_links_reverse verbatim so the
-		// backlink direction ("what links TO this trace") has its own primary
-		// key — see the span_links CREATE for the both-directions-as-PK-scan
-		// rationale. TO-form ON PURPOSE (the first in this codebase; every
-		// other MV is combined): the target is a real table we also TTL /
-		// purge / retain independently, and the MV itself keeps no storage.
-		// Cluster mode (adaptDDL): the FROM rewrites to span_links_local
-		// (each shard triggers on its own slice) while the TO target stays
-		// the bare span_links_reverse — the Distributed wrapper — so reverse
-		// rows RE-SHARD by cityHash64(linked_trace_id) and LinksToTrace stays
-		// a single-shard PK scan. No ENGINE clause, so the Replicated engine
-		// swap correctly never touches it.
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS span_links_reverse_mv
-		 TO span_links_reverse
-		 AS SELECT
-		   trace_id, span_id, linked_trace_id, linked_span_id,
-		   time, service_name, attr_keys, attr_values
-		 FROM span_links`,
-
-		// service_seen — v0.9.1317, entity-model slice A2
-		// (docs/audit/entity-model-audit-2026-08-23.md §7.2). The service
-		// LIFECYCLE pair: first_seen / last_seen, Dynatrace's
-		// firstSeenTms/lastSeenTms equivalent. Until this MV, the only
-		// answer to "was this service here yesterday?" was "does it have a
-		// row in the window", which cannot distinguish a service that
-		// never existed from one that died.
-		//
-		// NO time dimension in the key. ORDER BY (service_name) alone, so
-		// the table collapses to ONE row per service ever seen — thousands
-		// of rows, not millions. Shape precedent: metric_catalog
-		// (v0.8.396), the other catalogue-sized MV here with no PARTITION
-		// BY and no TTL. State precedent: service_version_5m (v0.9.249),
-		// which already uses minState(time) — and for the same reason
-		// v0.9.250 spells out: the state's own min is EXACT, while a
-		// bucket label would round every birth to a 5-minute grid.
-		//
-		// NO TTL and NO PARTITION BY, deliberately and load-bearing. A
-		// disappeared service MUST stay in this table — "which services
-		// vanished" is precisely the question the MV exists to answer, and
-		// a row that ages out takes the answer with it. Bucketing by time
-		// and adding a TTL would silently redefine first_seen as "first
-		// seen within the retention window": a number that reads like a
-		// fact, is a lie, and that an operator would act on.
-		//
-		// The growth that buys: one row per distinct service.name ever
-		// observed. Two 8-byte DateTime64(9) aggregate states plus a
-		// LowCardinality name — call it ~50 B/row with part overhead, so
-		// 10k services ≈ 500 KB and even 100k (10x the design ceiling)
-		// ≈ 5 MB. Cardinality carries no NEW risk either: service_summary_5m
-		// is already keyed on service_name, so a fleet that could blow this
-		// up would have broken that MV first. The one honest difference is
-		// that service_summary_5m sheds names at its 90-day TTL and this
-		// table does not — a fleet that churns service NAMES (svc-v1,
-		// svc-v2, ...) accumulates here forever. At ~50 B/row that is a
-		// rounding error against a single day of spans.
-		//
-		// Insert-side cost, which is the number that actually matters at
-		// 1B spans/day: this MV emits one row per distinct service IN THE
-		// INCOMING BLOCK, which is the same per-block row count
-		// service_summary_5m already emits (that one groups by service +
-		// bucket, and a single block spans one or two buckets). So the
-		// write amplification is a proven quantity here, not an estimate —
-		// and unlike its sibling this MV's merge target collapses to N
-		// rows instead of N x buckets, so the steady state it settles into
-		// is strictly SMALLER than the MV beside it.
-		//
-		// NO kind filter, unlike every RED-metric MV in this file. The
-		// entry-span principle (kind IN ('server','consumer')) governs
-		// METRICS — throughput, error rate, latency — because those need a
-		// consistent population. Existence is not a metric: any span a
-		// service emits proves it was alive, including a purely internal
-		// one. Borrowing the server+consumer filter here would make a
-		// worker that only ever emits internal spans look like it was
-		// never born.
-		//
-		// NO countState(). Nothing reads it — a lifetime span count over
-		// an unbounded window is not a number any surface asks for — and
-		// min/max are the only states whose cross-shard merge is
-		// idempotent by construction, so keeping the column set to exactly
-		// what a read consumes is also the safest set.
-		//
-		// Registered in highVolumeTables + defaultShardPolicy +
-		// tablesWithoutTraceID day one (the v0.5.426 / v0.8.375 rule that
-		// v0.8.185 and v0.8.186 both broke prod by skipping). Shard key
-		// cityHash64(service_name) is inside ORDER BY, so rule O5 holds.
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS service_seen
-		 ENGINE = AggregatingMergeTree
-		 ORDER BY (service_name)
-		 SETTINGS index_granularity = 8192
-		 AS SELECT
-		   service_name,
-		   minState(time)  AS first_seen_state,
-		   maxState(time)  AS last_seen_state
-		 FROM spans
-		 GROUP BY service_name`,
-	}
+	// Materialized views — katalog canonicalMVs() içinde (v0.10.564: sihirbaz
+	// da AYNI gövdeyi okuyor). Koşullu eklemeler aşağıda append edilir.
+	mvs := canonicalMVs()
 	// v0.5.361 — bug-fix: the spanmetrics_hist_5m MV (added in
 	// v0.5.359) references metric_points.bucket_counts. On an
 	// existing install the column doesn't exist yet at this

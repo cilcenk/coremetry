@@ -3400,6 +3400,48 @@ export interface FunctionIDColumnPreflightResult {
   detail: string;
   generated: number;
 }
+// ── messaging_summary_5m operation boyutu yerinde geçişi (v0.10.564) ──
+// chstore/messaging_opdim_admin.go. v0.10.563 MV'ye `operation` boyutunu
+// ekledi; boot kolonu bulamazsa MV'yi DROP+RECREATE eder ve 90 günlük
+// messaging kovaları GİDER. Bu sihirbaz deploy'dan ÖNCE koşulur: depo
+// tablosuna kolon + sıralama anahtarına ekleme + MODIFY QUERY → boot
+// no-op'a düşer, geçmiş korunur. Geri alma YOK.
+export interface MessagingOpDimStatusResult {
+  /** '' = tek düğüm. */
+  cluster: string;
+  /** depo adı (küme kipinde messaging_summary_5m_local). */
+  mv: string;
+  /** .inner_id.<uuid> — >1 = host'lar arasında ayrışmış (her uuid ayrı ALTER). */
+  inner: string[];
+  objects: EntityLayerObjectStatus[];
+  /** depo tablosunda operation kolonu var mı. */
+  innerColumn: boolean;
+  /** depo sıralama anahtarında operation var mı. */
+  keyHasOperation: boolean;
+  /** MV sorgusunda `AS operation` var mı. */
+  queryHasOperation: boolean;
+  /** MV'nin (çıplak ad) kolon listesinde operation var mı. */
+  mvColumn: boolean;
+  /** true = deploy'da boot MV'yi DROP+RECREATE eder (geçmiş silinir). */
+  bootWouldDrop: boolean;
+  divergent: boolean;
+  state: 'done' | 'partial' | 'missing' | 'unknown';
+  detail: string;
+  generated: number;
+}
+export interface MessagingOpDimPreflightResult {
+  clusters: string[];
+  suggestedCluster?: string;
+  supported: boolean;
+  detail: string;
+  mv: string;
+  inner: string[];
+  divergent: boolean;
+  alreadyDone: boolean;
+  /** apply'ın koşacağı TAM SQL — operatör kopyalayıp elle de koşabilir. */
+  statements: string[];
+  probeErrors?: string[];
+}
 export interface EntityLayerPreflightResult {
   clusters: string[];
   suggestedCluster?: string;

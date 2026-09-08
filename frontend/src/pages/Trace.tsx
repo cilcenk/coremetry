@@ -1432,7 +1432,15 @@ function ExternalLinkRow({ link: l, url, missing, ctx, identities, srcNote }: {
     const g = spanSections.find(x => x.title === key);
     if (g) g.items.push(r); else spanSections.push({ title: key, items: [r] });
   }
-  const sections = logItems.length ? [{ title: 'log gövdesinden', items: logItems }, ...spanSections] : spanSections;
+  // v0.10.571 (operatör: "log gövdesinden requestId yazsın yanında") — log
+  // bölümü de ANAHTARINI söyler: span bölümleri zaten function_id /
+  // channel_code diye başlıklanıyordu, log bölümü yalnız kaynağını
+  // söyleyince tek başlık anahtarsız kalıyordu. Anahtar sunucudan gelir
+  // (uydurma yok); kaynak ekte kalır.
+  const logKey = logItems[0]?.cand.key || 'request_id';
+  const sections = logItems.length
+    ? [{ title: `${logKey} · log gövdesinden`, items: logItems }, ...spanSections]
+    : spanSections;
 
   return (
     <span ref={wrapRef} style={{ position: 'relative', display: 'inline-flex' }}>

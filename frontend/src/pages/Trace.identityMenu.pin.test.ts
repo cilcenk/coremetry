@@ -88,7 +88,10 @@ describe('Trace kimlik seçim menüsü (v0.10.568)', () => {
     expect(src).toContain('<ExternalLinkRow key={l.label} link={l} url={url} missing={missing}');
     // request_id adayları üstte, span adayları anahtar anahtar altta.
     expect(src).toContain("const logItems = resolved.filter(r => r.cand.source === 'log');");
-    expect(src).toContain("{ title: 'log gövdesinden', items: logItems }");
+    // v0.10.571 — başlık METNİ değişti (anahtar eklendi); burada korunan
+    // sözleşme SIRA: log adayları üstte, span bölümleri altta. Başlık
+    // biçimini kendi testi çiviliyor.
+    expect(src).toContain('items: logItems }, ...spanSections]');
   });
 
   it('Esc KATMANI bağlı, dışa tık kapatır, window.open noopener taşır', () => {
@@ -111,5 +114,14 @@ describe('split düğme hizası', () => {
     expect(src).toContain("height: 'auto'");
     // Ortak kenarlık hâlâ tek piksel: iki hedef, tek kontrol.
     expect(src).toContain('marginLeft: -1');
+  });
+});
+
+// v0.10.571 — operatör: log bölümü başlığı da anahtarını yazsın (span
+// bölümleri function_id / channel_code diyor). Anahtar SUNUCUDAN gelir.
+describe('log bölümü başlığı', () => {
+  it('anahtar + kaynak', () => {
+    expect(src).toContain('${logKey} · log gövdesinden');
+    expect(src).toContain("logItems[0]?.cand.key || 'request_id'");
   });
 });

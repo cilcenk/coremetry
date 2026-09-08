@@ -121,7 +121,7 @@ func TestGuidedParityToolsGroupedNearFamilies(t *testing.T) {
 	// v0.10.474 — 42 → 43 (trace_stats.go).
 	// v0.10.475 — 43 → 44 (build_link.go).
 	// v0.10.478 — 44 → 47 (context_tools.go).
-	if len(tools) != 52 /* v0.10.555 — 48 → 52: problem_tools.go */ {
+	if len(tools) != 54 /* v0.10.556 — 52 → 54: signal_tools.go */ {
 		t.Errorf("katalog %d tool — sayı değiştiyse tools.go başlığındaki sayımı, "+
 			"api/mcp_authz_test.go'daki duruş notunu, discovery_test.go'daki pini ve "+
 			"docs/runbooks/mcp-claude-code.md'yi de güncelle", len(tools))

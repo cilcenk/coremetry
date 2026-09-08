@@ -19,7 +19,14 @@
 // mcptools'a taşınamadı — analysis.go'daki bilinçli sapma).
 package api
 
-import "github.com/cilcenk/coremetry/internal/mcptools"
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/cilcenk/coremetry/internal/mcptools"
+	"github.com/cilcenk/coremetry/internal/thanos"
+)
 
 // mcpDeps — tool kataloğunun ve ortak veri katmanının kapandığı
 // handle'lar. Ucuz: yalnız üç işaretçi kopyalar, her çağrıda kurulabilir.
@@ -44,6 +51,7 @@ func (s *Server) mcpDeps() mcptools.Deps {
 		RolloutsEnabled: func() bool { return s.rolloutCfg != nil && s.rolloutCfg.Resolved().Enabled },
 		MetricsName:     func() string { return s.metricSource().Name() },
 		RAGReady:        func() bool { return s.rag != nil && s.rag.Ready() },
+		ClusterMetrics:  s.mcpClusterMetricsOrNil(), // v0.10.556
 		CopilotModel: func() string {
 			if s.copilot == nil || !s.copilot.Configured() {
 				return ""
@@ -67,4 +75,76 @@ func (s *Server) mcpClusterRefs() []mcptools.ClusterRef {
 		out = append(out, mcptools.ClusterRef{ID: c.EffectiveID(), Name: c.Name, SpanValues: c.SpanClusterKeys()})
 	}
 	return out
+}
+
+// mcpClusterMetrics — v0.10.556: cluster_metric aracının Thanos adaptörü. Kalkanlar
+// HTTP handler'larıyla aynı: cluster referansı çözümü (ClusterByRef), 30 g pencere
+// tavanı (clampThanosWindow), 10 s zaman aşımı, nokta basamağı
+// (TrendMaxDataPointsRung). Ham PromQL kabul etmez.
+type mcpClusterMetrics struct{ s *Server }
+
+func (s *Server) mcpClusterMetricsOrNil() mcptools.ClusterMetricReader {
+	if s.thanos == nil {
+		return nil
+	}
+	return mcpClusterMetrics{s}
+}
+
+func (m mcpClusterMetrics) cfg(ref string) (thanos.ClusterConfig, error) {
+	if m.s.thanos == nil || !m.s.thanos.HasEnabledClusters() {
+		return thanos.ClusterConfig{}, fmt.Errorf("no thanos clusters configured")
+	}
+	cfg, ok := m.s.thanos.ClusterByRef(ref)
+	if !ok {
+		return thanos.ClusterConfig{}, fmt.Errorf("unknown or disabled cluster %q", ref)
+	}
+	return cfg, nil
+}
+
+func mcpThanosCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, 10*time.Second)
+}
+
+func (m mcpClusterMetrics) PodTrend(ctx context.Context, cluster, namespace, pod string, from, to time.Time) ([]thanos.TrendPoint, error) {
+	cfg, err := m.cfg(cluster)
+	if err != nil {
+		return nil, err
+	}
+	from, to, _ = clampThanosWindow(from, to)
+	qctx, cancel := mcpThanosCtx(ctx)
+	defer cancel()
+	return m.s.thanos.PodTrend(qctx, cfg, namespace, pod, from, to)
+}
+
+func (m mcpClusterMetrics) NamespaceTrend(ctx context.Context, cluster, namespace string, from, to time.Time) ([]thanos.TrendPoint, error) {
+	cfg, err := m.cfg(cluster)
+	if err != nil {
+		return nil, err
+	}
+	from, to, _ = clampThanosWindow(from, to)
+	qctx, cancel := mcpThanosCtx(ctx)
+	defer cancel()
+	return m.s.thanos.NamespaceTrend(qctx, cfg, namespace, from, to)
+}
+
+func (m mcpClusterMetrics) DeployTrend(ctx context.Context, cluster, namespace, deploy, metric string, byPod bool, from, to time.Time, mdp int) ([]thanos.NamedSeries, int, error) {
+	cfg, err := m.cfg(cluster)
+	if err != nil {
+		return nil, 0, err
+	}
+	from, to, _ = clampThanosWindow(from, to)
+	qctx, cancel := mcpThanosCtx(ctx)
+	defer cancel()
+	return m.s.thanos.DeployTrend(qctx, cfg, namespace, deploy, metric, byPod, from, to, thanos.TrendMaxDataPointsRung(mdp))
+}
+
+func (m mcpClusterMetrics) NetworkTrend(ctx context.Context, cluster string, from, to time.Time) ([]thanos.NetTrendPoint, error) {
+	cfg, err := m.cfg(cluster)
+	if err != nil {
+		return nil, err
+	}
+	from, to, _ = clampThanosWindow(from, to)
+	qctx, cancel := mcpThanosCtx(ctx)
+	defer cancel()
+	return m.s.thanos.NetworkTrend(qctx, cfg, from, to)
 }

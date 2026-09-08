@@ -442,6 +442,27 @@ export interface DBDetail {
 // "wait lock'ı kaldırabilirsin — db metriklerini almıyorum". Geri dönüş
 // git geçmişinden.
 
+// MsgOperationStat — messaging_summary_5m'in OPERATION boyutundan tek
+// satır (v0.10.563). `operation` MV'de saklanan ham değer değil, OKUMA
+// ANINDA coalesce edilmiş tür: messaging.operation.type →
+// messaging.operation.name → messaging.operation (publish / receive /
+// process / settle / create …).
+//
+// '' (boş dize) MEŞRU BİR DEĞER ve "0 çağrı" DEMEK DEĞİL: SDK hiçbir
+// operation niteliği yaymamış demek. UI bunu "(yaymıyor)" diye yazar —
+// boş hücre, eksik ölçümü sıfır gibi okutur.
+export interface MsgOperationStat {
+  operation: string;
+  spanCount: number;
+  errorCount: number;
+  /** Yüzde (0-100), sunucudan hazır gelir. */
+  errorRate: number;
+  avgDurationMs: number;
+  p50DurationMs: number;
+  p95DurationMs: number;
+  p99DurationMs: number;
+}
+
 export interface MessagingDetail {
   system: string;
   cluster: string;
@@ -475,6 +496,13 @@ export interface MessagingDetail {
   // drawer can say "SDKs aren't emitting span links" instead of a
   // misleading 0ms.
   e2e?: MsgE2E;
+  // v0.10.563 (Faz 4b) — messaging_summary_5m'in operation boyutu:
+  // publish/receive/process kırılımı, çağıran servis boyutundan BAĞIMSIZ.
+  // Okuma anında coalesce: messaging.operation.type → .name → .operation.
+  // Optional + boş-dilime toleranslı: rolling deploy sırasında ısınmış
+  // önbellekten gelen pre-563 payload'da alan YOK, ve Go nil → JSON null
+  // ihtimaline karşı okuyan taraf `?? []` yapar.
+  operations?: MsgOperationStat[];
 }
 
 // MsgKindPoint — one 5-minute bucket of the messaging drawer's

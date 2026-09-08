@@ -367,3 +367,55 @@ Evaluator VM yolu var (`evaluator/runtime_vm.go`); "istemci lag artışı" kural
 8. **Env:** VM tarafında env label'ı hangi yazımla var (`deployment_environment` /
    `deployment_environment_name`)? Bilinirse Kafka sorgularında sabit tek label ile
    daraltma denenebilir (bugünkü bilinçli ret genel seam için; buraya özel istisna SOR).
+
+---
+
+## 8. Faz 4b — `messaging_summary_5m` operation boyutu (v0.10.563)
+
+**Ne değişiyor:** MV'ye `operation` boyutu (okuma-anı coalesce
+`messaging.operation.type → messaging.operation.name → messaging.operation`, boş =
+SDK yaymıyor), ORDER BY `(msg_system, cluster, destination, operation, time_bucket)`.
+Yeni okuma `MessagingOperationRED` → çekmecede "Operasyonlar · MV" tablosu. Mevcut
+okuyucular (liste, trend) operation'sız GROUP BY ile aynı sonucu verir (state'ler birleşir).
+
+**Boot geçişi (kodlanmış yol):** `db_name` emsali — `system.columns` probe, kolon yoksa
+`dropCombinedMV` + yeniden CREATE. **Bu yol 90 günlük messaging 5-dk kovalarını siler**
+(ileriye dönük yeniden dolar). Kolon zaten varsa boot HİÇ dokunmaz.
+
+**Prod için önerilen: yerinde geçiş (geçmiş korunur), deploy'dan ÖNCE elle** —
+`reference-ch-inplace-mv-column-add` yordamı, CH 24.8'de doğrulanmış (v0.8.52,
+`trace_summary_5m`); küme kipinde replika başına inner tablo (`.inner_id.<uuid>`,
+`clusterAllReplicas(system.tables)` ile bul):
+
+```sql
+-- 1) depo tablosunu bul (küme kipinde her replika; `_local` MV'nin inner'ı)
+SELECT hostName(), database, name, uuid
+FROM clusterAllReplicas('<cluster>', system.tables)
+WHERE engine = 'MaterializedView' AND name IN ('messaging_summary_5m', 'messaging_summary_5m_local');
+
+-- 2) depo tablosuna kolon + SIRALAMA ANAHTARI (ikisi birlikte; anahtara eklemek ŞART:
+--    operation anahtarda olmazsa AggregatingMergeTree birleşmesi farklı operasyonları
+--    tek satıra çökertir ve boyut sessizce yok olur). MODIFY ORDER BY yalnız SONA
+--    ekleyebilir → yerinde geçen kurulumun anahtarı (…, time_bucket, operation) olur;
+--    taze DDL'den (…, operation, time_bucket) ayrışır ama okuma sonuçları aynıdır
+--    ((msg_system, cluster, destination) öneki korunur).
+ALTER TABLE `.inner_id.<uuid>`
+  ADD COLUMN IF NOT EXISTS operation String DEFAULT '' AFTER destination,
+  MODIFY ORDER BY (msg_system, cluster, destination, time_bucket, operation);
+
+-- 3) MV sorgusunu değiştir (store.go v0.10.563 SELECT metni birebir)
+ALTER TABLE messaging_summary_5m MODIFY QUERY <yeni SELECT>;
+```
+
+Sonra deploy: boot probe kolonu görür → no-op, geçmiş kalır. Yerinde geçiş yapılmazsa
+deploy DROP+RECREATE ile temiz başlar (dürüst log satırı). **Küme kipi düzeltmesi
+(v0.10.563):** boot geçişi artık çıplak addaki Distributed sarmalayıcıyı da düşürüp
+yeniden kurar — önceki `db_name` geçişi yalnız `_local`'i düşürüyordu, sarmalayıcı eski
+kolon setiyle kalıyor ve çıplak addan `SELECT <yeni kolon>` prod dağıtık CH'de kod 47
+veriyordu (lokalde görünmeyen sınıf). Rolling deploy'da kısa bir okuma-hatası penceresi
+kabul edilmiş maliyettir; hızlı roll.
+
+**Doğrulama:** `SELECT operation, countMerge(span_count_state) FROM messaging_summary_5m
+WHERE time_bucket >= now() - INTERVAL 1 HOUR GROUP BY operation` — publish/receive/process
+satırları; `''` satırı = SDK operation yaymıyor (demo eski semconv `messaging.operation`
+yayıyor, coalesce 3. halkasıyla yakalanır).

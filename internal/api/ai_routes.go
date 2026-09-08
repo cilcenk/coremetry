@@ -80,6 +80,9 @@ func (s *Server) registerAIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/ai/rca-quality", auth.RequireRole(auth.RoleAdmin, s.aiRCAQuality))
 	mux.HandleFunc("GET /api/ai/rates", auth.RequireRole(auth.RoleAdmin, s.getAIRates))
 	mux.HandleFunc("PUT /api/ai/rates", auth.RequireRole(auth.RoleAdmin, s.putAIRates))
+	// v0.10.561 — sohbet arşivi saklama süresi (ai_chat_retention.go).
+	mux.HandleFunc("GET /api/ai/chat-retention", auth.RequireRole(auth.RoleAdmin, s.getAIChatRetention))
+	mux.HandleFunc("PUT /api/ai/chat-retention", auth.RequireRole(auth.RoleAdmin, s.putAIChatRetention))
 	// v0.8.399 — thumbs up/down on AI answers. Any authenticated user
 	// (NOT admin-gated like the reads above): whoever can chat can
 	// rate the answer they got — mirrors POST /api/copilot/chat.

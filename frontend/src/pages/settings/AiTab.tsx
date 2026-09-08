@@ -6,6 +6,7 @@ import { useSettingsLoad, SettingsLoadError, Field } from './shared';
 import type { AIProvider, AISettings, AIIntentClassify, AIProfilesPayload } from '@/lib/types';
 import { AiProfilesPanel } from './AiProfilesPanel';
 import { AiBudgetPanel } from './AiBudgetPanel'; // v0.10.411
+import { AiChatRetentionPanel } from './AiChatRetentionPanel'; // v0.10.561
 import { tuningToForm, tuningToWire } from './aiTuning';
 import { IconSparkles } from '@/components/icons';
 import { Link } from 'react-router-dom';
@@ -236,6 +237,7 @@ export function AITab() {
         }} />
       )}
       <AiBudgetPanel />
+      <AiChatRetentionPanel />
       <div style={{ maxWidth: 640 }}>
       <form onSubmit={save} style={{
         marginTop: 18, padding: 16, borderRadius: 8,

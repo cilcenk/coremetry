@@ -532,3 +532,25 @@ func TestReadTeamServicesREDStaysOnMVAndSorts(t *testing.T) {
 // Guided tarafının AYNI seam'leri çağırdığı pin api paketinde yaşıyor
 // (kaynak dosyanın yanında): api/guided_shared_layer_test.go →
 // TestGuidedTeamPathUsesSharedLayer.
+
+// v0.10.559 — katalog satırı takım TÜRÜNÜ sayar (Owner = ownerTeam olduğu
+// servis sayısı, SRE = sreTeam); aynı servis iki alanda aynı takımsa iki
+// tür de sayılır ama Services bir kez.
+func TestTeamCatalogueKindCounts(t *testing.T) {
+	mds := map[string]chstore.ServiceMetadata{
+		"a": {OwnerTeam: "UG-1", SRETeam: "SY-A"},
+		"b": {OwnerTeam: "UG-1", SRETeam: "SY-A"},
+		"c": {OwnerTeam: "SY-A", SRETeam: "SY-A"},
+	}
+	rows := TeamCatalogue(chstore.TeamAliases{}, mds)
+	by := map[string]TeamCatalogueEntry{}
+	for _, r := range rows {
+		by[r.Team] = r
+	}
+	if by["UG-1"].Owner != 2 || by["UG-1"].SRE != 0 || by["UG-1"].Services != 2 {
+		t.Fatalf("UG-1: %+v", by["UG-1"])
+	}
+	if by["SY-A"].SRE != 3 || by["SY-A"].Owner != 1 || by["SY-A"].Services != 3 {
+		t.Fatalf("SY-A: %+v", by["SY-A"])
+	}
+}

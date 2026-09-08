@@ -122,6 +122,12 @@ func teamSvcWindowS(rangeS int) int {
 type TeamCatalogueEntry struct {
 	Team     string `json:"team"`
 	Services int    `json:"services"`
+	// Owner / SRE — v0.10.559: takımın TÜRÜ (kaç serviste ownerTeam = uygulama
+	// takımı, kaç serviste sreTeam). "Hangi takım?" listesi türleri dönüşümlü
+	// sunar; servis sayısına göre tek sıralama SRE takımlarını tepeye
+	// yığıp uygulama takımlarını görünmez kılıyordu (operatör-raporlu, prod).
+	Owner int `json:"owner,omitempty"`
+	SRE   int `json:"sre,omitempty"`
 }
 
 // betterTeamDisplay — aynı takımın iki yazımı arasında gösterileni seçer.
@@ -151,27 +157,36 @@ func betterTeamDisplay(cand, cur, canon string) bool {
 // tarafındaki teamCatalogue artık bunun ad görünümü).
 func TeamCatalogue(ta chstore.TeamAliases, mds map[string]chstore.ServiceMetadata) []TeamCatalogueEntry {
 	type entry struct {
-		display string
-		n       int
+		display    string
+		n          int
+		owner, sre int // v0.10.559 — tür sayaçları (alan başına; Services bir kez)
 	}
 	byCanon := map[string]*entry{}
 	for _, md := range mds {
 		seen := map[string]bool{} // aynı servis owner=sre ise İKİ kez saymasın
-		for _, name := range []string{md.OwnerTeam, md.SRETeam} {
+		for kind, name := range []string{md.OwnerTeam, md.SRETeam} {
 			c := ta.CanonTeam(name)
-			if c == "" || seen[c] {
+			if c == "" {
+				continue
+			}
+			disp := strings.TrimSpace(name)
+			e, ok := byCanon[c]
+			if !ok {
+				e = &entry{display: disp}
+				byCanon[c] = e
+			} else if betterTeamDisplay(disp, e.display, c) {
+				e.display = disp
+			}
+			if kind == 0 {
+				e.owner++
+			} else {
+				e.sre++
+			}
+			if seen[c] {
 				continue
 			}
 			seen[c] = true
-			disp := strings.TrimSpace(name)
-			if e, ok := byCanon[c]; ok {
-				e.n++
-				if betterTeamDisplay(disp, e.display, c) {
-					e.display = disp
-				}
-				continue
-			}
-			byCanon[c] = &entry{display: disp, n: 1}
+			e.n++
 		}
 	}
 	out := make([]entry, 0, len(byCanon))
@@ -186,7 +201,7 @@ func TeamCatalogue(ta chstore.TeamAliases, mds map[string]chstore.ServiceMetadat
 	})
 	rows := make([]TeamCatalogueEntry, 0, len(out))
 	for _, e := range out {
-		rows = append(rows, TeamCatalogueEntry{Team: e.display, Services: e.n})
+		rows = append(rows, TeamCatalogueEntry{Team: e.display, Services: e.n, Owner: e.owner, SRE: e.sre})
 	}
 	return rows
 }

@@ -488,7 +488,6 @@ export interface MessagingDetail {
   // messaging_caller_summary_5m (kind × time_bucket dimensions).
   // Optional so a stale pre-M1 cached payload can't crash the
   // drawer mid-rolling-deploy.
-  series?: MsgKindPoint[];
   // v0.8.372 (Stage-2 M2) — span_links-correlated end-to-end
   // produce→consume latency. Absent when the backend read failed
   // (or on a stale pre-M2 cached payload); present with
@@ -505,13 +504,6 @@ export interface MessagingDetail {
   operations?: MsgOperationStat[];
 }
 
-// MsgKindPoint — one 5-minute bucket of the messaging drawer's
-// produce/consume series (v0.8.364). timeS = bucket start, unix s.
-export interface MsgKindPoint {
-  timeS: number;
-  produceCount: number;
-  consumeCount: number;
-}
 
 // MsgE2E — end-to-end produce→consume latency for one messaging
 // destination (v0.8.372, Stage-2 M2). Correlated via span_links:

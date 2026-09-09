@@ -41,9 +41,13 @@ export default function MessagingPage() {
   // v0.9.399 (desen paritesi) — compare oturum state'inden URL'e
   // (?compare=prior, Endpoints deseniyle birebir): copy-link ve saved
   // view artık compare durumunu da taşıyor.
-  const [mparams, setMparams] = useSearchParams();
-  const compare = mparams.get('compare') === 'prior';
-  const setCompare = (v: boolean) => setMparams(prev => {
+  // v0.10.574 — TEK useSearchParams örneği. İkinci bir örnek (mparams)
+  // aynı URL durumunu ayrı bir isimle okuyordu: hata değildi (iki yazıcı da
+  // fonksiyonel biçimi kullanıyor, yani birbirini ezmiyor) ama okuyan
+  // "iki ayrı durum mu" diye duraklıyordu ve fonksiyonel biçimden sapan
+  // ileride bir düzenleme sessizce ezme üretirdi.
+  const compare = params.get('compare') === 'prior';
+  const setCompare = (v: boolean) => setParams(prev => {
     const next = new URLSearchParams(prev);
     if (v) next.set('compare', 'prior'); else next.delete('compare');
     return next;

@@ -520,27 +520,11 @@ type MessagingDetail struct {
 	// ve etiketlemesi frontend'e ait. Okuma best-effort: hata dönerse
 	// dilim boş kalır, çekmecenin geri kalanı bloklanmaz.
 	Operations []MsgOperationStat `json:"operations"`
-	// Series — v0.8.364 (Stage-2 M1). Per-5-minute produce/consume
-	// counts across the window, straight off
-	// messaging_caller_summary_5m (kind + time_bucket are both
-	// dimensions there, so the split series is one bounded merged-
-	// state GROUP BY — no raw-spans read). Drives the drawer's
-	// produce/consume sparklines.
-	Series []MsgKindPoint `json:"series"`
 	// E2E — v0.8.372 (Stage-2 M2). span_links-correlated end-to-end
 	// produce→consume latency (messaging_e2e.go). Nil when the read
 	// fails (drawer omits the section); non-nil with Linkless=true
 	// when no links correlated in the window (honest empty state).
 	E2E *MsgE2E `json:"e2e,omitempty"`
-}
-
-// MsgKindPoint is one 5-minute bucket of the messaging detail's
-// produce/consume series (v0.8.364). TimeS is the bucket start in
-// unix seconds; counts are spans in that bucket by span kind.
-type MsgKindPoint struct {
-	TimeS        int64  `json:"timeS"`
-	ProduceCount uint64 `json:"produceCount"`
-	ConsumeCount uint64 `json:"consumeCount"`
 }
 
 func (s *Store) GetMessagingDetail(
@@ -580,7 +564,6 @@ func (s *Store) GetMessagingDetail(
 		Callers:    []DBCallerBreakdown{},
 		TopOps:     []DBOpStat{},
 		Operations: []MsgOperationStat{},
-		Series:     []MsgKindPoint{},
 	}
 
 	// MV-backed aggregate over messaging_caller_summary_5m. The
@@ -662,55 +645,6 @@ func (s *Store) GetMessagingDetail(
 			b.ErrorRate = float64(b.ErrorCount) / float64(b.SpanCount) * 100
 		}
 		out.Callers = append(out.Callers, b)
-	}
-
-	// Produce/consume series — v0.8.364 (Stage-2 M1). The caller MV
-	// already carries kind + time_bucket, so the split-by-time read
-	// is a single bounded merged-state GROUP BY (window/5min buckets
-	// × ≤2 kinds; LIMIT 5000 covers >17 days). ORDER BY t lets the
-	// fold below build the ascending series in one pass. Failure is
-	// non-fatal — the drawer renders without sparklines.
-	sRows, err := s.telemetryReadConn().Query(ctx, `
-		SELECT toUnixTimestamp(time_bucket) AS t,
-		       kind,
-		       countMerge(span_count_state) AS c
-		FROM messaging_caller_summary_5m
-		WHERE time_bucket >= ? AND time_bucket < ?
-		  AND msg_system = ? AND cluster = ? AND destination = ?
-		  AND kind IN ('producer', 'consumer')
-		GROUP BY t, kind
-		ORDER BY t
-		LIMIT 5000
-		SETTINGS max_execution_time = 8`,
-		bucketStart, to, system, cluster, destination)
-	if err == nil {
-		for sRows.Next() {
-			// v0.9.817 — `toUnixTimestamp()` UInt32 döndürür. Bu satır
-			// `int64` bağlıyordu; sürücü dönüşümü DESTEKLEMİYOR, yani Scan
-			// HER satırda hata veriyor ve aşağıdaki `continue` onu yutuyordu.
-			// Sonuç: seri HER ZAMAN boş, drawer'ın produce/consume
-			// sparkline'ları hiç çizilmedi — hata da yok, log da yok.
-			// Kardeş okumaların hepsi bu tipi doğru bağlıyor (external.go:221,
-			// anomaly.go:690, heatmap.go:201); yalnız messaging kaçırmıştı.
-			var t uint32
-			var kind string
-			var c uint64
-			if err := sRows.Scan(&t, &kind, &c); err != nil {
-				continue
-			}
-			ts := int64(t)
-			if n := len(out.Series); n == 0 || out.Series[n-1].TimeS != ts {
-				out.Series = append(out.Series, MsgKindPoint{TimeS: ts})
-			}
-			p := &out.Series[len(out.Series)-1]
-			switch kind {
-			case "producer":
-				p.ProduceCount += c
-			case "consumer":
-				p.ConsumeCount += c
-			}
-		}
-		sRows.Close()
 	}
 
 	// End-to-end produce→consume latency — v0.8.372 (Stage-2 M2).

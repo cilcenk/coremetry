@@ -44,6 +44,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/mcptools"
 	"github.com/cilcenk/coremetry/internal/monitor"
 	"github.com/cilcenk/coremetry/internal/notify"
+	"github.com/cilcenk/coremetry/internal/oracle"
 	"github.com/cilcenk/coremetry/internal/otlp"
 	"github.com/cilcenk/coremetry/internal/pipeline"
 	"github.com/cilcenk/coremetry/internal/rag"
@@ -1024,6 +1025,16 @@ func main() {
 		log.Printf("[influx] load persisted config: %v", err)
 	}
 	cfgRefresh.Add("influx", func(ctx context.Context) error { return influxSvc.LoadPersisted(ctx, store) })
+	// v0.10.580 — Oracle hata tablosu datasource'ları (audit:
+	// docs/audit/oracle-error-log-2026-09-09.md, AŞAMA 1). Ayar blobu HER
+	// rolde: api pod'u Settings'i ve bağlantı testini servis ediyor.
+	// Poller/metrik/Problem YOK — Aşama 2-3, ayrı sürümler; bu yüzden
+	// burada lider kilidi de yok.
+	oracleSvc := oracle.New()
+	if err := oracleSvc.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[oracle] load persisted config: %v", err)
+	}
+	cfgRefresh.Add("oracle", func(ctx context.Context) error { return oracleSvc.LoadPersisted(ctx, store) })
 	var influxWorker *influx.Worker
 	// v0.10.129 — K8s entity katmanı: bayrak + vidalar her modda (uçlar
 	// okur), Thanos senkronizasyonu yalnız worker rolünde ve liderde
@@ -1384,6 +1395,7 @@ func main() {
 	srv.SetVMetrics(vmSvc)
 	srv.SetInflux(influxSvc)          // v0.10.222
 	srv.SetInfluxWorker(influxWorker) // v0.10.223 — nil = bu pod poll'lamıyor
+	srv.SetOracle(oracleSvc)          // v0.10.580 — Oracle kaynakları (her rol)
 	srv.SetDevOps(devopsSvc)
 	srv.SetMCPClient(mcpCliSvc)
 	// Cross-pod L1 cache invalidation (v0.5.337). Subscribes

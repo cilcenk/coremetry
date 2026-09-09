@@ -1612,6 +1612,90 @@ export interface InfluxStatusPayload {
   generatedAt: number;
 }
 
+
+// ── Oracle hata tablosu dış kaynakları (v0.10.580, internal/oracle) ──
+// Go aynası: oracle.SourceConfig / SourceSnapshot / Snapshot / Settings /
+// TestResult / SourceStatus. AŞAMA 1: yalnız datasource tanımı, credential
+// ve bağlantı testi — poller / metrik yazımı / Problem üretimi Aşama 2-3'te
+// (audit: docs/audit/oracle-error-log-2026-09-09.md §7).
+//
+// Şifre sözleşmesi Influx token'ının birebir ikizi (v0.10.224 operatör
+// kararı): düz şifre saklanır ama GET ASLA geri vermez (hasPassword rozeti),
+// boş girdi saklıyı KORUR; alternatif REFERANS `env:NAME` | `file:/path`
+// (passwordRef) — bir referans secret DEĞİLDİR, GET aynen döndürür.
+/** oracle.SourceConfig — PUT gövdesi elemanı; id sunucu sahipli ("o-"+8 hex).
+ *  Bağlantı İKİ biçimden biri: ya tek parça `dsn` ya host+port+serviceName
+ *  üçlüsü — ikisi birden sunucuda reddedilir. */
+export interface OracleSource {
+  id?: string;
+  name: string;
+  /** `oracle://kullanıcı:şifre@host:port/servis` — verilirse port ayrıca verilmez. */
+  dsn?: string;
+  host?: string;
+  port?: number;
+  serviceName?: string;
+  user: string;
+  /** Yalnız YENİ değer; boş = saklıyı koru (sourceForSave anahtarı HİÇ koymaz). */
+  password?: string;
+  /** `env:NAME` | `file:/path` — doluysa saklı şifreye tercih edilir. */
+  passwordRef?: string;
+  schema: string;
+  table: string;
+  /** Boş = sunucu varsayılanı MCA_ERR_TIMESTAMP / MCA_ERR_TYPE. Şema-tablo
+   *  gibi bunlar da SQL'e identifier olarak girer (bind edilemez). */
+  timestampColumn?: string;
+  typeColumn?: string;
+  /** Sorguya `AND (…)` olarak girer; `;` `--` `/*` YASAK, ≤500 karakter. */
+  extraWhere?: string;
+  /** Tip kolonunun değerleri (BIND edilir); boş = ["T"]. */
+  typeFilter?: string[];
+  /** 1-16, varsayılan 4. */
+  maxOpenConns?: number;
+  /** 5-120 sn, varsayılan 20. */
+  queryTimeoutSec?: number;
+  /** 10-3600 sn, varsayılan 60 (Aşama 2 poller tüketir). */
+  intervalSec?: number;
+  enabled: boolean;
+}
+/** oracle.SourceSnapshot — GET görünümü: password MASKELİ, rozet alanları eklidir. */
+export interface OracleSourceSnapshot extends OracleSource {
+  hasPassword: boolean;
+  passwordResolved: boolean;
+  passwordError?: string;
+}
+export interface OracleSnapshot { sources: OracleSourceSnapshot[] }
+export interface OracleSettingsInput { sources: OracleSource[] }
+/** oracle.TestResult — BAŞARISIZLIK 200 + ok:false ile döner (influx test
+ *  ucu sözleşmesi): bağlantının kurulamaması, operatörün sorusuna verilmiş
+ *  BAŞARILI bir cevaptır — HTTP hatası değil. */
+export interface OracleTestResult {
+  ok: boolean;
+  error?: string;
+  passwordResolved: boolean;
+  columns?: string[];
+  sample?: Record<string, string>[];
+  rowCount: number;
+  latencyMs?: number;
+  /** Koşan SELECT'in metni (şifre/DSN içermez; yalnız identifier + bind). */
+  query?: string;
+}
+/** oracle.SourceStatus — GET /api/oracle/status satırı. ŞİFRESİZ. Aşama 1'de
+ *  poller YOK: "son kontrol" o pod'da koşmuş bağlantı testinin izidir. */
+export interface OracleSourceStatus {
+  id: string;
+  name: string;
+  enabled: boolean;
+  passwordResolved: boolean;
+  passwordError?: string;
+  lastCheckAt?: number; // unix ms
+  lastCheckOK: boolean;
+  lastError?: string;
+}
+export interface OracleStatusPayload {
+  sources: OracleSourceStatus[];
+  generatedAt: number; // unix ms
+}
+
 // Azure DevOps Server / TFS connection (v0.9.829). Tempo secret
 // contract: the PAT never round-trips (hasPat is the stored
 // indicator), and an empty `pat` on submit preserves the stored one.

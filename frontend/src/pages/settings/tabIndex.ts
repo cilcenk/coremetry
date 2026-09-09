@@ -20,6 +20,7 @@ export const SETTINGS_TAB_INDEX: SettingsTabRef[] = [
   { slug: 'external-links', label: 'Dış linkler' }, // v0.10.345
   { slug: 'clusters', label: 'Remote clusters' },
   { slug: 'influx', label: 'Influx kaynakları' },
+  { slug: 'oracle', label: 'Oracle hata tablosu' }, // v0.10.580
   { slug: 'entities', label: 'K8s entity katmanı' },
   { slug: 'elastic', label: 'Elasticsearch logs' },
   { slug: 'kibana', label: 'Kibana link' },

@@ -151,13 +151,34 @@ export function isGrpcMessageEvent(row: LogRow): boolean {
   return GRPC_MSG_TYPES.has(attrs['message.type']);
 }
 
+// isNoisySpanEvent — Logs sekmesinde gizlenecek span event'lerinin TAM kuralı.
+// İki aile, ikisi de "bu satır hiçbir şey anlatmıyor" demenin farklı biçimi:
+//
+//   1. gRPC per-message event'i (yukarıdaki dar yüklem)
+//   2. HİÇ attribute taşımayan işaretçi — redis.encode.start/end gibi
+//      (operatör onayı 2026-09-09). Ad listesi TUTULMUYOR: bugün redis,
+//      yarın başka kütüphane olur. Şeklin kendisi yakalanıyor — attribute'u
+//      olmayan bir event'in gövdesi her zaman ADININ kendisidir (eventBody
+//      zincirindeki tüm adaylar boş çıkar), yani "bu olay oldu"dan fazlasını
+//      söylemiyor.
+//
+// EMNİYET KEMERİ: ERROR ve üstü hiçbir koşulda gizlenmez. Attribute'suz bir
+// exception event'i teorik olarak mümkün ve onu kaybetmek kabul edilemez —
+// bu kural, 2. aileyi güvenli kılan şeyin ta kendisi.
+export function isNoisySpanEvent(row: LogRow): boolean {
+  if (row.origin !== 'span-event') return false;
+  if (isGrpcMessageEvent(row)) return true;
+  if (row.severity >= 17) return false;
+  return Object.keys(row.attributes ?? {}).length === 0;
+}
+
 // splitGrpcMessageEvents — Logs sekmesinin görünür listesi + gizlenen sayısı.
 // Gizlenecek hiçbir şey yoksa GİRDİ DİZİSİNİN KENDİSİ döner: yeni bir dizi
 // kimliği, aşağıdaki memo zincirini ve LogTable'ı boşuna yeniden render
 // ettirirdi.
 export function splitGrpcMessageEvents(rows: LogRow[]): { visible: LogRow[]; hidden: number } {
   let hidden = 0;
-  for (const r of rows) if (isGrpcMessageEvent(r)) hidden++;
+  for (const r of rows) if (isNoisySpanEvent(r)) hidden++;
   if (hidden === 0) return { visible: rows, hidden: 0 };
-  return { visible: rows.filter(r => !isGrpcMessageEvent(r)), hidden };
+  return { visible: rows.filter(r => !isNoisySpanEvent(r)), hidden };
 }

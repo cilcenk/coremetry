@@ -24,7 +24,7 @@ import type {
   TempoSnapshot, TempoSettingsInput,
   VMSnapshot, VMSettingsInput, VMTestResult, InfluxSnapshot, InfluxSettingsInput, InfluxSourceInput, InfluxTestResult, InfluxStatusPayload,
   OracleSnapshot, OracleSettingsInput, OracleSource, OracleTestResult, OracleStatusPayload,
-  DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult, DevOpsResolveDryRun,
+  DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult, DevOpsResolveDryRun, StackFramesResult,
   EntityClustersResponse, EntityListResponse, EntityDetailResponse, EntityServicesResponse, EntityMetricsResponse, EntityContainersResponse, EntityLatencyResponse,
   ServicePodsResponse, EntitySettings, EntitySettingsResponse, EntitySyncResponse,
   ThanosClusterProbe,
@@ -1786,6 +1786,23 @@ export const api = {
     request<DevOpsResolveDryRun>(`/api/devops/resolve-dryrun`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ service }),
+    }),
+  // v0.10.581 — exception stack trace'inin TIKLANABİLİR künyesi.
+  //
+  // POST, GET DEĞİL: stack gövdesi kilobaytlarca olabiliyor ve bir URL'ye
+  // sığmaz. Sunucu HAM metni alır, `internal/stackparse` ile frame'lere
+  // böler ve her frame için `lineIndex` + (varsa) DevOps dosya URL'si
+  // döner — kod GÖVDESİ dönmez.
+  //
+  // `signal` çağırandan: çekmece kapanınca / operatör başka bir span'e
+  // geçince istek GERÇEKTEN kesilsin (queries/cancellation.test.ts).
+  //
+  // Ayarsız kurulumda uç `{configured:false, frames:[]}` döner — HATA
+  // değil. Çağıran yüzey o durumda bugünkü düz metinde kalır.
+  stackFrameLinks: (service: string, stack: string, signal?: AbortSignal) =>
+    request<StackFramesResult>(`/api/devops/stack-frames`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service, stack }), signal,
     }),
   // Thanos multi-cluster config (v0.8.577, admin). Tempo contract:
   // GET is masked (per-cluster hasToken), PUT's empty token

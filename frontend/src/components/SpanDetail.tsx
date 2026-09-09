@@ -16,7 +16,8 @@ import { IconFlame, IconSparkles } from './icons';
 import { CopyButton } from './CopyButton';
 import { AIExplainButton } from './ai/AIExplainButton';
 import { BreakdownBar, KindBadge } from './KindBadge';
-import { useEntityEnabled } from '@/lib/queries';
+import { useEntityEnabled, useStackFrameLinks } from '@/lib/queries';
+import { StackTrace } from './StackTrace';
 import { SpanK8sSection } from './SpanK8sSection';
 import { spanK8sContext, k8sAttrHref, type SpanK8sContext } from '@/lib/spanK8s';
 
@@ -370,6 +371,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
           <Section title={`Exceptions (${exceptions.length || 1})`}>
             {exceptions.map((e, i) => (
               <ExceptionView key={i}
+                service={span.serviceName}
                 type={e.attributes?.['exception.type']}
                 message={e.attributes?.['exception.message']}
                 stacktrace={e.attributes?.['exception.stacktrace']}
@@ -378,6 +380,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
             ))}
             {exceptions.length === 0 && hasInlineException && (
               <ExceptionView
+                service={span.serviceName}
                 type={inlineExType}
                 message={inlineExMsg}
                 stacktrace={inlineStack}
@@ -575,7 +578,9 @@ function KV({ children }: { children: React.ReactNode }) {
  * Renders one OTel-style exception block (type / message / stacktrace).
  * Stacktrace is shown in a scrollable monospace pre with a copy button.
  */
-function ExceptionView({ type, message, stacktrace, escaped, time }: {
+function ExceptionView({ service, type, message, stacktrace, escaped, time }: {
+  /** Span'in servisi — stack frame'lerinin depo çözümü buna dayanır. */
+  service?: string;
   type?: string;
   message?: string;
   stacktrace?: string;
@@ -585,6 +590,34 @@ function ExceptionView({ type, message, stacktrace, escaped, time }: {
   const [collapsed, setCollapsed] = useState(false);
   const stack = (stacktrace ?? '').toString();
   const escFlag = escaped === true || escaped === 'true';
+  // shown = ÇİZİLEN ve SUNUCUYA GİDEN metin, aynı dizgi.
+  //
+  // İkisinin ayrışması sessiz bir kusur olurdu: sunucu `lineIndex`i
+  // KENDİ gördüğü metnin indeksi olarak döner, ekranda başka bir
+  // dizgi çizilirse süsler kayar. CRLF normalizasyonu (v0.5 döneminden
+  // beri burada) bu yüzden fetch'ten ÖNCE, tek yerde koşuyor.
+  // Kopyalama düğmesi HAM `stack`i kopyalamaya devam ediyor: operatör
+  // "aynen gördüğüm gibi" bekler.
+  const shown = useMemo(() => formatStack(stack), [stack]);
+  // Uygulama-içi link kapalıysa (anonim /public/trace izleyicisi)
+  // stack frame künyesi de İSTENMEZ: o yüzey şirket-içi DevOps
+  // adreslerini duyurmamalı ve tanımadığımız bir alıcı için dış
+  // sisteme istek açmamalıyız.
+  const linksOn = useContext(ServiceLinkCtx).on;
+  // FETCH-ON-OPEN: yalnız bu blok AÇIKKEN. Katlanmış bir exception
+  // ya da stack'siz bir olay hiçbir istek üretmez; liste ön-getirmesi
+  // YOK (ES-cost disiplini, CLAUDE.md).
+  const links = useStackFrameLinks({
+    service: service ?? '',
+    stack: shown,
+    enabled: linksOn && !!service && !!shown && !collapsed,
+  });
+  // Uç `configured:false` dönerse, istek düşerse ya da hâlâ
+  // koşuyorsa: frames YOK → StackTrace bugünkü düz metni çizer.
+  // Bu yüzeyde hata/uyarı GÖSTERİLMEZ — stack'in kendisi zaten
+  // operatörün okumak istediği şey ve onu bir hata kutusunun
+  // arkasına koymak, çalışan bir özelliği geriletmek olurdu.
+  const framed = links.data?.configured ? links.data : undefined;
 
   return (
     <div className="ex">
@@ -605,16 +638,27 @@ function ExceptionView({ type, message, stacktrace, escaped, time }: {
         </div>
       </div>
       {stack && !collapsed && (
-        <pre className="ex-stack">{formatStack(stack)}</pre>
+        <StackTrace stack={shown}
+          frames={framed?.frames}
+          warning={framed?.revisionWarning} />
       )}
     </div>
   );
 }
 
-// Light syntax-aware reflow:
-//   • Java / Go style "at pkg.Class.method(File.java:42)" lines kept verbatim
-//   • Caused-by / Suppressed lines highlighted by leaving them at column 0
-//   • Plain newline split — defensive against single-line dumps
+// formatStack — stack metninin KANONİK hâli.
+//
+// Yaptığı iş bilinçli olarak minik: CRLF → LF ve sondaki boşluğu kırp.
+// Frame AYRIŞTIRMASI burada YOK ve olmayacak — o iş sunucuda
+// (`internal/stackparse`), tek bir gramerle.
+//
+// v0.10.581'den beri bu fonksiyonun çıktısı İKİ yere birden gidiyor:
+// ekrana çizilen metin ve `/api/devops/stack-frames`e gönderilen gövde.
+// Bu bir tesadüf değil sözleşme: sunucu frame'leri `lineIndex` ile
+// işaretliyor ve o indeks KENDİ gördüğü metnin indeksi. İki taraf farklı
+// dizgi görürse süsler sessizce kayar — yanlış satır link olur ve hiçbir
+// kapı bunu göremez. Normalizasyonu değiştiren, iki çağrı yerinin de
+// AYNI dizgiyi aldığını doğrulamak zorunda (SpanDetail `shown`).
 function formatStack(s: string): string {
   return s.replace(/\r\n/g, '\n').trimEnd();
 }

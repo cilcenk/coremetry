@@ -1821,6 +1821,56 @@ export interface DevOpsResolveDryRun {
   fileCount?: number;
 }
 
+// StackFrameLink / StackFramesResult (v0.10.581) — exception stack
+// trace'inin TIKLANABİLİR hâli.
+//
+// Ayrıştırma KANONİK olarak Go tarafında (internal/stackparse): bir
+// Java/Go/.NET stack'ini frame'lere bölmek dil başına ayrı bir gramer
+// ve iki ayrı uygulama iki ayrı doğruluk demek. Bu yüzden frontend
+// stack'i HAM gönderir ve sunucudan künye alır — TS'te ikinci bir
+// FRAME_RE açılmaz (`lib/codeQuote.ts`teki desen AI markdown'ına
+// aittir, bu yüzeye DEĞİL).
+//
+// `lineIndex` gönderilen stack'in `\n` ile bölünmüş 0-TABANLI satır
+// indeksi. Süsleme buna göre yapılır, metin eşleştirmesine göre değil:
+// aynı frame bir stack'te ("Caused by:" zincirleri) birden çok kez
+// geçebilir ve metinden eşleştirme hepsini birden boyardı.
+//
+// Kod GÖVDESİ dönmez — yalnız künye + `url`. Snippet operatör kararıyla
+// kapsam dışı.
+export interface StackFrameLink {
+  /** Gönderilen stack'in 0-tabanlı satır indeksi. */
+  lineIndex: number;
+  class: string;
+  method: string;
+  file: string;
+  line: number;
+  /** Uygulama kodu mu (true) yoksa kütüphane/framework mü (false). */
+  isApp: boolean;
+  /** Uygulama-yakınlık kademesi; küçük = daha yakın. */
+  tier: number;
+  /** DevOps'ta dosya+satır bağlantısı. Yoksa link ÇİZİLMEZ. */
+  url?: string;
+  /** url yoksa NEDEN yok (hover'da gösterilir). */
+  reason?: string;
+}
+
+export interface StackFramesResult {
+  /** false = DevOps ayarlanmamış → yüzey bugünkü düz metinde kalır. */
+  configured: boolean;
+  repo?: string;
+  project?: string;
+  branch?: string;
+  /** 'pin' = katalog pini, 'convention' = ad konvansiyonu (TAHMİN). */
+  repoSource?: 'pin' | 'convention';
+  /**
+   * Link ÜRETİLDİYSE DAİMA dolu: linkin işaret ettiği branş, exception'ın
+   * koştuğu sürümle aynı olmayabilir. Bölümün ÜSTÜNDE bir kez gösterilir.
+   */
+  revisionWarning: string;
+  frames: StackFrameLink[];
+}
+
 export interface DevOpsTestResult {
   ok: boolean;
   detectedFlavor?: DevOpsFlavor;

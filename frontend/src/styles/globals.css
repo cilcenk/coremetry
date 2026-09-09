@@ -2108,6 +2108,21 @@ canvas { max-width: 100%; }
   color: var(--text2); white-space: pre; overflow: auto;
   max-height: 360px; max-width: 100%;
 }
+/* v0.10.581 — tıklanabilir stack frame (components/StackTrace.tsx).
+   Üç kademe, `.ex-stack`ın taban `--text2`si etrafında kuruluyor:
+   uygulama frame'i YUKARI (`--text`), kütüphane frame'i AŞAĞI
+   (`--text3`). Operatörün aradığı satır kendi kodu; 40 satırlık
+   Spring/Netty gövdesi onun arka planı, silinmesi değil geri
+   çekilmesi gereken bir şey.
+   Link rengi YAZILMIYOR — global `a { color: var(--accent2) }` tek
+   link mavisi (linkColorGate, v0.9.1379). Buradaki tek ek, monospace
+   bir dökümde satırın tıklanabilir OLDUĞUNU glif eklemeden söyleyen
+   noktalı altçizgi. */
+.ex-stack-note { margin-top: var(--sp-4); }
+.ex-frame-app { color: var(--text); }
+.ex-frame-lib { color: var(--text3); }
+.ex-frame-link { text-decoration: underline dotted; text-underline-offset: 2px; }
+.ex-frame-link:hover { text-decoration: underline solid; }
 
 /* Live tail button (pulsing) */
 .live-on {

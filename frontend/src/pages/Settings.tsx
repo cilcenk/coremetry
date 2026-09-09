@@ -30,6 +30,7 @@ import { DevOpsTab } from './settings/DevOpsTab';
 import { McpServersTab } from './settings/McpServersTab';
 import { ClustersTab } from './settings/ClustersTab';
 import { InfluxTab } from './settings/InfluxTab';
+import { OracleTab } from './settings/OracleTab';
 import { EntitiesTab } from './settings/EntitiesTab';
 import { ElasticTab } from './settings/ElasticTab';
 import { KibanaTab } from './settings/KibanaTab';
@@ -72,6 +73,7 @@ const TAB_COMPS: Record<string, ComponentType> = {
   'external-links': ExternalLinksTab,
   'clusters': ClustersTab,
   'influx': InfluxTab,
+  'oracle': OracleTab,
   'entities': EntitiesTab,
   'elastic': ElasticTab,
   'kibana': KibanaTab,

@@ -46,6 +46,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/mcp"
 	"github.com/cilcenk/coremetry/internal/mcpclient"
 	"github.com/cilcenk/coremetry/internal/notify"
+	"github.com/cilcenk/coremetry/internal/oracle"
 	"github.com/cilcenk/coremetry/internal/otlp"
 	"github.com/cilcenk/coremetry/internal/pipeline"
 	"github.com/cilcenk/coremetry/internal/profileconv"
@@ -215,6 +216,12 @@ type Server struct {
 	// rolünde set edilir). Durum ucu bellek durumunu buradan okur; nil = bu
 	// pod poll'lamıyor.
 	influxWorker *influx.Worker
+
+	// oracle — Oracle hata tablosu datasource'ları (v0.10.580, Aşama 1:
+	// yalnız tanım + credential + bağlantı testi; poller Aşama 2).
+	// Rotalar oracle_routes.go'da (route_registry defteri), setter de
+	// orada. nil-safe: handler'lar 503.
+	oracle *oracle.Service
 
 	// devops — Azure DevOps Server / TFS bağlantısı (v0.9.829).
 	// ŞİMDİLİK YALNIZ BAĞLANTI: ayar + kimlik + erişilebilirlik

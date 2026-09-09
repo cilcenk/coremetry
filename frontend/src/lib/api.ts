@@ -23,6 +23,7 @@ import type {
   AnomalyVerdict, AnomalyVerdictKind,
   TempoSnapshot, TempoSettingsInput,
   VMSnapshot, VMSettingsInput, VMTestResult, InfluxSnapshot, InfluxSettingsInput, InfluxSourceInput, InfluxTestResult, InfluxStatusPayload,
+  OracleSnapshot, OracleSettingsInput, OracleSource, OracleTestResult, OracleStatusPayload,
   DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult, DevOpsResolveDryRun,
   EntityClustersResponse, EntityListResponse, EntityDetailResponse, EntityServicesResponse, EntityMetricsResponse, EntityContainersResponse, EntityLatencyResponse,
   ServicePodsResponse, EntitySettings, EntitySettingsResponse, EntitySyncResponse,
@@ -1709,6 +1710,29 @@ export const api = {
     }),
   /** Kaynak başına metric_points izi (son 1 saat) + bu pod'daki işçi durumu; her rol. */
   getInfluxStatus: () => get<InfluxStatusPayload>(`/api/influx/status`),
+
+  // Oracle hata tablosu dış kaynakları (v0.10.580, AŞAMA 1) — oracle_routes.go.
+  // Hiçbiri qs() kullanmıyor: dördü de gövde/parametresiz uçlar. qs()
+  // `undefined | '' | false` ATAR, yani `enabled: false` gibi anlamlı bir
+  // boolean sorgu dizesinden sessizce düşerdi — bu yüzden ayarlar tel'e
+  // JSON gövdeyle gidiyor, sorgu dizesiyle değil.
+  /** Snapshot: password MASKELİ (hasPassword rozeti), passwordRef görünür. */
+  oracleSettings: () => get<OracleSnapshot>(`/api/settings/oracle`),
+  /** Tüm liste atomik; sunucu Normalize'dan geçirip yeni snapshot döndürür. */
+  putOracleSettings: (s: OracleSettingsInput) =>
+    request<OracleSnapshot>(`/api/settings/oracle`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }),
+  /** Formdaki TEK kaynağı KAYDETMEDEN dener. Başarısızlık 200 + {ok:false}
+   *  ile gelir — çağıran bunu HATA olarak değil, CEVAP olarak çizmeli. */
+  testOracleSource: (src: OracleSource) =>
+    request<OracleTestResult>(`/api/settings/oracle/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(src),
+    }),
+  /** Kaynak başına durum (şifresiz); her rol — viewer state'i GÖRMELİ. */
+  oracleStatus: () => get<OracleStatusPayload>(`/api/oracle/status`),
 
   // Azure DevOps Server / TFS connection (v0.9.829, admin).
   // Tempo contract: GET is masked (hasPat), PUT's empty `pat`

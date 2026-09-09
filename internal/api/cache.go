@@ -577,6 +577,15 @@ func (s *Server) reloadConfigOnSignal(ctx context.Context, svc string) {
 				log.Printf("[cache] config-reload influx: %v", err)
 			}
 		}
+	// v0.10.580 — Oracle kaynak listesi. Case UÇLA AYNI SÜRÜMDE (thanos
+	// v0.9.237 dersi: dinleyicisiz publish peer pod'ları 30 s poll'a
+	// bırakır). config_reload_test.go bu eşleşmeyi zaten kapıyor.
+	case "oracle":
+		if s.oracle != nil {
+			if err := s.oracle.LoadPersisted(ctx, s.oracleStore()); err != nil {
+				log.Printf("[cache] config-reload oracle: %v", err)
+			}
+		}
 	// v0.9.829 — Azure DevOps / TFS bağlantısı. Case'i uçla AYNI
 	// sürümde ekliyoruz: v0.9.237'de thanos'un publish'i dinleyicisiz
 	// kaldığı için peer pod'lar 30s poll'u beklemişti.

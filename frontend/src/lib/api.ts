@@ -1473,14 +1473,27 @@ export const api = {
   // — defaults to "(default)" when the SPA doesn't supply one.
   // Multi-cluster Kafka / MQ deployments need it set so the
   // drawer scopes to the correct physical cluster.
-  messagingDetail: (system: string, cluster: string, destination: string, fromNs: number, toNs: number) =>
+  //
+  // v0.10.575 — `signal`: /messaging/topic sayfası bu okumayı SAYFA AÇILIŞINDA
+  // yapıyor ve aralık değişimi onu iptal edebilmeli. Çekmece signal geçirmiyor
+  // (mevcut davranış birebir korunuyor).
+  messagingDetail: (system: string, cluster: string, destination: string, fromNs: number, toNs: number, signal?: AbortSignal) =>
     get<import('./types').MessagingDetail | null>(
-      `/api/messaging/detail?system=${encodeURIComponent(system)}&cluster=${encodeURIComponent(cluster)}&destination=${encodeURIComponent(destination)}&from=${fromNs}&to=${toNs}`),
+      `/api/messaging/detail?system=${encodeURIComponent(system)}&cluster=${encodeURIComponent(cluster)}&destination=${encodeURIComponent(destination)}&from=${fromNs}&to=${toNs}`, signal),
   // v0.10.551 — topic'in Kafka istemci metrikleri (VM seam; Faz 2). Kapsam
   // sunucuda span tarafından (caller MV) çıkar; çekmece açılınca çekilir.
-  messagingClients: (system: string, cluster: string, destination: string, fromNs: number, toNs: number, signal?: AbortSignal) =>
+  //
+  // v0.10.575 — `set` SORU KÜMESİNİ seçer ve MALİYET DİSİPLİNİNİN kendisidir:
+  //   • yok      → bugünkü davranış (çekmecenin 5 sorusu), tel değişmiyor
+  //   • 'chart'  → yalnız producer_send_rate + consumer_consumed_rate
+  //                (sayfa üstündeki tek grafik; iki soru, beş değil)
+  //   • 'topic'  → çekmecenin 5 sorusu, açıkça istenmiş hâli
+  //   • 'clients'→ bağlantı/gecikme/rebalance; kapsamı SERVİS (yanıtta
+  //                scope='services'), yalnız o sekme seçilince istenir.
+  messagingClients: (system: string, cluster: string, destination: string, fromNs: number, toNs: number, signal?: AbortSignal, set?: 'chart' | 'topic' | 'clients') =>
     get<import('./types').MessagingClients | null>(
-      `/api/messaging/clients?system=${encodeURIComponent(system)}&cluster=${encodeURIComponent(cluster)}&destination=${encodeURIComponent(destination)}&from=${fromNs}&to=${toNs}`, signal),
+      `/api/messaging/clients?system=${encodeURIComponent(system)}&cluster=${encodeURIComponent(cluster)}&destination=${encodeURIComponent(destination)}&from=${fromNs}&to=${toNs}`
+      + (set ? `&set=${encodeURIComponent(set)}` : ''), signal),
   // v0.10.552 — servisin Kafka istemci sağlığı (Infra sekmesi paneli). env
   // verilirse sunucu VM'de ifade edemezse envAmbiguous ilan eder.
   serviceKafkaClients: (svc: string, fromNs: number, toNs: number, env?: string, signal?: AbortSignal) =>

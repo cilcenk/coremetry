@@ -217,3 +217,79 @@ func uniqSorted(in []string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// kafkaPickQuestions — v0.10.575: türetilmiş soru listesi kurucusu. TEK GÖVDE
+// kuralı: türeyen liste soruyu yeniden YAZMAZ, kaynak listeden anahtarla SEÇER
+// — ikiz gövde yazılırsa metrik/etiket zamanla kayar ("aynı kalacak" yorumu
+// garanti değildir). prefixGroupBy seçilen sorunun kırılımına önek olarak
+// eklenir (tekrar edeni yutar). Kaynakta olmayan anahtar atlanır; uzunluk
+// iddiası testte pinli (kafka_test.go).
+func kafkaPickQuestions(src []KafkaQuestion, prefixGroupBy []string, keys ...string) []KafkaQuestion {
+	byKey := make(map[string]KafkaQuestion, len(src))
+	for _, q := range src {
+		byKey[q.Key] = q
+	}
+	out := make([]KafkaQuestion, 0, len(keys))
+	for _, k := range keys {
+		q, ok := byKey[k]
+		if !ok {
+			continue
+		}
+		gb := make([]string, 0, len(prefixGroupBy)+len(q.GroupBy))
+		seen := make(map[string]bool, len(prefixGroupBy)+len(q.GroupBy))
+		for _, g := range append(append([]string(nil), prefixGroupBy...), q.GroupBy...) {
+			if g == "" || seen[g] {
+				continue
+			}
+			seen[g] = true
+			gb = append(gb, g)
+		}
+		q.GroupBy = gb
+		out = append(out, q)
+	}
+	return out
+}
+
+// kafkaTopicChartKeys — topic sayfasının üst grafiği: giren/çıkan kayıt.
+var kafkaTopicChartKeys = []string{"producer_send_rate", "consumer_consumed_rate"}
+
+// KafkaTopicChartQuestions — v0.10.575: topic detay sayfası AÇILIŞINDA koşan
+// dar set (yalnız üst grafik). Sayfanın tamamı 12 VM range sorgusu demek;
+// VM/ES maliyet disiplini gereği açılışta yalnız bu iki soru gider, ağır
+// bloklar sekme seçilince ?set=topic|clients ile istenir.
+//
+// Anahtarlar KafkaTopicQuestions ile AYNI — FE bloğu tek isimle okur, set
+// değişince adlandırma kaymaz. Seçim türetmedir, kopya değil.
+func KafkaTopicChartQuestions() []KafkaQuestion {
+	return kafkaPickQuestions(KafkaTopicQuestions(), nil, kafkaTopicChartKeys...)
+}
+
+// kafkaClientHealthKeys — topic sayfasının "İstemci sağlığı" sekmesi.
+// Hepsi YALNIZ client_id label'lı metrikler (topic label'ı YOK): bağlantı,
+// broker istek gecikmesi, rebalance, son poll, fetch gecikmesi.
+var kafkaClientHealthKeys = []string{
+	"producer_connection_count",
+	"consumer_connection_count",
+	"producer_connection_creation_rate",
+	"consumer_connection_creation_rate",
+	"producer_request_latency_avg",
+	"producer_request_latency_max",
+	"consumer_rebalance_rate",
+	"consumer_last_poll",
+	"consumer_fetch_latency_avg",
+}
+
+// KafkaClientHealthQuestions — v0.10.575: topic detay sayfasının istemci
+// sağlığı seti. Metrikler İSTEMCİYE aittir, topic'e değil — hiçbiri `topic`
+// label'ı taşımaz, dolayısıyla topic'e göre SÜZÜLEMEZ (KafkaQuery zaten
+// hata verir). Kapsam bu yüzden "topic'e dokunan servisler"dir; uç bunu
+// yanıtta scope="services" ile ilan eder, sessiz daraltma yapmaz.
+//
+// Anahtarlar KafkaServiceQuestions ile aynı yazımdadır (servis Infra paneli
+// v0.10.552 ile aynı blok adları) ve o listeden TÜRETİLİR — servis paneli
+// değişmez. Tek fark kırılım: topic sayfası çok servislidir, önek olarak
+// service.name eklenir; aksi hâlde iki serviste tekrarlanan client_id
+// (Spring varsayılanı "consumer-<group>-1") tek seriye sessizce birleşirdi.
+func KafkaClientHealthQuestions() []KafkaQuestion {
+	return kafkaPickQuestions(KafkaServiceQuestions(), []string{"service.name"}, kafkaClientHealthKeys...)
+}

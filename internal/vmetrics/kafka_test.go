@@ -75,7 +75,9 @@ func TestKafkaCatalogIntegrity(t *testing.T) {
 }
 
 func TestKafkaQuestionsResolve(t *testing.T) {
-	for _, set := range [][]KafkaQuestion{KafkaTopicQuestions(), KafkaServiceQuestions()} {
+	// v0.10.575 — türetilmiş setler de katalogda çözülmeli ve anahtarları
+	// kendi içinde tekil olmalı (ayrıntılı sözleşme: kafka_sets_test.go).
+	for _, set := range [][]KafkaQuestion{KafkaTopicQuestions(), KafkaServiceQuestions(), KafkaTopicChartQuestions(), KafkaClientHealthQuestions()} {
 		keys := map[string]bool{}
 		for _, q := range set {
 			if keys[q.Key] {

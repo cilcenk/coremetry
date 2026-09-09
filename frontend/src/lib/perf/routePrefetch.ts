@@ -28,6 +28,8 @@ const importers: Record<string, () => Promise<unknown>> = {
   '/endpoints':  () => import('@/pages/Endpoints'),
   '/databases':  () => import('@/pages/Databases'),
   '/messaging':  () => import('@/pages/Messaging'),
+  // v0.10.575 — çekmecedeki "Detay sayfası →" linkinin hover'ı bu chunk'ı ısıtır.
+  '/messaging/topic': () => import('@/pages/MessagingTopic'),
   '/dashboards': () => import('@/pages/Dashboards'),
   '/explore':    () => import('@/pages/Explore'),
   '/inbox':      () => import('@/pages/Inbox'),

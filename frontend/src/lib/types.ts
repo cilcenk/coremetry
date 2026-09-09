@@ -784,6 +784,14 @@ export interface MessagingClients {
   cluster: string;
   destination: string;
   source: string;    // vm | ch
+  // v0.10.575 — İSTENEN SORU KÜMESİNİN KAPSAMI. `set=chart|topic` topic'e
+  // daraltılabilen metrikler ('topic'); `set=clients` bağlantı/gecikme/
+  // rebalance aileleri ('services') — bunlar Kafka istemcisinde topic
+  // ETİKETİ TAŞIMIYOR, yani gösterilen seriler "bu topic'e dokunan
+  // SERVİSLERİN" tamamı. UI bunu yazmak zorunda: topic'e daraltılmış
+  // sanılan bir servis grafiği, yanlış bir suçlu gösterir.
+  // Opsiyonel: pre-575 sunucu (ve ısınmış önbellek) alanı taşımaz.
+  scope?: 'topic' | 'services';
   available: boolean;
   envAmbiguous?: boolean;
   note: string;

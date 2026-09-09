@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const drawer = readFileSync(resolve(__dirname, 'DetailDrawer.tsx'), 'utf8');
+const caller = readFileSync(resolve(__dirname, 'CallerSection.tsx'), 'utf8'); // v0.10.575
 const list = readFileSync(resolve(__dirname, '../../pages/Messaging.tsx'), 'utf8');
 
 describe('KafkaClientsSection yerleşimi', () => {
@@ -18,7 +19,13 @@ describe('KafkaClientsSection yerleşimi', () => {
     expect(drawer).toContain("import { KafkaClientsSection } from './KafkaClientsSection'");
   });
   it('pod hücresi podDetailPath ile linkli', () => {
-    expect(drawer).toContain("podDetailPath({ pod: c.pod, service: c.service");
+    // v0.10.575 — CallerSection çekmeceden ÇIKARILDI (/messaging/topic sayfası
+    // aynı tabloyu çiziyor). Pivot taşındı, KAYBOLMADI: iddia kodun yeni evini
+    // okuyor + çekmecenin o evden import ettiğini ayrıca çiviliyor, yoksa
+    // bileşen sessizce düşse de test yeşil kalırdı.
+    expect(caller).toContain("podDetailPath({ pod: c.pod, service: c.service");
+    expect(drawer).toContain("import { CallerSection } from './CallerSection';");
+    expect(drawer).toContain('<CallerSection');
   });
   it('v0.10.553 — Top-ops operasyon türü kolonu yalnız queue kipinde', () => {
     expect(drawer).toContain("kind === 'queue'\n      ? [{ id: 'op', label: 'Type'");

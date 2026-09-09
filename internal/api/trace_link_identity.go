@@ -5,9 +5,13 @@ package api
 // Operatör kuralı (kesinleşti):
 //
 //  1. Trace'in loglarının GÖVDE METNİNDE request_id varsa dış link onunla
-//     üretilir. Yapılandırılmış alan YOK — `Attributes` hiçbir log
-//     backend'inde dolmuyor (ES yalnız ResourceAttributes yazıyor), bu
-//     yüzden kimlik gövdeden çözülür (reqid.Find).
+//     üretilir. v0.10.578'e kadar buradaki yorum "Attributes hiçbir log
+//     backend'inde dolmuyor" diyordu ve bu YANLIŞTI: ES flatten() ile
+//     (elasticsearch.go), CH arraysToMap ile (repo.go) DOLDURUYOR.
+//     Operatör prod'da `attributes.request_id` dolu bir kayıt gösterdi ve
+//     çözücü onu bulamıyordu. Sıra artık: YAPILANDIRILMIŞ alan → gövde
+//     metni (reqid.Find). Gövde taraması yedek olarak duruyor, çünkü bazı
+//     servisler kimliği yalnız metin içinde basıyor.
 //  2. request_id yoksa mevcut yol sürer: span attribute'larından
 //     function_id + channel_code (şablon neyi isterse) — bu yüzden yanıt
 //     `attrs` haritasını HER ZAMAN taşır.
@@ -440,6 +444,44 @@ func traceLinkWindow(spans []chstore.SpanRow) (time.Time, time.Time) {
 // linkIdentityLogHit — SAF veri: log çözümlemesinde görülen bir kimlik ve
 // geldiği kayıt span'i (kayıt span taşımıyorsa sorgulanan span, o da
 // yoksa boş).
+// linkIdentityLogAttrKeys — kimliğin yapılandırılmış log alanındaki bilinen
+// yazımları. Şablonun istediği anahtarlar (?keys=) bunlardan ÖNCE denenir:
+// operatör bir şablona `function_id` yazdıysa istediği odur, request_id değil.
+var linkIdentityLogAttrKeys = []string{"request_id", "requestId", "request.id"}
+
+// identityFromLogAttrs — SAF: log kaydının attribute haritasından kimlik.
+// Dönüş: değer, ANAHTAR ADI (uydurulmaz, olduğu gibi), katı-biçim mi, bulundu mu.
+//
+// Biçimi tutmayan değer DÜŞÜRÜLMEZ: alan adı zaten `request_id` ise değer
+// kimliktir; yalnız katı-olmayan diye işaretlenir ve arayüz "BİÇİM
+// DOĞRULANAMADI" der. Kaybetmek, şüpheyle göstermekten kötüdür.
+func identityFromLogAttrs(attrs map[string]string, keys []string, loc *time.Location) (string, string, bool, bool) {
+	if len(attrs) == 0 {
+		return "", "", false, false
+	}
+	try := func(k string) (string, string, bool, bool) {
+		v := strings.TrimSpace(attrs[k])
+		if v == "" {
+			return "", "", false, false
+		}
+		if _, ok := reqid.Parse(v, loc); ok {
+			return v, k, true, true
+		}
+		return v, k, false, true
+	}
+	for _, k := range keys {
+		if v, kk, strict, ok := try(k); ok {
+			return v, kk, strict, true
+		}
+	}
+	for _, k := range linkIdentityLogAttrKeys {
+		if v, kk, strict, ok := try(k); ok {
+			return v, kk, strict, true
+		}
+	}
+	return "", "", false, false
+}
+
 type linkIdentityLogHit struct {
 	Value  string
 	SpanID string
@@ -740,6 +782,28 @@ func (s *Server) resolveTraceLinkIdentity(ctx context.Context, traceID, selected
 		found := false
 		for _, rec := range page.Logs {
 			if rec == nil {
+				continue
+			}
+			// v0.10.578 — YAPILANDIRILMIŞ alan gövdeden ÖNCE gelir: metin
+			// taraması bir tahmindir, alan adı bir sözleşmedir.
+			if v, k, strict, ok := identityFromLogAttrs(rec.Attributes, keys, loc); ok {
+				aSpan := rec.SpanID
+				if aSpan == "" {
+					aSpan = fallbackSpan
+				}
+				if strict {
+					if !seenHit[v] {
+						seenHit[v] = true
+						hits = append(hits, linkIdentityLogHit{Value: v, SpanID: aSpan, Key: k})
+					}
+					if !found {
+						found = true
+						winID, winSpan = v, aSpan
+					}
+				} else if !seenLoose[v] {
+					seenLoose[v] = true
+					looseHits = append(looseHits, linkIdentityLogHit{Value: v, SpanID: aSpan, Loose: true, Key: k})
+				}
 				continue
 			}
 			id, ok := reqid.Find(rec.Body, loc)

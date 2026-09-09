@@ -57,6 +57,11 @@ export const STORAGE_KEYS = {
   problemsPrio:     'problems.prio',
   svcHeatmapCollapsed: 'svc.heatmap.collapsed',
   svcChartsCompare:    'svc.charts.compare',
+  // v0.10.577 — Trace Detail Logs sekmesi: gRPC per-message span event'leri
+  // (SENT/RECEIVED) varsayılan olarak GİZLİ. Tercih küresel, trace başına
+  // değil: operatör bunu bir kez kapatıp her trace'te yeniden kapatmakla
+  // uğraşmasın (svcHeatmapCollapsed emsali).
+  traceShowGrpcMsgs:   'trace.logs.grpcmsgs',
   // v0.9.1238 — "Kodu da incele" (CopilotExplain). Operatörün SON
   // açık tercihi; AI çekmecesi her özne için yeni bir mount kurduğundan
   // (AIDrawer `key`) tercih aksi hâlde her açılışta unutuluyordu ve

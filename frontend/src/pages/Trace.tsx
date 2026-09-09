@@ -6,7 +6,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { DrillButton } from '@/components/DrillButton';
 import { Spinner, Empty } from '@/components/Spinner';
-import { perSpanLogSignals, spanEventLogRows, traceServicesWithoutTraceField } from '@/lib/traceEventLogs';
+import { perSpanLogSignals, spanEventLogRows, splitGrpcMessageEvents, traceServicesWithoutTraceField } from '@/lib/traceEventLogs';
+import { STORAGE_KEYS, getRaw, setRaw } from '@/lib/storage';
 import { computeCriticalPath } from '@/lib/criticalPath';
 import { traceRepeatGroups, type TraceRepeatGroup } from '@/lib/traceRepeats';
 import { CopyButton } from '@/components/CopyButton';
@@ -112,6 +113,27 @@ function TraceDetailInner() {
   // they become pseudo log rows for the Logs tab and, combined with
   // whatever the lazy ES fetch has cached, per-span waterfall chips.
   const eventRows = useMemo(() => spanEventLogRows(spans ?? []), [spans]);
+
+  // v0.10.577 — gRPC per-message event'leri (SENT/RECEIVED) Logs sekmesinde
+  // VARSAYILAN GİZLİ. Operatörün getirdiği trace'te 253 tanesi 11 gerçek log
+  // satırını görünmez yapıyordu.
+  //
+  // Tercih localStorage'da ve KÜRESEL (trace başına değil): bunu her trace'te
+  // yeniden kapatmak zorunda kalmasın — svcHeatmapCollapsed emsali.
+  const [showGrpcMsgs, setShowGrpcMsgs] = useState(
+    () => getRaw(STORAGE_KEYS.traceShowGrpcMsgs) === '1');
+  const toggleGrpcMsgs = () => setShowGrpcMsgs(v => {
+    setRaw(STORAGE_KEYS.traceShowGrpcMsgs, v ? '0' : '1');
+    return !v;
+  });
+  // TÜRETİLMİŞ liste — ham `eventRows` DEĞİŞMEDEN kalır. Filtre ham listeye
+  // uygulansaydı waterfall'ın satır-içi log çipleri (perSpanLogSignals,
+  // hemen aşağıda) de sessizce değişirdi; oysa kapsam yalnız Logs sekmesi.
+  const { visible: shownEventRows, hidden: hiddenGrpcMsgs } = useMemo(
+    () => (showGrpcMsgs
+      ? { visible: eventRows, hidden: 0 }
+      : splitGrpcMessageEvents(eventRows)),
+    [eventRows, showGrpcMsgs]);
 
   // Correlated logs ride the shared OTel hook — every log line sharing this
   // trace_id, react-query-cached. Enabled lazily (only when the Logs tab is
@@ -573,9 +595,9 @@ function TraceDetailInner() {
               // carries log-like span events (zero-cost signal — no ES query
               // fires until the tab opens).
               { key: 'logs', label: <>Logs {logs
-                ? <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{logs.length + eventRows.length}</span>
-                : eventRows.length > 0
-                  ? <span style={{ color: 'var(--text3)', marginLeft: 4 }} title={`${eventRows.length} span event(s) on this trace`}>●</span>
+                ? <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{logs.length + shownEventRows.length}</span>
+                : shownEventRows.length > 0
+                  ? <span style={{ color: 'var(--text3)', marginLeft: 4 }} title={`Bu trace'te ${shownEventRows.length} span event'i var`}>●</span>
                   : null}</> },
             ]} />
 
@@ -612,7 +634,10 @@ function TraceDetailInner() {
             {tab === 'logs' && (
               <TraceLogsPanel logs={logs} degraded={logsDegraded}
                 logsTotal={logsQuery.data?.total}
-                eventRows={eventRows}
+                eventRows={shownEventRows}
+                hiddenGrpcMsgs={hiddenGrpcMsgs}
+                showGrpcMsgs={showGrpcMsgs}
+                onToggleGrpcMsgs={toggleGrpcMsgs}
                 traceServices={[...new Set((spans ?? []).map(sp => sp.serviceName).filter(Boolean))]} />
             )}
           </>
@@ -850,7 +875,7 @@ function LinkedTracesSection({ id, pageRange }: { id: string; pageRange: TimeRan
 // result contract: warn chip instead of the "no logs" empty state (which
 // would misread as an instrumentation gap), table still renders, tab never
 // blocks.
-function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, traceServices }: {
+function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, hiddenGrpcMsgs, showGrpcMsgs, onToggleGrpcMsgs, traceServices }: {
   logs: LogRow[] | null | undefined;
   degraded?: string | null;
   // v0.9.461 (dürüstlük A5) — sunucunun gerçek toplamı ("ilk N / M").
@@ -858,17 +883,44 @@ function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, traceServices }:
   // v0.8.407 — pseudo rows from the trace's own span events (zero-ES
   // leg): merged into the list, shown alone when the backend has
   // nothing / fails, so the tab is useful even without shipped logs.
+  //
+  // v0.10.577 — bu liste ARTIK SÜZÜLMÜŞ gelir (gRPC SENT/RECEIVED gizli).
+  // Ham liste sayfada kalır ve waterfall çiplerini beslemeye devam eder.
   eventRows: LogRow[];
+  hiddenGrpcMsgs: number;
+  showGrpcMsgs: boolean;
+  onToggleGrpcMsgs: () => void;
   traceServices: string[];
 }) {
+  // v0.10.577 — gizlenen event'leri geri getiren çip. Sayfanın kendi dili
+  // (.facet + aria-pressed + klavye dalı); emsali "Critical path focus".
+  // Yalnız gizlenen VARSA ya da tercih açıkken çizilir — hiçbir gRPC event'i
+  // olmayan bir trace'te ekranda anlamsız bir düğme durmasın.
+  const grpcChip = (hiddenGrpcMsgs > 0 || showGrpcMsgs) ? (
+    <span className={'facet' + (showGrpcMsgs ? ' on' : '')}
+      role="button" tabIndex={0} aria-pressed={showGrpcMsgs}
+      title="OTel gRPC instrumentation'ının her mesaj için bastığı SENT/RECEIVED span event'leri"
+      onClick={onToggleGrpcMsgs}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleGrpcMsgs(); }
+      }}>
+      gRPC mesaj event'leri
+      {hiddenGrpcMsgs > 0 && <span className="n">{hiddenGrpcMsgs}</span>}
+    </span>
+  ) : null;
+
   if (logs === undefined) return <Spinner />;
   if (logs === null) {
     // Backend errored — the span events still tell part of the story.
     if (eventRows.length > 0) {
       return (
         <>
-          <div style={{ padding: '0 10px 6px' }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '0 10px 6px' }}>
             <span className="badge b-err">⚠ Failed to load logs — showing the trace's span events only</span>
+            {/* v0.10.577 — bu dalda da çip lazım: gizlenen event'ler
+                yüzünden liste boş görünebilir ve operatörün geri getirecek
+                hiçbir yolu kalmazdı. */}
+            {grpcChip}
           </div>
           <LogTable logs={[...eventRows].sort((a, b) => a.timestamp - b.timestamp)} hideTraceColumn />
         </>
@@ -877,6 +929,16 @@ function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, traceServices }:
     return <Empty icon="⚠" title="Failed to load logs" />;
   }
   if (logs.length === 0 && eventRows.length === 0 && !degraded) {
+    // v0.10.577 — gizlenmiş gRPC event'i varken "hiç log yok" teşhisi YALAN
+    // olur: liste boş değil, süzülmüş. Çipi göster, teşhisi gösterme.
+    if (hiddenGrpcMsgs > 0) {
+      return (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 10px', fontSize: 11, color: 'var(--text3)' }}>
+          <span>{hiddenGrpcMsgs} gRPC mesaj event'i gizlendi, başka log satırı yok</span>
+          {grpcChip}
+        </div>
+      );
+    }
     return <TraceLogsEmptyDiagnostics traceServices={traceServices} />;
   }
   // Ascending chronological order — lines up with the trace
@@ -895,17 +957,21 @@ function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, traceServices }:
         </div>
       )}
       <div style={{
-        display: 'flex', gap: 10, padding: '6px 10px',
+        display: 'flex', gap: 10, alignItems: 'center', padding: '6px 10px',
         fontSize: 11, color: 'var(--text3)',
       }}>
         <span>
           {/* v0.9.461 (dürüstlük A5) — sunucu toplamı sayfadan büyükse
-              "ilk N / M": limit'e çarpan sayfa tam envanter değil. */}
+              "ilk N / M": limit'e çarpan sayfa tam envanter değil.
+              v0.10.577 — metnin tamamı Türkçe: iki dal iki DİLDEYDİ, yani
+              ekran verinin durumuna göre dil değiştiriyordu. */}
           {logsTotal && logsTotal > logs.length
             ? `ilk ${logs.length} / ${logsTotal.toLocaleString()} log satırı`
-            : `${logs.length} log line${logs.length === 1 ? '' : 's'}`}
-          {eventRows.length > 0 && ` + ${eventRows.length} span event${eventRows.length === 1 ? '' : 's'}`}
+            : `${logs.length} log satırı`}
+          {eventRows.length > 0 && ` + ${eventRows.length} span event'i`}
+          {hiddenGrpcMsgs > 0 && ` (${hiddenGrpcMsgs} gRPC mesaj event'i gizlendi)`}
         </span>
+        {grpcChip}
       </div>
       <LogTable logs={sorted} hideTraceColumn />
     </>

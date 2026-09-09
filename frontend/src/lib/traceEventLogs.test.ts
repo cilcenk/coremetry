@@ -1,10 +1,6 @@
 // traceEventLogs.test.ts — v0.8.407 trace↔log correlation, zero-ES leg.
 import { describe, expect, it } from 'vitest';
-import {
-  perSpanLogSignals,
-  spanEventLogRows,
-  traceServicesWithoutTraceField,
-} from './traceEventLogs';
+import { perSpanLogSignals, spanEventLogRows, traceServicesWithoutTraceField, isGrpcMessageEvent, splitGrpcMessageEvents } from './traceEventLogs';
 import type { LogRow, SpanRow } from './types';
 
 const span = (over: Partial<SpanRow>): SpanRow => ({
@@ -87,5 +83,91 @@ describe('traceServicesWithoutTraceField', () => {
       ],
     );
     expect(bad).toEqual(['checkout']); // deduped; no-logs-svc excluded
+  });
+});
+
+// v0.10.577 — gRPC per-message span event'lerinin gizlenmesi.
+//
+// OTel gRPC instrumentation'ı her mesaj için bir span event basıyor
+// (body "message", attribute'ları yalnız message.id + message.type). Bir
+// trace'te 253 tanesi çıkıp 11 gerçek log satırını görünmez yapıyordu.
+//
+// Yüklem DAR: dördü birden sağlanmazsa event KALIR. Asıl korunan şey
+// gizlenenler değil, KORUNANLAR — exception'ı ya da gerçek gövdeli bir
+// event'i düşürmek sessiz teşhis kaybıdır.
+describe('isGrpcMessageEvent', () => {
+  const row = (over: Partial<LogRow>): LogRow => ({
+    id: -1, timestamp: 1, severity: 9, severityText: 'INFO',
+    body: 'message', serviceName: 'shop-payment', traceId: 't', spanId: 's',
+    attributes: { 'message.id': '1', 'message.type': 'SENT' },
+    resourceAttributes: {}, origin: 'span-event', ...over,
+  } as LogRow);
+
+  it('SENT gizlenir', () => {
+    expect(isGrpcMessageEvent(row({}))).toBe(true);
+  });
+
+  it('RECEIVED gizlenir', () => {
+    expect(isGrpcMessageEvent(row({ attributes: { 'message.id': '2', 'message.type': 'RECEIVED' } }))).toBe(true);
+  });
+
+  it('message.id olmadan da gizlenir (alt küme)', () => {
+    expect(isGrpcMessageEvent(row({ attributes: { 'message.type': 'SENT' } }))).toBe(true);
+  });
+
+  it('exception event KORUNUR', () => {
+    expect(isGrpcMessageEvent(row({
+      body: 'IllegalStateException: boom', severity: 17, severityText: 'ERROR',
+      attributes: { 'exception.type': 'IllegalStateException', 'exception.message': 'boom' },
+    }))).toBe(false);
+  });
+
+  it('EKSTRA attribute taşıyan event KORUNUR', () => {
+    expect(isGrpcMessageEvent(row({
+      attributes: { 'message.id': '1', 'message.type': 'SENT', 'rpc.grpc.status_code': '2' },
+    }))).toBe(false);
+  });
+
+  it('gerçek gövdeli event KORUNUR', () => {
+    expect(isGrpcMessageEvent(row({ body: 'payment authorised' }))).toBe(false);
+  });
+
+  it('bilinmeyen message.type KORUNUR', () => {
+    expect(isGrpcMessageEvent(row({ attributes: { 'message.type': 'DROPPED' } }))).toBe(false);
+  });
+
+  it('message.type YOKSA korunur — anahtar kümesi alt küme olsa bile', () => {
+    expect(isGrpcMessageEvent(row({ attributes: { 'message.id': '1' } }))).toBe(false);
+  });
+
+  it('ES log satırına ASLA dokunulmaz (origin yok)', () => {
+    expect(isGrpcMessageEvent(row({ origin: undefined }))).toBe(false);
+  });
+});
+
+describe('splitGrpcMessageEvents', () => {
+  const ev = (type: string): LogRow => ({
+    id: -1, timestamp: 1, severity: 9, severityText: 'INFO', body: 'message',
+    serviceName: 's', traceId: 't', spanId: 'sp',
+    attributes: { 'message.id': '1', 'message.type': type },
+    resourceAttributes: {}, origin: 'span-event',
+  } as LogRow);
+  const real: LogRow = {
+    id: -2, timestamp: 2, severity: 17, severityText: 'ERROR', body: 'boom',
+    serviceName: 's', traceId: 't', spanId: 'sp',
+    attributes: { 'exception.type': 'E' }, resourceAttributes: {}, origin: 'span-event',
+  } as LogRow;
+
+  it('ikiye ayırır ve SIRAYI korur', () => {
+    const { visible, hidden } = splitGrpcMessageEvents([ev('SENT'), real, ev('RECEIVED')]);
+    expect(visible).toEqual([real]);
+    expect(hidden).toBe(2);
+  });
+
+  it('gizlenecek yoksa aynı diziyi döndürür', () => {
+    const rows = [real];
+    const { visible, hidden } = splitGrpcMessageEvents(rows);
+    expect(visible).toBe(rows); // yeni dizi ayırmaz — gereksiz render yok
+    expect(hidden).toBe(0);
   });
 });

@@ -13,6 +13,8 @@
 // and the body <td> must agree EXACTLY. If they drift, the header and the
 // row cells desync by one column — a silent layout corruption that no
 // type error catches.
+import type { DBTrend } from '@/lib/types';
+
 export type DepKind = 'db' | 'queue';
 
 export function trendsEnabled(kind: DepKind): boolean {
@@ -74,4 +76,42 @@ export function depRowKey(r: {
 }): string {
   const name = r.instance ?? r.destination ?? '';
   return `${r.system}|${r.cluster ?? ''}|${name}|${r.dbName ?? ''}`;
+}
+
+// resolveTrends — trend sütununun ÜÇ DURUMU, tek saf karar noktası (v0.10.576).
+//
+// Sütun React Query'ye taşınırken bu türetme bileşenin içinde kalsaydı hiçbir
+// test onu görmeyecekti; oysa sessizce bozulabilen tam olarak BU:
+//
+//   null      = sütun çizilmiyor (queue tarafı) YA DA okuma başarısız
+//   undefined = yükleniyor → hücrede spinner
+//   Map       = veri
+//
+// null ile undefined'ı karıştırmak v0.9.258'in kendisidir: çizilmeyen bir
+// sütuna kalıcı spinner park eder. Sıra ÖNEMLİ — kapalı sütun, "yükleniyor"
+// göründüğü için (RQ disabled sorguda isPending true kalır) ÖNCE elenir.
+export function resolveTrends(p: {
+  enabled: boolean;
+  pending: boolean;
+  list: DBTrend[] | null | undefined;
+  kind: 'db' | 'queue';
+}): Map<string, DBTrend> | null | undefined {
+  if (!p.enabled) return null;
+  if (p.pending) return undefined;
+  if (!p.list) return null;
+  const m = new Map<string, DBTrend>();
+  for (const t of p.list) {
+    if (p.kind === 'db') {
+      m.set(`${t.dbSystem}|${t.instance}|${t.dbName}`, t);
+      // Gevşek yedek anahtar — İLK YAZAN KAZANIR: gerçek db.name taşıyan bir
+      // trend, 'default' kardeşi tarafından ezilmemeli.
+      const loose = `${t.dbSystem}|${t.instance}`;
+      if (!m.has(loose)) m.set(loose, t);
+    } else {
+      // v0.9.434 — messaging kimliği cluster'ı İÇERİR; cluster'sız gevşek
+      // anahtar farklı cluster'daki aynı destination'ı ezerdi.
+      m.set(`${t.dbSystem}|${t.cluster}|${t.instance}`, t);
+    }
+  }
+  return m;
 }

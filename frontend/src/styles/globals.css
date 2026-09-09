@@ -3962,3 +3962,32 @@ a.ins-val:hover { text-decoration: underline; }
 .ins-cell--warn .ins-val { color: var(--warn); }
 .ins-cell--ok .ins-val { color: var(--ok); }
 .ins-cell--muted .ins-val { color: var(--text3); }
+
+/* v0.10.575 — /messaging/topic (tek topic tam sayfa detayı). Ölçüler
+   merdiven token'larından; renkler yalnız tema token'ları (colorLeaks). */
+.mtp-crumb { font-size: var(--fs-xs); color: var(--text3); margin-bottom: var(--sp-4); }
+.mtp-id { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; margin-bottom: var(--sp-5); }
+.mtp-id-dim { font-size: var(--fs-sm); color: var(--text3); }
+.mtp-id-sep { color: var(--text3); }
+.mtp-id-name { font-size: var(--fs-lg); font-weight: 600; color: var(--text); }
+.mtp-id-act { margin-left: auto; }
+.mtp-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: var(--sp-5); margin-bottom: var(--sp-3); }
+.mtp-cap { font-size: var(--fs-xs); color: var(--text3); margin-bottom: var(--sp-6); }
+.mtp-charts { gap: var(--sp-6); margin-bottom: var(--sp-6); }
+.mtp-card { min-width: 0; }
+.mtp-e2e { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-4); margin-top: var(--sp-3); }
+.mtp-e2e-count { font-size: var(--fs-xs); color: var(--text3); }
+.mtp-e2e-link { font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; }
+.mtp-sec { margin-bottom: var(--sp-6); }
+.mtp-sec-head { display: flex; align-items: center; gap: var(--sp-4); font-size: var(--fs-sm); font-weight: 700; color: var(--text2); margin-bottom: var(--sp-3); }
+.mtp-sec-act { margin-left: auto; }
+.mtp-dot { width: 8px; height: 8px; border-radius: var(--radius-xs); }
+.mtp-dot--op { background: var(--purple); }
+.mtp-dot--span { background: var(--accent2); }
+.mtp-empty { font-size: var(--fs-sm); color: var(--text3); }
+.mtp-op { font-size: var(--fs-xs); color: var(--text2); }
+.mtp-op-missing { font-size: var(--fs-xs); color: var(--text3); }
+.mtp-span-name { font-size: var(--fs-xs); word-break: break-word; }
+.mtp-row-link { margin-left: var(--sp-4); font-size: var(--fs-2xs); white-space: nowrap; font-weight: 500; }
+/* v0.10.575 — Kafka istemci bölümünün KAPSAM beyanı (scope='services'). */
+.kc-scope { font-size: var(--fs-2xs); color: var(--warn); margin-bottom: var(--sp-2); }

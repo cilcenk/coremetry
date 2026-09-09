@@ -47,6 +47,10 @@ const EntityDetail      = lazy(() => import('./pages/EntityDetail')); // v0.10.1
 const SlowQueries       = lazy(() => import('./pages/SlowQueries'));
 const StatementDetail   = lazy(() => import('./pages/StatementDetail'));
 const Messaging         = lazy(() => import('./pages/Messaging'));
+// v0.10.575 — tek topic'in tam sayfa detayı. /messaging listesi ve onun
+// satır çekmecesi AYNEN duruyor; bu rota çekmecedeki "Detay sayfası →"
+// bağlantısından açılıyor (kimlik ?system=&cluster=&destination=).
+const MessagingTopic    = lazy(() => import('./pages/MessagingTopic'));
 const Dashboards        = lazy(() => import('./pages/Dashboards'));
 const Dashboard         = lazy(() => import('./pages/Dashboard'));
 const Events            = lazy(() => import('./pages/Events'));
@@ -172,6 +176,7 @@ export default function App() {
             <Route path="/pod"            element={<Pod />} />
             <Route path="/entity"         element={<EntityDetail />} />
             <Route path="/messaging"      element={<Messaging />} />
+            <Route path="/messaging/topic" element={<MessagingTopic />} />
             <Route path="/dashboards"     element={<Dashboards />} />
             <Route path="/dashboard"      element={<Dashboard />} />
             <Route path="/incidents"      element={<Incidents />} />

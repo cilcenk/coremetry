@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { kafkaBlockItems, kafkaDegradeTR, kafkaLastRows, kafkaLastValue, kafkaPanelUnit, kafkaSeriesLabel, KAFKA_SERIES_CAP } from './kafkaClients';
+import { kafkaBlockItems, kafkaChartItems, kafkaDegradeTR, kafkaLastRows, kafkaLastValue, kafkaPanelUnit, kafkaScopeNoteTR, kafkaSeriesLabel, KAFKA_SERIES_CAP } from './kafkaClients';
 import type { KafkaMetricBlock, MessagingClients } from '@/lib/types';
 
 // v0.10.551 — çekmece "Kafka istemcileri" saf çekirdeği.
@@ -41,5 +41,26 @@ describe('kafkaClients', () => {
     const base: MessagingClients = { system: 'kafka', cluster: '(default)', destination: 'o', source: 'vm', available: false, note: 'n', producers: [], consumers: [], blocks: {} };
     expect(kafkaDegradeTR(base)).toMatch(/OTel Java agent/);
     expect(kafkaDegradeTR({ ...base, available: true })).toBeNull();
+  });
+  // v0.10.575 — /messaging/topic üst grafiği + kapsam beyanı.
+  it('grafik item\'ları iki bloktan gelir, adları ÖNEKLİ', () => {
+    const { items, truncated } = kafkaChartItems({
+      producer_send_rate: blk(['service.name'], [[['loan'], [1, 2]]]),
+      consumer_consumed_rate: blk(['service.name'], [[['loan'], [3, 4]]]),
+    });
+    expect(items.map(i => i.name)).toEqual(['gönderilen · loan', 'tüketilen · loan']);
+    expect(truncated).toBe(0);
+    // Blok yoksa item de yok — panel boş-durumunu kendi çizer.
+    expect(kafkaChartItems(undefined)).toEqual({ items: [], truncated: 0 });
+    // Tavan blok BAŞINA: bir taraf kalabalıksa diğerini yutmaz.
+    const many = blk(['service.name'], Array.from({ length: 15 }, (_, i) => [[`s${i}`], [1]] as [string[], number[]]));
+    const both = kafkaChartItems({ producer_send_rate: many, consumer_consumed_rate: many });
+    expect(both.items.length).toBe(KAFKA_SERIES_CAP * 2);
+    expect(both.truncated).toBe((15 - KAFKA_SERIES_CAP) * 2);
+  });
+  it('kapsam beyanı yalnız servis kapsamında yazılır', () => {
+    expect(kafkaScopeNoteTR('services')).toMatch(/topic'e göre süzülemez/);
+    expect(kafkaScopeNoteTR('topic')).toBeNull();
+    expect(kafkaScopeNoteTR(undefined)).toBeNull();
   });
 });

@@ -75,6 +75,53 @@ export function kafkaDegradeTR(r: Pick<MessagingClients, 'available'> | null | u
   return null;
 }
 
+// ── v0.10.575 — /messaging/topic üst grafiği (`set=chart`) ───────────────────
+
+/** Üst grafiğin İKİ bloğu. Sıra çizim sırası: gönderilen üstte, tüketilen altta. */
+export const KAFKA_CHART_KEYS = ['producer_send_rate', 'consumer_consumed_rate'] as const;
+
+/** Blok başına görünen ad öneki — iki blok tek panelde, hangi tarafın kim olduğu yazılı. */
+const CHART_PREFIX: Record<string, string> = {
+  producer_send_rate: 'gönderilen',
+  consumer_consumed_rate: 'tüketilen',
+};
+
+/**
+ * kafkaChartItems — iki bloğu TEK panelin item listesine indirir.
+ *
+ * Ad ÖNEKLİ ('gönderilen · loan-api'): öneksiz iki blok aynı servis adını
+ * taşıyabilir ve lejantta iki özdeş satır olurdu — hangisinin üretim hangisinin
+ * tüketim olduğu ancak renkten tahmin edilirdi. Tavan blok BAŞINA uygulanır
+ * (kafkaBlockItems), yani bir taraf 40 servisliyse diğer taraf onun altında
+ * kaybolmaz.
+ */
+export function kafkaChartItems(
+  blocks: Record<string, KafkaMetricBlock> | null | undefined,
+): { items: CorePanelMultiItem[]; truncated: number } {
+  const items: CorePanelMultiItem[] = [];
+  let truncated = 0;
+  for (const key of KAFKA_CHART_KEYS) {
+    const { items: got, truncated: cut } = kafkaBlockItems(blocks?.[key]);
+    truncated += cut;
+    for (const it of got) items.push({ ...it, name: `${CHART_PREFIX[key] ?? key} · ${it.name}` });
+  }
+  return { items, truncated };
+}
+
+/**
+ * kafkaScopeNoteTR — kapsam beyanı. null = beyan gerekmez (topic'e daraltılmış).
+ *
+ * 'services' hâlinde bunu YAZMAK zorunlu: Kafka istemci metrikleri topic
+ * etiketi taşımıyor, yani seriler bu topic'e dokunan SERVİSLERİN tamamı.
+ * Beyansız bir grafik, başka bir topic'in yükünü buranın sanıp yanlış suçlu
+ * gösterir — "boş küme kaybolur, sıfır olmaz"ın kardeşi: DAR SANILAN küme.
+ */
+export function kafkaScopeNoteTR(scope: string | null | undefined): string | null {
+  return scope === 'services'
+    ? "Bu topic'e dokunan servisler — metrik topic'e göre süzülemez"
+    : null;
+}
+
 export const KAFKA_PRODUCER_COLS = [
   { id: 'producer_send_rate', label: 'gönd/s' },
   { id: 'producer_error_rate', label: 'hata/s' },

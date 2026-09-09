@@ -35,6 +35,10 @@ export const ROUTE_PAGES: Record<string, PageId> = {
   '/databases': 'databases', '/database': 'database', '/databases/slow-queries': 'slow-queries', '/databases/statement': 'statement',
   '/dashboards': 'dashboards', '/dashboard': 'dashboard',
   '/service-map': 'service-map', '/topology': 'topology', '/messaging': 'messaging', '/external': 'external', '/profiling': 'profiling',
+  // v0.10.575 — topic detayı /messaging ile AYNI PageId: sohbete taşınan
+  // bağlam aynı alan (kuyruk/topic), ayrı bir sayfa kimliği icat etmek
+  // Go aynasını (internal/ai/agent/context.PageContext) da büyütürdü.
+  '/messaging/topic': 'messaging',
   '/slos': 'slos', '/alerts': 'alerts', '/monitors': 'monitors', '/watchers': 'watchers',
   '/incidents': 'incidents', '/incident': 'incident',
   '/runbooks': 'runbooks', '/runbook': 'runbook', '/runbook-exec': 'runbook-exec',

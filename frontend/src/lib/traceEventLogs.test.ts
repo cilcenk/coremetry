@@ -1,6 +1,6 @@
 // traceEventLogs.test.ts — v0.8.407 trace↔log correlation, zero-ES leg.
 import { describe, expect, it } from 'vitest';
-import { perSpanLogSignals, spanEventLogRows, traceServicesWithoutTraceField, isGrpcMessageEvent, splitGrpcMessageEvents } from './traceEventLogs';
+import { perSpanLogSignals, spanEventLogRows, traceServicesWithoutTraceField, isGrpcMessageEvent, splitGrpcMessageEvents, isNoisySpanEvent } from './traceEventLogs';
 import type { LogRow, SpanRow } from './types';
 
 const span = (over: Partial<SpanRow>): SpanRow => ({
@@ -169,5 +169,50 @@ describe('splitGrpcMessageEvents', () => {
     const { visible, hidden } = splitGrpcMessageEvents(rows);
     expect(visible).toBe(rows); // yeni dizi ayırmaz — gereksiz render yok
     expect(hidden).toBe(0);
+  });
+});
+
+// v0.10.579 — gürültü kuralı GENİŞLEDİ (operatör onayı 2026-09-09).
+//
+// İkinci gürültü ailesi: `redis.encode.start` / `redis.encode.end` gibi
+// hiç attribute taşımayan saf işaretçiler. Ad listesi tutmuyoruz — bugün
+// redis, yarın başka kütüphane. Şeklin kendisi yakalanıyor: attribute'u
+// olmayan bir event'in gövdesi HER ZAMAN adının kendisidir (eventBody
+// zinciri boş çıkar), yani "bu olay oldu" demekten başka bilgi yok.
+//
+// EMNİYET KEMERİ: ERROR ve üstü hiçbir koşulda gizlenmez.
+describe('isNoisySpanEvent — attribute taşımayan işaretçiler', () => {
+  const marker = (over: Partial<LogRow>): LogRow => ({
+    id: -1, timestamp: 1, severity: 9, severityText: 'INFO',
+    body: 'redis.encode.start', serviceName: 's', traceId: 't', spanId: 'sp',
+    attributes: {}, resourceAttributes: {}, origin: 'span-event', ...over,
+  } as LogRow);
+
+  it('attribute\'suz INFO işaretçisi gizlenir', () => {
+    expect(isNoisySpanEvent(marker({}))).toBe(true);
+    expect(isNoisySpanEvent(marker({ body: 'redis.encode.end' }))).toBe(true);
+  });
+
+  it('ERROR ve üstü ASLA gizlenmez — attribute\'suz olsa bile', () => {
+    expect(isNoisySpanEvent(marker({ severity: 17, severityText: 'ERROR' }))).toBe(false);
+    expect(isNoisySpanEvent(marker({ severity: 21, severityText: 'FATAL' }))).toBe(false);
+  });
+
+  it('attributes undefined ise de işaretçi sayılır', () => {
+    expect(isNoisySpanEvent(marker({ attributes: undefined as unknown as Record<string, string> }))).toBe(true);
+  });
+
+  it('tek bir attribute bile event\'i KURTARIR', () => {
+    expect(isNoisySpanEvent(marker({ attributes: { 'db.statement': 'GET k' } }))).toBe(false);
+  });
+
+  it('gRPC SENT/RECEIVED kuralı korunur', () => {
+    expect(isNoisySpanEvent(marker({
+      body: 'message', attributes: { 'message.id': '1', 'message.type': 'SENT' },
+    }))).toBe(true);
+  });
+
+  it('ES log satırına dokunulmaz', () => {
+    expect(isNoisySpanEvent(marker({ origin: undefined }))).toBe(false);
   });
 });

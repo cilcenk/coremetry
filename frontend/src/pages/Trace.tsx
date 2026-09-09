@@ -899,12 +899,12 @@ function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, hiddenGrpcMsgs, 
   const grpcChip = (hiddenGrpcMsgs > 0 || showGrpcMsgs) ? (
     <span className={'facet' + (showGrpcMsgs ? ' on' : '')}
       role="button" tabIndex={0} aria-pressed={showGrpcMsgs}
-      title="OTel gRPC instrumentation'ının her mesaj için bastığı SENT/RECEIVED span event'leri"
+      title="Bilgi taşımayan span event'leri: gRPC SENT/RECEIVED mesajları ve hiç attribute taşımayan işaretçiler (redis.encode.start gibi). ERROR ve üstü asla gizlenmez."
       onClick={onToggleGrpcMsgs}
       onKeyDown={e => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleGrpcMsgs(); }
       }}>
-      gRPC mesaj event'leri
+      Gürültü event'leri
       {hiddenGrpcMsgs > 0 && <span className="n">{hiddenGrpcMsgs}</span>}
     </span>
   ) : null;
@@ -934,7 +934,7 @@ function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, hiddenGrpcMsgs, 
     if (hiddenGrpcMsgs > 0) {
       return (
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 10px', fontSize: 11, color: 'var(--text3)' }}>
-          <span>{hiddenGrpcMsgs} gRPC mesaj event'i gizlendi, başka log satırı yok</span>
+          <span>{hiddenGrpcMsgs} gürültü event'i gizlendi, başka log satırı yok</span>
           {grpcChip}
         </div>
       );
@@ -969,7 +969,7 @@ function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, hiddenGrpcMsgs, 
             ? `ilk ${logs.length} / ${logsTotal.toLocaleString()} log satırı`
             : `${logs.length} log satırı`}
           {eventRows.length > 0 && ` + ${eventRows.length} span event'i`}
-          {hiddenGrpcMsgs > 0 && ` (${hiddenGrpcMsgs} gRPC mesaj event'i gizlendi)`}
+          {hiddenGrpcMsgs > 0 && ` (${hiddenGrpcMsgs} gürültü event'i gizlendi)`}
         </span>
         {grpcChip}
       </div>

@@ -117,3 +117,47 @@ export function traceServicesWithoutTraceField(
   }
   return bad;
 }
+
+// --- gRPC per-message event gürültüsü (v0.10.577) -------------------------
+
+// OTel gRPC instrumentation'ı akıştaki HER mesaj için bir span event basar.
+// Operatörün getirdiği trace'te bu 253 satırdı ve 11 gerçek log satırını
+// görünmez yapıyordu. Teşhis değeri sıfır: hangi mesajın gönderildiğini
+// değil, yalnız kaçıncı mesaj olduğunu söylüyorlar.
+const GRPC_MSG_KEYS = new Set(['message.id', 'message.type']);
+const GRPC_MSG_TYPES = new Set(['SENT', 'RECEIVED']);
+
+// isGrpcMessageEvent — DÖRT koşul birden. Yüklem bilerek dar: burada yanlış
+// pozitif, operatörün bir daha göremeyeceği bir teşhis satırı demek.
+//
+//   1. satır bir span event'i (ES log satırına ASLA dokunma)
+//   2. gövde tam olarak "message" — yani eventBody'nin bütün gerçek-gövde
+//      adayları boş çıkmış, geriye event adı kalmış
+//   3. attribute anahtarları {message.id, message.type} kümesinin ALT KÜMESİ
+//      — tek bir fazladan anahtar (rpc.grpc.status_code gibi) event'i
+//      kurtarır, çünkü artık bir şey anlatıyordur
+//   4. message.type SENT ya da RECEIVED (operatör 2026-09-09: "sadece grpc
+//      sent and received"). Bilinmeyen bir tip KORUNUR.
+//
+// Exception event'leri 2 ve 3'ten geçemez: gövdeleri "Type: message"
+// biçiminde ve exception.* attribute'ları taşırlar.
+export function isGrpcMessageEvent(row: LogRow): boolean {
+  if (row.origin !== 'span-event') return false;
+  if (row.body !== 'message') return false;
+  const attrs = row.attributes ?? {};
+  for (const k of Object.keys(attrs)) {
+    if (!GRPC_MSG_KEYS.has(k)) return false;
+  }
+  return GRPC_MSG_TYPES.has(attrs['message.type']);
+}
+
+// splitGrpcMessageEvents — Logs sekmesinin görünür listesi + gizlenen sayısı.
+// Gizlenecek hiçbir şey yoksa GİRDİ DİZİSİNİN KENDİSİ döner: yeni bir dizi
+// kimliği, aşağıdaki memo zincirini ve LogTable'ı boşuna yeniden render
+// ettirirdi.
+export function splitGrpcMessageEvents(rows: LogRow[]): { visible: LogRow[]; hidden: number } {
+  let hidden = 0;
+  for (const r of rows) if (isGrpcMessageEvent(r)) hidden++;
+  if (hidden === 0) return { visible: rows, hidden: 0 };
+  return { visible: rows.filter(r => !isGrpcMessageEvent(r)), hidden };
+}

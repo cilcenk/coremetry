@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { trendsEnabled, latencyPresent, type DepKind } from './depsTable';
+import { trendsEnabled, latencyPresent, type DepKind, resolveTrends } from './depsTable';
+import type { DBTrend } from '@/lib/types';
 
 // v0.9.258 regression. DependenciesTable declared the Trend column and
 // fired its /api/databases/trends fetch unconditionally, for both kinds.
@@ -61,5 +62,48 @@ describe('latencyPresent', () => {
     // Rendering that as "0.0ms" made a database with zero application
     // traffic sort to the top as the fastest row on the page.
     expect(latencyPresent('receiver', 0)).toBe(false);
+  });
+});
+
+// v0.10.576 — resolveTrends: trend sütununun üç durumu.
+//
+// Sütun React Query'ye taşındı; bu türetme bileşenin içinde kalsaydı hiçbir
+// kapı görmezdi. Asıl korunan sözleşme SIRA: kapalı sütun "yükleniyor"dan
+// ÖNCE elenmeli, çünkü devre dışı bir RQ sorgusunda isPending KALICI olarak
+// true'dur — sıra ters olsa çizilmeyen sütuna sonsuz spinner park ederdi
+// (v0.9.258'in tekrarı).
+describe('resolveTrends', () => {
+  const t = (dbSystem: string, instance: string, dbName: string, cluster = '') =>
+    ({ dbSystem, instance, dbName, cluster } as unknown as DBTrend);
+
+  it('kapalı sütun null döner — pending true OLSA BİLE', () => {
+    expect(resolveTrends({ enabled: false, pending: true, list: undefined, kind: 'queue' })).toBeNull();
+  });
+
+  it('açık + pending → undefined (spinner)', () => {
+    expect(resolveTrends({ enabled: true, pending: true, list: undefined, kind: 'db' })).toBeUndefined();
+  });
+
+  it('okuma başarısız / boş cevap → null, undefined DEĞİL', () => {
+    expect(resolveTrends({ enabled: true, pending: false, list: null, kind: 'db' })).toBeNull();
+  });
+
+  it('db: tam anahtar + gevşek yedek, ilk yazan kazanır', () => {
+    const real = t('postgres', 'pg-1', 'orders');
+    const dflt = t('postgres', 'pg-1', 'default');
+    const m = resolveTrends({ enabled: true, pending: false, list: [real, dflt], kind: 'db' })!;
+    expect(m.get('postgres|pg-1|orders')).toBe(real);
+    expect(m.get('postgres|pg-1|default')).toBe(dflt);
+    // Gevşek anahtarı İLK giren (gerçek db.name'li) tutar.
+    expect(m.get('postgres|pg-1')).toBe(real);
+  });
+
+  it('queue: anahtar cluster İÇERİR — aynı destination iki cluster ezişmez', () => {
+    const a = t('kafka', 'orders', '', 'prod-eu');
+    const b = t('kafka', 'orders', '', 'dr-eu');
+    const m = resolveTrends({ enabled: true, pending: false, list: [a, b], kind: 'queue' })!;
+    expect(m.get('kafka|prod-eu|orders')).toBe(a);
+    expect(m.get('kafka|dr-eu|orders')).toBe(b);
+    expect(m.size).toBe(2);
   });
 });

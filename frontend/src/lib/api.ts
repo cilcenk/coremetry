@@ -1416,14 +1416,16 @@ export const api = {
   // (dbSystem, instance, dbName) — join to the overview rows by
   // (system, instance, dbName). Sourced from db_summary_5m, 30s
   // cached server-side.
-  dbTrends: (fromNs: number, toNs: number) =>
+  // v0.10.576 — `signal`: satır-içi trend sütunu React Query'ye taşındı;
+  // aralık/kind değişince eski istek GERÇEKTEN iptal olmalı.
+  dbTrends: (fromNs: number, toNs: number, signal?: AbortSignal) =>
     get<import('./types').DBTrend[] | null>(
-      `/api/databases/trends?from=${fromNs}&to=${toNs}`),
+      `/api/databases/trends?from=${fromNs}&to=${toNs}`, signal),
   // v0.9.434 — /messaging satır-içi trend (dbTrends'in ikizi; DBTrend
   // şekli paylaşılır: dbSystem=msg_system, instance=destination, cluster).
-  msgTrends: (fromNs: number, toNs: number) =>
+  msgTrends: (fromNs: number, toNs: number, signal?: AbortSignal) =>
     get<import('./types').DBTrend[] | null>(
-      `/api/messaging/trends?from=${fromNs}&to=${toNs}`),
+      `/api/messaging/trends?from=${fromNs}&to=${toNs}`, signal),
   // /messaging overview — parallel shape for queues / topics
   // (Kafka / RabbitMQ / IBM MQ / NATS / etc.). compare='prior'
   // (v0.8.364) merges the immediately-preceding equal-length
@@ -1464,11 +1466,14 @@ export const api = {
   // tıklansın aynı çekmece açılıyor ve host'un TOPLAMINI gösteriyordu.
   // Boş dbName hâlâ geçerli ("tüm veritabanları") — eski derin linkler
   // ve messaging tarafı için; çekmece bu hâli açıkça yazıyor.
-  databaseDetail: (system: string, instance: string, dbName: string, fromNs: number, toNs: number) =>
+  //
+  // v0.10.576 — `signal`: çekmece açılışı React Query'ye taşındı; operatör
+  // çekmeceyi kapatınca ya da başka satıra geçince eski okuma iptal olur.
+  databaseDetail: (system: string, instance: string, dbName: string, fromNs: number, toNs: number, signal?: AbortSignal) =>
     get<import('./types').DBDetail | null>(
       `/api/databases/detail?system=${encodeURIComponent(system)}&instance=${encodeURIComponent(instance)}`
       + (dbName ? `&dbName=${encodeURIComponent(dbName)}` : '')
-      + `&from=${fromNs}&to=${toNs}`),
+      + `&from=${fromNs}&to=${toNs}`, signal),
   // cluster is the bootstrap host / messaging.kafka.cluster.name
   // — defaults to "(default)" when the SPA doesn't supply one.
   // Multi-cluster Kafka / MQ deployments need it set so the

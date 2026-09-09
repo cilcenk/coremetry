@@ -1,10 +1,10 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import { msSyncKey } from '@/lib/chart/syncNamespace';
 import { messagingTracesHref, statementTracesHref } from '@/lib/pivotHref';
 import { Link } from 'react-router-dom';
 import { Spinner } from '@/components/Spinner';
 import { LazyMount } from '@/components/LazyMount';
-import { api } from '@/lib/api';
+import { useDepDetail } from '@/lib/queries/dependencies';
 import { fmtNum, fmtNs, timeRangeToNs } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -77,20 +77,23 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
   range: TimeRange;
 }) {
   type D = DBDetail | MessagingDetail;
-  const [data, setData] = useState<D | null | undefined>(undefined);
-
-  useEffect(() => {
-    setData(undefined);
-    const { from, to } = timeRangeToNs(range);
-    const p = kind === 'db'
-      // v0.9.821 — kimlik ÜÇLÜ ve GÖRÜNEN ETİKETTEN bağımsız:
-      // (system, instance, dbName). instance verilmemişse (messaging
-      // tarafı, eski çağıranlar) etikete düşülür.
-      ? api.databaseDetail(system, instance ?? name, dbName ?? '', from, to)
-      : api.messagingDetail(system, cluster, name, from, to);
-    p.then(r => setData(r ?? null))
-     .catch(() => setData(null));
-  }, [system, cluster, name, instance, dbName, kind, range]);
+  // v0.10.576 — React Query. Eskisi çıplak useEffect + then/catch idi ve
+  // iptal YOKTU: operatör çekmeceyi kapatınca ya da başka satıra geçince
+  // sunucudaki okuma sonuna kadar koşuyordu. Artık signal iletiliyor.
+  //
+  // ÜÇ DURUM aynen korunuyor: undefined = yükleniyor, null = boş/başarısız,
+  // veri = yük. Çekmece yalnız AÇIKKEN mount ediliyor, o yüzden ayrı bir
+  // `enabled` kapısına gerek yok — fetch-on-open zaten sağlanmış durumda.
+  // timeRangeToNs MEMO içinde: çıplak JSX'te sonsuz refetch (v0.5.184).
+  const detailWindow = useMemo(() => timeRangeToNs(range), [range]);
+  // v0.9.821 — kimlik ÜÇLÜ ve GÖRÜNEN ETİKETTEN bağımsız: (system, instance,
+  // dbName). instance verilmemişse (messaging tarafı, eski çağıranlar)
+  // etikete düşülür; bu dallanma artık hook'un içinde, tek yerde.
+  const detailQ = useDepDetail({
+    kind, system, cluster, name, instance, dbName,
+    fromNs: detailWindow.from, toNs: detailWindow.to,
+  });
+  const data: D | null | undefined = detailQ.isPending ? undefined : (detailQ.data ?? null);
 
   // v0.9.814 — mini panellerin x ekseni sorgu penceresine sabitlenir
   // (v0.9.83 kuralı): veri seyrekse eksen kendi kendine daralıp iki

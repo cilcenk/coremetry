@@ -29,6 +29,11 @@ const HEAVY: { file: string; hooks: string[] }[] = [
   { file: 'prefs.ts', hooks: ['api.getPreference('] }, // v0.10.248 — kişisel tercih okuma; sekme kapanınca iptal
   { file: 'problems.ts', hooks: ['api.blastRadiusBatch(', 'api.problemInsight('] }, // v0.10.260 — inbox toplu blast-radius (MV, ≤200 servis); v0.10.562 insight
   { file: 'endpoints.ts', hooks: ['api.endpoints(', 'api.endpointDetail(', 'api.endpointSplit(', 'api.endpointDownstream('] },
+  // v0.10.576 — /databases + /messaging'in paylaştığı iki okuma. Trend
+  // sütunu db_summary_5m/msg tarafını tarar, çekmece yükü tek istekte
+  // callers+operations+topOps+e2e getirir: ikisi de operatör aralığı
+  // değiştirdiğinde ya da çekmeceyi kapattığında kesilebilmeli.
+  { file: 'dependencies.ts', hooks: ['api.dbTrends(', 'api.msgTrends(', 'api.databaseDetail(', 'api.messagingDetail('] },
   // v0.10.551 / 552; v0.10.575 — messagingDetail: /messaging/topic sayfasının
   // açılış okuması (callers + operations + topOps + e2e, tek yükte).
   { file: 'messaging.ts', hooks: ['api.messagingClients(', 'api.serviceKafkaClients(', 'api.messagingDetail('] },

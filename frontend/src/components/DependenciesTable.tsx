@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { rowActivation } from '@/lib/a11y';
 import { messagingTracesHref, dbTracesHref } from '@/lib/pivotHref';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -6,13 +6,13 @@ import { Empty } from './Spinner';
 import { Sparkline } from './Sparkline';
 import { TrendDelta } from './TrendDelta';
 import { Button } from './ui/Button';
-import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
-import { trendsEnabled, latencyPresent, depRowKey } from '@/lib/depsTable';
+import { trendsEnabled, latencyPresent, depRowKey, resolveTrends } from '@/lib/depsTable';
 import { msgP99Delta } from '@/lib/msgBalance';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import { stickyLeftOffsets } from '@/lib/dataTable';
 import { DetailDrawer } from '@/features/dependencies/DetailDrawer';
+import { useDepTrends } from '@/lib/queries/dependencies';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { serviceHref } from '@/lib/serviceHref';
 import type { TimeRange, DBTrend } from '@/lib/types';
@@ -166,7 +166,6 @@ export function DependenciesTable({
   // by (system, instance, dbName) — see trendFor below. null =
   // backend returned null / fetch failed (render the '—'
   // placeholder), undefined = not yet loaded.
-  const [trends, setTrends] = useState<Map<string, DBTrend> | null | undefined>(undefined);
 
   const systems = useMemo(() => {
     const s = new Set<string>();
@@ -283,7 +282,6 @@ export function DependenciesTable({
       ? [{ id: 'trend', label: 'Trend', width: 140 } as DataTableColumn<DepRow>]
       : []),
     { id: 'callers', label: 'Top callers', width: 240 },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [hasClusterCol, kind]);
 
   const dt = useDataTable<DepRow>({
@@ -364,42 +362,24 @@ export function DependenciesTable({
   // trendFor tries exact first then falls back to (system,
   // instance). cluster is empty for DB rows so it isn't part of
   // the join.
-  useEffect(() => {
-    let live = true;
-    // v0.9.258 — the fetch is DB-only, but the hook itself stays
-    // unconditional (see the stable-hook-order note above). null,
-    // not undefined: undefined is the "loading" state and would
-    // park a spinner on a column that isn't even rendered.
-    if (!trendsEnabled(kind)) { setTrends(null); return; }
-    setTrends(undefined);
-    const { from, to } = timeRangeToNs(range);
-    // v0.9.434 — endpoint kind'a göre: db → databases/trends (davranış
-    // bayt-bayt eski), queue → messaging/trends (yeni ikiz). Join
-    // anahtarları da kind'a göre: messaging kimliği (system, cluster,
-    // destination) — cluster'sız loose anahtar farklı cluster'daki aynı
-    // destination'ı ezerdi.
-    const fetchTrends = kind === 'db' ? api.dbTrends : api.msgTrends;
-    fetchTrends(from, to)
-      .then(list => {
-        if (!live) return;
-        if (!list) { setTrends(null); return; }
-        const m = new Map<string, DBTrend>();
-        for (const t of list) {
-          if (kind === 'db') {
-            m.set(`${t.dbSystem}|${t.instance}|${t.dbName}`, t);
-            // Looser fallback key — first writer wins so a real
-            // db.name'd trend isn't clobbered by a 'default' sibling.
-            const loose = `${t.dbSystem}|${t.instance}`;
-            if (!m.has(loose)) m.set(loose, t);
-          } else {
-            m.set(`${t.dbSystem}|${t.cluster}|${t.instance}`, t);
-          }
-        }
-        setTrends(m);
-      })
-      .catch(() => { if (live) setTrends(null); });
-    return () => { live = false; };
-  }, [range, kind]);
+  // v0.10.576 — React Query. Eski hâli çıplak useEffect + `live` bayrağıydı:
+  // bayrak yalnız SONUCU yok sayıyordu, istek sunucuda sonuna kadar koşuyordu.
+  // Artık aralık/kind değişimi eskisini GERÇEKTEN iptal ediyor (signal).
+  //
+  // Hook koşulsuz kalır (hook sırası sabit); kapı `enabled`: /messaging
+  // tarafında sütun zaten çizilmiyor, sorgu hiç kurulmasın.
+  const trendsOn = trendsEnabled(kind);
+  const trendsWindow = useMemo(() => timeRangeToNs(range), [range]);
+  const trendsQ = useDepTrends({
+    kind, fromNs: trendsWindow.from, toNs: trendsWindow.to, enabled: trendsOn,
+  });
+
+  // Üç durum + join anahtarları SAF fonksiyonda (lib/depsTable.ts) ve testte
+  // pinli: bileşenin içinde kalsalardı hiçbir kapı görmezdi.
+  const trends = useMemo(
+    () => resolveTrends({ enabled: trendsOn, pending: trendsQ.isPending, list: trendsQ.data, kind }),
+    [trendsOn, trendsQ.isPending, trendsQ.data, kind]);
+
 
   // trendFor — join one overview row to its DBTrend. Match on
   // (system, instance, dbName) exactly; fall back to

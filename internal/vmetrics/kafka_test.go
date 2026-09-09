@@ -9,11 +9,11 @@ import (
 
 // v0.10.550 — Kafka client metrik kataloğu + soru→MetricQueryFilter üreticisi
 // (docs/audit/messaging-kafka-metrics-2026-09-08.md Faz 1). Sözleşme:
-//   • katalog adları OTel Java kafka-clients-metrics modülünün adları
+//   - katalog adları OTel Java kafka-clients-metrics modülünün adları
 //     (kafka.<producer|consumer>.<jmx>), tekil; `_total` = counter, gerisi gauge;
-//   • gauge'a ASLA rate/increase uygulanmaz (Kafka'nın kendi pencere ortalaması);
+//   - gauge'a ASLA rate/increase uygulanmaz (Kafka'nın kendi pencere ortalaması);
 //     counter'a yalnız rate;
-//   • sorgu daima servis kapsamlı (kardinalite) ve pencereli; topic/client_id
+//   - sorgu daima servis kapsamlı (kardinalite) ve pencereli; topic/client_id
 //     süzgeci yalnız o label'ı taşıyan metrikte; groupBy yalnız bilinen label.
 func TestKafkaCatalogIntegrity(t *testing.T) {
 	seen := map[string]bool{}
@@ -39,7 +39,12 @@ func TestKafkaCatalogIntegrity(t *testing.T) {
 			if m.Agg == "rate" || m.Agg == "increase" {
 				t.Errorf("%s: gauge'a %s uygulanamaz", m.Name, m.Agg)
 			}
-			if m.Agg != "sum" && m.Agg != "avg" && m.Agg != "max" {
+			// v0.10.582 — "min" eklendi. Kapının ASIL işi yukarıdaki
+			// rate/increase yasağı; bu liste yalnız o gün kullanımda olan
+			// toplamalardı. min hem promql.go hem metricquery.go tarafında
+			// destekleniyor ve records_lead için TEK doğru toplama: lead'in
+			// tehlikeli yönü aşağı, en kötü partition ortalamada kaybolur.
+			if m.Agg != "sum" && m.Agg != "avg" && m.Agg != "max" && m.Agg != "min" {
 				t.Errorf("%s: gauge agg %q", m.Name, m.Agg)
 			}
 		default:

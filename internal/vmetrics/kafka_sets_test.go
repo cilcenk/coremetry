@@ -70,8 +70,8 @@ func TestKafkaClientHealthQuestions(t *testing.T) {
 	from := time.Date(2026, 9, 8, 6, 0, 0, 0, time.UTC)
 	to := from.Add(30 * time.Minute)
 	health := KafkaClientHealthQuestions()
-	if len(health) != 9 {
-		t.Fatalf("client-health seti 9 soru olmalı, geldi %d: %+v", len(health), health)
+	if len(health) != 11 {
+		t.Fatalf("client-health seti 11 soru olmalı, geldi %d: %+v", len(health), health)
 	}
 	svc := kafkaQuestionIndex(KafkaServiceQuestions())
 	seen := map[string]bool{}

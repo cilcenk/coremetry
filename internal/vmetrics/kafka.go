@@ -86,6 +86,46 @@ var KafkaCatalog = []KafkaMetric{
 	{Name: "kafka.consumer.assigned_partitions", Side: "consumer", Kind: KafkaGauge, Unit: "{partition}", Agg: "sum", TR: "Atanmış partition", Labels: []string{"client_id"}},
 	{Name: "kafka.consumer.heartbeat_rate", Side: "consumer", Kind: KafkaGauge, Unit: "1/s", Agg: "sum", TR: "Heartbeat", Labels: []string{"client_id"}},
 	{Name: "kafka.consumer.failed_authentication_rate", Side: "consumer", Kind: KafkaGauge, Unit: "1/s", Agg: "sum", TR: "Kimlik doğrulama hatası (tüketici)", Labels: []string{"client_id"}},
+
+	// --- v0.10.582: prod VM'de GÖRÜLEN ama katalogda olmayan aileler.
+	// Operatör 2026-09-09 ekran görüntüleriyle gösterdi. Kural: gauge varsa
+	// onu al, `_total` sayacını yalnız gauge karşılığı YOKSA ekle — ikisini
+	// birden almak kataloğu iki katına çıkarır, teşhis gücü katmaz.
+
+	// Poll aralığı — rebalance fırtınasının SEBEBİNİ söyleyen metrik.
+	// Rebalance oranını zaten görüyorduk; poll aralığı max.poll.interval.ms
+	// aşımına yaklaşıldığını, yani tüketicinin gruptan atılmak üzere
+	// olduğunu önceden söyler.
+	{Name: "kafka.consumer.time_between_poll_avg", Side: "consumer", Kind: KafkaGauge, Unit: "ms", Agg: "avg", TR: "Poll aralığı ort.", Labels: []string{"client_id"}},
+	{Name: "kafka.consumer.time_between_poll_max", Side: "consumer", Kind: KafkaGauge, Unit: "ms", Agg: "max", TR: "Poll aralığı maks.", Labels: []string{"client_id"}},
+
+	// Lead — lag'in ikizi ve FARKLI bir alarm. Lag "geride kaldın" der;
+	// lead sıfıra yaklaşınca "retention penceresinin dışına düşmek
+	// üzeresin", yani VERİ KAYBI riski. Toplama MIN: en kötü partition
+	// ortalamada kaybolur.
+	{Name: "kafka.consumer.records_lead", Side: "consumer", Kind: KafkaGauge, Unit: "{record}", Agg: "min", TR: "Lead (retention'a uzaklık, en düşük)", Labels: []string{"client_id", "topic", "partition"}},
+	{Name: "kafka.consumer.records_lead_avg", Side: "consumer", Kind: KafkaGauge, Unit: "{record}", Agg: "avg", TR: "Ortalama lead", Labels: []string{"client_id", "topic", "partition"}},
+
+	// Kota kısıtı — yavaşlığın sebebi uygulama değil BROKER KOTASI
+	// olduğunda bunu görmeden saatler harcanır.
+	{Name: "kafka.consumer.fetch_throttle_time_avg", Side: "consumer", Kind: KafkaGauge, Unit: "ms", Agg: "avg", TR: "Fetch kota kısıtı ort.", Labels: []string{"client_id"}},
+	{Name: "kafka.consumer.fetch_throttle_time_max", Side: "consumer", Kind: KafkaGauge, Unit: "ms", Agg: "max", TR: "Fetch kota kısıtı maks.", Labels: []string{"client_id"}},
+
+	// Rebalance ve sync SÜRESİ — oranı vardı, süresi yoktu.
+	{Name: "kafka.consumer.rebalance_latency_avg", Side: "consumer", Kind: KafkaGauge, Unit: "ms", Agg: "avg", TR: "Rebalance süresi ort.", Labels: []string{"client_id"}},
+	{Name: "kafka.consumer.rebalance_latency_max", Side: "consumer", Kind: KafkaGauge, Unit: "ms", Agg: "max", TR: "Rebalance süresi maks.", Labels: []string{"client_id"}},
+	{Name: "kafka.consumer.sync_time_avg", Side: "consumer", Kind: KafkaGauge, Unit: "ms", Agg: "avg", TR: "Grup sync süresi ort.", Labels: []string{"client_id"}},
+	{Name: "kafka.consumer.sync_time_max", Side: "consumer", Kind: KafkaGauge, Unit: "ms", Agg: "max", TR: "Grup sync süresi maks.", Labels: []string{"client_id"}},
+
+	// SASL yeniden kimlik doğrulama — bugüne dek yalnız İLK doğrulamayı
+	// görüyorduk; oturum yenilemesi ayrı bir arıza sınıfı.
+	{Name: "kafka.consumer.failed_reauthentication_rate", Side: "consumer", Kind: KafkaGauge, Unit: "1/s", Agg: "sum", TR: "Yeniden kimlik doğrulama hatası (tüketici)", Labels: []string{"client_id"}},
+	{Name: "kafka.producer.failed_reauthentication_rate", Side: "producer", Kind: KafkaGauge, Unit: "1/s", Agg: "sum", TR: "Yeniden kimlik doğrulama hatası (üretici)", Labels: []string{"client_id"}},
+
+	// Üretici verimliliği — küçük batch + düşük sıkıştırma, ağ maliyetinin
+	// sebebini söyler.
+	{Name: "kafka.producer.batch_size_avg", Side: "producer", Kind: KafkaGauge, Unit: "By", Agg: "avg", TR: "Ortalama batch boyutu", Labels: []string{"client_id"}},
+	{Name: "kafka.producer.compression_rate_avg", Side: "producer", Kind: KafkaGauge, Unit: "1", Agg: "avg", TR: "Ortalama sıkıştırma oranı", Labels: []string{"client_id"}},
 }
 
 var kafkaByName = func() map[string]KafkaMetric {
@@ -129,6 +169,10 @@ func KafkaTopicQuestions() []KafkaQuestion {
 		{Key: "producer_retry_rate", Metric: "kafka.producer.record_retry_rate", TR: "Yeniden deneme/sn — servis", GroupBy: []string{"service.name"}},
 		{Key: "consumer_consumed_rate", Metric: "kafka.consumer.records_consumed_rate", TR: "Tüketilen kayıt/sn — servis", GroupBy: []string{"service.name"}},
 		{Key: "consumer_lag_max", Metric: "kafka.consumer.records_lag_max", TR: "İstemcinin gördüğü en yüksek lag — servis · istemci", GroupBy: []string{"service.name", "client_id"}},
+		// v0.10.582 — lead lag'in İKİZİ değil, farklı bir alarm: sıfıra
+		// yaklaşması "retention penceresinden düşmek üzeresin" demek.
+		// MIN toplaması bilinçli — en kötü partition ortalamada kaybolur.
+		{Key: "consumer_lead_min", Metric: "kafka.consumer.records_lead", TR: "En düşük lead (retention'a uzaklık) — servis · istemci", GroupBy: []string{"service.name", "client_id"}},
 	}
 }
 
@@ -147,6 +191,12 @@ func KafkaServiceQuestions() []KafkaQuestion {
 		{Key: "consumer_rebalance_rate", Metric: "kafka.consumer.rebalance_rate_per_hour", TR: "Rebalance/saat — istemci", GroupBy: []string{"client_id"}},
 		{Key: "consumer_last_poll", Metric: "kafka.consumer.last_poll_seconds_ago", TR: "Son poll'dan beri (s) — istemci", GroupBy: []string{"client_id"}},
 		{Key: "consumer_fetch_latency_avg", Metric: "kafka.consumer.fetch_latency_avg", TR: "Fetch gecikmesi ort. — istemci", GroupBy: []string{"client_id"}},
+		// v0.10.582 — üçü de "neden" sorusunu cevaplıyor; sayı değil sebep.
+		// Tümü eklenmedi: panel her açılışta soru başına bir VM range
+		// sorgusu koşuyor, katalog zenginliği panel şişkinliği demek değil.
+		{Key: "consumer_poll_gap_max", Metric: "kafka.consumer.time_between_poll_max", TR: "Poll aralığı maks. — istemci", GroupBy: []string{"client_id"}},
+		{Key: "consumer_fetch_throttle_avg", Metric: "kafka.consumer.fetch_throttle_time_avg", TR: "Fetch kota kısıtı ort. — istemci", GroupBy: []string{"client_id"}},
+		{Key: "consumer_rebalance_latency_avg", Metric: "kafka.consumer.rebalance_latency_avg", TR: "Rebalance süresi ort. — istemci", GroupBy: []string{"client_id"}},
 	}
 }
 
@@ -277,6 +327,8 @@ var kafkaClientHealthKeys = []string{
 	"consumer_rebalance_rate",
 	"consumer_last_poll",
 	"consumer_fetch_latency_avg",
+	"consumer_poll_gap_max",       // v0.10.582
+	"consumer_fetch_throttle_avg", // v0.10.582
 }
 
 // KafkaClientHealthQuestions — v0.10.575: topic detay sayfasının istemci

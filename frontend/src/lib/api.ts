@@ -1,4 +1,5 @@
 import type {
+  OracleLogsResponse,
   McpServersSnapshot, McpServerInput, McpServerTestResult,
   PurgeResult,
   Service, ServiceEdge, TracesResponse, TracesExtrasResponse, TraceDetailResponse,
@@ -857,6 +858,10 @@ export const api = {
   // Logs timeseries — Histogram aggregation routed through
   // whichever backend is configured (CH or external ES). Powers
   // the Logs source on /explore. 30s server-side cache.
+  // v0.10.602 — trace'in Oracle hata tablosu satırları (Aşama 2, /api/oracle/errors).
+  // from/to unix ns ZORUNLU: sunucu now() varsayılanı yapmaz (eski trace boş dönmesin).
+  oracleTraceLogs: (traceId: string, from: number, to: number, limit = 200) =>
+    get<OracleLogsResponse>(`/api/oracle/errors?${qs({ trace_id: traceId, from, to, limit })}`),
   logsTimeseries: (params: {
     service?: string;
     cluster?: string; // v0.9.216 — toolbar cluster select; the table honoured it, this endpoint didn't

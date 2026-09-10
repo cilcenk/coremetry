@@ -165,3 +165,36 @@ export function derivedTeamTitle(via: string, service?: string): string {
     `Çözüm veritabanı SİSTEMİ düzeyinde yapılır, tekil örnek düzeyinde değil: ` +
     `aynı sistemden birden çok küme varsa hepsi bu takıma yazılır.`;
 }
+
+
+// v0.10.598 — dış hattın ÖZET Problem'leri: tavan aşımı (587), kaynak düştü
+// (588), küme (597). Bunların root_cause_hypotheses satırı HİÇ yazılmaz —
+// OnEvidence yalnız seri Problem'lerinde koşar; kanıt gerekçe metnindedir.
+// Kural öneki backend sözleşmesi (chstore.RuleExtCapPrefix / RuleExtDownPrefix,
+// anomaly clusterRulePrefix); problemSubject.test.ts biçim pini taşır.
+export type ExternalSummaryKind = 'cap' | 'down' | 'cluster';
+const EXT_SUMMARY_PREFIXES: ReadonlyArray<[string, ExternalSummaryKind]> = [
+  ['anomaly:ext-cap:', 'cap'],
+  ['anomaly:ext-down:', 'down'],
+  ['anomaly-cluster:ext:', 'cluster'],
+];
+
+export function externalSummaryKind(ruleId: string | null | undefined): ExternalSummaryKind | null {
+  const id = ruleId ?? '';
+  for (const [prefix, kind] of EXT_SUMMARY_PREFIXES) {
+    if (id.startsWith(prefix)) return kind;
+  }
+  return null;
+}
+
+/** Özet Problem'in kanıt paneli yerine geçen DÜRÜST açıklama — "toplanıyor" vaadi YOK. */
+export function externalSummaryNote(kind: ExternalSummaryKind): { title: string; body: string } {
+  switch (kind) {
+    case 'cap':
+      return { title: 'Tavan özeti — seri kanıtı yok', body: 'Bu Problem tik başına açılış tavanına takılan serilerin özetidir; hangi seriler olduğu ve sayısı gerekçede. Seri kanıtı (trace/pod/log) yalnız tek tek açılan seri Problem\'lerinde toplanır.' };
+    case 'down':
+      return { title: 'Kaynak erişilemiyor — seri kanıtı yok', body: 'Bu Problem dış kaynağın kendisine (ardışık başarısız poll) ait; son hata ve sayı gerekçede. Kaynak erişilemezken seri taraması koşmaz, dolayısıyla toplanacak seri kanıtı yoktur.' };
+    case 'cluster':
+      return { title: 'Küme özeti — seri kanıtı üyelerde', body: 'Aynı üst boyutta aynı anda patlayan seriler tek Problem\'de toplandı; üyeler gerekçede. Üyelerin bireysel Problem\'i açılmadığı için trace/pod/log kanıtı bu satırda değil, kaynağın seri Problem\'lerinde aranır.' };
+  }
+}

@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  parseDbSubject, subjectKind, subjectLabel, subjectIsLinkable, subjectTitle,
-  derivedTeamTitle,
-} from './problemSubject';
+import { parseDbSubject, subjectKind, subjectLabel, subjectIsLinkable, subjectTitle, derivedTeamTitle, externalSummaryKind, externalSummaryNote } from './problemSubject';
 
 // problemSubject.test.ts — v0.9.1339.
 //
@@ -171,5 +168,28 @@ describe('subjectKind — bilinen kind biçimi yener (v0.10.596)', () => {
   it('bilinmeyen kind yine şekle düşer (mevcut sözleşme korunur)', () => {
     expect(subjectKind('ext:oracle-errlog', 'queue')).toBe('external');
     expect(subjectKind('db:oracle@x', 'anomaly')).toBe('db');
+  });
+});
+
+
+// v0.10.598 — özet Problem'ler kanıt paneli yerine dürüst açıklama alır.
+describe('externalSummaryKind', () => {
+  it('üç önek tanınır — backend sabitleriyle aynı yazım', () => {
+    expect(externalSummaryKind('anomaly:ext-cap:ext:REDACTED:ext:tfail')).toBe('cap');
+    expect(externalSummaryKind('anomaly:ext-down:ext:oracle-errlog')).toBe('down');
+    expect(externalSummaryKind('anomaly-cluster:ext:REDACTED/OP_PAY')).toBe('cluster');
+  });
+  it('seri Problem\'i ve servis kümesi özet DEĞİL (kanıt panelini korur)', () => {
+    expect(externalSummaryKind('anomaly:ext:REDACTED/OP1/E1:ext:tfail')).toBeNull();
+    expect(externalSummaryKind('anomaly-cluster:shop-payment')).toBeNull(); // servis kümesi, ext: değil
+    expect(externalSummaryKind('anomaly:shop:p99_ms')).toBeNull();
+    expect(externalSummaryKind(undefined)).toBeNull();
+  });
+  it('açıklama "toplanıyor" vaadi vermez', () => {
+    for (const k of ['cap', 'down', 'cluster'] as const) {
+      const n = externalSummaryNote(k);
+      expect(n.title).not.toMatch(/henüz|toplan/i);
+      expect(n.body).toMatch(/gerekçe/);
+    }
   });
 });

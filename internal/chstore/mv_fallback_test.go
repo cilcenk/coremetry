@@ -44,7 +44,7 @@ func TestMVFallbackEligible(t *testing.T) {
 // with a db.statement filter that died on ClickHouse's memory limit.
 func TestOperatorReportedFailuresDoNotFallBack(t *testing.T) {
 	for _, msg := range []string{
-		`query processing: failed to read packet from 203.0.113.2:9000 (conn_id=39): read: read tcp 203.0.113.3:43194->203.0.113.2:9000: i/o timeout`,
+		`query processing: failed to read packet from 203.0.113.15:9000 (conn_id=39): read: read tcp 198.51.100.225:43194->203.0.113.15:9000: i/o timeout`,
 		`code: 241, message: Query memory limit exceeded: would use 3.73 GiB (attempt to allocate chunk of 4.00 MiB), maximum: 3.73 GiB: While executing SourceFromNativeStream`,
 	} {
 		if mvFallbackEligible(errors.New(msg)) {

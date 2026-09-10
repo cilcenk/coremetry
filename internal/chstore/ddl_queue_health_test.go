@@ -77,7 +77,7 @@ func TestHostPrefixMatching(t *testing.T) {
 		t.Error("chc-1, chc-10'a eşleşti — nokta sınırı şart, yoksa yanlış " +
 			"host 'cevap veriyor' sayılır ve gerçek unreachable gizlenir")
 	}
-	if !hasHostPrefix("host14.example", "ch-host") {
+	if !hasHostPrefix("chc-prod-01.intranet.example", "chc-prod-01") {
 		t.Error("prod biçimi eşleşmedi")
 	}
 	if !hostRespondedTo(map[string]bool{"chc-0": true}, "chc-0.chc-headless") {

@@ -81,8 +81,8 @@ func TestFingerprintMergesDynamicIDVariants(t *testing.T) {
 		},
 		{
 			"harfe bitişik sayı (conn_id / port) birleşir",
-			"failed to read packet from 203.0.113.7:9000 (conn_id=333): read: EOF",
-			"failed to read packet from 203.0.113.6:9000 (conn_id=91): read: EOF",
+			"failed to read packet from 198.51.100.12:9000 (conn_id=333): read: EOF",
+			"failed to read packet from 198.51.100.199:9000 (conn_id=91): read: EOF",
 			true,
 		},
 		{

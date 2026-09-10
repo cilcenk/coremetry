@@ -134,7 +134,7 @@ func TestNodeWorkQueryCastsUptime(t *testing.T) {
 //
 //	is_local             → lokal kümede her iki node da 0 bildiriyor
 //	host_name=hostName() → host_name FQDN (chc-0.chc-headless) ya da IP
-//	                       (203.0.113.2); hostName() kısa ad
+//	                       (203.0.113.15); hostName() kısa ad
 //
 // system.macros eşleştirme GEREKTİRMİYOR: her node kendi kimliğini
 // kendi yapılandırmasından okuyor. Replicated tablosu olan her kümede

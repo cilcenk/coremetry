@@ -110,3 +110,10 @@ ds-bundle/
 .design-sync/.cache/
 .design-sync/learnings/
 .design-sync/node_modules
+
+# v0.10.618 — makineye/kişiye özel Claude Code artefaktları ve çalışma dosyaları:
+# .mcp.json mutlak yol taşır (settings enableAllProjectMcpServers ile herkeste
+# başlardı), agent-memory kişisel notlar (920K), scratchpad prod adları içerebilir.
+.mcp.json
+.claude/agent-memory/
+scratchpad/

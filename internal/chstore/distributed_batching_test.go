@@ -164,7 +164,7 @@ func TestIsSettingsChangeUnsupported(t *testing.T) {
 		{
 			// v0.9.1102 — prod span'ındaki VERBATIM metin.
 			"Code 48 (CH 26.2) metni yakalanmalı",
-			errStr("code: 48, message: There was an error on [203.0.113.4:9000]: Code: 48. DB::Exception: Alter of type 'MODIFY_SETTING' is not supported by storage Distributed. (NOT_IMPLEMENTED) (version 26.2.4.23 (official build))"),
+			errStr("code: 48, message: There was an error on [203.0.113.28:9000]: Code: 48. DB::Exception: Alter of type 'MODIFY_SETTING' is not supported by storage Distributed. (NOT_IMPLEMENTED) (version 26.2.4.23 (official build))"),
 			true,
 		},
 		{

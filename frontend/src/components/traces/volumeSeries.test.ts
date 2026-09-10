@@ -22,14 +22,14 @@ function mk(values: (number)[], stepSec = 300): SpanMetricSeries[] {
 const byKey = (cfg: ReturnType<typeof buildVolumeSeries>, k: string) =>
   cfg.series.find(s => s.key === k)!;
 
-describe('buildVolumeSeries — eksen eşlemesi (v0.10.268 Dynatrace düzeni; v0.9.843 takası geri alındı)', () => {
+describe('buildVolumeSeries — eksen eşlemesi (v0.10.656: süre SOL, sayı SAĞ — operatör)', () => {
   const cfg = buildVolumeSeries(mk([10, 20, 30]), mk([1, 2, 3]), mk([120, 130, 140]));
 
   // TABLO: seri → beklenen eksen. Takasın TEK kaynağı bu.
   it.each([
-    ['total', 'left', 'bar'],   // span sayısı → SAĞ
-    ['error', 'left', 'bar'],   // span sayısı → SAĞ
-    ['rt', 'right', 'line'],     // SÜRE → SOL
+    ['total', 'right', 'bar'],  // span sayısı → SAĞ
+    ['error', 'right', 'bar'],  // span sayısı → SAĞ
+    ['rt', 'left', 'line'],     // SÜRE → SOL
   ] as const)('%s serisi %s eksende ve %s tipinde', (key, axis, type) => {
     const s = byKey(cfg, key);
     expect(s.axis).toBe(axis);

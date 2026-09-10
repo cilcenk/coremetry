@@ -5,9 +5,9 @@
 // TimeChart. ok-span bars (accent) with the error share overlaid red at the
 // bottom + a response-time line (p95 default, selectable). Drag to brush a time range.
 //
-// v0.9.843 (operatör isteği) — EKSEN TAKASI, Grafana düzeni: SÜRE (p50
-// çizgisi) SOL eksende, SPAN SAYISI (bar'lar) SAĞ eksende. Eşleme +
-// biçimlendirici sözleşmesi volumeSeries.ts'te, tablo-testli.
+// v0.9.843 → v0.10.268 → v0.10.656 (operatör): SÜRE çizgisi SOL eksende,
+// SPAN/TRACE SAYISI (bar'lar) SAĞ eksende. Eşleme + biçimlendirici
+// sözleşmesi volumeSeries.ts'te, tablo-testli.
 
 import { useMemo } from 'react';
 import type { SpanMetricSeries } from '@/lib/types';
@@ -83,11 +83,11 @@ export function VolumeChart({
           rightUnit=""
           onBrush={onBrush}
           onZoomReset={onZoomReset}
-          // v0.10.268 — Dynatrace düzeni: SAYIM sol eksende (fmtLeft
-          // verilmez → TimeChart'ın kısaltması "30.9k"), SÜRE sağ eksende
-          // (fmtRight = ms/s biçimlendirici). v0.9.843 takası geri alındı;
-          // biçimlendirici eksenle birlikte taşındı (sayıya "ms" yazma tuzağı).
-          fmtRight={fmtVolumeDuration}
+          // v0.10.656 (operatör) — SÜRE sol eksende (fmtLeft = ms/s
+          // biçimlendirici), SAYIM sağ eksende (fmtRight verilmez → TimeChart'ın
+          // kısaltması "30.9k"). Biçimlendirici eksenle birlikte taşındı
+          // (sayıya "ms" yazma tuzağı, v0.10.268 dersi).
+          fmtLeft={fmtVolumeDuration}
           xRange={xRange}
           // v0.10.321 (operatör, prod ekran görüntüsü: "Series paneli kapalı
           // olsun. Shrink mode gelsin.") — lejant VARSAYILAN KAPALI: şerit

@@ -290,7 +290,12 @@ export function TimeChart({
       width,
       height,
       cursor: {
-        x: true, y: false, points: { show: true, size: 7 },
+        // v0.10.656 (operatör: "süre çizgisinde kayan nokta olsun, diğer
+        // grafiklerdeki gibi") — `show: true` YAZILMAZ: uPlot points.show'u
+        // fnOrSelf'ten geçirip HTMLElement bekler; `true` element değil →
+        // nokta HİÇ oluşturulmaz (CorePanel.tsx aynı ders). Boyut CorePanel ile
+        // aynı (10 px, 2 px kenar).
+        x: true, y: false, points: { size: 10, width: 2 },
         // v0.9.84 (madde 4) — seyrek (null'lu) line/area seride hover en
         // yakın DOLU örneğe snap'ler (±2 bucket, sınırsız arama yok).
         dataIdx: (u, sidx, idx) => {

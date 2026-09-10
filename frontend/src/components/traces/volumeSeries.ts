@@ -75,19 +75,18 @@ export function buildVolumeSeries(
   // görsel yarısıydı. Başlıktaki <STAT> MAX ham kovadan okunur; etiket
   // yumuşatmayı söyler.
   const p50s = smoothCentered(p50d, RT_SMOOTH_WINDOW);
-  // v0.10.268 (operatör: "bar gösterimleri Dynatrace gibi olabilir", mockup A
-  // onayı) — SAYIM SOL eksende (çubuklar), MEDYAN yanıt süresi SAĞ eksende
-  // (çizgi): Dynatrace "Trace count / Response Time (Median)" düzeni.
-  // v0.9.843'ün Grafana takası bilinçli geri alındı; geri dönüş tek commit
-  // (git revert). Seriler giriş span'ı (server/consumer) kapsamlı
+  // v0.10.656 (operatör: "süre solda, adet sağda") — SÜRE çizgisi SOL
+  // eksende, SAYIM çubukları SAĞ eksende (v0.9.843 Grafana düzeni geri;
+  // v0.10.268'in Dynatrace takası geri alındı). Biçimlendirici eksenle
+  // birlikte taşınır (VolumeChart fmtLeft). Tek kaynak: aşağıdaki axis alanı. Seriler giriş span'ı (server/consumer) kapsamlı
   // (Traces.tsx şerit filtresi) — istek ≈ trace.
   const series: TimeChartSeries[] = [
     // v0.9.843 — bar'lar SAĞ eksende (span sayısı).
-    { key: 'total', label: unit, data: total, color: 'var(--accent)', type: 'bar', axis: 'left' },
-    { key: 'error', label: 'error ' + unit, data: err, color: statusColor('error'), type: 'bar', axis: 'left' },
+    { key: 'total', label: unit, data: total, color: 'var(--accent)', type: 'bar', axis: 'right' },
+    { key: 'error', label: 'error ' + unit, data: err, color: statusColor('error'), type: 'bar', axis: 'right' },
     // v0.9.73 — kalın çizgi + nokta: seyrek p50 örnekleri artık okunur.
     // v0.9.843 — süre SOL eksende (Grafana düzeni).
-    { key: 'rt', label: `response time (${stripStatLabel(stat)}, ${RT_SMOOTH_WINDOW}-kova ort.)`, data: p50s, color: 'var(--orange)', type: 'line', axis: 'right', width: 2, pointsShow: t.length < 20 },
+    { key: 'rt', label: `response time (${stripStatLabel(stat)}, ${RT_SMOOTH_WINDOW}-kova ort.)`, data: p50s, color: 'var(--orange)', type: 'line', axis: 'left', width: 2, pointsShow: t.length < 20 },
   ];
   return { times: t, series, bucketMin: Math.max(1, dt) };
 }

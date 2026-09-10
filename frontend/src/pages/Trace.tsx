@@ -25,7 +25,7 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { logsRangeParam } from '@/lib/logsUrl';
 import { raceGuard } from '@/lib/raceGuard';
 import { useOutsideClose } from '@/lib/useOutsideClose';
-import { useCorrelatedLogs, spanHasError, traceLogWindow } from '@/lib/otel';
+import { useCorrelatedLogs, useOracleTraceLogs, spanHasError, traceLogWindow } from '@/lib/otel';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
 import { traceBackHref } from '@/lib/traceBackHref';
 import { SvcBadge } from '@/components/traces/shared';
@@ -141,6 +141,11 @@ function TraceDetailInner() {
   const logsQuery = useCorrelatedLogs(
     tab === 'logs' ? id : undefined, undefined,
     { limit: 500, from: logWin?.from, to: logWin?.to });
+  // v0.10.602 — Oracle Aşama 2: trace'in Oracle hata tablosu satırları, aynı
+  // span-ankrajlı pencere; yalnız Logs sekmesi açıkken çekilir (ES-maliyet
+  // disiplini burada CH için de korunur: liste boyunca prefetch yok).
+  const oracleQuery = useOracleTraceLogs(tab === 'logs' ? id : undefined, { from: logWin?.from, to: logWin?.to, enabled: tab === 'logs' });
+  const oracleRows = useMemo(() => oracleQuery.data?.logs ?? [], [oracleQuery.data]);
   // v0.8.407 — per-span correlated-row counts for the waterfall chips
   // (span events always; ES logs once the lazy fetch has cached them).
   const logSignals = useMemo(
@@ -635,6 +640,8 @@ function TraceDetailInner() {
               <TraceLogsPanel logs={logs} degraded={logsDegraded}
                 logsTotal={logsQuery.data?.total}
                 eventRows={shownEventRows}
+                oracleRows={oracleRows}
+                oracleError={oracleQuery.isError}
                 hiddenGrpcMsgs={hiddenGrpcMsgs}
                 showGrpcMsgs={showGrpcMsgs}
                 onToggleGrpcMsgs={toggleGrpcMsgs}
@@ -875,7 +882,7 @@ function LinkedTracesSection({ id, pageRange }: { id: string; pageRange: TimeRan
 // result contract: warn chip instead of the "no logs" empty state (which
 // would misread as an instrumentation gap), table still renders, tab never
 // blocks.
-function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, hiddenGrpcMsgs, showGrpcMsgs, onToggleGrpcMsgs, traceServices }: {
+function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, oracleRows, oracleError, hiddenGrpcMsgs, showGrpcMsgs, onToggleGrpcMsgs, traceServices }: {
   logs: LogRow[] | null | undefined;
   degraded?: string | null;
   // v0.9.461 (dürüstlük A5) — sunucunun gerçek toplamı ("ilk N / M").
@@ -887,6 +894,10 @@ function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, hiddenGrpcMsgs, 
   // v0.10.577 — bu liste ARTIK SÜZÜLMÜŞ gelir (gRPC SENT/RECEIVED gizli).
   // Ham liste sayfada kalır ve waterfall çiplerini beslemeye devam eder.
   eventRows: LogRow[];
+  // v0.10.602 — Oracle hata tablosu satırları (origin 'oracle'), üçüncü dizi.
+  // Boş dizi = satır yok YA DA kaynak yok; ikisi de listeyi değiştirmez.
+  oracleRows: LogRow[];
+  oracleError?: boolean;
   hiddenGrpcMsgs: number;
   showGrpcMsgs: boolean;
   onToggleGrpcMsgs: () => void;
@@ -912,7 +923,7 @@ function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, hiddenGrpcMsgs, 
   if (logs === undefined) return <Spinner />;
   if (logs === null) {
     // Backend errored — the span events still tell part of the story.
-    if (eventRows.length > 0) {
+    if (eventRows.length > 0 || oracleRows.length > 0) {
       return (
         <>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '0 10px 6px' }}>
@@ -922,13 +933,13 @@ function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, hiddenGrpcMsgs, 
                 hiçbir yolu kalmazdı. */}
             {grpcChip}
           </div>
-          <LogTable logs={[...eventRows].sort((a, b) => a.timestamp - b.timestamp)} hideTraceColumn />
+          <LogTable logs={[...eventRows, ...oracleRows].sort((a, b) => a.timestamp - b.timestamp)} hideTraceColumn />
         </>
       );
     }
     return <Empty icon="⚠" title="Failed to load logs" />;
   }
-  if (logs.length === 0 && eventRows.length === 0 && !degraded) {
+  if (logs.length === 0 && eventRows.length === 0 && oracleRows.length === 0 && !degraded) {
     // v0.10.577 — gizlenmiş gRPC event'i varken "hiç log yok" teşhisi YALAN
     // olur: liste boş değil, süzülmüş. Çipi göster, teşhisi gösterme.
     if (hiddenGrpcMsgs > 0) {
@@ -946,7 +957,7 @@ function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, hiddenGrpcMsgs, 
   // severity colouring / row expand layout / attribute tables
   // stay consistent with the /logs page; operators don't
   // re-learn a second viewer when they drill in from a trace.
-  const sorted = [...logs, ...eventRows].sort((a, b) => a.timestamp - b.timestamp);
+  const sorted = [...logs, ...eventRows, ...oracleRows].sort((a, b) => a.timestamp - b.timestamp);
   return (
     <>
       {degraded && (
@@ -969,6 +980,8 @@ function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, hiddenGrpcMsgs, 
             ? `ilk ${logs.length} / ${logsTotal.toLocaleString()} log satırı`
             : `${logs.length} log satırı`}
           {eventRows.length > 0 && ` + ${eventRows.length} span event'i`}
+          {oracleRows.length > 0 && ` + ${oracleRows.length} Oracle satırı`}
+          {oracleError && ' (Oracle satırları yüklenemedi)'}
           {hiddenGrpcMsgs > 0 && ` (${hiddenGrpcMsgs} gürültü event'i gizlendi)`}
         </span>
         {grpcChip}

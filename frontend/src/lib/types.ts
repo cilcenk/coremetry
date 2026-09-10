@@ -2889,7 +2889,19 @@ export interface LogRow {
   // log-bridge record) already loaded with the trace from ClickHouse.
   // Never set on backend rows; <LogTable> renders a small chip so
   // operators can tell the two sources apart when merged.
-  origin?: 'span-event';
+  // v0.10.602 — 'oracle': Oracle hata tablosundan (oracle_error_log) gelen
+  // satır; TEK istisna olarak backend basar (/api/oracle/errors), çünkü satır
+  // logstore'dan değil kendi tablosundan gelir ve rozet bunu söylemeli.
+  origin?: 'span-event' | 'oracle';
+}
+
+// OracleLogsResponse — v0.10.602: GET /api/oracle/errors (oracle_logs_routes.go).
+// enabled:false = etkin Oracle kaynağı yok (CH'ye gidilmedi) — "satır yok"
+// DEĞİL; panel bunu ayırt eder.
+export interface OracleLogsResponse {
+  enabled: boolean;
+  logs: LogRow[];
+  total: number;
 }
 
 export interface LogsResponse {

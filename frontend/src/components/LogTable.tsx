@@ -441,6 +441,15 @@ function LogRow({
                     event
                   </span>
                 )}
+                {/* v0.10.602 — Oracle hata tablosu satırı (audit §4): kaynağı
+                    logstore değil, kendi tablosu; rozet "bu bir log değil,
+                    bir DB satırı" der. */}
+                {l.origin === 'oracle' && (
+                  <span className="badge b-info" style={{ marginRight: 6, fontSize: 9 }}
+                        title="Oracle hata tablosundan (MCA_TERROR_LOG) alınan satır — uygulama logu değil">
+                    oracle
+                  </span>
+                )}
                 {highlightTerms && highlightTerms.length > 0
                   ? highlightSegments(l.body, highlightTerms).map((s, i) =>
                       s.hl ? <mark key={i} className="log-mark">{s.text}</mark> : <span key={i}>{s.text}</span>)

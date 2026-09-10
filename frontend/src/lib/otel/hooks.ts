@@ -8,7 +8,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { SpanRow, LogRow, TraceRow } from '@/lib/types';
+import type { OracleLogsResponse, SpanRow, LogRow, TraceRow } from '@/lib/types';
 import { resolveResource, scopeKey, type ResourceIdentity } from './semconv';
 import { extractSpanLinks, spanExceptions, type SpanLink, type ExceptionInfo } from './links';
 
@@ -95,6 +95,26 @@ export function useCorrelatedLogs(
       return { logs: res?.logs ?? [], total: res?.total, degraded: res?.degraded, reason: res?.reason };
     },
     enabled: !!traceId,
+    staleTime: 30_000,
+  });
+}
+
+// useOracleTraceLogs — v0.10.602 (Oracle Aşama 2, audit §4 Seçenek A): trace'in
+// Oracle hata tablosu satırları (/api/oracle/errors → oracle_error_log). Pencere
+// useCorrelatedLogs ile AYNI (traceLogWindow, span-ankrajlı); penceresiz istek
+// YOK — sunucu from/to ister. Yalnız Logs sekmesi açıkken (enabled): liste
+// boyunca prefetch yok, staleTime = sunucu TTL (30 s). enabled:false cevabı
+// "Oracle kaynağı yok" demektir, "satır yok" değil.
+export function useOracleTraceLogs(
+  traceId: string | undefined,
+  opts: { from?: number; to?: number; enabled?: boolean; limit?: number },
+) {
+  const { from, to } = opts;
+  const limit = opts.limit ?? 200;
+  return useQuery<OracleLogsResponse>({
+    queryKey: ['otel', 'oracle-logs', traceId ?? '', limit, from ?? 0, to ?? 0],
+    queryFn: () => api.oracleTraceLogs(traceId!, from!, to!, limit),
+    enabled: !!traceId && !!from && !!to && (opts.enabled ?? true),
     staleTime: 30_000,
   });
 }

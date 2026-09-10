@@ -882,11 +882,21 @@ export function CorePanel({
         tt.style.display = 'none';
         return;
       }
+      // v0.10.585 (operatör: "tüm pencerelerde popup çıkmasın, kalabalık") —
+      // tooltip YALNIZ gerçek hover'daki panelde. Senkron kardeşlere gelen
+      // setCursor UZAKTIR: uPlot cursor.event yalnız kaynakta dolu. Crosshair
+      // ve cursorTime kanalı yukarıda yaşamaya devam eder (senkron bozulmaz),
+      // yalnız kutu çizilmez. Pin guard'ı bunun ÜSTÜNDE: sabitlenmiş kutu
+      // uzak imleçte de donuk kalır, kaybolmaz.
+      const realHover = (u.cursor as { event?: unknown }).event != null;
+      if (!realHover) {
+        tt.style.display = 'none';
+        return;
+      }
       // v0.10.180/182 — imleç bir bant ŞERİDİNDEYSE tooltip'in BAŞINA bölge
       // başlığı eklenir (seri satırları KALIR — tepe değeri kaybolmasın, #4).
       // Yalnız GERÇEK hover: senkron kardeşte cursor.top kaynağın y-değeridir,
       // pointer değil (#3) — uPlot cursor.event yalnız kaynakta dolu.
-      const realHover = (u.cursor as { event?: unknown }).event != null;
       const hitRegion = realHover ? regionAt(u, regionsRef.current, 1000, u.cursor.left ?? 0, u.cursor.top ?? 0) : null;
       let regionHTML = '';
       if (hitRegion) {

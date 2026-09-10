@@ -14,11 +14,40 @@ export function kafkaSeriesLabel(groupKey: string[] | null | undefined): string 
   return parts.length ? parts.join(' · ') : '(tümü)';
 }
 
+// v0.10.595 — GRAFİK/TOOLTIP etiketleri kısa. Operatör ekranı: her tooltip
+// satırı "servis · consumer-…-<uuid>-7" idi, altı panel okunmuyordu.
+//   1. blokta tüm serilerde aynı olan sütun düşer (kapsam başlıkta zaten),
+//      en az bir sütun kalır
+//   2. UUID ilk 8 karaktere iner; sondaki -N örnek indeksi KALIR
+//   3. kısaltma iki seriyi çakıştırırsa o seriler TAM etikete düşer
+// Son-değer tablosu (kafkaLastRows) TAM etiketi korur — sütunu var.
+const UUID_RE = /\b([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+
+export function kafkaShortLabels(series: Array<{ groupKey?: string[] | null }>): string[] {
+  const keys = series.map(s => (s.groupKey ?? []).map(v => (v ?? '').trim()));
+  const cols = Math.max(0, ...keys.map(k => k.length));
+  const keep: number[] = [];
+  for (let c = 0; c < cols; c++) {
+    const vals = new Set(keys.map(k => k[c] ?? ''));
+    if (vals.size > 1) keep.push(c);
+  }
+  // Hepsi ortaksa (tek seri ya da aynı anahtar) en az bir sütun kalsın.
+  const cols2 = keep.length ? keep : (cols ? [cols - 1] : []);
+  const short = keys.map(k => {
+    const parts = cols2.map(c => (k[c] ?? '').replace(UUID_RE, '$1…')).filter(Boolean);
+    return parts.length ? parts.join(' · ') : '(tümü)';
+  });
+  const seen = new Map<string, number>();
+  for (const l of short) seen.set(l, (seen.get(l) ?? 0) + 1);
+  return short.map((l, i) => (seen.get(l)! > 1 ? kafkaSeriesLabel(series[i].groupKey) : l));
+}
+
 export function kafkaBlockItems(block: KafkaMetricBlock | null | undefined): { items: CorePanelMultiItem[]; truncated: number } {
   const series = block?.series ?? [];
   const shown = series.slice(0, KAFKA_SERIES_CAP);
+  const names = kafkaShortLabels(shown);
   return {
-    items: shown.map(s => ({ name: kafkaSeriesLabel(s.groupKey), role: 'data' as const, series: [s] })),
+    items: shown.map((s, i) => ({ name: names[i], role: 'data' as const, series: [s] })),
     truncated: Math.max(0, series.length - shown.length),
   };
 }

@@ -19,22 +19,22 @@ import (
 
 const mapperXML = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.acme.fraud.IntTfraudMapper">
-  <resultMap id="ariCTelefonSelect" type="com.acme.fraud.Telefon">
-    <result column="TELNO" property="telNo"/>
+<mapper namespace="com.acme.fraud.OrderPhoneMapper">
+  <resultMap id="orderPhoneSelect" type="com.acme.order.Phone">
+    <result column="PHONE" property="phone"/>
   </resultMap>
-  <sql id="cols">TELNO, MUSTERI_NO</sql>
-  <select id="baskaSelect" resultMap="ariCTelefonSelect">
+  <sql id="cols">PHONE, CUSTOMER_NO</sql>
+  <select id="baskaSelect" resultMap="orderPhoneSelect">
     SELECT <include refid="cols"/> FROM TFRAUD WHERE X = #{x}
   </select>
-  <select id="ariCTelefonSelect" resultMap="ariCTelefonSelect">
+  <select id="orderPhoneSelect" resultMap="orderPhoneSelect">
     SELECT <include refid="cols"/>
-      FROM INT_TFRAUD
-     WHERE MUSTERI_NO = #{musteriNo}
-       AND TELNO = <![CDATA[ #{telNo} ]]>
+      FROM ORDER_PHONE
+     WHERE CUSTOMER_NO = #{customerNo}
+       AND PHONE = <![CDATA[ #{phone} ]]>
   </select>
-  <insert id="ariCTelefonInsert">
-    INSERT INTO INT_TFRAUD (MUSTERI_NO, TELNO) VALUES (#{musteriNo}, #{telNo})
+  <insert id="orderPhoneInsert">
+    INSERT INTO ORDER_PHONE (CUSTOMER_NO, PHONE) VALUES (#{customerNo}, #{phone})
   </insert>
 </mapper>
 `
@@ -48,9 +48,9 @@ func TestMapperStatementWindowTable(t *testing.T) {
 		wantHas  string
 		wantNone bool
 	}{
-		{"select bloğu, gerçek satır numaralarıyla", "ariCTelefonSelect", 11, 16, "FROM INT_TFRAUD", false},
-		{"resultMap aynı id'yi taşıyor ama STATEMENT önce", "ariCTelefonSelect", 11, 16, "<select id=\"ariCTelefonSelect\"", false},
-		{"insert bloğu", "ariCTelefonInsert", 17, 19, "INSERT INTO INT_TFRAUD", false},
+		{"select bloğu, gerçek satır numaralarıyla", "orderPhoneSelect", 11, 16, "FROM ORDER_PHONE", false},
+		{"resultMap aynı id'yi taşıyor ama STATEMENT önce", "orderPhoneSelect", 11, 16, "<select id=\"orderPhoneSelect\"", false},
+		{"insert bloğu", "orderPhoneInsert", 17, 19, "INSERT INTO ORDER_PHONE", false},
 		{"sql fragment", "cols", 7, 7, "<sql id=\"cols\">", false},
 		{"id yok → boş", "yokBoyleBirsey", 0, 0, "", true},
 		{"boş id → boş", "", 0, 0, "", true},
@@ -115,36 +115,36 @@ func TestMapperStatementWindowCap(t *testing.T) {
 // önce statement bloğu; Member yok ya da bulunamadıysa eski ilk-200
 // davranışı (v0.10.73) aynen.
 func TestHuntResourcesPrefersStatementBlock(t *testing.T) {
-	paths := []string{"/src/main/resources/mapper/IntTfraudMapper.xml", "/src/main/resources/mapper/Other.xml"}
+	paths := []string{"/src/main/resources/mapper/OrderPhoneMapper.xml", "/src/main/resources/mapper/Other.xml"}
 	fetch := func(_ context.Context, p string) (string, error) {
-		if strings.HasSuffix(p, "IntTfraudMapper.xml") {
+		if strings.HasSuffix(p, "OrderPhoneMapper.xml") {
 			return mapperXML, nil
 		}
 		return "<mapper>\n<select id=\"q\">SELECT 1</select>\n</mapper>\n", nil
 	}
 	refs := []stackparse.ResourceRef{
-		{Base: "IntTfraudMapper", Member: "ariCTelefonSelect"},
+		{Base: "OrderPhoneMapper", Member: "orderPhoneSelect"},
 		{Base: "Other"},
 	}
 	ws := huntResources(context.Background(), refs, paths, fetch)
 	if len(ws) != 2 {
 		t.Fatalf("pencere=%d, 2 bekleniyordu: %+v", len(ws), ws)
 	}
-	if ws[0].FromLine != 11 || !strings.Contains(ws[0].Content, "FROM INT_TFRAUD") || ws[0].Frame != "statement id: ariCTelefonSelect" {
+	if ws[0].FromLine != 11 || !strings.Contains(ws[0].Content, "FROM ORDER_PHONE") || ws[0].Frame != "statement id: orderPhoneSelect" {
 		t.Errorf("statement bloğu seçilmedi: %+v", ws[0])
 	}
 	if ws[1].FromLine != 1 || ws[1].Frame != "" {
 		t.Errorf("Member'sız aday ilk-N davranışını kaybetti: %+v", ws[1])
 	}
 	// Member var ama XML'de yok → ilk-N'e düşer (fail-open).
-	refs = []stackparse.ResourceRef{{Base: "IntTfraudMapper", Member: "olmayanId"}}
+	refs = []stackparse.ResourceRef{{Base: "OrderPhoneMapper", Member: "olmayanId"}}
 	ws = huntResources(context.Background(), refs, paths, fetch)
 	if len(ws) != 1 || ws[0].FromLine != 1 {
 		t.Errorf("bulunamayan id ilk-N'e düşmedi: %+v", ws)
 	}
 	// Prompt etiketi: statement penceresi satır aralığı ve id ile sunulur.
-	block := (CodeContext{Repo: "r", Windows: []CodeWindow{ws[0], {Path: "/m.xml", Resource: true, FromLine: 11, ToLine: 16, Frame: "statement id: ariCTelefonSelect", Content: "11| x"}}}).PromptBlock()
-	if !strings.Contains(block, "(satır 11-16, statement id: ariCTelefonSelect)") {
+	block := (CodeContext{Repo: "r", Windows: []CodeWindow{ws[0], {Path: "/m.xml", Resource: true, FromLine: 11, ToLine: 16, Frame: "statement id: orderPhoneSelect", Content: "11| x"}}}).PromptBlock()
+	if !strings.Contains(block, "(satır 11-16, statement id: orderPhoneSelect)") {
 		t.Errorf("prompt etiketi: %s", block)
 	}
 }

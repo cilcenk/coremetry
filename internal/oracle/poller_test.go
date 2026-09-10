@@ -68,14 +68,14 @@ type queryCall struct {
 }
 
 func testSource() SourceConfig {
-	return SourceConfig{ID: "o-aaaaaaaa", Name: "prod-eu", Enabled: true, Schema: "PMCACOM", Table: "MCA_TERROR_LOG",
+	return SourceConfig{ID: "o-aaaaaaaa", Name: "prod-eu", Enabled: true, Schema: "SHOP", Table: "MCA_TERROR_LOG",
 		User: "u", Password: "p", Host: "db", Port: 1521, ServiceName: "svc", IntervalSec: 60}
 }
 
 func oracleRow(ts time.Time, msg string) map[string]any {
 	return map[string]any{
 		"MCA_ERR_TIMESTAMP": ts, "MCA_ERR_SEVERITY": "E", "MCA_ERR_MESSAGE": msg,
-		"MCA_ERR_TRACEID": "4bf92f3577b34da6a3ce929d0e0e4736", "MCA_ERR_TYPE": "T", "MCA_ERR_CODE": "BSA_020",
+		"MCA_ERR_TRACEID": "4bf92f3577b34da6a3ce929d0e0e4736", "MCA_ERR_TYPE": "T", "MCA_ERR_CODE": "ERR_020",
 	}
 }
 
@@ -107,7 +107,7 @@ func TestPollFirstWindowAndBindWallClock(t *testing.T) {
 		t.Fatalf("1 sorgu bekleniyor, %d", len(*calls))
 	}
 	c := (*calls)[0]
-	for _, want := range []string{"FROM PMCACOM.MCA_TERROR_LOG", "MCA_ERR_TIMESTAMP > :1 AND MCA_ERR_TIMESTAMP <= :2", "MCA_ERR_TYPE IN (:3)", "ORDER BY MCA_ERR_TIMESTAMP ASC", "FETCH FIRST 5000 ROWS ONLY"} {
+	for _, want := range []string{"FROM SHOP.MCA_TERROR_LOG", "MCA_ERR_TIMESTAMP > :1 AND MCA_ERR_TIMESTAMP <= :2", "MCA_ERR_TYPE IN (:3)", "ORDER BY MCA_ERR_TIMESTAMP ASC", "FETCH FIRST 5000 ROWS ONLY"} {
 		if !strings.Contains(c.sql, want) {
 			t.Errorf("poll SQL %q içermeli:\n%s", want, c.sql)
 		}

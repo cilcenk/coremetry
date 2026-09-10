@@ -91,7 +91,7 @@ func repeat(v float64, n int) []float64 {
 	return out
 }
 
-var extTarget = ExternalTarget{SourceID: "i-1", SourceName: "ggfail", Query: "tfail_adet", GroupBy: []string{"OPERATIONCODE", "ERRORCODE"}}
+var extTarget = ExternalTarget{SourceID: "i-1", SourceName: "extsrc", Query: "fail_count", GroupBy: []string{"OP_CODE", "ERR_CODE"}}
 
 func newExtScanner(f *fakeExtStore, now time.Time) *ExternalScanner {
 	s := NewExternalScanner(f, nil)
@@ -115,10 +115,10 @@ func TestExternalScan_OpensProblemOnSpike(t *testing.T) {
 	if p.Kind != chstore.ProblemKindExternal || p.Status != "open" || p.ID == "" {
 		t.Fatalf("kind=external open problem, got %+v", p)
 	}
-	if p.Service != "ext:ggfail/OP1/E1" || p.Metric != "ext:tfail_adet" || p.RuleID != "anomaly:ext:ggfail/OP1/E1:ext:tfail_adet" {
+	if p.Service != "ext:extsrc/OP1/E1" || p.Metric != "ext:fail_count" || p.RuleID != "anomaly:ext:extsrc/OP1/E1:ext:fail_count" {
 		t.Fatalf("subject/metric/rule: %q %q %q", p.Service, p.Metric, p.RuleID)
 	}
-	if !strings.Contains(p.Description, "OPERATIONCODE=OP1") || !strings.Contains(p.Description, "ERRORCODE=E1") {
+	if !strings.Contains(p.Description, "OP_CODE=OP1") || !strings.Contains(p.Description, "ERR_CODE=E1") {
 		t.Fatalf("reason string carries labels: %q", p.Description)
 	}
 	if p.Severity == "" || p.Comparator == "" || p.Value != 60 {
@@ -130,7 +130,7 @@ func TestExternalScan_OpensProblemOnSpike(t *testing.T) {
 		t.Fatalf("baseline median must come from the live series (5), got %v", p.Threshold)
 	}
 	q := f.queries[0]
-	if q.Name != "ext:tfail_adet" || q.Service != "ggfail" || q.StepSeconds != 60 || len(q.GroupBy) != 2 || q.GroupBy[0] != "OPERATIONCODE" {
+	if q.Name != "ext:fail_count" || q.Service != "extsrc" || q.StepSeconds != 60 || len(q.GroupBy) != 2 || q.GroupBy[0] != "OP_CODE" {
 		t.Fatalf("metric query filter: %+v", q)
 	}
 }
@@ -138,8 +138,8 @@ func TestExternalScan_OpensProblemOnSpike(t *testing.T) {
 func TestExternalScan_TouchesOpenProblemWhileQuiet(t *testing.T) {
 	cfg := chstore.DefaultAnomalySensitivity()
 	now := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
-	open := chstore.Problem{ID: "p-open", RuleID: "anomaly:ext:ggfail/OP1/E1:ext:tfail_adet", Service: "ext:ggfail/OP1/E1",
-		Kind: chstore.ProblemKindExternal, Metric: "ext:tfail_adet", Status: "open", Severity: "critical", Value: 60}
+	open := chstore.Problem{ID: "p-open", RuleID: "anomaly:ext:extsrc/OP1/E1:ext:fail_count", Service: "ext:extsrc/OP1/E1",
+		Kind: chstore.ProblemKindExternal, Metric: "ext:fail_count", Status: "open", Severity: "critical", Value: 60}
 	// Hâlâ yüksek ama dwell penceresinin tamamı kritik z üstünde DEĞİL:
 	// karar "none" — problem açık kalır ve dokunulur.
 	vals := append(baselineVals(30), 60, 5, 5)
@@ -160,8 +160,8 @@ func TestExternalScan_TouchesOpenProblemWhileQuiet(t *testing.T) {
 func TestExternalScan_ResolvesOnRecovery(t *testing.T) {
 	cfg := chstore.DefaultAnomalySensitivity()
 	now := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
-	open := chstore.Problem{ID: "p-open", RuleID: "anomaly:ext:ggfail/OP1/E1:ext:tfail_adet", Service: "ext:ggfail/OP1/E1",
-		Kind: chstore.ProblemKindExternal, Metric: "ext:tfail_adet", Status: "open", Severity: "critical", Value: 60}
+	open := chstore.Problem{ID: "p-open", RuleID: "anomaly:ext:extsrc/OP1/E1:ext:fail_count", Service: "ext:extsrc/OP1/E1",
+		Kind: chstore.ProblemKindExternal, Metric: "ext:fail_count", Status: "open", Severity: "critical", Value: 60}
 	vals := append(baselineVals(30), repeat(5, cfg.DwellBuckets+2)...)
 	f := &fakeExtStore{cfg: cfg, open: []chstore.Problem{open},
 		series: []chstore.SpanMetricSeries{extSeries(vals, now, "OP1", "E1")}}
@@ -286,10 +286,10 @@ func TestObservedSpan_ClampsToSlots(t *testing.T) {
 }
 
 func TestExternalSubject(t *testing.T) {
-	if got := ExternalSubject("ggfail", []string{"OP1", "E1"}); got != "ext:ggfail/OP1/E1" {
+	if got := ExternalSubject("extsrc", []string{"OP1", "E1"}); got != "ext:extsrc/OP1/E1" {
 		t.Fatalf("got %q", got)
 	}
-	if got := ExternalSubject("ggfail", nil); got != "ext:ggfail" {
+	if got := ExternalSubject("extsrc", nil); got != "ext:extsrc" {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -369,7 +369,7 @@ func TestExternalScan_SeasonalBaselinePreventsFalseOpen(t *testing.T) {
 		t.Fatalf("seasonal baseline (60 at this hour) must not open: %+v", rep)
 	}
 	req := f.seasonalReqs[0]
-	if req.Metric != "ext:tfail_adet" || req.Service != "ggfail" || req.Class != "weekday" || req.TargetSod != 36000 || req.RadiusSec != 900 || len(req.GroupBy) != 2 {
+	if req.Metric != "ext:fail_count" || req.Service != "extsrc" || req.Class != "weekday" || req.TargetSod != 36000 || req.RadiusSec != 900 || len(req.GroupBy) != 2 {
 		t.Fatalf("seasonal request: %+v", req)
 	}
 	if !req.Cutoff.Equal(now.Add(-14 * 24 * time.Hour)) || !req.Upper.Before(now) {

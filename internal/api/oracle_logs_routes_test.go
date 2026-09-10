@@ -19,7 +19,7 @@ func sampleOracleRow() chstore.OracleErrorRow {
 	return chstore.OracleErrorRow{
 		SourceID: "o-11111111", Time: time.Unix(0, 1_757_500_000_000_000_000).UTC(), RowID: 0xFFFF_FFFF_FFFF_FFFF,
 		SeverityNum: 17, SeverityText: "ERROR", Body: "ORA-01555", TraceID: "4bf92f3577b34da6a3ce929d0e0e4736",
-		HostName: "app-01", InstanceID: "shop-payment-7f9c", OperationCode: "PAY_TRANSFER", ErrorCode: "BSA_020",
+		HostName: "app-01", InstanceID: "shop-payment-7f9c", OperationCode: "PAY_TRANSFER", ErrorCode: "ERR_020",
 		ExternalCode: "", ErrorType: "T", ChannelCode: "MOB", TaskCode: "", RequestID: "req-42",
 		AttrKeys: []string{"MCA_ERR_NUM", "MCA_ERR_SQLTEXT"}, AttrValues: []string{"7", "select 1"},
 	}
@@ -34,7 +34,7 @@ func TestOracleLogRowProjection(t *testing.T) {
 		t.Errorf("zaman/severity/gövde: %+v", row)
 	}
 	want := map[string]string{
-		"operation.code": "PAY_TRANSFER", "error.code": "BSA_020", "error.type": "T", "channel.code": "MOB",
+		"operation.code": "PAY_TRANSFER", "error.code": "ERR_020", "error.type": "T", "channel.code": "MOB",
 		"request.id": "req-42", "MCA_ERR_NUM": "7", "MCA_ERR_SQLTEXT": "select 1",
 	}
 	if len(row.Attributes) != len(want) {

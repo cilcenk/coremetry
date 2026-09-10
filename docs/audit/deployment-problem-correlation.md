@@ -112,7 +112,7 @@ type RolloutEvidence struct {
 | B | servis → `(cluster, k8s_namespace, workload, revision)` | `workload_revision_activity_1m` `WHERE service_name = ? AND bucket ∈ [onset−120 dk, onset]` — **`RolloutServices`'in tersi, YENİ** `RolloutsForService` | ❌ yazılacak (PK öneki cluster → `cluster IN (span değerleri)` ile) |
 | C | `(cluster, ns, workload)` → rollout'lar | `RolloutList` / `rolloutWhere`, `started_at ∈ [onset−120 dk, onset+5 dk]` | ✅ var |
 | D | cluster kimliği çevirisi | span değeri ↔ `EffectiveID`: `ClusterConfig.SpanClusterKeys()` (`thanos/cluster_identity.go:67-80`), emsal `rollout_detail.go:59-79 resolveCluster` | ✅ var |
-| E | pod → revizyon (Influx `INSTANCEID`/`k8s.pod.name`, runtime pod problemleri) | `k8s_replicaset` terfi kolonu: `SELECT any(k8s_replicaset), any(k8s_namespace), any(k8s_deployment) FROM spans WHERE k8s_pod = ? AND time ∈ [onset−15 dk, onset] LIMIT 1` (skip index `idx_k8s_pod` var) → revizyon eşleşen rollout | ❌ yazılacak; `podTemplateHash` yedek |
+| E | pod → revizyon (Influx `INSTANCE_TAG`/`k8s.pod.name`, runtime pod problemleri) | `k8s_replicaset` terfi kolonu: `SELECT any(k8s_replicaset), any(k8s_namespace), any(k8s_deployment) FROM spans WHERE k8s_pod = ? AND time ∈ [onset−15 dk, onset] LIMIT 1` (skip index `idx_k8s_pod` var) → revizyon eşleşen rollout | ❌ yazılacak; `podTemplateHash` yedek |
 | F | `Problem.StartedAt` **ns** ↔ `started_at` **ms** | | birim çevirisi — test şart (unit-mixing dersi) |
 
 `Problem.Kind` (service/db/external) ile `workload_kind` KARIŞTIRILMAZ.

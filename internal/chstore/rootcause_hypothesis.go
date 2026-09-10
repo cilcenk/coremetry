@@ -109,7 +109,7 @@ type ExternalMetricEvidence struct {
 	UpdatedNs   int64              `json:"updatedNs"`
 }
 
-// PodHit — INSTANCEID (k8s.pod.name) sayımı; Problem.Pod tek string olduğu
+// PodHit — INSTANCE_TAG (k8s.pod.name) sayımı; Problem.Pod tek string olduğu
 // için liste kanıta yazılır.
 type PodHit struct {
 	Pod        string `json:"pod"`

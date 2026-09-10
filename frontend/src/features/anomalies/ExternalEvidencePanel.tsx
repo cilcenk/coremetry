@@ -36,7 +36,7 @@ const TRACE_COLS: DataTableColumn<ExternalTraceRow>[] = [
 ];
 
 const POD_COLS: DataTableColumn<PodHit>[] = [
-  { id: 'pod', label: 'Pod (INSTANCEID)', width: 320, sortValue: r => r.pod },
+  { id: 'pod', label: 'Pod', width: 320, sortValue: r => r.pod },
   { id: 'count', label: 'Satır', width: 90, numeric: true, sortValue: r => r.count },
   { id: 'last', label: 'Son görülme', width: 176, numeric: true, sortValue: r => r.lastSeenNs },
 ];
@@ -187,7 +187,7 @@ export function ExternalEvidencePanel({ problem, window: win }: {
 
       {/* 4. Pod'lar */}
       <EvidenceBlock title="Etkilenen pod'lar" count={pods.length}>
-        {pods.length === 0 ? <Muted>Pod kanıtı yok (SORGU 2 INSTANCEID döndürmedi).</Muted> : (
+        {pods.length === 0 ? <Muted>Pod kanıtı yok (kaynak pod kimliği döndürmedi).</Muted> : (
           <div className="table-wrap">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dtP} />

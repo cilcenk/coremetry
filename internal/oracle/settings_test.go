@@ -179,7 +179,7 @@ func TestNormalize_ExtraWhereBannedTokens(t *testing.T) {
 	}
 	// Meşru yüklem geçer.
 	src := base()
-	src.ExtraWhere = "MCA_ERR_CODE NOT IN ('BSA_000') AND MCA_ERR_CHANNELCODE IS NOT NULL"
+	src.ExtraWhere = "MCA_ERR_CODE NOT IN ('ERR_000') AND MCA_ERR_CHANNELCODE IS NOT NULL"
 	out, err := Normalize(one(src), Settings{}, NewSourceID)
 	if err != nil {
 		t.Fatalf("meşru extraWhere reddedildi: %v", err)

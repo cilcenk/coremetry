@@ -27,9 +27,9 @@ func schemaServer(t *testing.T, fp *fakeProvider, rec copilot.Recorder) *Server 
 	s := codeServer(t, fp, rec)
 	cat, err := appschema.ParseCSV(strings.NewReader(
 		"TABSCHEMA,TABNAME,COLNAME,TYPENAME,LENGTH,SCALE,NULLS\n" +
-			"BSA,INT_TFRAUD,MUSTERI_NO,DECIMAL,15,0,N\n" +
-			"BSA,INT_TFRAUD,TELNO,VARCHAR,10,0,N\n" +
-			"BSA,INT_TFRAUD,ACIKLAMA,VARCHAR,200,0,Y\n"))
+			"SHOP,ORDER_PHONE,CUSTOMER_NO,DECIMAL,15,0,N\n" +
+			"SHOP,ORDER_PHONE,PHONE,VARCHAR,10,0,N\n" +
+			"SHOP,ORDER_PHONE,NOTE,VARCHAR,200,0,Y\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,19 +46,19 @@ func TestSchemaEvidenceEndToEnd(t *testing.T) {
 
 	// (1) Kanıt kurulumu: hata metni sinyali + hata span'ının SQL'i.
 	se := s.buildSchemaEvidence(testDB2Stack,
-		[]string{"INSERT INTO BSA.INT_TFRAUD (MUSTERI_NO, TELNO) VALUES (?, ?)"}, nil)
+		[]string{"INSERT INTO SHOP.ORDER_PHONE (CUSTOMER_NO, PHONE) VALUES (?, ?)"}, nil)
 	if !se.Signal || se.Columns != 2 {
 		t.Fatalf("kanıt: signal=%v columns=%d\n%s", se.Signal, se.Columns, se.Block)
 	}
-	for _, want := range []string{"ŞEMA BAĞLAMI", "2026-08-28", "SQLCODE -302, SQLSTATE 22001", "INT_TFRAUD.TELNO VARCHAR(10) NOT NULL", "INT_TFRAUD.MUSTERI_NO DECIMAL(15) NOT NULL"} {
+	for _, want := range []string{"ŞEMA BAĞLAMI", "2026-08-28", "SQLCODE -302, SQLSTATE 22001", "ORDER_PHONE.PHONE VARCHAR(10) NOT NULL", "ORDER_PHONE.CUSTOMER_NO DECIMAL(15) NOT NULL"} {
 		if !strings.Contains(se.Block, want) {
 			t.Errorf("blokta yok: %q\n%s", want, se.Block)
 		}
 	}
-	if strings.Contains(se.Block, "ACIKLAMA") {
+	if strings.Contains(se.Block, "NOTE") {
 		t.Error("INSERT listesinde olmayan kolon gönderildi")
 	}
-	if se.Summary != "\n\n[şema: INT_TFRAUD · 2 kolon]" {
+	if se.Summary != "\n\n[şema: ORDER_PHONE · 2 kolon]" {
 		t.Errorf("maske özeti: %q", se.Summary)
 	}
 
@@ -76,14 +76,14 @@ func TestSchemaEvidenceEndToEnd(t *testing.T) {
 	if ci < 0 || si < 0 || si < ci {
 		t.Fatalf("sıra kod > şema değil (kod=%d şema=%d)", ci, si)
 	}
-	if !strings.Contains(sent, "INT_TFRAUD.TELNO VARCHAR(10) NOT NULL") {
+	if !strings.Contains(sent, "ORDER_PHONE.PHONE VARCHAR(10) NOT NULL") {
 		t.Fatal("kolon tanımı modele gitmedi")
 	}
 	sample := rec.wait(t, 1)[0].PromptSample
 	if strings.Contains(sample, "VARCHAR(10)") || strings.Contains(sample, "SECRET_MARK") {
 		t.Fatalf("kayıt kopyası kolon tanımı/kod taşıyor:\n%s", sample)
 	}
-	if !strings.Contains(sample, "[şema: INT_TFRAUD · 2 kolon]") || !strings.Contains(sample, "[kod: core-service/src/CardService.java:27-31") {
+	if !strings.Contains(sample, "[şema: ORDER_PHONE · 2 kolon]") || !strings.Contains(sample, "[kod: core-service/src/CardService.java:27-31") {
 		t.Fatalf("kayıt özetleri eksik:\n%s", sample)
 	}
 
@@ -94,7 +94,7 @@ func TestSchemaEvidenceEndToEnd(t *testing.T) {
 	if _, err := s2.copilotExplainEvidence(r, copilot.SystemPromptException(), copilot.SystemPromptExceptionWithCode(), "Exception GRUBU: x", miss, se); err != nil {
 		t.Fatal(err)
 	}
-	if p := fp2.sent()[0]; !strings.Contains(p, "KOD BAĞLAMI İSTENDİ — ÇÖZÜLEMEDİ") || !strings.Contains(p, "INT_TFRAUD.TELNO VARCHAR(10)") {
+	if p := fp2.sent()[0]; !strings.Contains(p, "KOD BAĞLAMI İSTENDİ — ÇÖZÜLEMEDİ") || !strings.Contains(p, "ORDER_PHONE.PHONE VARCHAR(10)") {
 		t.Fatalf("kodsuz yolda şema düştü:\n%s", p)
 	}
 }
@@ -114,7 +114,7 @@ func TestSchemaEvidenceDegradesHonestly(t *testing.T) {
 	// Sinyal yok ama mapper bloğu katalogda bir tabloya işaret ediyor →
 	// kolonlar gider (sorgu hatası SQLCODE taşımadan da olabilir).
 	se = s.buildSchemaEvidence("java.sql.SQLException: timeout", nil,
-		[]string{"11| <select id=\"q\">\n12| SELECT TELNO FROM INT_TFRAUD WHERE MUSTERI_NO = #{m}\n13| </select>"})
+		[]string{"11| <select id=\"q\">\n12| SELECT PHONE FROM ORDER_PHONE WHERE CUSTOMER_NO = #{m}\n13| </select>"})
 	if se.Columns != 3 || strings.Contains(se.Block, "Hata sinyali") {
 		t.Errorf("mapper hedefi: %+v", se)
 	}

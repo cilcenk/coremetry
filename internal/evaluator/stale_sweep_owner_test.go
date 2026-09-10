@@ -20,8 +20,8 @@ func TestStaleSweepCandidates(t *testing.T) {
 	stale := []chstore.Problem{
 		{ID: "a", RuleID: "anomaly:shop-payment:p99_ms"},
 		{ID: "b", RuleID: chstore.RuleExtDownPrefix + "ext:oracle-errlog"},
-		{ID: "c", RuleID: "anomaly:ext:ggfail/OP1/E1:ext:tfail_adet"}, // seri Problem'i — SÜPÜRÜLÜR
-		{ID: "d", RuleID: chstore.RuleExtCapPrefix + "ext:ggfail:ext:tfail_adet"},
+		{ID: "c", RuleID: "anomaly:ext:extsrc/OP1/E1:ext:fail_count"}, // seri Problem'i — SÜPÜRÜLÜR
+		{ID: "d", RuleID: chstore.RuleExtCapPrefix + "ext:extsrc:ext:fail_count"},
 	}
 	toClose, skipped := staleSweepCandidates(stale, nil) // nil = 592 davranışı
 	ids := func(ps []chstore.Problem) string {
@@ -40,9 +40,9 @@ func TestStaleSweepCandidates(t *testing.T) {
 	if tc, sk := staleSweepCandidates(nil, nil); len(tc) != 0 || len(sk) != 0 {
 		t.Fatal("boş girdi boş çıktı")
 	}
-	// v0.10.605 — canlılık: oracle-errlog yaşıyor, ggfail silinmiş → d (ggfail
+	// v0.10.605 — canlılık: oracle-errlog yaşıyor, extsrc silinmiş → d (extsrc
 	// ext-cap) SÜPÜRÜLÜR, b (oracle ext-down) muaf kalır. Özne ext-cap'ten
-	// metriksiz çıkarılır ("ext:ggfail:ext:tfail_adet" → "ext:ggfail").
+	// metriksiz çıkarılır ("ext:extsrc:ext:fail_count" → "ext:extsrc").
 	live := func(subject string) bool { return subject == "ext:oracle-errlog" }
 	toClose, skipped = staleSweepCandidates(stale, live)
 	if got := ids(toClose); got != "a,c,d" {

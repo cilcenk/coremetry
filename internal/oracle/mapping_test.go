@@ -31,7 +31,7 @@ func sampleRow() map[string]any {
 		"MCA_ERR_HOSTNAME":      "app-01",
 		"MCA_ERR_INSTANCE_ID":   "shop-payment-7f9c",
 		"MCA_ERR_SERVICE":       "PAY_TRANSFER",
-		"MCA_ERR_CODE":          "BSA_020",
+		"MCA_ERR_CODE":          "ERR_020",
 		"MCA_ERR_EXTERNAL_CODE": "X-12",
 		"MCA_ERR_TYPE":          "T",
 		"MCA_ERR_CHANNELCODE":   "MOB",
@@ -162,7 +162,7 @@ func TestMapFieldsAndExtras(t *testing.T) {
 	if r.SeverityNum != 17 || r.SeverityText != "ERROR" {
 		t.Errorf("severity E → 17/ERROR, got %d/%s", r.SeverityNum, r.SeverityText)
 	}
-	if r.Body != "ORA-01555: snapshot too old" || r.OperationCode != "PAY_TRANSFER" || r.ErrorCode != "BSA_020" ||
+	if r.Body != "ORA-01555: snapshot too old" || r.OperationCode != "PAY_TRANSFER" || r.ErrorCode != "ERR_020" ||
 		r.ExternalCode != "X-12" || r.ErrorType != "T" || r.ChannelCode != "MOB" || r.TaskCode != "TASK9" ||
 		r.RequestID != "req-42" || r.CustomerID != "c-1" || r.TellerID != "" || r.Location != "ist" ||
 		r.HostName != "app-01" || r.InstanceID != "shop-payment-7f9c" || r.SpanID != "" {

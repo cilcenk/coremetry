@@ -14,12 +14,12 @@ func TestPollerOwnedSubject(t *testing.T) {
 		ok   bool
 	}{
 		{RuleExtDownPrefix + "ext:prod-eu", "ext:prod-eu", true},
-		{RuleExtCapPrefix + "ext:prod-eu:ext:tfail_adet", "ext:prod-eu", true}, // metrik iki nokta taşır
+		{RuleExtCapPrefix + "ext:prod-eu:ext:fail_count", "ext:prod-eu", true}, // metrik iki nokta taşır
 		{RuleExtCapPrefix + "ext:prod-eu:cnt", "ext:prod-eu", true},
 		{RuleExtCapPrefix + "ext:prod-eu", "ext:prod-eu", true}, // metriksiz (savunma)
 		{RuleExtDownPrefix, "", false},
 		{RuleExtCapPrefix + ":x", "", false},
-		{"anomaly:ext:prod-eu/OP1:ext:tfail_adet", "", false}, // seri Problem'i — sahipli değil
+		{"anomaly:ext:prod-eu/OP1:ext:fail_count", "", false}, // seri Problem'i — sahipli değil
 		{"anomaly:shop:p99_ms", "", false},
 		{"", "", false},
 	}

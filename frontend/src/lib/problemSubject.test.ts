@@ -175,12 +175,12 @@ describe('subjectKind — bilinen kind biçimi yener (v0.10.596)', () => {
 // v0.10.598 — özet Problem'ler kanıt paneli yerine dürüst açıklama alır.
 describe('externalSummaryKind', () => {
   it('üç önek tanınır — backend sabitleriyle aynı yazım', () => {
-    expect(externalSummaryKind('anomaly:ext-cap:ext:ggfail:ext:tfail')).toBe('cap');
+    expect(externalSummaryKind('anomaly:ext-cap:ext:extsrc:ext:fail')).toBe('cap');
     expect(externalSummaryKind('anomaly:ext-down:ext:oracle-errlog')).toBe('down');
-    expect(externalSummaryKind('anomaly-cluster:ext:ggfail/OP_PAY')).toBe('cluster');
+    expect(externalSummaryKind('anomaly-cluster:ext:extsrc/OP_PAY')).toBe('cluster');
   });
   it('seri Problem\'i ve servis kümesi özet DEĞİL (kanıt panelini korur)', () => {
-    expect(externalSummaryKind('anomaly:ext:ggfail/OP1/E1:ext:tfail')).toBeNull();
+    expect(externalSummaryKind('anomaly:ext:extsrc/OP1/E1:ext:fail')).toBeNull();
     expect(externalSummaryKind('anomaly-cluster:shop-payment')).toBeNull(); // servis kümesi, ext: değil
     expect(externalSummaryKind('anomaly:shop:p99_ms')).toBeNull();
     expect(externalSummaryKind(undefined)).toBeNull();

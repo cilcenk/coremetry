@@ -25,7 +25,7 @@ import (
 //
 //	1. AÇIK DOSYA ADI — "IntTfraudMapper.xml", "queries.sql".
 //	2. NİTELİKLİ STATEMENT ID — MyBatis/iBatis hataları
-//	   `com.x.y.IntTfraudMapper.ariCTelefonSelect` biçiminde bir kimlik
+//	   `com.x.y.OrderPhoneMapper.orderPhoneSelect` biçiminde bir kimlik
 //	   basıyor; sondan bir önceki parça MAPPER SINIFIDIR ve dosya adı
 //	   ona eşittir.
 //
@@ -52,7 +52,7 @@ var resourceExts = []string{".xml", ".sql", ".yaml", ".yml", ".properties"}
 var explicitFileRe = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_\-]*)\.(xml|sql|yaml|yml|properties)\b`)
 
 // qualifiedIDRe — nitelikli kimlik: en az üç parça, parçalar nokta ile.
-// `com.x.y.IntTfraudMapper.ariCTelefonSelect` → yakalanır.
+// `com.x.y.OrderPhoneMapper.orderPhoneSelect` → yakalanır.
 var qualifiedIDRe = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){2,})\b`)
 
 // ResourceRef — aranacak bir kaynak dosya adayı.
@@ -62,7 +62,7 @@ type ResourceRef struct {
 	// Ext — biliniyorsa uzantı (".xml"); boşsa çağıran resourceExts'i dener.
 	Ext string
 	// Member (v0.10.113) — nitelikli kimliğin SON parçası: MyBatis
-	// statement id'si (`…IntTfraudMapper.ariCTelefonSelect` → Member
+	// statement id'si (`…OrderPhoneMapper.orderPhoneSelect` → Member
 	// "ariCTelefonSelect"). Açık dosya adından türeyen adaylarda boş.
 	// Çağıran bununla dosyanın tamamı yerine İLGİLİ sorgu bloğunu keser.
 	Member string

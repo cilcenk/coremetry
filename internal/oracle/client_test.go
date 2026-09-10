@@ -82,7 +82,7 @@ func assertEveryValueIsBound(t *testing.T, sqlText string, args []any) {
 
 func TestBuildSampleQuery_Contract(t *testing.T) {
 	cfg := cfgFor(t)
-	cfg.ExtraWhere = "MCA_ERR_CODE NOT IN ('BSA_000')"
+	cfg.ExtraWhere = "MCA_ERR_CODE NOT IN ('ERR_000')"
 	from := time.Date(2026, 9, 9, 10, 0, 0, 0, time.UTC)
 	to := from.Add(15 * time.Minute)
 
@@ -116,7 +116,7 @@ func TestBuildSampleQuery_Contract(t *testing.T) {
 		t.Fatalf("şema.tablo yok: %q", sqlText)
 	}
 	// ExtraWhere AND(...) olarak.
-	if !strings.Contains(sqlText, "AND (MCA_ERR_CODE NOT IN ('BSA_000'))") {
+	if !strings.Contains(sqlText, "AND (MCA_ERR_CODE NOT IN ('ERR_000'))") {
 		t.Fatalf("extraWhere yok: %q", sqlText)
 	}
 	// Zaman değeri METNE girmemeli.

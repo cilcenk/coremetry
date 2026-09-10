@@ -37,13 +37,13 @@ var demoChannels = []struct {
 	code   string
 	weight int
 }{
-	{"030101", 40}, // internet şubesi
-	{"010101", 30}, // mobil
-	{"020202", 12}, // ATM
-	{"040404", 8},  // çağrı merkezi
-	{"050505", 5},  // şube
-	{"060606", 3},  // açık bankacılık
-	{"070707", 2},  // toplu iş
+	{"030101", 40}, // web
+	{"010101", 30}, // mobile
+	{"020202", 12}, // kiosk
+	{"040404", 8},  // callcenter
+	{"050505", 5},  // store
+	{"060606", 3},  // partner-api
+	{"070707", 2},  // batch
 }
 
 // demoChannelTotal — ağırlıkların toplamı; init'te bir kez.

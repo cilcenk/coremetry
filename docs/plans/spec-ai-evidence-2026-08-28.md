@@ -213,7 +213,7 @@ uygulanır).
 
 ### Dilim C — SQL artefaktı: statement id → blok
 - `internal/stackparse/resources.go`: `ResourceRef.Member` (nitelikli
-  kimliğin son parçası, `ariCTelefonSelect`).
+  kimliğin son parçası, `orderPhoneSelect`).
 - `internal/devops/code.go`: `MapperStatementWindow(body, id)` — XML'de
   `<select|insert|update|delete|sql id="…">…</…>` bloğu, gerçek satır
   numaralarıyla (±0, tavan 80 satır); bulunamazsa eski ilk-200 davranışı.

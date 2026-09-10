@@ -4740,6 +4740,9 @@ type LogFilter struct {
 	SeverityMin uint8
 	TraceID     string
 	SpanID      string // optional: only logs attached to this span
+	// TraceIDs (v0.10.584) — çoğul trace filtresi (DQL join'i). v0.5.271'den
+	// beri logstore.Filter'da vardı ama CH'ye HİÇ ulaşmıyordu — sessiz no-op.
+	TraceIDs []string
 	// HasTrace (v0.8.406) — only rows with a trace correlation
 	// (trace_id != ''). Applied before the SinceNs branch so the
 	// count(), page read AND forward-tail all carry it.
@@ -5008,11 +5011,16 @@ func logsWhere(f LogFilter) whereClause {
 	if f.SeverityMin > 0 {
 		wc.add("severity_num >= ?", f.SeverityMin)
 	}
+	// v0.10.584 — id'ler NORMALİZE (küçük harf + kırpma, ES paritesi): OTLP
+	// küçük harf hex yazar, büyük harfli bir id kesin eşitlikte 0 satırdı.
 	if f.TraceID != "" {
-		wc.add("trace_id = ?", f.TraceID)
+		wc.add("trace_id = ?", normalizeLogID(f.TraceID))
+	}
+	if expr, args := LogTraceIDsConjunct(f.TraceIDs); expr != "" {
+		wc.add(expr, args...)
 	}
 	if f.SpanID != "" {
-		wc.add("span_id = ?", f.SpanID)
+		wc.add("span_id = ?", normalizeLogID(f.SpanID))
 	}
 	if f.HasTrace {
 		wc.add("trace_id != ''")

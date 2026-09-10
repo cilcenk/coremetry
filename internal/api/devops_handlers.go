@@ -44,6 +44,7 @@ type devopsSettingsInput struct {
 	// convention. Omitted or empty = keep the bundled defaults.
 	RepoPrefixes []string `json:"repoPrefixes"`
 	BranchOrder  []string `json:"branchOrder"`
+	VersionRef   string   `json:"versionRef"` // v0.10.590
 	// AppPrefixes / CodeLookupLimit (v0.10.112) — uygulama paket önekleri
 	// ve kod çekme deneme tavanı; gerekçe devops.Settings'te.
 	AppPrefixes     []string `json:"appPrefixes"`
@@ -66,6 +67,11 @@ type devopsSettingsInput struct {
 // is the honest operator gesture. A magic wipe-sentinel is one
 // typo away from silently dropping working credentials.
 func mergeDevOpsSettings(in devopsSettingsInput, cur devops.Settings) (devops.Settings, string) {
+	// v0.10.590 — versionRef deseni: boş → varsayılan, geçersiz → 400.
+	vr, verr := devops.NormalizeVersionRef(in.VersionRef)
+	if verr != nil {
+		return devops.Settings{}, "versionRef: " + verr.Error()
+	}
 	cfg := devops.Settings{
 		BaseURL:            strings.TrimSpace(in.BaseURL),
 		Collection:         strings.TrimSpace(in.Collection),
@@ -76,6 +82,7 @@ func mergeDevOpsSettings(in devopsSettingsInput, cur devops.Settings) (devops.Se
 		InsecureSkipVerify: in.InsecureSkipVerify,
 		CodeSearch:         in.CodeSearch,
 		RepoPrefixes:       cleanConventionList(in.RepoPrefixes),
+		VersionRef:         vr,
 		BranchOrder:        cleanConventionList(in.BranchOrder),
 		AppPrefixes:        cleanConventionList(in.AppPrefixes),
 		CodeLookupLimit:    devops.ClampCodeLookupLimit(in.CodeLookupLimit),

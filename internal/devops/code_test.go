@@ -354,6 +354,15 @@ type fakeTFS struct {
 	tree     []string
 	files    map[string]string
 	branches []string
+	// v0.10.590 — tag'ler: ad ("refs/tags/x") → objectId; peeled annotated
+	// tag için commit. treeVersions: items(Full) isteklerinin gördüğü
+	// versionDescriptor (tür:ad) — ağacın HANGİ ref'ten okunduğunun kanıtı.
+	tags         map[string]string
+	peeled       map[string]string
+	treeVersions []string
+	// treeAt — versionDescriptor.version → o ref'e ÖZGÜ ağaç. Yoksa f.tree.
+	// Link ile yolun aynı ref'ten geldiğini ancak farklı ağaçlarla ölçebilirsin.
+	treeAt map[string][]string
 	// repos — sunucudaki KANONİK depo adları (v0.9.1236). Boşsa her ad
 	// kabul edilir; mevcut testler bu yüzden dokunulmadan geçiyor.
 	// Doluysa eşleşme BAYT BAYT: gerçek Azure DevOps ada göre çözümde
@@ -528,6 +537,30 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 			f.mu.Lock()
 			f.hits["refs"]++
 			f.mu.Unlock()
+			// v0.10.590 — tags/<ad> süzgeci: gerçek API gibi objectId (+ annotated
+			// için peeledObjectId) taşır. Tam ad eşleşmesi; yoksa boş liste.
+			if tf := q.Get("filter"); strings.HasPrefix(tf, "tags/") {
+				var tout struct {
+					Value []struct {
+						Name     string `json:"name"`
+						ObjectID string `json:"objectId"`
+						Peeled   string `json:"peeledObjectId,omitempty"`
+					} `json:"value"`
+				}
+				f.mu.Lock()
+				for name, oid := range f.tags {
+					if name == "refs/"+tf {
+						tout.Value = append(tout.Value, struct {
+							Name     string `json:"name"`
+							ObjectID string `json:"objectId"`
+							Peeled   string `json:"peeledObjectId,omitempty"`
+						}{name, oid, f.peeled[name]})
+					}
+				}
+				f.mu.Unlock()
+				_ = json.NewEncoder(w).Encode(tout)
+				return
+			}
 			// v0.9.1265 — gerçek API gibi filter=heads/<ad> ÖNEK süzer;
 			// filter=heads tümünü döndürür. hiddenFromListing, tek-sayfa
 			// kesilmesini taklit eder: SÜZGEÇSİZ listede görünmez ama
@@ -551,6 +584,31 @@ func newFakeTFS(t *testing.T) *fakeTFS {
 			}
 			_ = json.NewEncoder(w).Encode(out)
 		case strings.HasSuffix(p, "/items") && q.Get("recursionLevel") == "Full":
+			f.mu.Lock()
+			f.treeVersions = append(f.treeVersions, q.Get("versionDescriptor.versionType")+":"+q.Get("versionDescriptor.version"))
+			f.mu.Unlock()
+			if alt, ok := f.treeAt[q.Get("versionDescriptor.version")]; ok {
+				// v0.10.590 — ref'e özgü ağaç: gerçek API gibi versionDescriptor'a göre farklı içerik.
+				f.mu.Lock()
+				f.hits["tree"]++
+				f.mu.Unlock()
+				var out struct {
+					Value []struct {
+						Path   string `json:"path"`
+						IsDir  bool   `json:"isFolder"`
+						GitObj string `json:"gitObjectType"`
+					} `json:"value"`
+				}
+				for _, pth := range alt {
+					out.Value = append(out.Value, struct {
+						Path   string `json:"path"`
+						IsDir  bool   `json:"isFolder"`
+						GitObj string `json:"gitObjectType"`
+					}{pth, false, "blob"})
+				}
+				_ = json.NewEncoder(w).Encode(out)
+				return
+			}
 			// v0.9.1269 — scopePath GERÇEK API gibi süzer: verilen dizinin
 			// ALTINDAKİ girdiler döner, dizin hiç yoksa 404 (TF401174).
 			// Süzmeyi taklit etmemek, kapsamlı geri-denemeyi tam ağacın

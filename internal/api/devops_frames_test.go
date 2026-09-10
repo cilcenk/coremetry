@@ -30,8 +30,8 @@ import (
 // bug tam buydu: uzunluğa çöken bir özet, iki farklı girdiyi aynı
 // cache satırına servis ediyordu.
 func TestDevopsFramesKeyDistinctSameLengthStacks(t *testing.T) {
-	a := devopsFramesKey("svc", "repo", "cfg", "at com.a.A.x(A.java:1)")
-	b := devopsFramesKey("svc", "repo", "cfg", "at com.b.B.y(B.java:1)")
+	a := devopsFramesKey("svc", "repo", "cfg", "at com.a.A.x(A.java:1)", "")
+	b := devopsFramesKey("svc", "repo", "cfg", "at com.b.B.y(B.java:1)", "")
 	if len(a) == 0 || a == b {
 		t.Fatalf("v0.5.187 sınıfı: aynı uzunlukta iki stack aynı anahtara düştü (%q)", a)
 	}
@@ -40,7 +40,7 @@ func TestDevopsFramesKeyDistinctSameLengthStacks(t *testing.T) {
 // Anahtar KARARLI: aynı girdi iki çağrıda aynı dizeyi vermeli.
 func TestDevopsFramesKeyStable(t *testing.T) {
 	in := []string{"odeme", "core", "cfg1", "at com.a.A.x(A.java:1)"}
-	if devopsFramesKey(in[0], in[1], in[2], in[3]) != devopsFramesKey(in[0], in[1], in[2], in[3]) {
+	if devopsFramesKey(in[0], in[1], in[2], in[3], "") != devopsFramesKey(in[0], in[1], in[2], in[3], "") {
 		t.Fatal("anahtar kararsız")
 	}
 }
@@ -49,8 +49,8 @@ func TestDevopsFramesKeyStable(t *testing.T) {
 // KÜME değil, sıralı alanlar. service ile repo yer değiştirdiğinde
 // aynı anahtara düşmek, iki farklı servisin cevabını karıştırırdı.
 func TestDevopsFramesKeyFieldsAreNotInterchangeable(t *testing.T) {
-	a := devopsFramesKey("alfa", "beta", "cfg", "st")
-	b := devopsFramesKey("beta", "alfa", "cfg", "st")
+	a := devopsFramesKey("alfa", "beta", "cfg", "st", "")
+	b := devopsFramesKey("beta", "alfa", "cfg", "st", "")
 	if a == b {
 		t.Fatalf("service ve repo yer değiştirince anahtar aynı kaldı: %q", a)
 	}
@@ -59,12 +59,12 @@ func TestDevopsFramesKeyFieldsAreNotInterchangeable(t *testing.T) {
 // Her alan anahtarı DEĞİŞTİRMELİ — birini unutmak, ayar değişince
 // bayat cevap servis etmek demek.
 func TestDevopsFramesKeyEveryInputMatters(t *testing.T) {
-	base := devopsFramesKey("svc", "repo", "cfg", "st")
+	base := devopsFramesKey("svc", "repo", "cfg", "st", "")
 	cases := map[string]string{
-		"service": devopsFramesKey("svc2", "repo", "cfg", "st"),
-		"repo":    devopsFramesKey("svc", "repo2", "cfg", "st"),
-		"cfg":     devopsFramesKey("svc", "repo", "cfg2", "st"),
-		"stack":   devopsFramesKey("svc", "repo", "cfg", "st2"),
+		"service": devopsFramesKey("svc2", "repo", "cfg", "st", ""),
+		"repo":    devopsFramesKey("svc", "repo2", "cfg", "st", ""),
+		"cfg":     devopsFramesKey("svc", "repo", "cfg2", "st", ""),
+		"stack":   devopsFramesKey("svc", "repo", "cfg", "st2", ""),
 	}
 	for field, got := range cases {
 		if got == base {

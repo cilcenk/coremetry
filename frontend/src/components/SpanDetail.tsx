@@ -18,6 +18,7 @@ import { AIExplainButton } from './ai/AIExplainButton';
 import { BreakdownBar, KindBadge } from './KindBadge';
 import { useEntityEnabled, useStackFrameLinks } from '@/lib/queries';
 import { StackTrace } from './StackTrace';
+import { runningVersion } from '@/lib/runningVersion'; // v0.10.590
 import { SpanK8sSection } from './SpanK8sSection';
 import { spanK8sContext, k8sAttrHref, type SpanK8sContext } from '@/lib/spanK8s';
 
@@ -372,6 +373,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
             {exceptions.map((e, i) => (
               <ExceptionView key={i}
                 service={span.serviceName}
+                resourceAttributes={span.resourceAttributes}
                 type={e.attributes?.['exception.type']}
                 message={e.attributes?.['exception.message']}
                 stacktrace={e.attributes?.['exception.stacktrace']}
@@ -381,6 +383,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
             {exceptions.length === 0 && hasInlineException && (
               <ExceptionView
                 service={span.serviceName}
+                resourceAttributes={span.resourceAttributes}
                 type={inlineExType}
                 message={inlineExMsg}
                 stacktrace={inlineStack}
@@ -578,9 +581,11 @@ function KV({ children }: { children: React.ReactNode }) {
  * Renders one OTel-style exception block (type / message / stacktrace).
  * Stacktrace is shown in a scrollable monospace pre with a copy button.
  */
-function ExceptionView({ service, type, message, stacktrace, escaped, time }: {
+function ExceptionView({ service, resourceAttributes, type, message, stacktrace, escaped, time }: {
   /** Span'in servisi — stack frame'lerinin depo çözümü buna dayanır. */
   service?: string;
+  /** v0.10.590 — olay anındaki sürüm buradan (image tag → service.version). */
+  resourceAttributes?: Record<string, string> | null;
   type?: string;
   message?: string;
   stacktrace?: string;
@@ -607,9 +612,13 @@ function ExceptionView({ service, type, message, stacktrace, escaped, time }: {
   // FETCH-ON-OPEN: yalnız bu blok AÇIKKEN. Katlanmış bir exception
   // ya da stack'siz bir olay hiçbir istek üretmez; liste ön-getirmesi
   // YOK (ES-cost disiplini, CLAUDE.md).
+  // v0.10.590 — olay anındaki sürüm resource attr'dan (image tag öncelikli);
+  // sunucu bunu VCS ref'ine bağlamayı dener. Boşsa bugünkü davranış.
+  const version = useMemo(() => runningVersion(resourceAttributes), [resourceAttributes]);
   const links = useStackFrameLinks({
     service: service ?? '',
     stack: shown,
+    version,
     enabled: linksOn && !!service && !!shown && !collapsed,
   });
   // Uç `configured:false` dönerse, istek düşerse ya da hâlâ
@@ -640,7 +649,8 @@ function ExceptionView({ service, type, message, stacktrace, escaped, time }: {
       {stack && !collapsed && (
         <StackTrace stack={shown}
           frames={framed?.frames}
-          warning={framed?.revisionWarning} />
+          warning={framed?.revisionWarning}
+          verified={framed?.revision?.verified === true} />
       )}
     </div>
   );

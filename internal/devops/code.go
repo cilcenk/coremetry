@@ -1373,8 +1373,18 @@ func defaultBranch(ctx context.Context, cli *http.Client, cfg Settings, ver, rep
 
 // repoTree — recursive listing, 10 dk cache (depo+branş anahtarlı).
 // Yalnız blob'ların (dosya) yolu tutulur; ağaç düğümleri atılır.
+// repoTree — branş ağacı (geriye uyum sarmalayıcısı).
 func (s *Service) repoTree(ctx context.Context, cli *http.Client, cfg Settings, ver, repo, branch string) (treeResult, error) {
-	key := treeCacheKey(cfg, repo, branch)
+	return s.repoTreeAt(ctx, cli, cfg, ver, repo, RefSpec{Kind: "branch", Name: branch})
+}
+
+// repoTreeAt — v0.10.590: ağaç herhangi bir ref'ten (branş/tag/commit).
+// Link ile dosya YOLU aynı ref'e bakmalı; ağaç branştan, link commit'ten
+// gelseydi satır yine kayardı. Cache anahtarı ref türüyle ayrışır.
+func (s *Service) repoTreeAt(ctx context.Context, cli *http.Client, cfg Settings, ver, repo string, ref RefSpec) (treeResult, error) {
+	branch := ref.Name // gövdedeki eski adlandırma; anlam artık "ref adı"
+	_ = branch
+	key := treeCacheKey(cfg, repo, refCacheName(ref))
 	if r, ok := s.code.get(key); ok {
 		return r, nil
 	}
@@ -1383,7 +1393,7 @@ func (s *Service) repoTree(ctx context.Context, cli *http.Client, cfg Settings, 
 	// iptali kazananı düşürmez (singleflight semantiği); 25s FetchCode
 	// tavanı her çağıranda ayrı ayrı zaten işliyor.
 	v, err, _ := s.treeFlight.Do(key, func() (any, error) {
-		return s.repoTreeFetch(ctx, cli, cfg, ver, repo, branch, key)
+		return s.repoTreeFetch(ctx, cli, cfg, ver, repo, ref, key)
 	})
 	if err != nil {
 		return treeResult{}, err
@@ -1403,9 +1413,14 @@ func scopedCacheKey(treeKey, scopePath string) string {
 	return treeKey + "|scope|" + scopePath
 }
 
-func (s *Service) repoTreeFetch(ctx context.Context, cli *http.Client, cfg Settings, ver, repo, branch, key string) (treeResult, error) {
+func (s *Service) repoTreeFetch(ctx context.Context, cli *http.Client, cfg Settings, ver, repo string, ref RefSpec, key string) (treeResult, error) {
+	branch := ref.Name // gövdedeki eski adlandırma
+	kind := ref.Kind
+	if kind == "" {
+		kind = "branch"
+	}
 	u := repoURL(cfg, repo) + "/items?recursionLevel=Full" +
-		"&versionDescriptor.versionType=branch&versionDescriptor.version=" + url.QueryEscape(branch) +
+		"&versionDescriptor.versionType=" + kind + "&versionDescriptor.version=" + url.QueryEscape(branch) +
 		"&api-version=" + ver
 	r, err := s.listItems(ctx, cli, cfg, u)
 	if err != nil {

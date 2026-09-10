@@ -1799,10 +1799,10 @@ export const api = {
   //
   // Ayarsız kurulumda uç `{configured:false, frames:[]}` döner — HATA
   // değil. Çağıran yüzey o durumda bugünkü düz metinde kalır.
-  stackFrameLinks: (service: string, stack: string, signal?: AbortSignal) =>
+  stackFrameLinks: (service: string, stack: string, signal?: AbortSignal, version?: string) =>
     request<StackFramesResult>(`/api/devops/stack-frames`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ service, stack }), signal,
+      body: JSON.stringify({ service, stack, ...(version ? { version } : {}) }), signal,
     }),
   // Thanos multi-cluster config (v0.8.577, admin). Tempo contract:
   // GET is masked (per-cluster hasToken), PUT's empty token

@@ -69,6 +69,9 @@ const (
 type devopsStackFramesInput struct {
 	Service string `json:"service"`
 	Stack   string `json:"stack"`
+	// Version (v0.10.590) — olay anındaki sürüm (image tag/service.version);
+	// opsiyonel, geriye uyumlu. Sunucu ref'e bağlamayı dener.
+	Version string `json:"version,omitempty"`
 }
 
 // devopsFrameDTO — tek frame. omitempty YOK, bilinçli: frontend
@@ -102,8 +105,27 @@ type devopsStackFramesResponse struct {
 	// RevisionWarning — link üretildiği HER yanıtta dolu. Revizyon
 	// çözümleme yok (kod branşın UCUndan geliyor, deploy edilen
 	// sürümden değil), o yüzden uyarı istisna değil kural.
-	RevisionWarning string           `json:"revisionWarning,omitempty"`
-	Frames          []devopsFrameDTO `json:"frames"`
+	RevisionWarning string `json:"revisionWarning,omitempty"`
+	// Revision (v0.10.590) — sürüm→ref çözümü; verified ise linkler o commit'ten.
+	Revision *devopsRevisionDTO `json:"revision,omitempty"`
+	Frames   []devopsFrameDTO   `json:"frames"`
+}
+
+type devopsRevisionDTO struct {
+	Version  string `json:"version"`
+	Ref      string `json:"ref,omitempty"`
+	SHA      string `json:"sha,omitempty"`
+	Verified bool   `json:"verified"`
+	Note     string `json:"note,omitempty"`
+}
+
+// revisionVerifiedText — SAF. Sürüm bir commit'e bağlandı: uyarı yerine onay.
+func revisionVerifiedText(rev *devops.Revision) string {
+	sha := rev.SHA
+	if len(sha) > 8 {
+		sha = sha[:8]
+	}
+	return "Sürüm doğrulandı: " + rev.Ref + " (" + sha + ") — bağlantılar ve dosya yolu olay anındaki koda gider."
 }
 
 // devopsFramesKey — SAF cache anahtarı. TÜM girdiler ayrı ayrı FNV
@@ -115,9 +137,9 @@ type devopsStackFramesResponse struct {
 // branch anahtarda YOK ve olamaz: branş bir ÇIKTI (refs API'sinden
 // gelir), girdi değil. Onu belirleyen girdi — BranchOrder — cfgDigest
 // içinde taşınıyor, yani ayar değişince anahtar da değişir.
-func devopsFramesKey(service, repo, cfgDigest, stack string) string {
-	return fmt.Sprintf("devops:frames:svc=%s:repo=%s:cfg=%s:st=%s",
-		fnvStr(service), fnvStr(repo), fnvStr(cfgDigest), fnvStr(stack))
+func devopsFramesKey(service, repo, cfgDigest, stack, version string) string {
+	return fmt.Sprintf("devops:frames:svc=%s:repo=%s:cfg=%s:st=%s:v=%s",
+		fnvStr(service), fnvStr(repo), fnvStr(cfgDigest), fnvStr(stack), fnvStr(version))
 }
 
 // devopsSettingsDigest — cevabı değiştirebilecek TÜM DevOps ayarları.
@@ -131,6 +153,7 @@ func devopsSettingsDigest(sn devops.Snapshot) string {
 	parts = append(parts, sn.RepoPrefixes...)
 	parts = append(parts, "\x01bo")
 	parts = append(parts, sn.BranchOrder...)
+	parts = append(parts, "\x01vr", sn.VersionRef) // v0.10.590 — desen cevabı değiştirir
 	parts = append(parts, "\x01ap")
 	parts = append(parts, sn.AppPrefixes...)
 	return fnvStr(parts...)
@@ -220,6 +243,17 @@ func stackFramesPayload(stack string, resolve func([]stackparse.Frame) devops.Fr
 	}
 	if hasURL {
 		out.RevisionWarning = revisionWarningText(out.Branch)
+		// v0.10.590 — sürüm çözüldüyse uyarı ONAYA döner; çözülemediyse
+		// nedeni uyarıya eklenir (sessiz değil). Link yoksa revizyonun
+		// anlamı da yok — o yüzden hasURL içinde.
+		if rv := links.Revision; rv != nil {
+			out.Revision = &devopsRevisionDTO{Version: rv.Version, Ref: rv.Ref, SHA: rv.SHA, Verified: rv.Verified, Note: rv.Note}
+			if rv.Verified {
+				out.RevisionWarning = revisionVerifiedText(rv)
+			} else if rv.Note != "" {
+				out.RevisionWarning += " (" + rv.Note + ")"
+			}
+		}
 	}
 	return out
 }
@@ -235,6 +269,7 @@ func (s *Server) postDevopsStackFrames(w http.ResponseWriter, r *http.Request) {
 	}
 	service := strings.TrimSpace(in.Service)
 	stack := in.Stack
+	version := strings.TrimSpace(in.Version) // v0.10.590
 	if strings.TrimSpace(stack) == "" {
 		writeJSONError(w, http.StatusBadRequest, "stack parametresi zorunlu")
 		return
@@ -269,7 +304,7 @@ func (s *Server) postDevopsStackFrames(w http.ResponseWriter, r *http.Request) {
 		pin.Repo, pin.Abort = pinReadDecision(mdRepo, md != nil, err)
 	}
 	repo := devops.ResolveRepo(service, pin.Repo, s.devops.ResolveConfig()).Repo
-	key := devopsFramesKey(service, repo, devopsSettingsDigest(s.devops.Snapshot()), stack)
+	key := devopsFramesKey(service, repo, devopsSettingsDigest(s.devops.Snapshot()), stack, version)
 
 	s.serveCached(w, r, key, devopsFramesTTL, func(ctx context.Context) (any, error) {
 		// Kapalı gelen ctx KULLANILIR, isteğinki DEĞİL: SWR arka
@@ -279,7 +314,7 @@ func (s *Server) postDevopsStackFrames(w http.ResponseWriter, r *http.Request) {
 		// (servecached_ctx_test.go) closure gövdesindeki YORUMU da
 		// tarıyor, o yüzden yasak çağrı burada adıyla anılmıyor.
 		return stackFramesPayload(stack, func(frames []stackparse.Frame) devops.FrameLinks {
-			return s.devops.ResolveFrameLinks(ctx, service, pin, frames)
+			return s.devops.ResolveFrameLinks(ctx, service, pin, frames, version)
 		}), nil
 	})
 }

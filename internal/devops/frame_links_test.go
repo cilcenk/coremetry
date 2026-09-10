@@ -135,7 +135,7 @@ func TestResolveFrameLinksUnconfigured(t *testing.T) {
 		frame("com.banka.odeme.Kart", "cek", "Kart.java", 42),
 		frame("java.util.Optional", "orElseThrow", "Optional.java", 403),
 	}
-	got := New().ResolveFrameLinks(context.Background(), "shop-odeme-prod", PinRead{}, frames)
+	got := New().ResolveFrameLinks(context.Background(), "shop-odeme-prod", PinRead{}, frames, "")
 	if got.Configured {
 		t.Fatal("Configured=true, oysa BaseURL boş")
 	}
@@ -156,7 +156,7 @@ func TestResolveFrameLinksUnconfigured(t *testing.T) {
 func TestResolveFrameLinksNilService(t *testing.T) {
 	var svc *Service
 	got := svc.ResolveFrameLinks(context.Background(), "x",
-		PinRead{}, []stackparse.Frame{frame("com.x.Y", "z", "Y.java", 1)})
+		PinRead{}, []stackparse.Frame{frame("com.x.Y", "z", "Y.java", 1)}, "")
 	if got.Configured || len(got.Links) != 1 {
 		t.Fatalf("nil Service: %+v", got)
 	}
@@ -177,7 +177,7 @@ func TestResolveFrameLinksHappyPath(t *testing.T) {
 		frame("java.util.Optional", "orElseThrow", "Optional.java", 403),
 		frame("com.example.card.CardService", "noline", "CardService.java", 0),
 	}
-	got := svc.ResolveFrameLinks(context.Background(), "shop-core-service-prod", PinRead{}, frames)
+	got := svc.ResolveFrameLinks(context.Background(), "shop-core-service-prod", PinRead{}, frames, "")
 
 	if !got.Configured || got.Repo != "core-service" || got.Branch != "release" {
 		t.Fatalf("zincir çıktısı=%+v, istenen core-service@release", got)
@@ -219,7 +219,7 @@ func TestResolveFrameLinksNoPathInTree(t *testing.T) {
 	svc.Configure(f.settings())
 
 	got := svc.ResolveFrameLinks(context.Background(), "shop-core-service-prod", PinRead{},
-		[]stackparse.Frame{frame("com.example.card.CardService", "charge", "CardService.java", 246)})
+		[]stackparse.Frame{frame("com.example.card.CardService", "charge", "CardService.java", 246)}, "")
 	if got.Links[0].URL != "" || got.Links[0].Reason != FrameReasonNoPath {
 		t.Fatalf("got %+v, istenen %q", got.Links[0], FrameReasonNoPath)
 	}
@@ -241,7 +241,7 @@ func TestResolveFrameLinksCandidateLimit(t *testing.T) {
 		f.tree = append(f.tree, "/src/main/java/com/example/card/Svc"+strconv.Itoa(i)+".java")
 		frames = append(frames, frame(cls, "run", "Svc"+strconv.Itoa(i)+".java", 10+i))
 	}
-	got := svc.ResolveFrameLinks(context.Background(), "shop-core-service-prod", PinRead{}, frames)
+	got := svc.ResolveFrameLinks(context.Background(), "shop-core-service-prod", PinRead{}, frames, "")
 
 	linked, over := 0, 0
 	for _, l := range got.Links {
@@ -268,7 +268,7 @@ func TestResolveFrameLinksSkipsNetworkWithoutCandidates(t *testing.T) {
 	svc.Configure(f.settings())
 
 	got := svc.ResolveFrameLinks(context.Background(), "shop-core-service-prod", PinRead{},
-		[]stackparse.Frame{frame("java.util.Optional", "orElseThrow", "Optional.java", 403)})
+		[]stackparse.Frame{frame("java.util.Optional", "orElseThrow", "Optional.java", 403)}, "")
 	if !got.Configured {
 		t.Fatal("Configured=false")
 	}
@@ -290,7 +290,7 @@ func TestResolveFrameLinksPinAbortIsFailClosed(t *testing.T) {
 
 	got := svc.ResolveFrameLinks(context.Background(), "shop-core-service-prod",
 		PinRead{Abort: "servis kataloğu okunamadı"},
-		[]stackparse.Frame{frame("com.example.card.CardService", "charge", "CardService.java", 246)})
+		[]stackparse.Frame{frame("com.example.card.CardService", "charge", "CardService.java", 246)}, "")
 	if got.Links[0].URL != "" {
 		t.Fatalf("pin iptalinde link üretildi: %q", got.Links[0].URL)
 	}
@@ -335,7 +335,7 @@ func TestResolveFrameLinksDeduplicatesRecursion(t *testing.T) {
 
 	rec := frame("com.example.card.CardService", "charge", "CardService.java", 246)
 	got := svc.ResolveFrameLinks(context.Background(), "shop-core-service-prod", PinRead{},
-		[]stackparse.Frame{rec, rec, rec})
+		[]stackparse.Frame{rec, rec, rec}, "")
 	for i, l := range got.Links {
 		if l.URL == "" {
 			t.Fatalf("yinelenen frame %d linksiz: %+v", i, l)
@@ -358,10 +358,10 @@ func TestResolveFrameLinksDoesNotTouchCodeCounters(t *testing.T) {
 	ctx := context.Background()
 	frames := []stackparse.Frame{frame("com.example.card.CardService", "charge", "CardService.java", 246)}
 
-	svc.ResolveFrameLinks(ctx, "shop-core-service-prod", PinRead{}, frames)   // mutlu yol
-	svc.ResolveFrameLinks(ctx, "legacy-service", PinRead{}, frames)          // konvansiyon çıkmazı
-	svc.ResolveFrameLinks(ctx, "x", PinRead{Abort: "okunamadı"}, frames)     // pin iptali
-	New().ResolveFrameLinks(ctx, "shop-core-service-prod", PinRead{}, frames) // yapılandırılmamış
+	svc.ResolveFrameLinks(ctx, "shop-core-service-prod", PinRead{}, frames, "")   // mutlu yol
+	svc.ResolveFrameLinks(ctx, "legacy-service", PinRead{}, frames, "")          // konvansiyon çıkmazı
+	svc.ResolveFrameLinks(ctx, "x", PinRead{Abort: "okunamadı"}, frames, "")     // pin iptali
+	New().ResolveFrameLinks(ctx, "shop-core-service-prod", PinRead{}, frames, "") // yapılandırılmamış
 
 	if st := svc.CodeObservability(); st.Attempts != 0 || st.OK != 0 ||
 		st.Partial != 0 || len(st.Misses) != 0 {

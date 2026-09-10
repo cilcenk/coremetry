@@ -162,3 +162,31 @@ func TestKafkaPickQuestions(t *testing.T) {
 		t.Fatalf("kaynak liste mutasyona uğradı: %+v", src)
 	}
 }
+
+// v0.10.589 — partition seti: iki soru, ikisi de TOPIC etiketli (topic
+// süzgeci uygulanabilir), ikisi de partition kırılımlı. Lag ve lead bir
+// arada: lag "geride", lead "retention'dan düşmek üzere" — farklı alarm.
+func TestKafkaPartitionQuestions(t *testing.T) {
+	qs := KafkaPartitionQuestions()
+	if len(qs) != 2 {
+		t.Fatalf("partition seti 2 soru olmalı, %d", len(qs))
+	}
+	for _, q := range qs {
+		m, ok := KafkaMetricByName(q.Metric)
+		if !ok {
+			t.Fatalf("%s katalogda yok", q.Metric)
+		}
+		if !hasLabel(m, "topic") || !hasLabel(m, "partition") {
+			t.Fatalf("%s topic+partition etiketli olmalı: %v", m.Name, m.Labels)
+		}
+		found := false
+		for _, g := range q.GroupBy {
+			if g == "partition" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s kırılımı partition taşımalı: %v", q.Key, q.GroupBy)
+		}
+	}
+}

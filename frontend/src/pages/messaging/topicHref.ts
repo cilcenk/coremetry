@@ -20,10 +20,10 @@ import type { TimeRange } from '@/lib/types';
 export const MSG_TOPIC_PATH = '/messaging/topic';
 
 /** Sekme ekseni. Varsayılan `producers` — URL'de YAZILMAZ (Service.tsx deseni). */
-export type MsgTopicTab = 'producers' | 'consumers' | 'operations' | 'clients' | 'spannames';
+export type MsgTopicTab = 'producers' | 'consumers' | 'operations' | 'clients' | 'partitions' | 'spannames';
 
 export const MSG_TOPIC_TABS: readonly MsgTopicTab[] = [
-  'producers', 'consumers', 'operations', 'clients', 'spannames',
+  'producers', 'consumers', 'operations', 'clients', 'partitions', 'spannames',
 ];
 
 export const MSG_TOPIC_DEFAULT_TAB: MsgTopicTab = 'producers';

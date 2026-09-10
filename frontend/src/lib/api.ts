@@ -1496,7 +1496,7 @@ export const api = {
   //   • 'topic'  → çekmecenin 5 sorusu, açıkça istenmiş hâli
   //   • 'clients'→ bağlantı/gecikme/rebalance; kapsamı SERVİS (yanıtta
   //                scope='services'), yalnız o sekme seçilince istenir.
-  messagingClients: (system: string, cluster: string, destination: string, fromNs: number, toNs: number, signal?: AbortSignal, set?: 'chart' | 'topic' | 'clients') =>
+  messagingClients: (system: string, cluster: string, destination: string, fromNs: number, toNs: number, signal?: AbortSignal, set?: 'chart' | 'topic' | 'clients' | 'partitions') =>
     get<import('./types').MessagingClients | null>(
       `/api/messaging/clients?system=${encodeURIComponent(system)}&cluster=${encodeURIComponent(cluster)}&destination=${encodeURIComponent(destination)}&from=${fromNs}&to=${toNs}`
       + (set ? `&set=${encodeURIComponent(set)}` : ''), signal),

@@ -112,7 +112,7 @@ func TestBuildSampleQuery_Contract(t *testing.T) {
 		t.Fatalf("FETCH FIRST yok: %q", sqlText)
 	}
 	// Identifier'lar metinde (bind edilemezler).
-	if !strings.Contains(sqlText, "FROM REDACTED") {
+	if !strings.Contains(sqlText, "FROM APPOWNER.ERROR_LOG") {
 		t.Fatalf("şema.tablo yok: %q", sqlText)
 	}
 	// ExtraWhere AND(...) olarak.

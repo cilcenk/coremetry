@@ -11,7 +11,7 @@
 //                              operatör "4abcd5" olarak bunu görüyordu)
 //
 // Okunabilir pod adı (0 veya 1) varsa servis-adı prefix'i kırpılır
-// (shop-...-login-prep-6f9c7b-x2v → 6f9c7b-x2v); yoksa instance id ilk 8;
+// (svc-...-login-prep-6f9c7b-x2v → 6f9c7b-x2v); yoksa instance id ilk 8;
 // üçü de boşsa spec fallback'i (tek çizgi aggregate).
 export function podLineLabel(groupKey: string[], service: string, fallback: string): string {
   const podName = (groupKey[0] ?? '').trim() || (groupKey[1] ?? '').trim();

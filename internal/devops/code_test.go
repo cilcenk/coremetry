@@ -688,6 +688,8 @@ func (f *fakeTFS) settings() Settings {
 	return Settings{
 		BaseURL: f.srv.URL, Collection: "DefaultCollection", Project: "Payments",
 		PAT: "test-pat", Flavor: FlavorServer,
+		// v0.10.641: ürün varsayılanı öneksiz; konvansiyon testleri açık önekle.
+		RepoPrefixes: []string{"shop-"},
 	}
 }
 
@@ -983,7 +985,7 @@ func TestFetchCodePinnedServiceDerivesProject(t *testing.T) {
 	svc.Configure(cfg)
 
 	// Pin: doğru depo, elle yazıldığı için YANLIŞ harf yazımında.
-	res := ResolveRepo("shop-treasury-cashflow-prod", "CashManagement.cashflow", ResolveConfig{})
+	res := ResolveRepo("shop-treasury-cashflow-prod", "CashManagement.cashflow", ResolveConfig{RepoPrefixes: []string{"shop-"}})
 	if res.Source != RepoSourcePin || res.Project.Value != "SHOP" {
 		t.Fatalf("çözüm=%+v — pin depoyu, önek projeyi vermeliydi", res)
 	}
@@ -1053,7 +1055,7 @@ func TestProjectDeadEndNamesAllThree(t *testing.T) {
 	svc := New()
 	svc.Configure(cfg)
 
-	res := ResolveRepo("standalone-service-prod", "pushconfirm-legacy", ResolveConfig{})
+	res := ResolveRepo("standalone-service-prod", "pushconfirm-legacy", ResolveConfig{RepoPrefixes: []string{"shop-"}})
 	cc := svc.FetchCode(context.Background(), res.Repo, res.Project,
 		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"), nil, nil)
 
@@ -1064,7 +1066,7 @@ func TestProjectDeadEndNamesAllThree(t *testing.T) {
 		"Project boş", // (1) Ayarlar
 		"katalog pini yalnız depo adı taşıyor", // (2) pin bileşeni
 		"standalone-service-prod",              // (3) önek türetimi: hangi ad
-		"shop-",                                 // (3) hangi öneklerle denendi
+		"shop-",                                // (3) hangi öneklerle denendi
 	} {
 		if !strings.Contains(cc.Reason, want) {
 			t.Errorf("Reason=%q, %q içermeliydi", cc.Reason, want)

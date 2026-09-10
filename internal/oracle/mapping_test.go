@@ -283,9 +283,9 @@ func TestColumnsOverrideCaseInsensitiveAndDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	row := map[string]any{
-		"ERR_TS":            time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC),
-		"TRACE_REF":         "4bf92f3577b34da6a3ce929d0e0e4736",
-		"MSG":               "m",
+		"ERR_TS":        time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC),
+		"TRACE_REF":     "4bf92f3577b34da6a3ce929d0e0e4736",
+		"MSG":           "m",
 		"ERR_TELLERID":  "t-9", // alan kapalı → tüketilmez → attribute'a düşer
 		"ERR_MESSAGE":   "eski kolon, artık ekstra",
 		"ERR_TIMESTAMP": "2026-01-01 00:00:00", // artık ekstra

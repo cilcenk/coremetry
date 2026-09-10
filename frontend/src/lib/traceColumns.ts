@@ -63,10 +63,9 @@ export const FIXED_COLS = ['time', 'operation', 'service', 'duration', 'status',
  *     spans 58 tek haneye yeter) ve dört kolonla artık rahat pay var.
  */
 export const DEFAULT_TRACE_COLUMNS: string[] = [
-  'openshift.cluster.name',
-  'channel_code',
-  'function_code',
-  'function_id',
+  'http.method',
+  'http.route',
+  'deployment.environment',
 ];
 
 /**

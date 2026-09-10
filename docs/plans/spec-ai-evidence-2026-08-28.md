@@ -83,7 +83,7 @@ araması (varsayılan KAPALI); v0.10.100 hata-kodu token'ı.
 - **Pozitif uygulama-önek listesi YOK; hiçbir yerden yapılandırılamıyor**
   (`frameworkPrefixes` unexported var; `devops_connection` blobu yalnız
   `repoPrefixes/branchOrder/codeSearch` taşır — `devops/client.go:59-103`).
-- `repoPrefixes` (`shop-`) **servis→depo** sözleşmesidir, frame sınıflamasına
+- `repoPrefixes` (`svc-`) **servis→depo** sözleşmesidir, frame sınıflamasına
   girmez. Deployment unit / war adı kullanılmıyor.
 - **Süzülür, ÖNCELİKLENMEZ:** `AppFrames` çerçeveyi atar, kalanlar arasında
   "uygulamalık" sırası yoktur. Bankanın kendi çerçevesi

@@ -83,7 +83,7 @@ export function spanK8sContext(span: SpanLike, clusters: EntityClusterInfo[], ra
 }
 
 // podChipLabel / podChipWhere — v0.10.148 (operator-reported, prod:
-// "?/shop-…" çipleri). Etiket YALNIZ bilinen parçalardan kurulur; bilinmeyen
+// "?/svc-…" çipleri). Etiket YALNIZ bilinen parçalardan kurulur; bilinmeyen
 // parça için '?' basılmaz — eksik ne ise tooltip (where) AÇIKÇA söyler.
 export function podChipLabel(ctx: Pick<SpanK8sContext, 'clusterName' | 'clusterValue' | 'namespace' | 'pod'>, multiCluster: boolean): string {
   const cluster = ctx.clusterName ?? ctx.clusterValue;

@@ -108,9 +108,17 @@ func TestResolveRepo(t *testing.T) {
 		},
 	}
 
+	// v0.10.641: ürün varsayılanı ÖNEKSİZ (DefaultRepoPrefixes boş); konvansiyon
+	// vakaları açık "shop-" önekiyle koşar. Boş varsayılanın sözleşmesi
+	// TestResolveRepoDefaultPrefixIsEmpty'de pinli.
+	shopCfg := ResolveConfig{RepoPrefixes: []string{"shop-"}}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ResolveRepo(tt.service, tt.meta, tt.cfg)
+			cfg := tt.cfg
+			if len(cfg.RepoPrefixes) == 0 {
+				cfg = shopCfg
+			}
+			got := ResolveRepo(tt.service, tt.meta, cfg)
 			if got.Repo != tt.repo || got.Source != tt.source {
 				t.Fatalf("Repo/Source=%q/%q, istenen %q/%q (reason=%q)",
 					got.Repo, got.Source, tt.repo, tt.source, got.Reason)
@@ -296,18 +304,18 @@ func TestResolveRepoProjectFromPrefix(t *testing.T) {
 		wantProject string
 	}{
 		{
-			"varsayılan önek → SHOP",
-			"shop-treasury-cashflow-prod", nil,
+			"açık önek → SHOP",
+			"shop-treasury-cashflow-prod", []string{"shop-"},
 			"treasury-cashflow", "SHOP",
 		},
 		{
 			"ortam eki proje türetmesini etkilemez",
-			"shop-payments-core-int", nil,
+			"shop-payments-core-int", []string{"shop-"},
 			"payments-core", "SHOP",
 		},
 		{
 			"ortam eki yoksa da çalışır",
-			"shop-payments-core", nil,
+			"shop-payments-core", []string{"shop-"},
 			"payments-core", "SHOP",
 		},
 		{
@@ -345,6 +353,20 @@ func TestResolveRepoProjectFromPrefix(t *testing.T) {
 	}
 }
 
+// TestResolveRepoDefaultPrefixIsEmpty — v0.10.641: ürün varsayılanı öneksiz.
+// Kurum öneki Ayarlar → Kod entegrasyonu'ndan gelir; ayar yokken servis adı
+// soyulmaz (yalnız ortam eki düşer) ve proje türetilmez. Mutasyon: varsayılanı
+// {"shop-"} yapmak bu testi düşürür (repo "core", proje "SHOP" olurdu).
+func TestResolveRepoDefaultPrefixIsEmpty(t *testing.T) {
+	if got := DefaultRepoPrefixes(); len(got) != 0 {
+		t.Fatalf("DefaultRepoPrefixes = %v, istenen boş", got)
+	}
+	got := ResolveRepo("shop-core-prod", "", ResolveConfig{})
+	if got.Repo != "shop-core" || got.Source != RepoSourceConvention || got.Project.Value != "" {
+		t.Fatalf("öneksiz varsayılan: Repo=%q Source=%q Project=%q, istenen shop-core/convention/boş", got.Repo, got.Source, got.Project.Value)
+	}
+}
+
 // TestResolveRepoPinProjectWinsOverPrefix — pinin KENDİ projesi türetimi
 // ezer (v0.9.1240).
 //
@@ -379,7 +401,7 @@ func TestResolveRepoPinProjectWinsOverPrefix(t *testing.T) {
 // söylüyor, projeyi söylemiyor — söylenmemiş olanı doldurmak pinin
 // iradesine dokunmaz.
 func TestResolveRepoPinWithoutProjectDerives(t *testing.T) {
-	got := ResolveRepo("shop-payments-core-prod", "pushconfirm-legacy", ResolveConfig{})
+	got := ResolveRepo("shop-payments-core-prod", "pushconfirm-legacy", ResolveConfig{RepoPrefixes: []string{"shop-"}})
 	if got.Repo != "pushconfirm-legacy" || got.Source != RepoSourcePin {
 		t.Fatalf("Repo/Source=%q/%q — pin depo adını vermeli", got.Repo, got.Source)
 	}
@@ -412,7 +434,7 @@ func TestResolveRepoProjectMissReason(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := ResolveRepo(c.service, c.meta, ResolveConfig{})
+			got := ResolveRepo(c.service, c.meta, ResolveConfig{RepoPrefixes: []string{"shop-"}})
 			if got.Project.Value != "" {
 				t.Fatalf("Project=%q — bu vakada öneri olmamalı", got.Project.Value)
 			}
@@ -510,7 +532,7 @@ func TestParsePinnedRepo(t *testing.T) {
 func TestProjectFromPrefix(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"shop-", "SHOP"},
-		{"bsa", "SHOP"},
+		{"shop", "SHOP"},
 		{"acme_", "ACME"},
 		{"team.x.", "TEAM.X"},
 		{"  ops-  ", "OPS"},

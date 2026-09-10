@@ -28,7 +28,7 @@ Tek cümle: yayından önce iki zorunlu blok var — (a) ağaç sentetikleştirm
 Kapsam: 3237 takipli dosya + untracked (`.mcp.json`, `.ai/`, `.claude/agent-memory/`, `.claude/settings*.json`, `scratchpad/`) + gitignore'lu kök manifestler (yalnız bilgi) + 3654 commit'lik geçmiş (`git log --all -p`, pickaxe `-S`). Ham (maskesiz) 1524 satırlık liste repo dışında: `scratchpad/leak-raw.txt` (bölümler TREE / IGNORED / UNTRACKED / HISTORY).
 
 **TL;DR**
-- Ağaçta kurum adı / alan adı **doğrudan yok** — v0.9.656 ve v0.9.698 temizliği tutmuş. Ama **dolaylı** kimlikler duruyor: 1 intranet FQDN, 6 prod IP, Oracle şema/tablo/kolon taksonomisi, bir fraud tablosu (Türkçe kolonlu), Influx bucket/alan adları (docs), 82 farklı gerçek OpenShift iş yükü adı (`shop-*`), cluster adları (`ocp*`), LDAP OU ve iki kişi adı.
+- Ağaçta kurum adı / alan adı **doğrudan yok** — v0.9.656 ve v0.9.698 temizliği tutmuş. Ama **dolaylı** kimlikler duruyor: 1 intranet FQDN, 6 prod IP, Oracle şema/tablo/kolon taksonomisi, bir fraud tablosu (Türkçe kolonlu), Influx bucket/alan adları (docs), 82 farklı gerçek OpenShift iş yükü adı (`kurum-öneki*`), cluster adları (`ocp*`), LDAP OU ve iki kişi adı.
 - Gitignore'lu kök manifestler (`deployment-coremetry-prod*.yaml`, `route-*.yaml`, `.env`) kurum alan adlarını **yoğun** taşıyor; git'e hiç girmemişler (pickaxe 0 commit). Tek savunma gitignore; dosyalar repo kökünde durdukça `git add -f` / `-A` riski.
 - **Yalnız geçmişte:** bir çalışanın kurumsal e-postası, `com.<KURUM>.bsa.core.exception.*` Java paket adı, Influx bucket'ları + Flux şablonları (commit mesajlarında da).
 - **History rewrite: EVET** (gerekçe 1.8).
@@ -83,16 +83,16 @@ Yalnız geçmişte: bucket adları + tam Flux şablonları (`frontend/src/pages/
 |---|---|---|
 | `frontend/src/pages/service/runtimePodLabel.ts:34` (ürün kodu yorumu), `runtimePodLabel.test.ts:31-49`, `podDetailPath.test.ts:40-43`, `lib/logCluster.test.ts:14-15`, `docs/audit/entity-layer-discovery-2026-08-28.md:134` | cluster `ocp*a`, `ocp*b` | sentetik `prod-eu` / `prod-us` |
 | `internal/logstore/elasticsearch.go:2695` (ürün kodu yorumu), `frontend/src/components/LogsHistogram.test.ts` | cluster adları | sentetik |
-| `frontend/src/pages/clusters/podWorkload.test.ts` (47 satır), `podWorkload.ts:8,28-29,78-79,153-154` (ürün kodu yorumu) | `shop-*-prep` iş yükleri, RS hash'li pod adları | sentetik (`shop-login-prep`) |
-| `internal/chstore/job_service.go:37,50,52,108-110` (ürün kodu), `job_service_test.go` | `<ns>/shop-*-uat` | sentetik |
-| `internal/api/service_metric_throughput.go:156,714-720` (ürün kodu) | `shop-*-uat/-prod` | sentetik |
-| `internal/devops/{repo_resolve,frame_links,resolve_dryrun,repo_catalog}_test.go` (43 satır) | `shop-*-prod` | sentetik |
-| `internal/api/{near_names,throughput_candidates,servicegraph_hidden,correlation_link,chat_tool_links}_test.go`, `internal/evaluator/selfhealth_volume_test.go`, `internal/logstore/elasticsearch_servicefilter_test.go`, `internal/vmetrics/throughput_test.go`, `internal/notify/…`, `internal/mcptools/…` | `shop-*` (login/mobile/limit/ödeme/bpm/customer …) | sentetik |
-| `docs/DEPLOY-EVENTS.md:24` | `shop-*-prod` | `shop-checkout-prod` |
+| `frontend/src/pages/clusters/podWorkload.test.ts` (47 satır), `podWorkload.ts:8,28-29,78-79,153-154` (ürün kodu yorumu) | `kurum-öneki*-prep` iş yükleri, RS hash'li pod adları | sentetik (`shop-login-prep`) |
+| `internal/chstore/job_service.go:37,50,52,108-110` (ürün kodu), `job_service_test.go` | `<ns>/kurum-öneki*-uat` | sentetik |
+| `internal/api/service_metric_throughput.go:156,714-720` (ürün kodu) | `kurum-öneki*-uat/-prod` | sentetik |
+| `internal/devops/{repo_resolve,frame_links,resolve_dryrun,repo_catalog}_test.go` (43 satır) | `kurum-öneki*-prod` | sentetik |
+| `internal/api/{near_names,throughput_candidates,servicegraph_hidden,correlation_link,chat_tool_links}_test.go`, `internal/evaluator/selfhealth_volume_test.go`, `internal/logstore/elasticsearch_servicefilter_test.go`, `internal/vmetrics/throughput_test.go`, `internal/notify/…`, `internal/mcptools/…` | `kurum-öneki*` (login/mobile/limit/ödeme/bpm/customer …) | sentetik |
+| `docs/DEPLOY-EVENTS.md:24` | `kurum-öneki*-prod` | `shop-checkout-prod` |
 | `scratchpad/exc-pods/fixture.html` (untracked, ignore edilmemiş, 54 satır) | gerçek prod pod adları (RS hash'li), düğüm adları `ocp*wrp*`, cluster `ocp*a/b` | tamamen kaldır + `scratchpad/` gitignore |
 | `charts/coremetry/values.yaml:12-18,166`, `examples/openshift/*` | `registry.example.com`, `coremetry.local` | zaten sentetik — OK |
 
-Sayım (takipli): `shop-*` 82 farklı ad, 234 geçiş, 41 dosya (5'i ürün kodu yorumu); `ocp*` 31 geçiş / 13 dosya. İlk `e7449af4` (2026-07-18), `eba82688` (2026-07-20). Geçmiş-only yok; hepsi ağaçta.
+Sayım (takipli): `kurum-öneki*` 82 farklı ad, 234 geçiş, 41 dosya (5'i ürün kodu yorumu); `ocp*` 31 geçiş / 13 dosya. İlk `e7449af4` (2026-07-18), `eba82688` (2026-07-20). Geçmiş-only yok; hepsi ağaçta.
 
 ### 1.5 İş kodu taksonomileri
 
@@ -135,7 +135,7 @@ Sayım: `BSA_0xx` 14 / 8 dosya; kanal kodu değerleri 12 / 4 dosya.
 | Host/IP/URL | 1 FQDN + 6 IP + 2 cluster/ns | 20 / 10 | 4 | 2 sınıf (e-posta domain'i, `com.<KURUM>` paketi) | `6e115529` 2026-07-26 |
 | DB şema | şema sahibi, `ERROR_LOG`, ~20 `ERR_*`, fraud tablosu(+3 kolon), `uptrace_all` | 220+410 / 30 | 0 | 0 | `dcfc81db` 2026-08-28 |
 | Influx | bucket, measurement/field, `REDACTED` … | 26 / 8 | 1 | bucket'lar + Flux (47 satır, 9 commit) | `ee8aaf0f` 2026-09-01 |
-| OCP/K8s | 82 `shop-*` + 6 cluster + 6 düğüm | 265 / 54 | 54 | 0 | `e7449af4` 2026-07-18 |
+| OCP/K8s | 82 `kurum-öneki*` + 6 cluster + 6 düğüm | 265 / 54 | 54 | 0 | `e7449af4` 2026-07-18 |
 | İş kodları | `BSA_0xx`×3, kanal kodları ×8, `DEFAULT_TRACE_COLUMNS` | 45 / 12 | 0 | `REDACTED` | `f7c9dd22` 2026-09-09 |
 | LDAP/e-posta | 2 OU, 2 kişi | 18 / 1 | 0 | 1 kurumsal e-posta | `a7979328` 2026-07-10 |
 | Secret | 0 canlı (1 local-dev literal) | 1 / 1 | 0 | 0 | — |
@@ -630,7 +630,7 @@ Etki: Y (yayın/güvenlik engeli) · O (ekip verimliliği) · D (kozmetik). Efor
 
 | # | İş | Etki | Efor | Bölüm |
 |---|---|---|---|---|
-| 1 | Ağaç sentetikleştirme: IP/FQDN fixture'ları (1.1), Oracle şema/kolon varsayılanlarını config'e (1.2), fraud tablosu fixture'ı (1.2), Influx docs (1.3), 82 `shop-*` + `ocp*` fixture'ları (1.4), `BSA_0xx`/kanal kodları/`DEFAULT_TRACE_COLUMNS` (1.5), LDAP fixture'ı (1.6) | **Y** | M-L (~1-1.5 gün; 100+ dosya ama mekanik) | §1 |
+| 1 | Ağaç sentetikleştirme: IP/FQDN fixture'ları (1.1), Oracle şema/kolon varsayılanlarını config'e (1.2), fraud tablosu fixture'ı (1.2), Influx docs (1.3), 82 `kurum-öneki*` + `ocp*` fixture'ları (1.4), `BSA_0xx`/kanal kodları/`DEFAULT_TRACE_COLUMNS` (1.5), LDAP fixture'ı (1.6) | **Y** | M-L (~1-1.5 gün; 100+ dosya ama mekanik) | §1 |
 | 2 | Kök manifestler + `.env` repo dışına; `.gitignore`: `.mcp.json`, `.claude/agent-memory/`, `scratchpad/`; `scratchpad/exc-pods`, `copilot-tools` sil; `values-minikube.yaml` JWT literal'ı → env | **Y** | S | §1.1, 1.7, §2 |
 | 3 | History rewrite (`git filter-repo --replace-text`; 3477 tag; klonlar yenilenir) — 1'den SONRA | **Y** | M | §1.8 |
 | 4 | CI yeşil: vitest TZ düzeltmesi (v0.10.613), `js-yaml`/`browserslist`, `x/crypto`+`grpc` bump | **Y** | S-M | §4.4 #3-5 |
@@ -656,7 +656,7 @@ Repo dışında operatöre teslim: `leak-raw.txt` (1524 satır, maskesiz) — bu
 
 | # | İş | Durum |
 |---|---|---|
-| 1 | Ağaç sentetikleştirme | **GEMİDE** 618 (IP/FQDN), 619 (LDAP fixture), 620 (`shop-`→`shop-`, cluster adları, 52 dosya), 621 (fraud fixture, Influx kalıntıları). Üç davranışsal varsayılan (Oracle sütun adları, Traces varsayılan kolonları, devops `shop-` öneki) → config'e taşıma **operatör kararı** bekliyor |
+| 1 | Ağaç sentetikleştirme | **GEMİDE** 618 (IP/FQDN), 619 (LDAP fixture), 620 (kurum öneki→`shop-`, cluster adları, 52 dosya), 621 (fraud fixture, Influx kalıntıları). Üç davranışsal varsayılan **GEMİDE 641**: Oracle sütunları jenerik `ERR_*`, Traces varsayılan kolonları `http.method/http.route/deployment.environment`, devops öneki boş (kurum değerleri Settings'ten; prod'da açıkça kaydedilmeli — deploy ön koşulu) |
 | 2 | Kök manifestler + `.gitignore` | **GEMİDE** 618 (`.mcp.json`, `.claude/agent-memory/`, `scratchpad/`); kök compose/collector/tempo/minikube yaml'ları sentetik, ağaçta kalıyor |
 | 3 | History rewrite | **Operatör** — zamanlama (force-push + 3477 tag; klonlar yenilenir) |
 | 4 | CI yeşil | **GEMİDE** 614 (vitest TZ), 615 (js-yaml/browserslist), 616 (x/crypto, grpc); `main` 628'den beri 5/5 yeşil |

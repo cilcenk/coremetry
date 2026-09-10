@@ -73,8 +73,9 @@ var fieldOrder = []string{
 	FieldRequestID, FieldCustomerID, FieldTellerID, FieldLocation,
 }
 
-// DefaultColumns — audit §5 tablosu birebir. Her çağrı yeni harita (çağıran
-// değiştirebilir).
+// DefaultColumns — jenerik ERR_* varsayılanları (v0.10.641: kurum tablosunun
+// adları ürün varsayılanı olamaz; gerçek eşleme Settings → Oracle → sütunlar).
+// Her çağrı yeni harita (çağıran değiştirebilir).
 func DefaultColumns() map[string]string {
 	return map[string]string{
 		FieldTimestamp:    DefaultTimestampColumn,

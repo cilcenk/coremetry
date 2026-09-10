@@ -208,7 +208,7 @@ type Snapshot struct {
 	// RepoPrefixes / BranchOrder (v0.9.830) — echoed back RESOLVED, i.e.
 	// the defaults appear when the operator saved nothing. The card
 	// would otherwise render two empty boxes next to a resolver that is
-	// quietly using "shop-" and release→master, and the first question
+	// quietly using "svc-" and release→master, and the first question
 	// out of a failed lookup would be "but what IS it stripping?".
 	RepoPrefixes []string `json:"repoPrefixes,omitempty"`
 	BranchOrder  []string `json:"branchOrder,omitempty"`

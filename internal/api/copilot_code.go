@@ -100,7 +100,7 @@ func (s *Server) buildCodeContext(ctx context.Context, service, stack string) de
 		return devops.CodeContext{Reason: reason, Source: res.Source, Outcome: devops.CodeRepoUnresolved}
 	}
 	// v0.9.1183 — res.Project, proje ÖNERİSİ: pinin kendi taşıdığı proje
-	// (v0.9.1240) ya da servis önekinden türetilen ad (shop-… → SHOP).
+	// (v0.9.1240) ya da servis önekinden türetilen ad (svc-… → SVC).
 	// FetchCode onu yalnız ayardaki Project boşken kullanır; öneri boşsa
 	// içindeki Reason çıkmazı üç kaynak üzerinden anlatır.
 	// v0.10.73 — HATA METNİNİN ANDIĞI KAYNAK DOSYALAR da aday.

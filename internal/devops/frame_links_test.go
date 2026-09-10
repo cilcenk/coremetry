@@ -359,8 +359,8 @@ func TestResolveFrameLinksDoesNotTouchCodeCounters(t *testing.T) {
 	frames := []stackparse.Frame{frame("com.example.card.CardService", "charge", "CardService.java", 246)}
 
 	svc.ResolveFrameLinks(ctx, "shop-core-service-prod", PinRead{}, frames, "")   // mutlu yol
-	svc.ResolveFrameLinks(ctx, "legacy-service", PinRead{}, frames, "")          // konvansiyon çıkmazı
-	svc.ResolveFrameLinks(ctx, "x", PinRead{Abort: "okunamadı"}, frames, "")     // pin iptali
+	svc.ResolveFrameLinks(ctx, "legacy-service", PinRead{}, frames, "")           // konvansiyon çıkmazı
+	svc.ResolveFrameLinks(ctx, "x", PinRead{Abort: "okunamadı"}, frames, "")      // pin iptali
 	New().ResolveFrameLinks(ctx, "shop-core-service-prod", PinRead{}, frames, "") // yapılandırılmamış
 
 	if st := svc.CodeObservability(); st.Attempts != 0 || st.OK != 0 ||

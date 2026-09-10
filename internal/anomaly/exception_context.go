@@ -367,7 +367,7 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 				// stackService) eksik yarısı: span-örnekleri stack taşımıyorsa
 				// kod çekicinin istihkakı LOGLARDAN gelir. Servis de birlikte
 				// taşınır — logu atan servis g.Service'ten farklı olabilir ve
-				// shop- depo çözümü yanlış depoya gitmesin.
+				// svc- depo çözümü yanlış depoya gitmesin.
 				if logStack == "" && stackText != "" {
 					logStack, logStackSvc = stackText, lg.ServiceName
 				}

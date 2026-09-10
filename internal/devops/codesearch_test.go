@@ -459,7 +459,7 @@ func TestPickSearchHitRecency_NewestRepoWins(t *testing.T) {
 }
 
 func TestRecencyKey(t *testing.T) {
-	if RecencyKey("SHOP", "Card-V2") != RecencyKey("bsa", "card-v2") {
+	if RecencyKey("SHOP", "Card-V2") != RecencyKey("shop", "card-v2") {
 		t.Fatalf("recency key must be case-insensitive (Azure DevOps names are)")
 	}
 }

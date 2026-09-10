@@ -447,7 +447,7 @@ func evictOldest(m map[string]treeEntry) {
 // yanlışlıkla açıklamayı düşürmesin).
 // hint (v0.9.1183, v0.9.1240'ta yapılandırıldı) — proje ÖNERİSİ +
 // önerinin kaynağı, öneri boşsa çıkmazın nedeni. Ayardaki açık Project
-// boşsa kullanılır. Operatör isteği: "service_name başında shop-
+// boşsa kullanılır. Operatör isteği: "service_name başında svc-
 // yazıyorsa direkt project SHOP olduğunu anlasın."
 //
 // v0.9.1241 — her çıkış SAYILIR. Dönüş DEĞERİ adlandırıldı ve sayaç
@@ -532,7 +532,7 @@ func (s *Service) FetchCode(ctx context.Context, repo string, hint ProjectHint, 
 	cli := s.clientFor(cfg.InsecureSkipVerify)
 
 	// v0.9.1183 — proje ayarda boşsa servis önekinden TÜRETİLİR
-	// (shop-… → SHOP). Açık ayar HER ZAMAN kazanır: türetme bir tahmin,
+	// (svc-… → SVC). Açık ayar HER ZAMAN kazanır: türetme bir tahmin,
 	// operatörün yazdığı ad bir karar (ResolveRepo'daki pin sözleşmesinin
 	// aynısı). Önceden burası kesin bir duvardı ve kurulumun kendi
 	// adlandırma sözleşmesi zaten cevabı taşırken operatörden aynı bilgiyi
@@ -972,7 +972,7 @@ func (s *Service) resolveChain(ctx, parent context.Context, cli *http.Client, cf
 	res.capped, res.cappedWhy = tree.capped, tree.why
 	if len(tree.paths) == 0 {
 		// v0.9.1183 — NE DENENDİĞİ yazılıyor. Proje artık türetilebiliyor
-		// (shop-… → SHOP) ve türetme bir tahmin; "depo ağacı boş döndü"
+		// (svc-… → SVC) ve türetme bir tahmin; "depo ağacı boş döndü"
 		// tek başına operatöre yanlış tahmini göstermez, oysa hatanın en
 		// olası sebebi tam olarak yanlış proje/depo adıdır (ör. gerçek depo
 		// farklı harf yazımında). Katalogdaki Repository pini bunu ezer.

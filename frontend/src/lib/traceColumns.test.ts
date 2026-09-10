@@ -88,8 +88,10 @@ describe('DEFAULT_TRACE_COLUMNS', () => {
     // operatörün fiilen kullandığının aynısı. status_code'un satırdaki
     // bilgisi zaten Status kolonunda (OK/ERROR) — ikinci kez, daha dar
     // biçimde gösteriliyordu.
+    // v0.10.641: jenerik varsayılan (kurumun iş boyutları değil); operatörün
+    // kendi seçimi saved_views/localStorage'dan gelir, varsayılana düşmez.
     expect(DEFAULT_TRACE_COLUMNS).toEqual([
-      'openshift.cluster.name', 'channel_code', 'function_code', 'function_id',
+      'http.method', 'http.route', 'deployment.environment',
     ]);
   });
 

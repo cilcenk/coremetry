@@ -17,7 +17,7 @@ import type { DevOpsFlavor, DevOpsResolveDryRun, DevOpsTestResult, SchemaCatalog
 // Alan boş bırakılırsa sunucu nil kaydeder ve varsayılan uygulanır;
 // snapshot çözülmüş değeri geri döndüğü için kutu asla boş kalmaz —
 // operatör çözücünün gerçekte neyi soyduğunu ekranda görür.
-// splitList — "shop-, svc-" → ['shop-','svc-']. Boş girdi [] döner ve
+// splitList — "svc-, svc-" → ['svc-','svc-']. Boş girdi [] döner ve
 // sunucu onu nil'e çevirip varsayılana düşer (cleanConventionList).
 function splitList(s: string): string[] {
   return s.split(',').map(x => x.trim()).filter(Boolean);
@@ -262,7 +262,7 @@ export function DevOpsTab() {
           </div>
           <input value={project}
             onChange={e => setProject(e.target.value)}
-            placeholder="boş bırakılırsa servis önekinden türetilir (shop- → SHOP)"
+            placeholder="boş bırakılırsa servis önekinden türetilir (svc- → SVC)"
             style={{ width: '100%' }} />
           {/* v0.9.1183 — boş Project'in ARTIK iki anlamı var ve ikisi de
               burada yazılı olmalı: bağlantı testi hâlâ yalnız koleksiyonu
@@ -273,7 +273,7 @@ export function DevOpsTab() {
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
             Bağlantı testi boşken yalnız koleksiyonu doğrular. <b>Kod çekiminde</b> boş
             bırakılırsa proje, servis adının eşleşen önekinden türetilir
-            (<code>shop-…</code> → <code>SHOP</code>). Buraya yazılan değer türetmeyi ezer.
+            (<code>svc-…</code> → <code>SVC</code>). Buraya yazılan değer türetmeyi ezer.
           </div>
         </label>
 
@@ -331,7 +331,7 @@ export function DevOpsTab() {
           </div>
           <input value={repoPrefixes}
             onChange={e => setRepoPrefixes(e.target.value)}
-            placeholder="shop-"
+            placeholder="svc-"
             style={{ width: '100%' }} />
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
             Servis adından depo adı türetilirken soyulur; ortam eki

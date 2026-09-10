@@ -42,7 +42,7 @@ func (s *Server) copilotExplainException(w http.ResponseWriter, r *http.Request)
 	cacheKey := explainCacheKey(copilot.SystemPromptException(), in.User, "")
 	if opts.IncludeCode {
 		// v0.9.1225 — stack log-fallback'ten geldiyse depo çözümü logu
-		// atan servise gider (shop- önek deseni servis adından türetilir).
+		// atan servise gider (svc- önek deseni servis adından türetilir).
 		codeSvc := g.Service
 		if in.StackService != "" {
 			codeSvc = in.StackService

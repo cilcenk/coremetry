@@ -14,7 +14,7 @@ import (
 //     operatörün yazdığı ad bir karardır. (Mevcut merge/pin sözleşmesi:
 //     deriver'ların yazdığı alanlar insan girdisini ezmez.)
 //  2. Yoksa ad konvansiyonu: yapılandırılabilir bir ÖNEK (varsayılan
-//     "shop-") + chstore'un ORTAM EKİ (-prod/-int/-uat/-prep) soyulur.
+//     "svc-") + chstore'un ORTAM EKİ (-prod/-int/-uat/-prep) soyulur.
 //     shop-digital-mobile-pushconfirm-prod → digital-mobile-pushconfirm
 //
 // Neden yapılandırılabilir: önek ve branş sırası kuruluma özgü. Kodda
@@ -23,7 +23,7 @@ import (
 
 // DefaultRepoPrefixes / DefaultBranchOrder — ayar boşken kullanılan
 // varsayılanlar. Ayarın kendisi devops_connection blob'unda.
-func DefaultRepoPrefixes() []string { return []string{"shop-"} }
+func DefaultRepoPrefixes() []string { return []string{} } // v0.10.641: öneksiz — kurum öneki ayardan gelir
 func DefaultBranchOrder() []string  { return []string{"release", "master"} }
 
 // envSuffixes — servis adlarındaki ortam ekleri.
@@ -67,7 +67,7 @@ type RepoResolution struct {
 	Repo   string
 	Source string
 	Reason string
-	// Project (v0.9.1183, operatör isteği: "service_name başında shop-
+	// Project (v0.9.1183, operatör isteği: "service_name başında svc-
 	// yazıyorsa direkt project SHOP olduğunu anlasın") — DevOps proje
 	// ÖNERİSİ + önerinin kaynağı.
 	//
@@ -94,7 +94,7 @@ type ProjectHint struct {
 }
 
 // projectFromPrefix — eşleşen servis önekinden proje adı.
-// "shop-" → "SHOP". SAF.
+// "svc-" → "SVC". SAF.
 //
 // Kural: ayraçları (- _ . /) at, BÜYÜK harfe çevir. Büyük harf, Azure
 // DevOps proje adlarının yaygın yazımı ve sunucu proje adını URL'de

@@ -842,6 +842,49 @@ func (s *Store) tryOperationMVFastPathMulti(ctx context.Context, f SpanMetricBat
 // Name is the operator's label for the result key in the
 // response map — callers pick something stable ("rate",
 // "error_rate", "p99") so the frontend can address each
+// rootSpanPredicate — v0.10.611 (operatör-bildirimi, dogfood exception:
+// "Unknown expression or function identifier `parent_span_id`", code 47).
+// spans tablosunda kolon `parent_id`; kök = boş YA DA sıfır id (iki tel
+// biçimi, repo.go GetTraces RootOnly ile AYNI yazım). Tek sabit: histogram
+// ile tablo aynı kümeyi daraltmak zorunda.
+const rootSpanPredicate = "(parent_id = '' OR parent_id = '0000000000000000')"
+
+// spanMetricBatchWhere — v0.10.611: batch span-metrik sorgusunun WHERE'i,
+// SAF (regresyon testi doğrudan pinler). v0.10.484 RootOnly'yi buraya
+// `parent_span_id = ''` diye yazmıştı — kolon yok; /traces hacim şeridi Root
+// açıkken 6 Eylül'den beri prod'da CH 47 alıyordu ve saf seam olmadığı için
+// hiçbir test göremedi.
+func spanMetricBatchWhere(f SpanMetricBatchFilter, winK, effWin int) whereClause {
+	var wc whereClause
+	if !f.From.IsZero() {
+		scanFrom := f.From
+		if winK > 0 {
+			// Prometheus rate[W] grafik kenarının W sn gerisine bakar;
+			// taramayı genişletmezsek ilk W saniye eksik pencereyle
+			// rampalanır (Grafana'da olmayan bir artefakt). Kenarlar
+			// aşağıda bucket sınırlarıyla kırpılıyor.
+			scanFrom = scanFrom.Add(-time.Duration(effWin) * time.Second)
+		}
+		wc.add("time >= ?", scanFrom)
+	}
+	if !f.To.IsZero() {
+		wc.add("time <= ?", f.To)
+	}
+	ApplyFilters(&wc, f.Filters)
+	// v0.10.484 — /traces Root / Errors bayrakları (tablo ile aynı küme).
+	if f.RootOnly {
+		wc.add(rootSpanPredicate) // v0.10.611 — kolon parent_id (parent_span_id YOK, prod CH 47)
+	}
+	// v0.9.601 — tek-agg yolundaki (yukarıda, ~satır 189) searchPredicate
+	// ile BİREBİR aynı. İki yolun aynı yüklemi kurması şart: /traces
+	// hacim şeridi bu yüzeye geçtiğinde grafik ile tablo aynı kümeyi
+	// daraltmalı.
+	if pred, pargs := searchPredicate(f.Search); pred != "" {
+		wc.add(pred, pargs...)
+	}
+	return wc
+}
+
 // series without inspecting types.
 type SpanMetricBatchFilter struct {
 	Filters []FilterExpr
@@ -1053,35 +1096,7 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 		}
 	}
 
-	// ── Build WHERE ───────────────────────────────────────────────────────────
-	var wc whereClause
-	if !f.From.IsZero() {
-		scanFrom := f.From
-		if winK > 0 {
-			// Prometheus rate[W] grafik kenarının W sn gerisine bakar;
-			// taramayı genişletmezsek ilk W saniye eksik pencereyle
-			// rampalanır (Grafana'da olmayan bir artefakt). Kenarlar
-			// aşağıda bucket sınırlarıyla kırpılıyor.
-			scanFrom = scanFrom.Add(-time.Duration(effWin) * time.Second)
-		}
-		wc.add("time >= ?", scanFrom)
-	}
-	if !f.To.IsZero() {
-		wc.add("time <= ?", f.To)
-	}
-	ApplyFilters(&wc, f.Filters)
-	// v0.10.484 — /traces Root / Errors bayrakları (tablo ile aynı küme).
-	if f.RootOnly {
-		wc.add("parent_span_id = ''")
-	}
-	// v0.9.601 — tek-agg yolundaki (yukarıda, ~satır 189) searchPredicate
-	// ile BİREBİR aynı. İki yolun aynı yüklemi kurması şart: /traces
-	// hacim şeridi bu yüzeye geçtiğinde grafik ile tablo aynı kümeyi
-	// daraltmalı.
-	if pred, pargs := searchPredicate(f.Search); pred != "" {
-		wc.add(pred, pargs...)
-	}
-
+	wc := spanMetricBatchWhere(f, winK, effWin)
 	// ── Bucket size — clampSpanMetricStep yukarıda uyguladı ──────────────────
 	step := f.StepSeconds
 

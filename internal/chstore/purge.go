@@ -22,6 +22,10 @@ type PurgeResult struct {
 // CREATE statements in store.go / chmigrate; TestPurgeAllowlistExcludesConfig
 // pins that no config table leaks in.
 var telemetryPurgeTables = []string{
+	// v0.10.599 — Oracle Aşama 2: MCA_TERROR_LOG satırları TELEMETRİDİR (log);
+	// purge silsin, poller watermark'tan devam eder (geçmiş yeniden gelmez —
+	// Oracle tarafında hâlâ duruyorsa operatör watermark'ı geri alır).
+	"oracle_error_log",
 	// v0.10.127 — K8s entity katmanı: hepsi telemetriden/Thanos'tan
 	// TÜRER ve syncer + MV ile yeniden doğar; operatör içeriği taşımaz.
 	// entities/entity_relations ömür tarihçesi purge'la gider — purge

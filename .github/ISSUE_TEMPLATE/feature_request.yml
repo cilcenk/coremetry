@@ -1,0 +1,30 @@
+name: Özellik
+description: Yeni yüzey / davranış önerisi
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Ne / neden
+      description: "Operatör hangi soruya cevap arıyor? Datadog / Dynatrace / Honeycomb bunu nasıl yapar?"
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Kapsam
+      options:
+        - label: 3+ dosyaya dokunacak → önce `/spec` (plan + onay), sonra kod.
+        - label: Mevcut bir yüzeyin davranışını (kapsam / varsayılan / ayrım) değiştiriyor → önce sor.
+        - label: ClickHouse şeması / MV değişiyor → `/clickhouse-schema`.
+        - label: Ölçek kısıtı düşünüldü (1000+ servis, 1B+ span/gün, MV-first, p99 < 200 ms).
+  - type: dropdown
+    id: area
+    attributes:
+      label: Alan
+      options: ["frontend", "chart-layer", "otlp ingest", "storage (ClickHouse/logstore)", "metrics (VictoriaMetrics)", "CoSRE / AI / MCP", "anomaly / alerts / notify", "integrations (Oracle, DevOps, Tempo, Thanos, entity)", "auth / security", "helm / ops", "perf / demo", "docs"]
+  - type: input
+    id: audit
+    attributes:
+      label: İlgili audit / plan dokümanı
+      placeholder: "docs/audit/….md ya da yok"

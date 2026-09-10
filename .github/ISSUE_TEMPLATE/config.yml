@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Güvenlik açığı
+    url: https://github.com/cosretr/coremetry/security/advisories/new
+    about: Açıkları herkese açık issue olarak DEĞİL, özel bildirim ile gönderin (SECURITY.md).

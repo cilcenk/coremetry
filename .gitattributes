@@ -1,0 +1,16 @@
+# .gitattributes — v0.10.623. LF her yerde (Windows klonu CRLF ile diff
+# şişirmesin); ikili ve üretilmiş dosyalar diff/linguist dışı.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff2 binary
+*.patch -text
+
+frontend/package-lock.json linguist-generated=true -diff
+go.sum linguist-generated=true
+frontend/dist/** linguist-generated=true
+migrations/*.sql linguist-language=SQL
+docs/screenshots/** binary

@@ -1,0 +1,54 @@
+name: Bug
+description: Yanlış davranış / hata (operatör bildirimi dahil)
+labels: ["bug"]
+body:
+  - type: checkboxes
+    id: operator
+    attributes:
+      label: Operatör bildirimi mi?
+      options:
+        - label: Evet — üretimde görüldü; kuyruğun önüne geçer, kendi `v0.10.X+1` sürümü olur.
+  - type: input
+    id: version
+    attributes:
+      label: Sürüm
+      description: "`/api/version` çıktısı (build + overridden bayrağı) ya da git tag."
+      placeholder: "v0.10.622 (overridden: false)"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Deployment modu
+      options: ["all (monolitik)", "ingest", "api", "worker", "distributed (chart)"]
+    validations:
+      required: true
+  - type: input
+    id: surface
+    attributes:
+      label: Sayfa / uç
+      placeholder: "/traces?…  ya da GET /api/spans/metric/batch"
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Depo topolojisi
+      options: ["ClickHouse tek node", "ClickHouse dağıtık (external Distributed)", "Log backend: Elasticsearch", "Metrik backend: VictoriaMetrics"]
+      multiple: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Gözlenen
+      description: "Hata metni / ekran görüntüsü. Hostname, IP, şema adı ve kurum adı MASKELİ."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Beklenen
+  - type: textarea
+    id: repro
+    attributes:
+      label: Yeniden üretme
+      description: "Mümkünse ClickHouse ground-truth sorgusu ya da demo (`cmd/demo`) senaryosu."

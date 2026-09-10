@@ -1,0 +1,161 @@
+# CODEOWNERS — v0.10.623 (docs/audit/team-readiness-audit.md §5.4).
+#
+# Son eşleşen satır kazanır. Takımlar henüz kurulmadı: her alan bugün
+# @cilcenk'e düşer; alan başına hedef takım yorumda (@cosretr/<takım>).
+# Takım oluşturulunca satırdaki sahibi değiştirmek yeter — glob'lar
+# internal/api dosya-öneki konvansiyonuna dayanır (/api-route: her domain
+# kendi <domain>.go dosyasında), o sürdükçe bu dosya bakımsız kalmaz.
+
+# Varsayılan                                     # @cosretr/core
+*                                               @cilcenk
+
+# --- Frontend                                   # @cosretr/frontend
+/frontend/                                      @cilcenk
+# chart katmanı (CorePanel/uPlot tek motor)      # @cosretr/chart-layer
+/frontend/src/components/chart/                 @cilcenk
+/frontend/src/components/charts/                @cilcenk
+/frontend/src/components/viz/                   @cilcenk
+/frontend/src/lib/chart/                        @cilcenk
+# CoSRE UI                                       # @cosretr/cosre-ai
+/frontend/src/components/ai/                    @cilcenk
+/frontend/src/pages/ai/                         @cilcenk
+/frontend/src/components/CopilotChat.tsx        @cilcenk
+/frontend/src/components/CopilotExplain.tsx     @cilcenk
+# anomali / alarm UI                             # @cosretr/anomaly-alerts
+/frontend/src/features/anomalies/               @cilcenk
+/frontend/src/pages/alerts/                     @cilcenk
+# auth UI                                        # @cosretr/security
+/frontend/src/components/AuthProvider.tsx       @cilcenk
+/frontend/src/pages/Login.tsx                   @cilcenk
+
+# --- OTLP ingest                                # @cosretr/otlp
+/internal/otlp/                                 @cilcenk
+/internal/pipeline/                             @cilcenk
+/internal/consumer/                             @cilcenk
+/internal/correlator/                           @cilcenk
+/internal/profileconv/                          @cilcenk
+/internal/stackparse/                           @cilcenk
+/otel-collector-config*.yaml                    @cilcenk
+
+# --- Storage (ClickHouse / logstore / migrations) # @cosretr/storage
+/internal/chstore/                              @cilcenk
+/internal/logstore/                             @cilcenk
+/internal/chmigrate/                            @cilcenk
+/internal/cluster/                              @cilcenk
+/internal/acache/                               @cilcenk
+/internal/cache/                                @cilcenk
+/internal/appschema/                            @cilcenk
+/migrations/                                    @cilcenk
+/docs/SCHEMA.md                                 @cilcenk
+/docs/rollup-design.md                          @cilcenk
+
+# --- Metrics (VictoriaMetrics)                  # @cosretr/metrics
+/internal/vmetrics/                             @cilcenk
+/internal/promql/                               @cilcenk
+/internal/promapi/                              @cilcenk
+/internal/api/metric*.go                        @cilcenk
+/internal/api/vmetrics*.go                      @cilcenk
+
+# --- CoSRE / AI / MCP                           # @cosretr/cosre-ai
+/internal/copilot/                              @cilcenk
+/internal/ai/                                   @cilcenk
+/internal/mcp/                                  @cilcenk
+/internal/mcptools/                             @cilcenk
+/internal/mcpclient/                            @cilcenk
+/internal/rag/                                  @cilcenk
+/internal/rca/                                  @cilcenk
+/internal/promptfmt/                            @cilcenk
+/internal/agent/                                @cilcenk
+/internal/api/ai_*.go                           @cilcenk
+/internal/api/copilot_*.go                      @cilcenk
+/internal/api/chat_*.go                         @cilcenk
+/internal/api/mcp_*.go                          @cilcenk
+/internal/api/rca*.go                           @cilcenk
+/internal/api/rag*.go                           @cilcenk
+/internal/api/explain*.go                       @cilcenk
+/internal/api/guided*.go                        @cilcenk
+/docs/cosre-*.md                                @cilcenk
+/docs/evals/                                    @cilcenk
+
+# --- Anomaly / alerts / notify                  # @cosretr/anomaly-alerts
+/internal/anomaly/                              @cilcenk
+/internal/evaluator/                            @cilcenk
+/internal/notify/                               @cilcenk
+/internal/watcher/                              @cilcenk
+/internal/monitor/                              @cilcenk
+/internal/templater/                            @cilcenk
+/internal/api/anomaly*.go                       @cilcenk
+/internal/api/alert*.go                         @cilcenk
+/internal/api/problem*.go                       @cilcenk
+/internal/api/inbox*.go                         @cilcenk
+/internal/api/slo*.go                           @cilcenk
+/internal/api/watcher*.go                       @cilcenk
+/internal/api/runbook*.go                       @cilcenk
+
+# --- Integrations                               # @cosretr/integrations
+/internal/oracle/                               @cilcenk
+/internal/devops/                               @cilcenk
+/internal/tempo/                                @cilcenk
+/internal/thanos/                               @cilcenk
+/internal/entity/                               @cilcenk
+/internal/rollout/                              @cilcenk
+/internal/elasticml/                            @cilcenk
+/internal/dql/                                  @cilcenk
+/internal/logql/                                @cilcenk
+/internal/api/oracle*.go                        @cilcenk
+/internal/api/devops*.go                        @cilcenk
+/internal/api/thanos*.go                        @cilcenk
+/internal/api/tempo*.go                         @cilcenk
+/internal/api/kibana*.go                        @cilcenk
+/internal/api/entity*.go                        @cilcenk
+/internal/api/rollout*.go                       @cilcenk
+
+# --- Auth / security                            # @cosretr/security
+/internal/auth/                                 @cilcenk
+/internal/ldap/                                 @cilcenk
+/internal/secretref/                            @cilcenk
+/internal/reqid/                                @cilcenk
+/internal/api/admin*.go                         @cilcenk
+/internal/api/ldap*.go                          @cilcenk
+/SECURITY.md                                    @cilcenk
+/.trivyignore                                   @cilcenk
+/.github/dependabot.yml                         @cilcenk
+
+# --- Helm / ops / CI                            # @cosretr/helm-ops
+/charts/                                        @cilcenk
+/examples/openshift/                            @cilcenk
+/Dockerfile                                     @cilcenk
+/cmd/demo/Dockerfile                            @cilcenk
+/docker-compose*.yml                            @cilcenk
+/values-minikube.yaml                           @cilcenk
+/scripts/                                       @cilcenk
+/Makefile                                       @cilcenk
+/.github/workflows/                             @cilcenk
+/docs/ha/                                       @cilcenk
+/docs/operator/                                 @cilcenk
+/docs/runbooks/                                 @cilcenk
+/docs/clickhouse-cluster.md                     @cilcenk
+
+# --- Perf / demo                                # @cosretr/perf-demo
+/cmd/demo/                                      @cilcenk
+/cmd/perfcheck/                                 @cilcenk
+/cmd/paritycheck/                               @cilcenk
+/internal/perfcheck/                            @cilcenk
+/java-demo/                                     @cilcenk
+/jboss-demo/                                    @cilcenk
+/perf/                                          @cilcenk
+/scripts/perf/                                  @cilcenk
+/docs/perf/                                     @cilcenk
+
+# --- Docs / governance                          # @cosretr/core + @cosretr/docs
+/docs/                                          @cilcenk
+/README.md                                      @cilcenk
+/CLAUDE.md                                      @cilcenk
+/.claude/                                       @cilcenk
+/.github/CODEOWNERS                             @cilcenk
+/go.mod                                         @cilcenk
+/go.sum                                         @cilcenk
+/main.go                                        @cilcenk
+/internal/api/api.go                            @cilcenk
+/internal/api/route_registry.go                 @cilcenk
+/internal/config/                               @cilcenk

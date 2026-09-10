@@ -1334,13 +1334,11 @@ function TracesPageInner() {
             chips; grouped→flat flattens them back (OR / nested structure has no
             flat representation). v0.8.x. */}
           <div className="row gap-2" style={{ alignItems: 'center', justifyContent: 'flex-end', marginBottom: -4 }}>
-            {!grouped ? (
-              <Button variant="ghost" size="sm"
-                title="Switch to the grouped AND/OR builder for (A OR B) AND C style queries"
-                onClick={() => setAdvGroup({ join: 'AND', filters: advFilters })}>
-                ⊞ Group filters (AND/OR)
-              </Button>
-            ) : (
+            {/* v0.10.659 (operatör: "Group and/or'a gerek yok, filtre zaten yapıyor")
+                — gruplu kurucuya GİRİŞ düğmesi kaldırıldı; tek satır filtre çubuğu
+                AND/OR'u alıyor. Gruplu kip yalnız URL/kayıtlı görünümden
+                (?filterGroup=) gelir ve düz çiplere dönülebilir. */}
+            {grouped && (
               <Button variant="ghost" size="sm"
                 title="Back to the flat filter chips (drops any OR / nested groups)"
                 onClick={() => {

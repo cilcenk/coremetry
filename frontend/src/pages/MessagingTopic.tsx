@@ -39,6 +39,7 @@ import { kindSeries } from '@/features/dependencies/msgSeries';
 import { kafkaChartItems, kafkaDegradeTR } from '@/features/dependencies/kafkaClients';
 import { opLabelTR, isOpMissing, msgOperationRows, OP_MISSING_TITLE } from '@/features/dependencies/msgOperations';
 import { useMessagingClients, useMessagingTopicDetail } from '@/lib/queries/messaging';
+import { metricOnlyServices } from './messaging/metricOnlyServices';
 import { messagingTracesHref } from '@/lib/pivotHref';
 import { traceHref } from '@/lib/traceHref';
 import { navHref } from '@/lib/navHref';
@@ -120,6 +121,11 @@ export default function MessagingTopicPage() {
   const producers = callers.filter(c => c.role === 'producer');
   const consumers = callers.filter(c => c.role === 'consumer');
   const others = callers.filter(c => c.role && c.role !== 'producer' && c.role !== 'consumer');
+  // v0.10.610 — span üretmeyip yalnız Kafka istemci metriğinde görülen servisler
+  // (609 keşfi, üst grafiğin set=chart cevabından; ek istek yok). Başlık ve
+  // sekme sayaçları bunları AYRI sayar — span satırı yok, RED sayısı uydurulmaz.
+  const metricOnlyProducers = metricOnlyServices(chartQ.data?.discoveredProducers, producers);
+  const metricOnlyConsumers = metricOnlyServices(chartQ.data?.discoveredConsumers, consumers);
   const msgOps = msgOperationRows(d?.operations);
   const topOps = d?.topOps ?? [];
   const e2e = d?.e2e;
@@ -187,6 +193,10 @@ export default function MessagingTopicPage() {
             <div className="mtp-cap">
               üretici / tüketici <b>{producers.length}</b> / <b>{consumers.length}</b>
               {others.length > 0 && <> · diğer istemci <b>{others.length}</b></>}
+              {(metricOnlyProducers.length + metricOnlyConsumers.length) > 0 && (
+                <> · yalnız metrikte <b>{metricOnlyProducers.length + metricOnlyConsumers.length}</b>
+                  <span title="Span üretmeyen, yalnız Kafka istemci metriğinde (kafka-clients-metrics) görülen servisler"> (span üretmeyen istemci)</span></>
+              )}
               {' '}· seçili pencere, <code className="mono">messaging_caller_summary_5m</code>
             </div>
 
@@ -204,8 +214,10 @@ export default function MessagingTopicPage() {
             </div>
 
             <TabStrip ariaLabel="Topic sekmeleri" value={tab} onChange={setTab} tabs={[
-              { key: 'producers', label: <>Üreticiler<span className="tab-count">{producers.length}</span></> },
-              { key: 'consumers', label: <>Tüketiciler<span className="tab-count">{consumers.length}</span></> },
+              { key: 'producers', label: <>Üreticiler<span className="tab-count">{producers.length}</span>
+                {metricOnlyProducers.length > 0 && <span className="tab-count" title="+ yalnız metrikte görülen (span üretmeyen) üretici">+{metricOnlyProducers.length}</span>}</> },
+              { key: 'consumers', label: <>Tüketiciler<span className="tab-count">{consumers.length}</span>
+                {metricOnlyConsumers.length > 0 && <span className="tab-count" title="+ yalnız metrikte görülen (span üretmeyen) tüketici">+{metricOnlyConsumers.length}</span>}</> },
               { key: 'operations', label: <>Operasyonlar<span className="tab-count">{msgOps.length}</span></> },
               { key: 'clients', label: 'Kafka istemcileri',
                 title: 'Metrik tarafı — bağlantı, gecikme, rebalance. Yalnız bu sekme seçilince istenir.' },
@@ -222,6 +234,7 @@ export default function MessagingTopicPage() {
                 tone="producer" range={range}
                 storageKey="msg-topic-producers" showReset />
             )}
+            {tab === 'producers' && <MetricOnlyCallers names={metricOnlyProducers} what="üretici" />}
             {tab === 'consumers' && (
               <CallerSection
                 title={`Tüketiciler · ${consumers.length} satır`}
@@ -230,6 +243,7 @@ export default function MessagingTopicPage() {
                 tone="consumer" range={range}
                 storageKey="msg-topic-consumers" showReset />
             )}
+            {tab === 'consumers' && <MetricOnlyCallers names={metricOnlyConsumers} what="tüketici" />}
             {tab === 'operations' && <OperationsTable rows={msgOps} />}
             {/* Sekme seçili DEĞİLKEN bileşen hiç mount edilmiyor: VM sorgusu
                 ne kurulur ne de "arka planda hazır" tutulur. `enabled` de
@@ -480,6 +494,22 @@ function SpanNamesTable({ rows, range, system, destination }: {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// MetricOnlyCallers — v0.10.610: span üretmeyip yalnız Kafka istemci
+// metriğinde görülen servisler. RED sayısı YOK (span yok); bağlantı/gecikme
+// için Kafka istemcileri sekmesi. Boşsa hiç çizilmez — CallerSection'ın
+// "span'i yok" mesajı tek başına doğru kalır.
+function MetricOnlyCallers({ names, what }: { names: string[]; what: 'üretici' | 'tüketici' }) {
+  if (names.length === 0) return null;
+  return (
+    <div className="mtp-cap">
+      Yalnız metrikte görülen {what} <b>{names.length}</b>{' — '}
+      {names.map((n, i) => <span key={n}>{i > 0 && ', '}<code className="mono">{n}</code></span>)}
+      {'. '}Bu servisler bu topic için span üretmiyor; kafka-clients metriği yayınlıyor.
+      Bağlantı, gecikme ve lag için <b>Kafka istemcileri</b> sekmesi.
     </div>
   );
 }

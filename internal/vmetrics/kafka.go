@@ -250,6 +250,10 @@ func KafkaQuery(m KafkaMetric, sc KafkaScope, groupBy []string) (chstore.MetricQ
 	return chstore.MetricQueryFilter{
 		Name: m.Name, Filters: filters, GroupBy: gb, Aggregation: m.Agg,
 		From: sc.From, To: sc.To, MaxDataPoints: mdp,
+		// v0.10.607 — katalog düz gauge/sayaç ilan eder: histogram kolu yok.
+		// Operatör-bildirimi: request_latency_avg'in avg'i or-kompozisyonla
+		// 3 selektöre şişip VM 422 aldı (maks. tek kollu, çalışıyordu).
+		PlainSeries: true,
 	}, nil
 }
 

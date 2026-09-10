@@ -801,7 +801,7 @@ func buildPromQL(f chstore.MetricQueryFilter, opts promOpts) (string, error) {
 			return agg.Rollup + "(" + sel(cands) + "[" + strconv.Itoa(w) + "s])"
 		}
 		left := aggregateExpr(agg.Op, labels, rollup(base))
-		if !mayHaveHistogramParts(name) {
+		if f.PlainSeries || !mayHaveHistogramParts(name) { // v0.10.607 — çağıran düz seri dedi
 			return left, nil
 		}
 		// The histogram's throughput IS its `_count` counter — the same
@@ -811,7 +811,7 @@ func buildPromQL(f chstore.MetricQueryFilter, opts promOpts) (string, error) {
 
 	if agg.Op == "avg" && agg.Rollup == "" {
 		left := aggregateExpr("avg", labels, sel(base))
-		if !mayHaveHistogramParts(name) {
+		if f.PlainSeries || !mayHaveHistogramParts(name) { // v0.10.607 — çağıran düz seri dedi
 			// PLAIN GAUGE avg — one arm, one family, no guard (v0.9.1164). This
 			// early return is also WHY the guard is checked below rather than at
 			// the top of the branch: the protected shape and the free shape are

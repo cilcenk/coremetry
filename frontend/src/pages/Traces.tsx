@@ -423,7 +423,9 @@ function TracesPageInner() {
   aggRef.current = agg;
   const [listErr, setListErr] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
-  const [showTotal, setShowTotal] = useState(false);
+  // v0.10.654 (operatör: "Show total gerek yok, direkt göstersin") — toplam
+  // her listede otomatik: sayım ayrı, tavanlı ve MV tabanlı (v0.9.638),
+  // listeyi yavaşlatmaz; tıklama affordance'ı kalktı.
 
   // ── State → URL (replaceState; restores filters/sort/page on back). ──────────
   // `range` is included via encodeRange so the URL stays the single source of
@@ -579,7 +581,7 @@ function TracesPageInner() {
       setRefreshing(false);
     });
     return () => { cancelled = true; ctl.abort(); };
-  }, [view, listRangeNs, sort, order, page, filter, env, clusterScope, advFilters, advGroupParam, showTotal, retryNonce]);
+  }, [view, listRangeNs, sort, order, page, filter, env, clusterScope, advFilters, advGroupParam, retryNonce]);
 
   // ── Extras enrichment (FAZ 2 — docs/audit/traces-attribute-columns.md
   // §6B). Fires when the page rows are in and attribute columns are
@@ -858,12 +860,12 @@ function TracesPageInner() {
   });
 
   const traces = data?.traces ?? [];
-  // v0.9.638 — tavanlı sayım, AYRI istek. Yalnız operatör "toplamı göster"
-  // dediğinde koşuyor; sayfa değiştikçe DEĞİŞMEDİĞİ için sayfalama turları
-  // 20sn önbelleğe biniyor (eski davranış her offset'te yeniden ödüyordu).
+  // v0.9.638 — tavanlı sayım, AYRI istek; sayfa değiştikçe DEĞİŞMEDİĞİ için
+  // sayfalama turları 20sn önbelleğe biniyor. v0.10.654: her liste için
+  // otomatik koşar (eskiden yalnız "Show total" tıklanınca).
   const [countRes, setCountRes] = useState<TraceCountResponse | null>(null);
   useEffect(() => {
-    if (!showTotal || view !== 'list') { setCountRes(null); return; }
+    if (view !== 'list') { setCountRes(null); return; }
     const ctl = new AbortController();
     let cancelled = false;
     const { from, to } = listRangeNs;
@@ -892,7 +894,7 @@ function TracesPageInner() {
       .then(r => { if (!cancelled) setCountRes(r); })
       .catch((e: unknown) => { if (!cancelled && !isCanceled(e)) setCountRes(null); });
     return () => { cancelled = true; ctl.abort(); };
-  }, [showTotal, view, listRangeNs, filter.service, filter.search, filter.traceId, filter.minMs, filter.maxMs,
+  }, [view, listRangeNs, filter.service, filter.search, filter.traceId, filter.minMs, filter.maxMs,
       filter.hasError, filter.rootOnly, env, clusterScope, advFilters, advGroupParam]);
   // v0.9.1372 — sessiz geri dönüş. Koşul, aşağıdaki "no traces found" boş
   // durumunun GÖRÜNME koşuluyla aynı: liste görünümü, hata yok, veri geldi,
@@ -1504,10 +1506,8 @@ function TracesPageInner() {
                       {countRes.value.toLocaleString()}{countRes.atLeast ? '+' : ''} total
                     </span>
                   ) : (
-                    <>showing {traces.length}{hasMore ? '+' : ''}{' · '}
-                      <a href="#" onClick={e => { e.preventDefault(); setShowTotal(true); }}
-                        title="Tavanlı sayım — MV'den okur, listeyi yavaşlatmaz">Show total</a>
-                    </>
+                    /* v0.10.654 — sayım yolda (otomatik); link yok. */
+                    <span title="Toplam sayılıyor…">showing {traces.length}{hasMore ? '+' : ''}</span>
                   )}
                   {/* v0.10.522 (operatör: "steps rows göremedim") — teşhis linki
                       yalnız boş sonuçta vardı; dolu listede de admin'e (aynı

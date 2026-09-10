@@ -86,7 +86,7 @@ export function buildVolumeSeries(
     { key: 'error', label: 'error ' + unit, data: err, color: statusColor('error'), type: 'bar', axis: 'right' },
     // v0.9.73 — kalın çizgi + nokta: seyrek p50 örnekleri artık okunur.
     // v0.9.843 — süre SOL eksende (Grafana düzeni).
-    { key: 'rt', label: `response time (${stripStatLabel(stat)}, ${RT_SMOOTH_WINDOW}-kova ort.)`, data: p50s, color: 'var(--orange)', type: 'line', axis: 'left', width: 2, pointsShow: t.length < 20 },
+    { key: 'rt', label: `response time (${stripStatLabel(stat)})` /* v0.10.663 (operatör): "5-kova ort." ibaresi kalktı; yumuşatma penceresi ipucuda değil, davranışta */, data: p50s, color: 'var(--orange)', type: 'line', axis: 'left', width: 2, pointsShow: t.length < 20 },
   ];
   return { times: t, series, bucketMin: Math.max(1, dt) };
 }

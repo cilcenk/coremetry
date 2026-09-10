@@ -136,7 +136,9 @@ describe('smoothCentered / p50 yumuşatma', () => {
     const mk = (f: (i: number) => number | null): SpanMetricSeries[] => [{ groupKey: [], points: Array.from({ length: n }, (_, i) => ({ time: (1_700_000_000 + i * 120) * 1e9, value: f(i) ?? 0 })) }];
     const cfg = buildVolumeSeries(mk(() => 100), mk(() => 1), mk(i => (i === 10 ? 0 : (i % 2 ? 10 : 2))));
     const p50 = cfg.series.find(s0 => s0.key === 'rt')!;
-    expect(p50.label).toContain('ort.');
+    // v0.10.663 (operatör): etiket yumuşatma penceresini SÖYLEMEZ; yalnız istatistik.
+    expect(p50.label).toContain('response time (');
+    expect(p50.label).not.toContain('kova');
     expect(p50.pointsShow).toBe(false);
     expect(p50.data[10]).toBeNull();                       // GAP korunur (0 → null)
     expect(p50.data[15]).not.toBe(10); expect(p50.data[15]).not.toBe(2); // zikzak yumuşadı
@@ -171,9 +173,9 @@ describe('stripScope', () => {
 describe('şerit istatistiği (v0.10.513)', () => {
   const mk = (v: number): SpanMetricSeries[] => [{ groupKey: [], points: [1, 2, 3].map(i => ({ time: (1_700_000_000 + i * 120) * 1e9, value: v })) }];
   it('varsayılan etiket p95; p50 "median" diye, p99 adıyla', () => {
-    expect(buildVolumeSeries(mk(10), mk(1), mk(42)).series.find(s0 => s0.key === 'rt')!.label).toContain('(p95,');
-    expect(buildVolumeSeries(mk(10), mk(1), mk(42), 'traces', 'p50').series.find(s0 => s0.key === 'rt')!.label).toContain('(median,');
-    expect(buildVolumeSeries(mk(10), mk(1), mk(42), 'traces', 'p99').series.find(s0 => s0.key === 'rt')!.label).toContain('(p99,');
+    expect(buildVolumeSeries(mk(10), mk(1), mk(42)).series.find(s0 => s0.key === 'rt')!.label).toContain('(p95)');
+    expect(buildVolumeSeries(mk(10), mk(1), mk(42), 'traces', 'p50').series.find(s0 => s0.key === 'rt')!.label).toContain('(median)');
+    expect(buildVolumeSeries(mk(10), mk(1), mk(42), 'traces', 'p99').series.find(s0 => s0.key === 'rt')!.label).toContain('(p99)');
   });
 });
 

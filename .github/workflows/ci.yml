@@ -201,7 +201,11 @@ jobs:
       # makes it safe as a blocking gate.
       - name: govulncheck (Go reachable CVEs)
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          # v0.10.622 — @latest DEĞİL: x/vuln v1.8.0 go >= 1.26 istiyor, bu job go 1.25
+          # + GOTOOLCHAIN=local ile koşuyor ve 2026-09-10'da kurulum adımı düştü
+          # (main kırmızı, kod değişmeden). v1.7.0 = go 1.25 ile derlenen son sürüm;
+          # toolchain yükseltilince (go.mod) birlikte güncellenir.
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           "$(go env GOPATH)/bin/govulncheck" ./...
       # Policy unchanged: HIGH + CRITICAL block, moderate does not (10 exist
       # with no non-major fix). What changed (v0.9.266) is that a gate can no

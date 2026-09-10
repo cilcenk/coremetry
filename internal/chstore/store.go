@@ -1959,6 +1959,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		// API token'ları (v0.8.444) — harici agent platformları (GenAI
 		// Studio) için iptal edilebilir servis kimlikleri; DDL api_tokens.go'da.
 		apiTokensDDL,
+		// v0.10.599 — Oracle Aşama 2: ERROR_LOG satırları (idempotent RMT);
+		// DDL oracle_error_log.go'da, /clickhouse-schema §1 state yolu.
+		oracleErrorLogDDL,
 		// Service catalog metadata — operator-curated per-service
 		// info (owner team, oncall channel, runbook URL, repo,
 		// description) that the spans table doesn't carry. Joins

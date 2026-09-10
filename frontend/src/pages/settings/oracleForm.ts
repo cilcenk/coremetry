@@ -25,12 +25,11 @@
 // KOYMAYARAK ifade eder — boş string göndermek sunucuda aynı sonucu verirdi
 // ama niyeti belirsiz bırakırdı.
 import type { OracleSource, OracleSourceSnapshot } from '@/lib/types';
-// Sayı/liste kutusu çevirileri InfluxTab ile BAYT BAYT aynı işi yapıyor;
-// ikinci bir nüsha yazmak ölçülü kopya ailelerinin (Stat ×6, Field ×7)
-// doğum mekanizmasının ta kendisi olurdu. `numToForm` 0'ı boş kutuya
+// Sayı/liste kutusu çevirileri ortak formNumbers.ts'te (v0.10.604: Influx
+// sökümü öncesi tarafsız dosyaya taşındı). `numToForm` 0'ı boş kutuya
 // çevirir — Oracle'da da 0 "sunucu varsayılanı" demek, aynı anlam.
-export { numFromForm, numToForm, parseList, listToText } from './influxForm';
-import { parseList, listToText } from './influxForm';
+export { numFromForm, numToForm, parseList, listToText } from './formNumbers';
+import { parseList, listToText } from './formNumbers';
 
 // ── Varsayılanlar — internal/oracle/settings.go sabitlerinin aynası ──────
 export const ORACLE_DEFAULT_PORT = 1521;

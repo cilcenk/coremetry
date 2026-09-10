@@ -39,25 +39,11 @@ export function attrMapToText(m: Record<string, string> | undefined | null): str
   return Object.entries(m).map(([k, v]) => `${k}=${v}`).join('\n');
 }
 
-export function parseList(text: string): string[] {
-  return text.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
-}
-
-export function listToText(l: string[] | undefined | null): string {
-  return (l ?? []).join(', ');
-}
-
-/** '' | garbage → undefined (unset); sayı → sayı. Negatifi sunucu reddeder. */
-export function numFromForm(text: string): number | undefined {
-  const t = text.trim();
-  if (t === '') return undefined;
-  const n = Number(t);
-  return Number.isFinite(n) ? n : undefined;
-}
-
-export function numToForm(v: number | undefined | null): string {
-  return v === undefined || v === null || v === 0 ? '' : String(v);
-}
+// v0.10.604 — sayı/liste çevirileri formNumbers.ts'e TAŞINDI (Influx sökümü
+// öncesi; oracleForm da oradan alır). Buradaki re-export yalnız InfluxTab'ın
+// mevcut importları için.
+export { parseList, listToText, numFromForm, numToForm } from './formNumbers';
+import { parseList, listToText, numFromForm, numToForm } from './formNumbers';
 
 export interface ThresholdsForm { criticalZ: string; dwell: string; minAbsDelta: string; minMAD: string }
 

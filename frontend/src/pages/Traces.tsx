@@ -1645,7 +1645,8 @@ function renderTraceCell(id: string, t: TraceRow, visibleMax: number, k8s?: { cl
   switch (id) {
     case 'time':      return <span className="mono">{tsDateTime(t.startTime)}</span>;
     case 'service':   return <SvcBadge name={t.serviceName} />;
-    case 'operation': return <span title={t.rootName}>{t.rootName || '—'}</span>;
+    // v0.10.658 (operatör): diğer hücrelerle AYNI yazı tipi (.mono 12 px) — sınıfsız span orantılı yazıyla büyük görünüyordu.
+    case 'operation': return <span className="mono cell-ellipsis" title={t.rootName}>{t.rootName || '—'}</span>;
     case 'duration':  return <DurationBar ms={t.durationMs} err={t.hasError} max={visibleMax} />;
     case 'spans':     return <>{t.spanCount}</>;
     // v0.10.218 (D3) — hata rozetinin yanında hatalı span SAYISI (Dynatrace

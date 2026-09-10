@@ -21,6 +21,7 @@ import { ChatBubble } from './ai/ChatBubble';
 import { TraceExplainNudge } from './ai/TraceExplainNudge';
 import { useChatThread } from './ai/useChatThread';
 import { useStickToBottom } from './ai/stickToBottom';
+import { chatInputSubmitKey, autoGrowTextarea, CHAT_INPUT_MAX_PX } from './ai/chatInputKey';
 import { useCopilotConfig } from './ai/useCopilotEnabled'; // v0.10.483
 import { AI_DRAWER_WIDTH } from './ai/answerCard'; // v0.10.461
 import { AIDrawerBody } from './ai/AIDrawerBody'; // v0.10.483 — ✨ Explain gövdesi aynı çekmecede
@@ -583,16 +584,22 @@ export function CopilotChat() {
           <form
             onSubmit={e => { e.preventDefault(); submit(input); }}
             style={{ display: 'flex', gap: 8, padding: 'var(--sp-5) var(--sp-7)', borderTop: '1px solid var(--border)' }}>
-            <input
+            {/* v0.10.664 — <textarea>: Enter gönderir, Shift+Enter yeni satır (stack
+                trace / SQL yapıştırılabilir); akarken KİLİTLİ DEĞİL — gönderim
+                mevcut akışı durdurup yeni soruyu gönderir (useChatThread). */}
+            <textarea
               value={input}
+              rows={1}
               onChange={e => setInput(e.target.value)}
-              placeholder="CoSRE'ye sor…"
-              disabled={busy}
+              onInput={e => autoGrowTextarea(e.currentTarget)}
+              onKeyDown={e => { if (chatInputSubmitKey(e)) { e.preventDefault(); submit(input); } }}
+              placeholder="CoSRE'ye sor… (Shift+Enter: yeni satır)"
               autoFocus
               style={{
-                flex: 1, padding: '7px 10px', fontSize: 13,
-                background: 'var(--bg)', color: 'var(--text)',
+                flex: 1, padding: '7px 10px', fontSize: 13, lineHeight: '18px',
+                background: 'var(--bg)', color: 'var(--text)', fontFamily: 'inherit',
                 border: '1px solid var(--border)', borderRadius: 6,
+                resize: 'none', maxHeight: CHAT_INPUT_MAX_PX, overflowY: 'auto',
               }} />
             {/* v0.10.23 — DURDUR. AbortController zaten kuruluydu ama
                 hiçbir affordance'a bağlı değildi; yerel gemma4 tek GPU'da

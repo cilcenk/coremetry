@@ -12,6 +12,7 @@ import { ServiceChartsExplainBody } from './ServiceChartsExplainBody';
 import { aiSubjectQuestion, buildExplainContext, drawerFollowups } from './drawerChat';
 import { useChatThread } from './useChatThread';
 import { useStickToBottom } from './stickToBottom';
+import { chatInputSubmitKey, autoGrowTextarea, CHAT_INPUT_MAX_PX } from './chatInputKey';
 import { useCopilotConfig } from './useCopilotEnabled';
 
 // AIDrawerBody — v0.10.483 (operatör, üçüncü kez: "Explain trace ile CoSRE
@@ -227,16 +228,20 @@ function AIDrawerChat({ subject, explainText, spanIds, traceIds }: {
         <form
           onSubmit={e => { e.preventDefault(); submit(input); }}
           style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-          <input
+          {/* v0.10.664 — <textarea> (Enter gönder, Shift+Enter satır); akarken kilitli değil. */}
+          <textarea
             value={input}
+            rows={1}
             onChange={e => setInput(e.target.value)}
-            placeholder="Bu konuda sor…"
-            disabled={busy}
+            onInput={e => autoGrowTextarea(e.currentTarget)}
+            onKeyDown={e => { if (chatInputSubmitKey(e)) { e.preventDefault(); submit(input); } }}
+            placeholder="Bu konuda sor… (Shift+Enter: yeni satır)"
             autoFocus
             style={{
-              flex: 1, minWidth: 0, padding: '7px 10px', fontSize: 13,
-              background: 'var(--bg)', color: 'var(--text)',
+              flex: 1, minWidth: 0, padding: '7px 10px', fontSize: 13, lineHeight: '18px',
+              background: 'var(--bg)', color: 'var(--text)', fontFamily: 'inherit',
               border: '1px solid var(--border)', borderRadius: 6,
+              resize: 'none', maxHeight: CHAT_INPUT_MAX_PX, overflowY: 'auto',
             }} />
           <Button variant="primary" type="submit" disabled={!input.trim()} loading={busy}>
             Gönder

@@ -100,6 +100,11 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
   turnsRef.current = turns;
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  // v0.10.664 — akarken gelen soru: mevcut akış durdurulur, soru kuyruğa
+  // alınır, finally gönderir ("durdur ve gönder"; operatörün yeni sorusu
+  // her zaman kazanır). sendRef: finally içinden güncel send'e ulaşmak için.
+  const queuedRef = useRef<string | null>(null);
+  const sendRef = useRef<(text: string) => Promise<void>>(async () => {});
   // Kalıcılık (v0.9.1139). conversationId state OLARAK da tutuluyor ki
   // kabuk "kayıtlı thread" bilgisini çizebilsin; yazım yolu ref'i okur
   // (bayat closure yok).
@@ -141,7 +146,13 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
 
   const send = useCallback(async (text: string) => {
     const q = text.trim();
-    if (!q || busyRef.current) return;
+    if (!q) return;
+    if (busyRef.current) {
+      // v0.10.664 — sessizce düşürme YOK: durdur ve kuyruğa al.
+      queuedRef.current = q;
+      abortRef.current?.abort();
+      return;
+    }
     const o = optsRef.current;
     const history: ChatMessage[] = [
       ...(o.seed ?? []),
@@ -242,8 +253,15 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
       // turu persistMessages'ta düşer, yani hatalı bir tur arşivi
       // kirletmez ama ondan ÖNCEKİ turlar korunur.
       schedulePersist();
+      // v0.10.664 — kuyruktaki soru (akarken gelen) şimdi gider.
+      const next = queuedRef.current;
+      if (next) {
+        queuedRef.current = null;
+        void sendRef.current(next);
+      }
     }
   }, [schedulePersist]);
+  sendRef.current = send;
 
   // clear = YENİ KONUŞMA (v0.9.1139'da anlamı genişledi). Turların
   // yanında kalıcı kimlik de düşer: aksi hâlde "Temizle" sonrası ilk

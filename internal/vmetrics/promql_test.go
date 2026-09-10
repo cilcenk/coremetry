@@ -594,6 +594,27 @@ func TestOrCompositionShapes(t *testing.T) {
 				` / sum(rate({` + mcHTTPDurCount + `}[600s])))`,
 		},
 		{
+			// v0.10.608 (607'nin testi) — çağıran DÜZ seri ilan etti
+			// (PlainSeries): histogram kolu YOK. Operatör-bildirimi: Kafka
+			// request_latency_avg (zaten ortalama olan bir gauge)
+			// or-kompozisyonla 3 selektöre şişip VM'den 422 aldı; "maks." tek
+			// kollu olduğu için çalışıyordu.
+			name: "avg, grouped, PlainSeries — tek kol",
+			f: chstore.MetricQueryFilter{
+				Name: "http.server.request.duration", Aggregation: "avg", PlainSeries: true,
+				GroupBy: []string{"http.route"}, From: from, To: to, StepSeconds: 600,
+			},
+			want: `avg by (http_route) ({` + mcHTTPDur + `})`,
+		},
+		{
+			name: "rate, grouped, PlainSeries — _count kolu yok",
+			f: chstore.MetricQueryFilter{
+				Name: "http.server.request.duration", Aggregation: "rate", PlainSeries: true,
+				GroupBy: []string{"http.route"}, From: from, To: to, StepSeconds: 600,
+			},
+			want: `sum by (http_route) (rate({` + mcHTTPDur + `}[600s]))`,
+		},
+		{
 			// An OMITTED aggregation is avg, and that is what the reported panel
 			// sends. A gate keyed on the literal "avg" would leave the bug live
 			// while every explicit-label test passed.

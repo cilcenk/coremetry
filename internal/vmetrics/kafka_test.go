@@ -133,6 +133,9 @@ func TestKafkaQuery(t *testing.T) {
 	if f.Service != "" {
 		t.Fatal("Service alanı tek servis içindir; kapsam Filters'ta taşınır")
 	}
+	if !f.PlainSeries {
+		t.Fatal("v0.10.607 — Kafka katalogu düz gauge/sayaç ilan eder: PlainSeries true (histogram kolu yok, VM 422 sınıfı)")
+	}
 	if f2, err := KafkaQuery(errTotal, KafkaScope{Services: []string{"a"}, Topic: "orders", From: from, To: to}, nil); err != nil || f2.Aggregation != "rate" {
 		t.Fatalf("counter → rate: %+v %v", f2, err)
 	}

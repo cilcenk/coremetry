@@ -1,0 +1,35 @@
+name: Performans
+description: "Şu sayfa yavaş" — tek şikâyet, ölçülmüş kök neden (`/perf-triage`)
+labels: ["perf"]
+body:
+  - type: input
+    id: surface
+    attributes:
+      label: Sayfa / uç
+    validations:
+      required: true
+  - type: input
+    id: ttfb
+    attributes:
+      label: Ölçüm
+      description: "TTFB / süre, `X-Cache` başlığı, pencere (range) ve filtreler."
+      placeholder: "4.2 s, X-Cache: MISS, range=24h, service=shop"
+    validations:
+      required: true
+  - type: textarea
+    id: querylog
+    attributes:
+      label: ClickHouse query_log
+      description: "`read_rows`, `read_bytes`, `query_duration_ms` medyanı (tek ad-hoc zamanlama yalan söyler)."
+  - type: textarea
+    id: perfcheck
+    attributes:
+      label: perfcheck JSON (varsa)
+      description: "`make perfcheck` çıktısı ya da nightly koşu linki."
+  - type: checkboxes
+    id: budget
+    attributes:
+      label: Bütçe
+      options:
+        - label: "/api/* p99 < 200 ms sıcak, < 1 s soğuk; hot uçlar < 50 ms"
+        - label: "MV-first — ham `spans` üzerinde aggregate = bug"

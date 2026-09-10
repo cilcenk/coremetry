@@ -1,0 +1,28 @@
+# .editorconfig — v0.10.623. Go: tab (gofmt). Frontend: frontend/.prettierrc.json
+# ile aynı (2 boşluk, 100 sütun, tek tırnak orada). Markdown'da sondaki
+# boşluk anlamlı (satır kırma) — kırpma yok.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.go]
+indent_style = tab
+
+[Makefile]
+indent_style = tab
+
+[*.{ts,tsx,js,jsx,json,yml,yaml,css,html}]
+indent_style = space
+indent_size = 2
+max_line_length = 100
+
+[*.sql]
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false

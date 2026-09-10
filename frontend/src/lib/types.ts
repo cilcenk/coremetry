@@ -1653,8 +1653,15 @@ export interface OracleSource {
   maxOpenConns?: number;
   /** 5-120 sn, varsayılan 20. */
   queryTimeoutSec?: number;
-  /** 10-3600 sn, varsayılan 60 (Aşama 2 poller tüketir). */
+  /** 10-3600 sn, varsayılan 60 — poll aralığı (v0.10.601 işçisi). */
   intervalSec?: number;
+  /** v0.10.600 — dilimsiz TIMESTAMP'in yorumlandığı IANA dilimi; boş =
+   *  Europe/Istanbul. Kolon TIMESTAMP WITH TIME ZONE ise timestampHasZone. */
+  timezone?: string;
+  timestampHasZone?: boolean;
+  /** v0.10.600 — alan → Oracle kolonu geçersiz kılmaları (oracle.DefaultColumns
+   *  tabanı); "" = alan tabloda yok. timestamp/type kendi kutularından gelir. */
+  columns?: Record<string, string>;
   enabled: boolean;
 }
 /** oracle.SourceSnapshot — GET görünümü: password MASKELİ, rozet alanları eklidir. */
@@ -1691,8 +1698,30 @@ export interface OracleSourceStatus {
   lastCheckOK: boolean;
   lastError?: string;
 }
+/** oracle.PollStatus — v0.10.601 işçisinin kaynak başına son tiki. */
+export interface OraclePollStatus {
+  sourceId: string;
+  name: string;
+  watermarkNs: number;
+  lastPollAt: number; // unix ms
+  nextDueAt: number;  // unix ms
+  lastRows: number;
+  lastMapped: number;
+  lastNoTimestamp: number;
+  lastBadTraceId: number;
+  capped?: boolean;
+  lastError?: string;
+}
+/** oracle.WorkerStatusSnapshot — lider pod'un yayınladığı blob. */
+export interface OraclePollSnapshot {
+  pod: string;
+  updatedAt: number; // unix ms
+  sources: OraclePollStatus[];
+}
 export interface OracleStatusPayload {
   sources: OracleSourceStatus[];
+  /** v0.10.601 — yok = işçi henüz yayın yapmadı (worker lideri koşmuyor olabilir). */
+  poll?: OraclePollSnapshot;
   generatedAt: number; // unix ms
 }
 

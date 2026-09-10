@@ -3,6 +3,7 @@ import {
   emptyOracleSource, validateOracleSource, sourceForSave, sourceFromSnapshot,
   parseTypeFilter, typeFilterToText, defaultTypeFilter,
   ORACLE_DEFAULT_PORT, ORACLE_MAX_EXTRA_WHERE,
+  ORACLE_COLUMN_DISABLED, ORACLE_MAPPING_FIELDS,
 } from './oracleForm';
 import type { OracleSource, OracleSourceSnapshot } from '@/lib/types';
 
@@ -273,5 +274,65 @@ describe('tip süzgeci metin çevirisi', () => {
   it('gidiş-dönüş', () => {
     expect(parseTypeFilter(typeFilterToText(['T', 'E']))).toEqual(['T', 'E']);
     expect(typeFilterToText(undefined)).toBe('');
+  });
+});
+
+// v0.10.603 — Aşama 2 eşleme ayarları: dilim biçimi, kolon eşlemesi kapısı,
+// `-` = "alan tabloda yok" (tel'de ""), boş kutu = varsayılan (anahtar YOK).
+describe('v0.10.603 — zaman dilimi + kolon eşlemesi', () => {
+  it('varsayılanlar: dilim boş (sunucu Europe/Istanbul), dilimsiz, kolon haritası boş', () => {
+    const e = emptyOracleSource();
+    expect(e.timezone).toBe('');
+    expect(e.timestampHasZone).toBe(false);
+    expect(e.columns).toEqual({});
+  });
+  it('ORACLE_MAPPING_FIELDS 14 alan; timestamp/type LİSTEDE DEĞİL (kendi kutuları var)', () => {
+    expect(ORACLE_MAPPING_FIELDS.length).toBe(14);
+    const fields = ORACLE_MAPPING_FIELDS.map(f => f.field);
+    expect(fields).not.toContain('timestamp');
+    expect(fields).not.toContain('type');
+    expect(new Set(fields).size).toBe(14);
+    expect(ORACLE_MAPPING_FIELDS.find(f => f.field === 'service')?.target).toBe('operation.code');
+    for (const f of ORACLE_MAPPING_FIELDS) expect(f.column).toMatch(/^ERR_[A-Z_]+$/);
+  });
+  it('dilim biçimi: IANA adları geçer, serbest metin reddedilir', () => {
+    for (const tz of ['Europe/Istanbul', 'UTC', 'Etc/GMT+3', 'America/Argentina/Buenos_Aires']) {
+      expect(validateOracleSource(goodSource({ timezone: tz })).timezone, tz).toBeUndefined();
+    }
+    for (const tz of ['İstanbul saati', 'Europe Istanbul', 'Europe/İstanbul', '+03:00']) {
+      expect(validateOracleSource(goodSource({ timezone: tz })).timezone, tz).toBeDefined();
+    }
+  });
+  it('kolon eşlemesi identifier kapısından geçer; `-` ve boş serbest; bilinmeyen alan reddedilir', () => {
+    expect(validateOracleSource(goodSource({ columns: { code: 'ERR_CODE', traceId: ORACLE_COLUMN_DISABLED, host: '' } })).columns).toBeUndefined();
+    expect(validateOracleSource(goodSource({ columns: { code: '1BAD' } })).columns).toBeDefined();
+    expect(validateOracleSource(goodSource({ columns: { code: 'A;B' } })).columns).toBeDefined();
+    expect(validateOracleSource(goodSource({ columns: { nope: 'X' } })).columns).toBeDefined();
+  });
+  it('sourceForSave: boş dilim/dilimsiz/boş harita gövdeye girmez; `-` → "" (alan kapalı); boş kutu anahtar YOK', () => {
+    const plain = sourceForSave(goodSource());
+    expect('timezone' in plain).toBe(false);
+    expect('timestampHasZone' in plain).toBe(false);
+    expect('columns' in plain).toBe(false);
+    const body = sourceForSave(goodSource({
+      timezone: ' UTC ', timestampHasZone: true,
+      columns: { code: ' ERR_CODE ', tellerId: ORACLE_COLUMN_DISABLED, host: '   ' },
+    }));
+    expect(body.timezone).toBe('UTC');
+    expect(body.timestampHasZone).toBe(true);
+    expect(body.columns).toEqual({ code: 'ERR_CODE', tellerId: '' });
+    expect('host' in (body.columns ?? {})).toBe(false);
+  });
+  it('sourceFromSnapshot: "" (kapalı alan) formda `-`; dilim ve dilimli bayrağı taşınır', () => {
+    const snap: OracleSourceSnapshot = {
+      ...goodSource(), id: 'o-1', hasPassword: true, passwordResolved: true,
+      timezone: 'UTC', timestampHasZone: true, columns: { tellerId: '', code: 'ERR_CODE' },
+    };
+    const form = sourceFromSnapshot(snap);
+    expect(form.timezone).toBe('UTC');
+    expect(form.timestampHasZone).toBe(true);
+    expect(form.columns).toEqual({ tellerId: ORACLE_COLUMN_DISABLED, code: 'ERR_CODE' });
+    // gidiş-dönüş: form → gövde aynı tel değerini üretir
+    expect(sourceForSave(form).columns).toEqual({ tellerId: '', code: 'ERR_CODE' });
   });
 });

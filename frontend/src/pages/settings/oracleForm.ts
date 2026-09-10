@@ -49,6 +49,32 @@ export const ORACLE_MAX_EXTRA_WHERE = 500;
 export const ORACLE_MAX_TYPE_FILTER = 16;
 export const ORACLE_MAX_TYPE_VALUE_LEN = 32;
 export const ORACLE_MAX_NAME_LEN = 64;
+// v0.10.603 — Aşama 2 eşleme ayarları (internal/oracle/mapping.go aynası).
+export const ORACLE_DEFAULT_TIMEZONE = 'Europe/Istanbul';
+/** Form kutusunda `-` = "bu alan tabloda yok" → tel'de "" (sunucu alanı kapatır).
+ *  Boş kutu = varsayılan kolon (anahtar gövdeye HİÇ konmaz). */
+export const ORACLE_COLUMN_DISABLED = '-';
+/** Alan → varsayılan Oracle kolonu; timestamp/type kendi kutularından gelir
+ *  (timestampColumn/typeColumn), bu listede DEĞİLLER. Sıra Go fieldOrder. */
+export const ORACLE_MAPPING_FIELDS: ReadonlyArray<{ field: string; target: string; column: string }> = [
+  { field: 'severity',     target: 'severity',            column: 'ERR_SEVERITY' },
+  { field: 'message',      target: 'body',                column: 'ERR_MESSAGE' },
+  { field: 'traceId',      target: 'trace_id',            column: 'ERR_TRACEID' },
+  { field: 'host',         target: 'host.name',           column: 'ERR_HOSTNAME' },
+  { field: 'instance',     target: 'oracle.instance_id',  column: 'ERR_INSTANCE_ID' },
+  { field: 'service',      target: 'operation.code',      column: 'ERR_SERVICE' },
+  { field: 'code',         target: 'error.code',          column: 'ERR_CODE' },
+  { field: 'externalCode', target: 'error.external_code', column: 'ERR_EXTERNAL_CODE' },
+  { field: 'channel',      target: 'channel.code',        column: 'ERR_CHANNELCODE' },
+  { field: 'task',         target: 'task.code',           column: 'ERR_TASKCODE' },
+  { field: 'requestId',    target: 'request.id',          column: 'ERR_REQUESTID' },
+  { field: 'customerId',   target: 'customer.id',         column: 'ERR_CUSTOMERID' },
+  { field: 'tellerId',     target: 'teller.id',           column: 'ERR_TELLERID' },
+  { field: 'location',     target: 'location',            column: 'ERR_LOCATION' },
+];
+// IANA dilim adı biçimi (Europe/Istanbul, UTC, Etc/GMT+3). Gerçek varlık
+// kontrolü sunucuda (time.LoadLocation): burada yalnız biçim.
+const TZ_RE = /^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)*$/;
 
 /** Varsayılan tip süzgeci. Fonksiyon, sabit dizi DEĞİL: çağıran dönen diziyi
  *  değiştirse bile varsayılan bozulmaz (paylaşılan-dilim tuzağı, Go tarafında
@@ -75,7 +101,8 @@ const EXTRA_WHERE_BANNED: ReadonlyArray<readonly [string, string]> = [
 export type OracleField =
   | 'name' | 'dsn' | 'host' | 'port' | 'serviceName' | 'user' | 'password'
   | 'passwordRef' | 'schema' | 'table' | 'timestampColumn' | 'typeColumn'
-  | 'extraWhere' | 'typeFilter' | 'maxOpenConns' | 'queryTimeoutSec' | 'intervalSec';
+  | 'extraWhere' | 'typeFilter' | 'maxOpenConns' | 'queryTimeoutSec' | 'intervalSec'
+  | 'timezone' | 'columns';
 
 export type OracleFieldErrors = Partial<Record<OracleField, string>>;
 
@@ -114,6 +141,9 @@ export function emptyOracleSource(): OracleSource {
     maxOpenConns: ORACLE_DEFAULT_MAX_OPEN_CONNS,
     queryTimeoutSec: ORACLE_DEFAULT_QUERY_TIMEOUT_SEC,
     intervalSec: ORACLE_DEFAULT_INTERVAL_SEC,
+    timezone: '',
+    timestampHasZone: false,
+    columns: {},
     enabled: false,
   };
 }
@@ -241,6 +271,24 @@ export function validateOracleSource(
   const iv = clampError(src.intervalSec, ORACLE_MIN_INTERVAL_SEC, ORACLE_MAX_INTERVAL_SEC, 'Poll aralığı (sn)');
   if (iv) e.intervalSec = iv;
 
+  // ── zaman dilimi + kolon eşlemesi (v0.10.603) ──────────────────────────
+  const tz = trim(src.timezone);
+  if (tz && !TZ_RE.test(tz)) {
+    e.timezone = 'Zaman dilimi IANA adı olmalı (Europe/Istanbul, UTC gibi).';
+  }
+  for (const [field, raw] of Object.entries(src.columns ?? {})) {
+    const col = trim(raw);
+    if (!col || col === ORACLE_COLUMN_DISABLED) continue;
+    if (!ORACLE_MAPPING_FIELDS.some(f => f.field === field)) {
+      e.columns = `Bilinmeyen eşleme alanı: ${field}.`;
+      break;
+    }
+    if (!IDENT_RE.test(col)) {
+      e.columns = `${field} kolonu Oracle identifier'ı olmalı: harfle başlar, yalnız harf/rakam/_ $ # içerir, ≤30 karakter.`;
+      break;
+    }
+  }
+
   return e;
 }
 
@@ -311,6 +359,20 @@ export function sourceForSave(
   if (Number.isFinite(src.queryTimeoutSec) && (src.queryTimeoutSec ?? 0) > 0) out.queryTimeoutSec = src.queryTimeoutSec;
   if (Number.isFinite(src.intervalSec) && (src.intervalSec ?? 0) > 0) out.intervalSec = src.intervalSec;
 
+  // v0.10.603 — dilim boşsa gövdeye girmez (sunucu varsayılanı); dilimli
+  // bayrağı yalnız true iken; kolonlar: boş kutu = varsayılan (anahtar yok),
+  // `-` = alan kapalı ("" gider), diğeri kırpılmış kolon adı.
+  const tz = trim(src.timezone);
+  if (tz) out.timezone = tz;
+  if (src.timestampHasZone) out.timestampHasZone = true;
+  const cols: Record<string, string> = {};
+  for (const [field, raw] of Object.entries(src.columns ?? {})) {
+    const v = trim(raw);
+    if (!v) continue;
+    cols[field] = v === ORACLE_COLUMN_DISABLED ? '' : v;
+  }
+  if (Object.keys(cols).length) out.columns = cols;
+
   return out;
 }
 
@@ -337,6 +399,11 @@ export function sourceFromSnapshot(s: OracleSourceSnapshot): OracleSource {
     maxOpenConns: s.maxOpenConns,
     queryTimeoutSec: s.queryTimeoutSec,
     intervalSec: s.intervalSec,
+    timezone: s.timezone ?? '',
+    timestampHasZone: !!s.timestampHasZone,
+    // "" (kapalı alan) formda `-` olarak görünür — boş kutuyla (varsayılan)
+    // karışmasın.
+    columns: Object.fromEntries(Object.entries(s.columns ?? {}).map(([k, v]) => [k, v === '' ? ORACLE_COLUMN_DISABLED : v])),
     enabled: !!s.enabled,
   };
 }

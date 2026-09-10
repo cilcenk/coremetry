@@ -347,14 +347,14 @@ func (s *ESStore) TraceContextDiagnostics(ctx context.Context) (*TraceContextRep
 	}
 	res, err := req.Do(covCtx, s.cli)
 	if err != nil {
-		s.recordQueryError("trace-context coverage", idx, body, 0, fmt.Errorf("ES coverage: %w", err))
+		_ = s.recordQueryError("trace-context coverage", idx, body, 0, fmt.Errorf("ES coverage: %w", err))
 		rep.Reason = "coverage query failed: " + err.Error()
 		return rep, nil
 	}
 	defer res.Body.Close()
 	if res.IsError() {
 		perr := parseESError("trace-context coverage", res, s.cfg.Index)
-		s.recordQueryError("trace-context coverage", idx, body, res.StatusCode, perr)
+		_ = s.recordQueryError("trace-context coverage", idx, body, res.StatusCode, perr)
 		rep.Reason = "coverage query failed: " + perr.Error()
 		return rep, nil
 	}

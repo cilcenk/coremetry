@@ -1343,7 +1343,7 @@ func guidedRangeSExplicit(msg string) (int64, bool) {
 	rangeS := int64(1800)
 	if m := guidedRangeRe.FindStringSubmatch(msg); m != nil {
 		n := int64(0)
-		fmt.Sscanf(m[1], "%d", &n)
+		_, _ = fmt.Sscanf(m[1], "%d", &n) // regex zaten \d+ garanti eder
 		switch unit := m[2]; {
 		// "dk"/"dakika" also start with 'd' — day units must be
 		// matched by full stem, never a bare 'd' prefix (this exact

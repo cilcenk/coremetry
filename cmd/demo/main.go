@@ -2337,7 +2337,7 @@ func pushProfile(service, host, ptype string, startNs, durNs int64, data []byte)
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("status %d: %s", resp.StatusCode, b)
 	}
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body) // gövdeyi boşalt; hata önemsiz (bağlantı yeniden kullanımı)
 	return nil
 }
 
@@ -2366,7 +2366,7 @@ func sendOTLP(path string, msg proto.Message) error {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("status %d: %s", resp.StatusCode, b)
 	}
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body) // gövdeyi boşalt; hata önemsiz (bağlantı yeniden kullanımı)
 	return nil
 }
 

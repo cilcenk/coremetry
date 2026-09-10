@@ -4710,7 +4710,7 @@ func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error)
 		sp.DurationMs = float64(dur) / 1e6
 		sp.Attributes = arraysToMap(attrK, attrV)
 		sp.ResourceAttributes = arraysToMap(resK, resV)
-		json.Unmarshal([]byte(eventsJSON), &sp.Events)
+		_ = json.Unmarshal([]byte(eventsJSON), &sp.Events) // bozuk blob = olaysız span (mevcut davranış)
 		out = append(out, sp)
 	}
 	return out, rows.Err()

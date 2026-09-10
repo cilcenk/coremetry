@@ -6427,7 +6427,7 @@ func (s *Server) searchLDAPUsers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	limit := 25
 	if v := r.URL.Query().Get("limit"); v != "" {
-		fmt.Sscan(v, &limit)
+		_, _ = fmt.Sscan(v, &limit) // parse hatası = varsayılan 25 kalır
 	}
 	users, err := s.ldap.Search(r.Context(), q, limit)
 	if err != nil {

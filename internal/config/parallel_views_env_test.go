@@ -17,7 +17,7 @@ func TestParallelViewsEnv(t *testing.T) {
 		{"1", true, false}, {"true", true, false}, {"maybe", true, false},
 	}
 	for _, c := range cases {
-		os.Unsetenv("COREMETRY_CH_PARALLEL_VIEWS")
+		_ = os.Unsetenv("COREMETRY_CH_PARALLEL_VIEWS")
 		if c.set {
 			t.Setenv("COREMETRY_CH_PARALLEL_VIEWS", c.val)
 		}

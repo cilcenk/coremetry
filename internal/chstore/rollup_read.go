@@ -145,7 +145,7 @@ func rollupREDSQL(plan RollupPlan, f RollupSeriesFilter, from, to time.Time) (st
 			SELECT %s FROM %s WHERE %s
 			GROUP BY %s ORDER BY sum(span_count) DESC LIMIT %d)`,
 			col, col, plan.Table, whereSQL, col, maxGroups+1)
-		args = append(args, args[:len(args)]...) // iç sorgu aynı bind'ları SQL sırasında tekrar ister
+		args = append(args, args[:]...) // iç sorgu aynı bind'ları SQL sırasında tekrar ister
 	}
 
 	inner := fmt.Sprintf(`

@@ -190,7 +190,7 @@ func TestClampCodeWindows(t *testing.T) {
 		// ToLine gerçeği söylemeli: korunan SON satır.
 		last := strings.Split(ws[1].Content, "\n")
 		wantTo := 0
-		fmt.Sscanf(last[len(last)-1], "%d|", &wantTo)
+		_, _ = fmt.Sscanf(last[len(last)-1], "%d|", &wantTo)
 		if ws[1].ToLine != wantTo {
 			t.Fatalf("ToLine=%d, korunan son satır %d — aralık yalan söylüyor", ws[1].ToLine, wantTo)
 		}

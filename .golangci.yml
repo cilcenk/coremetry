@@ -30,9 +30,26 @@ linters:
       # matters — ignored ClickHouse / notify / store errors.
       exclude-functions:
         - (io.Closer).Close
+        # v0.10.637: ClickHouse driver Rows/Conn ve redis PubSub Close'u io.Closer
+        # imzasıyla eşleşmez (somut arayüz tipi); deferred Close aynı sınıf.
+        - (github.com/ClickHouse/clickhouse-go/v2/lib/driver.Rows).Close
+        - (github.com/ClickHouse/clickhouse-go/v2/lib/driver.Conn).Close
+        - (*github.com/redis/go-redis/v9.PubSub).Close
+        # v0.10.637: http.ResponseWriter'a yazım — fmt.Fprint ile aynı sınıf (istemci
+        # gitmişse hata anlamsız, zaten writeJSON/writeErr yolu loglar).
+        - (net/http.ResponseWriter).Write
+        - (*encoding/json.Encoder).Encode
         - fmt.Fprint
         - fmt.Fprintf
         - fmt.Fprintln
+  exclusions:
+    rules:
+      # v0.10.637: deferred/son-satır Close — hata alınacak yer yok, idiom kabul.
+      - linters: [errcheck]
+        text: 'Error return value of `[^`]*\.Close` is not checked'
+      # v0.10.637: test dosyalarında errcheck gürültü (fixture yazımı, Scan, gzip).
+      - linters: [errcheck]
+        path: '_test\.go'
 
 formatters:
   # gofmt drift is a real finding — surface it, but as a formatter (auto-

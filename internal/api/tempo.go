@@ -392,7 +392,9 @@ func (s *Server) collectTagNamesScoped(ctx context.Context) (span []string, res 
 	}
 	for rs.Next() {
 		var k string
-		rs.Scan(&k)
+		if err := rs.Scan(&k); err != nil {
+			continue // v0.10.637: bozuk satır boş anahtar olarak listeye girmesin
+		}
 		span = append(span, k)
 	}
 	rs.Close()
@@ -406,7 +408,9 @@ func (s *Server) collectTagNamesScoped(ctx context.Context) (span []string, res 
 	}
 	for rs.Next() {
 		var k string
-		rs.Scan(&k)
+		if err := rs.Scan(&k); err != nil {
+			continue
+		}
 		res = append(res, k)
 	}
 	rs.Close()

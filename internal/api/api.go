@@ -1498,8 +1498,8 @@ func (s *Server) warmDependenciesCache() {
 		// v0.5.461 — per-call budget override. Default queryBudg
 		// (20s) covers every warmer except ES significant_text
 		// on billion-doc indices; that one gets its own deadline
-		// via the same COREMETRY_LOGS_PATTERNS_DEADLINE env the
-		// handler reads (passed through from the call site).
+		// passed through from the call site (no env knob today —
+		// the old COREMETRY_LOGS_PATTERNS_DEADLINE name was never read).
 		budget := queryBudg
 		if len(perCallBudget) > 0 && perCallBudget[0] > 0 {
 			budget = perCallBudget[0]

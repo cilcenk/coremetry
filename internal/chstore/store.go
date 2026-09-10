@@ -909,7 +909,7 @@ func (s *Store) telemetryReadConn() driver.Conn {
 
 // ClusterName returns the configured CH cluster identifier (e.g.
 // the value that lands inside `ON CLUSTER`) when the operator set
-// COREMETRY_CH_CLUSTER, or "" for a single-shard standalone
+// COREMETRY_CH_CLUSTER_NAME, or "" for a single-shard standalone
 // install. Used by /admin/clickhouse to render the topology
 // banner so the operator can confirm at a glance whether the
 // running pod is talking to a cluster vs a single CH node.

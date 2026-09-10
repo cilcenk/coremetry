@@ -41,6 +41,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -83,6 +84,8 @@ const (
 	msgSetTopic   = "topic"
 	msgSetChart   = "chart"
 	msgSetClients = "clients"
+	// v0.10.589 — partition lag/lead; pencere son 10 dk, seri tavanı 50.
+	msgSetPartitions = "partitions"
 )
 
 // parseMessagingSet — ?set= ayrıştırıcı. Boş = topic (geriye dönük davranış).
@@ -96,6 +99,8 @@ func parseMessagingSet(raw string) (string, bool) {
 		return msgSetChart, true
 	case msgSetClients:
 		return msgSetClients, true
+	case msgSetPartitions:
+		return msgSetPartitions, true
 	}
 	return "", false
 }
@@ -107,6 +112,8 @@ func messagingSetQuestions(set string) []vmetrics.KafkaQuestion {
 		return vmetrics.KafkaTopicChartQuestions()
 	case msgSetClients:
 		return vmetrics.KafkaClientHealthQuestions()
+	case msgSetPartitions:
+		return vmetrics.KafkaPartitionQuestions()
 	default:
 		return vmetrics.KafkaTopicQuestions()
 	}
@@ -304,6 +311,15 @@ func buildMessagingClients(ctx context.Context, src metricSource, p messagingCli
 	if set == msgSetClients {
 		topic, caveat = "", msgClientsScopeCaveat
 	}
+	// v0.10.589 — partition seti için SON DEĞER yeter: pencere son 10 dk'ya
+	// daralır, adım kabalaşır. 200 partition × 5 tüketici = 1000 seri; tam
+	// aralığı tele bindirmek hem VM'i hem tarayıcıyı boşuna yorar.
+	if set == msgSetPartitions {
+		if p.To.Sub(p.From) > msgPartitionWindow {
+			p.From = p.To.Add(-msgPartitionWindow)
+		}
+		p.Mdp = 2
+	}
 	resp.Producers, resp.Consumers = splitCallerRoles(callers)
 	if len(resp.Producers) == 0 && len(resp.Consumers) == 0 {
 		resp.Note = kafkaClientsNote(resp.Source, false, false, "span tarafında bu topic için üretici/tüketici görülmedi; metrik sorgusu atılmadı.", caveat)
@@ -320,9 +336,49 @@ func buildMessagingClients(ctx context.Context, src metricSource, p messagingCli
 		return &vmetrics.KafkaScope{Services: svcs, Topic: topic, From: p.From, To: p.To, MaxDataPoints: p.Mdp}
 	}
 	blocks, available, envAmbiguous := runKafkaQuestions(ctx, src, messagingSetQuestions(set), p.Env, scopeFor)
+	if set == msgSetPartitions {
+		// Sunucu tarafı tavan: en kötü 50 kalır (son değere göre). FE 20
+		// gösterir ve kalan sayıyı yazar; tel sınırı burada.
+		for k, b := range blocks {
+			b.Series = capSeriesByLast(b.Series, msgPartitionSeriesCap)
+			blocks[k] = b
+		}
+	}
 	resp.Blocks, resp.Available, resp.EnvAmbiguous = blocks, available, envAmbiguous
 	resp.Note = kafkaClientsNote(resp.Source, available, envAmbiguous, "", caveat)
 	return resp, nil
+}
+
+const (
+	// msgPartitionWindow — partition setinin pencere tavanı; son değer için yeter.
+	msgPartitionWindow = 10 * time.Minute
+	// msgPartitionSeriesCap — tel üstüne binen partition serisi tavanı.
+	// Üst akış (FE) 20 gösterir; 50 sıralama/eşitlik payı bırakır.
+	msgPartitionSeriesCap = 50
+)
+
+// capSeriesByLast — SAF: serileri SON noktasının değerine göre azalan sırala
+// (noktasız seri en sona), eşitlikte groupKey artan (deterministik), ilk n.
+func capSeriesByLast(in []chstore.SpanMetricSeries, n int) []chstore.SpanMetricSeries {
+	if len(in) <= n {
+		n = len(in)
+	}
+	out := make([]chstore.SpanMetricSeries, len(in))
+	copy(out, in)
+	last := func(s chstore.SpanMetricSeries) float64 {
+		if len(s.Points) == 0 {
+			return math.Inf(-1)
+		}
+		return s.Points[len(s.Points)-1].Value
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		li, lj := last(out[i]), last(out[j])
+		if li != lj {
+			return li > lj
+		}
+		return strings.Join(out[i].GroupKey, "|") < strings.Join(out[j].GroupKey, "|")
+	})
+	return out[:n]
 }
 
 // buildServiceKafkaClients — SAF: servis paneli soruları, kapsam tek servis.

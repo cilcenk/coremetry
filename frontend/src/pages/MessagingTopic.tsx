@@ -34,6 +34,7 @@ import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } fro
 import type { DataTableColumn } from '@/lib/dataTable';
 import { CallerSection } from '@/features/dependencies/CallerSection';
 import { KafkaClientsSection } from '@/features/dependencies/KafkaClientsSection';
+import { PartitionLagTable } from '@/features/dependencies/PartitionLagTable'; // v0.10.589
 import { kindSeries } from '@/features/dependencies/msgSeries';
 import { kafkaChartItems, kafkaDegradeTR } from '@/features/dependencies/kafkaClients';
 import { opLabelTR, isOpMissing, msgOperationRows, OP_MISSING_TITLE } from '@/features/dependencies/msgOperations';
@@ -208,6 +209,8 @@ export default function MessagingTopicPage() {
               { key: 'operations', label: <>Operasyonlar<span className="tab-count">{msgOps.length}</span></> },
               { key: 'clients', label: 'Kafka istemcileri',
                 title: 'Metrik tarafı — bağlantı, gecikme, rebalance. Yalnız bu sekme seçilince istenir.' },
+              { key: 'partitions', label: "Partition'lar",
+                title: 'En kötü 20 partition: lag ve lead (metrik). Yalnız bu sekme seçilince istenir.' },
               { key: 'spannames', label: <>Span adları<span className="tab-count">{topOps.length}</span></> },
             ]} />
 
@@ -237,6 +240,10 @@ export default function MessagingTopicPage() {
                 system={system} cluster={cluster} destination={destination}
                 range={range} xRange={xRange} syncKey={syncKey}
                 set="clients" enabled title="Kafka istemcileri" />
+            )}
+            {/* v0.10.589 — partition lag/lead; kendi set=partitions sorgusu, yalnız mount olunca. */}
+            {tab === 'partitions' && (
+              <PartitionLagTable system={system} cluster={cluster} destination={destination} range={range} />
             )}
             {tab === 'spannames' && (
               <SpanNamesTable rows={topOps} range={range} system={system} destination={destination} />

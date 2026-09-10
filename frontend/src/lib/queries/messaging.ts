@@ -13,7 +13,7 @@ import { api } from '@/lib/api';
 // ("cache key hashes ALL inputs" kuralının FE aynası).
 export function useMessagingClients(p: {
   system: string; cluster: string; destination: string; fromNs: number; toNs: number;
-  set?: 'chart' | 'topic' | 'clients'; enabled?: boolean;
+  set?: 'chart' | 'topic' | 'clients' | 'partitions'; enabled?: boolean;
 }) {
   return useQuery({
     queryKey: ['messaging', 'clients', p.system, p.cluster, p.destination, p.fromNs, p.toNs, p.set ?? ''],

@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/vmetrics"
@@ -276,5 +278,74 @@ func TestMessagingSetQuestionCounts(t *testing.T) {
 	}
 	if messagingSetScope(msgSetClients) != "services" || messagingSetScope(msgSetTopic) != "topic" || messagingSetScope(msgSetChart) != "topic" {
 		t.Fatal("scope eşlemesi")
+	}
+}
+
+// v0.10.589 — set=partitions: son değer yeter, tam pencere GEREKMEZ.
+// 200 partition × 5 tüketici = 1000 seri; tam aralık tele binmemeli.
+// Pencere son 10 dakikaya daralır, seri sayısı son değere göre 50'ye
+// tavanlanır (en kötüler kalır). Kapsam topic (records_lag topic etiketli).
+func TestBuildMessagingClientsPartitionsNarrowWindowAndCap(t *testing.T) {
+	// 60 seri: partition i'nin son değeri i.
+	series := make([]chstore.SpanMetricSeries, 0, 60)
+	for i := 0; i < 60; i++ {
+		series = append(series, chstore.SpanMetricSeries{
+			GroupKey: []string{"consumer-b", "c1", fmt.Sprintf("%d", i)},
+			Points:   []chstore.SpanMetricPoint{{Time: 1, Value: 1}, {Time: 2, Value: float64(i)}},
+		})
+	}
+	src := &fakeEPSource{name: "vm", queryFn: func(chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error) {
+		return series, nil
+	}}
+	resp, err := buildMessagingClients(context.Background(), src, msgSetPlan(msgSetPartitions), msgSetCallers())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Scope != "topic" {
+		t.Fatalf("partition kapsamı topic olmalı: %q", resp.Scope)
+	}
+	if len(src.queries) == 0 {
+		t.Fatal("hiç sorgu koşmadı")
+	}
+	for _, f := range src.queries {
+		if f.To.Sub(f.From) > 10*time.Minute {
+			t.Fatalf("pencere son 10 dk'ya daralmalı: %v", f.To.Sub(f.From))
+		}
+		if topicFilterValues(f) == nil {
+			t.Fatalf("partition seti topic süzgeci taşımalı: %+v", f.Filters)
+		}
+	}
+	b, ok := resp.Blocks["consumer_partition_lag"]
+	if !ok {
+		t.Fatalf("lag bloğu yok: %v", resp.Blocks)
+	}
+	if len(b.Series) != msgPartitionSeriesCap {
+		t.Fatalf("seri tavanı %d olmalı, %d", msgPartitionSeriesCap, len(b.Series))
+	}
+	// En kötüler kalır, azalan: ilk 59, son 10.
+	if b.Series[0].GroupKey[2] != "59" || b.Series[len(b.Series)-1].GroupKey[2] != "10" {
+		t.Fatalf("son değere göre azalan, en kötüler tutulmalı: ilk=%v son=%v", b.Series[0].GroupKey, b.Series[len(b.Series)-1].GroupKey)
+	}
+}
+
+// capSeriesByLast SAF: son değere göre azalan, tavan, eşitlikte anahtar artan.
+func TestCapSeriesByLast(t *testing.T) {
+	mk := func(k string, last float64) chstore.SpanMetricSeries {
+		return chstore.SpanMetricSeries{GroupKey: []string{k}, Points: []chstore.SpanMetricPoint{{Time: 1, Value: 99}, {Time: 2, Value: last}}}
+	}
+	in := []chstore.SpanMetricSeries{mk("a", 5), mk("b", 50), mk("c", 5), mk("d", 500), {GroupKey: []string{"e"}}}
+	out := capSeriesByLast(in, 3)
+	got := []string{out[0].GroupKey[0], out[1].GroupKey[0], out[2].GroupKey[0]}
+	if len(out) != 3 || got[0] != "d" || got[1] != "b" || got[2] != "a" {
+		t.Fatalf("d(500) b(50) a(5, c'den önce) beklenir: %v", got)
+	}
+	if len(capSeriesByLast(in, 100)) != 5 {
+		t.Fatal("tavan girdiyi aşınca hepsi kalır (noktasız seri de)")
+	}
+}
+
+func TestParseMessagingSetPartitions(t *testing.T) {
+	if s, ok := parseMessagingSet("partitions"); !ok || s != msgSetPartitions {
+		t.Fatalf("partitions ayrışmalı: %q %v", s, ok)
 	}
 }

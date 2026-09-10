@@ -146,3 +146,21 @@ describe('çekmeceden sayfaya kapı', () => {
     expect(link).toBeGreaterThan(kindQueue);
   });
 });
+
+// v0.10.589 — Partition'lar sekmesi: set=partitions YALNIZ sekme bileşeninde
+// (fetch-on-open); sayfa açılışta onu istemez; sekme mount kapılı.
+describe('partitions sekmesi (v0.10.589)', () => {
+  const table = readFileSync(new URL('../features/dependencies/PartitionLagTable.tsx', import.meta.url), 'utf8');
+  it("set: 'partitions' sayfada DEĞİL, yalnız tablo bileşeninde", () => {
+    expect(page).not.toContain("set: 'partitions'");
+    expect(table).toContain("set: 'partitions', enabled: true");
+  });
+  it('tablo yalnız sekme seçiliyken mount edilir', () => {
+    expect(page).toContain("{tab === 'partitions' && (");
+    expect(page).toContain('<PartitionLagTable system={system} cluster={cluster} destination={destination} range={range} />');
+  });
+  it('sekme kodekte tanımlı', () => {
+    const codec = readFileSync(new URL('./messaging/topicHref.ts', import.meta.url), 'utf8');
+    expect(codec).toContain("'partitions'");
+  });
+});

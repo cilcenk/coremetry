@@ -345,3 +345,16 @@ var kafkaClientHealthKeys = []string{
 func KafkaClientHealthQuestions() []KafkaQuestion {
 	return kafkaPickQuestions(KafkaServiceQuestions(), []string{"service.name"}, kafkaClientHealthKeys...)
 }
+
+// KafkaPartitionQuestions — v0.10.589: topic sayfası "Partition'lar" sekmesi.
+// İkisi de topic etiketli (topic süzgeci uygulanır) ve partition kırılımlı.
+// Kırılım SIRASI FE ile sözleşme (partitionLag.ts keyOf): service · client ·
+// partition. Lag ve lead bir arada, çünkü FARKLI alarmlar: lag "geride
+// kaldın", lead sıfıra yaklaşınca "retention'dan düşmek üzeresin".
+func KafkaPartitionQuestions() []KafkaQuestion {
+	gb := []string{"service.name", "client_id", "partition"}
+	return []KafkaQuestion{
+		{Key: "consumer_partition_lag", Metric: "kafka.consumer.records_lag", TR: "Lag — partition", GroupBy: gb},
+		{Key: "consumer_partition_lead", Metric: "kafka.consumer.records_lead", TR: "Lead — partition", GroupBy: gb},
+	}
+}

@@ -649,3 +649,28 @@ Etki: Y (yayın/güvenlik engeli) · O (ekip verimliliği) · D (kozmetik). Efor
 **GitHub'a (org altında, ekibe/dışa) açmadan ÖNCE mutlaka:** **1 → 2 → 3** (sızıntı ve geçmiş; sıra değişmez), **4 → 5** (yeşil CI ve zorunlu kapılar; aksi hâlde ilk PR'lar kırmızı bir main üzerine düşer ve `release.yml` kırık kodu yayınlar), **6** (SECURITY.md + critical CodeQL triyajı: public repoda alert'ler dışarıdan görünmez ama kod görünür), **2'deki `.gitignore` ekleri** (`.mcp.json` mutlak yol + `enableAllProjectMcpServers`, agent-memory 920K kişisel not). 7-9 ilk ekip üyesi gelmeden; 10-15 ilk sprint.
 
 Repo dışında operatöre teslim: `leak-raw.txt` (1524 satır, maskesiz) — bu dokümana ve repoya asla kopyalanmaz.
+
+## 9. Durum — 2026-09-10 (v0.10.630 itibarıyla)
+
+§8 matrisinin satır satır durumu. "Operatör" = karar/işlem operatörde; kod tarafı bitti.
+
+| # | İş | Durum |
+|---|---|---|
+| 1 | Ağaç sentetikleştirme | **GEMİDE** 618 (IP/FQDN), 619 (LDAP fixture), 620 (`bsa-`→`shop-`, cluster adları, 52 dosya), 621 (fraud fixture, Influx kalıntıları). Üç davranışsal varsayılan (Oracle sütun adları, Traces varsayılan kolonları, devops `bsa-` öneki) → config'e taşıma **operatör kararı** bekliyor |
+| 2 | Kök manifestler + `.gitignore` | **GEMİDE** 618 (`.mcp.json`, `.claude/agent-memory/`, `scratchpad/`); kök compose/collector/tempo/minikube yaml'ları sentetik, ağaçta kalıyor |
+| 3 | History rewrite | **Operatör** — zamanlama (force-push + 3477 tag; klonlar yenilenir) |
+| 4 | CI yeşil | **GEMİDE** 614 (vitest TZ), 615 (js-yaml/browserslist), 616 (x/crypto, grpc); `main` 628'den beri 5/5 yeşil |
+| 5 | Ruleset + required checks + release gate + Dependabot | **KISMİ**: release.yml `gate` job'ı 626 (docker/helm `needs: [gate]`); Dependabot alerts/security updates açık (624). Ruleset `protectd` etkinleştirme + required checks **operatör** (doğrudan push'u keser → PR akışı kararı) |
+| 6 | SECURITY.md + PVR + CodeQL triyajı | **KISMİ**: SECURITY.md + Private Vulnerability Reporting 624. CodeQL açık 40: 2 critical + 5 `go/request-forgery` (webhook/Zoom/VM/Prom/devops URL'leri yönetici ayarından — by design), 5 `go/clear-text-logging` (bind-hata mesajı ve trusted-header e-postası; parola akmıyor), 2 `go/path-injection` (LDAP CA/parola dosyası yolu yönetici ayarından), 12 `go/incorrect-integer-conversion`, 12 `js/incomplete-sanitization` — kapatma gerekçeleri hazır, "by design" kapatma **operatör** |
+| 7 | Katkı altyapısı | **GEMİDE** 623 (PR/issue şablonları, CODEOWNERS, .editorconfig, .gitattributes), 624 (CONTRIBUTING, SECURITY; eski Dependabot PR'ları kapatıldı) |
+| 8 | CLAUDE.md ekip sürümü | **Operatör** — sahibinin dosyası; kapsam/üslup kararı |
+| 9 | api.go ratchet | **GEMİDE** 625 (taban 12113, test, hook, CI adımı) |
+| 10 | gofmt sweep + tidy + make audit + toolchain | **GEMİDE** 626 (`make audit`, `go mod tidy -diff`, CGO=0), 628 (86 dosya gofmt + CI kapısı). `go.mod` `toolchain` pini **operatör** (sorulmadan eklenmez) |
+| 11 | gitleaks | **AÇIK** — yayın sonrası önleyici; ayrı dilim |
+| 12 | golangci 123 / prettier 1042 / ESLint hard | **KISMİ**: ESLint gerçek kapı 627. golangci + prettier **AÇIK** (mekanik, sessiz pencere ister) |
+| 13 | Onboarding | **GEMİDE** 629 (docs/ENV.md 89 değişken, docs/local-dev.md), 630 (`/codebase-tour` skill + test kültürü sözlüğü), 631 (README bağlantıları + `make build-ui` ön koşulu) |
+| 14 | Org transferi + modül yolu + ghcr + URL'ler | **KISMİ**: org `cosretr` + tüm URL/imaj referansları 617; imaj paketi public (operatör). Kalan **operatör**: `go.mod` modül yolu, `charts/coremetry` paketinin public yapılması |
+| 15 | Kök artefakt temizliği, annotated tag, Release notu | **AÇIK** (D) |
+
+Bağımlılık: Dependabot 8 orta bulgu (go-ntlmssp, react-router-dom, vitest, postcss, @opentelemetry/core) → 632.
+

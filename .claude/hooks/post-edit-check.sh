@@ -22,6 +22,15 @@ file=$(printf '%s' "$payload" | jq -r '.tool_input.file_path // empty')
 
 cd "$CLAUDE_PROJECT_DIR" || exit 0
 
+# v0.10.625 — api.go büyüme kapısı, ucuz kontrol pahalı build'den ÖNCE.
+# Büyüme → exit 2 (Claude düzeltir); küçülme yalnız uyarı (ratchet'i go test
+# ve CI zorlar).
+if [[ "$file" == */internal/api/api.go ]]; then
+  if ! bash scripts/guard-api-go-size.sh --worktree; then
+    exit 2
+  fi
+fi
+
 if [[ "$file" == *.go ]]; then
   if ! out=$(go build ./... 2>&1); then
     { echo "go build ./... başarısız:"; echo "$out" | head -40; } >&2

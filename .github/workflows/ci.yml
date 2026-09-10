@@ -80,6 +80,10 @@ jobs:
         run: go vet ./...
       - name: go build
         run: go build ./...
+      # v0.10.625 — api.go BÜYÜMEZ (ratchet): taban .claude/baselines/api_go_lines;
+      # büyüme ve indirilmemiş taban ikisi de kırmızı (GUARD_STRICT_RATCHET=1).
+      - name: api.go büyüme kapısı (ratchet)
+        run: GUARD_STRICT_RATCHET=1 bash scripts/guard-api-go-size.sh --worktree
       # CLAUDE.md's release flow requires "go test ./... pre-tag", and every
       # bug-fix ships a regression test — but nothing ENFORCED it in CI, so a
       # forgotten local run could ship a regression undetected. This is the gate.

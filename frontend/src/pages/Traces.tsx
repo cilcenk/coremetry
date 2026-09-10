@@ -1061,7 +1061,7 @@ function TracesPageInner() {
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
             <div className="trace-lookup">
               <span className="tl-icon" aria-hidden><IconSearch size={14} /></span>
-              <input placeholder="Trace ID veya kimlik (function_id)…" title="32 karakterlik trace ID doğrudan trace'e gider; başka bir kimlik değeri (function_id gibi) terfi/facet anahtarlarında eşitlikle aranır"
+              <input placeholder="Trace ID veya function_id…" title="32 karakterlik trace ID doğrudan trace'e gider; başka bir kimlik değeri (function_id gibi) terfi/facet anahtarlarında eşitlikle aranır"
                 value={draft.traceId}
                 onChange={e => setDraft({ ...draft, traceId: e.target.value })}
                 onKeyDown={e => e.key === 'Enter' && apply()} />

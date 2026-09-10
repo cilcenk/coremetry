@@ -64,7 +64,7 @@ Geçmiş: `history:930a4196` (v0.9.316) `internal/anomaly/log_patterns_cost_test
 | `internal/appschema/appschema_test.go:16-153`, `appschema.go:9`, `internal/devops/mapper_statement_test.go:32-133`, `frontend/src/pages/settings/DevOpsTab.tsx:630` | `<kurum-kısaltması>.INT_T*` Türkçe kolonlu fraud tablosu, gerçek ORA-12899 satırı | sentetik `SHOP.ORDER_PHONE (CUSTOMER_ID, PHONE, NOTE)` |
 | `migrations/00{01,02,03,08,09,10,11,12,14}*.sql` (≈400 geçiş), docs, `state_repartition_admin_test.go` | `ON CLUSTER uptrace_all` (docs "yer tutucu" diyor; müşteri prod küme adıyla aynı) | `values.yaml` `clickhouse.clusterName` → `{cluster}` makro — düşük hassasiyet |
 
-`cmd/demo` içindeki `COREBANK.*`, `PKG_LEDGER.*` sentetik — OK. Sayım: `ERR_*` 156 / 19 dosya; fraud tablosu 40+ / 4; şema sahibi 2 / 1. Hepsi ağaçta (ilk `dcfc81db` 2026-08-28, `f7c9dd22` 2026-09-09, `5b11e51a` 2026-09-10).
+`cmd/demo` içindeki `COREBANK.*`, `PKG_LEDGER.*` sentetik — OK. Sayım: `<kurum-kolon-öneki>_*` 156 / 19 dosya; fraud tablosu 40+ / 4; şema sahibi 2 / 1. Hepsi ağaçta (ilk `dcfc81db` 2026-08-28, `f7c9dd22` 2026-09-09, `5b11e51a` 2026-09-10).
 
 ### 1.3 Influx bucket / measurement (entegrasyon v0.10.606'da söküldü)
 
@@ -277,7 +277,7 @@ Ratchet yalnız aşağı iner. Kaçış: baseline yükseltmek = `.claude/baselin
 Bugün: pre-commit yok; CI Trivy fs `secret` tarayıcısı yalnız genel kalıplar (AWS key vb.) — hostname/şema adı sınıfını görmez; müşteri manifestleri yalnız `.gitignore:97-101` ile korunuyor.
 
 1. **gitleaks** pre-commit (`gitleaks protect --staged --redact --config .gitleaks.toml`) + CI (`gitleaks-action`, PR aralığı) + ilk kurulumda bir kez tam geçmiş; Trufflehog haftalık `--only-verified`.
-2. **Repo'ya özel kurallar** (`.gitleaks.toml`, `useDefault = true`) — müşteri adı regex'e yazılmaz, sınıf düzeyi: `kurum-hostname` (`\.(com\.tr|gov\.tr)\b`, `\.(internal|corp|intra|lan)\b`, YAML `host:` allowlist dışı); `schema-qualified-oracle` (`\b[A-Z][A-Z0-9_]{2,}\.ERR_[A-Z0-9_]+\b`; çıplak `ERR_` Oracle özelliğinde meşru → path allowlist); `business-code-literal` (`(channel|function)_code\s*[:=]\s*['"][A-Z0-9]{2,8}`); `k8s-manifest-root` (`^(deployment|services|route)-coremetry.*\.ya?ml$`); `ip-private-prod` (`10\.x` yalnız docs/charts/yaml). Tam müşteri suffix'i gerekiyorsa CI secret'ından şablonlanır, repoya girmez.
+2. **Repo'ya özel kurallar** (`.gitleaks.toml`, `useDefault = true`) — müşteri adı regex'e yazılmaz, sınıf düzeyi: `kurum-hostname` (`\.(com\.tr|gov\.tr)\b`, `\.(internal|corp|intra|lan)\b`, YAML `host:` allowlist dışı); `schema-qualified-oracle` (`\b[A-Z][A-Z0-9_]{2,}\.<KOLON-ÖNEKİ>_[A-Z0-9_]+\b`; çıplak `<KOLON-ÖNEKİ>_` Oracle özelliğinde meşru → path allowlist); `business-code-literal` (`(channel|function)_code\s*[:=]\s*['"][A-Z0-9]{2,8}`); `k8s-manifest-root` (`^(deployment|services|route)-coremetry.*\.ya?ml$`); `ip-private-prod` (`10\.x` yalnız docs/charts/yaml). Tam müşteri suffix'i gerekiyorsa CI secret'ından şablonlanır, repoya girmez.
 3. **Sentetik veri allowlist'i:** `cmd/demo/`, `jboss-demo/`, `docs/DEMO-REALISM.md`, `internal/otlp/testdata/`, `*_test.go`, `*.test.ts(x)`; regex: `admin@coremetry\.local`, `example\.com`, `svc\.cluster\.local`, `localhost`; satır içi `# gitleaks:allow` yalnız gerekçeyle.
 4. **Claude tarafı:** PostToolUse'a `gitleaks detect --no-git --source "$file"` (tek dosya ~50 ms) → `exit 2`.
 

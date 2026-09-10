@@ -519,7 +519,11 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
           kanıt trace'leri window köprüsüyle gelip örnek satırlarını
           kutulamaya devam ediyor. */}
       <div style={{ marginBottom: 16 }}>
-        <AIExplainButton subject={{ kind: 'exception', id: group.fingerprint }}
+        {/* v0.10.593 (operatör) — Trace'teki "Explain this trace" ile AYNI:
+            sayfanın tek ana eylemi, dolu aksan (emphasis strong). İki yüzeyde
+            iki farklı ağırlık, aynı işi yapan düğmeyi iki ayrı şey gibi
+            gösteriyordu. */}
+        <AIExplainButton subject={{ kind: 'exception', id: group.fingerprint }} emphasis="strong"
           label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain root cause</span></>} />
       </div>
 

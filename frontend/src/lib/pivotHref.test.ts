@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { SLOW_QUERY_SNIPPET_LEN } from '@/pages/slowqueries/tracesHref';
 import { tracesPivotHref, messagingTracesHref, dbTracesHref, operationTracesHref,
   statementTracesHref, bucketTracesHref, STATEMENT_LIKE_PREFIX_LEN } from './pivotHref';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -396,10 +397,14 @@ describe('statementTracesHref', () => {
   // hiç kırmadı. Asıl sözleşme KARDEŞ YÜZEYLE aynı önekte olmak: /slow-queries
   // aynı LIKE'ı kendi satırından kuruyor ve ikisi ayrışırsa aynı ifade iki
   // sayfada iki farklı trace kümesi listeler.
-  it('önek kardeş yüzeyle (SlowQueries.tsx) aynı', () => {
-    const sibling = readFileSync(join(__dirname, '..', 'pages', 'SlowQueries.tsx'), 'utf8');
-    expect(sibling, 'SlowQueries.tsx artık slice(0, N) yazmıyor — sözleşmeyi yeniden bul')
-      .toContain(`slice(0, ${STATEMENT_LIKE_PREFIX_LEN})`);
+  it('önek kardeş yüzeyle (pages/slowqueries/tracesHref.ts) aynı', () => {
+    // v0.10.652 — /slow-queries'in href kurucusu saf modüle taşındı; sabit
+    // eşitliği gerçek sözleşme (biri 60→30 olursa düşer), kaynak pini ise
+    // kurucunun o sabiti gerçekten kullandığını çiviler.
+    expect(SLOW_QUERY_SNIPPET_LEN).toBe(STATEMENT_LIKE_PREFIX_LEN);
+    const sibling = readFileSync(join(__dirname, '..', 'pages', 'slowqueries', 'tracesHref.ts'), 'utf8');
+    expect(sibling, 'tracesHref.ts artık slice(0, SLOW_QUERY_SNIPPET_LEN) yazmıyor — sözleşmeyi yeniden bul')
+      .toContain('slice(0, SLOW_QUERY_SNIPPET_LEN)');
   });
 
   it('60 karakterden kısa ifade kırpılmaz', () => {

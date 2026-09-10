@@ -35,6 +35,14 @@ type MetricQueryFilter struct {
 	// Operatörün Grafana referansı [3m]@1s — pencere OLMADAN aynı veri
 	// testere dişi görünüyor (kesikli şikâyeti).
 	RateWindowSec int
+	// PlainSeries — v0.10.607: çağıran adın DÜZ bir gauge/sayaç olduğunu
+	// BİLİYOR (Kafka katalogu gibi): VM çevirisi histogram-ailesi tahminini
+	// (`_sum/_count/_bucket` or-kolları) atlar. Operatör-bildirimi: 500
+	// servislik kapsamla `avg(x) or (sum(rate(x_sum))/sum(rate(x_count)))`
+	// üç selektöre şişip VM'den 422 aldı; `kafka.producer.request_latency_avg`
+	// zaten ortalama olan bir gauge, kolun eşleşeceği aile yok. false =
+	// bugüne kadarki davranış (ad heuristiği karar verir).
+	PlainSeries bool
 }
 
 // buildMetricQuerySQL builds the metric_points query SQL + bound args for a

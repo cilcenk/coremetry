@@ -227,7 +227,7 @@ func parseJavaSource(src string) (string, int) {
 //
 // Java stack'i en DIŞTAKİ (wrapper) exception'la başlar; gerçek kök
 // neden en derin "Caused by:" bölümündedir. Metin sırasına göre ilk n
-// frame'i almak, katmanlı SHOP/EJB kodunda — ki orada catch-rethrow
+// frame'i almak, katmanlı kurumsal EJB kodunda — ki orada catch-rethrow
 // yolu da uygulama sınıflarından geçer — üç kod penceresinin üçünü de
 // wrapper'ın yeniden-fırlatma satırlarına harcıyor, hatanın DOĞDUĞU
 // satır hiç pencere alamıyordu. Artık bütçe önce kök nedene gidiyor,

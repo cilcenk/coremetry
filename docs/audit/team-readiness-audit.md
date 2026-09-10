@@ -61,7 +61,7 @@ Geçmiş: `history:930a4196` (v0.9.316) `internal/anomaly/log_patterns_cost_test
 | `frontend/src/components/LogTable.tsx:449`, `lib/types.ts:1536`, `internal/chstore/store.go:1962`, `oracle_error_log.go:5`, `purge.go:25` | yorum/tooltip `ERROR_LOG` | jenerik |
 | `internal/oracle/{mapping,settings,client,poller}_test.go`, `internal/api/oracle_logs_routes_test.go` | ~20 `ERR_*` fixture kolonu | sentetik `ERR_*` |
 | `docs/audit/oracle-error-log-2026-09-09.md:115,195…`, `.claude/agent-memory/…` | `<SAHİP>.ERROR_LOG`, kolon listesi, kod semantiği | jenerik |
-| `internal/appschema/appschema_test.go:16-153`, `appschema.go:9`, `internal/devops/mapper_statement_test.go:32-133`, `frontend/src/pages/settings/DevOpsTab.tsx:630` | `SHOP.INT_T*` Türkçe kolonlu fraud tablosu, gerçek ORA-12899 satırı | sentetik `SHOP.ORDER_PHONE (CUSTOMER_ID, PHONE, NOTE)` |
+| `internal/appschema/appschema_test.go:16-153`, `appschema.go:9`, `internal/devops/mapper_statement_test.go:32-133`, `frontend/src/pages/settings/DevOpsTab.tsx:630` | `<kurum-kısaltması>.INT_T*` Türkçe kolonlu fraud tablosu, gerçek ORA-12899 satırı | sentetik `SHOP.ORDER_PHONE (CUSTOMER_ID, PHONE, NOTE)` |
 | `migrations/00{01,02,03,08,09,10,11,12,14}*.sql` (≈400 geçiş), docs, `state_repartition_admin_test.go` | `ON CLUSTER uptrace_all` (docs "yer tutucu" diyor; müşteri prod küme adıyla aynı) | `values.yaml` `clickhouse.clusterName` → `{cluster}` makro — düşük hassasiyet |
 
 `cmd/demo` içindeki `COREBANK.*`, `PKG_LEDGER.*` sentetik — OK. Sayım: `ERR_*` 156 / 19 dosya; fraud tablosu 40+ / 4; şema sahibi 2 / 1. Hepsi ağaçta (ilk `dcfc81db` 2026-08-28, `f7c9dd22` 2026-09-09, `5b11e51a` 2026-09-10).

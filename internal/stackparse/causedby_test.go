@@ -11,7 +11,7 @@ import (
 // SEMPTOM: "Kodu da incele" üç kod penceresinin üçünü de en DIŞTAKİ
 // (wrapper) exception'ın yeniden-fırlatma satırlarına harcıyordu; kök
 // nedenin gerçekten fırlatıldığı satır — ki o her zaman en derin
-// "Caused by:" bölümündedir — hiç pencere almıyordu. Katmanlı SHOP/EJB
+// "Caused by:" bölümündedir — hiç pencere almıyordu. Katmanlı kurumsal EJB
 // kodunda wrapper bölümünde de rahatça 3+ uygulama frame'i bulunduğu
 // için tavan zincirin dibine hiç ulaşmıyordu.
 //

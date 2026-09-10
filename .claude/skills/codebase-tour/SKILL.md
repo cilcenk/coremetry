@@ -8,7 +8,7 @@ description: Coremetry'ye yeni katılan geliştirici için müfredat — okuma s
 Bu skill bir **müfredattır**: "neden böyle, neyi bozmamalıyım, önce ne okuyayım".
 `/where-is` bir kavram için ≤7 `file:line` işaretçisi döndürür (lookup, her
 sorguda); tour bir kez okunur, iş yapılacaksa ilgili skill'e yönlendirir, kod
-yazmaz. Ölçüm tabanı v0.10.629 (2026-09-10); satır numaraları kayabilir, sembol
+yazmaz. Ölçüm tabanı v0.10.646 (2026-09-10); satır numaraları kayabilir, sembol
 adları kaymaz — önce sembolü grep'le.
 
 ## 1. Sıralı okuma listesi (25 dosya, ~2 saat)
@@ -23,7 +23,7 @@ adları kaymaz — önce sembolü grep'le.
 | 6 | `internal/config/config.go` (`applyEnv`) | env > config.yaml > defaults |
 | 7 | `internal/chstore/store.go` (`migrate()`, iki-boot sözleşmesi) | Bildirimsel/idempotent DDL, küme kipinde ertelenen ALTER |
 | 8 | `internal/chstore/problem.go` (Problem, Kind, `PollerOwnedRule`) | Problem modeli, kind=service/db/external |
-| 9 | `internal/api/api.go` (yalnız GEZ: Server, `registerRoutes`) | 12113 satır; ratchet var, büyütme |
+| 9 | `internal/api/api.go` (yalnız GEZ: Server, `registerRoutes`) | 12111 satır; ratchet var (`.claude/baselines/api_go_lines`), büyütme |
 | 10 | `internal/api/route_registry.go` | api.go'ya dokunmadan rota kaydı (`registerRoutesExtra`) |
 | 11 | `internal/api/cache.go` (`serveCached`) + `cache_key_test.go` | Hash-all-inputs cache anahtarı; kanonik regresyon testi |
 | 12 | `internal/api/anomaly_extra.go` (`s.audit`) | Admin yazımı = audit satırı |
@@ -39,7 +39,7 @@ adları kaymaz — önce sembolü grep'le.
 | 22 | `frontend/src/lib/types.ts` + `lib/api.ts` (yapıyı gez) | Tek şekil kaynağı + istemci (`qs()` boşları atar) |
 | 23 | `components/ui/DataTable/DataTable.tsx` + `pages/SlowQueries.tsx` | Tablo şablonu (`useDataTable`, storageKey) |
 | 24 | `components/chart/CorePanel.tsx` + `lib/useUrlRange.ts` | uPlot tek motor; URL = state |
-| 25 | `docs/INCIDENTS.md`, `docs/DECISIONS.md` | "Neden" bilgisi; tuzak kurallarının hikâyeleri |
+| 25 | `docs/INCIDENTS.md`, `docs/DECISIONS.md` (v0.7→v0.10 karar kaydı 635) | "Neden" bilgisi; tuzak kurallarının hikâyeleri |
 
 Sonra: `.claude/skills/clickhouse-schema/SKILL.md` §8 (migration üç yolu),
 `docs/runbooks/mcp-claude-code.md`, `docs/audit/team-readiness-audit.md` §6.
@@ -56,7 +56,7 @@ Sonra: `.claude/skills/clickhouse-schema/SKILL.md` §8 (migration üç yolu),
 
 Gölge invariant'lar (aynı derecede zorunlu): cache anahtarı TÜM girdileri
 hash'ler (`len(set)` yasak); AI explain yalnız `s.copilotExplain(...)`;
-`internal/api/api.go` büyümez (ratchet: `.claude/baselines/api_go_lines`);
+`internal/api/api.go` büyümez (ratchet: `.claude/baselines/api_go_lines`); golangci tavansız 0 ve CI'da gerçek kapı (v0.10.639);
 metrikler bugün CH `metric_points` + VictoriaMetrics ÇİFT yazılır (hedef VM tek
 depo; `docs/audit/vm-metrics-migration.md` Aşama 3 açık).
 

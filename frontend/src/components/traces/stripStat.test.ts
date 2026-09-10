@@ -14,11 +14,11 @@ describe('stripStat', () => {
     expect(parseStripStat('p99')).toBe('p99');
     expect(STRIP_STATS).toEqual(['p50', 'p95', 'p99']);
   });
-  it('etiketler: p50 "median", başlık "P95 MAX"', () => {
+  it('etiketler: p50 "median", başlık "P95 AVG" (v0.10.660: aralık ortalaması)', () => {
     expect(stripStatLabel('p50')).toBe('median');
     expect(stripStatLabel('p95')).toBe('p95');
-    expect(stripStatHeaderLabel('p50')).toBe('MEDIAN MAX');
-    expect(stripStatHeaderLabel('p99')).toBe('P99 MAX');
+    expect(stripStatHeaderLabel('p50')).toBe('MEDIAN AVG');
+    expect(stripStatHeaderLabel('p99')).toBe('P99 AVG');
   });
   it('kaynak pinleri: Traces şeridi ?rt= okur/yazar (varsayılan yazılmaz), agg seçime bağlı, expand düğmesi yok', () => {
     const src = readFileSync(resolve(__dirname, '../../pages/Traces.tsx'), 'utf8');

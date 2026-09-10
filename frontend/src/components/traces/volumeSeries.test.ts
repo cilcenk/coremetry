@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { SpanMetricSeries } from '@/lib/types';
-import { buildVolumeSeries, fmtVolumeDuration, volumeUnitLabel, smoothCentered, RT_SMOOTH_WINDOW, stripScope, isEntrySpanKey, volumeUnitFor, volumeHint } from './volumeSeries';
+import { weightedStatAvg, buildVolumeSeries, fmtVolumeDuration, volumeUnitLabel, smoothCentered, RT_SMOOTH_WINDOW, stripScope, isEntrySpanKey, volumeUnitFor, volumeHint } from './volumeSeries';
 
 const S = 1_000_000_000; // 1 saniye, ns
 const T0 = 1_700_000_000 * S;
@@ -174,5 +174,20 @@ describe('şerit istatistiği (v0.10.513)', () => {
     expect(buildVolumeSeries(mk(10), mk(1), mk(42)).series.find(s0 => s0.key === 'rt')!.label).toContain('(p95,');
     expect(buildVolumeSeries(mk(10), mk(1), mk(42), 'traces', 'p50').series.find(s0 => s0.key === 'rt')!.label).toContain('(median,');
     expect(buildVolumeSeries(mk(10), mk(1), mk(42), 'traces', 'p99').series.find(s0 => s0.key === 'rt')!.label).toContain('(p99,');
+  });
+});
+
+describe('weightedStatAvg (v0.10.660 — başlık: aralığın istek-ağırlıklı ortalaması)', () => {
+  const ser = (vals: (number | null)[]) => [{ groupKey: [] as string[], points: vals.map((v, i) => ({ time: i * 60, value: v as number })) }];
+  it('istek sayısıyla ağırlıklandırır: 3 isteklik kova 3000 isteklik kovayı eğmez', () => {
+    // kova0: 3 istek × 1000ms, kova1: 3000 istek × 100ms → ≈100.9ms (düz ortalama 550 olurdu)
+    expect(weightedStatAvg(ser([3, 3000]), ser([1000, 100]))).toBeCloseTo((3 * 1000 + 3000 * 100) / 3003, 3);
+  });
+  it('istatistiği olmayan kova ve 0 istekli kova ağırlıksız', () => {
+    expect(weightedStatAvg(ser([10, 0, 10]), ser([100, 900, null]))).toBe(100);
+  });
+  it('istek yoksa 0 (bölme yok); null seriler → 0', () => {
+    expect(weightedStatAvg(ser([0, 0]), ser([5, 5]))).toBe(0);
+    expect(weightedStatAvg(null, null)).toBe(0);
   });
 });

@@ -74,7 +74,7 @@ import { traceHref } from '@/lib/traceHref';
 
 import { VolumeChart } from '@/components/traces/VolumeChart';
 import { STRIP_STATS, STRIP_STAT_DEFAULT, parseStripStat, stripStatHeaderLabel, type StripStat } from '@/components/traces/stripStat';
-import { stripScope, volumeUnitFor } from '@/components/traces/volumeSeries';
+import { stripScope, volumeUnitFor, weightedStatAvg } from '@/components/traces/volumeSeries';
 import { groupLeaves } from '@/lib/urlState';
 import { LatencyScatter } from '@/components/traces/LatencyScatter';
 import { ShapesView } from '@/components/traces/ShapesView';
@@ -929,17 +929,18 @@ function TracesPageInner() {
   // Header RED stats over the live filtered rows (the stat group right of the
   // Volume|Latency toggle). Replaces the deleted standalone RED panel — the
   // filtered Rate/Errors/Duration numbers ride here + in the table.
-  // Header TOTAL/ERRORS/ERR RATE/P99 MAX — derived from the TRUE-volume series
+  // Header TOTAL/ERRORS/ERR RATE/<stat> AVG — derived from the TRUE-volume series
   // (whole window), so they describe real traffic rather than the 50-row page.
+  // v0.10.660 (operatör): süre istatistiği artık kovaların MAX'ı değil,
+  // istek-ağırlıklı ortalaması (weightedStatAvg) — tek sıçrayan kova pencereyi tanımlamasın.
   const volumeUnit = volumeUnitFor(!!filter.service, stripScope(!grouped ? advFilters : [], filter.search ?? ''));
   const headerStats = useMemo(() => {
     const cPts = volSeries?.count?.[0]?.points ?? [];
     const eMap = new Map((volSeries?.errors?.[0]?.points ?? []).map(p => [p.time, p.value]));
-    const pPts = volSeries?.rt?.[0]?.points ?? [];
-    let total = 0, err = 0, rtMax = 0;
+    let total = 0, err = 0;
     for (const p of cPts) { total += p.value; err += eMap.get(p.time) ?? 0; }
-    for (const p of pPts) if (p.value > rtMax) rtMax = p.value;
-    return { total, err, errRate: total > 0 ? (err / total) * 100 : 0, rtMax };
+    const rtAvg = weightedStatAvg(volSeries?.count ?? null, volSeries?.rt ?? null);
+    return { total, err, errRate: total > 0 ? (err / total) * 100 : 0, rtAvg };
   }, [volSeries]);
 
   const openTrace = (t: TraceRow) => navigate(traceHref(t.traceId, { pageRange: range }));
@@ -1149,7 +1150,7 @@ function TracesPageInner() {
                 tone={headerStats.err > 0 ? 'err' : undefined}
                 title="Seçili pencerenin tamamındaki hatalı giriş span'ı sayısı — yüklü satırlardan bağımsız, gerçek trafiği tarif eder." />
               <HeaderStat label="ERR RATE" value={`${headerStats.errRate.toFixed(2)}%`} tone={headerStats.errRate > 0 ? 'err' : undefined} />
-              <HeaderStat label={stripStatHeaderLabel(stripStat)} value={headerStats.rtMax ? fmtDur(headerStats.rtMax) : '—'} tone="warn"
+              <HeaderStat label={stripStatHeaderLabel(stripStat)} value={headerStats.rtAvg ? fmtDur(headerStats.rtAvg) : '—'} tone="warn"
                 title={`Giriş span'ı ${stripStat} yanıt süresinin penceredeki en yüksek kovası.`} />
             </>
           );

@@ -25,5 +25,6 @@ export function stripStatLabel(stat: StripStat): string {
 
 /** Başlık istatistiği etiketi ("P95 MAX"): penceredeki en yüksek kova. */
 export function stripStatHeaderLabel(stat: StripStat): string {
-  return `${stat === 'p50' ? 'MEDIAN' : stat.toUpperCase()} MAX`;
+  // v0.10.660 (operatör) — MAX değil pencerenin istek-ağırlıklı ortalaması (weightedStatAvg).
+  return `${stat === 'p50' ? 'MEDIAN' : stat.toUpperCase()} AVG`;
 }

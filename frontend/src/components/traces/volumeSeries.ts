@@ -156,3 +156,25 @@ export function volumeHint(unit: string): string {
     ? 'Filtre ya da arama giriş span\'ı dışındaki bir alanı hedefliyor (ör. db.statement): eşleşen SPAN\'ler sayılır, medyan o span\'lerin süresi. Tablo yine trace düzeyinde eşleşir.'
     : 'Giriş span\'leri (server/consumer) sayılır: servis seçiliyken istek = trace; servissiz pencerede her hop bir kez sayılır.';
 }
+
+/**
+ * weightedStatAvg — v0.10.660 (operatör: "P95 max yerine seçilen aralıktaki
+ * ortalama"). Seçili istatistiğin (p50/p95/p99) kova serisinin İSTEK-AĞIRLIKLI
+ * ortalaması: Σ(stat_i × istek_i) / Σ istek_i. Düz kova ortalaması değil:
+ * 3 isteklik gece kovası ile 3M isteklik gündüz kovası eşit sayılmasın.
+ * İstatistiği olmayan kova ya da 0 istek ağırlıksız; toplam ağırlık 0 → 0.
+ */
+export function weightedStatAvg(
+  count: SpanMetricSeries[] | null | undefined,
+  stat: SpanMetricSeries[] | null | undefined,
+): number {
+  const sMap = new Map((stat?.[0]?.points ?? []).map(p => [p.time, p.value]));
+  let num = 0, den = 0;
+  for (const c of count?.[0]?.points ?? []) {
+    const v = sMap.get(c.time);
+    if (v == null || !Number.isFinite(v) || !(c.value > 0)) continue;
+    num += v * c.value;
+    den += c.value;
+  }
+  return den > 0 ? num / den : 0;
+}

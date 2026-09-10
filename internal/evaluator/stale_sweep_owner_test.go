@@ -1,0 +1,63 @@
+package evaluator
+
+import (
+	"os"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/cilcenk/coremetry/internal/chstore"
+)
+
+// v0.10.592 — bayat süpürme poller'ın Problem'lerini ATLAR.
+//
+// Evaluator somut *chstore.Store ile kurulur; sahte yok, süpürücüyü CH'siz
+// koşturamayız. Bu yüzden karar SAF fonksiyonda ve burada tablo testli;
+// KABLOLAMA ise yorum-süzülmüş kaynak piniyle: sweepStaleProblems'ın
+// döngüsü `stale` üzerinden değil `toClose` üzerinden dönmeli — aksi hâlde
+// saf fonksiyon yeşil, ekranda hiçbir şey değişmemiş olur.
+func TestStaleSweepCandidates(t *testing.T) {
+	stale := []chstore.Problem{
+		{ID: "a", RuleID: "anomaly:shop-payment:p99_ms"},
+		{ID: "b", RuleID: chstore.RuleExtDownPrefix + "ext:oracle-errlog"},
+		{ID: "c", RuleID: "anomaly:ext:ggfail/OP1/E1:ext:tfail_adet"}, // seri Problem'i — SÜPÜRÜLÜR
+		{ID: "d", RuleID: chstore.RuleExtCapPrefix + "ext:ggfail:ext:tfail_adet"},
+	}
+	toClose, skipped := staleSweepCandidates(stale)
+	ids := func(ps []chstore.Problem) string {
+		var b []string
+		for _, p := range ps {
+			b = append(b, p.ID)
+		}
+		return strings.Join(b, ",")
+	}
+	if got := ids(toClose); got != "a,c" {
+		t.Fatalf("süpürülecekler a,c olmalı (seri Problem'i dahil), %q", got)
+	}
+	if got := ids(skipped); got != "b,d" {
+		t.Fatalf("atlananlar b,d (ext-down, ext-cap), %q", got)
+	}
+	if tc, sk := staleSweepCandidates(nil); len(tc) != 0 || len(sk) != 0 {
+		t.Fatal("boş girdi boş çıktı")
+	}
+}
+
+func TestSweepStaleProblemsUsesCandidates(t *testing.T) {
+	raw, err := os.ReadFile("evaluator.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := regexp.MustCompile(`(?m)//.*$`).ReplaceAllString(string(raw), "")
+	start := strings.Index(code, "func (e *Evaluator) sweepStaleProblems(")
+	if start < 0 {
+		t.Fatal("sweepStaleProblems bulunamadı")
+	}
+	end := strings.Index(code[start:], "\n}\n")
+	body := code[start : start+end]
+	if !strings.Contains(body, "toClose, skipped := staleSweepCandidates(stale)") {
+		t.Fatal("süpürücü staleSweepCandidates'ı çağırmıyor — poller Problem'leri yine süpürülür")
+	}
+	if !strings.Contains(body, "for i := range toClose {") || strings.Contains(body, "for i := range stale {") {
+		t.Fatal("döngü toClose üzerinden dönmeli, stale üzerinden değil")
+	}
+}

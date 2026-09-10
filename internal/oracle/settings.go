@@ -107,6 +107,14 @@ type SourceConfig struct {
 	// girer, dolayısıyla aynı katı regex'ten geçer.
 	TimestampColumn string `json:"timestampColumn,omitempty"`
 	TypeColumn      string `json:"typeColumn,omitempty"`
+	// Timezone — v0.10.600 (Aşama 2): dilimsiz TIMESTAMP'in yorumlandığı
+	// IANA dilimi; boş = DefaultTimezone (Europe/Istanbul). TimestampHasZone
+	// true ise kolon TIMESTAMP WITH TIME ZONE'dur, sürücünün anı korunur.
+	// Columns — alan → Oracle kolonu geçersiz kılmaları (DefaultColumns
+	// tabanı; "" alanı kapatır). mapping.go çözer, Normalize doğrular.
+	Timezone         string            `json:"timezone,omitempty"`
+	TimestampHasZone bool              `json:"timestampHasZone,omitempty"`
+	Columns          map[string]string `json:"columns,omitempty"`
 
 	// ExtraWhere — operatörün ek yüklemi, sorguya AND (…) olarak girer.
 	// Bind edilemez (serbest ifade), bu yüzden noktalı virgül ve yorum
@@ -431,6 +439,9 @@ func Normalize(in Settings, prev Settings, newID func() string) (Settings, error
 			Table:           strings.TrimSpace(src.Table),
 			TimestampColumn: strings.TrimSpace(src.TimestampColumn),
 			TypeColumn:      strings.TrimSpace(src.TypeColumn),
+			Timezone:         strings.TrimSpace(src.Timezone),
+			TimestampHasZone: src.TimestampHasZone,
+			Columns:          cloneColumns(src.Columns),
 			ExtraWhere:      strings.TrimSpace(src.ExtraWhere),
 			MaxOpenConns:    src.MaxOpenConns,
 			QueryTimeoutSec: src.QueryTimeoutSec,
@@ -509,6 +520,15 @@ func Normalize(in Settings, prev Settings, newID func() string) (Settings, error
 		if err := validateExtraWhere(s.ExtraWhere, label); err != nil {
 			return Settings{}, err
 		}
+		// v0.10.600 — Aşama 2 eşleme ayarları kayıtta doğrulanır: kötü TZ /
+		// bilinmeyen alan / identifier olmayan kolon poller'da değil burada
+		// düşer (operatör kaydederken görür).
+		if _, err := ResolveColumns(s); err != nil {
+			return Settings{}, fmt.Errorf("%s: %v", label, err)
+		}
+		if _, err := ResolveLocation(s); err != nil {
+			return Settings{}, fmt.Errorf("%s: %v", label, err)
+		}
 
 		// TypeFilter: kırp, boşları at, tekilleştir. Boşsa varsayılan —
 		// değer KODA GÖMÜLÜ DEĞİL, ayardan değiştirilebilir.
@@ -571,6 +591,26 @@ func Normalize(in Settings, prev Settings, newID func() string) (Settings, error
 		out.Sources = append(out.Sources, s)
 	}
 	return out, nil
+}
+
+// cloneColumns — SAF: anahtar/değer kırpılır, boş harita nil (JSON'da
+// görünmez). Değer "" KORUNUR — "alan kapalı" anlamı taşır.
+func cloneColumns(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		out[k] = strings.TrimSpace(v)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // validateExtraWhere — SAF. Uzunluk + yasak dizi kapısı; geçen ifade sorguya

@@ -196,8 +196,8 @@ type SourceStatus struct {
 	LastPoints int    `json:"lastPoints"`
 	LastDrops  int    `json:"lastDrops"`
 	// v0.10.224 — watermark ayıklaması: zaten yazılmış / tamamlanmamış kova.
-	LastSkippedOld     int    `json:"lastSkippedOld"`
-	LastSkippedPartial int    `json:"lastSkippedPartial"`
+	LastSkippedOld     int `json:"lastSkippedOld"`
+	LastSkippedPartial int `json:"lastSkippedPartial"`
 	// v0.10.532 — oran birleşiminde bilinçli atlanan kova (payda az / bekliyor / paydasız pay).
 	LastRatioSkipped int    `json:"lastRatioSkipped,omitempty"`
 	LastError        string `json:"lastError,omitempty"`
@@ -219,6 +219,10 @@ type Worker struct {
 	// Influx erişilemezken CH'deki seriyi okumak sıfır-padli "iyileşti"
 	// uydururdu; sessiz kaynağı evaluator'ın bayat süpürmesi kapatır.
 	hook func(ctx context.Context, src SourceConfig, qc QueryConfig)
+	// healthHook (v0.10.588) — HER poll'dan sonra, başarı da hata da: kaynak
+	// sağlığı (anomaly.ReportSourceHealth). hook'tan farkı tam bu — hook
+	// yalnız başarıda koşar, sağlık kancası kesintiyi görmek için hatada da.
+	healthHook func(ctx context.Context, src SourceConfig, lastError string)
 
 	mu      sync.Mutex
 	nextDue map[string]time.Time
@@ -233,6 +237,11 @@ type Worker struct {
 // SetHook — poll-sonrası çağrı (bkz. Worker.hook). Start'tan ÖNCE kurulur.
 func (w *Worker) SetHook(h func(ctx context.Context, src SourceConfig, qc QueryConfig)) {
 	w.hook = h
+}
+
+// SetHealthHook — poll-sonrası sağlık çağrısı (bkz. Worker.healthHook). Start'tan ÖNCE kurulur.
+func (w *Worker) SetHealthHook(h func(ctx context.Context, src SourceConfig, lastError string)) {
+	w.healthHook = h
 }
 
 func NewWorker(svc *Service, sink MetricSink) *Worker {
@@ -301,6 +310,12 @@ func (w *Worker) Tick(ctx context.Context) {
 		st := w.pollSource(ctx, src, now)
 		polled = true
 		st.NextDueAt = now.Add(interval).UnixMilli()
+		// v0.10.588 — sağlık kancası HER sonuçta; anomali kancası (aşağıda)
+		// yalnız başarıda. Sıra: sağlık önce, çünkü "kaynak düştü" bilgisi
+		// seri taramasından bağımsız ve ondan önce gelmeli.
+		if w.healthHook != nil {
+			w.healthHook(ctx, src, st.LastError)
+		}
 		if st.LastError == "" && w.hook != nil {
 			for _, qc := range src.Queries {
 				w.hook(ctx, src, qc)

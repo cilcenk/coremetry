@@ -117,10 +117,107 @@ type ExternalScanner struct {
 	now      func() time.Time
 	// lastEnriched — ruleID → son kanıt toplama; tek goroutine (worker tiki).
 	lastEnriched map[string]time.Time
+	// downStreak (v0.10.588) — kaynak id → ardışık başarısız poll sayısı;
+	// tek goroutine (worker tiki). Başarı sıfırlar.
+	downStreak map[string]int
 }
 
 func NewExternalScanner(store externalStore, n *notify.Notifier) *ExternalScanner {
-	return &ExternalScanner{store: store, notifier: n, now: time.Now, lastEnriched: map[string]time.Time{}}
+	return &ExternalScanner{store: store, notifier: n, now: time.Now, lastEnriched: map[string]time.Time{}, downStreak: map[string]int{}}
+}
+
+// externalDownAfter — kaynağın "erişilemiyor" Problem'i için ardışık
+// başarısız poll eşiği. Tekil hata olağan (retry yok, ağ dalgalanır); üç
+// ardışık hata = poll aralığının en az 3 katı süren kesinti. Evaluator'ın
+// bayat süpürmesiyle aynı oran (3 × interval).
+const externalDownAfter = 3
+
+// ReportSourceHealth (v0.10.588) — poller'ın HER poll'dan sonra (başarı da
+// hata da) çağırdığı sağlık kancası. Oracle audit'inin boşluğu: kaynağa
+// erişilemeyince yalnız durum kartı doluyordu; "kaynak sustu" kapanışı
+// dürüst ama "kaynağa bağlanamıyorum" ALARMI yoktu.
+//
+//   - lastError == ""  → seri sıfırlanır; açık ext-down Problem'i resolve.
+//   - ardışık < externalDownAfter → hiçbir şey (tekil hata olağan).
+//   - ardışık ≥ externalDownAfter → ext:<kaynak> özneli, critical, kind=
+//     external Problem: yoksa AÇILIR (+bildirim), varsa TOUCH (gerekçe ve
+//     Value = ardışık sayı tazelenir; updated_at yenilenir ki bayat süpürücü
+//     "source silent" diye kapatmasın).
+//
+// Seri Problem'lerine DOKUNMAZ: kaynak erişilemezken Scan zaten koşmuyor;
+// onları süpürücü dürüst gerekçeyle kapatır (external.go:12-19 sözleşmesi).
+func (s *ExternalScanner) ReportSourceHealth(ctx context.Context, sourceID, sourceName, lastError string, now time.Time) {
+	if sourceID == "" {
+		return
+	}
+	subject := ExternalSubject(sourceName, nil)
+	ruleID := "anomaly:ext-down:" + subject
+	if lastError == "" {
+		if s.downStreak[sourceID] == 0 {
+			return
+		}
+		delete(s.downStreak, sourceID)
+		snap, err := s.store.OpenProblemsSnapshot(ctx)
+		if err != nil {
+			log.Printf("[anomaly/external] source-health snapshot %s: %v", subject, err)
+			return
+		}
+		open := snap.ByKey(ruleID, subject)
+		if open == nil || open.ID == "" {
+			return
+		}
+		chstore.MarkResolved(open, now.UnixNano())
+		if err := s.store.UpsertProblem(ctx, *open); err != nil {
+			log.Printf("[anomaly/external] source-health resolve %s: %v", subject, err)
+			return
+		}
+		log.Printf("[anomaly/external] SOURCE UP %s — Problem resolve", subject)
+		return
+	}
+	s.downStreak[sourceID]++
+	streak := s.downStreak[sourceID]
+	if streak < externalDownAfter {
+		return
+	}
+	snap, err := s.store.OpenProblemsSnapshot(ctx)
+	if err != nil {
+		log.Printf("[anomaly/external] source-health snapshot %s: %v", subject, err)
+		return
+	}
+	desc := fmt.Sprintf("Kaynağa erişilemiyor: %d ardışık poll başarısız. Son hata: %s. "+
+		"Bu süre boyunca kaynağın anomali taraması KOŞMUYOR; açık seri Problem'leri \"source silent\" gerekçesiyle kapanabilir — bu iyileşme değildir.",
+		streak, lastError)
+	if open := snap.ByKey(ruleID, subject); open != nil && open.ID != "" {
+		open.Value = float64(streak)
+		open.Description = desc
+		if err := s.store.UpsertProblem(ctx, *open); err != nil {
+			log.Printf("[anomaly/external] source-health touch %s: %v", subject, err)
+		}
+		return
+	}
+	p := chstore.Problem{
+		ID:          newID(),
+		RuleID:      ruleID,
+		RuleName:    "Dış kaynak erişilemiyor · " + sourceName,
+		Severity:    "critical",
+		Service:     subject,
+		Kind:        chstore.ProblemKindExternal,
+		Metric:      ExternalMetricPrefix + "source_down",
+		Value:       float64(streak),
+		Threshold:   float64(externalDownAfter),
+		Comparator:  ">=",
+		Status:      "open",
+		Description: desc,
+		StartedAt:   now.UnixNano(),
+	}
+	if err := s.store.UpsertProblem(ctx, p); err != nil {
+		log.Printf("[anomaly/external] source-health open %s: %v", subject, err)
+		return
+	}
+	log.Printf("[anomaly/external] SOURCE DOWN %s — %d ardışık hata, Problem açıldı", subject, streak)
+	if s.notifier != nil {
+		go s.notifier.SendProblemAlert(context.Background(), p)
+	}
 }
 
 // Scan — hedefin bütün serilerini okur, her biri için karar verir ve

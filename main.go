@@ -1035,6 +1035,24 @@ func main() {
 		log.Printf("[oracle] load persisted config: %v", err)
 	}
 	cfgRefresh.Add("oracle", func(ctx context.Context) error { return oracleSvc.LoadPersisted(ctx, store) })
+	// v0.10.605 — bayat süpürme muafiyeti (592) yalnız YAŞAYAN poller
+	// kaynakları için: özne ext:<ad> etkin bir Influx ya da Oracle kaynağına
+	// karşılık gelmiyorsa ext-down/ext-cap Problem'i süpürülür — silinen
+	// kaynağın Problem'ini resolve edecek poller yok, muafiyet onu sonsuza
+	// dek açık bırakırdı.
+	evalr.SetPollerSourceLive(func(subject string) bool {
+		for _, src := range influxSvc.CurrentSettings().Sources {
+			if src.Enabled && anomaly.ExternalSubject(src.Name, nil) == subject {
+				return true
+			}
+		}
+		for _, src := range oracleSvc.CurrentSettings().Sources {
+			if src.Enabled && anomaly.ExternalSubject(src.Name, nil) == subject {
+				return true
+			}
+		}
+		return false
+	})
 	var influxWorker *influx.Worker
 	// v0.10.129 — K8s entity katmanı: bayrak + vidalar her modda (uçlar
 	// okur), Thanos senkronizasyonu yalnız worker rolünde ve liderde

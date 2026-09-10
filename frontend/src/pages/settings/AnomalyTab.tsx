@@ -385,6 +385,19 @@ function SensitivitySection() {
                 etkilenmez: tek bir dilimin banda dönmesi problemi kapatır.
               </div>
             </Field>
+
+            {/* v0.10.587 — dış hat sel kapısı (Oracle audit §6.5). */}
+            <Field label="Dış kaynak: tik başına en çok yeni Problem">
+              <input type="number" min={1} max={200} step={1}
+                value={cfg.externalOpenCapPerTick ?? 20}
+                onChange={e => setCfg({ ...cfg, externalOpenCapPerTick: Number(e.target.value) })} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Influx/Oracle gibi dış kaynakların anomali hattı bir tikte bundan fazla
+                yeni Problem açmaz; en güçlü sapmalar önce, kalanlar için tek bir
+                &ldquo;tavan aşıldı&rdquo; özeti açılır. Açık Problem'ler etkilenmez.
+                Varsayılan 20.
+              </div>
+            </Field>
           </div>
 
           {SENSITIVITY_METRICS.map(m => {

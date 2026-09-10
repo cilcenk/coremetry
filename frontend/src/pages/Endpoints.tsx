@@ -121,9 +121,8 @@ const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
   // does it have a heavy TAIL (spread high, most calls fine)? Those two
   // have different causes and different fixes.
   { id: 'spread',    label: 'Spread',     sortValue: spreadOf, numeric: true, width: 76 },
-  // v0.10.363 (operatör: "sparkline çıkmasın, buton olsun") — çağrı sparkline'ı
-  // yerine detay sayfasına düğme; grafikler detay sayfasının ilk şeyi.
-  { id: 'trend',     label: 'Detay',      width: 92 },
+  // v0.10.363 sparkline → "Detay →" düğmesi; v0.10.662 (operatör): düğme de kalktı —
+  // satır tıklaması zaten detaya gidiyor, kolon yer kaplıyordu.
   // v0.8.573 — pinned to the right edge: the 14-column table overflows
   // laptop widths and the horizontal scrollbar sits below 2000 rows, so
   // the trailing drill-through was effectively invisible (operator
@@ -864,18 +863,6 @@ export default function EndpointsPage() {
                             const tone = sp >= 10 ? 'var(--err)' : sp >= 4 ? 'var(--warn)' : 'var(--text2)';
                             return <span style={{ color: tone }}>{sp < 10 ? sp.toFixed(1) : Math.round(sp)}×</span>;
                           })()}
-                        </td>}
-                        {visibleCols.has('trend') && <td>
-                          {/* v0.10.363 — sparkline yerine düğme (Traces → ile aynı
-                              anatomi); detay sayfası çağrı/hata/p99 grafiklerini
-                              zaten ilk sırada gösteriyor. */}
-                          <Link to={endpointDetailHref(
-                              { service: r.service, path: r.path, sig: bySignature },
-                              { range: encodeRange(range), env: env || undefined, cluster: cluster || undefined, compare, entry: entry === 'rpc' ? 'rpc' : undefined },
-                            )} className="accent" style={{ fontSize: 11, padding: '2px 8px' }}
-                            title={`${r.calls.toLocaleString()} çağrı — detay: çağrı / hata / p99 zaman ekseninde`}>
-                            Detay →
-                          </Link>
                         </td>}
                         {visibleCols.has('traces') && <td className="sticky-right"
                             style={{

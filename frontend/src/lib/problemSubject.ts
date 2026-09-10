@@ -70,8 +70,17 @@ export function parseDbSubject(subject: string): DbSubject | null {
  * zorluyor.
  */
 export function subjectKind(service: string, kind?: string): SubjectKind {
-  if (kind === 'external' || parseExternalSubject(service)) return 'external';
-  if (kind === 'db' || parseDbSubject(service)) return 'db';
+  // v0.10.596 — BİLİNEN kind biçimi YENER. Eskiden `ext:` şekli kind'ı
+  // ezerdi; oysa `ext:` öneki iki anlam taşıyor: dış metrik öznesi
+  // (`ext:<kaynak>/…`, kind=external) ve topoloji dış peer düğümü
+  // (`ext:api.example.com`, bir Problem'e özne olursa kind=service). Backend
+  // kind'ı yazım anında normalize ediyor (v0.9.1338); onu yok sayıp şekle
+  // bakmak, bir servis Problem'ini "dış metrik serisi" diye basar ve kanıt
+  // panelini boş açardı. Şekil yalnız kind BOŞ/BİLİNMEYEN olduğunda karar
+  // verir (eski sekme JSON'u, InboxItem.kind karışıklığı).
+  if (kind === 'external' || kind === 'db' || kind === 'service') return kind;
+  if (parseExternalSubject(service)) return 'external';
+  if (parseDbSubject(service)) return 'db';
   return 'service';
 }
 

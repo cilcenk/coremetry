@@ -154,3 +154,22 @@ describe('derivedTeamTitle', () => {
     expect(bare).toContain('SİSTEMİ düzeyinde');
   });
 });
+
+
+// v0.10.596 — bilinen kind, çelişen biçimi YENER: `ext:` öneki hem dış
+// metrik öznesi hem topoloji dış peer düğümü. Backend kind'ı normalize
+// ediyor; şekil yalnız kind boş/bilinmeyenken konuşur.
+describe('subjectKind — bilinen kind biçimi yener (v0.10.596)', () => {
+  it("topoloji dış peer'i özne olan servis Problem'i 'external' sanılmaz", () => {
+    expect(subjectKind('ext:api.example.com', 'service')).toBe('service');
+  });
+  it('dış metrik öznesi kind ile de şekil ile de external', () => {
+    expect(subjectKind('ext:oracle-errlog/OP1', 'external')).toBe('external');
+    expect(subjectKind('ext:oracle-errlog/OP1', '')).toBe('external');
+    expect(subjectKind('ext:api.example.com', undefined)).toBe('external'); // kind yok → şekil
+  });
+  it('bilinmeyen kind yine şekle düşer (mevcut sözleşme korunur)', () => {
+    expect(subjectKind('ext:oracle-errlog', 'queue')).toBe('external');
+    expect(subjectKind('db:oracle@x', 'anomaly')).toBe('db');
+  });
+});

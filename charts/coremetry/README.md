@@ -6,13 +6,13 @@ runs as a monolithic POC install or scales out into role-split
 Deployments for billion-span-a-day production.
 
 - Chart `version` / Coremetry `appVersion`: see [`Chart.yaml`](Chart.yaml).
-- Source: <https://github.com/cilcenk/coremetry>
+- Source: <https://github.com/cosretr/coremetry>
 
 ## Quick start (monolithic)
 
 ```bash
 helm upgrade --install coremetry \
-  oci://ghcr.io/cilcenk/charts/coremetry \
+  oci://ghcr.io/cosretr/charts/coremetry \
   -n coremetry --create-namespace
 ```
 

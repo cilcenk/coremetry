@@ -232,7 +232,7 @@ appVersion: "0.6.21"
   STILL ok to update without a bump (text only).
 
 Per the release skill, `helm package` + OCI push to
-`oci://ghcr.io/cilcenk/charts/coremetry` runs on tag push. If the
+`oci://ghcr.io/cosretr/charts/coremetry` runs on tag push. If the
 chart version doesn't change, the push is a no-op for the chart
 artifact (GHCR rejects duplicate version tags).
 

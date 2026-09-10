@@ -12,7 +12,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}   # cilcenk/coremetry
+  IMAGE_NAME: ${{ github.repository }}   # cosretr/coremetry (org transferi 2026-09-10)
 
 jobs:
   docker:

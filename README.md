@@ -1,7 +1,7 @@
 # Coremetry
 
-[![CI](https://github.com/cilcenk/coremetry/actions/workflows/ci.yml/badge.svg)](https://github.com/cilcenk/coremetry/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/cilcenk/coremetry?display_name=tag&sort=semver)](https://github.com/cilcenk/coremetry/releases)
+[![CI](https://github.com/cosretr/coremetry/actions/workflows/ci.yml/badge.svg)](https://github.com/cosretr/coremetry/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/cosretr/coremetry?display_name=tag&sort=semver)](https://github.com/cosretr/coremetry/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/cilcenk/coremetry)](https://goreportcard.com/report/github.com/cilcenk/coremetry)
 
@@ -140,7 +140,7 @@ Boots ClickHouse, Redis, OTel Collector, Coremetry plus a
 Java + Go demo emitting realistic traffic.
 
 ```bash
-git clone https://github.com/cilcenk/coremetry
+git clone https://github.com/cosretr/coremetry
 cd coremetry
 docker compose up -d
 ```
@@ -168,19 +168,19 @@ the bundled subcharts.
 The chart ships as an OCI artifact. From a Helm 3.8+ install:
 
 ```bash
-helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry \
+helm install coremetry oci://ghcr.io/cosretr/charts/coremetry \
   --version <release-tag> \
   --create-namespace --namespace coremetry
 ```
 
 Replace `<release-tag>` with a published release (see
-[Releases](https://github.com/cilcenk/coremetry/releases)) or
+[Releases](https://github.com/cosretr/coremetry/releases)) or
 omit `--version` to take latest.
 
 ### Or install from a checkout
 
 ```bash
-git clone https://github.com/cilcenk/coremetry
+git clone https://github.com/cosretr/coremetry
 cd coremetry
 helm install coremetry charts/coremetry \
   --create-namespace --namespace coremetry \
@@ -263,7 +263,7 @@ Collector. No external dependency is required: logs default to the
 ClickHouse read backend, so Elasticsearch is optional (see below).
 
 ```bash
-helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry \
+helm install coremetry oci://ghcr.io/cosretr/charts/coremetry \
   --version 0.7.109 \
   --namespace coremetry --create-namespace \
   --set deployment.mode=distributed \
@@ -502,6 +502,6 @@ Coremetry into production without per-seat negotiations.
 ## Status
 
 Active development — see
-[Releases](https://github.com/cilcenk/coremetry/releases) for
+[Releases](https://github.com/cosretr/coremetry/releases) for
 the per-version changelog. Open issues + feature requests
 welcome via GitHub Issues.

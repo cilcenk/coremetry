@@ -199,8 +199,8 @@ minikube-up:
 	@# reloading the same :local tag silently kept the STALE binary on the node
 	@# (operator saw v0.6.65 long after newer tags shipped — a unique per-build
 	@# tag can't collide). --set image.tag wires the version tag into the deploy.
-	docker build --build-arg VERSION=$(VERSION) --build-arg VITE_APP_VERSION=$(VERSION) -t ghcr.io/cilcenk/coremetry:$(VERSION) .
-	minikube image load ghcr.io/cilcenk/coremetry:$(VERSION)
+	docker build --build-arg VERSION=$(VERSION) --build-arg VITE_APP_VERSION=$(VERSION) -t ghcr.io/cosretr/coremetry:$(VERSION) .
+	minikube image load ghcr.io/cosretr/coremetry:$(VERSION)
 	@# v0.8.105 — on an EXISTING release, upgrade with --reuse-values and
 	@# WITHOUT -f: re-applying values-minikube.yaml reset goDemo.image.tag
 	@# to the chart default (0.8.0, never loaded into the node) and
@@ -238,8 +238,8 @@ DEMO_TAG := $(DEMO_TAG)
 minikube-demo:
 	@minikube status >/dev/null 2>&1 || { echo "[make] minikube not running — run 'make minikube-up' first"; exit 1; }
 	@helm status coremetry -n coremetry >/dev/null 2>&1 || { echo "[make] release 'coremetry' not found — run 'make minikube-up' first"; exit 1; }
-	docker build --build-arg VERSION=$(DEMO_TAG) -f cmd/demo/Dockerfile  -t ghcr.io/cilcenk/coremetry-go-demo:$(DEMO_TAG)   .
-	minikube image load ghcr.io/cilcenk/coremetry-go-demo:$(DEMO_TAG)
+	docker build --build-arg VERSION=$(DEMO_TAG) -f cmd/demo/Dockerfile  -t ghcr.io/cosretr/coremetry-go-demo:$(DEMO_TAG)   .
+	minikube image load ghcr.io/cosretr/coremetry-go-demo:$(DEMO_TAG)
 	helm upgrade coremetry charts/coremetry -n coremetry --reuse-values \
 	  --set goDemo.enabled=true   --set goDemo.image.tag=$(DEMO_TAG)   --set goDemo.image.pullPolicy=Never \
 	  --wait --timeout 8m

@@ -7,7 +7,7 @@ chart in this directory — `values.yaml`, `Chart.yaml`, and
 `templates/*`. Nothing below requires editing a template.
 
 > All commands assume the chart is pulled from the OCI registry:
-> `oci://ghcr.io/cilcenk/charts/coremetry`. Pin `--version` to the
+> `oci://ghcr.io/cosretr/charts/coremetry`. Pin `--version` to the
 > chart `version` from `Chart.yaml` (currently `0.7.18`) in production.
 
 ---
@@ -270,7 +270,7 @@ global:
 With this set, all images resolve from the mirror, e.g.:
 
 ```
-docker.internal.bank.example.com/cilcenk/coremetry:0.7.18
+docker.internal.bank.example.com/cosretr/coremetry:0.7.18
 docker.internal.bank.example.com/clickhouse/clickhouse-server:26.2.4.23-alpine
 docker.internal.bank.example.com/library/redis:7-alpine
 docker.internal.bank.example.com/otel/opentelemetry-collector-contrib:0.111.0
@@ -467,7 +467,7 @@ suffix changes: `coremetry` ↔ `coremetry-api`/`-ingest`/`-worker`) —
 
 ```bash
 helm uninstall coremetry -n coremetry
-helm upgrade --install coremetry oci://ghcr.io/cilcenk/charts/coremetry \
+helm upgrade --install coremetry oci://ghcr.io/cosretr/charts/coremetry \
   --version <new-version> -n coremetry -f values-openshift.yaml
 ```
 
@@ -637,7 +637,7 @@ oc create secret generic coremetry-secrets -n coremetry \
   --from-literal=es-api-key=''
 
 helm upgrade --install coremetry \
-  oci://ghcr.io/cilcenk/charts/coremetry \
+  oci://ghcr.io/cosretr/charts/coremetry \
   --version 0.7.18 \
   -n coremetry --create-namespace \
   -f values-openshift.yaml

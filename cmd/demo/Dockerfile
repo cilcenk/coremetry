@@ -5,7 +5,7 @@
 # Dockerfile (which produces both `coremetry` and `demo`); this file builds
 # ONLY ./cmd/demo so the chart has a small, single-purpose image to pull.
 #
-#   docker build -f cmd/demo/Dockerfile -t ghcr.io/cilcenk/coremetry-go-demo:<v> .
+#   docker build -f cmd/demo/Dockerfile -t ghcr.io/cosretr/coremetry-go-demo:<v> .
 #
 # Build context MUST be the repo root (it needs go.mod / go.sum + cmd/demo).
 

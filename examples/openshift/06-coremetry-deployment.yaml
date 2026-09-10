@@ -46,7 +46,7 @@ spec:
         # for it to print 1-2 retry lines before ClickHouse opens
         # its TCP listener; only sustained failure is a real error.
         - name: wait-for-clickhouse
-          image: ghcr.io/cilcenk/coremetry:v0.2.79
+          image: ghcr.io/cosretr/coremetry:v0.2.79
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           args:
@@ -75,7 +75,7 @@ spec:
             readOnlyRootFilesystem: true
       containers:
         - name: coremetry
-          image: ghcr.io/cilcenk/coremetry:v0.2.79
+          image: ghcr.io/cosretr/coremetry:v0.2.79
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

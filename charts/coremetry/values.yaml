@@ -12,7 +12,7 @@
 #     imageRegistry: docker.artifacthub.registry.example.com
 #
 # Mirrors expected at:
-#   docker.artifacthub.registry.example.com/cilcenk/coremetry:0.1.4
+#   docker.artifacthub.registry.example.com/cosretr/coremetry:0.1.4
 #   docker.artifacthub.registry.example.com/clickhouse/clickhouse-server:26.2.4.23-alpine
 #   docker.artifacthub.registry.example.com/library/redis:7-alpine
 #   docker.artifacthub.registry.example.com/otel/opentelemetry-collector-contrib:0.111.0
@@ -25,9 +25,11 @@ global:
 
 image:
   # Built and pushed by .github/workflows/release.yml on every v*.*.* tag.
-  # Public on GHCR — no pullSecrets needed by default.
+  # Repo 2026-09-10'da `cosretr` organizasyonuna taşındı (v0.10.617): imajlar
+  # ghcr.io/cosretr/* altında. Org paketleri PUBLIC yapılmadıysa pull için
+  # global.imagePullSecrets gerekir; eski ghcr.io/cilcenk/* imajları taşınmadı.
   registry: "ghcr.io"
-  repository: "cilcenk/coremetry"
+  repository: "cosretr/coremetry"
   tag: ""               # defaults to .Chart.appVersion
   pullPolicy: IfNotPresent
   pullSecrets: []       # legacy field — prefer global.imagePullSecrets
@@ -527,7 +529,7 @@ goDemo:
   enabled: false
   image:
     registry: "ghcr.io"
-    repository: cilcenk/coremetry-go-demo
+    repository: cosretr/coremetry-go-demo
     tag: ""               # defaults to .Chart.appVersion
     pullPolicy: IfNotPresent
   # Scenarios per second the generator drives. ~3 rps is a comfortable demo

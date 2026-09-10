@@ -122,6 +122,7 @@ const effectiveBatchingSQL = `SELECT max(toUInt8(value))
 //   - Code 48 (CH 26.2, prod error span'ı 2026-08-16 / v0.9.1102):
 //     "Alter of type 'MODIFY_SETTING' is not supported by storage
 //     Distributed. (NOT_IMPLEMENTED)"
+//
 // Ad/kapsam fallback'lerinin hiçbiri işe yaramaz, tablo tablo denemek
 // 30 satır yanıltıcı hata basar. Bu sınıf hatada döngü tek özetle
 // kesilir.

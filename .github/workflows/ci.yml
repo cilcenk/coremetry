@@ -90,6 +90,12 @@ jobs:
       # büyüme ve indirilmemiş taban ikisi de kırmızı (GUARD_STRICT_RATCHET=1).
       - name: api.go büyüme kapısı (ratchet)
         run: GUARD_STRICT_RATCHET=1 bash scripts/guard-api-go-size.sh --worktree
+      # v0.10.628 — gofmt borcu tek sweep ile kapandı (86 dosya, dört toolchain'de
+      # aynı liste = gerçek borç). Bundan sonra biçimsiz dosya kırmızı.
+      - name: gofmt
+        run: |
+          out=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$out" ]; then echo "gofmt farkı:"; echo "$out"; exit 1; fi
       # CLAUDE.md's release flow requires "go test ./... pre-tag", and every
       # bug-fix ships a regression test — but nothing ENFORCED it in CI, so a
       # forgotten local run could ship a regression undetected. This is the gate.

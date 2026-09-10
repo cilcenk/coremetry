@@ -67,11 +67,11 @@ func TestShouldWriteBootstrapAdmin(t *testing.T) {
 // COREMETRY_GRPC_ADDR still resolves to the right self-ingest port.
 func TestSelfObsDefaultEndpoint(t *testing.T) {
 	cases := map[string]string{
-		":4317":          "localhost:4317",
-		"0.0.0.0:4317":   "localhost:4317",
-		":14317":         "localhost:14317",
-		"4317":           "localhost:4317", // no colon → default port
-		"":               "localhost:4317",
+		":4317":        "localhost:4317",
+		"0.0.0.0:4317": "localhost:4317",
+		":14317":       "localhost:14317",
+		"4317":         "localhost:4317", // no colon → default port
+		"":             "localhost:4317",
 	}
 	for in, want := range cases {
 		if got := selfObsDefaultEndpoint(in); got != want {

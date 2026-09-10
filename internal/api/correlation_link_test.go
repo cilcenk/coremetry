@@ -124,7 +124,7 @@ func TestEnvFromServiceName(t *testing.T) {
 		"shop-mobile-login-prep": "prep",
 		"shop-mobile-login-prod": "",
 		"shop-mobile-login":      "",
-		"BSA-MOBILE-LOGIN-INT":  "int", // büyük harf
+		"BSA-MOBILE-LOGIN-INT":   "int", // büyük harf
 		// SONEK araması, alt dize DEĞİL: "integration-service" içinde
 		// "int" geçiyor ama sonu "-int" değil. Alt dize araması burayı
 		// sessizce test ortamına yönlendirirdi.

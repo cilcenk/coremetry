@@ -22,12 +22,12 @@ import (
 // aşılamaz; robots yok (iç ağ), nezaket hız limitiyle sağlanır.
 
 const (
-	crawlMaxPages    = 200
-	crawlMaxDepth    = 3
-	crawlPageMax     = 2 << 20 // 2MB/sayfa
-	crawlRateEvery   = 500 * time.Millisecond
-	crawlFetchTO     = 15 * time.Second
-	crawlMinTextLen  = 80 // bundan kısa sayfalar (yönlendirme/menü) atlanır
+	crawlMaxPages   = 200
+	crawlMaxDepth   = 3
+	crawlPageMax    = 2 << 20 // 2MB/sayfa
+	crawlRateEvery  = 500 * time.Millisecond
+	crawlFetchTO    = 15 * time.Second
+	crawlMinTextLen = 80 // bundan kısa sayfalar (yönlendirme/menü) atlanır
 )
 
 // CrawledPage — bir sayfanın çıkarılmış hali.

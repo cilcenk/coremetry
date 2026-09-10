@@ -12,7 +12,7 @@ import (
 // that asks "is metric_catalog actually empty, or did this search just
 // match nothing?". That probe sat behind `pattern != "" || service !=
 // ""` — and /metrics' first paint sends BOTH empty
-// (api.metricNamesSearch('', ...)). So on the one call every operator
+// (api.metricNamesSearch(”, ...)). So on the one call every operator
 // makes, on every page load, the probe never ran and the escalation
 // fired: `count(DISTINCT metric) FROM metric_points WHERE time >=
 // now()-7d` plus a `GROUP BY metric`. That is the query behind two prod

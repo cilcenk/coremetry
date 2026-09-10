@@ -5,35 +5,35 @@
 //
 // MVP grammar:
 //
-//   query   := table ('|' pipe)*
-//   table   := "spans" | "metrics"
-//   pipe    := "filter" predicate
-//            | "summarize" agg ("by" group)?
-//   predicate := ident op value
-//   op      := "==" | "!=" | "contains" | "startswith" | "endswith"
-//   agg     := "count()"
-//            | "rate()"
-//            | "error_rate()"
-//            | ("p50" | "p95" | "p99" | "avg" | "max" | "min") "(" ident ")"
-//   group   := "bin(time," duration ")"  (optional — defaults to auto)
-//   value   := quoted-string | number
-//   duration := <int> ("s"|"m"|"h"|"d")
+//	query   := table ('|' pipe)*
+//	table   := "spans" | "metrics"
+//	pipe    := "filter" predicate
+//	         | "summarize" agg ("by" group)?
+//	predicate := ident op value
+//	op      := "==" | "!=" | "contains" | "startswith" | "endswith"
+//	agg     := "count()"
+//	         | "rate()"
+//	         | "error_rate()"
+//	         | ("p50" | "p95" | "p99" | "avg" | "max" | "min") "(" ident ")"
+//	group   := "bin(time," duration ")"  (optional — defaults to auto)
+//	value   := quoted-string | number
+//	duration := <int> ("s"|"m"|"h"|"d")
 //
 // Logs (KQL-backed) deferred to Phase 2 — the parser knows the
 // table name but the executor errors with a clear message.
 //
 // Design notes:
 //
-//   • Parser is a hand-rolled token stream — ~250 lines, no
+//   - Parser is a hand-rolled token stream — ~250 lines, no
 //     external dep, no codegen. The grammar is small enough
 //     that a parser-generator would be more weight than it's
 //     worth.
-//   • Compile() returns a structured Plan that the API layer
+//   - Compile() returns a structured Plan that the API layer
 //     dispatches to existing chstore methods. Keeps the
 //     execution paths uniform with /metrics and /explore so a
 //     DQL query and a UI-built query hit the SAME cache + the
 //     SAME CH MV when applicable.
-//   • The plan exposes the equivalent SQL the executor will
+//   - The plan exposes the equivalent SQL the executor will
 //     run so /admin/query can surface it in the UI for
 //     transparency + audit.
 package dql
@@ -84,8 +84,8 @@ type Plan struct {
 	// The join key is fixed at "trace.id" for the MVP — the
 	// only cross-signal key OTel actually carries everywhere.
 	JoinTarget    Table
-	JoinKey       string                 // defaults to "trace.id"
-	SourceFilters []chstore.FilterExpr   // pre-join filters on Table
+	JoinKey       string               // defaults to "trace.id"
+	SourceFilters []chstore.FilterExpr // pre-join filters on Table
 }
 
 // Compile parses a DQL string into a Plan. Returns a wrapped

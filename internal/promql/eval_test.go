@@ -231,7 +231,7 @@ func TestEvalBinary(t *testing.T) {
 		// review MAJOR: group_left with empty ignoring() must NOT slip through.
 		{`foo / ignoring () group_left bar`, "group_left"},
 		{`foo / ignoring () group_right bar`, "group_left"},
-		{`foo and on (le) bar`, "not supported"}, // on() on a set op
+		{`foo and on (le) bar`, "not supported"},                // on() on a set op
 		{`sum without(a)(x) / on(le) sum by(le)(y)`, "without"}, // on() over without() operand
 	} {
 		if _, err := run(bad.q, one(1)); err == nil || !strings.Contains(err.Error(), bad.sub) {
@@ -471,13 +471,13 @@ func TestEvalScalarFunctions(t *testing.T) {
 func TestEvalCapsAndErrors(t *testing.T) {
 	fs := &fakeStore{}
 	bad := []struct{ q, wantSub string }{
-		{`{code="500"}`, "must name a metric"},          // nameless selector
-		{`foo[5m]`, "must be inside a function"},         // bare range vector
-		{`avg(rate(foo[5m]))`, "only sum"},               // avg-of-rate deferred
-		{`sum(a + b)`, "can only aggregate"},             // complex inner deferred
-		{`histogram_quantile(1.5, foo)`, "out of range"}, // quantile out of [0,1]
-		{`histogram_quantile(0.95, sum(foo))`, "Phase 3"},// nested hist arg
-		{`rate(foo)`, "range vector"},                    // rate needs a matrix
+		{`{code="500"}`, "must name a metric"},            // nameless selector
+		{`foo[5m]`, "must be inside a function"},          // bare range vector
+		{`avg(rate(foo[5m]))`, "only sum"},                // avg-of-rate deferred
+		{`sum(a + b)`, "can only aggregate"},              // complex inner deferred
+		{`histogram_quantile(1.5, foo)`, "out of range"},  // quantile out of [0,1]
+		{`histogram_quantile(0.95, sum(foo))`, "Phase 3"}, // nested hist arg
+		{`rate(foo)`, "range vector"},                     // rate needs a matrix
 	}
 	for _, c := range bad {
 		_, err := EvalString(context.Background(), fs, c.q, EvalOptions{FromNs: 1, ToNs: 2})

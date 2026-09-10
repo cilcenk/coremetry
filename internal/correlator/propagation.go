@@ -81,7 +81,7 @@ func RankRootCausesFromEdges(edges []chstore.ServiceEdgePair, trigger string) []
 // returned slice is sorted score desc, then hops asc, then service asc
 // (a total, deterministic order — map iteration is not).
 func rankRootCauses(out map[string]map[string]EdgeStat, trigger string) []ScoredCause {
-	best := map[string]ScoredCause{}    // candidate → its highest-scoring reach
+	best := map[string]ScoredCause{} // candidate → its highest-scoring reach
 	onPath := map[string]bool{trigger: true}
 
 	var walk func(node string, hop int, sharesProduct float64, path []string)

@@ -748,14 +748,14 @@ func (d *Detector) applyOutcome(ctx context.Context, service, metric string, oc 
 			return
 		}
 		p := chstore.Problem{
-			ID:          newID(),
-			RuleID:      ruleID,
-			RuleName:    fmt.Sprintf("Anomaly · %s", displayMetric(metric)),
-			Severity:    severity,
-			Service:     service,
-			Metric:      metric,
-			Value:       current,
-			Threshold:   median,
+			ID:        newID(),
+			RuleID:    ruleID,
+			RuleName:  fmt.Sprintf("Anomaly · %s", displayMetric(metric)),
+			Severity:  severity,
+			Service:   service,
+			Metric:    metric,
+			Value:     current,
+			Threshold: median,
 			// v0.9.978 (operatör kararı) — anomali satırında Threshold bir
 			// İHLAL EŞİĞİ değil, BASELINE MEDYANI. Yani value/threshold
 			// "baseline'ın kaç katı" demek ve DÜŞÜŞ yönlü bir olayda doğal

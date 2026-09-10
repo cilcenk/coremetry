@@ -427,7 +427,7 @@ type EndpointSplitRow struct {
 // dimensions the drawer is already scoped by (service.name /
 // http.route), plus the semconv resource keys operators split
 // incidents by (pod, version). http.status_code maps zero (unset) to
-// '' so the shared blank-value filter drops non-HTTP spans.
+// ” so the shared blank-value filter drops non-HTTP spans.
 var endpointSplitDims = map[string]string{
 	"deployment.environment": "deploy_env",
 	// Current semconv spelling (≥1.27) — same typed column (v0.8.379).

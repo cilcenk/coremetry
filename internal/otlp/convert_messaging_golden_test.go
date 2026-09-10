@@ -18,13 +18,13 @@ import (
 // yeni bir Span alanı eklendiğinde bu test KIRILMAK ZORUNDA.
 //
 // Sözleşme (bugünkü dönüşüm, bilerek):
-//   • yalnız messaging.system tipli kolona iner (msg_system);
-//   • messaging.destination(.name), messaging.operation(.type|.name),
+//   - yalnız messaging.system tipli kolona iner (msg_system);
+//   - messaging.destination(.name), messaging.operation(.type|.name),
 //     messaging.consumer.group.name / messaging.kafka.consumer.group,
 //     partition/offset/key, bootstrap.servers: HİÇBİRİ düşmez — attr dizisine
 //     VERBATIM ve gelen sırayla girer (§3 sınıf A: TAŞI). Okuma tarafı coalesce
 //     eder (messaging_summary_5m destination; Top-ops operation, v0.10.553).
-//   • kind PRODUCER→producer, CONSUMER→consumer; status UNSET→"unset",
+//   - kind PRODUCER→producer, CONSUMER→consumer; status UNSET→"unset",
 //     ERROR→"error" + mesaj; Time = start; Duration = end-start (ns).
 func TestConvertSpanMessagingGolden(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("testdata", "span_messaging_kafka.json"))
@@ -57,7 +57,7 @@ func TestConvertSpanMessagingGolden(t *testing.T) {
 				"messaging.destination.partition.id", "messaging.kafka.message.key",
 				"messaging.kafka.bootstrap.servers", "server.address", "peer.service"},
 			AttrValues: []string{"kafka", "orders", "orders-legacy", "publish", "send", "publish", "3", "k1", "broker:9092", "broker", "kafka"},
-			ResKeys: res, ResValues: resV, Events: "", ScopeName: "io.opentelemetry.kafka-clients-2.6",
+			ResKeys:    res, ResValues: resV, Events: "", ScopeName: "io.opentelemetry.kafka-clients-2.6",
 		},
 		{
 			TraceID: "00000000000000000000000000000001", SpanID: "0000000000000003", ParentID: "",
@@ -70,7 +70,7 @@ func TestConvertSpanMessagingGolden(t *testing.T) {
 				"messaging.consumer.group.name", "messaging.kafka.consumer.group",
 				"messaging.kafka.message.offset", "messaging.destination.partition.id"},
 			AttrValues: []string{"kafka", "orders", "process", "orders-workers", "orders-workers-legacy", "4711", "3"},
-			ResKeys: res, ResValues: resV, Events: "", ScopeName: "io.opentelemetry.kafka-clients-2.6",
+			ResKeys:    res, ResValues: resV, Events: "", ScopeName: "io.opentelemetry.kafka-clients-2.6",
 		},
 	}
 	for i := range want {

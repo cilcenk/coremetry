@@ -40,7 +40,9 @@ import (
 // olmadığı. ÖLÇÜLEN DEĞER, VARSAYIM DEĞİL.
 //
 // Sihirbaz ADIM 2'yi tek ifadeye indirmek için
-//     INSERT INTO <t>_unified SELECT * FROM cluster(<küme>, db, <t>)
+//
+//	INSERT INTO <t>_unified SELECT * FROM cluster(<küme>, db, <t>)
+//
 // yazıyor: `cluster()` shard başına BİR replika okur, yani bölünmüş bir
 // tabloda tam olarak shard'ların birleşimini verir, çift sayım yok.
 //
@@ -55,11 +57,11 @@ import (
 // zookeeper_path'i vardır. distinctPaths == shardCount olduğunda ve
 // SADECE o zaman `cluster()` ayrık dilimleri birleştirir.
 //
-//   distinctPaths == 1 && shardCount > 1  → tablo BİRLEŞİK; cluster()
-//       veriyi shardCount katına çıkarır. INSERT ATMA.
-//   distinctPaths < shardCount            → kısmen göç etmiş; bazı
-//       shard'lar aynı grubu paylaşıyor, o pay çiftlenir. INSERT ATMA.
-//   distinctPaths == shardCount           → her shard ayrı grup; güvenli.
+//	distinctPaths == 1 && shardCount > 1  → tablo BİRLEŞİK; cluster()
+//	    veriyi shardCount katına çıkarır. INSERT ATMA.
+//	distinctPaths < shardCount            → kısmen göç etmiş; bazı
+//	    shard'lar aynı grubu paylaşıyor, o pay çiftlenir. INSERT ATMA.
+//	distinctPaths == shardCount           → her shard ayrı grup; güvenli.
 func clusterReadSafe(distinctPaths, shardCount int) bool {
 	if distinctPaths <= 0 || shardCount <= 0 {
 		return false

@@ -43,8 +43,8 @@ func TestExceptionSignals(t *testing.T) {
 				Service: "checkout", Occurrences: 1240, Last24: 380, PeakCount: 91,
 				FirstSeenNs: now - 3*24*3600*1e9, LastSeenNs: now - 5*min,
 				Deploys: []DeployCandidate{
-					{Version: "v1.4.0", OffsetSec: 5400},         // 90dk önce
-					{Version: "v1.4.1", OffsetSec: 300},          // 5dk önce ← en yakın
+					{Version: "v1.4.0", OffsetSec: 5400},            // 90dk önce
+					{Version: "v1.4.1", OffsetSec: 300},             // 5dk önce ← en yakın
 					{Version: "v1.4.2", OffsetSec: 60, After: true}, // SONRA — aday değil
 				},
 				NowNs: now,
@@ -68,7 +68,7 @@ func TestExceptionSignals(t *testing.T) {
 			ev: ExceptionEvidence{
 				Service: "orders", Occurrences: 12, Last24: 0,
 				FirstSeenNs: now - 30*24*3600*1e9, LastSeenNs: now - 9*24*3600*1e9,
-				NowNs:       now,
+				NowNs: now,
 			},
 			wantLabel: map[string]string{"Oluşum": "12 · son 24s 0", "Son oluşum": "9gün önce"},
 			wantSev:   map[string]string{"Oluşum": SevOK, "Son oluşum": ""},
@@ -589,13 +589,13 @@ func TestSlowQuerySignals(t *testing.T) {
 				FromNs: now - 3600*1e9, ToNs: now, NowNs: now,
 			},
 			wantLabel: map[string]string{
-				"Gecikme":       "p95 842ms · p99 1.2sn · maks 3.1sn",
-				"Hacim":         "12.345 çağrı · toplam 41.2sn · ort 3ms",
-				"Hata":          "82 hata (%0.7)",
-				"Motor":         "oracle · COREBANK",
+				"Gecikme":        "p95 842ms · p99 1.2sn · maks 3.1sn",
+				"Hacim":          "12.345 çağrı · toplam 41.2sn · ort 3ms",
+				"Hata":           "82 hata (%0.7)",
+				"Motor":          "oracle · COREBANK",
 				"En çok çağıran": "payments-api · 8.100 çağrı · p95 902ms",
-				"Çağıranlar":    "2 servis: payments-api, web",
-				"İfade":         "SELECT * FROM T WHERE ID = ?",
+				"Çağıranlar":     "2 servis: payments-api, web",
+				"İfade":          "SELECT * FROM T WHERE ID = ?",
 			},
 			wantSev: map[string]string{"Gecikme": SevErr, "Hata": SevErr, "Hacim": ""},
 		},

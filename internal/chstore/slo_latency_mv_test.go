@@ -83,7 +83,7 @@ func TestSLOGoodFractionAgainstExactCDF(t *testing.T) {
 	n := 200000
 	pop := make([]float64, n)
 	for i := range pop {
-		pop[i] = math.Exp(r.NormFloat64()*0.8+math.Log(120e6)) // log-normal around 120 ms
+		pop[i] = math.Exp(r.NormFloat64()*0.8 + math.Log(120e6)) // log-normal around 120 ms
 	}
 	sort.Float64s(pop)
 	qs := make([]float64, len(sloLatencyLevels))

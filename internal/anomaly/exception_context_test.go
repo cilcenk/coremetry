@@ -88,7 +88,7 @@ func TestIsExceptionExplainCandidate(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	mk := func(ageMin int64, occ uint64, summary string) chstore.ExceptionGroup {
 		return chstore.ExceptionGroup{
-			LastSeen: now.Add(-time.Duration(ageMin) * time.Minute).UnixNano(),
+			LastSeen:    now.Add(-time.Duration(ageMin) * time.Minute).UnixNano(),
 			Occurrences: occ, AISummary: summary,
 		}
 	}

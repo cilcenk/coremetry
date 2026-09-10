@@ -18,9 +18,9 @@ func TestMedianMAD(t *testing.T) {
 		xs               []float64
 		wantMed, wantMAD float64
 	}{
-		{"odd", []float64{1, 2, 3, 4, 5}, 3, 1},  // |dev|=2,1,0,1,2 → MAD=median=1
-		{"even", []float64{1, 2, 3, 4}, 2.5, 1},  // dev=1.5,.5,.5,1.5 → MAD=1
-		{"constant", []float64{7, 7, 7}, 7, 0},   // robust analogue of stdev=0
+		{"odd", []float64{1, 2, 3, 4, 5}, 3, 1}, // |dev|=2,1,0,1,2 → MAD=median=1
+		{"even", []float64{1, 2, 3, 4}, 2.5, 1}, // dev=1.5,.5,.5,1.5 → MAD=1
+		{"constant", []float64{7, 7, 7}, 7, 0},  // robust analogue of stdev=0
 		{"empty", nil, 0, 0},
 	}
 	for _, c := range cases {

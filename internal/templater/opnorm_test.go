@@ -19,13 +19,13 @@ func TestNormalizeOperation(t *testing.T) {
 	}{
 		// ── (a) http.route present — instrumentation already templated ──
 		{
-			name:   "route + method",
-			op:     "HTTP GET", method: "GET", route: "/users/{id}",
+			name: "route + method",
+			op:   "HTTP GET", method: "GET", route: "/users/{id}",
 			want: "GET /users/{id}",
 		},
 		{
-			name:  "route, client span no method",
-			op:    "GET", route: "/orders/{orderId}/items",
+			name: "route, client span no method",
+			op:   "GET", route: "/orders/{orderId}/items",
 			want: "/orders/{orderId}/items",
 		},
 		{
@@ -118,8 +118,8 @@ func TestNormalizeOperation(t *testing.T) {
 			want: "mysql: UPDATE acct SET bal = ? WHERE id = ?",
 		},
 		{
-			name:  "db system set but empty statement falls back to name",
-			op:    "oracle.execute", dbSys: "oracle", dbStmt: "",
+			name: "db system set but empty statement falls back to name",
+			op:   "oracle.execute", dbSys: "oracle", dbStmt: "",
 			want: "oracle.execute",
 		},
 		{
@@ -204,9 +204,9 @@ func TestNormalizeOperationCap200(t *testing.T) {
 // düşer, düz path'e dokunulmaz. Kardinalite sözleşmesi buradan geçer.
 func TestNormalizePathTemplate(t *testing.T) {
 	cases := map[string]string{
-		"/api/accounts/12345":                    "/api/accounts/:id",
-		"/api/accounts/12345/transactions?p=2":   "/api/accounts/:id/transactions",
-		"/api/v1/auth/login":                     "/api/v1/auth/login",
+		"/api/accounts/12345":                                   "/api/accounts/:id",
+		"/api/accounts/12345/transactions?p=2":                  "/api/accounts/:id/transactions",
+		"/api/v1/auth/login":                                    "/api/v1/auth/login",
 		"/customers/550e8400-e29b-41d4-a716-446655440000/cards": "/customers/:id/cards",
 	}
 	for in, want := range cases {

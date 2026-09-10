@@ -15,16 +15,16 @@
 // This file is the single source of truth for that shape. It exposes a
 // global `L` whose three hot-path factors are read lock-free:
 //
-//   L.latencyFactor()  multiplies every dur() — saturation stretches the
-//                      whole latency distribution at once, so the trace
-//                      waterfalls and the http.server.duration histogram
-//                      move TOGETHER (which is what makes the percentile
-//                      charts and the anomaly correlator light up).
-//   L.rateFactor()     multiplies the driver's scenarios/sec — the demo
-//                      actually slows down at 03:00 and surges at 10:00.
-//   L.errorBump()      extra failure probability folded into rollFail(),
-//                      so failures CLUSTER during incidents instead of
-//                      being sprinkled uniformly forever.
+//	L.latencyFactor()  multiplies every dur() — saturation stretches the
+//	                   whole latency distribution at once, so the trace
+//	                   waterfalls and the http.server.duration histogram
+//	                   move TOGETHER (which is what makes the percentile
+//	                   charts and the anomaly correlator light up).
+//	L.rateFactor()     multiplies the driver's scenarios/sec — the demo
+//	                   actually slows down at 03:00 and surges at 10:00.
+//	L.errorBump()      extra failure probability folded into rollFail(),
+//	                   so failures CLUSTER during incidents instead of
+//	                   being sprinkled uniformly forever.
 //
 // Keeping all three in one model is what ties metrics + traces + logs to
 // the same underlying story rather than three independent random streams.

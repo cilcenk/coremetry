@@ -23,15 +23,15 @@ func TestBuildEvidenceBundle_FusesCoFiringSignals(t *testing.T) {
 	in := evidenceInputs{
 		openProblems: []chstore.Problem{
 			trigger,
-			{ID: "p2", Service: "checkout", Metric: "p99_ms", RuleName: "Anomaly · P99 latency", StartedAt: T}, // co-firing
+			{ID: "p2", Service: "checkout", Metric: "p99_ms", RuleName: "Anomaly · P99 latency", StartedAt: T},    // co-firing
 			{ID: "p3", Service: "payments", Metric: "error_rate", RuleName: "Anomaly · Error rate", StartedAt: T}, // neighbour
 			{ID: "p4", Service: "unrelated", Metric: "error_rate", RuleName: "x", StartedAt: T},                   // neither
 		},
 		events: []chstore.AnomalyEvent{
 			{ID: "e1", Kind: "log_pattern", Pattern: "OOMKilled", Service: "checkout", Status: "active", Sample: "Container OOMKilled"},
 			{ID: "e2", Kind: "trace_op", Pattern: "POST /checkout", Service: "checkout", Status: "active"},
-			{ID: "e3", Kind: "log_pattern", Pattern: "noise", Service: "other", Status: "active"},      // wrong service
-			{ID: "e4", Kind: "log_pattern", Pattern: "stale", Service: "checkout", Status: "cleared"},  // not active
+			{ID: "e3", Kind: "log_pattern", Pattern: "noise", Service: "other", Status: "active"},     // wrong service
+			{ID: "e4", Kind: "log_pattern", Pattern: "stale", Service: "checkout", Status: "cleared"}, // not active
 		},
 		deploys: []chstore.RecentDeployEntry{
 			{Service: "checkout", Version: "v2.0.0", FirstSeenNs: T - int64(5*time.Minute)}, // 5m before → causal

@@ -20,14 +20,14 @@ type TraceOpAnomaly struct {
 	Kind           string  `json:"kind"` // "new_error" | "error_spike"
 	CurrentErrors  uint64  `json:"currentErrors"`
 	BaselineErrors uint64  `json:"baselineErrors"`
-	Ratio          float64 `json:"ratio"`         // current / max(baseline, 1)
+	Ratio          float64 `json:"ratio"` // current / max(baseline, 1)
 	// CurrentCalls — the denominator the qualification now insists on
 	// (v0.9.327). Shipping it means the row can say "42 errors of 3,100
 	// calls" instead of a bare count the operator has to go look up.
-	CurrentCalls uint64  `json:"currentCalls"`
-	ErrorShare   float64 `json:"errorShare"` // CurrentErrors / CurrentCalls, 0..1
-	SampleTraceID  string  `json:"sampleTraceId"` // representative trace for one-click drill-in
-	LastSeenNs     int64   `json:"lastSeenNs"`
+	CurrentCalls  uint64  `json:"currentCalls"`
+	ErrorShare    float64 `json:"errorShare"`    // CurrentErrors / CurrentCalls, 0..1
+	SampleTraceID string  `json:"sampleTraceId"` // representative trace for one-click drill-in
+	LastSeenNs    int64   `json:"lastSeenNs"`
 }
 
 // traceOpBucket is one (service, operation) pair's cur/base error

@@ -13,10 +13,10 @@ import (
 // Parsing Approach with Fixed Depth Tree"). Each log line walks
 // a fixed-depth tree keyed by:
 //
-//   • Layer 1 — token count (an 11-token "Failed to connect"
+//   - Layer 1 — token count (an 11-token "Failed to connect"
 //     line never collides with a 4-token "GET /foo 200" line)
-//   • Layer 2 — first token (literal or "<*>")
-//   • Layer 3..Depth — extended literal tokens (only the
+//   - Layer 2 — first token (literal or "<*>")
+//   - Layer 3..Depth — extended literal tokens (only the
 //     non-masked positions discriminate)
 //
 // The leaf node holds a list of clusters; each cluster's
@@ -28,10 +28,10 @@ import (
 //   - hits no cluster → new cluster.
 //
 // Tradeoffs vs the canonical implementation:
-//   • No LRU eviction of clusters — log_templates is the
+//   - No LRU eviction of clusters — log_templates is the
 //     persistent ledger so memory growth is bounded by the
 //     periodic save+compact in the puller.
-//   • MaxChildren is enforced at the tree, not via priority
+//   - MaxChildren is enforced at the tree, not via priority
 //     eviction — once a non-leaf node has MaxChildren distinct
 //     buckets we fall through to a single "<*>" child so a
 //     pathologically variable layer doesn't explode the tree.
@@ -107,13 +107,13 @@ type node struct {
 // same order always produces the same id, so duplicate
 // processing across pulls is idempotent.
 type Cluster struct {
-	ID         string
-	Template   []string // tokens; "<*>" marks variable positions
-	Count      uint64
-	FirstSeen  int64 // unix ns
-	LastSeen   int64 // unix ns
-	Services   []string
-	Sample     string // representative raw line (for UI hover)
+	ID        string
+	Template  []string // tokens; "<*>" marks variable positions
+	Count     uint64
+	FirstSeen int64 // unix ns
+	LastSeen  int64 // unix ns
+	Services  []string
+	Sample    string // representative raw line (for UI hover)
 }
 
 // NewDrain builds a tree with the canonical Drain-3 defaults:

@@ -219,7 +219,7 @@ func TestJobServiceRegexStillRejectsNeighbours(t *testing.T) {
 		"deposit/legacy-shop-deposit-commonaccountsvc-uat", // ad uzantısı
 		"deposit/shop-deposit-commonaccountsvc-uat-v2",     // sonek
 		"deposit/shop-deposit-commonaccountsvc-prod",       // BAŞKA ortam
-		"deposit/shop-deposit",                                 // kısaltma
+		"deposit/shop-deposit",                             // kısaltma
 	} {
 		if re.MatchString(v) {
 			t.Errorf("%q eşleşmemeliydi — yanlış servisin trafiği karışır", v)
@@ -230,12 +230,12 @@ func TestJobServiceRegexStillRejectsNeighbours(t *testing.T) {
 func TestStripEnvSuffix(t *testing.T) {
 	cases := map[string]string{
 		"shop-deposit-commonaccountsvc-uat": "shop-deposit-commonaccountsvc",
-		"svc-prod":                             "svc",
-		"svc-int":                              "svc",
-		"svc-prep":                             "svc",
-		"checkout":                             "checkout", // ek yok
-		"-uat":                                 "-uat",     // adın tamamı ek → dokunma
-		"printer":                              "printer",  // alt dize, sonek değil
+		"svc-prod":                          "svc",
+		"svc-int":                           "svc",
+		"svc-prep":                          "svc",
+		"checkout":                          "checkout", // ek yok
+		"-uat":                              "-uat",     // adın tamamı ek → dokunma
+		"printer":                           "printer",  // alt dize, sonek değil
 	}
 	for in, want := range cases {
 		if got := StripEnvSuffix(in); got != want {

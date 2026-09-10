@@ -68,14 +68,20 @@ func (p *parser) enter() error {
 }
 func (p *parser) leave() { p.depth-- }
 
-func (p *parser) cur() token  { return p.toks[p.pos] }
+func (p *parser) cur() token { return p.toks[p.pos] }
 func (p *parser) peek() token {
 	if p.pos+1 < len(p.toks) {
 		return p.toks[p.pos+1]
 	}
 	return p.toks[len(p.toks)-1] // EOF
 }
-func (p *parser) advance() token { t := p.toks[p.pos]; if t.kind != tEOF { p.pos++ }; return t }
+func (p *parser) advance() token {
+	t := p.toks[p.pos]
+	if t.kind != tEOF {
+		p.pos++
+	}
+	return t
+}
 
 func (p *parser) errf(format string, a ...any) error {
 	return fmt.Errorf("promql: "+format+" (at position %d)", append(a, p.cur().pos)...)

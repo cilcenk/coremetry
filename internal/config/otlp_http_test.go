@@ -15,18 +15,18 @@ func TestResolveOTLPHTTPAddr(t *testing.T) {
 		current string
 		want    string
 	}{
-		{"", ":4318", ":4318"},                    // unset → keep default
-		{"", "", ""},                              // unset → keep an already-disabled value
-		{":5318", ":4318", ":5318"},               // explicit custom port
-		{"0.0.0.0:4318", ":4318", "0.0.0.0:4318"}, // explicit bind address
-		{"off", ":4318", ""},                      // explicit disable
-		{"none", ":4318", ""},                     // explicit disable (alias)
-		{"-", ":4318", ""},                        // explicit disable (alias)
-		{"OFF", ":4318", ""},                      // disable tokens are case-insensitive
-		{" off ", ":4318", ""},                    // ...and whitespace-tolerant
-		{":4318\n", ":4318", ":4318"},             // trailing newline (k8s Secret) trimmed, not fatal
+		{"", ":4318", ":4318"},                      // unset → keep default
+		{"", "", ""},                                // unset → keep an already-disabled value
+		{":5318", ":4318", ":5318"},                 // explicit custom port
+		{"0.0.0.0:4318", ":4318", "0.0.0.0:4318"},   // explicit bind address
+		{"off", ":4318", ""},                        // explicit disable
+		{"none", ":4318", ""},                       // explicit disable (alias)
+		{"-", ":4318", ""},                          // explicit disable (alias)
+		{"OFF", ":4318", ""},                        // disable tokens are case-insensitive
+		{" off ", ":4318", ""},                      // ...and whitespace-tolerant
+		{":4318\n", ":4318", ":4318"},               // trailing newline (k8s Secret) trimmed, not fatal
 		{" 0.0.0.0:4318 ", ":4318", "0.0.0.0:4318"}, // surrounding space trimmed off the address
-		{"   ", ":4318", ":4318"},                 // whitespace-only → treated as unset (keep default)
+		{"   ", ":4318", ":4318"},                   // whitespace-only → treated as unset (keep default)
 	}
 	for _, c := range cases {
 		if got := resolveOTLPHTTPAddr(c.env, c.current); got != c.want {

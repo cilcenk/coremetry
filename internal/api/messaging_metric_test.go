@@ -12,12 +12,12 @@ import (
 )
 
 // v0.10.550 — Kafka istemci metrikleri (VM seam) — Faz 1. Sözleşme:
-//   • kapsam SPAN tarafından gelir (caller MV: servis + rol); üretici soruları
+//   - kapsam SPAN tarafından gelir (caller MV: servis + rol); üretici soruları
 //     üretici servislerle, tüketici soruları tüketici servislerle daraltılır;
 //     rolü bilinmeyen servis iki kapsama da girer (üst küme, sessiz daraltma yok);
-//   • her soru bağımsız blok: biri hata verse diğerleri gelir, hata blokta yazılı;
-//   • available = en az bir seri; yoksa not sebebi söyler, sayfa span'a düşer;
-//   • env VM'de ifade edilemezse envAmbiguous; caller yoksa hiç sorgu yok.
+//   - her soru bağımsız blok: biri hata verse diğerleri gelir, hata blokta yazılı;
+//   - available = en az bir seri; yoksa not sebebi söyler, sayfa span'a düşer;
+//   - env VM'de ifade edilemezse envAmbiguous; caller yoksa hiç sorgu yok.
 func kafkaFixtureWindow() (time.Time, time.Time) {
 	to := time.Date(2026, 9, 8, 6, 30, 0, 0, time.UTC)
 	return to.Add(-30 * time.Minute), to

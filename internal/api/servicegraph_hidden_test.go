@@ -21,11 +21,11 @@ func TestFilterHiddenTopologyEdges(t *testing.T) {
 	patterns := []string{"kafka:log*", "kafka:bsa*"}
 
 	in := []chstore.ServiceTopologyEdge{
-		edge("shop-msg-smssender", "oracle@orabcore-prod"),             // kept
-		edge("shop-msg-smssender", "kafka:log.service.bsa.stat"),       // hidden child
+		edge("shop-msg-smssender", "oracle@orabcore-prod"),              // kept
+		edge("shop-msg-smssender", "kafka:log.service.bsa.stat"),        // hidden child
 		edge("kafka:bsa.kafka.core.cfg", "shop-customer-profile-prod"),  // hidden parent
 		edge("shop-framework-batchjob", "queue:kafka:bsa.log.core.svc"), // queue: prefix stripped → hidden
-		edge("shop-callcenter-core", "shop-bpm-workflow"),                    // kept
+		edge("shop-callcenter-core", "shop-bpm-workflow"),               // kept
 		edge("shop-loan-consumer", "kafka:payments.orders"),             // kafka but NOT log*/bsa* → kept
 	}
 

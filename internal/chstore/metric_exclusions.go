@@ -261,8 +261,8 @@ func (c *CompiledMetricExclusions) DropAtIngest(metric, route string) bool {
 // ifadenin BİREBİR aynısı: kırılımda görünen değer ile dışlanan değer
 // ayrışamaz.
 //
-// http.route attr'ı OLMAYAN satırlar '' üretir ve `/health` gibi bir
-// desen '' ile eşleşmez → satır KALIR. Route'suz datapoint'leri elemek
+// http.route attr'ı OLMAYAN satırlar ” üretir ve `/health` gibi bir
+// desen ” ile eşleşmez → satır KALIR. Route'suz datapoint'leri elemek
 // isteyen `^$` yazar; sessizce elemek, "grafikte bir şey eksik ama ne
 // bilmiyorum" sınıfı olurdu.
 func applyMetricExclusionWhere(wc *whereClause, ex *CompiledMetricExclusions, metric string) {

@@ -20,7 +20,7 @@ func TestMask_PrefixedIDs(t *testing.T) {
 	cases := []struct {
 		name    string
 		in      string
-		wantOut string  // exact expected output
+		wantOut string // exact expected output
 	}{
 		// Operator-reported shape — should collapse to one template.
 		{
@@ -77,11 +77,11 @@ func TestMask_DoesNotOverReach(t *testing.T) {
 		// behaviour at the points that matter for operator
 		// readability.
 		{"v-version still recognisable (v + dotted)",
-			"Starting agent v1.2.3", "v"},  // bare-number rule still folds "1.2.3" but the v stays
-		{"single-digit suffix preserved",   "Connecting to log4j logger",        "log4j"},
-		{"iso8601 word (no underscore)",    "Parsed iso8601 timestamp",          "iso8601"},
-		{"HTTP status untouched (3 digits)", "Returned 200 OK",                  "Returned <*> OK"},
-		{"ORA-error code preserved",        "Encountered ORA-12345 fault",       "ORA-<*>"},
+			"Starting agent v1.2.3", "v"}, // bare-number rule still folds "1.2.3" but the v stays
+		{"single-digit suffix preserved", "Connecting to log4j logger", "log4j"},
+		{"iso8601 word (no underscore)", "Parsed iso8601 timestamp", "iso8601"},
+		{"HTTP status untouched (3 digits)", "Returned 200 OK", "Returned <*> OK"},
+		{"ORA-error code preserved", "Encountered ORA-12345 fault", "ORA-<*>"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

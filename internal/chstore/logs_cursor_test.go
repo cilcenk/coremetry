@@ -16,11 +16,11 @@ import (
 //     No tiebreak + block-order-dependent id → boundary dup/drop.
 //  2. v0.7.22: ORDER BY time DESC, span_id DESC + a STRICT keyset
 //     cursor base64("ch|"+timeNs+"|"+spanId). This still dropped rows:
-//     span_id is String DEFAULT '' and most log lines are emitted
-//     OUTSIDE a span (span_id=''). (time, span_id) is therefore NOT a
-//     total order — a page boundary inside a run of (t0,'') rows
-//     dropped every remaining (t0,'') row, because `time = t0 AND
-//     span_id < ''` matches nothing.
+//     span_id is String DEFAULT ” and most log lines are emitted
+//     OUTSIDE a span (span_id=”). (time, span_id) is therefore NOT a
+//     total order — a page boundary inside a run of (t0,”) rows
+//     dropped every remaining (t0,”) row, because `time = t0 AND
+//     span_id < ”` matches nothing.
 //  3. v0.7.23: tiebreak is now a deterministic query-time row hash
 //     (logsRowKeyExpr = cityHash64 over the line's identifying
 //     columns). ORDER BY time DESC, <rowKey> DESC + a STRICT keyset

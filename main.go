@@ -1364,7 +1364,7 @@ func main() {
 		srv.StartRolloutTail(ctx) // v0.10.200 — pod-yerel SSE tail (audit §3 T); yalnız api
 	}
 	srv.SetVMetrics(vmSvc)
-	srv.SetOracle(oracleSvc)          // v0.10.580 — Oracle kaynakları (her rol)
+	srv.SetOracle(oracleSvc) // v0.10.580 — Oracle kaynakları (her rol)
 	srv.SetDevOps(devopsSvc)
 	srv.SetMCPClient(mcpCliSvc)
 	// Cross-pod L1 cache invalidation (v0.5.337). Subscribes

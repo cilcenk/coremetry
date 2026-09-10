@@ -10,11 +10,11 @@ import (
 
 func TestOpHealthWindowS(t *testing.T) {
 	cases := []struct{ in, want int }{
-		{0, 3600},          // varsayılan 1h
-		{-5, 3600},         // negatif → varsayılan
-		{30, 60},           // kova tabanı (1m)
-		{60, 60},           // tam kova
-		{7200, 7200},       // aralıkta aynen
+		{0, 3600},            // varsayılan 1h
+		{-5, 3600},           // negatif → varsayılan
+		{30, 60},             // kova tabanı (1m)
+		{60, 60},             // tam kova
+		{7200, 7200},         // aralıkta aynen
 		{99 * 86400, 604800}, // tavan 7g
 	}
 	for _, c := range cases {

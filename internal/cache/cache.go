@@ -105,14 +105,14 @@ type noopLock struct{}
 // grants the lock. Used when Redis is not configured.
 func NewNoop() (Cache, Lock) { return noopCache{}, noopLock{} }
 
-func (noopCache) Get(context.Context, string) ([]byte, bool, error)   { return nil, false, nil }
+func (noopCache) Get(context.Context, string) ([]byte, bool, error)        { return nil, false, nil }
 func (noopCache) Set(context.Context, string, []byte, time.Duration) error { return nil }
 func (noopCache) SetNX(context.Context, string, []byte, time.Duration) (bool, error) {
 	// Always-win: with no Redis there are no peers to dedup against, so
 	// the caller (e.g. the cache warmer) must do its own work.
 	return true, nil
 }
-func (noopCache) Del(context.Context, string) error                   { return nil }
+func (noopCache) Del(context.Context, string) error { return nil }
 func (noopCache) MGet(_ context.Context, keys []string) ([][]byte, error) {
 	// All-miss, positionally aligned — callers (presence enrichment)
 	// treat nil slots as "no stamp".
@@ -120,8 +120,8 @@ func (noopCache) MGet(_ context.Context, keys []string) ([][]byte, error) {
 }
 func (noopCache) ScanPrefix(context.Context, string) ([][]byte, error) { return nil, nil }
 func (noopCache) DelPrefix(context.Context, string) error              { return nil }
-func (noopCache) Ping(context.Context) error                          { return nil }
-func (noopCache) Publish(context.Context, string, []byte) error       { return nil }
+func (noopCache) Ping(context.Context) error                           { return nil }
+func (noopCache) Publish(context.Context, string, []byte) error        { return nil }
 func (noopCache) Subscribe(ctx context.Context, _ string) (<-chan []byte, error) {
 	// Idle channel that closes on ctx cancellation. The
 	// invalidation loop sits in a select on this — without the
@@ -138,5 +138,5 @@ func (noopCache) Subscribe(ctx context.Context, _ string) (<-chan []byte, error)
 // Noop lock = always-leader. Correct for single-instance deployments
 // because there's no one to contend with.
 func (noopLock) TryAcquire(context.Context, string, time.Duration) (bool, error) { return true, nil }
-func (noopLock) Release(context.Context, string) error                          { return nil }
+func (noopLock) Release(context.Context, string) error                           { return nil }
 func (noopLock) Refresh(context.Context, string, time.Duration) (bool, error)    { return true, nil }

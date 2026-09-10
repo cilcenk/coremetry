@@ -14,11 +14,13 @@
 //	  test ortamında (Prometheus 60s tutuyor) koşulur.
 //
 // Sapma sınıfları (görev tanımı):
+//
 //	BEKLENEN  — farklı export/scrape aralığı, kafes farkı
 //	KABUL     — kayan nokta (oransal ≤ 1e-9)
 //	HATA      — yanlış agregasyon/hizalama/null işleme
 //
 // Kullanım:
+//
 //	go run ./cmd/paritycheck -base http://localhost:8090 \
 //	  -ch "kubectl exec -i -n coremetry chc-0 -- clickhouse-client --database coremetry" \
 //	  -service coremetry-monolithic -metric process.runtime.go.goroutines \

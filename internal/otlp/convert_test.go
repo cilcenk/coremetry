@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricscollpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	tracecollpb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"

@@ -11,9 +11,9 @@ import "testing"
 // (maliyet kapısının ölmesi) burada patlar.
 func TestShouldDeepInvestigate(t *testing.T) {
 	cases := []struct {
-		name           string
-		isP1, hasDep   bool
-		want           bool
+		name         string
+		isP1, hasDep bool
+		want         bool
 	}{
 		{"P1 + deploy", true, true, true},
 		{"P1, deploysuz", true, false, true},

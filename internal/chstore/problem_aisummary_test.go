@@ -51,7 +51,7 @@ func allProblemColCombos() []problemCols {
 
 // v0.9.448 — v0.5.254'ün "explicit liste ai kolonlarını dışlar,
 // ReplacingMergeTree eski değere düşer" varsayımı yanlıştı: replace
-// bütün-satırdır, dışlanan kolon DEFAULT ''e iner. Her refresh özeti
+// bütün-satırdır, dışlanan kolon DEFAULT ”e iner. Her refresh özeti
 // siliyor, explainer boş görüp yeniden üretiyordu. Pin: problems'e
 // yazan HER explicit kolon listesi ai_summary + ai_summary_at taşır.
 func TestProblemWritePathsCarryAISummary(t *testing.T) {

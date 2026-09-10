@@ -31,26 +31,26 @@ func TestUseSummaryMV_Boundary(t *testing.T) {
 		want   bool
 	}{
 		// Below the MV's 5-min granularity → raw-spans fallback.
-		{"1s",         1 * time.Second,        false},
-		{"30s",        30 * time.Second,       false},
-		{"1min",       1 * time.Minute,        false},
-		{"2min",       2 * time.Minute,        false},
-		{"4min",       4 * time.Minute,        false},
-		{"4min59s",    4*time.Minute + 59*time.Second, false},
+		{"1s", 1 * time.Second, false},
+		{"30s", 30 * time.Second, false},
+		{"1min", 1 * time.Minute, false},
+		{"2min", 2 * time.Minute, false},
+		{"4min", 4 * time.Minute, false},
+		{"4min59s", 4*time.Minute + 59*time.Second, false},
 		// At-or-above 5min → MV path. The 5-min bucket alignment
 		// gives a faithful aggregate for these windows.
-		{"5min",       5 * time.Minute,        true},
-		{"5min1s",     5*time.Minute + time.Second, true},
-		{"10min",      10 * time.Minute,       true},
-		{"15min",      15 * time.Minute,       true},
-		{"1h",         time.Hour,              true},
-		{"24h",        24 * time.Hour,         true},
+		{"5min", 5 * time.Minute, true},
+		{"5min1s", 5*time.Minute + time.Second, true},
+		{"10min", 10 * time.Minute, true},
+		{"15min", 15 * time.Minute, true},
+		{"1h", time.Hour, true},
+		{"24h", 24 * time.Hour, true},
 		// Edge: zero / negative — treat as raw spans path so an
 		// operator typo doesn't accidentally fall into "MV with
 		// no data" silent success. (The query would return 0,
 		// which a threshold rule would interpret as "all clear".)
-		{"zero",       0,                      false},
-		{"negative",   -time.Second,           false},
+		{"zero", 0, false},
+		{"negative", -time.Second, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

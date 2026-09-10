@@ -29,18 +29,18 @@ const (
 	tRBracket
 	tComma
 	tColon
-	tAdd // +
-	tSub // -
-	tMul // *
-	tDiv // /
-	tMod // %
-	tPow // ^
-	tEQL // ==
-	tNEQ // !=
-	tLSS // <
-	tLTE // <=
-	tGTR // >
-	tGTE // >=
+	tAdd      // +
+	tSub      // -
+	tMul      // *
+	tDiv      // /
+	tMod      // %
+	tPow      // ^
+	tEQL      // ==
+	tNEQ      // !=
+	tLSS      // <
+	tLTE      // <=
+	tGTR      // >
+	tGTE      // >=
 	tEQLRegex // =~
 	tNEQRegex // !~
 	tAssign   // =

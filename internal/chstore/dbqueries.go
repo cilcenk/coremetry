@@ -100,7 +100,7 @@ type SlowQueryRow struct {
 //
 // Optional dbSystem filter (e.g. "postgresql") narrows the
 // view when the operator already knows which engine they're
-// after. Cost is bounded by `db_statement != ''` filter — at
+// after. Cost is bounded by `db_statement != ”` filter — at
 // billion-span scale this still has to scan the partition
 // pruning helps for the time window, and CH's index on
 // service_name doesn't help here since we don't filter on it.
@@ -319,7 +319,7 @@ func (s *Store) getSlowQueriesGlobalMV(
 // wall-clock time spent in them (count × avgMs).
 //
 // Performance posture: the query reads only spans where
-// db_statement != '' (a small slice of total span volume),
+// db_statement != ” (a small slice of total span volume),
 // applies regex normalisation in CH (no Go-side post-pass),
 // groups in-store, and the result is bounded by `limit`. At
 // billion-span scale it lands in <2s with the (service_name,

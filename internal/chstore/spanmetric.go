@@ -851,7 +851,7 @@ const rootSpanPredicate = "(parent_id = '' OR parent_id = '0000000000000000')"
 
 // spanMetricBatchWhere — v0.10.611: batch span-metrik sorgusunun WHERE'i,
 // SAF (regresyon testi doğrudan pinler). v0.10.484 RootOnly'yi buraya
-// `parent_span_id = ''` diye yazmıştı — kolon yok; /traces hacim şeridi Root
+// `parent_span_id = ”` diye yazmıştı — kolon yok; /traces hacim şeridi Root
 // açıkken 6 Eylül'den beri prod'da CH 47 alıyordu ve saf seam olmadığı için
 // hiçbir test göremedi.
 func spanMetricBatchWhere(f SpanMetricBatchFilter, winK, effWin int) whereClause {

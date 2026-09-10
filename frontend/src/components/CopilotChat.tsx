@@ -20,6 +20,7 @@ import { Empty, Spinner } from './Spinner';
 import { ChatBubble } from './ai/ChatBubble';
 import { TraceExplainNudge } from './ai/TraceExplainNudge';
 import { useChatThread } from './ai/useChatThread';
+import { useStickToBottom } from './ai/stickToBottom';
 import { useCopilotConfig } from './ai/useCopilotEnabled'; // v0.10.483
 import { AI_DRAWER_WIDTH } from './ai/answerCard'; // v0.10.461
 import { AIDrawerBody } from './ai/AIDrawerBody'; // v0.10.483 — ✨ Explain gövdesi aynı çekmecede
@@ -198,7 +199,7 @@ export function CopilotChat() {
   // persist: true — KALICILIK YALNIZ BURADA (v0.9.1139, Faz 4.1).
   // AI çekmecesindeki özne sohbeti efemer kalıyor; gerekçe
   // useChatThread'in dosya başında.
-  const { turns, busy, send, stop, clear, load, conversationId, last, showFollowups } =
+  const { turns, busy, send, retry, stop, clear, load, conversationId, last, showFollowups } =
     useChatThread({
       // v0.10.540 — pin varken eski alanlar pinden (boş alan = kapsamsız, ekrandan DEĞİL).
       service: pinnedLegacy ? (pinnedLegacy.service ?? '') : currentService,
@@ -302,9 +303,8 @@ export function CopilotChat() {
   const p1s = p1q.data?.items;
 
 
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [turns, open]);
+  // v0.10.650 — yalnız dipteyken yapış (stickToBottom.ts); soru gönderimi pin'ler.
+  const pinBottom = useStickToBottom(scrollRef, [turns, open]);
 
   // Explain→chat köprüsü (v0.9.165): satır-içi explain panelleri (çekmece
   // OLMAYAN yüzeyler, örn. AnomalyDetailDrawer) bir global event atar; chat
@@ -324,7 +324,7 @@ export function CopilotChat() {
 
   if (!enabled) return null;
 
-  const submit = (text: string) => { setInput(''); void send(text); };
+  const submit = (text: string) => { setInput(''); pinBottom(); void send(text); };
 
 
   return (
@@ -564,7 +564,7 @@ export function CopilotChat() {
               </div>
             )}
             {turns.map((t, i) => (
-              <ChatBubble key={i} turn={t} />
+              <ChatBubble key={i} turn={t} onRetry={i === turns.length - 1 && t.error && !busy ? retry : undefined} />
             ))}
           </div>
 

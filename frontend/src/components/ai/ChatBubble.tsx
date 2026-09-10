@@ -441,7 +441,7 @@ export function ToolStepsPanel({ details: allDetails, error, turnDone, evId, set
   );
 }
 
-export function ChatBubble({ turn }: { turn: ChatTurn }) {
+export function ChatBubble({ turn, onRetry }: { turn: ChatTurn; onRetry?: () => void }) {
   const effLinks = mergeBlockLinks(turn.links, turn.blocks); // v0.10.541 — link blokları çiplere katılır
   const isUser = turn.role === 'user';
   const navigate = useNavigate();
@@ -546,6 +546,10 @@ export function ChatBubble({ turn }: { turn: ChatTurn }) {
             siliyordu. Metin üstte kalır, ⚠ altına iner. */}
         {turn.error && (
           <div style={{ marginTop: turn.text ? 6 : 0 }}><ChatErrorLine error={turn.error} isUser={false} /></div>
+        )}
+        {/* v0.10.650 — hata sonrası soru kaybolmasın: yalnız son hatalı turda (kap geçirir). */}
+        {turn.error && !turn.pending && onRetry && (
+          <div style={{ marginTop: 6 }}><Button variant="secondary" size="sm" onClick={onRetry}>↺ Yeniden dene</Button></div>
         )}
         {!turn.text && !turn.error && turn.pending && (
           <span style={{ color: 'var(--text3)' }}>yazıyor<span className="cm-ai-cursor" /></span>

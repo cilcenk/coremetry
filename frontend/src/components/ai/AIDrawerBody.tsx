@@ -11,6 +11,7 @@ import { ChatBubble } from './ChatBubble';
 import { ServiceChartsExplainBody } from './ServiceChartsExplainBody';
 import { aiSubjectQuestion, buildExplainContext, drawerFollowups } from './drawerChat';
 import { useChatThread } from './useChatThread';
+import { useStickToBottom } from './stickToBottom';
 import { useCopilotConfig } from './useCopilotEnabled';
 
 // AIDrawerBody — v0.10.483 (operatör, üçüncü kez: "Explain trace ile CoSRE
@@ -168,7 +169,7 @@ function AIDrawerChat({ subject, explainText, spanIds, traceIds }: {
   const cfgP = useCopilotConfig(true);
   const [profile, setProfile] = useState('');
   const navigate = useNavigate(); // v0.10.445 — "sayfasını aç" çekmece sohbetinde de gezer
-  const { turns, busy, send, last, showFollowups } = useChatThread({
+  const { turns, busy, send, retry, last, showFollowups } = useChatThread({
     explain, seed, subject: subjectParam,
     onOpen: href => { const to = mergeOpenHref(href, window.location.pathname, window.location.search); if (to) navigate(to, { replace: true }); }, // v0.10.460
     service: subject.kind === 'service-health' ? subject.id : undefined,
@@ -179,11 +180,10 @@ function AIDrawerChat({ subject, explainText, spanIds, traceIds }: {
     persist: true, title: persistTitle,
   });
 
-  useEffect(() => {
-    if (turns.length) endRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [turns]);
+  // v0.10.650 — yalnız dipteyken yapış; kaydırma kabı çekmecenin gövdesi (findScrollParent).
+  const pinBottom = useStickToBottom(endRef, [turns]);
 
-  const submit = (text: string) => { setInput(''); void send(text); };
+  const submit = (text: string) => { setInput(''); pinBottom(); void send(text); };
 
   // Bağlam kurulamadıysa (yalnız-boşluk cevap) sohbeti hiç açma —
   // bağlamsız sohbet operatör raporundaki hatanın ta kendisiydi.
@@ -212,7 +212,7 @@ function AIDrawerChat({ subject, explainText, spanIds, traceIds }: {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {turns.map((t, i) => <ChatBubble key={i} turn={t} />)}
+          {turns.map((t, i) => <ChatBubble key={i} turn={t} onRetry={i === turns.length - 1 && t.error && !busy ? retry : undefined} />)}
           <div ref={endRef} />
         </div>
 

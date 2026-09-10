@@ -496,3 +496,26 @@ describe('akış ortası hata (v0.10.649)', () => {
     expect(text()).toContain('⚠');
   });
 });
+
+describe('↺ Yeniden dene (v0.10.650)', () => {
+  it('onRetry verilmiş hatalı turda düğme var ve tıklanınca çağrılır', async () => {
+    const onRetry = vi.fn();
+    await act(async () => {
+      root.render(
+        <MemoryRouter>
+          <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+            <ChatBubble turn={asst('', { error: 'deadline', pending: false })} onRetry={onRetry} />
+          </QueryClientProvider>
+        </MemoryRouter>
+      );
+    });
+    const btn = qa('button').find(b => b.textContent?.includes('Yeniden dene')) as HTMLButtonElement | undefined;
+    expect(btn).toBeTruthy();
+    await act(async () => { btn!.click(); });
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+  it('onRetry yoksa (son tur değil / meşgul) düğme yok', async () => {
+    await mount(asst('', { error: 'deadline', pending: false }));
+    expect(qa('button').some(b => b.textContent?.includes('Yeniden dene'))).toBe(false);
+  });
+});

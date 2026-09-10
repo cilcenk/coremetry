@@ -4,6 +4,7 @@ import { appendChatBlock } from '@/lib/chatBlocks';
 import type { PageContext } from '@/lib/types';
 import type { ChatMessage, ChatTurn } from '@/lib/types';
 import { isAbortError, settleStoppedTurn, settleTruncatedTurn } from './chatAbort';
+import { failedQuestion, dropFailedTail } from './chatRetry';
 import {
   PERSIST_DEBOUNCE_MS, hasCompletedExchange, persistMessages, restoreTurns,
 } from './chatPersist';
@@ -283,9 +284,21 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
   // monte, yani çekmeceyi kapatmak bile akışı durdurmuyordu. Tek GPU'da
   // istenmeyen bir 5-turlu döngü, sıradaki meşru soruyu dakikalarca
   // tıkıyordu.
+  // v0.10.650 — hata sonrası yeniden dene: başarısız kuyruk (soru + hatalı
+  // cevap) hem state'ten hem turnsRef'ten düşer, sonra aynı soru gider.
+  // turnsRef senkron kırpılmazsa send geçmişi soruyu iki kez taşırdı.
+  const retry = useCallback(() => {
+    const q = failedQuestion(turnsRef.current);
+    if (!q || busyRef.current) return;
+    const trimmed = dropFailedTail(turnsRef.current);
+    turnsRef.current = trimmed;
+    setTurns(trimmed);
+    void send(q);
+  }, [send]);
+
   const stop = useCallback(() => {
     abortRef.current?.abort();
   }, []);
 
-  return { turns, busy, send, stop, clear, load, conversationId, last, showFollowups };
+  return { turns, busy, send, retry, stop, clear, load, conversationId, last, showFollowups };
 }

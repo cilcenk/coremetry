@@ -667,10 +667,10 @@ Repo dışında operatöre teslim: `leak-raw.txt` (1524 satır, maskesiz) — bu
 | 9 | api.go ratchet | **GEMİDE** 625 (taban 12113, test, hook, CI adımı) |
 | 10 | gofmt sweep + tidy + make audit + toolchain | **GEMİDE** 626 (`make audit`, `go mod tidy -diff`, CGO=0), 628 (86 dosya gofmt + CI kapısı). `go.mod` `toolchain` pini **operatör** (sorulmadan eklenmez) |
 | 11 | gitleaks | **AÇIK** — yayın sonrası önleyici; ayrı dilim |
-| 12 | golangci 123 / prettier 1042 / ESLint hard | **KISMİ**: ESLint gerçek kapı 627. golangci 123 → 110 (SA4000 ×13 → 634: determinizm iddiaları iki-bağlama biçimine; gerçek test hatası ÇIKMADI). Kalan golangci + prettier **AÇIK** (mekanik, sessiz pencere ister) |
+| 12 | golangci / prettier / ESLint hard | **golangci GEMİDE 634-639**: tavansız gerçek toplam 143 ("123" golangci'nin 50/3 tavanıyla kırpılmış sayıydı) → 0: SA4000 ×13 determinizm iddiası (634, gerçek hata ÇIKMADI), unused 26 (636), errcheck 60 politika+6 üretim kalemi (637), staticcheck 74 + govet 6 + ineffassign 2 (638), CI lint **gerçek kapı** tavansız (639). ESLint gerçek kapı 627. prettier 1042 dosya **AÇIK** (mekanik, sessiz pencere ister — operatör) |
 | 13 | Onboarding | **GEMİDE** 629 (docs/ENV.md 89 değişken, docs/local-dev.md), 630 (`/codebase-tour` skill + test kültürü sözlüğü), 631 (README bağlantıları + `make build-ui` ön koşulu) |
 | 14 | Org transferi + modül yolu + ghcr + URL'ler | **KISMİ**: org `cosretr` + tüm URL/imaj referansları 617; imaj paketi public (operatör). Kalan **operatör**: `go.mod` modül yolu, `charts/coremetry` paketinin public yapılması |
 | 15 | Kök artefakt temizliği, annotated tag, Release notu | **AÇIK** (D) |
 
-Bağımlılık: Dependabot 8 orta bulgu (go-ntlmssp, react-router-dom, vitest, postcss, @opentelemetry/core) → 632.
+Bağımlılık: Dependabot 8 orta → 2 (632 go-ntlmssp/react-router-dom/vitest/postcss; 633 tarayıcı OTel seti 2.11/0.222). Kalan 2 = react-router v6 aralığı, düzeltme 7.18.3 major (router göçü) — **operatör**. Açık Dependabot PR'ları: #46 Go 21 paket (dep bump disiplini → operatör), #44 npm grubu (632/633 sonrası bayat), #41 actions v7 (**operatör**). docs/DECISIONS.md v0.7→v0.10.629 42 kayıt (635).
 

@@ -7,10 +7,14 @@ import (
 )
 
 // team_attr_test.go — v0.8.430. Operator-reported: users.team showed
-// the TOP division ("TEKNOLOJİ") for every LDAP login because AD
+// the TOP division ("ENGINEERING") for every LDAP login because AD
 // stores the division in `department` (the legacy fallback chain's
 // first hit). Pins teamFor's resolution order for every TeamAttribute
 // mode and deepestOU's DN parsing.
+//
+// v0.10.619 — fixture adları SENTETİK (Alice/Bob, Payments/Engineering):
+// eski yazım gerçek kişi ve birim adlarını taşıyordu; şekil (DN derinliği,
+// bileşik displayName'deki parantez/yıldız/tire) birebir korundu.
 
 func entry(dn string, attrs map[string][]string) *goldap.Entry {
 	e := goldap.NewEntry(dn, attrs)
@@ -22,10 +26,10 @@ func TestDeepestOU(t *testing.T) {
 		dn   string
 		want string
 	}{
-		{"CN=Cenk,OU=Odeme Sistemleri,OU=TEKNOLOJI,DC=bank,DC=local", "Odeme Sistemleri"},
-		{"CN=Cenk,OU=TEKNOLOJI,DC=bank,DC=local", "TEKNOLOJI"},
-		{"CN=Cenk,DC=bank,DC=local", ""},
-		{"uid=cenk,ou=platform,ou=eng,o=bank", "platform"}, // lowercase ou
+		{"CN=Alice,OU=Payments,OU=ENGINEERING,DC=bank,DC=local", "Payments"},
+		{"CN=Alice,OU=ENGINEERING,DC=bank,DC=local", "ENGINEERING"},
+		{"CN=Alice,DC=bank,DC=local", ""},
+		{"uid=alice,ou=platform,ou=eng,o=bank", "platform"}, // lowercase ou
 		{"not-a-dn", ""},
 	}
 	for _, tc := range tests {
@@ -36,11 +40,11 @@ func TestDeepestOU(t *testing.T) {
 }
 
 func TestTeamFor(t *testing.T) {
-	dn := "CN=Cenk,OU=Odeme Sistemleri,OU=TEKNOLOJI,DC=bank,DC=local"
+	dn := "CN=Alice,OU=Payments,OU=ENGINEERING,DC=bank,DC=local"
 	e := entry(dn, map[string][]string{
-		"department": {"TEKNOLOJI"},
-		"ou":         {"TEKNOLOJI"},
-		"division":   {"Odeme Sistemleri Ekibi"},
+		"department": {"ENGINEERING"},
+		"ou":         {"ENGINEERING"},
+		"division":   {"Payments Team"},
 	})
 
 	tests := []struct {
@@ -49,15 +53,15 @@ func TestTeamFor(t *testing.T) {
 		want string
 	}{
 		{"legacy default: department wins (the reported wrong value)",
-			Config{}, "TEKNOLOJI"},
+			Config{}, "ENGINEERING"},
 		{"explicit attribute overrides the chain",
-			Config{TeamAttribute: "division"}, "Odeme Sistemleri Ekibi"},
+			Config{TeamAttribute: "division"}, "Payments Team"},
 		{"explicit attribute missing on entry → legacy fallback",
-			Config{TeamAttribute: "extensionAttribute7"}, "TEKNOLOJI"},
+			Config{TeamAttribute: "extensionAttribute7"}, "ENGINEERING"},
 		{"dn-ou takes the DEEPEST OU (the sub-team container)",
-			Config{TeamAttribute: "dn-ou"}, "Odeme Sistemleri"},
+			Config{TeamAttribute: "dn-ou"}, "Payments"},
 		{"whitespace-padded config value is trimmed",
-			Config{TeamAttribute: "  division  "}, "Odeme Sistemleri Ekibi"},
+			Config{TeamAttribute: "  division  "}, "Payments Team"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -87,11 +91,11 @@ func TestTeamAttrForFetch(t *testing.T) {
 }
 
 // TestApplyTeamRegex — v0.8.434. Operator-reported: the AD displayName
-// is a composite ("Tuğberk Çimen (Teknoloji Servis Yönetimi) * YAZILIM
-// UZMANI-Moneytalks") and the SUB-TEAM is the segment after the last
+// is a composite ("Bob Example (Platform Service Mgmt) * SOFTWARE
+// SPECIALIST-Payments") and the SUB-TEAM is the segment after the last
 // dash. TeamRegex extracts it; every branch tabled (unit-mixing rule).
 func TestApplyTeamRegex(t *testing.T) {
-	const operatorDisplay = "Tuğberk Çimen (Teknoolji Servis Yönetimi( * YAZILIM UZMANI-Moneytalks"
+	const operatorDisplay = "Bob Example (Platform Service Mgmt( * SOFTWARE SPECIALIST-Payments"
 
 	tests := []struct {
 		name    string
@@ -100,7 +104,7 @@ func TestApplyTeamRegex(t *testing.T) {
 		want    string
 	}{
 		{"operator's exact composite → trailing segment",
-			operatorDisplay, `-([^-]+)$`, "Moneytalks"},
+			operatorDisplay, `-([^-]+)$`, "Payments"},
 		{"trailing whitespace trimmed",
 			"UNVAN- Ekip Adi ", `-([^-]+)$`, "Ekip Adi"},
 		{"multi-dash: LAST segment wins with the anchored pattern",
@@ -108,9 +112,9 @@ func TestApplyTeamRegex(t *testing.T) {
 		{"empty pattern passes raw through",
 			operatorDisplay, "", operatorDisplay},
 		{"no capture group → whole match",
-			"team=Moneytalks", `Moneytalks`, "Moneytalks"},
+			"team=Payments", `Payments`, "Payments"},
 		{"NO match → empty, never the raw composite (the reported bug)",
-			"TEKNOLOJI", `-([^-]+)$`, ""},
+			"ENGINEERING", `-([^-]+)$`, ""},
 		{"invalid pattern is ignored → raw passes through",
 			operatorDisplay, `-([`, operatorDisplay},
 		{"empty raw stays empty",
@@ -128,13 +132,13 @@ func TestApplyTeamRegex(t *testing.T) {
 // End-to-end through teamFor: displayName source + regex — the exact
 // operator configuration this shipped for.
 func TestTeamForWithRegex(t *testing.T) {
-	e := entry("CN=Tugberk,OU=X,DC=bank,DC=local", map[string][]string{
-		"displayName": {"Tuğberk Çimen (Teknoolji Servis Yönetimi( * YAZILIM UZMANI-Moneytalks"},
-		"department":  {"TEKNOLOJI"},
+	e := entry("CN=Bob,OU=X,DC=bank,DC=local", map[string][]string{
+		"displayName": {"Bob Example (Platform Service Mgmt( * SOFTWARE SPECIALIST-Payments"},
+		"department":  {"ENGINEERING"},
 	})
 	cfg := Config{TeamAttribute: "displayName", TeamRegex: `-([^-]+)$`}
-	if got := teamFor(e, cfg); got != "Moneytalks" {
-		t.Fatalf("teamFor = %q, want Moneytalks", got)
+	if got := teamFor(e, cfg); got != "Payments" {
+		t.Fatalf("teamFor = %q, want Payments", got)
 	}
 	// Regex also composes with the legacy chain: department has no dash
 	// → empty (not the division name — that was the original complaint).

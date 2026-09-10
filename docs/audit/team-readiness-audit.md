@@ -70,10 +70,10 @@ Geçmiş: `history:930a4196` (v0.9.316) `internal/anomaly/log_patterns_cost_test
 
 | Konum | Maskeli değer | Öneri |
 |---|---|---|
-| `docs/audit/influx-integration.md:4,9,180,259-262,365,383` (**takipli**) | `GG*Bckt/<measurement>/<field>` serisi, `(REDACTED × REDACTED)`, `REDACTED/REDACTED` alan adları | tamamen kaldır ya da `<bucket>/<measurement>/<field>` |
+| `docs/audit/influx-integration.md:4,9,180,259-262,365,383` (**takipli**) | `GG*Bckt/<measurement>/<field>` serisi, `(<operasyon-kolonu> × <hata-kodu-kolonu>)`, `<kanal-kolonu>/<fonksiyon-kolonu>` alan adları | tamamen kaldır ya da `<bucket>/<measurement>/<field>` |
 | `docs/audit/cosre-agent-v2.md:248,440,599` | measurement adı | jenerik |
 | `docs/plans/spec-influx-error-ratio.md` (untracked, ignore edilmemiş) | oran formülü + alan adları | kaldır |
-| `internal/anomaly/external_test.go:94,121,133`, `external_cluster_test.go:87`, `internal/chstore/external_seasonal_test.go:41-42`, `frontend/src/features/anomalies/externalEvidence.test.ts:8,55` | `REDACTED`, `REDACTED`, `REDACTED`, `REDACTED` | sentetik (`ext-src`, `fail_count`, `op_code`, `err_code`) |
+| `internal/anomaly/external_test.go:94,121,133`, `external_cluster_test.go:87`, `internal/chstore/external_seasonal_test.go:41-42`, `frontend/src/features/anomalies/externalEvidence.test.ts:8,55` | `<hata-sayacı-kolonu>`, `<hata-adedi-kolonu>`, `<operasyon-kolonu>`, `<hata-kodu-kolonu>` | sentetik (`ext-src`, `fail_count`, `op_code`, `err_code`) |
 
 Yalnız geçmişte: bucket adları + tam Flux şablonları (`frontend/src/pages/settings/influxForm.ts`, `InfluxTab.tsx`, `internal/influx/*` — ilk `ee8aaf0f` v0.10.222 2026-09-01 → silindi `6ab9c4cf` v0.10.606; 47 satır, 9 commit); commit mesajları da ekibi/bucket'ı anıyor (v0.10.526) — yalnız rewrite ile temizlenir.
 
@@ -134,9 +134,9 @@ Sayım: `BSA_0xx` 14 / 8 dosya; kanal kodu değerleri 12 / 4 dosya.
 |---|---|---|---|---|---|
 | Host/IP/URL | 1 FQDN + 6 IP + 2 cluster/ns | 20 / 10 | 4 | 2 sınıf (e-posta domain'i, `com.<KURUM>` paketi) | `6e115529` 2026-07-26 |
 | DB şema | şema sahibi, `ERROR_LOG`, ~20 `ERR_*`, fraud tablosu(+3 kolon), `uptrace_all` | 220+410 / 30 | 0 | 0 | `dcfc81db` 2026-08-28 |
-| Influx | bucket, measurement/field, `REDACTED` … | 26 / 8 | 1 | bucket'lar + Flux (47 satır, 9 commit) | `ee8aaf0f` 2026-09-01 |
+| Influx | bucket, measurement/field, `<kanal-kolonu>` … | 26 / 8 | 1 | bucket'lar + Flux (47 satır, 9 commit) | `ee8aaf0f` 2026-09-01 |
 | OCP/K8s | 82 `kurum-öneki*` + 6 cluster + 6 düğüm | 265 / 54 | 54 | 0 | `e7449af4` 2026-07-18 |
-| İş kodları | `BSA_0xx`×3, kanal kodları ×8, `DEFAULT_TRACE_COLUMNS` | 45 / 12 | 0 | `REDACTED` | `f7c9dd22` 2026-09-09 |
+| İş kodları | `BSA_0xx`×3, kanal kodları ×8, `DEFAULT_TRACE_COLUMNS` | 45 / 12 | 0 | `<kanal-kolonu>` | `f7c9dd22` 2026-09-09 |
 | LDAP/e-posta | 2 OU, 2 kişi | 18 / 1 | 0 | 1 kurumsal e-posta | `a7979328` 2026-07-10 |
 | Secret | 0 canlı (1 local-dev literal) | 1 / 1 | 0 | 0 | — |
 

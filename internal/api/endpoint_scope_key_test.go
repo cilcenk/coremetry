@@ -44,7 +44,7 @@ func TestEndpointDetailKeyCarriesScope(t *testing.T) {
 		!strings.Contains(key("uat", "eu-west"), "clu=eu-west") {
 		t.Fatalf("key must carry both scope values, got %q", key("uat", "eu-west"))
 	}
-	if key("uat", "") != key("uat", "") {
+	if k1, k2 := key("uat", ""), key("uat", ""); k1 != k2 {
 		t.Fatal("the key must be deterministic")
 	}
 }

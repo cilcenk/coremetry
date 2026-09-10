@@ -30,8 +30,7 @@ func TestBatchKeySeparatesSearches(t *testing.T) {
 	}
 	// Boş arama, aramasız çağrıyla aynı kalmalı: aksi halde mevcut
 	// çağıranların (servis detayı) önbelleği tek seferde soğurdu.
-	if spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "", aggs) !=
-		spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "", aggs) {
+	if k1, k2 := spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "", aggs), spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "", aggs); k1 != k2 {
 		t.Error("aynı girdi iki farklı anahtar üretti — deterministik değil")
 	}
 }

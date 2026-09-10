@@ -147,7 +147,7 @@ func TestExclusionDigestInvariants(t *testing.T) {
 		t.Error("sıra özeti değiştirdi — sort adımı düştü")
 	}
 	// Kararlı.
-	if mustCompile(t, a, b).Digest() != mustCompile(t, a, b).Digest() {
+	if k1, k2 := mustCompile(t, a, b).Digest(), mustCompile(t, a, b).Digest(); k1 != k2 {
 		t.Error("özet kararsız")
 	}
 	// dropAtIngest bayrağı özete girer: aynı desen ingest'te düşerken

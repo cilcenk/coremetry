@@ -389,8 +389,7 @@ func TestTraceLinkIdentityCacheKey(t *testing.T) {
 		seen[k] = true
 	}
 	// Aynı girdi → aynı anahtar (kararlılık).
-	if traceLinkIdentityCacheKey("t1", "s1", "tz", []string{"a", "b"}) !=
-		traceLinkIdentityCacheKey("t1", "s1", "tz", []string{"a", "b"}) {
+	if k1, k2 := traceLinkIdentityCacheKey("t1", "s1", "tz", []string{"a", "b"}), traceLinkIdentityCacheKey("t1", "s1", "tz", []string{"a", "b"}); k1 != k2 {
 		t.Fatal("anahtar kararsız")
 	}
 }

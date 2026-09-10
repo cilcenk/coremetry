@@ -37,7 +37,7 @@ func TestNormalizeSignature_CapAndHash(t *testing.T) {
 	if got := NormalizeSignature(long); len(got) != signatureMaxLen {
 		t.Fatalf("cap at %d, got %d", signatureMaxLen, len(got))
 	}
-	if SignatureHash("a") == SignatureHash("b") || SignatureHash("a") != SignatureHash("a") {
+	if h1, h2 := SignatureHash("a"), SignatureHash("a"); SignatureHash("a") == SignatureHash("b") || h1 != h2 {
 		t.Fatal("hash must be deterministic and discriminating")
 	}
 }

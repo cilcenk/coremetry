@@ -345,7 +345,7 @@ Kurulu olmayan araçlar (dürüstlük): golangci-lint, staticcheck, gosec, hadol
 | 7 | `go mod tidy -diff` | 3 satır | `go mod tidy` | 15 dk |
 | 8 | gofmt | 83 dosya | tek mekanik sweep commit'i; adım `test -z "$(gofmt -l $(git ls-files '*.go'))"`; `go.mod` `toolchain go1.25.14` + üç workflow `go-version-file` | 30 dk |
 | 9 | actionlint / hadolint | 6 warn | tırnak/`for _ in`; `apk add pkg=ver`; `--ignore DL3006` | 1 saat |
-| 10 | golangci-lint | 123 | errcheck `exclude-functions` (CH `Close` −44); 25 `unused` sil; SA4000 ×4 gerçek test hatası (`internal/api/devops_frames_test.go:43`, `endpoint_scope_key_test.go:47`, `logs_field_values_window_test.go:70`, `internal/notify/problem_dedup_test.go:375`); SA1012 ×3 (`acache_test.go:223-229` nil ctx); SA1019 ×5; QF* ertele | 1-2 gün |
+| 10 | golangci-lint | 123 | errcheck `exclude-functions` (CH `Close` −44); 25 `unused` sil; SA4000 ×13 = bilinçli determinizm iddiaları `f(x) != f(x)` — gerçek hata DEĞİL; v0.10.634 iki-bağlama biçimine çevirdi (`k1, k2 := f(x), f(x)`), lint sıfırlandı; SA1012 ×3 (`acache_test.go:223-229` nil ctx); SA1019 ×5; QF* ertele | 1-2 gün |
 | 11 | prettier | 1042 | tek mekanik `npm run format` commit'i (sessiz pencere) | 1 saat |
 | 12 | CodeQL | 64 | 11 critical triyajı; codeql.yml:42 `check-latest`; branch protection "Code scanning results" | 2-3 gün |
 | 13 | gosec | 490 | kapı değil; `-severity high -confidence high -exclude G115,G404,G118` → G402/G703/G709 kalır | 1 gün |
@@ -641,7 +641,7 @@ Etki: Y (yayın/güvenlik engeli) · O (ekip verimliliği) · D (kozmetik). Efor
 | 9 | api.go ratchet: `.claude/baselines/api_go_lines`=12113 + `api_go_size_test.go` + hook + CI adımı | O | S | §3.1 |
 | 10 | go.mod `toolchain` + üç workflow `go-version-file`; gofmt sweep (83 dosya) + CI kapısı; `go mod tidy`; `make audit` CI'a | O | S | §3.2, §4.4 #6-8 |
 | 11 | gitleaks pre-commit + CI + repo'ya özel kural seti + allowlist | O (yayın sonrası tekrar sızıntı önleyici) | M | §3.3 |
-| 12 | golangci 123 → 0 (4 gerçek test hatası dahil), ESLint hard; prettier sweep (1042 dosya) | O | L | §4.4 #10-11 |
+| 12 | golangci 123 → 0 (SA4000 ×13 determinizm iddiası → 634, gerçek hata değildi), ESLint hard; prettier sweep (1042 dosya) | O | L | §4.4 #10-11 |
 | 13 | Onboarding: `docs/local-dev.md` (dist ön koşulu, compose/minikube, portlar), `docs/ENV.md` (110 değişken), `codebase-tour` skill'i, test kültürü sözlüğü, DECISIONS v0.7→v0.10, adlandırma çakışmaları (§6.2) | O | L | §6 |
 | 14 | Org transferi + modül yolu + ghcr ad alanı + Chart/README URL'leri | O | M | §7 |
 | 15 | Kök ikili/artefakt temizliği; annotated tag'ler; `release.yml` Release notu | D | S | §5.1 |
@@ -667,7 +667,7 @@ Repo dışında operatöre teslim: `leak-raw.txt` (1524 satır, maskesiz) — bu
 | 9 | api.go ratchet | **GEMİDE** 625 (taban 12113, test, hook, CI adımı) |
 | 10 | gofmt sweep + tidy + make audit + toolchain | **GEMİDE** 626 (`make audit`, `go mod tidy -diff`, CGO=0), 628 (86 dosya gofmt + CI kapısı). `go.mod` `toolchain` pini **operatör** (sorulmadan eklenmez) |
 | 11 | gitleaks | **AÇIK** — yayın sonrası önleyici; ayrı dilim |
-| 12 | golangci 123 / prettier 1042 / ESLint hard | **KISMİ**: ESLint gerçek kapı 627. golangci + prettier **AÇIK** (mekanik, sessiz pencere ister) |
+| 12 | golangci 123 / prettier 1042 / ESLint hard | **KISMİ**: ESLint gerçek kapı 627. golangci 123 → 110 (SA4000 ×13 → 634: determinizm iddiaları iki-bağlama biçimine; gerçek test hatası ÇIKMADI). Kalan golangci + prettier **AÇIK** (mekanik, sessiz pencere ister) |
 | 13 | Onboarding | **GEMİDE** 629 (docs/ENV.md 89 değişken, docs/local-dev.md), 630 (`/codebase-tour` skill + test kültürü sözlüğü), 631 (README bağlantıları + `make build-ui` ön koşulu) |
 | 14 | Org transferi + modül yolu + ghcr + URL'ler | **KISMİ**: org `cosretr` + tüm URL/imaj referansları 617; imaj paketi public (operatör). Kalan **operatör**: `go.mod` modül yolu, `charts/coremetry` paketinin public yapılması |
 | 15 | Kök artefakt temizliği, annotated tag, Release notu | **AÇIK** (D) |

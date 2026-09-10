@@ -23,7 +23,7 @@ func TestLogsSearchKey_CarriesHasTrace(t *testing.T) {
 	if !strings.Contains(key(true), "ht=true") {
 		t.Fatalf("key must carry the hasTrace value; got %q", key(true))
 	}
-	if key(true) != key(true) {
+	if k1, k2 := key(true), key(true); k1 != k2 {
 		t.Fatal("logsSearchKey must be deterministic")
 	}
 }
@@ -47,7 +47,7 @@ func TestTailFilterKey_CarriesHasTrace(t *testing.T) {
 	if tailFilterKey(on) == tailFilterKey(base) {
 		t.Fatal("hasTrace on/off must produce distinct tail poll groups")
 	}
-	if tailFilterKey(on) != tailFilterKey(on) {
+	if k1, k2 := tailFilterKey(on), tailFilterKey(on); k1 != k2 {
 		t.Fatal("tailFilterKey must be deterministic")
 	}
 }

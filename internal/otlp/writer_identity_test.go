@@ -94,7 +94,7 @@ func TestWriterIdentityChain(t *testing.T) {
 	})
 
 	t.Run("hiç kimlik yoksa deterministik tek seri (belgeli kalıntı)", func(t *testing.T) {
-		if fpOf(t, with(nil)) != fpOf(t, with(nil)) {
+		if k1, k2 := fpOf(t, with(nil)), fpOf(t, with(nil)); k1 != k2 {
 			t.Fatal("kimliksiz vaka deterministik değil")
 		}
 	})

@@ -372,7 +372,7 @@ func TestTeamMailClaimIsHeldAcrossTheSend(t *testing.T) {
 			"o problemin mailini süreç ömrü boyunca sessizce öldürür")
 	}
 	// Kimliksiz asla kilitlenmez: haber kaybetmektense geç.
-	if !n.claimTeamMail("") || !n.claimTeamMail("") {
+	if first, second := n.claimTeamMail(""), n.claimTeamMail(""); !first || !second {
 		t.Error("kimliksiz problem kilitlendi — açık geçmeliydi")
 	}
 }

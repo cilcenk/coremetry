@@ -28,7 +28,7 @@ func TestLogsSearchKey_CarriesWantCursor(t *testing.T) {
 	if !strings.Contains(key(true), "pg=true") {
 		t.Fatalf("key must carry the paging value; got %q", key(true))
 	}
-	if key(true) != key(true) {
+	if k1, k2 := key(true), key(true); k1 != k2 {
 		t.Fatal("logsSearchKey must be deterministic")
 	}
 }

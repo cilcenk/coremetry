@@ -67,7 +67,7 @@ func TestFieldValuesKeyCarriesWindow(t *testing.T) {
 	if !strings.Contains(key(time.Hour, to), "since=1h0m0s") {
 		t.Fatalf("key must carry the window, got %q", key(time.Hour, to))
 	}
-	if key(time.Hour, to) != key(time.Hour, to) {
+	if k1, k2 := key(time.Hour, to), key(time.Hour, to); k1 != k2 {
 		t.Fatal("the key must be deterministic")
 	}
 }

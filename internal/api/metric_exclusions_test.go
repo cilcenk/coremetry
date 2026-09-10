@@ -54,7 +54,7 @@ func TestDeriveExclusionRuleWildcardHasNoMetricCondition(t *testing.T) {
 // yoksa biri diğerini sessizce ezer.
 func TestDeriveExclusionRuleIDIsDeterministicAndDistinct(t *testing.T) {
 	a := chstore.MetricExclusionRule{Metric: "m1", Pattern: "^/health", DropAtIngest: true}
-	if deriveExclusionRule(a).ID != deriveExclusionRule(a).ID {
+	if k1, k2 := deriveExclusionRule(a).ID, deriveExclusionRule(a).ID; k1 != k2 {
 		t.Error("aynı kural iki farklı kimlik üretti — her kayıtta yeni ikiz birikir")
 	}
 	diffPattern := a

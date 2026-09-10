@@ -133,9 +133,9 @@ func (s *Server) testOracleSource(w http.ResponseWriter, r *http.Request) {
 type oracleStatusPayload struct {
 	// v0.10.601 — worker liderinin poll durumu (system_settings blobu; influx
 	// v0.10.333 duruşu). nil = henüz yayın yok.
-	Poll *oracle.WorkerStatusSnapshot `json:"poll,omitempty"`
-	Sources     []oracle.SourceStatus `json:"sources"`
-	GeneratedAt int64                 `json:"generatedAt"`
+	Poll        *oracle.WorkerStatusSnapshot `json:"poll,omitempty"`
+	Sources     []oracle.SourceStatus        `json:"sources"`
+	GeneratedAt int64                        `json:"generatedAt"`
 }
 
 func (s *Server) getOracleStatus(w http.ResponseWriter, r *http.Request) {

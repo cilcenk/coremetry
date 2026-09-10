@@ -196,7 +196,7 @@ func TestBehaviorQueryShape(t *testing.T) {
 	}
 	// UTC pini: iki taraf aynı saati konuşmalı (v0.8.323).
 	if strings.Count(q, "'UTC'") < 2 {
-		t.Error("toDayOfWeek/toHour UTC pinli değil — CH sunucusunun saat "+
+		t.Error("toDayOfWeek/toHour UTC pinli değil — CH sunucusunun saat " +
 			"dilimi Go tarafından farklıysa baseline yanlış kovaya bakar")
 	}
 	// Dairesel kova eşleşmesi (hafta sarması).
@@ -245,7 +245,7 @@ func TestSplitBehaviorSeries(t *testing.T) {
 	rows := []behaviorRow{
 		{Unix: cut - 600, HOW: 10, Spans: 3000, Errs: 30},
 		{Unix: cut - 300, HOW: 10, Spans: 3000, Errs: 30},
-		{Unix: cut, HOW: 10, Spans: 3000, Errs: 300},     // kesim DAHİL → pencere
+		{Unix: cut, HOW: 10, Spans: 3000, Errs: 300}, // kesim DAHİL → pencere
 		{Unix: cut + 300, HOW: 10, Spans: 3000, Errs: 300},
 	}
 	baseline, recent := splitBehaviorSeries(rows, "error_rate", cut)

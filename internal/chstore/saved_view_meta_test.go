@@ -50,7 +50,7 @@ func TestSavedViewMetaSQL(t *testing.T) {
 
 // TestListSavedViewMetaRequiresOwner — boş sahip SORGU KOŞMADAN hata.
 //
-// owner_id = '' CH'de takım kovasıdır; boş ownerID'yle koşan bir sorgu
+// owner_id = ” CH'de takım kovasıdır; boş ownerID'yle koşan bir sorgu
 // paylaşımlı satırları "benim thread'lerim" diye listelerdi. nil-conn'lu
 // Store{} kanıtı: ad reddedilirse bağlantıya hiç dokunulmaz — geçerli
 // sahiple çağırsak nil conn panik verirdi.

@@ -79,9 +79,10 @@ func IsBareHexID(q string) bool {
 // sayılar tavsiyeyi tersine çevirdi.
 //
 // query_log medyanı, SEKİZER koşum, 24s pencere, CH 26.2:
-//   hasToken('timeout')       → 11.5 ms · 29.795 satır · CPU 11.6 ms
-//   hasToken(<nadir token>)   → 12.0 ms ·      0 satır · CPU 11.0 ms
-//   multiSearchAnyCaseInsens  → 22.0 ms · 29.812 satır · CPU 16.3 ms
+//
+//	hasToken('timeout')       → 11.5 ms · 29.795 satır · CPU 11.6 ms
+//	hasToken(<nadir token>)   → 12.0 ms ·      0 satır · CPU 11.0 ms
+//	multiSearchAnyCaseInsens  → 22.0 ms · 29.812 satır · CPU 16.3 ms
 //
 // İki okuma, ikisi de dilimin aleyhine:
 //

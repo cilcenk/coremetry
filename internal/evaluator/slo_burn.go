@@ -19,8 +19,9 @@ import (
 // minute.
 //
 // Defaults are the SRE-book values for a 30-day SLO window:
-//   • Fast: 1h burn > 14.4 → exhausts a 30d budget in ~2 days
-//   • Slow: 6h burn >  6   → exhausts a 30d budget in ~5 days
+//   - Fast: 1h burn > 14.4 → exhausts a 30d budget in ~2 days
+//   - Slow: 6h burn >  6   → exhausts a 30d budget in ~5 days
+//
 // Critical severity needs both fast AND slow ≥ critical band.
 // Warning band is half: 6 / 1 over the same windows.
 type burnPolicy struct {
@@ -33,10 +34,10 @@ type burnPolicy struct {
 
 var burnPolicies = []burnPolicy{
 	{severity: "critical",
-		fastWindow: 1 * time.Hour,  fastRate: 14.4,
-		slowWindow: 6 * time.Hour,  slowRate: 6.0},
+		fastWindow: 1 * time.Hour, fastRate: 14.4,
+		slowWindow: 6 * time.Hour, slowRate: 6.0},
 	{severity: "warning",
-		fastWindow: 6 * time.Hour,  fastRate: 6.0,
+		fastWindow: 6 * time.Hour, fastRate: 6.0,
 		slowWindow: 24 * time.Hour, slowRate: 3.0},
 }
 
@@ -89,15 +90,15 @@ func (e *Evaluator) evaluateSLOBurn(ctx context.Context, slo chstore.SLO, pol bu
 	switch {
 	case breached && !hasOpen:
 		p := chstore.Problem{
-			ID:       newID(),
-			RuleID:   ruleID,
-			RuleName: fmt.Sprintf("SLO burn-rate %s — %s", pol.severity, slo.Name),
-			Severity: pol.severity,
-			Service:  slo.Service,
-			Metric:   fmt.Sprintf("burn_rate_%dm", int(pol.fastWindow.Minutes())),
-			Value:    fastRate,
+			ID:        newID(),
+			RuleID:    ruleID,
+			RuleName:  fmt.Sprintf("SLO burn-rate %s — %s", pol.severity, slo.Name),
+			Severity:  pol.severity,
+			Service:   slo.Service,
+			Metric:    fmt.Sprintf("burn_rate_%dm", int(pol.fastWindow.Minutes())),
+			Value:     fastRate,
 			Threshold: pol.fastRate,
-			Status:   "open",
+			Status:    "open",
 			Description: fmt.Sprintf(
 				"Burn rate above %s threshold for SLO %q (target %.2f%%). "+
 					"Last %s: %.1fx — %s: %.1fx. At this rate the error budget "+

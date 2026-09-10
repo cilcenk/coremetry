@@ -26,10 +26,10 @@ package copilot
 // SetProfiles'ta korunur (30 s'lik config refresh istemciyi yeniden kurmaz).
 
 import (
-	"github.com/cilcenk/coremetry/internal/ai/modelcaps"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/cilcenk/coremetry/internal/ai/modelcaps"
 	"net/http"
 	"regexp"
 	"sort"

@@ -22,10 +22,10 @@ import (
 
 // senaryo — gerçekçi bir P1 şekli ve ondan beklenen prompt özellikleri.
 type promptScenario struct {
-	name     string
-	problem  chstore.Problem
-	deep     chstore.DeepEvidence
-	wantIn   []string // prompt'ta MUTLAKA geçmeli
+	name      string
+	problem   chstore.Problem
+	deep      chstore.DeepEvidence
+	wantIn    []string // prompt'ta MUTLAKA geçmeli
 	wantNotIn []string // prompt'ta ASLA geçmemeli
 }
 
@@ -50,12 +50,12 @@ func TestPromptGoldenScenarios(t *testing.T) {
 				CodeMeaning: map[string]string{"0012": "0012 - Mobil Kanal"},
 			},
 			wantIn: []string{
-				"SORUŞTURMA",           // denetim izi başlığı
-				"exceptions", "VAR",    // bulunan sinyal
-				"logs", "yok",          // bulunmayan sinyal AÇIKÇA yok diyor
-				"SocketTimeout",        // asıl kanıt
-				"0012", "Mobil Kanal",  // iş boyutu + RAG'dan çözülen anlam
-				"KURAL",                // uydurma yasağı
+				"SORUŞTURMA",        // denetim izi başlığı
+				"exceptions", "VAR", // bulunan sinyal
+				"logs", "yok", // bulunmayan sinyal AÇIKÇA yok diyor
+				"SocketTimeout",       // asıl kanıt
+				"0012", "Mobil Kanal", // iş boyutu + RAG'dan çözülen anlam
+				"KURAL", // uydurma yasağı
 				"sebep olarak GÖSTERME",
 			},
 		},

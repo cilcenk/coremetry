@@ -358,25 +358,25 @@ func TestCronIntervalSec(t *testing.T) {
 		expr string
 		want uint32
 	}{
-		{"0 0/10 * * * ?", 600},  // every 10 minutes (the prod fixture)
-		{"0 */5 * * * ?", 300},   // */N spelling of the same rate
-		{"0 0/1 * * * ?", 60},    // every minute
-		{"0 0 * * * ?", 3600},    // hourly
-		{"0 0 0/2 * * ?", 7200},  // every 2 hours
-		{"0 0 */6 * * ?", 21600}, // every 6 hours
+		{"0 0/10 * * * ?", 600},   // every 10 minutes (the prod fixture)
+		{"0 */5 * * * ?", 300},    // */N spelling of the same rate
+		{"0 0/1 * * * ?", 60},     // every minute
+		{"0 0 * * * ?", 3600},     // hourly
+		{"0 0 0/2 * * ?", 7200},   // every 2 hours
+		{"0 0 */6 * * ?", 21600},  // every 6 hours
 		{"0 0/10 * * * ? *", 600}, // 7-field form with wildcard year
 		// calendar shapes — NOT fixed-rate:
-		{"0 0 2 * * ?", 0},           // daily at 02:00
-		{"0 15 10 ? * MON-FRI", 0},   // weekday-gated
-		{"0 0/10 2 * * ?", 0},        // every 10m ONLY during hour 2
-		{"30 0/10 * * * ?", 0},       // nonzero seconds offset
-		{"0 0/10 * 15 * ?", 0},       // day-of-month gated
-		{"0 0/10 * * JAN ?", 0},      // month gated
-		{"0 0/10 * * * ? 2026", 0},   // constrained year
-		{"0 5/10 * * * ?", 0},        // offset start — not a plain rate
-		{"0 0/0 * * * ?", 0},         // degenerate step
-		{"* * * * * ?", 0},           // every second — nonsense as a rule cadence
-		{"0 0/10 * * *", 0},          // 5 fields is not Quartz
+		{"0 0 2 * * ?", 0},         // daily at 02:00
+		{"0 15 10 ? * MON-FRI", 0}, // weekday-gated
+		{"0 0/10 2 * * ?", 0},      // every 10m ONLY during hour 2
+		{"30 0/10 * * * ?", 0},     // nonzero seconds offset
+		{"0 0/10 * 15 * ?", 0},     // day-of-month gated
+		{"0 0/10 * * JAN ?", 0},    // month gated
+		{"0 0/10 * * * ? 2026", 0}, // constrained year
+		{"0 5/10 * * * ?", 0},      // offset start — not a plain rate
+		{"0 0/0 * * * ?", 0},       // degenerate step
+		{"* * * * * ?", 0},         // every second — nonsense as a rule cadence
+		{"0 0/10 * * *", 0},        // 5 fields is not Quartz
 		{"", 0},
 	}
 	for _, tt := range tests {
@@ -611,9 +611,9 @@ func TestToRuleTypical(t *testing.T) {
 func TestToRuleComparatorMapping(t *testing.T) {
 	base := `{"trigger": {"schedule": {"interval": "1m"}}, "input": {"search": {"request": {"body": {}}}}, "condition": {"compare": {"ctx.payload.hits.total": {%s}}}}`
 	tests := []struct {
-		op        string
-		wantCmp   string
-		wantThr   float64
+		op      string
+		wantCmp string
+		wantThr float64
 	}{
 		{`"gte": 100`, ">=", 100},
 		{`"gt": 10`, ">", 10},
@@ -889,12 +889,12 @@ func TestProdShapeWatchEndToEnd(t *testing.T) {
 
 	// Field-by-field expectations.
 	wantSupported := []string{
-		"trigger.schedule.cron",                        // cron→interval eşlendi
-		"condition.compare",                            // gte 5 on hits.total
-		"input.search",                                 // body verbatim, no mustache
-		"input.search.request.search_type",             // ignored by design
-		"input.search.request.rest_total_hits_as_int",  // ignored by design
-		"actions.email_team.email",                     // mustache OK — never executed
+		"trigger.schedule.cron",                       // cron→interval eşlendi
+		"condition.compare",                           // gte 5 on hits.total
+		"input.search",                                // body verbatim, no mustache
+		"input.search.request.search_type",            // ignored by design
+		"input.search.request.rest_total_hits_as_int", // ignored by design
+		"actions.email_team.email",                    // mustache OK — never executed
 	}
 	for _, field := range wantSupported {
 		if !hasFinding(rep, field, Supported) {

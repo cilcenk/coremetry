@@ -20,11 +20,11 @@ import (
 
 func TestParseCronSupportedForms(t *testing.T) {
 	valid := []string{
-		"0 0 8 * * ?",          // daily at 08:00
-		"0 30 9 ? * MON-FRI",   // weekdays 09:30, dow name range
-		"0 0/10 * * * ?",       // fixed-rate subset stays parseable
-		"0 */5 * * * ?",        // */n step
-		"0 0 12 1 * ?",         // 1st of the month, noon
+		"0 0 8 * * ?",        // daily at 08:00
+		"0 30 9 ? * MON-FRI", // weekdays 09:30, dow name range
+		"0 0/10 * * * ?",     // fixed-rate subset stays parseable
+		"0 */5 * * * ?",      // */n step
+		"0 0 12 1 * ?",       // 1st of the month, noon
 		// v0.9.202 review-fix pinleri — BÜYÜK HARF adlar özel-karakter
 		// taramasına takılmaz: WED 'W' içerir, JUL 'L' içerir; eski
 		// tüm-alan ContainsAny bunları yanlış reddediyordu.
@@ -33,18 +33,18 @@ func TestParseCronSupportedForms(t *testing.T) {
 		"0 0 8 ? * MON-WED",     // range ending at WED
 		"0 0 12 1 JUL ?",        // uppercase JUL (contains L)
 		"0 0 12 ? JUL-SEP TUE",  // month range with JUL
-		"0 0 8,20 * * ?",       // value list
-		"0 0 8-10 * * ?",       // range
-		"0 0 8 * JAN ?",        // month name
-		"0 0 8 * jan-mar ?",    // month name range, case-insensitive
-		"0 0 8 ? * 2",          // Quartz numeric DOW (2 = MON)
-		"0 0 8 ? * SUN,SAT",    // dow name list
-		"0 0 8 * * ? *",        // 7-field, wildcard year
-		"0 0 8 * * ? 2027",     // constrained year
+		"0 0 8,20 * * ?",        // value list
+		"0 0 8-10 * * ?",        // range
+		"0 0 8 * JAN ?",         // month name
+		"0 0 8 * jan-mar ?",     // month name range, case-insensitive
+		"0 0 8 ? * 2",           // Quartz numeric DOW (2 = MON)
+		"0 0 8 ? * SUN,SAT",     // dow name list
+		"0 0 8 * * ? *",         // 7-field, wildcard year
+		"0 0 8 * * ? 2027",      // constrained year
 		"0 0 8 * * ? 2026-2028", // year range
-		"0 15/15 * * * ?",      // a/n step (15,30,45)
-		"0 0-30/10 * * * ?",    // a-b/n step
-		"30 0 8 * * ?",         // fixed seconds
+		"0 15/15 * * * ?",       // a/n step (15,30,45)
+		"0 0-30/10 * * * ?",     // a-b/n step
+		"30 0 8 * * ?",          // fixed seconds
 	}
 	for _, expr := range valid {
 		if _, err := ParseCron(expr); err != nil {

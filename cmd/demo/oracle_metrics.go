@@ -389,7 +389,7 @@ func buildOracleMetrics(inst oracleInstance, c *oracleCounters, startNs, nowNs u
 	procLimit := 800.0
 	procUsage := usageUnder(procLimit, 150, 260)
 	sessLimit := 1224.0 // Oracle default = 1.1*processes + 5, rounded
-	txnLimit := 605.0    // transactions = 1.1*sessions, rounded
+	txnLimit := 605.0   // transactions = 1.1*sessions, rounded
 	txnUsage := usageUnder(txnLimit, 60, 180)
 
 	out = append(out,

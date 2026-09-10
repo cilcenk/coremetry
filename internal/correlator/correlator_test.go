@@ -243,8 +243,8 @@ func TestEdgeStatErrorRate(t *testing.T) {
 		stat EdgeStat
 		want float64
 	}{
-		{EdgeStat{Calls: 0, Errors: 0}, 0},   // no traffic → 0, not NaN
-		{EdgeStat{Calls: 0, Errors: 5}, 0},   // guard divide-by-zero even with stray errors
+		{EdgeStat{Calls: 0, Errors: 0}, 0}, // no traffic → 0, not NaN
+		{EdgeStat{Calls: 0, Errors: 5}, 0}, // guard divide-by-zero even with stray errors
 		{EdgeStat{Calls: 100, Errors: 25}, 0.25},
 		{EdgeStat{Calls: 4, Errors: 1}, 0.25},
 		{EdgeStat{Calls: 10, Errors: 10}, 1.0},

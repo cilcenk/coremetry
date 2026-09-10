@@ -266,15 +266,15 @@ func (r *redisCache) Subscribe(ctx context.Context, channel string) (<-chan []by
 // rather than crashing the panel.
 type RedisStats struct {
 	Version             string  `json:"version"`
-	Mode                string  `json:"mode"`               // standalone|sentinel|cluster
+	Mode                string  `json:"mode"` // standalone|sentinel|cluster
 	Uptime              int64   `json:"uptimeSec"`
 	ConnectedClients    int     `json:"connectedClients"`
 	Keys                int64   `json:"keys"`
 	UsedMemoryBytes     int64   `json:"usedMemoryBytes"`
 	UsedMemoryPeakBytes int64   `json:"usedMemoryPeakBytes"`
 	MaxMemoryBytes      int64   `json:"maxMemoryBytes"`
-	HitRate             float64 `json:"hitRate"`            // keyspace_hits / (hits+misses), 0..1
-	OpsPerSec           float64 `json:"opsPerSec"`          // instantaneous_ops_per_sec
+	HitRate             float64 `json:"hitRate"`   // keyspace_hits / (hits+misses), 0..1
+	OpsPerSec           float64 `json:"opsPerSec"` // instantaneous_ops_per_sec
 	NetInputKBps        float64 `json:"netInputKbps"`
 	NetOutputKBps       float64 `json:"netOutputKbps"`
 	EvictedKeys         int64   `json:"evictedKeys"`
@@ -378,7 +378,7 @@ func splitKV(s string, sep byte) (string, string, bool) {
 }
 
 // Stats on the noop cache returns an empty struct + nil — the System
-// page checks for "version == ''" and renders "Redis not configured".
+// page checks for "version == ”" and renders "Redis not configured".
 func (noopCache) Stats(_ context.Context) (RedisStats, error) {
 	return RedisStats{}, nil
 }

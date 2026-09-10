@@ -288,13 +288,13 @@ type UnaryExpr struct {
 	Expr Expr
 }
 
-func (u *UnaryExpr) exprNode() {}
+func (u *UnaryExpr) exprNode()      {}
 func (u *UnaryExpr) String() string { return u.Op + u.Expr.String() }
 
 // ParenExpr preserves an explicit `(…)` grouping in the tree (and re-render).
 type ParenExpr struct{ Expr Expr }
 
-func (p *ParenExpr) exprNode() {}
+func (p *ParenExpr) exprNode()      {}
 func (p *ParenExpr) String() string { return "(" + p.Expr.String() + ")" }
 
 // NumberLiteral is a scalar constant.
@@ -308,7 +308,7 @@ func (n *NumberLiteral) String() string {
 // StringLiteral — the string arg to label_replace / label_join / count_values.
 type StringLiteral struct{ Val string }
 
-func (s *StringLiteral) exprNode() {}
+func (s *StringLiteral) exprNode()      {}
 func (s *StringLiteral) String() string { return strconv.Quote(s.Val) }
 
 // writeAtOffset renders the shared `@ … offset …` suffix.

@@ -70,8 +70,8 @@ const (
 	keyAttrCardPrefix = "coremetry:attr:card:"
 
 	// WindowMode bookkeeping.
-	tsSuffix    = ":ts"                      // companion ZSET, member -> lastSeenUnix
-	tsRegistry  = "coremetry:acache:tsreg"   // HASH rankKey -> setKey ("" if none)
+	tsSuffix   = ":ts"                    // companion ZSET, member -> lastSeenUnix
+	tsRegistry = "coremetry:acache:tsreg" // HASH rankKey -> setKey ("" if none)
 )
 
 // ── Cardinality policy ───────────────────────────────────────────────────────
@@ -175,12 +175,12 @@ func DefaultPolicy() *StaticPolicy {
 // Options tune the cache. The zero value is invalid — use defaults via
 // NewStore, which fills any unset field.
 type Options struct {
-	Policy     Policy        // attribute-key classifier (default DefaultPolicy())
-	FlushEvery time.Duration // pipeline flush cadence (default 2s)
-	TTL        time.Duration // sliding EXPIRE on every touched key (default 24h; 0 disables)
-	TopN       int           // values kept per CardTrack key (default 1000)
-	MaxValLen  int           // attribute values longer than this are ignored (default 256)
-	MaxDistinctPerKey int     // per-flush in-memory distinct cap per attr key (default 50000)
+	Policy            Policy        // attribute-key classifier (default DefaultPolicy())
+	FlushEvery        time.Duration // pipeline flush cadence (default 2s)
+	TTL               time.Duration // sliding EXPIRE on every touched key (default 24h; 0 disables)
+	TopN              int           // values kept per CardTrack key (default 1000)
+	MaxValLen         int           // attribute values longer than this are ignored (default 256)
+	MaxDistinctPerKey int           // per-flush in-memory distinct cap per attr key (default 50000)
 
 	// WindowMode swaps the sliding-EXPIRE staleness strategy for per-member
 	// time windows: every flush stamps member->now into a companion ZSET, and

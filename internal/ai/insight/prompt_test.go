@@ -17,9 +17,9 @@ func TestProblemPromptUserCarriesEvidence(t *testing.T) {
 		Severity: "critical", Priority: "P1", PriorityReason: "kritik + deploy",
 		Comparator: ">", Value: 12.5, Threshold: 5,
 		StartedNs: now - 2*3600*1e9, NowNs: now,
-		Deploy:    &DeployRef{Version: "v2.1.0", AgeSec: 240, HasImpact: true, P99DeltaPct: 34, ErrDeltaPP: 2.4},
-		Blast:     &BlastRef{TotalCallers: 12, CascadingCallers: 3, TopCallers: []string{"web", "bff"}},
-		SlowOp:    &OpRef{Name: "POST /pay", P95Ms: 842, ErrorRate: 6.5},
+		Deploy: &DeployRef{Version: "v2.1.0", AgeSec: 240, HasImpact: true, P99DeltaPct: 34, ErrDeltaPP: 2.4},
+		Blast:  &BlastRef{TotalCallers: 12, CascadingCallers: 3, TopCallers: []string{"web", "bff"}},
+		SlowOp: &OpRef{Name: "POST /pay", P95Ms: 842, ErrorRate: 6.5},
 	}
 	got := ProblemPromptUser(ev, "")
 	for _, want := range []string{

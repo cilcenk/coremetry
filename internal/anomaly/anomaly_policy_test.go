@@ -10,12 +10,12 @@ import "testing"
 
 func TestDecideAnomaly_Directional(t *testing.T) {
 	cases := []struct {
-		name                string
-		metric              string
-		z, current, median  float64
-		wantOpen            bool
-		wantSeverity        string
-		wantDirection       string
+		name               string
+		metric             string
+		z, current, median float64
+		wantOpen           bool
+		wantSeverity       string
+		wantDirection      string
 	}{
 		// p99 is "up"-only: a 3σ DROP is good news → must NOT open.
 		{"p99 drop ignored", "p99_ms", -4.0, 50, 100, false, "", ""},

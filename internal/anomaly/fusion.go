@@ -38,11 +38,11 @@ const (
 
 // EvidenceBundle is the corroborating signal set for one triggering Problem.
 type EvidenceBundle struct {
-	Problem    chstore.Problem            // the triggering problem
-	CoFiring   []chstore.Problem          // other OPEN problems on the SAME service
-	Signals    []chstore.AnomalyEvent     // active log_pattern / trace_op anomalies on the service
-	Deploy     *chstore.RecentDeployEntry // a deploy of the service just before onset
-	Neighbors  []NeighborProblem          // open problems on direct topology neighbours
+	Problem   chstore.Problem            // the triggering problem
+	CoFiring  []chstore.Problem          // other OPEN problems on the SAME service
+	Signals   []chstore.AnomalyEvent     // active log_pattern / trace_op anomalies on the service
+	Deploy    *chstore.RecentDeployEntry // a deploy of the service just before onset
+	Neighbors []NeighborProblem          // open problems on direct topology neighbours
 	// NeighborSignals (v0.9.1056) — komşulardaki aktif anomaliler;
 	// confidence sayımında Neighbors ile TEK kanal (ölçek /5 sabit).
 	NeighborSignals []NeighborSignal

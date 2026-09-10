@@ -8,7 +8,7 @@
 // the aggregate history survives.
 //
 // Verified on CH 24.8 before writing this: a row past the column TTL but
-// inside the row TTL keeps countMerge/quantilesTDigestMerge and returns ''
+// inside the row TTL keeps countMerge/quantilesTDigestMerge and returns ”
 // for the exemplar.
 //
 // These tests pin the statement shape. Two properties are load-bearing and

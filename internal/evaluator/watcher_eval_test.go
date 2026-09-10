@@ -116,7 +116,7 @@ func TestWatcherTickPlan(t *testing.T) {
 func TestWatcherPacingSurvivesStaleSweep(t *testing.T) {
 	const tick = time.Minute // evaluator interval (main.go wiring)
 	cases := []struct {
-		name string
+		name     string
 		interval time.Duration
 		// failAfterFirst: the first due run opens the problem, every
 		// later due run errors (persistent 403/timeout) — the open

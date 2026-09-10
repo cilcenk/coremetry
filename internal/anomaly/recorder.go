@@ -24,12 +24,12 @@ import (
 // derived in the query layer from last_seen freshness, so we
 // don't need a separate sweep job.
 type Recorder struct {
-	store    *chstore.Store
-	logs     logstore.Store // v0.5.241 — drives DetectLogPatterns so the log-anomaly recorder
-	                       // works against whichever backend is wired (CH or ES).
+	store *chstore.Store
+	logs  logstore.Store // v0.5.241 — drives DetectLogPatterns so the log-anomaly recorder
+	// works against whichever backend is wired (CH or ES).
 	interval time.Duration
 	window   time.Duration
-	lock     cache.Lock // for multi-replica deployments
+	lock     cache.Lock          // for multi-replica deployments
 	leader   *cache.LeaderHolder // v0.5.426 — true leader designation
 }
 

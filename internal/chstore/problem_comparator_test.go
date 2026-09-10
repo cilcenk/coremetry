@@ -147,7 +147,7 @@ func TestIsBelowRule(t *testing.T) {
 //
 // Bu simetri load-bearing: ReplacingMergeTree bütün-satır replace yapıyor.
 // Okuma comparator'ı ATLAYIP yazma EKLERSE her ack/refresh/AI-özeti satırın
-// yönünü DEFAULT ''e indirir ve öncelik hesabı sessizce eski hatalı
+// yönünü DEFAULT ”e indirir ve öncelik hesabı sessizce eski hatalı
 // davranışa döner (v0.9.445/448'in aynı sınıfı).
 func TestProblemColumnListsAgree(t *testing.T) {
 	for _, c := range allProblemColCombos() {

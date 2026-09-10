@@ -158,16 +158,16 @@ type kafkaMetricBlock struct {
 }
 
 type messagingClientsResponse struct {
-	System       string                      `json:"system"`
-	Cluster      string                      `json:"cluster"`
-	Destination  string                      `json:"destination"`
-	Scope        string                      `json:"scope"` // topic | services — v0.10.575
-	Source       string                      `json:"source"`
-	Available    bool                        `json:"available"`
-	EnvAmbiguous bool                        `json:"envAmbiguous,omitempty"`
-	Note         string                      `json:"note"`
-	Producers    []string                    `json:"producers"`
-	Consumers    []string                    `json:"consumers"`
+	System       string   `json:"system"`
+	Cluster      string   `json:"cluster"`
+	Destination  string   `json:"destination"`
+	Scope        string   `json:"scope"` // topic | services — v0.10.575
+	Source       string   `json:"source"`
+	Available    bool     `json:"available"`
+	EnvAmbiguous bool     `json:"envAmbiguous,omitempty"`
+	Note         string   `json:"note"`
+	Producers    []string `json:"producers"`
+	Consumers    []string `json:"consumers"`
 	// v0.10.609 — span'de görünmeyip topic etiketli metrikten keşfedilen
 	// servisler (Producers/Consumers bunları da içerir). ScopeTruncated:
 	// birleşim msgScopeServiceCap'e kırpıldı (sorgu uzunluğu).

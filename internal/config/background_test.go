@@ -63,15 +63,15 @@ func TestResolveLogAnomalyEnabled(t *testing.T) {
 		current bool
 		want    bool
 	}{
-		{"", true, true},          // unset → keep default ON
-		{"", false, false},        // unset → keep an already-off value
-		{"false", true, false},    // explicit disable
-		{"0", true, false},        // explicit disable (numeric)
-		{"true", true, true},      // explicit enable
-		{"1", false, true},        // explicit enable flips an off default back on
-		{"yes", true, true},       // garbage → leave current untouched (don't disable)
-		{"FALSE", true, true},     // case-sensitive: not a recognised disable token → keep ON
-		{"off", false, false},     // garbage → leave current (off) untouched
+		{"", true, true},       // unset → keep default ON
+		{"", false, false},     // unset → keep an already-off value
+		{"false", true, false}, // explicit disable
+		{"0", true, false},     // explicit disable (numeric)
+		{"true", true, true},   // explicit enable
+		{"1", false, true},     // explicit enable flips an off default back on
+		{"yes", true, true},    // garbage → leave current untouched (don't disable)
+		{"FALSE", true, true},  // case-sensitive: not a recognised disable token → keep ON
+		{"off", false, false},  // garbage → leave current (off) untouched
 	}
 	for _, c := range cases {
 		if got := resolveLogAnomalyEnabled(c.env, c.current); got != c.want {

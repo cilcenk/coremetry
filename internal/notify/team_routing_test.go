@@ -67,7 +67,7 @@ func TestTeamContactsSeverityFloor(t *testing.T) {
 		sev  string
 		want bool
 	}{
-		{"", "info", false},        // default floor is warning
+		{"", "info", false}, // default floor is warning
 		{"", "warning", true},
 		{"", "critical", true},
 		{"info", "info", true},

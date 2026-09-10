@@ -30,9 +30,9 @@ import "regexp"
 // fieldQueryRe — `alan:değer` yazımı.
 //
 // Kısıtlar hep bir yanlış-pozitifi kesiyor:
-//   • `[a-zA-Z]` başlangıç → `12:30` (saat) alan sorgusu sayılmaz.
-//   • `(?:[\w.-]*)` → `service.name`, `http_status`, `k8s-pod` yakalanır.
-//   • `:` ardından `[^\s/]` ŞART → `ERROR: boom` (iki nokta + boşluk,
+//   - `[a-zA-Z]` başlangıç → `12:30` (saat) alan sorgusu sayılmaz.
+//   - `(?:[\w.-]*)` → `service.name`, `http_status`, `k8s-pod` yakalanır.
+//   - `:` ardından `[^\s/]` ŞART → `ERROR: boom` (iki nokta + boşluk,
 //     düz metin) ve `http://host` (şema) dışarıda kalır.
 var fieldQueryRe = regexp.MustCompile(`\b[a-zA-Z][\w.-]*:[^\s/]`)
 

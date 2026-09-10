@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
-	"github.com/cilcenk/coremetry/internal/promptfmt"
 	"github.com/cilcenk/coremetry/internal/logstore"
+	"github.com/cilcenk/coremetry/internal/promptfmt"
 	"github.com/cilcenk/coremetry/internal/stackparse"
 )
 

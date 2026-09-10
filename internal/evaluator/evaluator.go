@@ -33,10 +33,10 @@ type Evaluator struct {
 	vmetrics *vmetrics.Service
 	// pollerSourceLive — v0.10.605 (SetPollerSourceLive); nil = tüm poller Problem'leri muaf.
 	pollerSourceLive func(subject string) bool
-	interval time.Duration
-	lock     cache.Lock
-	leader   *cache.LeaderHolder // v0.5.429
-	notifier *notify.Notifier
+	interval         time.Duration
+	lock             cache.Lock
+	leader           *cache.LeaderHolder // v0.5.429
+	notifier         *notify.Notifier
 
 	// escCfg memoises the age-escalation settings (v0.9.248). The
 	// per-service reconcile paths (db_capacity, runtime_pods) clamp

@@ -88,9 +88,9 @@ func mergeMCPServers(in []mcpServerInput, cur mcpclient.Settings) (mcpclient.Set
 			Name: name, Transport: strings.TrimSpace(sv.Transport),
 			URL: strings.TrimSpace(sv.URL), Token: sv.Token,
 			Command: strings.TrimSpace(sv.Command), Args: cleanConventionList(sv.Args),
-			Enabled:    sv.Enabled,
-			AllowTools: cleanConventionList(sv.AllowTools),
-			DenyTools:  cleanConventionList(sv.DenyTools),
+			Enabled:            sv.Enabled,
+			AllowTools:         cleanConventionList(sv.AllowTools),
+			DenyTools:          cleanConventionList(sv.DenyTools),
 			InsecureSkipVerify: sv.InsecureSkipVerify,
 		}
 		if cfg.Transport == "" {

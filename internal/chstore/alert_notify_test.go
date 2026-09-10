@@ -5,6 +5,7 @@ package chstore
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -57,7 +58,10 @@ func TestRuleNotifyColumnPathPins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src := string(p)
+	// v0.10.628 — boşluk dizileri tek boşluğa: pinler alan+tip/ifade sözleşmesidir,
+	// gofmt hizalaması değil (v0.10.592'de "Notify *RuleNotify" hizalama yüzünden
+	// kırılmış, gofmt geri alınmıştı).
+	src := collapseSpaces(string(p))
 	for _, want := range []string{
 		"Notify *RuleNotify",
 		"r.Notify != nil && !s.hasAlertRuleNotifyCol.Load() && !s.probeAlertRuleNotifyCol(ctx)",
@@ -65,25 +69,29 @@ func TestRuleNotifyColumnPathPins(t *testing.T) {
 		"s.alertRuleNotifySelect()",
 		"r.Notify = decodeRuleNotify(notifyJSON)",
 	} {
-		if !strings.Contains(src, want) {
+		if !strings.Contains(src, collapseSpaces(want)) {
 			t.Errorf("problem.go: %q yok", want)
 		}
 	}
 	if strings.Count(src, "s.alertRuleNotifySelect()") != 2 || strings.Count(src, "r.Notify = decodeRuleNotify(notifyJSON)") != 2 {
 		t.Error("list + get: notify_json ikisinde de okunmalı")
 	}
-	st, err := os.ReadFile("store.go")
+	stRaw, err := os.ReadFile("store.go")
 	if err != nil {
 		t.Fatal(err)
 	}
+	st := []byte(collapseSpaces(string(stRaw)))
 	for _, want := range []string{
 		"hasAlertRuleNotifyCol atomic.Bool",
 		"ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS notify_json String DEFAULT ''",
 		"notify_json  String       DEFAULT ''",
 		"s.probeAlertRuleNotifyCol(ctx)",
 	} {
-		if !strings.Contains(string(st), want) {
+		if !strings.Contains(string(st), collapseSpaces(want)) {
 			t.Errorf("store.go: %q yok", want)
 		}
 	}
 }
+
+// collapseSpaces — ardışık boşluk/tab → tek boşluk (hizalama-bağımsız kaynak pini).
+func collapseSpaces(s string) string { return regexp.MustCompile(`[ \t]+`).ReplaceAllString(s, " ") }

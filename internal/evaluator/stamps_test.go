@@ -159,12 +159,12 @@ func TestStampTTL(t *testing.T) {
 		windowSec uint32
 		want      time.Duration
 	}{
-		{0, 10 * time.Minute},    // CooldownSec unset → floor
-		{120, 10 * time.Minute},  // builtin critical ForSec → 4m < floor
-		{180, 10 * time.Minute},  // builtin warning ForSec → 6m < floor
-		{300, 10 * time.Minute},  // 2×300s = exactly the floor
-		{600, 20 * time.Minute},  // builtin warning CooldownSec
-		{3600, 2 * time.Hour},    // long custom window
+		{0, 10 * time.Minute},   // CooldownSec unset → floor
+		{120, 10 * time.Minute}, // builtin critical ForSec → 4m < floor
+		{180, 10 * time.Minute}, // builtin warning ForSec → 6m < floor
+		{300, 10 * time.Minute}, // 2×300s = exactly the floor
+		{600, 20 * time.Minute}, // builtin warning CooldownSec
+		{3600, 2 * time.Hour},   // long custom window
 	}
 	for _, c := range cases {
 		if got := stampTTL(c.windowSec); got != c.want {

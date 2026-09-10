@@ -93,7 +93,7 @@ func TestMetricPointsNeverRoutesToPromotedColumn(t *testing.T) {
 }
 
 // EXISTS bilinçli olarak dizi yolunda: has(attr_keys,'k') ile
-// col != '' eşdeğer değil (anahtar BOŞ DEĞERLE varsa ayrışırlar).
+// col != ” eşdeğer değil (anahtar BOŞ DEĞERLE varsa ayrışırlar).
 func TestExistsStaysOnArrayPath(t *testing.T) {
 	withPromoted(t, "channel_code", "attr_channel_code")
 

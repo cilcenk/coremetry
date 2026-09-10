@@ -86,17 +86,17 @@ func TestParseRoundTrip(t *testing.T) {
 func TestParseAdversarial(t *testing.T) {
 	ok := []struct{ in, want string }{
 		{`http.server.duration{service.name="checkout"}`, `http.server.duration{service.name="checkout"}`}, // dotted metric + dotted label
-		{`foo[1w]`, `foo[7d]`},          // week → days (no 'w' in re-render)
+		{`foo[1w]`, `foo[7d]`},           // week → days (no 'w' in re-render)
 		{`up # {curly} "quote =~`, `up`}, // comment to EOL discarded
-		{`-inf`, `-Inf`},                // case-insensitive inf, canonical caps
+		{`-inf`, `-Inf`},                 // case-insensitive inf, canonical caps
 		{`NaN`, `NaN`},
-		{`0x1f`, `31`},     // hex → decimal
-		{`.5`, `0.5`},      // leading-dot float
-		{`1.5e-3`, `0.0015`}, // signed exponent
-		{"`a\\tb`", `"a\\tb"`},  // raw backtick string: literal backslash
-		{`+1`, `1`},        // unary plus folds away
-		{`- -1`, `1`},      // double negation folds
-		{`2^-2`, `2 ^ -2`}, // signed exponent RHS
+		{`0x1f`, `31`},         // hex → decimal
+		{`.5`, `0.5`},          // leading-dot float
+		{`1.5e-3`, `0.0015`},   // signed exponent
+		{"`a\\tb`", `"a\\tb"`}, // raw backtick string: literal backslash
+		{`+1`, `1`},            // unary plus folds away
+		{`- -1`, `1`},          // double negation folds
+		{`2^-2`, `2 ^ -2`},     // signed exponent RHS
 	}
 	for _, c := range ok {
 		e, err := Parse(c.in)
@@ -110,13 +110,13 @@ func TestParseAdversarial(t *testing.T) {
 	}
 	// Must be rejected (lexer/parser errors), never mis-parsed or panicked.
 	for _, bad := range []string{
-		`5m`,     // bare duration is not an expression
-		`5m2`,    // trailing digit invalidates the duration
-		`5.5m`,   // fractional duration illegal
-		`.foo`,   // '.' is continuation-only, never a start char
+		`5m`,         // bare duration is not an expression
+		`5m2`,        // trailing digit invalidates the duration
+		`5.5m`,       // fractional duration illegal
+		`.foo`,       // '.' is continuation-only, never a start char
 		`http.x:sum`, // ':' excluded from names (no recording rules)
-		`!foo`,   // stray '!'
-		`"oops`,  // unterminated string
+		`!foo`,       // stray '!'
+		`"oops`,      // unterminated string
 	} {
 		if _, err := Parse(bad); err == nil {
 			t.Errorf("Parse(%q) = nil error, want error", bad)

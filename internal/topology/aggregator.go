@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	lockKey       = "topology-aggregator-leader"
-	bucketSize    = 5 * time.Minute
-	settleDelay   = 30 * time.Second // wait this long past bucket end before processing
+	lockKey     = "topology-aggregator-leader"
+	bucketSize  = 5 * time.Minute
+	settleDelay = 30 * time.Second // wait this long past bucket end before processing
 	// v0.5.379 — "live" tick rewrites the in-progress current
 	// bucket every minute so the /topology + /backtrace pages
 	// see fresh edge data within ~1 min of ingest instead of

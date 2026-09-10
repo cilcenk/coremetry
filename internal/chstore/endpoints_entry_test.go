@@ -84,7 +84,7 @@ func TestRPCEntryRefusesTheRawPath(t *testing.T) {
 
 // v0.9.324 — the search box on the RPC tab could not return a row.
 //
-// EntryRPC pins `http_route = ''` — that IS its definition of "non-HTTP
+// EntryRPC pins `http_route = ”` — that IS its definition of "non-HTTP
 // inbound" — while the search conjunct was hardcoded to filter
 // positionCaseInsensitive(http_route, ?) > 0. False for every row the tab can
 // produce. The operator sees their gRPC and Kafka entry points, types a term

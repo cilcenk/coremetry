@@ -98,7 +98,7 @@ func isDBStmtWordByte(b byte) bool {
 // single O(n) pass, no regex, no allocations beyond the output buffer —
 // replicating these re2 semantics:
 //
-//   - '[^']*'                — a quote pairs with the NEXT quote ("'a''b'" is
+//   - '[^']*'                — a quote pairs with the NEXT quote ("'a”b'" is
 //     two adjacent literals → "??"; SQL's doubled-quote escaping is
 //     deliberately not special-cased, matching the read-time regex). An
 //     unterminated quote matches nothing: the quote stays and literals

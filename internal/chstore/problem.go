@@ -73,10 +73,10 @@ type AlertRule struct {
 	// convention so the rules table renders consistently.
 	WatcherJSON string `json:"watcherJson,omitempty"`
 	// Target — v0.10.331: hedefli kural (alert_target.go); alert_rules.target_json.
-	Target    *RuleTarget `json:"target,omitempty"`
+	Target *RuleTarget `json:"target,omitempty"`
 	// Notify — v0.10.519: kural bazında ekip bildirimi (alert_notify.go);
 	// alert_rules.notify_json. nil = sahip + SRE (v0.8.429 varsayılanı).
-	Notify *RuleNotify `json:"notify,omitempty"`
+	Notify    *RuleNotify `json:"notify,omitempty"`
 	CreatedAt int64       `json:"createdAt"` // unix nanoseconds
 }
 

@@ -33,8 +33,10 @@ type fakeExtStore struct {
 	seasonalReqs []chstore.ExternalSeasonalReq
 }
 
-func (f *fakeExtStore) GetAnomalyPromotion(context.Context) chstore.AnomalyPromotionConfig { return f.promo }
-func (f *fakeExtStore) MetricsHorizonDays(context.Context) int                              { return f.horizon }
+func (f *fakeExtStore) GetAnomalyPromotion(context.Context) chstore.AnomalyPromotionConfig {
+	return f.promo
+}
+func (f *fakeExtStore) MetricsHorizonDays(context.Context) int { return f.horizon }
 func (f *fakeExtStore) ExternalSeasonal(_ context.Context, req chstore.ExternalSeasonalReq) (map[string][]float64, map[string]map[int64]struct{}, error) {
 	f.seasonalReqs = append(f.seasonalReqs, req)
 	return f.seasonal, f.seasonalDays, nil
@@ -372,7 +374,7 @@ func TestExternalScan_SeasonalBaselinePreventsFalseOpen(t *testing.T) {
 	if req.Metric != "ext:fail_count" || req.Service != "extsrc" || req.Class != "weekday" || req.TargetSod != 36000 || req.RadiusSec != 900 || len(req.GroupBy) != 2 {
 		t.Fatalf("seasonal request: %+v", req)
 	}
-	if !req.Cutoff.Equal(now.Add(-14 * 24 * time.Hour)) || !req.Upper.Before(now) {
+	if !req.Cutoff.Equal(now.Add(-14*24*time.Hour)) || !req.Upper.Before(now) {
 		t.Fatalf("window: %v..%v", req.Cutoff, req.Upper)
 	}
 
@@ -395,7 +397,7 @@ func TestExternalScan_SeasonalBaselinePreventsFalseOpen(t *testing.T) {
 	// Gün-çeşitliliği yok (tek gün) → mevsimsel düşer → ardışık → açılır.
 	k := &fakeExtStore{cfg: cfg, horizon: 14, seasonal: map[string][]float64{key: season},
 		seasonalDays: map[string]map[int64]struct{}{key: {1: {}}},
-		series: []chstore.SpanMetricSeries{extSeries(vals, now, "OP1", "E1")}}
+		series:       []chstore.SpanMetricSeries{extSeries(vals, now, "OP1", "E1")}}
 	rep, _ = newExtScanner(k, now).Scan(context.Background(), extTarget)
 	if rep.Opened != 1 || rep.Seasonal != 0 {
 		t.Fatalf("single-day seasonal history must be pruned: %+v", rep)

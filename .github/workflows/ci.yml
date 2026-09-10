@@ -149,12 +149,11 @@ jobs:
     name: Lint (golangci-lint)
     needs: frontend
     runs-on: ubuntu-latest
-    # ADVISORY (v0.7.26): the existing ~32-finding standard-set baseline
-    # (errcheck/govet/ineffassign/staticcheck/unused) is being triaged — real
-    # bugs ship as their own bug-fix releases, intentional patterns get
-    # excluded in .golangci.yml. Drop continue-on-error to make this a hard
-    # gate once `golangci-lint run` is clean.
-    continue-on-error: true
+    # HARD GATE since v0.10.639: the standard-set baseline was triaged to
+    # zero in v0.10.634-638 (SA4000 determinism idiom, unused, errcheck
+    # policy, staticcheck/govet/ineffassign). Intentional patterns live in
+    # .golangci.yml with a version-stamped reason; a new finding fails the
+    # job. Caps are lifted below so nothing hides behind the 50/3 defaults.
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -178,10 +177,11 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
-          # Advisory: exit 0 even with findings (the ~32-finding baseline is
-          # being triaged). The job stays green; findings surface as
-          # annotations. Drop this + continue-on-error to make it a hard gate.
-          args: --issues-exit-code=0
+          # v0.10.639: hard gate. golangci's defaults cap output at 50 per
+          # linter / 3 per identical issue and hid the true total (the audit's
+          # "123" was a capped number; uncapped it was 143). Lift the caps so
+          # the gate — and any local run mirroring it — sees everything.
+          args: --max-issues-per-linter 0 --max-same-issues 0
 
   security:
     name: Security (vuln + dep scan)

@@ -31,19 +31,28 @@ doküman onların ÜZERİNE ne eksik ve hangi sırayla, onu söyler. Kod değiş
 
 ## 3. Program — dört faz, her biri kendi sürümü
 
-### Faz A — skor geçmişi + rubrik (G1, G2) · ~1 gün · **derived**
+### Faz A — skor geçmişi + rubrik (G1, G2) · **GEMİDE v0.10.666** · **derived**
 
-- Replay sonucu `ai_calls`'a yazılır: `surface='evalset:<vaka>'`, `exchange_id=<koşum id>`,
-  `status` = geçti/kaldı, `error_msg` = kalan kapının adı. Yeni şema YOK (invariant #5
-  ruhu); `/ai` ve E3 istatistikleri `surface LIKE 'evalset:%'` ile ayrıştırır, prod
-  maliyet sayımından düşer.
+> Uygulama notu (v0.10.666): skor geçmişi `ai_calls`'a DEĞİL, repo dışı JSON
+> artefaktlara yazılır (`COREMETRY_EVAL_OUT`, varsayılan `evalset-runs/`,
+> gitignore'lu). Gerekçe: replay CH'ye bağımlı olmamalı — "evalset bir
+> geliştiricinin gerçek anahtarına asla ateşlenmez, kayıt bellek içi"
+> sözleşmesi (evalset_test.go). Rubrik `internal/ai/evalrubric` (saf, CI'da
+> testli); diff `go run ./cmd/evalsetdiff a.json b.json` ya da `make evalset-diff`.
+> Doğrulama (aynı prompt + model iki koşum → Δ ≤ 0,05) yerel model ister —
+> bu makinede model sunucusu yoktu, operatörde.
+
+- Replay sonucu koşum artefaktına yazılır (`evalrubric.Run` JSON: promptVersion, model,
+  vaka başına ikili kapı + rubrik + gecikme, özet). `ai_calls` yolu ertelendi
+  (uygulama notu yukarıda); `/ai` sayfasında "son koşum" kartı Faz D'ye.
 - Rubrik (her vaka için JSON, skill'in yapısal çıktı ilkesi): `grounded` (0/1, kalkan
   `unknown[]` boş), `answers_question` (0–2), `language_tr` (0/1), `length_ok` (0/1,
   yüzey tavanı), `tool_calls_valid` (0/1, serbest döngü). Ağırlıklı toplam 0–1; eşik 0,8
   (evaluator-optimizer deseni). Rubrik değerlendiricisi ÖNCE deterministik
   (regex/kalkan/tool şeması) — LLM yargıcı Faz B'de eklenir.
-- Koşum altbilgisi: prompt_version + model + rubrik ortalaması; iki koşum diff'i
-  `go test -tags evalset -run TestEvalsetReplay -json` çıktısından `scripts/evalset-diff.sh`.
+- Koşum altbilgisi: prompt_version + model + rubrik ortalaması + eşik altı sayısı;
+  iki koşum diff'i `cmd/evalsetdiff` (gerileyen/iyileşen vaka, yeni FAIL/ok, model
+  farkı → "kıyaslanamaz", aynı prompt → gürültü notu).
 
 **Doğrulama:** aynı prompt + aynı model iki koşum → rubrik farkı ≤ 0,05 (gürültü tabanı
 ölçülür; yerel model sıcaklığı 0 değilse önce sabitle).

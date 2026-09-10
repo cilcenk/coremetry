@@ -119,3 +119,6 @@ ds-bundle/
 scratchpad/
 # v0.10.626 — Copilot modernize log'ları (untracked artefakt)
 .github/modernize/
+
+# v0.10.666 — evalset koşum artefaktları (COREMETRY_EVAL_OUT); repo dışı skor geçmişi
+evalset-runs/

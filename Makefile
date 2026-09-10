@@ -1,4 +1,4 @@
-.PHONY: build build-ui build-go build-demo test test-race lint run dev-ui clean docker-up docker-up-demo docker-down docker-distributed-up docker-distributed-down minikube-up minikube-down audit
+.PHONY: build build-ui build-go build-demo test test-race lint run dev-ui clean docker-up docker-up-demo docker-down docker-distributed-up docker-distributed-down minikube-up minikube-down audit evalset evalset-diff
 
 # VERSION is auto-derived from `git describe` so local builds
 # show something like "v0.4.48-3-gabcdef" instead of literal
@@ -58,6 +58,15 @@ dev-ui:
 # Intended as a pre-tag gate — run before `git tag v0.5.X`.
 audit:
 	@./scripts/audit.sh
+
+# v0.10.666 — CoSRE evalset replay'i (yerel model; CI DIŞI). Koşum artefaktı
+# evalset-runs/ altına yazılır; iki koşum: `make evalset-diff`.
+#   COREMETRY_EVAL_BASE_URL=http://localhost:11434/v1 COREMETRY_EVAL_MODEL=qwen3:8b make evalset
+EVAL_OUT ?= evalset-runs
+evalset:
+	@COREMETRY_EVAL_OUT=$(EVAL_OUT) go test -tags evalset ./internal/api/ -run TestEvalsetReplay -v -count=1
+evalset-diff:
+	@go run ./cmd/evalsetdiff -latest $(EVAL_OUT)
 
 # Docker build picks up VERSION from the env block above and
 # tags two images: a precise per-version `coremetry:vX.Y.Z`

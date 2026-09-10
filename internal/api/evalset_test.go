@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cilcenk/coremetry/internal/ai/evalrubric"
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
 )
@@ -61,7 +62,8 @@ func TestEvalsetReplay(t *testing.T) {
 
 	cases := loadEvalset(t)
 	pass, fail, skipped := 0, 0, 0
-	t.Logf("id\tsurface\tok\tlatency_ms\tunknown_entities\tfails")
+	var results []evalrubric.CaseResult // v0.10.666 — Faz A rubrik + artefakt
+	t.Logf("id\tsurface\tok\tlatency_ms\tunknown_entities\trubric\tfails")
 	for _, c := range cases {
 		if why := evalCaseSkipReason(c); why != "" { // v0.10.431
 			skipped++
@@ -109,7 +111,9 @@ func TestEvalsetReplay(t *testing.T) {
 		} else {
 			pass++
 		}
-		t.Logf("%s\t%s\t%s\t%d\t%d\t%s", c.ID, c.Surface, okS, lat, unknown, strings.Join(fails, " | "))
+		rub := evalrubric.Score(evalRubricInput(c, answer, err, unknown, rcaH != nil))
+		results = append(results, evalrubric.CaseResult{ID: c.ID, Surface: c.Surface, OK: len(fails) == 0, LatencyMs: lat, Fails: fails, Rubric: rub})
+		t.Logf("%s\t%s\t%s\t%d\t%d\t%.2f\t%s", c.ID, c.Surface, okS, lat, unknown, rub.Total, strings.Join(fails, " | "))
 		if len(fails) > 0 {
 			t.Errorf("%s (%s): %s\n  why: %s\n  answer: %s", c.ID, c.Surface, strings.Join(fails, "; "), c.Why, strings.TrimSpace(answer))
 		}
@@ -127,6 +131,18 @@ func TestEvalsetReplay(t *testing.T) {
 	}
 	n := len(rec.recs)
 	rec.mu.Unlock()
-	t.Logf("prompt_version=%s model=%s n=%d pass=%d fail=%d skipped=%d recorded=%d shield_hits_total=%d",
-		copilot.PromptVersion(), model, len(cases), pass, fail, skipped, n, shield)
+	sum := evalrubric.Summarize(results, skipped)
+	t.Logf("prompt_version=%s model=%s n=%d pass=%d fail=%d skipped=%d recorded=%d shield_hits_total=%d rubric_mean=%.3f below_threshold=%d",
+		copilot.PromptVersion(), model, len(cases), pass, fail, skipped, n, shield, sum.RubricMean, sum.BelowThr)
+	// v0.10.666 — koşum artefaktı (Faz A skor geçmişi): COREMETRY_EVAL_OUT dizini
+	// verildiyse JSON yazılır; iki koşum `go run ./cmd/evalsetdiff` ile kıyaslanır.
+	// ai_calls'a DEĞİL: replay CH'ye bağımlı olmamalı (başlıktaki sözleşme).
+	if out := os.Getenv("COREMETRY_EVAL_OUT"); out != "" {
+		run := evalrubric.Run{Schema: evalrubric.RunSchema, At: time.Now(), PromptVersion: copilot.PromptVersion(), Model: model, Provider: provider, Cases: results, Summary: sum}
+		if p, err := evalrubric.WriteRun(out, run); err != nil {
+			t.Errorf("koşum artefaktı yazılamadı: %v", err)
+		} else {
+			t.Logf("koşum artefaktı: %s", p)
+		}
+	}
 }

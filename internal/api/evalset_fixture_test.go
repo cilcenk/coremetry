@@ -9,6 +9,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/cilcenk/coremetry/internal/ai/evalrubric"
 	"os"
 	"path/filepath"
 	"sort"
@@ -408,5 +409,45 @@ func TestScoreRCACase(t *testing.T) {
 	}
 	if fails, _ := scoreRCACase(c, h, cat, `{"verdict":"insufficient_evidence","root_cause":{"evidence":[]}}`); len(fails) != 1 || !strings.HasPrefix(fails[0], "verdict") {
 		t.Fatalf("küme dışı verdict kızarmalı: %v", fails)
+	}
+}
+
+// evalRubricInput — v0.10.666 (Faz A): vaka beklentisi + çıktı → deterministik
+// rubrik girdisi. Dil boyutu yalnız düz metin yüzeylerde (JSON/şema yüzeyleri
+// ve RCA hakemi n/a); grounded tavanı vakanın maxUnknownEntities'i (yoksa 0).
+func evalRubricInput(c evalCase, answer string, err error, unknown int, rca bool) evalrubric.Input {
+	maxUnknown := 0
+	if c.Expect.MaxUnknownEntities != nil {
+		maxUnknown = *c.Expect.MaxUnknownEntities
+	}
+	return evalrubric.Input{
+		Answer:         answer,
+		Err:            err,
+		UnknownCount:   unknown,
+		MaxUnknown:     maxUnknown,
+		MustContain:    c.Expect.MustContain,
+		MustNotContain: c.Expect.MustNotContain,
+		ExpectTurkish:  !evalJSONSurface(c.Surface) && !rca,
+	}
+}
+
+// TestEvalRubricInput — adaptör sözleşmesi (CI): JSON yüzeyi dil boyutu
+// almaz, tavan vakadan, hata geçer.
+func TestEvalRubricInput(t *testing.T) {
+	two := 2
+	c := evalCase{ID: "x", Surface: "Problem", Expect: evalExpect{MustContain: []string{"checkout"}, MaxUnknownEntities: &two}}
+	in := evalRubricInput(c, "checkout için cevap", nil, 1, false)
+	if !in.ExpectTurkish || in.MaxUnknown != 2 || in.UnknownCount != 1 || len(in.MustContain) != 1 {
+		t.Fatalf("adaptör: %+v", in)
+	}
+	cj := evalCase{ID: "y", Surface: "IntentClassify"}
+	if evalRubricInput(cj, "{}", nil, 0, false).ExpectTurkish {
+		t.Fatal("JSON yüzeyi dil boyutu almamalı")
+	}
+	if evalRubricInput(c, "", nil, 0, true).ExpectTurkish {
+		t.Fatal("RCA hakemi dil boyutu almamalı")
+	}
+	if evalrubric.Score(in).Total <= 0 {
+		t.Fatal("geçerli girdi puan üretmeli")
 	}
 }

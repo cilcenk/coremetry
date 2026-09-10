@@ -95,9 +95,9 @@ DİĞER
 ÖRNEK — prod (uptrace_all, 2 shard × 2 replica)
   CH_PASSWORD=... scripts/migrate-0009-state-unify.sh \
       --cluster uptrace_all --database coremetry \
-      --host 172.31.240.15 --user default \
-      --insert-host 172.31.240.15 --insert-host 172.31.240.30 \
-      --app-url http://coremetry.internal
+      --host <ch-host> --user default \
+      --insert-host <ch-host-1> --insert-host <ch-host-2> \
+      --app-url http://<coremetry-url>
   # çıktıyı oku, sonra AYNI komuta --apply ekle.
 
 ADIM 5 (yedekleri DROP) BU SCRIPT'TE YOKTUR — birkaç gün bekleyip göç

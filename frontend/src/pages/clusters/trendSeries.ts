@@ -67,7 +67,7 @@ export function namedSeriesToSeries(
   fallbackLabel: string,
   // v0.9.539 — lejant kısaltma öneki (operatör: "lejantta isim
   // gösterimleri Grafana gibi olabilir mi?"). Grafana'da seri adları
-  // kısa ("lckhsdbp04"); bizde tam pod adı geliyordu
+  // kısa ("chc-prod-04"); bizde tam pod adı geliyordu
   // ("mobile-crm-dashboard-bff-57bdc7975b-59c8q", 41 karakter) ve
   // lejant üç sütuna taşıp grafiği aşağı itiyordu. Ortak önek
   // (deployment adı) HER seride aynı olduğu için ayırt edici DEĞİL —

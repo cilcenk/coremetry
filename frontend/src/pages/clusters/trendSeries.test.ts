@@ -65,7 +65,7 @@ describe('netTrendToSeries', () => {
 });
 
 // v0.9.539 — operatör: "lejantta isim gösterimleri Grafana gibi
-// olabilir mi?" Grafana'da seri adları kısa ("lckhsdbp04"); bizde tam
+// olabilir mi?" Grafana'da seri adları kısa ("chc-prod-04"); bizde tam
 // pod adı geliyordu (41 karakter) ve lejant üç sütuna taşıp grafiği
 // aşağı itiyordu. Ortak önek (deployment adı) HER seride aynı olduğu
 // için ayırt edici değil.

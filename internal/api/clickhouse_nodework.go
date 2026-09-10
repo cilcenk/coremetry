@@ -115,8 +115,8 @@ func nodeWorkQuery(clusterName string) string {
 //
 //	is_local        → lokal kümede HER İKİ node da 0 bildiriyor
 //	host_name=hostName() → host_name FQDN (chc-0.chc-headless) ya da
-//	                       IP (172.31.240.15), hostName() kısa ad
-//	                       (chc-0 / lckhsdbp01) — hiçbir kurulumda
+//	                       IP (203.0.113.15), hostName() kısa ad
+//	                       (chc-0 / chc-prod-01) — hiçbir kurulumda
 //	                       güvenilir eşleşmiyor
 //
 // system.macros bu sorunun tamamını atlıyor: her node'un KENDİ

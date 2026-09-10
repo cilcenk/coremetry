@@ -30,7 +30,7 @@ describe('podWorkloadName', () => {
 });
 
 // v0.9.56 — operatör ekran görüntüsündeki GERÇEK filo adları (OpenShift
-// ocptest3, callcenter ns): oneagent varyantı servise eşlenir, -batch /
+// ocp-test, callcenter ns): oneagent varyantı servise eşlenir, -batch /
 // -uat kardeş iş yükleri eşlenmez.
 describe('workloadMatchesService (gerçek filo adları)', () => {
   const cases: [string, string, boolean][] = [

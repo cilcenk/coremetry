@@ -52,8 +52,22 @@ func TestBatchAppliesSearchPredicate(t *testing.T) {
 	if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
 		body = body[:j+1]
 	}
-	if !strings.Contains(body, "searchPredicate(f.Search)") {
-		t.Error("batch yolu searchPredicate uygulamıyor — /traces hacim şeridi " +
+	// v0.10.611 — WHERE kurucusu saf spanMetricBatchWhere'e çıkarıldı (kök
+	// yüklemi kolon-adı bug'ı için seam). Sözleşme aynı, iki parça: metot
+	// kurucuyu ÇAĞIRIR, kurucu searchPredicate'i UYGULAR.
+	if !strings.Contains(body, "spanMetricBatchWhere(f,") {
+		t.Error("batch yolu spanMetricBatchWhere'i çağırmıyor — arama/kök yüklemi WHERE'e inmez")
+	}
+	k := strings.Index(src, "func spanMetricBatchWhere(")
+	if k < 0 {
+		t.Fatal("spanMetricBatchWhere bulunamadı — test bayatladı")
+	}
+	wb := src[k:]
+	if j := strings.Index(wb[1:], "\nfunc "); j >= 0 {
+		wb = wb[:j+1]
+	}
+	if !strings.Contains(wb, "searchPredicate(f.Search)") {
+		t.Error("batch WHERE kurucusu searchPredicate uygulamıyor — /traces hacim şeridi " +
 			"aramayı yok sayar ve grafik ile tablo AYRI kümeleri gösterir")
 	}
 }

@@ -119,7 +119,7 @@ export class ErrorBoundary extends Component<Props, State> {
             Go to home
           </Button>
           <a className="sec"
-             href="https://github.com/cilcenk/coremetry/issues"
+             href="https://github.com/cosretr/coremetry/issues"
              target="_blank" rel="noopener"
              style={{
                padding: '6px 14px', fontSize: 13,

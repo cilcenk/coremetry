@@ -168,7 +168,7 @@ describe('validateOracleSource — extraWhere', () => {
     expect(e.extraWhere, `${where} geçmemeliydi`).toContain(token);
   });
   it('meşru ek koşul geçer', () => {
-    expect(validateOracleSource(goodSource({ extraWhere: "ERR_CODE NOT IN ('REDACTED')" })).extraWhere)
+    expect(validateOracleSource(goodSource({ extraWhere: "ERR_CODE NOT IN ('ERR_020')" })).extraWhere)
       .toBeUndefined();
   });
   it(`en çok ${ORACLE_MAX_EXTRA_WHERE} karakter`, () => {

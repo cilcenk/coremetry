@@ -348,7 +348,7 @@ export function OracleTab() {
                 <TextareaField label="Ek koşul (WHERE'e AND ile eklenir)" rows={2}
                   value={src.extraWhere ?? ''} error={err.extraWhere}
                   onChange={e => patch(i, { extraWhere: e.target.value })}
-                  placeholder="ERR_CODE NOT IN ('REDACTED')"
+                  placeholder="ERR_CODE NOT IN ('ERR_020')"
                   hint={err.extraWhere ? undefined
                     : "Serbest ifade; `;` `--` `/*` yasak — bunlar sorgunun zaman yüklemini ve satır tavanını susturur."} />
               </div>

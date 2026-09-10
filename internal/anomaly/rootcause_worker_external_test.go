@@ -14,7 +14,7 @@ import (
 )
 
 func TestSynthesizerSkipsExternalProblems(t *testing.T) {
-	if !synthesizerSkipsProblem(chstore.Problem{Kind: chstore.ProblemKindExternal, Service: "ext:REDACTED/OP1/E1"}) {
+	if !synthesizerSkipsProblem(chstore.Problem{Kind: chstore.ProblemKindExternal, Service: "ext:extsrc/OP1/E1"}) {
 		t.Fatal("external anchor must be skipped")
 	}
 	for _, k := range []string{"", chstore.ProblemKindService, chstore.ProblemKindDB} {

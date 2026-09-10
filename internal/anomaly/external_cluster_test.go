@@ -54,7 +54,7 @@ func TestExternalScan_ClustersSameFirstDimension(t *testing.T) {
 	if cluster == nil || len(f.upserts) != 1 {
 		t.Fatalf("tek küme Problem'i bekleniyordu: %+v", f.upserts)
 	}
-	if cluster.Service != "ext:REDACTED/OP_PAY" || cluster.Kind != chstore.ProblemKindExternal || cluster.Value != 4 {
+	if cluster.Service != "ext:extsrc/OP_PAY" || cluster.Kind != chstore.ProblemKindExternal || cluster.Value != 4 {
 		t.Fatalf("özne ext:<kaynak>/<ilk boyut>, kind external, Value=üye sayısı: %+v", *cluster)
 	}
 	if !strings.Contains(cluster.Description, "E00") || !strings.Contains(cluster.Description, "4") {
@@ -84,7 +84,7 @@ func TestExternalScan_SingleDimensionNeverClusters(t *testing.T) {
 	}
 	f := &fakeExtStore{cfg: cfg, series: series}
 	target := extTarget
-	target.GroupBy = []string{"REDACTED"}
+	target.GroupBy = []string{"OP_CODE"}
 	rep, err := newExtScanner(f, now).Scan(context.Background(), target)
 	if err != nil {
 		t.Fatal(err)
@@ -119,8 +119,8 @@ func TestExternalScan_ClusterBeforeCap(t *testing.T) {
 func TestExternalScan_ClusterResolvesWhenMembersCalm(t *testing.T) {
 	cfg := chstore.DefaultAnomalySensitivity()
 	now := time.Date(2026, 9, 10, 14, 0, 0, 0, time.UTC)
-	open := chstore.Problem{ID: clusterProblemID("ext:REDACTED/OP_PAY"), RuleID: clusterRulePrefix + "ext:REDACTED/OP_PAY",
-		Service: "ext:REDACTED/OP_PAY", Kind: chstore.ProblemKindExternal, Status: "open", Value: 4, StartedAt: now.Add(-time.Hour).UnixNano()}
+	open := chstore.Problem{ID: clusterProblemID("ext:extsrc/OP_PAY"), RuleID: clusterRulePrefix + "ext:extsrc/OP_PAY",
+		Service: "ext:extsrc/OP_PAY", Kind: chstore.ProblemKindExternal, Status: "open", Value: 4, StartedAt: now.Add(-time.Hour).UnixNano()}
 	// Üyeler sakin (taban), küme açık kalmış.
 	f := &fakeExtStore{cfg: cfg, series: opSeries("OP_PAY", 4, now, 0, 5), open: []chstore.Problem{open}}
 	if _, err := newExtScanner(f, now).Scan(context.Background(), extTarget); err != nil {

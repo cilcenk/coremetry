@@ -37,9 +37,9 @@ func TestExternalSeasonalSQL_Shape(t *testing.T) {
 func TestExternalSeasonalArgs_Order(t *testing.T) {
 	cutoff := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
 	upper := cutoff.Add(24 * time.Hour)
-	req := ExternalSeasonalReq{Metric: "ext:x", Service: "REDACTED", Cutoff: cutoff, Upper: upper, Class: "weekday", TargetSod: 36000, RadiusSec: 900}
-	got := externalSeasonalArgs(req, []any{"REDACTED", "REDACTED"})
-	want := []any{"REDACTED", "REDACTED", "REDACTED", "ext:x", cutoff, upper, "weekday", 36000, 36000, 900}
+	req := ExternalSeasonalReq{Metric: "ext:x", Service: "extsrc", Cutoff: cutoff, Upper: upper, Class: "weekday", TargetSod: 36000, RadiusSec: 900}
+	got := externalSeasonalArgs(req, []any{"OP_CODE", "ERR_CODE"})
+	want := []any{"OP_CODE", "ERR_CODE", "extsrc", "ext:x", cutoff, upper, "weekday", 36000, 36000, 900}
 	if len(got) != len(want) {
 		t.Fatalf("len %d want %d", len(got), len(want))
 	}

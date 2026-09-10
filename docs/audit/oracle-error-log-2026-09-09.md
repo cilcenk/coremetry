@@ -221,10 +221,10 @@ anında uygulamalı** ve geçmeyen değeri boş bırakıp SAYMALI (Influx'ta ems
 ### 6.1 Gruplama anahtarı
 
 Zorunlu boyutlar: **(operation.code, error.code, channel.code)**.
-`error.code` her zaman anahtarda — REDACTED ile başka bir kod asla aynı
+`error.code` her zaman anahtarda — ERR_028 ile başka bir kod asla aynı
 Problem'de birleşmez.
 
-Jenerik kod (ayardan, başlangıç `REDACTED`) ise **ikincil ayırt edici**, sırayla
+Jenerik kod (ayardan, başlangıç `ERR_020`) ise **ikincil ayırt edici**, sırayla
 ilk bulunan:
 1. `error.external_code` (doluysa)
 2. TRACEID'den bulunan trace'teki exception tipi / hatalı span adı
@@ -288,7 +288,7 @@ bunu da kapatır. **Önerim: melez + açılışta sabitleme.**
 - **Kod bazında hassasiyet:** `cfg.Metrics[metric]` üst-yazımı var
   (`external.go:359`), taşıyıcı sorgu başına `Thresholds`
   (`influx/settings.go:84-93`). ⚠ Kırılım **sorgu** düzeyinde, **grup değeri**
-  düzeyinde değil: aynı sorgunun tüm serileri aynı eşiği paylaşır. "REDACTED
+  düzeyinde değil: aynı sorgunun tüm serileri aynı eşiği paylaşır. "ERR_028
   farklı hassasiyet" istenirse o kod **kendi sorgusu** olarak tanımlanmalı.
 
 ### 6.4 Yaşam döngüsü
@@ -357,7 +357,7 @@ sağlar, yalnız Oracle'a değil.
 `internal/oracle/mapping_test.go` (eşleme, trace_id normalize, TZ) ·
 `poller_test.go` (watermark, overlap, idempotent) ·
 `grouping_test.go` (jenerik+external / jenerik+exception / jenerik+hiçbiri /
-jenerik olmayan → ikincil EKLENMEZ; REDACTED ve REDACTED asla birleşmez) ·
+jenerik olmayan → ikincil EKLENMEZ; ERR_020 ve ERR_028 asla birleşmez) ·
 `lifecycle_test.go` (ikinci tetiklemede yeni Problem açılmaz; akış kesilince
 kapanmaz).
 

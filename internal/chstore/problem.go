@@ -1443,7 +1443,7 @@ func PollerOwnedRule(ruleID string) bool {
 // PollerOwnedSubject — v0.10.605: poller-sahipli kuralın ÖZNESİ (`ext:<kaynak
 // adı>`, anomaly.ExternalSubject(ad, nil)). ext-down kuralı öznenin
 // kendisi; ext-cap kuralı `<özne>:<metrik>` taşır ve metrik adı iki nokta
-// içerebilir (ext:REDACTED) — özne ilk İKİ parçadır (kaynak adında iki
+// içerebilir (ext:fail_count) — özne ilk İKİ parçadır (kaynak adında iki
 // nokta yok: NAME_RE). Süpürücü bununla "kaynak hâlâ yaşıyor mu" sorar:
 // silinen kaynağın Problem'leri muafiyetten çıkar. ok=false → poller-sahipli
 // değil.

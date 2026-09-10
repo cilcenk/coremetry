@@ -68,14 +68,14 @@ type queryCall struct {
 }
 
 func testSource() SourceConfig {
-	return SourceConfig{ID: "o-aaaaaaaa", Name: "prod-eu", Enabled: true, Schema: "REDACTED", Table: "ERROR_LOG",
+	return SourceConfig{ID: "o-aaaaaaaa", Name: "prod-eu", Enabled: true, Schema: "SHOP", Table: "ERROR_LOG",
 		User: "u", Password: "p", Host: "db", Port: 1521, ServiceName: "svc", IntervalSec: 60}
 }
 
 func oracleRow(ts time.Time, msg string) map[string]any {
 	return map[string]any{
 		"ERR_TIMESTAMP": ts, "ERR_SEVERITY": "E", "ERR_MESSAGE": msg,
-		"ERR_TRACEID": "4bf92f3577b34da6a3ce929d0e0e4736", "ERR_TYPE": "T", "ERR_CODE": "REDACTED",
+		"ERR_TRACEID": "4bf92f3577b34da6a3ce929d0e0e4736", "ERR_TYPE": "T", "ERR_CODE": "ERR_020",
 	}
 }
 
@@ -107,7 +107,7 @@ func TestPollFirstWindowAndBindWallClock(t *testing.T) {
 		t.Fatalf("1 sorgu bekleniyor, %d", len(*calls))
 	}
 	c := (*calls)[0]
-	for _, want := range []string{"FROM REDACTED", "ERR_TIMESTAMP > :1 AND ERR_TIMESTAMP <= :2", "ERR_TYPE IN (:3)", "ORDER BY ERR_TIMESTAMP ASC", "FETCH FIRST 5000 ROWS ONLY"} {
+	for _, want := range []string{"FROM SHOP.ERROR_LOG", "ERR_TIMESTAMP > :1 AND ERR_TIMESTAMP <= :2", "ERR_TYPE IN (:3)", "ORDER BY ERR_TIMESTAMP ASC", "FETCH FIRST 5000 ROWS ONLY"} {
 		if !strings.Contains(c.sql, want) {
 			t.Errorf("poll SQL %q içermeli:\n%s", want, c.sql)
 		}

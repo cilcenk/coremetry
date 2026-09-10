@@ -5,7 +5,7 @@ import type { DeepEvidence } from '@/lib/types';
 
 const deep: DeepEvidence = {
   external: {
-    source: 'REDACTED', query: 'REDACTED', labels: { operation_code: 'OP1', REDACTED: 'E1' },
+    source: 'extsrc', query: 'fail_count', labels: { operation_code: 'OP1', ERR_CODE: 'E1' },
     current: 60, median: 5, mad: 1, z: 37, windowFromNs: 0, windowToNs: 1, rows: 4, invalidIds: 1, updatedNs: 1,
     spanSummary: [
       { traceId: 'b', startNs: 20, durationNs: 5, spans: 2, errorSpans: 1, rootService: 'w' },
@@ -52,7 +52,7 @@ describe('pickSeries / labels / toChart', () => {
     expect(pickSeries(single, [])?.points.length).toBe(1);
   });
   it('etiket anahtarları alfabetik, değerler aynı sırada', () => {
-    expect(labelKeys(deep.external!.labels)).toEqual(['REDACTED', 'operation_code']);
+    expect(labelKeys(deep.external!.labels)).toEqual(['ERR_CODE', 'operation_code']);
     expect(labelValues(deep.external!.labels)).toEqual(['E1', 'OP1']);
   });
   it('toChart ns→s ve zaman sırası; boş seri null', () => {

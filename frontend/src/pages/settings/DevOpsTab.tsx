@@ -627,7 +627,7 @@ export function DevOpsTab() {
             CSV (başlık satırlı; virgül / noktalı virgül / sekme) — yapıştırın ya da dosya seçin
           </div>
           <textarea value={schemaCsv} onChange={e => setSchemaCsv(e.target.value)} rows={5}
-            placeholder={'TABSCHEMA,TABNAME,COLNAME,TYPENAME,LENGTH,SCALE,NULLS\nBSA,REDACTED,TELNO,VARCHAR,10,0,N'}
+            placeholder={'TABSCHEMA,TABNAME,COLNAME,TYPENAME,LENGTH,SCALE,NULLS\nSHOP,ORDER_PHONE,PHONE,VARCHAR,10,0,N'}
             className="mono" style={{ width: '100%' }} />
           <input type="file" accept=".csv,.txt,text/csv" style={{ marginTop: 6, fontSize: 12 }}
             onChange={e => readCsvFile(e.target.files?.[0])} />

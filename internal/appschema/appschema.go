@@ -6,7 +6,7 @@
 //
 // SQLCODE=-302 / SQLSTATE=22001 gibi hatalarda model hedef kolonun
 // tipini/uzunluğunu bilmediği için "muhtemelen telefon numarası" diye
-// tahmin yürütüyordu. Kanıt kolon tanımıdır: `REDACTED.TELNO
+// tahmin yürütüyordu. Kanıt kolon tanımıdır: `ORDER_PHONE.PHONE
 // VARCHAR(10) NOT NULL`. Operatörün hedefi DB2 görünüyor (JDBC mesaj
 // kalıbı) ve DB2'nin cgo'suz Go sürücüsü yok; tek-binary/air-gapped
 // imaja IBM clidriver sokmak ayrı bir karar. Sürücüyü prod `db_system`
@@ -125,7 +125,7 @@ func ParseCSV(r io.Reader) (Catalog, error) {
 	cr.LazyQuotes = true
 	// Sekme ayraçta TrimLeadingSpace KAPALI: encoding/csv boşluk sayılan
 	// ayracı da kırpar ve "\t\t" (boş scale) çökerek NULLS kolonunu bir
-	// sola kaydırırdı — TELNO NULL görünürdü.
+	// sola kaydırırdı — PHONE NULL görünürdü.
 	cr.TrimLeadingSpace = sep != '\t'
 	rows, err := cr.ReadAll()
 	if err != nil {

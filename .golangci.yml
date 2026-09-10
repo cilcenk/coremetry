@@ -22,6 +22,10 @@ linters:
   # the standard-set baseline is triaged.)
   default: standard
   settings:
+    staticcheck:
+      # v0.10.638: QF1* = staticcheck "quickfix" stil önerileri (De Morgan, tagged
+      # switch, Fprintf, ReplaceAll) — davranışsız; gözden geçirildi, kapı değil.
+      checks: ["all", "-ST1000", "-ST1003", "-ST1016", "-ST1020", "-ST1021", "-ST1022", "-QF1*"]
     errcheck:
       # In this codebase these are idiomatically fire-and-forget: deferred
       # Close on rows/bodies, and Fprint into an http.ResponseWriter or a
@@ -43,6 +47,8 @@ linters:
         - fmt.Fprintf
         - fmt.Fprintln
   exclusions:
+    paths:
+      - frontend/node_modules # v0.10.638: yerel çalışma ağacında Go dosyası taşıyan npm paketi (flatted)
     rules:
       # v0.10.637: deferred/son-satır Close — hata alınacak yer yok, idiom kabul.
       - linters: [errcheck]

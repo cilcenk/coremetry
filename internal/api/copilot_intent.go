@@ -446,9 +446,8 @@ func (s *Server) copilotChatIntent(ctx context.Context, emit func(string, any), 
 			// sınıflandırma çağrısı exchange'siz kalmaya devam eder, #2).
 			ans["exchangeId"] = copilot.MetaFromContext(ctx).ExchangeID
 			ans["links"] = s.answerRequestIDLinks(ctx, graw, ctxService)
-		} else {
-			// exchangeId YOK: deterministik sunucu metni oylanamaz (#3).
 		}
+		// general değilse exchangeId YOK: deterministik sunucu metni oylanamaz (#3).
 		emit("answer", ans)
 		return true, true
 	}

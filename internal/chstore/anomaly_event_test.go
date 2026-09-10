@@ -24,6 +24,7 @@
 package chstore
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -140,10 +141,10 @@ func TestUniqueAnomalyIDs(t *testing.T) {
 // yani "dokunmadı" gerçekten kanıtlanıyor.
 func TestUpsertAnomalyEventsEmptyIsNoop(t *testing.T) {
 	s := &Store{} // conn nil
-	if err := s.UpsertAnomalyEvents(nil, nil); err != nil {
+	if err := s.UpsertAnomalyEvents(context.Background(), nil); err != nil {
 		t.Errorf("boş dilim hata döndürdü: %v", err)
 	}
-	if err := s.UpsertAnomalyEvents(nil, []AnomalyEvent{}); err != nil {
+	if err := s.UpsertAnomalyEvents(context.Background(), []AnomalyEvent{}); err != nil {
 		t.Errorf("boş dilim hata döndürdü: %v", err)
 	}
 }

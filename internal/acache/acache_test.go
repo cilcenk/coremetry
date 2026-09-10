@@ -1,6 +1,7 @@
 package acache
 
 import (
+	"context"
 	"testing"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -220,13 +221,13 @@ func TestDisabledStoreIsNoop(t *testing.T) {
 	if !s.cur.empty() {
 		t.Error("disabled store must not accumulate")
 	}
-	if _, _, hit := s.GetServices(nil, "", 10); hit {
+	if _, _, hit := s.GetServices(context.Background(), "", 10); hit {
 		t.Error("disabled GetServices must miss")
 	}
-	if _, hit := s.GetAttributeKeys(nil); hit {
+	if _, hit := s.GetAttributeKeys(context.Background()); hit {
 		t.Error("disabled GetAttributeKeys must miss")
 	}
-	if _, _, _, hit := s.GetAttributeValues(nil, "k", "", 10); hit {
+	if _, _, _, hit := s.GetAttributeValues(context.Background(), "k", "", 10); hit {
 		t.Error("disabled GetAttributeValues must miss")
 	}
 }

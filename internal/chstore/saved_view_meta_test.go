@@ -8,6 +8,7 @@ package chstore
 // olduğunu pinler, çünkü artık başka hiçbir katman vermiyor.
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -57,7 +58,7 @@ func TestSavedViewMetaSQL(t *testing.T) {
 func TestListSavedViewMetaRequiresOwner(t *testing.T) {
 	s := &Store{}
 	for _, owner := range []string{"", "   ", "\t"} {
-		if _, err := s.ListSavedViewMeta(nil, owner, "ai-chat", 50); err == nil {
+		if _, err := s.ListSavedViewMeta(context.Background(), owner, "ai-chat", 50); err == nil {
 			t.Errorf("ownerID=%q sorgusuz reddedilmeliydi", owner)
 		}
 	}

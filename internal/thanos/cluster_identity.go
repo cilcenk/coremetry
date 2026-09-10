@@ -266,7 +266,7 @@ func checkClusterUniqueness(cfg Settings) error {
 		if l, v := c.EffectiveThanosLabel(); l != "" {
 			k := l + "=" + v
 			if o, dup := labelOwner[k]; dup && o != c.Name {
-				return fmt.Errorf("Thanos etiketi %s=%q zaten %q kaydına bağlı", l, v, o)
+				return fmt.Errorf("thanos etiketi %s=%q zaten %q kaydına bağlı", l, v, o)
 			}
 			labelOwner[k] = c.Name
 		}

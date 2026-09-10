@@ -4484,9 +4484,7 @@ func (s *Server) exportTracesCSV(w http.ResponseWriter, r *http.Request) {
 		"trace_id", "started_at", "duration_ms", "span_count",
 		"root_service", "root_operation", "has_error",
 	}
-	for _, k := range f.ExtraAttrs {
-		header = append(header, k)
-	}
+	header = append(header, f.ExtraAttrs...)
 	if err := cw.Write(header); err != nil {
 		return
 	}

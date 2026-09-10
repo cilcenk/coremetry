@@ -1196,9 +1196,7 @@ func queryMetricTool(d Deps) mcp.Tool {
 			from, to := rangeWindow(ctx, a.RangeS)
 			var groups []string
 			if a.GroupBy != "" {
-				for _, p := range splitCSV(a.GroupBy) {
-					groups = append(groups, p)
-				}
+				groups = append(groups, splitCSV(a.GroupBy)...)
 			}
 			// v0.9.1150 — metrik okuma ROUTER'ından (CH ya da VM).
 			series, err := d.metrics().QueryMetric(ctx, chstore.MetricQueryFilter{

@@ -409,7 +409,7 @@ func TestMessagingHealthDataOrderCapAndCallers(t *testing.T) {
 	// Callers KOPYALANIR: store dilimini paylaşmak çağıranın altında
 	// değişebilen bir dilim bırakır.
 	ov.Rows[1].Callers[0] = "MUTATED"
-	if data.Rows[1].Callers != nil && len(data.Rows[1].Callers) > 0 && data.Rows[1].Callers[0] == "MUTATED" {
+	if len(data.Rows[1].Callers) > 0 && data.Rows[1].Callers[0] == "MUTATED" {
 		t.Error("Callers dilimi paylaşılmış — kopyalanmalı")
 	}
 }

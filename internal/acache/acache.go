@@ -674,13 +674,13 @@ func (s *Store) readRank(ctx context.Context, rankKey, prefix string, limit int)
 		return nil, 0, false // error or cold key → miss
 	}
 	if prefix == "" {
-		names, err := s.cli.ZRevRange(ctx, rankKey, 0, int64(limit-1)).Result()
+		names, err := s.cli.ZRangeArgs(ctx, redis.ZRangeArgs{Key: rankKey, Start: 0, Stop: int64(limit - 1), Rev: true}).Result()
 		if err != nil {
 			return nil, 0, false
 		}
 		return names, int(card), true
 	}
-	all, err := s.cli.ZRevRange(ctx, rankKey, 0, -1).Result()
+	all, err := s.cli.ZRangeArgs(ctx, redis.ZRangeArgs{Key: rankKey, Start: 0, Stop: -1, Rev: true}).Result()
 	if err != nil {
 		return nil, 0, false
 	}

@@ -1361,11 +1361,7 @@ func (s *Server) handlePromptsList(req *Request) *Response {
 	for _, p := range s.prompts {
 		args := make([]promptArgumentEntry, 0, len(p.Arguments))
 		for _, a := range p.Arguments {
-			args = append(args, promptArgumentEntry{
-				Name:        a.Name,
-				Description: a.Description,
-				Required:    a.Required,
-			})
+			args = append(args, promptArgumentEntry(a))
 		}
 		out = append(out, promptListEntry{
 			Name:        p.Name,

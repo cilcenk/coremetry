@@ -510,7 +510,7 @@ func parseArrayCompare(raw json.RawMessage) (ConditionSpec, error) {
 	}
 	for arrayPath, clauseRaw := range top {
 		if !isAggPath(arrayPath) {
-			return ConditionSpec{}, fmt.Errorf("array_compare path %q is not under ctx.payload.aggregations.", arrayPath)
+			return ConditionSpec{}, fmt.Errorf("array_compare path %q is not under ctx.payload.aggregations", arrayPath)
 		}
 		var clause map[string]json.RawMessage
 		if err := json.Unmarshal(clauseRaw, &clause); err != nil {

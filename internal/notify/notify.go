@@ -1685,15 +1685,15 @@ func (n *Notifier) sendZoomChat(ctx context.Context, c chstore.NotificationChann
 		// clean error is better than a confused 401 from the
 		// non-existent OAuth round-trip.
 		if zc.WebhookURL != "" {
-			return errors.New("Zoom Chat channel uses the legacy webhook format — please reconfigure with Account ID / Client ID / Client Secret / Channel ID (Settings → Notification channels)")
+			return errors.New("zoom chat channel uses the legacy webhook format — please reconfigure with Account ID / Client ID / Client Secret / Channel ID (Settings → Notification channels)")
 		}
-		return errors.New("Zoom Chat channel missing Account ID")
+		return errors.New("zoom chat channel missing Account ID")
 	}
 	if zc.ClientID == "" || zc.ClientSecret == "" {
-		return errors.New("Zoom Chat channel missing Client ID or Client Secret")
+		return errors.New("zoom chat channel missing Client ID or Client Secret")
 	}
 	if zc.ChannelID == "" && zc.ToContact == "" {
-		return errors.New("Zoom Chat channel needs either a Channel ID or a contact email")
+		return errors.New("zoom chat channel needs either a Channel ID or a contact email")
 	}
 
 	token, err := n.zoomAccessToken(ctx, zc.AccountID, zc.ClientID, zc.ClientSecret, zc.OAuthBaseURL, zc.InsecureSkipVerify)

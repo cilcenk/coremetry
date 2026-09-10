@@ -1,6 +1,7 @@
 package chstore
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -51,10 +52,10 @@ func TestTraceMVCoverageCacheTTL(t *testing.T) {
 	s.mvCoverage.now = func() time.Time { return now }
 	s.mvCoverage.gaps = map[string]bool{"2026-08-26": true}
 	s.mvCoverage.fetched = now
-	if !s.TraceMVGap(nil, time.Date(2026, 8, 26, 1, 0, 0, 0, time.UTC), time.Date(2026, 8, 26, 2, 0, 0, 0, time.UTC)) {
+	if !s.TraceMVGap(context.Background(), time.Date(2026, 8, 26, 1, 0, 0, 0, time.UTC), time.Date(2026, 8, 26, 2, 0, 0, 0, time.UTC)) {
 		t.Fatal("önbellekteki boşluk görülmedi")
 	}
-	if s.TraceMVGap(nil, time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC), time.Date(2026, 8, 27, 2, 0, 0, 0, time.UTC)) {
+	if s.TraceMVGap(context.Background(), time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC), time.Date(2026, 8, 27, 2, 0, 0, 0, time.UTC)) {
 		t.Fatal("dolu gün boşluk sayıldı")
 	}
 }

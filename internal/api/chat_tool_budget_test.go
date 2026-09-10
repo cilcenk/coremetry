@@ -54,12 +54,11 @@ func TestClampToolResultForModel(t *testing.T) {
 				return
 			}
 			// Kırpılmış: gövde tam tavan kadar, sonrasında NOT var.
-			body := out
 			idx := strings.Index(out, "\n\n[kırpıldı:")
 			if idx < 0 {
 				t.Fatal("kırpma NOTU yok — sessiz kırpma yasak sınıf")
 			}
-			body = out[:idx]
+			body := out[:idx]
 			if n := utf8.RuneCountInString(body); n != c.wantRunes {
 				t.Fatalf("gövde %d rune, beklenen %d", n, c.wantRunes)
 			}

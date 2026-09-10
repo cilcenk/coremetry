@@ -88,10 +88,11 @@ func TestPromotedAttrDDLResourceScope(t *testing.T) {
 	if !strings.Contains(stmts[1], "ADD INDEX IF NOT EXISTS idx_k8s_node k8s_node TYPE set(0) GRANULARITY 4") {
 		t.Fatalf("set(0) skip index beklenir: %s", stmts[1])
 	}
-	// Onarım kararı da resource dizisine bakar.
-	if !promotedAttrNeedsRepair("attr_values[indexOf(attr_keys, 'k8s.node.name')]", a.keys) == false {
-		// anahtar geçiyor → onarım gerekmez sayılır; kapsam farkını
-		// promotedAttrNeedsRepair değil probe yakalar (kolon == dizi).
+	// Onarım kararı da resource dizisine bakar: anahtar geçiyor → onarım
+	// gerekmez; kapsam farkını promotedAttrNeedsRepair değil probe yakalar
+	// (kolon == dizi). v0.10.638: gövdesiz if (iddiasız) gerçek iddiaya çevrildi.
+	if promotedAttrNeedsRepair("attr_values[indexOf(attr_keys, 'k8s.node.name')]", a.keys) {
+		t.Error("resource dizisine bakan ifade: anahtar geçiyor, onarım istenmemeli")
 	}
 }
 

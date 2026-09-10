@@ -111,6 +111,7 @@ func TestAnchorSurvivesDerivedContext(t *testing.T) {
 // hiç görmez, yani o sınıf burada yapısal olarak imkânsız.
 func TestEveryToolWindowGoesThroughRangeWindow(t *testing.T) {
 	fset := token.NewFileSet()
+	//nolint:staticcheck // v0.10.638: ParseDir deprecated ama tek çağrıda paket; go/packages test bağımlılığı eklemeye değmez.
 	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
 		return !strings.HasSuffix(fi.Name(), "_test.go")
 	}, 0) // 0 = yorumları hiç ayrıştırma

@@ -1,6 +1,7 @@
 package chstore
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -75,7 +76,7 @@ func TestTraceAttrSliceSQLShape(t *testing.T) {
 		t.Errorf("servissiz/env'siz şekil: %s", plain)
 	}
 	// Bağlama sırası: from, to, service, env, yüklem args, (LIMIT scanIDSlice ekler).
-	if _, _, _, err := s.traceAttrSlice(nil, TraceFilter{}, 0, "", nil); err != nil {
+	if _, _, _, err := s.traceAttrSlice(context.Background(), TraceFilter{}, 0, "", nil); err != nil {
 		t.Errorf("want=0 → sessiz boş: %v", err)
 	}
 	_ = time.Now()

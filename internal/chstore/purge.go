@@ -174,7 +174,7 @@ func (s *Store) truncateStmt(ctx context.Context, name string) (stmt string, ski
 			cluster = strings.TrimSpace(s.cfg.ClusterName)
 		}
 		if cluster == "" {
-			return "", false, fmt.Errorf("Distributed table: no cluster to truncate shards (set clickhouse.cluster_name)")
+			return "", false, fmt.Errorf("distributed table: no cluster to truncate shards (set clickhouse.cluster_name)")
 		}
 		onCluster := " ON CLUSTER `" + cluster + "`"
 		local := name + "_local"

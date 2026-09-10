@@ -243,9 +243,7 @@ func walkClusters(n *node, acc *[]*Cluster) {
 	if n == nil {
 		return
 	}
-	for _, c := range n.clusters {
-		*acc = append(*acc, c)
-	}
+	*acc = append(*acc, n.clusters...)
 	for _, child := range n.children {
 		walkClusters(child, acc)
 	}

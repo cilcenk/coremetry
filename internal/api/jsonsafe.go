@@ -40,7 +40,7 @@ func scrub(v reflect.Value) {
 		return
 	}
 	switch v.Kind() {
-	case reflect.Ptr, reflect.Interface:
+	case reflect.Pointer, reflect.Interface:
 		if !v.IsNil() {
 			scrub(v.Elem())
 		}
@@ -80,7 +80,7 @@ func scrub(v reflect.Value) {
 						v.SetMapIndex(k, reflect.Zero(v.Type().Elem()))
 					}
 				}
-			case reflect.Ptr:
+			case reflect.Pointer:
 				if !inner.IsNil() {
 					scrub(inner.Elem())
 				}

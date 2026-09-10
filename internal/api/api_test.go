@@ -193,7 +193,7 @@ func TestSanitizePasswordTrimsLeadingTrailingSpace(t *testing.T) {
 
 func TestSanitizePasswordStripsSoftHyphen(t *testing.T) {
 	// "se­cret" — rendered as "secret" but bcrypt-compares as different.
-	if got := sanitizePassword("se­cret"); got != "secret" {
+	if got := sanitizePassword("se\u00adcret"); got != "secret" {
 		t.Errorf("soft-hyphen: got %q want %q", got, "secret")
 	}
 }

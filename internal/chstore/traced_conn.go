@@ -213,7 +213,7 @@ func (t *tracedConn) AsyncInsert(ctx context.Context, q string, wait bool, args 
 		attribute.String("coremetry.ch_pool", t.pool),
 	)
 	defer span.End()
-	err := t.Conn.AsyncInsert(ctx, q, wait, args...)
+	err := t.Conn.AsyncInsert(ctx, q, wait, args...) //nolint:staticcheck // v0.10.638: WithAsync geçişi ingest async_insert sözleşmesine dokunur — ayrı dilim
 	recordCHError(span, err)
 	return err
 }

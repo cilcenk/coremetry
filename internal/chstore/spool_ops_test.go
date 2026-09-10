@@ -5,6 +5,7 @@ package chstore
 // işi o adın asla serbest metin olamayacağını çivilemek.
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -38,10 +39,10 @@ func TestCHIdentRe(t *testing.T) {
 func TestSpoolCommandsRefuseBadNames(t *testing.T) {
 	s := &Store{}
 	for _, bad := range []string{"spans`; DROP TABLE spans; --", "a b", ""} {
-		if err := s.FlushDistributed(nil, bad); err == nil || !strings.Contains(err.Error(), "geçersiz tablo adı") {
+		if err := s.FlushDistributed(context.Background(), bad); err == nil || !strings.Contains(err.Error(), "geçersiz tablo adı") {
 			t.Errorf("FlushDistributed(%q) reddetmeliydi: %v", bad, err)
 		}
-		if err := s.StartDistributedSends(nil, bad); err == nil || !strings.Contains(err.Error(), "geçersiz tablo adı") {
+		if err := s.StartDistributedSends(context.Background(), bad); err == nil || !strings.Contains(err.Error(), "geçersiz tablo adı") {
 			t.Errorf("StartDistributedSends(%q) reddetmeliydi: %v", bad, err)
 		}
 	}
@@ -54,7 +55,7 @@ func TestSpoolCommandsRefuseBadNames(t *testing.T) {
 // dürüstçe "yok" der, sessizce ana havuza DÜŞMEZ.
 func TestFlushUsesDedicatedLongConn(t *testing.T) {
 	s := &Store{} // chOpts nil
-	err := s.FlushDistributed(nil, "spans")
+	err := s.FlushDistributed(context.Background(), "spans")
 	if err == nil || !strings.Contains(err.Error(), "uzun-işlem bağlantısı") {
 		t.Fatalf("chOpts'suz flush açık hata vermeli (ana havuza düşmek 30sn "+
 			"ReadTimeout'ta kopmak demek): %v", err)

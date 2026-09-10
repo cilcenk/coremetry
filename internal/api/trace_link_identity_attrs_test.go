@@ -22,8 +22,7 @@ import (
 func TestIdentityFromLogAttrs(t *testing.T) {
 	loc := reqid.Location("Europe/Istanbul")
 	// Katı biçime uyan örnek — reqid.Parse geçmeli.
-	strictVal := "A811001020102ATM_00000073382026090922231269 5979"
-	strictVal = "A811001020102ATM_000000733820260909222312695979"
+	strictVal := "A811001020102ATM_000000733820260909222312695979"
 
 	cases := []struct {
 		name    string

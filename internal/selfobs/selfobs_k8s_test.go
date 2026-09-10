@@ -17,7 +17,7 @@ func resourceAttrMap(t *testing.T) map[string]string {
 	}
 	out := map[string]string{}
 	for _, kv := range res.Attributes() {
-		out[string(kv.Key)] = kv.Value.Emit()
+		out[string(kv.Key)] = kv.Value.String()
 	}
 	return out
 }

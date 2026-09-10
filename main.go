@@ -1104,6 +1104,12 @@ func main() {
 					src.Name, qc.Name, rep.Series, rep.Opened, rep.Resolved)
 			}
 		})
+		// v0.10.588 — kaynak sağlığı: her poll'dan sonra (hata da dahil) ardışık
+		// kesinti sayılır; 3 ardışık hatada ext:<kaynak> Problem'i, ilk başarıda
+		// resolve. Oracle poller'ı (Aşama 2) aynı kancayı kullanacak.
+		influxWorker.SetHealthHook(func(ctx context.Context, src influx.SourceConfig, lastErr string) {
+			extScanner.ReportSourceHealth(ctx, src.ID, src.Name, lastErr, time.Now())
+		})
 		influxLeader := cache.NewLeaderHolder(lockImpl, "influx-poller", cache.LeaderTTL(30*time.Second))
 		influxLeader.SetOnAcquire(func() { influxWorker.Tick(ctx) })
 		influxLeader.Start(chstore.WithQueryTag(ctx, "worker:influx-poller"))

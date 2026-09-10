@@ -302,7 +302,7 @@ func TestSplitBuckets(t *testing.T) {
 		map[string]string{"_time": "2026-09-01T21:31:00Z", "_value": "7", "REDACTED": "A", "REDACTED": "E"},  // == watermark → eski
 		map[string]string{"_time": "2026-09-01T21:32:00Z", "_value": "16", "REDACTED": "A", "REDACTED": "E"}, // yeni tam kova
 		map[string]string{"_time": "2026-09-01T21:33:00Z", "_value": "3", "REDACTED": "A", "REDACTED": "E"},  // bitişi gelecekte → kısmi
-		map[string]string{"_value": "9", "REDACTED": "B", "REDACTED": "E"},                                  // _time yok → poll anı, watermark'a bakılmaz
+		map[string]string{"_value": "9", "REDACTED": "B", "REDACTED": "E"},                                   // _time yok → poll anı, watermark'a bakılmaz
 		map[string]string{"_time": "garbage", "_value": "1", "REDACTED": "C", "REDACTED": "E"},               // bozuk _time → poll anı
 	)
 	kept, newWM, st := SplitBuckets(in, wm, now)
@@ -524,5 +524,35 @@ func TestWorkerTick_RatioSkippedWhenInputFails(t *testing.T) {
 	w.Tick(context.Background())
 	if len(sink.pts) != 0 || w.Status()[0].LastError == "" {
 		t.Fatalf("girdi hatasında oran yazılmaz: %d pts, %+v", len(sink.pts), w.Status())
+	}
+}
+
+// v0.10.588 — sağlık kancası HER sonuçta ateşler: sağlıklı kaynak boş
+// hatayla, düşen kaynak hata metniyle. Anomali kancası (SetHook) yalnız
+// başarıda koştuğu için kesintiyi göremezdi; sağlık kancasının varlık
+// sebebi tam bu. Kancanın hatada da çağrıldığı burada pinli.
+func TestWorkerTick_HealthHookFiresOnBothOutcomes(t *testing.T) {
+	svc := New()
+	a := tfailSource()
+	b := tfailSource()
+	b.ID, b.Name = "i-bbbbbbbb", "down"
+	svc.Configure(Settings{Sources: []SourceConfig{a, b}})
+	w := NewWorker(svc, &fakeSink{})
+	w.queryAPIFor = func(s SourceConfig) (QueryAPI, error) {
+		if s.Name == "down" {
+			return nil, errors.New("ORA-12541: no listener")
+		}
+		REDACTED(
+			map[string]string{"_value": "1", "REDACTED": "OP", "REDACTED": "E"},
+		)}}, nil
+	}
+	seen := map[string]string{}
+	w.SetHealthHook(func(_ context.Context, src SourceConfig, lastErr string) { seen[src.Name] = lastErr })
+	w.Tick(context.Background())
+	if _, ok := seen[a.Name]; !ok || seen[a.Name] != "" {
+		t.Fatalf("sağlıklı kaynak için kanca BOŞ hatayla çağrılmalı: %q (%v)", seen[a.Name], ok)
+	}
+	if e, ok := seen["down"]; !ok || e == "" {
+		t.Fatalf("düşen kaynak için kanca HATAYLA çağrılmalı — kesinti görülmezdi: %q (%v)", e, ok)
 	}
 }

@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { rowActivation } from '@/lib/a11y';
-import { messagingTracesHref, dbTracesHref } from '@/lib/pivotHref';
+import { dbTracesHref } from '@/lib/pivotHref';
+import { messagingTopicHref } from '@/pages/messaging/topicHref'; // v0.10.586
 import { Link, useSearchParams } from 'react-router-dom';
 import { Empty } from './Spinner';
 import { Sparkline } from './Sparkline';
@@ -346,10 +347,16 @@ export function DependenciesTable({
     // paylaşılan helper: üç adın hepsini OR'luyor + pencereyi taşıyor +
     // /traces'e gidiyor (opak /explore DSL'i yerine, orada operatör
     // filtreleri çip olarak GÖRÜP düzenleyebiliyor).
-    return messagingTracesHref({
-      window: range,
+    //
+    // v0.10.586 (operatör: "topic'e basınca doğrudan bu sayfaya gelebilir,
+    // traces yerine") — topic ADI artık /messaging/topic detay sayfasına
+    // gider; Traces pivotu detay sayfasında ve çekmecede duruyor. Satır
+    // tıklaması değişmedi: çekmece açar (v0.10.575 kararı).
+    return messagingTopicHref({
       system: r.system,
+      cluster: r.cluster ?? '(default)',
       destination: r.destination ?? '',
+      range,
     });
   };
 
@@ -522,7 +529,7 @@ export function DependenciesTable({
                             title={r.instance === 'unknown'
                               ? `peer.service was empty on these spans — label sourced from ${r.dbName && r.dbName !== 'default' ? 'db.name' : 'fallback'}`
                               : kind === 'queue'
-                                ? 'Open the traces on this topic (same window, editable filter chips)'
+                                ? 'Topic detay sayfasını aç (aynı pencere)'
                                 : 'Open in Explore (spans pre-filtered)'}>
                         {nameOf(r) || <span style={{ color: 'var(--text3)' }}>(anonymous)</span>}
                       </Link>

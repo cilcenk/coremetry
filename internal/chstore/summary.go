@@ -64,22 +64,51 @@ type ServiceSummaryRow struct {
 // to CH `%` / `_`; bare strings are wrapped in `%…%` for
 // substring match. Returns (names, total, err) so the UI can
 // surface "showing 200 of 12,345 — refine" hints.
+// selfTelemetryServices — Coremetry'nin KENDİ telemetrisini yayan servisler
+// (tarayıcı öz-telemetrisi: frontend/src/lib/browserOtel.ts). v0.10.657:
+// servissiz operasyon aramasında dışlanır — sayfa URL'lerini span adı
+// olarak yaydıkları için ("Navigation: /logs?q=…") her aramaya sızıyorlardı.
+// Servis açıkça seçilince yine listelenir (dogfood bozulmaz).
+var selfTelemetryServices = []string{"coremetry-frontend"}
+
+// operationNamesQuery — SAF (summary_operation_names_test.go): WHERE +
+// ORDER BY. Joker yoksa önek eşleşmesi öne gelir (operatör "bsa-mobile"
+// yazınca URL'nin ortasında geçen adlar değil, öyle BAŞLAYAN operasyonlar).
+func operationNamesQuery(service, pattern string) (whereClause, string) {
+	var wc whereClause
+	if service != "" {
+		wc.add("service_name = ?", service)
+	} else {
+		wc.add("service_name NOT IN ?", selfTelemetryServices)
+	}
+	like := operationNamesLike(pattern)
+	if like != "" {
+		wc.add("name ILIKE ?", like)
+	}
+	if pattern != "" && !strings.ContainsAny(pattern, "*?") {
+		return wc, " ORDER BY startsWith(lowerUTF8(name), lowerUTF8(?)) DESC, name"
+	}
+	return wc, " ORDER BY name"
+}
+
+// operationNamesLike — `*`/`?` → `%`/`_`; jokersiz desen `%…%` (alt dize).
+func operationNamesLike(pattern string) string {
+	if pattern == "" {
+		return ""
+	}
+	like := strings.NewReplacer(`*`, `%`, `?`, `_`).Replace(pattern)
+	if !strings.ContainsAny(pattern, "*?") {
+		like = "%" + like + "%"
+	}
+	return like
+}
+
 func (s *Store) ListOperationNames(ctx context.Context, service, pattern string, limit, offset int) ([]string, int, error) {
 	if limit <= 0 {
 		limit = 200
 	}
-	var wc whereClause
-	if service != "" {
-		wc.add("service_name = ?", service)
-	}
-	like := ""
-	if pattern != "" {
-		like = strings.NewReplacer(`*`, `%`, `?`, `_`).Replace(pattern)
-		if !strings.ContainsAny(pattern, "*?") {
-			like = "%" + like + "%"
-		}
-		wc.add("name ILIKE ?", like)
-	}
+	wc, orderBy := operationNamesQuery(service, pattern)
+	like := operationNamesLike(pattern)
 
 	var total uint64
 	if err := s.telemetryReadConn().QueryRow(ctx,
@@ -95,10 +124,14 @@ func (s *Store) ListOperationNames(ctx context.Context, service, pattern string,
 		return s.operationNamesFromSpans(ctx, service, like, limit, offset)
 	}
 
-	args := append(append([]any{}, wc.args...), limit, offset)
+	args := append([]any{}, wc.args...)
+	if strings.Contains(orderBy, "startsWith") {
+		args = append(args, pattern) // önek sıralamasının bind argümanı
+	}
+	args = append(args, limit, offset)
 	rows, err := s.telemetryReadConn().Query(ctx,
 		"SELECT DISTINCT name FROM operation_summary_5m "+wc.sql()+
-			" ORDER BY name LIMIT ? OFFSET ?"+
+			orderBy+" LIMIT ? OFFSET ?"+
 			" SETTINGS max_execution_time = 25",
 		args...)
 	if err != nil {

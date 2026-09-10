@@ -59,7 +59,10 @@ describe('collectLinkCtx', () => {
 describe('endTime (v0.10.371)', () => {
   const base = { traceId: 'abc', service: 'svc', attrs: {} };
   it('trace bitişi dakikayı geçince endTime o dakikayı yazar, time başlangıcı', () => {
-    const start = new Date(2026, 8, 5, 11, 48, 59, 500).getTime(); // yerel saat
+    // v0.10.614 — beklenti makine saatinden DEĞİL, kurum diliminden: 11:48:59.5
+    // Europe/Istanbul = 08:48:59.5Z (UTC+3, DST yok). Eski yazım `new Date(2026, …)`
+    // +03 makinede geçip UTC runner'da +3 saat kayıyordu (main 10 gün kırmızı).
+    const start = Date.UTC(2026, 8, 5, 8, 48, 59, 500);
     const ctx = { ...base, startMs: start, endMs: start + 21_000 }; // 11:49:20.5
     expect(renderExternalLink('d={{time:HHmm}}', ctx).url).toBe('d=1148');
     expect(renderExternalLink('d={{endTime:HHmm}}', ctx).url).toBe('d=1149');
@@ -179,7 +182,7 @@ describe('pickGroupedLinks (v0.10.566)', () => {
       { label: 'Log (requestId)', urlTemplate: PRIMARY, group: 'log' },
       { label: 'Log (functionId)', urlTemplate: FALLBACK, group: 'log' },
     ];
-    const ctx = { traceId: 't', service: 'svc', startMs: new Date(2026, 8, 6, 10, 20).getTime(), endMs: 0, attrs: { function_id: 'F', channel_code: '060201' } };
+    const ctx = { traceId: 't', service: 'svc', startMs: Date.UTC(2026, 8, 6, 7, 20) /* 10:20 Europe/Istanbul — v0.10.614 */, endMs: 0, attrs: { function_id: 'F', channel_code: '060201' } };
     const withReq = pickGroupedLinks(links, l => renderExternalLink(l.urlTemplate, { ...ctx, requestId: 'R-42' }));
     expect(withReq).toHaveLength(1);
     expect(withReq[0].link.label).toBe('Log (requestId)');

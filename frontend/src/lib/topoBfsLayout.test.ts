@@ -87,7 +87,9 @@ const cases: { name: string; nodes: Node[]; edges: Edge[] }[] = [
 
 describe('bfsBarycenterLayout — referansla birebir', () => {
   for (const c of cases) {
-    it(c.name, () => {
+    // v0.10.614 — 500/40 sentetik vaka yük altında (paralel worker) 5 s tavanı aşıyor;
+    // tek başına ~1 s. Tavan CPU'ya değil doğruluğa bağlı olsun.
+    it(c.name, { timeout: 15_000 }, () => {
       const ref = referenceLayout(c.nodes, c.edges, 800, 600, 46);
       const got = bfsBarycenterLayout(c.nodes, c.edges, 800, 600, 46);
       expect(got.lw).toBe(ref.lw);

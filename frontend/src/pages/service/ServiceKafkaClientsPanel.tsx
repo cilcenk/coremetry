@@ -72,6 +72,14 @@ export function ServiceKafkaClientsPanel({ service, range, onZoom, onZoomReset }
           <StatTile label="Broker gecikme · maks." tone={strip.latencyMaxMs !== null && strip.latencyMaxMs > 1000 ? 'warn' : undefined}>{fmtOr(strip.latencyMaxMs, fmtMs)}</StatTile>
           <StatTile label="Rebalance / saat" tone={strip.rebalancePerHour !== null && strip.rebalancePerHour > 0 ? 'warn' : undefined}>{fmtOr(strip.rebalancePerHour)}</StatTile>
           <StatTile label="Son poll · maks." tone={strip.lastPollSecMax !== null && strip.lastPollSecMax > 300 ? 'err' : undefined}>{fmtOr(strip.lastPollSecMax, n => `${fmtNum(Math.round(n))} s`)}</StatTile>
+          {/* v0.10.583 — 582'nin üç "neden" metriği. Eşikler son değere:
+              poll aralığı Kafka'nın varsayılan max.poll.interval.ms'inin
+              (300 s) %80'ine yaklaşınca err — tüketici gruptan atılmak
+              üzere; her türlü kota kısıtı warn — yavaşlığın sebebi
+              uygulama değil broker. */}
+          <StatTile label="Poll aralığı · maks." tone={strip.pollGapMaxMs !== null && strip.pollGapMaxMs > 240_000 ? 'err' : strip.pollGapMaxMs !== null && strip.pollGapMaxMs > 60_000 ? 'warn' : undefined}>{fmtOr(strip.pollGapMaxMs, n => `${fmtNum(Math.round(n / 1000))} s`)}</StatTile>
+          <StatTile label="Fetch kota kısıtı · ort." tone={strip.fetchThrottleAvgMs !== null && strip.fetchThrottleAvgMs > 0 ? 'warn' : undefined}>{fmtOr(strip.fetchThrottleAvgMs, fmtMs)}</StatTile>
+          <StatTile label="Rebalance süresi · ort." tone={strip.rebalanceLatencyAvgMs !== null && strip.rebalanceLatencyAvgMs > 10_000 ? 'warn' : undefined}>{fmtOr(strip.rebalanceLatencyAvgMs, fmtMs)}</StatTile>
         </div>
       )}
       <div className="grid-2" style={{ display: 'grid', gap: 14 }}>

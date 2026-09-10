@@ -242,8 +242,8 @@ func main() {
 	// Init-container mode: run schema migration only and exit.
 	// Designed for multi-replica deployments where every web pod
 	// trying to migrate concurrently causes ZK / DDL races. Run
-	// this once as a Job or initContainer; web pods boot with
-	// COREMETRY_SKIP_MIGRATE=1 to avoid re-running.
+	// this once as a Job or initContainer; web pods still run the
+	// idempotent migrate() on boot (there is NO skip env — v0.10.629).
 	migrateOnly := flag.Bool("migrate-only", false, "Run ClickHouse schema migration only, then exit. Use as a Kubernetes initContainer / one-shot Job before web pods roll out.")
 	// DESTRUCTIVE: drops the configured CH database (every table:
 	// spans, logs, metrics, dashboards, audit log, anomaly history,

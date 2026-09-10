@@ -32,11 +32,12 @@ import { api } from '@/lib/api';
 export function useStackFrameLinks(p: {
   service: string;
   stack: string;
+  version?: string; // v0.10.590 — olay anındaki sürüm; anahtara GİRER
   enabled?: boolean;
 }) {
   return useQuery({
-    queryKey: ['devops', 'stack-frames', p.service, p.stack],
-    queryFn: ({ signal }) => api.stackFrameLinks(p.service, p.stack, signal),
+    queryKey: ['devops', 'stack-frames', p.service, p.stack, p.version ?? ''],
+    queryFn: ({ signal }) => api.stackFrameLinks(p.service, p.stack, signal, p.version),
     enabled: (p.enabled ?? true) && !!p.service && !!p.stack,
     staleTime: 5 * 60_000,
     retry: false,

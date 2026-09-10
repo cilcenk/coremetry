@@ -112,6 +112,19 @@ type FrameLinks struct {
 	// RepoSource — pin | convention (RepoSourcePin/RepoSourceConvention).
 	RepoSource string
 	Links      []FrameLink
+	// Revision (v0.10.590) — sürüm→ref çözümü. nil = sürüm verilmedi ya da
+	// yer tutucuydu. Verified=false ise Note nedenini söyler ve linkler
+	// branş ucundadır (uyarı kalır).
+	Revision *Revision
+}
+
+// Revision — olay anındaki sürümün VCS karşılığı.
+type Revision struct {
+	Version  string
+	Ref      string // "tags/release.1"
+	SHA      string // commit; Verified=true iken dolu
+	Verified bool
+	Note     string
 }
 
 // frameLinkDeadline — yürürlükteki tavan. Operatörün daha KISA bir
@@ -185,7 +198,7 @@ func failEligible(links []FrameLink, reason string) {
 // Zincir FetchCode'unkiyle AYNI (resolveChain): kopya bir zincir ilk
 // düzeltmede ayrışır ve operatöre gerçekte olmayan bir davranışı
 // gösterirdi — resolve_dryrun.go'nun 1 numaralı kararı.
-func (s *Service) ResolveFrameLinks(ctx context.Context, service string, pin PinRead, frames []stackparse.Frame) FrameLinks {
+func (s *Service) ResolveFrameLinks(ctx context.Context, service string, pin PinRead, frames []stackparse.Frame, version string) FrameLinks {
 	cfg := s.CurrentSettings()
 	out := FrameLinks{Links: classifyFrames(frames, cfg.AppPrefixes)}
 	if strings.TrimSpace(cfg.BaseURL) == "" {
@@ -235,6 +248,30 @@ func (s *Service) ResolveFrameLinks(ctx context.Context, service string, pin Pin
 		out.Repo = ch.repo
 	}
 	out.Branch = ch.branch
+	// v0.10.590 — sürüm → ref → commit. Başarılıysa AĞAÇ DA o commit'ten
+	// okunur: link ile yol aynı ref'e bakmalı. Başarısızlık sessiz DEĞİL
+	// (Revision.Note) ama link üretimini durdurmaz — branş ucu + uyarı.
+	paths := ch.paths
+	linkRef := RefSpec{Kind: "branch", Name: ch.branch}
+	if ref, ok := ResolveVersionRef(cfg.VersionRef, version); ok && ch.class == "" && out.Repo != "" {
+		out.Revision = &Revision{Version: strings.TrimSpace(version), Ref: ref}
+		cli := s.clientFor(cfg.InsecureSkipVerify)
+		sha, err := s.refCommit(ctx, cli, cfg, ch.ver, out.Repo, ref)
+		switch {
+		case err != nil:
+			out.Revision.Note = "ref sorgusu başarısız: " + err.Error()
+		case sha == "":
+			out.Revision.Note = ref + " bulunamadı"
+		default:
+			tree, terr := s.repoTreeAt(ctx, cli, cfg, ch.ver, out.Repo, RefSpec{Kind: "commit", Name: sha})
+			if terr != nil || len(tree.paths) == 0 {
+				out.Revision.Note = "commit ağacı okunamadı: " + sha
+			} else {
+				paths, linkRef = tree.paths, RefSpec{Kind: "commit", Name: sha}
+				out.Revision.SHA, out.Revision.Verified = sha, true
+			}
+		}
+	}
 	if ch.class != "" {
 		reason := ch.reason
 		if ch.class == CodeDeadline {
@@ -255,8 +292,8 @@ func (s *Service) ResolveFrameLinks(ctx context.Context, service string, pin Pin
 			continue
 		}
 		link := FrameLink{Reason: FrameReasonNoPath}
-		if p := BestPathForFrame(ch.paths, f); p != "" {
-			if u := FileURL(cfg, out.Project, out.Repo, out.Branch, p, f.Line); u != "" {
+		if p := BestPathForFrame(paths, f); p != "" {
+			if u := FileURLAt(cfg, out.Project, out.Repo, linkRef, p, f.Line); u != "" {
 				link = FrameLink{URL: u}
 			}
 		}

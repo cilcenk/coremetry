@@ -1746,6 +1746,7 @@ export interface DevOpsSnapshot {
   detectedApiVersion?: string;
   repoPrefixes?: string[];
   branchOrder?: string[];
+  versionRef?: string; // v0.10.590 — tags/{version} | heads/…/{version}
   /** Organizasyon geneli kod araması açık mı (v0.10.75). */
   codeSearch?: boolean;
   /** v0.10.112 — uygulama paket önekleri; kod çekicisi bunları kurum-içi
@@ -1768,6 +1769,7 @@ export interface DevOpsSettingsInput {
   insecureSkipVerify?: boolean;
   repoPrefixes?: string[];
   branchOrder?: string[];
+  versionRef?: string; // v0.10.590 — tags/{version} | heads/…/{version}
   appPrefixes?: string[];
   codeLookupLimit?: number;
 }
@@ -1868,6 +1870,10 @@ export interface StackFramesResult {
    * koştuğu sürümle aynı olmayabilir. Bölümün ÜSTÜNDE bir kez gösterilir.
    */
   revisionWarning: string;
+  // v0.10.590 — olay anındaki sürümün VCS'e bağlanması. verified=true ise
+  // bağlantılar ve dosya yolu o commit'ten (GC<sha>); false ise branş ucu ve
+  // uyarı kalır, note nedenini söyler (ör. "tags/release.X bulunamadı").
+  revision?: { version: string; ref?: string; sha?: string; verified: boolean; note?: string };
   frames: StackFrameLink[];
 }
 

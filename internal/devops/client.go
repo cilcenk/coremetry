@@ -101,6 +101,9 @@ type Settings struct {
 	// snapshot, unlike the PAT — the secret contract is unchanged.
 	RepoPrefixes []string `json:"repoPrefixes,omitempty"`
 	BranchOrder  []string `json:"branchOrder,omitempty"`
+	// VersionRef (v0.10.590) — olay anındaki sürümü ref'e çeviren desen:
+	// "tags/{version}" | "heads/release/{version}". Boş = varsayılan.
+	VersionRef string `json:"versionRef,omitempty"`
 	// AppPrefixes (v0.10.112) — UYGULAMA paket önekleri
 	// ("com.banka.odeme.", "com.banka.kart."). Kod çekicisi bu öneklerle
 	// başlayan frame'leri kurum-içi çerçeve/kütüphane frame'lerinden
@@ -209,6 +212,7 @@ type Snapshot struct {
 	// out of a failed lookup would be "but what IS it stripping?".
 	RepoPrefixes []string `json:"repoPrefixes,omitempty"`
 	BranchOrder  []string `json:"branchOrder,omitempty"`
+	VersionRef   string   `json:"versionRef,omitempty"` // v0.10.590
 	// AppPrefixes / CodeLookupLimit (v0.10.112) — olduğu gibi yankılanır;
 	// tavan 0 ise ekran "varsayılan 6" der, RESOLVED değer ayrıca
 	// EffectiveLookupLimit'te (kutu boşken bile yürürlükteki sayı görünsün).
@@ -399,6 +403,7 @@ func (s *Service) Snapshot() Snapshot {
 		DetectedAPIVersion:   s.detVersion,
 		RepoPrefixes:         rc.RepoPrefixes,
 		BranchOrder:          rc.BranchOrder,
+		VersionRef:           s.cfg.VersionRef,
 		AppPrefixes:          s.cfg.AppPrefixes,
 		CodeLookupLimit:      s.cfg.CodeLookupLimit,
 		CodeSearchLimit:      s.cfg.CodeSearchLimit,
@@ -771,7 +776,16 @@ func stripUserinfo(msg string) string {
 // Azure DevOps Server/TFS ve dev.azure.com aynı şekli okur:
 //
 //	{koleksiyon}/{proje}/_git/{depo}?path=/x/y.java&version=GB{branş}&line=N&lineEnd=N&lineStartColumn=1&lineEndColumn=1&_a=contents
+//
+// FileURL — branş ucuna link (geriye uyum sarmalayıcısı). Sürümü doğrulanmış
+// yol FileURLAt ile commit'e bağlanır.
 func FileURL(cfg Settings, project, repo, branch, path string, line int) string {
+	return FileURLAt(cfg, project, repo, RefSpec{Kind: "branch", Name: branch}, path, line)
+}
+
+// FileURLAt — v0.10.590: versionDescriptor türüne göre GB<branş> / GT<tag> /
+// GC<commit>. Azure DevOps Server/TFS ve dev.azure.com üçünü de okur.
+func FileURLAt(cfg Settings, project, repo string, ref RefSpec, path string, line int) string {
 	repo = strings.Trim(strings.TrimSpace(repo), "/")
 	path = strings.TrimSpace(path)
 	if repo == "" || path == "" || strings.TrimSpace(cfg.BaseURL) == "" {
@@ -786,8 +800,19 @@ func FileURL(cfg Settings, project, repo, branch, path string, line int) string 
 	}
 	q := url.Values{}
 	q.Set("path", "/"+strings.TrimLeft(path, "/"))
-	if b := ShortBranch(branch); b != "" {
-		q.Set("version", "GB"+b)
+	switch ref.Kind {
+	case "tag":
+		if n := strings.TrimPrefix(strings.TrimSpace(ref.Name), "refs/tags/"); n != "" {
+			q.Set("version", "GT"+n)
+		}
+	case "commit":
+		if n := strings.TrimSpace(ref.Name); n != "" {
+			q.Set("version", "GC"+n)
+		}
+	default:
+		if b := ShortBranch(ref.Name); b != "" {
+			q.Set("version", "GB"+b)
+		}
 	}
 	if line > 0 {
 		ln := strconv.Itoa(line)

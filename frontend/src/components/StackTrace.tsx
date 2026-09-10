@@ -30,13 +30,15 @@ import type { StackFrameLink } from '@/lib/types';
 // DEGRADASYON SESSİZ: `frames` yoksa (uç `configured:false` döndü,
 // istek düştü, ya da hiçbir frame tanınmadı) çıktı bugünkü düz metnin
 // BİREBİR aynısı olur. Bu yüzeyde hata/uyarı gösterilmez.
-export function StackTrace({ stack, frames, warning }: {
+export function StackTrace({ stack, frames, warning, verified }: {
   /** Çizilecek metin. Sunucuya gönderilen dizgenin AYNISI olmalı. */
   stack: string;
   /** Sunucudan gelen frame künyesi. Yoksa düz metne düşülür. */
   frames?: StackFrameLink[];
   /** Sürüm uyarısı; YALNIZ gerçekten link üretildiyse ve bir kez. */
   warning?: string;
+  /** v0.10.590 — sürüm VCS'te doğrulandıysa uyarı yerine onay tonu. */
+  verified?: boolean;
 }) {
   // İlk kazanır: sunucu aynı satır için birden çok frame dönerse
   // (bozuk bir gramer, iç içe geçmiş dil), satır TEK bir süs alır —
@@ -68,7 +70,7 @@ export function StackTrace({ stack, frames, warning }: {
     <>
       {hasLink && !!warning && (
         <div className="ex-stack-note">
-          <span className="badge b-warn">{warning}</span>
+          <span className={verified ? "badge b-ok" : "badge b-warn"}>{warning}</span>
         </div>
       )}
       <pre className="ex-stack">

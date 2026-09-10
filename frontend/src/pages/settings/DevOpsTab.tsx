@@ -38,6 +38,7 @@ export function DevOpsTab() {
   const [codeSearch, setCodeSearch] = useState(false);
   const [repoPrefixes, setRepoPrefixes] = useState('');
   const [branchOrder, setBranchOrder] = useState('');
+  const [versionRef, setVersionRef] = useState(''); // v0.10.590
   // v0.10.112 — uygulama paket önekleri + deneme tavanı (operatör-raporlu
   // "tavan çerçeve sınıflarına gidiyor"). Tavan metin olarak tutulur:
   // boş kutu = varsayılan, sunucu 0'ı "ayar yok" okur.
@@ -112,6 +113,7 @@ export function DevOpsTab() {
       setCodeSearch(!!s.codeSearch);
       setRepoPrefixes((s.repoPrefixes || []).join(', '));
       setBranchOrder((s.branchOrder || []).join(', '));
+      setVersionRef(s.versionRef || '');
       setAppPrefixes((s.appPrefixes || []).join(', '));
       setLookupLimit(s.codeLookupLimit ? String(s.codeLookupLimit) : '');
       setSearchLimit(s.codeSearchLimit ? String(s.codeSearchLimit) : '');
@@ -129,6 +131,7 @@ export function DevOpsTab() {
     codeSearch,
     repoPrefixes: splitList(repoPrefixes),
     branchOrder: splitList(branchOrder),
+    versionRef: versionRef.trim(),
     appPrefixes: splitList(appPrefixes),
     codeLookupLimit: Math.max(0, parseInt(lookupLimit, 10) || 0),
     codeSearchLimit: Math.max(0, parseInt(searchLimit, 10) || 0),
@@ -182,6 +185,7 @@ export function DevOpsTab() {
       // kaydettiği anda varsayılanı kutuda görür.
       setRepoPrefixes((next.repoPrefixes || []).join(', '));
       setBranchOrder((next.branchOrder || []).join(', '));
+      setVersionRef(next.versionRef || '');
       setDetected({ flavor: next.detectedFlavor, apiVersion: next.detectedApiVersion });
       setMsg({ kind: 'ok', text: next.baseUrl
         ? 'Kaydedildi — bağlantı bilgileri saklandı (tüm pod’lar <30s içinde eşitlenir).'
@@ -401,6 +405,23 @@ export function DevOpsTab() {
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
             İlk <strong>var olan</strong> branş kullanılır. Hiçbiri yoksa deponun
             kendi varsayılan branşına düşülür.
+          </div>
+        </label>
+
+        {/* v0.10.590 — olay anındaki sürümü VCS ref'ine bağlayan desen. */}
+        <label style={{ display: 'block', marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+            Sürüm → ref deseni <span style={{ color: 'var(--text3)' }}>(versionRef)</span>
+          </div>
+          <input value={versionRef}
+            onChange={e => setVersionRef(e.target.value)}
+            placeholder="tags/{version}"
+            style={{ width: '100%' }} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Stack frame linkleri olay anındaki sürüme (image tag / service.version) göre bu
+            ref'e bağlanır: ref bulunursa link ve dosya yolu o commit'ten gider, bulunmazsa branş
+            ucu + uyarı. <code>{'{version}'}</code> zorunlu; <code>tags/</code> ya da
+            <code>heads/</code> ile başlar. Boş = <code>tags/{'{version}'}</code>.
           </div>
         </label>
 

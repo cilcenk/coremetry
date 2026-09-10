@@ -81,7 +81,7 @@ func TestRequestIDLinks(t *testing.T) {
 	text := "Request ID:\n" + rid
 
 	t.Run("prod servis → default şablon, etiket ortamı söyler", func(t *testing.T) {
-		links := requestIDLinks(text, "shop-creditcard-ccmanagement-prod", tpls, nil)
+		links := requestIDLinks(text, "shop-creditcard-management-prod", tpls, nil)
 		if len(links) != 1 {
 			t.Fatalf("link sayısı %d", len(links))
 		}

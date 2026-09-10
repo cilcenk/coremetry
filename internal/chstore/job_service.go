@@ -47,9 +47,9 @@ const JobLabelDefault = "job"
 // Operatörün res_keys dökümü (56 anahtar) `job`ın kaybolmadığını,
 // OTel'in doğru karşılıklarına AYRILDIĞINI gösterdi:
 //
-//	job="deposit/shop-deposit-commondeposithesapsl-uat"
+//	job="deposit/shop-deposit-commonaccountsvc-uat"
 //	  → k8s.namespace.name = "deposit"
-//	  → k8s.deployment.name = "shop-deposit-commondeposithesapsl-uat"
+//	  → k8s.deployment.name = "shop-deposit-commonaccountsvc-uat"
 //
 // k8s.deployment.name ORTAM EKİNİ TAŞIYOR (meslektaşın Prometheus
 // çıktısı bunu doğruluyor), yani Coremetry'nin servis adıyla TAM
@@ -105,7 +105,7 @@ func JobServiceRegex(service string) string {
 	// v0.9.673 (operatör + meslektaşının Prometheus çıktısı) — ORTAM EKİ
 	// İKİ YÖNE DE GİDİYOR. Aynı kurulumda her iki biçim birden var:
 	//
-	//   job  = "deposit/shop-deposit-commondeposithesapsl-uat"  ← ek VAR
+	//   job  = "deposit/shop-deposit-commonaccountsvc-uat"  ← ek VAR
 	//   name = "shop-chatbot-ai-integration"                    ← ek YOK
 	//                (servis adı ise shop-chatbot-ai-integration-uat)
 	//

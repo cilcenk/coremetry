@@ -272,16 +272,16 @@ describe('kırılım ekseni', () => {
   it('seviye dışı eksenler grup katlamasını kullanır (bant sınıflaması DEĞİL)', () => {
     // Bir cluster adı severityBandOf'tan geçseydi OTHER'a yığılır ve
     // grafik tek gri çizgiye inerdi; collapseGroups adı korur.
-    const r = collapseGroups([S('ocp-cluster', [[T0, 7]]), S('ocp-cluster', [[T0, 3]])]);
-    expect(r.series.map(s => s.label)).toEqual(['ocp-cluster', 'ocp-cluster']);
+    const r = collapseGroups([S('ocp-east', [[T0, 7]]), S('ocp-west', [[T0, 3]])]);
+    expect(r.series.map(s => s.label)).toEqual(['ocp-east', 'ocp-west']);
   });
 
   it("CH'nin attribute'suz satırları (OTHER) 'diğer'e katlanır, seri kapmaz", () => {
     const r = collapseGroups([
-      S('ocp-cluster', [[T0, 7]]),
+      S('ocp-east', [[T0, 7]]),
       S('OTHER', [[T0, 90]]), // en büyük — ad ayıklaması olmasa ilk sırayı alırdı
     ]);
-    expect(r.series.map(s => s.label)).toEqual(['ocp-cluster', 'diğer']);
+    expect(r.series.map(s => s.label)).toEqual(['ocp-east', 'diğer']);
     expect(r.totals.all).toBe(97);
   });
 });

@@ -85,7 +85,7 @@ Dört alan da dolu dönerse GC portu yeterli; `memberOf` boşsa 389/636
 
 ## 5. Team attribute — tıkla-seç (v0.8.523)
 
-Ekip bilgisi yanlış (TEKNOLOJİ) geliyorsa: Settings → LDAP → **Kullanıcı
+Ekip bilgisi yanlış (TECHNOLOGY) geliyorsa: Settings → LDAP → **Kullanıcı
 incele** → kendi kullanıcı adın → tablodaki **Ekip adayları** sütununda
 doğru değere tıkla (ör. `SY-Dijital Bankacılık`) → Team attribute/regex
 otomatik dolar → **Save** → çıkış/giriş. Sonra katalog UG/SY takım

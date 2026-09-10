@@ -297,8 +297,8 @@ func TestResolveRepoProjectFromPrefix(t *testing.T) {
 	}{
 		{
 			"varsayılan önek → SHOP",
-			"shop-cashmanagement-cashflow-prod", nil,
-			"cashmanagement-cashflow", "SHOP",
+			"shop-treasury-cashflow-prod", nil,
+			"treasury-cashflow", "SHOP",
 		},
 		{
 			"ortam eki proje türetmesini etkilemez",

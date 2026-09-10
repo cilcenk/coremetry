@@ -211,7 +211,7 @@ export function LDAPTab() {
           </Field2>
         </Row>
         {/* v0.8.430 — attribute discovery. Operator-reported: users.team
-            herkes için üst division ("TEKNOLOJİ") geliyordu çünkü AD bunu
+            herkes için üst division ("TECHNOLOGY") geliyordu çünkü AD bunu
             department'ta tutuyor; alt ekibin HANGİ attribute'ta olduğunu
             görmek için bir kullanıcının tüm directory attribute'larını dök. */}
         <InspectPanel onPick={(attr, pattern) => update({ teamAttribute: attr, teamRegex: pattern })} />

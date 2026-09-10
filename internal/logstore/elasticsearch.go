@@ -2692,7 +2692,7 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		// v0.9.452 (operatör isteği) — OpenShift cluster-logging şekli:
 		// ClusterLogForwarder cluster adını ÜST-DÜZEY
 		// `openshift.labels.cluster` alanına yazar (OTel resource_attributes
-		// öneki YOK). Prod ES'te seçilen cluster (ocp-cluster, ocp-cluster…) yalnız bu
+		// öneki YOK). Prod ES'te seçilen cluster (ocp-east, ocp-west…) yalnız bu
 		// alanla eşleşiyor; üç OTel yolu bu indekste hiç yok — filtre o
 		// yüzden hiçbir kaydı bulamıyordu. exists-guard'lı should zinciri
 		// eksik alanlı indekslerde zararsız (mevcut sözleşme).

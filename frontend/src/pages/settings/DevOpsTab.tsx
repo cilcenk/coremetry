@@ -336,7 +336,7 @@ export function DevOpsTab() {
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
             Servis adından depo adı türetilirken soyulur; ortam eki
             (<code>-prod/-int/-uat/-prep</code>) her hâlükârda soyulur.
-            Örnek: <code>shop-odeme-servisi-prod</code> → <code>odeme-servisi</code>.
+            Örnek: <code>shop-payment-service-prod</code> → <code>payment-service</code>.
             Katalogdaki <strong>Repository</strong> alanı doluysa O kazanır —
             elle pin konvansiyonu ezer.
           </div>
@@ -353,7 +353,7 @@ export function DevOpsTab() {
           </div>
           <input value={appPrefixes}
             onChange={e => setAppPrefixes(e.target.value)}
-            placeholder="com.banka.odeme., com.banka.kart."
+            placeholder="com.shop.payment., com.shop.cards."
             style={{ width: '100%' }} />
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
             Bu öneklerle başlayan stack frame'leri <strong>önce</strong> denenir;
@@ -517,7 +517,7 @@ export function DevOpsTab() {
         </p>
         <Field label="Servis adı" value={dryService}
           onChange={e => setDryService(e.target.value)}
-          placeholder="shop-odeme-servisi-prod"
+          placeholder="shop-payment-service-prod"
           hint={configured
             ? 'Kayıtlı ayarlarla denenir — kaydetmediğiniz değişiklikler hesaba katılmaz.'
             : 'Önce sunucu adresini girip kaydedin.'} />

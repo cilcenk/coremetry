@@ -28,25 +28,25 @@ describe('podLineLabel', () => {
 // v0.9.532 — cluster öneki sözleşmesi (operatör: "jvm var ama hangi
 // cluster belli değil"). Önek YALNIZ çok-cluster'lı seri kümesinde ve
 // yalnız cluster'ı bilinen seride basılır — tek cluster'da her etikete
-// "ocp-cluster · " eklemek gürültü, cluster'sız seriye önek basmak yalan.
+// "ocp-eu · " eklemek gürültü, cluster'sız seriye önek basmak yalan.
 describe('withClusterPrefix / podClusterOf', () => {
   it('çok cluster + cluster bilinen → önek', () => {
-    expect(withClusterPrefix('6f9c7b-x2v', 'ocp-cluster', true)).toBe('ocp-cluster · 6f9c7b-x2v');
+    expect(withClusterPrefix('6f9c7b-x2v', 'ocp-eu', true)).toBe('ocp-eu · 6f9c7b-x2v');
   });
   it('tek cluster → önek YOK (gürültü)', () => {
-    expect(withClusterPrefix('6f9c7b-x2v', 'ocp-cluster', false)).toBe('6f9c7b-x2v');
+    expect(withClusterPrefix('6f9c7b-x2v', 'ocp-eu', false)).toBe('6f9c7b-x2v');
   });
   it('cluster bilinmiyor → önek YOK (attr basmayan ~%1-2 pod)', () => {
     expect(withClusterPrefix('6f9c7b-x2v', '', true)).toBe('6f9c7b-x2v');
   });
   it('podClusterOf groupKey[3] okur, kırpar, yoksa boş', () => {
-    expect(podClusterOf(['p', 'h', 'i', ' ocp-cluster '])).toBe('ocp-cluster');
+    expect(podClusterOf(['p', 'h', 'i', ' ocp-eu '])).toBe('ocp-eu');
     expect(podClusterOf(['p', 'h', 'i'])).toBe('');
     expect(podClusterOf([])).toBe('');
   });
   it('4. anahtar eklenmesi podLineLabel sözleşmesini BOZMAZ', () => {
     // groupKey[0..2] indeksleri v0.9.91 kontratı; [3] cluster.
-    expect(podLineLabel(['auth-service-6f9c7b-x2v', '', 'uuid', 'ocp-cluster'], 'auth-service', 'used'))
+    expect(podLineLabel(['auth-service-6f9c7b-x2v', '', 'uuid', 'ocp-eu'], 'auth-service', 'used'))
       .toBe('6f9c7b-x2v');
   });
 });

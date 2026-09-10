@@ -17,7 +17,7 @@ import (
 
 func TestMatchRepoName(t *testing.T) {
 	// Sahadaki asıl vaka: konvansiyon küçük harf üretir
-	// (shop-cashmanagement-cashflow-prod → cashmanagement-cashflow),
+	// (shop-treasury-cashflow-prod → cashmanagement-cashflow),
 	// gerçek depo "CashManagement.CashFlow" olabilir.
 	server := []string{
 		"CashManagement.CashFlow",

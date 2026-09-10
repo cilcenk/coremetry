@@ -187,10 +187,10 @@ func TestMergeFieldSeries(t *testing.T) {
 
 	t.Run("aynı ad iki alandan gelirse TOPLANIR", func(t *testing.T) {
 		got := mergeFieldSeries([][]LogSeries{
-			{s("ocp-cluster", [2]int64{t0, 10}, [2]int64{t1, 4})},
-			{s("ocp-cluster", [2]int64{t0, 5})},
+			{s("ocp-east", [2]int64{t0, 10}, [2]int64{t1, 4})},
+			{s("ocp-east", [2]int64{t0, 5})},
 		})
-		if len(got) != 1 || got[0].Name != "ocp-cluster" {
+		if len(got) != 1 || got[0].Name != "ocp-east" {
 			t.Fatalf("tek birleşmiş seri bekleniyordu: %+v", got)
 		}
 		want := []LogPoint{{T: t0, V: 15}, {T: t1, V: 4}}
@@ -212,15 +212,15 @@ func TestMergeFieldSeries(t *testing.T) {
 
 	t.Run("BELGELİ çift-sayım: bir doküman iki alanda da değer taşırsa", func(t *testing.T) {
 		// Tek bir doküman hem `openshift.labels.cluster` hem
-		// `resource_attributes.cluster` alanında "ocp-cluster" taşıyorsa iki
+		// `resource_attributes.cluster` alanında "ocp-east" taşıyorsa iki
 		// terms agg'i de onu sayar → birleşmiş bant 1 yerine 2 gösterir.
 		// Nadir (yollar farklı pipeline'lara ait) ve sınırlı: şişme adlı
 		// bandın içinde kalır, OTHER sentezi (total − toplam, 0'da
 		// kelepçeli) aritmetiği yutar. Davranış bilinçli — burada
 		// çakılıyor ki sessizce "düzeltilip" alan atlanmasın.
 		got := mergeFieldSeries([][]LogSeries{
-			{s("ocp-cluster", [2]int64{t0, 1})},
-			{s("ocp-cluster", [2]int64{t0, 1})},
+			{s("ocp-east", [2]int64{t0, 1})},
+			{s("ocp-east", [2]int64{t0, 1})},
 		})
 		if got[0].Points[0].V != 2 {
 			t.Fatalf("belgeli çift-sayım değişti: %+v", got[0].Points)

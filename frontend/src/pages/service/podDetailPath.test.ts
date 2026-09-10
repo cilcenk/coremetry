@@ -37,10 +37,10 @@ describe('podDetailPath', () => {
 
   it('emits full context + from marker when provided', () => {
     const q = parse(podDetailPath({
-      cluster: 'ocp-cluster', namespace: 'prod', pod: 'app-7d9f-x2',
+      cluster: 'ocp-eu', namespace: 'prod', pod: 'app-7d9f-x2',
       service: 'checkout', deploy: 'app', range: '1h', from: 'metrics',
     }));
-    expect(q.get('cluster')).toBe('ocp-cluster');
+    expect(q.get('cluster')).toBe('ocp-eu');
     expect(q.get('namespace')).toBe('prod');
     expect(q.get('pod')).toBe('app-7d9f-x2');
     expect(q.get('service')).toBe('checkout');

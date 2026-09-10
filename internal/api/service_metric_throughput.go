@@ -711,8 +711,8 @@ func (a svcAttempt) Label() string {
 // serviceNameAttempts — service_name kolonu denemeleri, GÜVEN SIRASIYLA.
 //
 // v0.9.679. Operatörün SQL çıktısı belirleyiciydi: metric_points'te 1494
-// servis var ve HEPSİ EKSİZ (shop-chequenotes-notespayment,
-// shop-creditcard-ccfinancial…), oysa Coremetry'nin servis listesi
+// servis var ve HEPSİ EKSİZ (shop-giftcards-cardpayment,
+// shop-creditcard-finance…), oysa Coremetry'nin servis listesi
 // trace'ten gelen EKLİ adı gösteriyor (...-uat). Eşleşme ancak eksiz
 // adla kurulabiliyor.
 //

@@ -39,7 +39,7 @@ func TestDevopsFramesKeyDistinctSameLengthStacks(t *testing.T) {
 
 // Anahtar KARARLI: aynı girdi iki çağrıda aynı dizeyi vermeli.
 func TestDevopsFramesKeyStable(t *testing.T) {
-	in := []string{"odeme", "core", "cfg1", "at com.a.A.x(A.java:1)"}
+	in := []string{"payment", "core", "cfg1", "at com.a.A.x(A.java:1)"}
 	if devopsFramesKey(in[0], in[1], in[2], in[3], "") != devopsFramesKey(in[0], in[1], in[2], in[3], "") {
 		t.Fatal("anahtar kararsız")
 	}

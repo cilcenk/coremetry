@@ -49,7 +49,7 @@ func TestNormalizeLogsGroupBy(t *testing.T) {
 // tanınmayan değerler tek girdi paylaşır, tanınan eksenler ise ASLA
 // birbirinin girdisini görmez (v0.5.187 çapraz-zehirlenme sınıfı).
 func TestLogsTimeseriesKey_AxisSeparation(t *testing.T) {
-	f := logstore.Filter{Service: "checkout", Cluster: "ocp-cluster"}
+	f := logstore.Filter{Service: "checkout", Cluster: "ocp-east"}
 	keyOf := func(axis string) string {
 		return logsTimeseriesKey(f, "now-1h", "now", 30, normalizeLogsGroupBy(axis))
 	}

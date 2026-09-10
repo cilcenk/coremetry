@@ -3,11 +3,11 @@ import { podWorkloadName, workloadMatchesService, podMatchesService, stripEnvSuf
 
 // v0.9.56 — servis-adı↔pod-adı yedek eşleşmesinin çekirdeği; backend
 // stripPodSuffixes ile aynı davranış (operatör vakası:
-// shop-adkservices-login-prep-<rs>-<rand> → shop-adkservices-login-prep).
+// shop-partnerservices-login-prep-<rs>-<rand> → shop-partnerservices-login-prep).
 describe('podWorkloadName', () => {
   it('strips deployment rs-hash + random suffix', () => {
-    expect(podWorkloadName('shop-adkservices-login-prep-6bd9df6c4d-x2b1z'))
-      .toBe('shop-adkservices-login-prep');
+    expect(podWorkloadName('shop-partnerservices-login-prep-6bd9df6c4d-x2b1z'))
+      .toBe('shop-partnerservices-login-prep');
   });
   it('strips daemonset random suffix only', () => {
     expect(podWorkloadName('node-exporter-x2b1z')).toBe('node-exporter');

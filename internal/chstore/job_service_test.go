@@ -185,7 +185,7 @@ func TestMetricNameProbeTokensCapped(t *testing.T) {
 // Meslektaşının Prometheus çıktısı: job = "<namespace>/<deployment>" ve
 // deployment kısmı ortam ekini TAŞIYOR:
 //
-//	deposit/shop-deposit-commondeposithesapsl-uat
+//	deposit/shop-deposit-commonaccountsvc-uat
 //
 // Ama Metric Explorer ekran görüntüsündeki `name` etiketi ekSİZ:
 //
@@ -194,11 +194,11 @@ func TestMetricNameProbeTokensCapped(t *testing.T) {
 // Aynı kurulumda iki biçim birden. Tek biçimi aramak diğerini kaçırır.
 func TestJobServiceRegexMatchesBothEnvSuffixForms(t *testing.T) {
 	// (1) Ek TAŞIYAN job değeri — namespace önekli.
-	re := regexp.MustCompile(JobServiceRegex("shop-deposit-commondeposithesapsl-uat"))
+	re := regexp.MustCompile(JobServiceRegex("shop-deposit-commonaccountsvc-uat"))
 	for _, v := range []string{
-		"deposit/shop-deposit-commondeposithesapsl-uat", // operatörün gerçek job'ı
-		"shop-deposit-commondeposithesapsl-uat",         // öneksiz
-		"shop-deposit-commondeposithesapsl",             // ek soyulmuş (name etiketi biçimi)
+		"deposit/shop-deposit-commonaccountsvc-uat", // operatörün gerçek job'ı
+		"shop-deposit-commonaccountsvc-uat",         // öneksiz
+		"shop-deposit-commonaccountsvc",             // ek soyulmuş (name etiketi biçimi)
 	} {
 		if !re.MatchString(v) {
 			t.Errorf("%q eşleşmeliydi", v)
@@ -214,11 +214,11 @@ func TestJobServiceRegexMatchesBothEnvSuffixForms(t *testing.T) {
 
 // Gevşemedik: ek alternatifi eklemek KOMŞU servisleri içeri almamalı.
 func TestJobServiceRegexStillRejectsNeighbours(t *testing.T) {
-	re := regexp.MustCompile(JobServiceRegex("shop-deposit-commondeposithesapsl-uat"))
+	re := regexp.MustCompile(JobServiceRegex("shop-deposit-commonaccountsvc-uat"))
 	for _, v := range []string{
-		"deposit/legacy-shop-deposit-commondeposithesapsl-uat", // ad uzantısı
-		"deposit/shop-deposit-commondeposithesapsl-uat-v2",     // sonek
-		"deposit/shop-deposit-commondeposithesapsl-prod",       // BAŞKA ortam
+		"deposit/legacy-shop-deposit-commonaccountsvc-uat", // ad uzantısı
+		"deposit/shop-deposit-commonaccountsvc-uat-v2",     // sonek
+		"deposit/shop-deposit-commonaccountsvc-prod",       // BAŞKA ortam
 		"deposit/shop-deposit",                                 // kısaltma
 	} {
 		if re.MatchString(v) {
@@ -229,7 +229,7 @@ func TestJobServiceRegexStillRejectsNeighbours(t *testing.T) {
 
 func TestStripEnvSuffix(t *testing.T) {
 	cases := map[string]string{
-		"shop-deposit-commondeposithesapsl-uat": "shop-deposit-commondeposithesapsl",
+		"shop-deposit-commonaccountsvc-uat": "shop-deposit-commonaccountsvc",
 		"svc-prod":                             "svc",
 		"svc-int":                              "svc",
 		"svc-prep":                             "svc",

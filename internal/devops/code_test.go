@@ -983,7 +983,7 @@ func TestFetchCodePinnedServiceDerivesProject(t *testing.T) {
 	svc.Configure(cfg)
 
 	// Pin: doğru depo, elle yazıldığı için YANLIŞ harf yazımında.
-	res := ResolveRepo("shop-cashmanagement-cashflow-prod", "CashManagement.cashflow", ResolveConfig{})
+	res := ResolveRepo("shop-treasury-cashflow-prod", "CashManagement.cashflow", ResolveConfig{})
 	if res.Source != RepoSourcePin || res.Project.Value != "SHOP" {
 		t.Fatalf("çözüm=%+v — pin depoyu, önek projeyi vermeliydi", res)
 	}

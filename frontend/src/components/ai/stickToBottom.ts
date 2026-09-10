@@ -57,6 +57,8 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, deps: unkno
     const el = elRef.current ?? findScrollParent(ref.current);
     if (!el || !stuck.current) return;
     el.scrollTop = el.scrollHeight;
+    // deps çağıranın listesi (turns/open): kuralın statik doğrulaması bilerek atlanır.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
   return useCallback(() => {

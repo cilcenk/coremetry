@@ -392,7 +392,7 @@ function SensitivitySection() {
                 value={cfg.externalOpenCapPerTick ?? 20}
                 onChange={e => setCfg({ ...cfg, externalOpenCapPerTick: Number(e.target.value) })} />
               <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-                Influx/Oracle gibi dış kaynakların anomali hattı bir tikte bundan fazla
+                Oracle gibi dış kaynakların anomali hattı bir tikte bundan fazla
                 yeni Problem açmaz; en güçlü sapmalar önce, kalanlar için tek bir
                 &ldquo;tavan aşıldı&rdquo; özeti açılır. Açık Problem'ler etkilenmez.
                 Varsayılan 20.

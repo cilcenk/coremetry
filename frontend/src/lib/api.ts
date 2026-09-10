@@ -23,7 +23,7 @@ import type {
   AISettings, AISettingsInput, AIModelProfileInput, AIProfilesPayload, AIProfileTestResult, AISurfaceMap,
   AnomalyVerdict, AnomalyVerdictKind,
   TempoSnapshot, TempoSettingsInput,
-  VMSnapshot, VMSettingsInput, VMTestResult, InfluxSnapshot, InfluxSettingsInput, InfluxSourceInput, InfluxTestResult, InfluxStatusPayload,
+  VMSnapshot, VMSettingsInput, VMTestResult,
   OracleSnapshot, OracleSettingsInput, OracleSource, OracleTestResult, OracleStatusPayload,
   DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult, DevOpsResolveDryRun, StackFramesResult,
   EntityClustersResponse, EntityListResponse, EntityDetailResponse, EntityServicesResponse, EntityMetricsResponse, EntityContainersResponse, EntityLatencyResponse,
@@ -1699,22 +1699,6 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
     }),
-
-  // InfluxDB 2.x dış metrik kaynakları (v0.10.222, admin) — influx_routes.go.
-  getInfluxSettings: () => get<InfluxSnapshot>(`/api/settings/influx`),
-  putInfluxSettings: (s: InfluxSettingsInput) =>
-    request<InfluxSnapshot>(`/api/settings/influx`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(s),
-    }),
-  /** Formdaki TEK kaynağı kaydetmeden dener (SORGU 1'e |> limit(n:20)). */
-  testInfluxSource: (s: InfluxSourceInput) =>
-    request<InfluxTestResult>(`/api/settings/influx/test`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(s),
-    }),
-  /** Kaynak başına metric_points izi (son 1 saat) + bu pod'daki işçi durumu; her rol. */
-  getInfluxStatus: () => get<InfluxStatusPayload>(`/api/influx/status`),
 
   // Oracle hata tablosu dış kaynakları (v0.10.580, AŞAMA 1) — oracle_routes.go.
   // Hiçbiri qs() kullanmıyor: dördü de gövde/parametresiz uçlar. qs()

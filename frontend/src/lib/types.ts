@@ -1500,127 +1500,14 @@ export interface VMTestResult {
   error?: string;
 }
 
-// ── InfluxDB 2.x dış metrik kaynakları (v0.10.222, internal/influx) ──
-// Go aynası: influx.Thresholds / QueryConfig / SourceConfig /
-// SourceSnapshot / Snapshot / Settings / QueryProbe / TestResult.
-// tokenRef bir REFERANS (`env:NAME` | `file:/path`), secret değil — GET
-// aynen döndürür; tokenResolved/tokenError Settings rozeti.
-/** influx.Thresholds — 0/yok = global anomaly_sensitivity varsayılanı. */
-export interface InfluxThresholds {
-  criticalZ?: number;
-  dwell?: number;
-  minAbsDelta?: number;
-  minMAD?: number;
-}
-/** influx.RatioSpec — v0.10.532: türetilmiş oran (Flux YOK): 100 × pay ÷ payda,
- *  (groupBy değerleri, kova) anahtarında bellekte birleşir; Influx'a gitmez. */
-export interface InfluxRatioSpec {
-  numerator: string;
-  denominator: string;
-  /** Altında kalan kova YAZILMAZ (0 değil, boşluk). 0/yok = 20. */
-  minDenominator?: number;
-  /** Pay hiç satır vermediğinde bekletilen en yeni payda kovası. 0/yok = 2. */
-  settleBuckets?: number;
-}
-/** influx.QueryConfig — name metrik kuyruğu (`ext:<name>`); flux SORGU 1, enrichFlux SORGU 2. */
-export interface InfluxQueryConfig {
-  name: string;
-  flux: string;
-  enrichFlux?: string;
-  attrMap?: Record<string, string>;
-  groupBy?: string[];
-  thresholds?: InfluxThresholds;
-  /** Doluysa türetilmiş oran sorgusu; flux boş. */
-  ratio?: InfluxRatioSpec;
-}
-/** influx.SourceConfig — PUT gövdesi elemanı; id sunucu sahipli. */
-export interface InfluxSourceInput {
-  id?: string;
-  name: string;
-  url: string;
-  org: string;
-  /** Düz token (v0.10.224): yalnız YENİ değer; boş = saklıyı koru. GET asla döndürmez. */
-  token?: string;
-  /** `env:NAME` | `file:/path` — doluysa token'a tercih edilir. */
-  tokenRef?: string;
-  intervalSec?: number;
-  insecureSkipVerify?: boolean;
-  enabled: boolean;
-  queries: InfluxQueryConfig[];
-}
-/** influx.SourceSnapshot — GET görünümü (SourceConfig gömülü + rozet). */
-export interface InfluxSourceSnapshot extends InfluxSourceInput {
-  hasToken: boolean;
-  tokenResolved: boolean;
-  tokenError?: string;
-}
-export interface InfluxSnapshot { sources: InfluxSourceSnapshot[] }
-export interface InfluxSettingsInput { sources: InfluxSourceInput[] }
-/** influx.QueryProbe — test-connection'da sorgu başına sonuç. */
-export interface InfluxQueryProbe {
-  name: string;
-  rows: number;
-  columns: string[];
-  sample?: Record<string, string>[];
-  latencyMs: number;
-  error?: string;
-  /** v0.10.335 — sıfır satırda ikinci deneme (24h); wideWindow doluysa koştu. */
-  wideWindow?: string;
-  wideRows?: number;
-  wideNewest?: string;
-  wideError?: string;
-  hint?: string;
-}
-/** influx.TestResult — 200 + ok:false başarısızlıkta (test ucu sözleşmesi). */
-export interface InfluxTestResult {
-  ok: boolean;
-  error?: string;
-  tokenResolved: boolean;
-  queries: InfluxQueryProbe[];
-}
-/** influx.SourceStatus — bu pod'daki poll işçisinin bellek durumu (v0.10.223). */
-export interface InfluxSourceStatus {
-  sourceId: string;
-  name: string;
-  lastPollAt?: number;  // unix ms
-  nextDueAt?: number;   // unix ms
-  lastRows: number;
-  lastPoints: number;
-  lastDrops: number;
-  lastSkippedOld: number;     // v0.10.224 — zaten yazılmış kova
-  lastSkippedPartial: number; // v0.10.224 — tamamlanmamış kova
-  lastRatioSkipped?: number;  // v0.10.532 — oran: payda az / bekliyor / paydasız pay
-  lastError?: string;
-}
-/** api.influxStatusSource — ayar + metric_points izi (son 1 saat) + (varsa) işçi. */
-export interface InfluxStatusSource {
-  id: string;
-  name: string;
-  enabled: boolean;
-  lastPointAt?: number; // unix ms; yok = son 1 saatte veri yok
-  points1h: number;
-  series1h: number;
-  worker?: InfluxSourceStatus;
-}
-export interface InfluxStatusPayload {
-  sources: InfluxStatusSource[];
-  workerOnThisPod: boolean;
-  // v0.10.333 — işçi başka pod'daysa paylaşılan durumdan okundu.
-  workerRemote?: boolean;
-  workerPod?: string;
-  workerUpdatedAt?: number; // unix ms
-  generatedAt: number;
-}
-
-
 // ── Oracle hata tablosu dış kaynakları (v0.10.580, internal/oracle) ──
 // Go aynası: oracle.SourceConfig / SourceSnapshot / Snapshot / Settings /
 // TestResult / SourceStatus. AŞAMA 1: yalnız datasource tanımı, credential
 // ve bağlantı testi — poller / metrik yazımı / Problem üretimi Aşama 2-3'te
 // (audit: docs/audit/oracle-error-log-2026-09-09.md §7).
 //
-// Şifre sözleşmesi Influx token'ının birebir ikizi (v0.10.224 operatör
-// kararı): düz şifre saklanır ama GET ASLA geri vermez (hasPassword rozeti),
+// Şifre sözleşmesi (v0.10.224 operatör kararı, eski Influx token'ından
+// devralındı): düz şifre saklanır ama GET ASLA geri vermez (hasPassword rozeti),
 // boş girdi saklıyı KORUR; alternatif REFERANS `env:NAME` | `file:/path`
 // (passwordRef) — bir referans secret DEĞİLDİR, GET aynen döndürür.
 /** oracle.SourceConfig — PUT gövdesi elemanı; id sunucu sahipli ("o-"+8 hex).
@@ -6692,7 +6579,7 @@ export interface AnomalySensitivityConfig {
   metrics: Record<string, AnomalyMetricSensitivity>;
   // Açılmak için üst üste ateşlemesi gereken 5-dk bucket sayısı.
   dwellBuckets: number;
-  // v0.10.587 — dış seri hattında (Influx/Oracle) tek tikte açılabilecek
+  // v0.10.587 — dış seri hattında (Oracle) tek tikte açılabilecek
   // YENİ Problem sayısı; aşımda tek özet Problem. 0 = varsayılan (20).
   externalOpenCapPerTick?: number;
   // Bu |z|'nin üstü critical. Dedektör YALNIZ critical verdict'te

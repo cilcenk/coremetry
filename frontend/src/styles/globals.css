@@ -1310,20 +1310,20 @@ tbody td.row-cell, [data-density] tbody td.row-cell { padding: 0; }
 /* Settings → dış kaynak sekmeleri (Influx v0.10.222, Oracle v0.10.580):
    kaynak kartı + alt blok. İkinci sekme kendi nüshasını yazmıyor —
    iki ad AYNI kurala bağlı; üçüncü bir kaynak sekmesi de buraya eklenir. */
-.influx-src, .oracle-src { margin-bottom: var(--sp-6); padding: var(--sp-7); border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); }
-.influx-src.is-off, .oracle-src.is-off { opacity: .65; }
-.influx-src__head, .oracle-src__head { display: flex; gap: var(--sp-5); align-items: flex-end; margin-bottom: var(--sp-5); }
-.influx-src__head > .field, .oracle-src__head > .field { flex: 1; margin-bottom: 0; }
-.influx-row, .oracle-row { display: flex; gap: var(--sp-5); flex-wrap: wrap; }
-.influx-row > .field, .oracle-row > .field { flex: 1 1 200px; }
+.oracle-src { margin-bottom: var(--sp-6); padding: var(--sp-7); border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); }
+.oracle-src.is-off { opacity: .65; }
+.oracle-src__head { display: flex; gap: var(--sp-5); align-items: flex-end; margin-bottom: var(--sp-5); }
+.oracle-src__head > .field { flex: 1; margin-bottom: 0; }
+.oracle-row { display: flex; gap: var(--sp-5); flex-wrap: wrap; }
+.oracle-row > .field { flex: 1 1 200px; }
 /* `className` Field atomunda <input>'a iner; dar kolon seçimi :has() ile sarmalayıcıya taşınır. */
-.influx-row > .field:has(> input.is-narrow), .oracle-row > .field:has(> input.is-narrow) { flex: 0 1 150px; }
-.influx-q, .oracle-q { margin-top: var(--sp-5); padding: var(--sp-5) var(--sp-6); border: 1px dashed var(--border); border-radius: var(--radius-sm); background: var(--bg1); }
-.influx-q textarea, .oracle-q textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--fs-xs); }
-.influx-probe, .oracle-probe { margin-top: var(--sp-5); font-size: var(--fs-sm); }
-.influx-probe table, .oracle-probe table { font-size: var(--fs-xs); }
-.influx-status, .oracle-status { margin-bottom: var(--sp-5); font-size: var(--fs-sm); color: var(--text2); }
-.influx-status .is-quiet, .oracle-status .is-quiet, .oracle-actions .is-quiet { color: var(--text3); }
+.oracle-row > .field:has(> input.is-narrow) { flex: 0 1 150px; }
+.oracle-q { margin-top: var(--sp-5); padding: var(--sp-5) var(--sp-6); border: 1px dashed var(--border); border-radius: var(--radius-sm); background: var(--bg1); }
+.oracle-q textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--fs-xs); }
+.oracle-probe { margin-top: var(--sp-5); font-size: var(--fs-sm); }
+.oracle-probe table { font-size: var(--fs-xs); }
+.oracle-status { margin-bottom: var(--sp-5); font-size: var(--fs-sm); color: var(--text2); }
+.oracle-status .is-quiet, .oracle-actions .is-quiet { color: var(--text3); }
 /* Ayar sekmesi okuma genişliği — form satırı 820px'i aşınca etiket/kutu
    ilişkisi kopuyor. Sayfanın kendisi dar ekranda daralır (max-width). */
 .settings-pane { max-width: 820px; }

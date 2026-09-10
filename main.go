@@ -36,7 +36,6 @@ import (
 	"github.com/cilcenk/coremetry/internal/elasticml"
 	"github.com/cilcenk/coremetry/internal/entity"
 	"github.com/cilcenk/coremetry/internal/evaluator"
-	"github.com/cilcenk/coremetry/internal/influx"
 	"github.com/cilcenk/coremetry/internal/ldap"
 	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/mcp"
@@ -1016,15 +1015,6 @@ func main() {
 		log.Printf("[thanos] label checks load: %v", err)
 	}
 	go thanosSvc.StartLabelCheckRefresh(ctx, store, 30*time.Second)
-	// v0.10.222 — InfluxDB 2.x dış metrik kaynakları (audit:
-	// docs/audit/influx-integration.md). Ayar blobu HER rolde (api pod
-	// Settings'i servis eder, worker poll'lar); poller (v0.10.223) yalnız
-	// worker lideri (cache.LeaderHolder "influx-poller").
-	influxSvc := influx.New()
-	if err := influxSvc.LoadPersisted(ctx, store); err != nil {
-		log.Printf("[influx] load persisted config: %v", err)
-	}
-	cfgRefresh.Add("influx", func(ctx context.Context) error { return influxSvc.LoadPersisted(ctx, store) })
 	// v0.10.580 — Oracle hata tablosu datasource'ları (audit:
 	// docs/audit/oracle-error-log-2026-09-09.md, AŞAMA 1). Ayar blobu HER
 	// rolde: api pod'u Settings'i ve bağlantı testini servis ediyor.
@@ -1036,16 +1026,11 @@ func main() {
 	}
 	cfgRefresh.Add("oracle", func(ctx context.Context) error { return oracleSvc.LoadPersisted(ctx, store) })
 	// v0.10.605 — bayat süpürme muafiyeti (592) yalnız YAŞAYAN poller
-	// kaynakları için: özne ext:<ad> etkin bir Influx ya da Oracle kaynağına
+	// kaynakları için: özne ext:<ad> etkin bir Oracle kaynağına
 	// karşılık gelmiyorsa ext-down/ext-cap Problem'i süpürülür — silinen
 	// kaynağın Problem'ini resolve edecek poller yok, muafiyet onu sonsuza
 	// dek açık bırakırdı.
 	evalr.SetPollerSourceLive(func(subject string) bool {
-		for _, src := range influxSvc.CurrentSettings().Sources {
-			if src.Enabled && anomaly.ExternalSubject(src.Name, nil) == subject {
-				return true
-			}
-		}
 		for _, src := range oracleSvc.CurrentSettings().Sources {
 			if src.Enabled && anomaly.ExternalSubject(src.Name, nil) == subject {
 				return true
@@ -1053,7 +1038,6 @@ func main() {
 		}
 		return false
 	})
-	var influxWorker *influx.Worker
 	// v0.10.129 — K8s entity katmanı: bayrak + vidalar her modda (uçlar
 	// okur), Thanos senkronizasyonu yalnız worker rolünde ve liderde
 	// (cache.LeaderHolder "entity-sync"). Bayrak kapalıyken Tick no-op.
@@ -1077,63 +1061,15 @@ func main() {
 		entityLeader.SetOnAcquire(func() { entitySyncer.Tick(ctx) })
 		entityLeader.Start(chstore.WithQueryTag(ctx, "worker:entity-syncer"))
 		go entitySyncer.Run(ctx, entityLeader.IsLeader)
-		// v0.10.223 — Influx poll işçisi (audit §5): yalnız worker lideri.
-		// LeaderTTL(30 s) = 90 s kira / 30 s yenileme; liderlik alınır alınmaz
-		// ilk tik (v0.9.730 dersi), sonra 5 s granülde kaynak aralığı.
-		influxWorker = influx.NewWorker(influxSvc, store)
-		influxWorker.SetStatusStore(store) // v0.10.333 — durum system_settings'e, her pod okur
-		// v0.10.228 (D3) — dış seri anomalisi: her BAŞARILI poll'dan sonra
-		// sorgu başına tarama (internal/anomaly/external.go); Problem
-		// kind=external, kanıt zinciri D4'te.
+		// v0.10.228 (D3) — dış seri anomalisi tarayıcısı (internal/anomaly/
+		// external.go): kind=external Problem'ler; kaynak sağlığı (588), tavan
+		// (587), küme (597) bu hattın parçası. Üreticisi Oracle poller'ı (sağlık
+		// kancası bugün, seri yazımı Aşama 3). Influx üreticisi v0.10.606'da
+		// söküldü (operatör: "influxdb ile işimiz kalmadı").
 		extScanner := anomaly.NewExternalScanner(store, notifier)
-		// v0.10.229 (D4) — kanıt: açılışta hemen + 5 dk'da bir SORGU 2 →
-		// exemplars + span özeti + log imzaları + pod'lar → DeepEvidence.
-		influxEnricher := influx.NewEnricher(influxSvc, store, logsStore)
-		influxWorker.SetHook(func(ctx context.Context, src influx.SourceConfig, qc influx.QueryConfig) {
-			rep, err := extScanner.Scan(ctx, anomaly.ExternalTarget{
-				SourceID: src.ID, SourceName: src.Name, Query: qc.Name,
-				// v0.10.532 — oran sorgusu (qc.Ratio) da buradan tarar: yön zaten
-				// yalnız yükseliş (anomaly.directionFor: her ext:* "up"), düşüş = iyileşme.
-				GroupBy: qc.MetricGroupBy(), Thresholds: anomaly.ExternalThresholds(qc.Thresholds),
-				OnEvidence: func(ctx context.Context, ev anomaly.ExternalEvent) {
-					erep, eerr := influxEnricher.Enrich(ctx, influx.EnrichRequest{
-						ProblemID: ev.Problem.ID, Subject: ev.Problem.Service, Source: src, Query: qc,
-						Values: ev.Values, Current: ev.Current, Median: ev.Median, MAD: ev.MAD, Z: ev.Z,
-						From: ev.From, To: ev.To,
-					})
-					if eerr != nil {
-						log.Printf("[influx] evidence %s: %v", ev.Problem.Service, eerr)
-						return
-					}
-					log.Printf("[influx] evidence %s: rows %d · ids %d (invalid %d) · traces %d · pods %d · log signatures %d%s",
-						ev.Problem.Service, erep.Rows, erep.ValidIDs, erep.InvalidIDs, erep.Traces, erep.Pods, erep.LogSignatures,
-						func() string {
-							if len(erep.Notes) == 0 {
-								return ""
-							}
-							return " · " + strings.Join(erep.Notes, "; ")
-						}())
-				},
-			})
-			if err != nil {
-				log.Printf("[influx] anomaly %s/%s: %v", src.Name, qc.Name, err)
-			} else if rep.Opened+rep.Resolved > 0 {
-				log.Printf("[influx] anomaly %s/%s: %d series · opened %d · resolved %d",
-					src.Name, qc.Name, rep.Series, rep.Opened, rep.Resolved)
-			}
-		})
-		// v0.10.588 — kaynak sağlığı: her poll'dan sonra (hata da dahil) ardışık
-		// kesinti sayılır; 3 ardışık hatada ext:<kaynak> Problem'i, ilk başarıda
-		// resolve. Oracle poller'ı (Aşama 2) aynı kancayı kullanacak.
-		influxWorker.SetHealthHook(func(ctx context.Context, src influx.SourceConfig, lastErr string) {
-			extScanner.ReportSourceHealth(ctx, src.ID, src.Name, lastErr, time.Now())
-		})
-		influxLeader := cache.NewLeaderHolder(lockImpl, "influx-poller", cache.LeaderTTL(30*time.Second))
-		influxLeader.SetOnAcquire(func() { influxWorker.Tick(ctx) })
-		influxLeader.Start(chstore.WithQueryTag(ctx, "worker:influx-poller"))
-		go influxWorker.Run(ctx, influxLeader.IsLeader)
 		// v0.10.601 — Oracle hata tablosu poll işçisi (Aşama 2): yalnız worker
-		// lideri, influx ile aynı kira/ilk-tik sözleşmesi. Sağlık kancası dış
+		// lideri; LeaderTTL(30 s) = 90 s kira / 30 s yenileme, liderlikte ilk tik
+		// (v0.9.730 dersi), 5 s granülde kaynak aralığı. Sağlık kancası dış
 		// tarayıcıya gider → 3 ardışık hata "kaynak düştü" Problem'i (588).
 		oracleWorker := oracle.NewWorker(oracleSvc, store, store)
 		oracleWorker.SetHealthHook(func(ctx context.Context, src oracle.SourceConfig, lastErr string) {
@@ -1428,8 +1364,6 @@ func main() {
 		srv.StartRolloutTail(ctx) // v0.10.200 — pod-yerel SSE tail (audit §3 T); yalnız api
 	}
 	srv.SetVMetrics(vmSvc)
-	srv.SetInflux(influxSvc)          // v0.10.222
-	srv.SetInfluxWorker(influxWorker) // v0.10.223 — nil = bu pod poll'lamıyor
 	srv.SetOracle(oracleSvc)          // v0.10.580 — Oracle kaynakları (her rol)
 	srv.SetDevOps(devopsSvc)
 	srv.SetMCPClient(mcpCliSvc)

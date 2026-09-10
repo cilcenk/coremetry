@@ -797,6 +797,11 @@ export interface MessagingClients {
   note: string;
   producers: string[];
   consumers: string[];
+  // v0.10.609 — span'de görünmeyip topic etiketli metrikten keşfedilenler
+  // (producers/consumers bunları da içerir); scopeTruncated = kapsam tavana kırpıldı.
+  discoveredProducers?: string[];
+  discoveredConsumers?: string[];
+  scopeTruncated?: boolean;
   blocks: Record<string, KafkaMetricBlock>;
 }
 // ServiceKafkaClients — GET /api/services/{name}/kafka-clients (v0.10.550);

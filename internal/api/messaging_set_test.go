@@ -85,8 +85,9 @@ func TestBuildMessagingClientsSets(t *testing.T) {
 			if resp.Scope != c.wantScope {
 				t.Fatalf("scope=%q, bekl. %q", resp.Scope, c.wantScope)
 			}
-			if len(resp.Blocks) != len(c.want) || len(src.queries) != len(c.want) {
-				t.Fatalf("soru sayısı: blocks=%d queries=%d bekl.=%d", len(resp.Blocks), len(src.queries), len(c.want))
+			// v0.10.609 — sorular + 2 keşif sorgusu (topic etiketli send/consumed rate).
+			if len(resp.Blocks) != len(c.want) || len(src.queries) != len(c.want)+2 {
+				t.Fatalf("soru sayısı: blocks=%d queries=%d bekl.=%d (+2 keşif)", len(resp.Blocks), len(src.queries), len(c.want))
 			}
 			for _, q := range c.want {
 				b, ok := resp.Blocks[q.Key]
@@ -102,6 +103,9 @@ func TestBuildMessagingClientsSets(t *testing.T) {
 			}
 			// Kapsam iddiasının kanıtı: topic süzgeci VAR mı / YOK mu.
 			for _, f := range src.queries {
+				if isKafkaDiscoveryQuery(f) {
+					continue // v0.10.609 — keşif sorgusu kapsam iddialarının dışında
+				}
 				got := topicFilterValues(f)
 				switch {
 				case c.wantTopic && (len(got) != 1 || got[0] != "orders"):
@@ -155,11 +159,15 @@ func TestBuildMessagingClientsDefaultSetUnchanged(t *testing.T) {
 	}
 }
 
-// Caller yokken clients setinde de sorgu atılmaz; scope yine "services" ve
-// not süzülemezliği söyler (FE başlığı buna göre yazılır).
+// Caller yokken clients setinde SORU sorgusu atılmaz (v0.10.609: yalnız 2
+// keşif sorgusu koşar, o da boş dönerse); scope yine "services" ve not
+// süzülemezliği söyler (FE başlığı buna göre yazılır).
 func TestBuildMessagingClientsClientsNoCallers(t *testing.T) {
-	src := &fakeEPSource{name: "vm", queryFn: func(chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error) {
-		t.Fatal("caller yokken sorgu atılmamalı")
+	src := &fakeEPSource{name: "vm", queryFn: func(f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error) {
+		if f.Name == "kafka.producer.record_send_rate" || f.Name == "kafka.consumer.records_consumed_rate" {
+			return nil, nil // keşif — boş
+		}
+		t.Fatalf("caller ve keşif yokken soru sorgusu atılmamalı: %s", f.Name)
 		return nil, nil
 	}}
 	resp, err := buildMessagingClients(context.Background(), src, msgSetPlan(msgSetClients), nil)

@@ -173,3 +173,40 @@ func TestKafkaQuery(t *testing.T) {
 		t.Fatalf("katalog çok kısa: %d", len(names))
 	}
 }
+
+// v0.10.609 — keşif süzgeci: topic sınırlar, service.name kırılımı, tek
+// nokta, düz seri; topic'siz/topic label'sız/ters pencere hata.
+func TestKafkaDiscoverFilter(t *testing.T) {
+	from := time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+	for _, side := range []string{"producer", "consumer"} {
+		m, ok := KafkaDiscoveryMetric(side)
+		if !ok || m.Side != side || !hasLabel(m, "topic") {
+			t.Fatalf("%s keşif metriği topic etiketli olmalı: %+v ok=%v", side, m, ok)
+		}
+		f, err := KafkaDiscoverFilter(m, " orders ", from, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(f.Filters) != 1 || f.Filters[0].Key != "topic" || f.Filters[0].Op != "=" || f.Filters[0].Values[0] != "orders" {
+			t.Fatalf("süzgeç yalnız topic: %+v", f.Filters)
+		}
+		if strings.Join(f.GroupBy, ",") != "service.name" || f.MaxDataPoints != 1 || !f.PlainSeries || f.Aggregation != "max" {
+			t.Fatalf("kırılım/nokta/düz seri: %+v", f)
+		}
+	}
+	if _, ok := KafkaDiscoveryMetric("broker"); ok {
+		t.Fatal("bilinmeyen taraf")
+	}
+	m, _ := KafkaDiscoveryMetric("consumer")
+	conn, _ := KafkaMetricByName("kafka.consumer.connection_count")
+	if _, err := KafkaDiscoverFilter(m, "", from, to); err == nil {
+		t.Fatal("topic zorunlu")
+	}
+	if _, err := KafkaDiscoverFilter(conn, "orders", from, to); err == nil {
+		t.Fatal("topic label'sız metrik keşif olamaz")
+	}
+	if _, err := KafkaDiscoverFilter(m, "orders", to, from); err == nil {
+		t.Fatal("ters pencere")
+	}
+}

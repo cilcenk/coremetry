@@ -79,31 +79,19 @@ func buildSampleQuery(cfg SourceConfig, from, to time.Time, limit int) (string, 
 	if limit > maxSampleLimit {
 		limit = maxSampleLimit
 	}
-	tsCol := cfg.TimestampColumn
-	if tsCol == "" {
-		tsCol = DefaultTimestampColumn
-	}
-	typCol := cfg.TypeColumn
-	if typCol == "" {
-		typCol = DefaultTypeColumn
-	}
-	for _, f := range []struct{ name, val string }{
-		{"şema", cfg.Schema}, {"tablo", cfg.Table},
-		{"timestampColumn", tsCol}, {"typeColumn", typCol},
-	} {
-		if !identRe.MatchString(f.val) {
-			return "", nil, fmt.Errorf("%s adı Oracle identifier'ı olmalı: %q", f.name, f.val)
-		}
-	}
-	if err := validateExtraWhere(cfg.ExtraWhere, "extraWhere"); err != nil {
+	tsCol, typCol, types, err := queryParts(cfg)
+	if err != nil {
 		return "", nil, err
 	}
-	types := cfg.TypeFilter
-	if len(types) == 0 {
-		types = DefaultTypeFilter()
+	loc, err := ResolveLocation(cfg)
+	if err != nil {
+		return "", nil, err
 	}
 
-	args := []any{from, to}
+	// v0.10.601 — bind değerleri kaynağın duvar saatine (bindTime): go-ora
+	// time.Time'ı BİLEŞENLERİYLE gönderir, UTC anı bağlamak dilimsiz kolonda
+	// 3 saat kaydırırdı. Poll sorgusuyla aynı yol — iki gerçek yok.
+	args := []any{bindTime(from, loc, cfg.TimestampHasZone), bindTime(to, loc, cfg.TimestampHasZone)}
 	var b strings.Builder
 	// Kolon listesi yerine * : Aşama 2'nin alan eşlemesini yazacak operatör
 	// tablonun GERÇEK kolonlarını testte görmeli (FETCH FIRST tavanı zaten var).
@@ -118,6 +106,68 @@ func buildSampleQuery(cfg SourceConfig, from, to time.Time, limit int) (string, 
 		fmt.Fprintf(&b, "\n  AND (%s)", cfg.ExtraWhere)
 	}
 	fmt.Fprintf(&b, "\nORDER BY %s DESC\nFETCH FIRST %d ROWS ONLY", tsCol, limit)
+	return b.String(), args, nil
+}
+
+// queryParts — SAF: iki sorgu üreticisinin (örnek + poll) ortak doğrulaması:
+// identifier'lar, extraWhere kapısı, tip listesi. Metin üretmez.
+func queryParts(cfg SourceConfig) (tsCol, typCol string, types []string, err error) {
+	tsCol = cfg.TimestampColumn
+	if tsCol == "" {
+		tsCol = DefaultTimestampColumn
+	}
+	typCol = cfg.TypeColumn
+	if typCol == "" {
+		typCol = DefaultTypeColumn
+	}
+	for _, f := range []struct{ name, val string }{
+		{"şema", cfg.Schema}, {"tablo", cfg.Table},
+		{"timestampColumn", tsCol}, {"typeColumn", typCol},
+	} {
+		if !identRe.MatchString(f.val) {
+			return "", "", nil, fmt.Errorf("%s adı Oracle identifier'ı olmalı: %q", f.name, f.val)
+		}
+	}
+	if err := validateExtraWhere(cfg.ExtraWhere, "extraWhere"); err != nil {
+		return "", "", nil, err
+	}
+	types = cfg.TypeFilter
+	if len(types) == 0 {
+		types = DefaultTypeFilter()
+	}
+	return tsCol, typCol, types, nil
+}
+
+// buildPollQuery — v0.10.601 (Aşama 2 poller). SAF. Örnek sorgudan farkı:
+// pencere (from, to] — from DIŞARIDA (watermark'ın kendisi zaten yazıldı),
+// ARTAN sıra (watermark en büyük görülen zamana ilerler), tavan pollRowCap
+// (tavana çarpan tik "capped" ilan eder, bir sonraki granülde devam eder).
+// Zaman/tip bind, identifier'lar doğrulanmış, limit %d ile basılan bir int.
+func buildPollQuery(cfg SourceConfig, from, to time.Time, limit int) (string, []any, error) {
+	if limit < 1 || limit > pollRowCap {
+		limit = pollRowCap
+	}
+	tsCol, typCol, types, err := queryParts(cfg)
+	if err != nil {
+		return "", nil, err
+	}
+	loc, err := ResolveLocation(cfg)
+	if err != nil {
+		return "", nil, err
+	}
+	args := []any{bindTime(from, loc, cfg.TimestampHasZone), bindTime(to, loc, cfg.TimestampHasZone)}
+	var b strings.Builder
+	fmt.Fprintf(&b, "SELECT * FROM %s.%s\nWHERE %s > :1 AND %s <= :2", cfg.Schema, cfg.Table, tsCol, tsCol)
+	binds := make([]string, 0, len(types))
+	for _, t := range types {
+		args = append(args, t)
+		binds = append(binds, fmt.Sprintf(":%d", len(args)))
+	}
+	fmt.Fprintf(&b, "\n  AND %s IN (%s)", typCol, strings.Join(binds, ", "))
+	if cfg.ExtraWhere != "" {
+		fmt.Fprintf(&b, "\n  AND (%s)", cfg.ExtraWhere)
+	}
+	fmt.Fprintf(&b, "\nORDER BY %s ASC\nFETCH FIRST %d ROWS ONLY", tsCol, limit)
 	return b.String(), args, nil
 }
 
@@ -311,6 +361,25 @@ func emptyProbeHint(wideRows int, wideErr error) (string, bool) {
 // çağırıyor (dar pencere, sonra geniş); tek gövde olması iki denemenin
 // aynı kırpma ve redaksiyon kurallarını paylaşmasını garanti eder.
 func runSample(ctx context.Context, db sqlDB, sqlText string, args []any, budget time.Duration, secret string) ([]string, []map[string]string, error) {
+	cols, raw, err := runRows(ctx, db, sqlText, args, budget, secret)
+	if err != nil {
+		return nil, nil, err
+	}
+	var out []map[string]string
+	for _, r := range raw {
+		row := make(map[string]string, len(r))
+		for c, v := range r {
+			row[c] = formatCell(v)
+		}
+		out = append(out, row)
+	}
+	return cols, out, nil
+}
+
+// runRows — v0.10.601: HAM hücreler (time.Time, []byte, sayı) — poller'ın
+// eşlemesi tipe göre karar verir; kırpma yok (formatCell'in 200'ü yalnız
+// Settings örneği için). Hata metinleri redaksiyondan geçer.
+func runRows(ctx context.Context, db sqlDB, sqlText string, args []any, budget time.Duration, secret string) ([]string, []map[string]any, error) {
 	qctx, qcancel := context.WithTimeout(ctx, budget)
 	defer qcancel()
 	rows, err := db.QueryContext(qctx, sqlText, args...)
@@ -323,7 +392,7 @@ func runSample(ctx context.Context, db sqlDB, sqlText string, args []any, budget
 	if err != nil {
 		return nil, nil, fmt.Errorf("kolonlar: %s", redactSecrets(err.Error(), secret))
 	}
-	var out []map[string]string
+	var out []map[string]any
 	for rows.Next() {
 		cells := make([]any, len(cols))
 		ptrs := make([]any, len(cols))
@@ -333,9 +402,9 @@ func runSample(ctx context.Context, db sqlDB, sqlText string, args []any, budget
 		if err := rows.Scan(ptrs...); err != nil {
 			return nil, nil, fmt.Errorf("satır: %s", redactSecrets(err.Error(), secret))
 		}
-		row := make(map[string]string, len(cols))
+		row := make(map[string]any, len(cols))
 		for i, c := range cols {
-			row[c] = formatCell(cells[i])
+			row[c] = cells[i]
 		}
 		out = append(out, row)
 	}

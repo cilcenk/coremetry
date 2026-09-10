@@ -33,6 +33,16 @@ type AnomalySensitivityConfig struct {
 	// dedektör YALNIZ critical verdict'te Problem açtığı için bu, fiilen
 	// "açılma eşiği"dir; operatörün en çok çevireceği vida budur.
 	CriticalZ float64 `json:"criticalZ"`
+	// ExternalOpenCapPerTick (v0.10.587) — dış seri hattında (Influx/Oracle,
+	// kind=external) TEK TİKTE açılabilecek YENİ Problem sayısı. Yüksek
+	// kardinaliteli bir groupBy (operasyon × hata kodu × kanal) bir tikte
+	// yüzlerce Problem açabilirdi; bugüne dek tavan YOKTU. Aşımda kalan
+	// seriler için tek bir "tavan aşıldı" özet Problem'i açılır. Yalnız
+	// YENİ açılışları kapılar: refresh/resolve/touch etkilenmez, yoksa bayat
+	// süpürücü açık Problem'leri "source silent" diye kapatırdı.
+	// 0 = ayarlanmamış → varsayılan (20). Kapatma sunulmuyor: sel kapısı
+	// bilinçli olarak her zaman açık; 200 pratik tavan.
+	ExternalOpenCapPerTick int `json:"externalOpenCapPerTick,omitempty"`
 	// Behavior — DAVRANIŞ MOTORU AŞAMA 1 (v0.9.935). Aynı blob'un
 	// altında, çünkü operatör buraya tek bir soruyla geliyor: "ne zaman
 	// olay sayılsın?". Üstteki alanlar ANİ sapmayı (5-dk pencere, 24s
@@ -295,6 +305,9 @@ const (
 	anomalyMaxCriticalZ    = 50.0
 	anomalyMinDwellBuckets = 1
 	anomalyMaxDwellBuckets = 24 // 2 saat; ötesi "hiç açma" demek
+	// v0.10.587 — dış hat açılış tavanı: 1 (her tik tek Problem) … 200.
+	anomalyMinExternalOpenCap = 1
+	anomalyMaxExternalOpenCap = 200
 )
 
 // DefaultAnomalySensitivity — v0.9.826'nın gemiye giren davranışı:
@@ -325,8 +338,9 @@ func DefaultAnomalySensitivity() AnomalySensitivityConfig {
 			// bir evrensel taban yok).
 			"request_rate": {FloorPct: 0.15},
 		},
-		DwellBuckets: 3,   // v0.8.220 — 3 × 5dk = 15 dk sürekli ateşleme
-		CriticalZ:    6.0, // v0.9.193 — operatör: yalnız P1-sınıfı gelsin
+		DwellBuckets:           3,   // v0.8.220 — 3 × 5dk = 15 dk sürekli ateşleme
+		CriticalZ:              6.0, // v0.9.193 — operatör: yalnız P1-sınıfı gelsin
+		ExternalOpenCapPerTick: 20,  // v0.10.587 — Oracle audit §6.5 önerisi
 		// v0.9.935 — davranış motoru AŞAMA 1; varsayılan AÇIK, ama
 		// adaylar mevcut terfi kapısından geçtiği için kendiliğinden
 		// Problem/bildirim üretmez: /anomalies akışına düşerler.
@@ -351,9 +365,10 @@ func boolPtr(b bool) *bool { return &b }
 func NormalizeAnomalySensitivity(c AnomalySensitivityConfig) AnomalySensitivityConfig {
 	d := DefaultAnomalySensitivity()
 	out := AnomalySensitivityConfig{
-		Metrics:      make(map[string]AnomalyMetricSensitivity, len(AnomalySensitivityMetrics)),
-		DwellBuckets: c.DwellBuckets,
-		CriticalZ:    c.CriticalZ,
+		Metrics:                make(map[string]AnomalyMetricSensitivity, len(AnomalySensitivityMetrics)),
+		DwellBuckets:           c.DwellBuckets,
+		CriticalZ:              c.CriticalZ,
+		ExternalOpenCapPerTick: c.ExternalOpenCapPerTick, // v0.10.587 — kopyalanmazsa PUT'ta sessizce düşer
 		// Normalize SOMUTLAŞTIRIR: nil gelen bayrak açık haliyle yazılır.
 		// Böylece kaydedilen blob her zaman ne olduğunu AÇIKÇA söyler ve
 		// bir sonraki okuyucu (ya da elle bakan operatör) varsayılanı
@@ -389,6 +404,11 @@ func NormalizeAnomalySensitivity(c AnomalySensitivityConfig) AnomalySensitivityC
 	}
 	if out.CriticalZ < anomalyMinCriticalZ || out.CriticalZ > anomalyMaxCriticalZ {
 		out.CriticalZ = d.CriticalZ
+	}
+	// v0.10.587 — 0 "ayarlanmamış"tır, "kapalı" değil: eski settings satırı
+	// alanı hiç taşımıyor; sıfırı kapı-yok diye okumak seli geri getirirdi.
+	if out.ExternalOpenCapPerTick < anomalyMinExternalOpenCap || out.ExternalOpenCapPerTick > anomalyMaxExternalOpenCap {
+		out.ExternalOpenCapPerTick = d.ExternalOpenCapPerTick
 	}
 	return out
 }

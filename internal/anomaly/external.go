@@ -27,6 +27,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -92,6 +93,9 @@ type ExternalThresholds struct {
 // baseline'la karar verilen seri sayısı (0 = kapı kapalı ya da geçmiş yok).
 type ExternalScanReport struct {
 	Series, Opened, Refreshed, Resolved, Touched, Skipped, Seasonal int
+	// Capped (v0.10.587) — anomali eşiğini geçtiği hâlde tik başına açılış
+	// tavanına takılan, Problem AÇILMAYAN seri sayısı. Özet Problem'e girer.
+	Capped int
 }
 
 type externalStore interface {
@@ -152,6 +156,23 @@ func (s *ExternalScanner) Scan(ctx context.Context, t ExternalTarget) (ExternalS
 	cfg := externalSensitivity(s.store.AnomalySensitivity(), metric, t.Thresholds)
 	seasonal, seasonalMin := s.seasonalFor(ctx, t, metric, now)
 	enriched := 0
+	// v0.10.587 — İKİ FAZ. Önce her seri değerlendirilir, sonra YENİ açılış
+	// adayları z'ye göre sıralanıp en güçlü `cap` tanesi açılır; kalanlar
+	// Problem AÇMAZ, Capped sayılır ve tek bir özet Problem'e girer.
+	// Tek fazlı döngüde açılış sırası CH'nin grup sırasına bağlıydı: aynı
+	// sel iki tikte farklı özneleri açar, geri kalanı bir sonraki tikte
+	// yine açılırdı — tavan bir sel kapısı değil, sel geciktirici olurdu.
+	// Refresh/resolve/touch tavana GİRMEZ: açık Problem'ler yaşamaya devam
+	// eder, yoksa evaluator'ın bayat süpürmesi "source silent" diye kapatır.
+	type pendingSeries struct {
+		sr      chstore.SpanMetricSeries
+		subject string
+		ruleID  string
+		open    *chstore.Problem
+		hasOpen bool
+		oc      anomalyOutcome
+	}
+	pending := make([]pendingSeries, 0, len(series))
 	for _, sr := range series {
 		rep.Series++
 		buckets := padMinuteSlots(sr.Points, start, end)
@@ -168,18 +189,126 @@ func (s *ExternalScanner) Scan(ctx context.Context, t ExternalTarget) (ExternalS
 			rep.Seasonal++
 		}
 		oc := evaluateAnomaly(metric, buckets, season, ones(len(buckets)), seasonalMin, hasOpen, cfg)
-		live := s.apply(ctx, &rep, t, metric, subject, ruleID, sr.GroupKey, oc, open, hasOpen, now)
-		if live != nil && t.OnEvidence != nil && enriched < externalEnrichPerTick && s.enrichDue(ruleID, live.StartedAt, now) {
+		pending = append(pending, pendingSeries{sr: sr, subject: subject, ruleID: ruleID, open: open, hasOpen: hasOpen, oc: oc})
+	}
+	// Yeni açılış adayları: en güçlü z önce, eşitlikte ruleID (deterministik).
+	cap := externalOpenCap(s.store.AnomalySensitivity())
+	newOpens := make([]int, 0, len(pending))
+	for i, ps := range pending {
+		if ps.oc.Action == "open" && !ps.hasOpen {
+			newOpens = append(newOpens, i)
+		}
+	}
+	sort.SliceStable(newOpens, func(a, b int) bool {
+		pa, pb := pending[newOpens[a]], pending[newOpens[b]]
+		if pa.oc.Z != pb.oc.Z {
+			return pa.oc.Z > pb.oc.Z
+		}
+		return pa.ruleID < pb.ruleID
+	})
+	allowed := make(map[int]bool, cap)
+	var cappedSample []string
+	for k, i := range newOpens {
+		if k < cap {
+			allowed[i] = true
+			continue
+		}
+		if len(cappedSample) < externalCapSample {
+			cappedSample = append(cappedSample, pending[i].subject)
+		}
+	}
+	for i, ps := range pending {
+		if ps.oc.Action == "open" && !ps.hasOpen && !allowed[i] {
+			rep.Capped++
+			continue
+		}
+		live := s.apply(ctx, &rep, t, metric, ps.subject, ps.ruleID, ps.sr.GroupKey, ps.oc, ps.open, ps.hasOpen, now)
+		if live != nil && t.OnEvidence != nil && enriched < externalEnrichPerTick && s.enrichDue(ps.ruleID, live.StartedAt, now) {
 			enriched++
-			s.lastEnriched[ruleID] = now
+			s.lastEnriched[ps.ruleID] = now
 			t.OnEvidence(ctx, ExternalEvent{
-				Target: t, Problem: *live, Values: sr.GroupKey,
-				Current: oc.Current, Median: oc.Median, MAD: oc.MAD, Z: oc.Z,
+				Target: t, Problem: *live, Values: ps.sr.GroupKey,
+				Current: ps.oc.Current, Median: ps.oc.Median, MAD: ps.oc.MAD, Z: ps.oc.Z,
 				From: time.Unix(0, live.StartedAt).UTC().Add(-externalEnrichLead), To: now,
 			})
 		}
 	}
+	s.applyOpenCap(ctx, t, metric, now, openSnap, cap, rep.Capped, cappedSample)
 	return rep, nil
+}
+
+// externalCapSample — özet Problem gerekçesine giren örnek özne sayısı.
+// Sayı ayrıca yazılır; liste yalnız "ne tür" sorusunu cevaplar.
+const externalCapSample = 3
+
+// externalDefaultOpenCap — ayarda alan yoksa (eski settings satırı) ya da
+// aralık dışıysa. PUT tarafı NormalizeAnomalySensitivity ile kelepçeler; bu
+// okuma tarafı yalnız normalize edilmemiş eski blobu kapsar. 0 = KAPALI
+// değil: sıfırı kapı-yok okumak seli geri getirirdi.
+const externalDefaultOpenCap = 20
+
+func externalOpenCap(cfg chstore.AnomalySensitivityConfig) int {
+	if c := cfg.ExternalOpenCapPerTick; c >= 1 && c <= 200 {
+		return c
+	}
+	return externalDefaultOpenCap
+}
+
+// applyOpenCap — tavan ÖZET Problem'i. Kimlik kaynak+sorgu başına SABİT
+// (`ext:<kaynak>` öznesi, "anomaly:ext-cap:" kuralı): aşım sürdükçe aynı
+// satır yenilenir (Value = aşan sayı), aşım bitince resolve olur. Sayaçlara
+// GİRMEZ — Opened/Refreshed/Resolved seri sayılarıdır; özetin sinyali Capped.
+func (s *ExternalScanner) applyOpenCap(ctx context.Context, t ExternalTarget, metric string, now time.Time,
+	openSnap *chstore.OpenProblems, cap, overflow int, sample []string) {
+	subject := ExternalSubject(t.SourceName, nil)
+	ruleID := "anomaly:ext-cap:" + subject + ":" + metric
+	open := openSnap.ByKey(ruleID, subject)
+	hasOpen := open != nil && open.ID != ""
+	if overflow <= 0 {
+		if !hasOpen {
+			return
+		}
+		chstore.MarkResolved(open, now.UnixNano())
+		if err := s.store.UpsertProblem(ctx, *open); err != nil {
+			log.Printf("[anomaly/external] cap-resolve %s: %v", ruleID, err)
+		}
+		return
+	}
+	desc := fmt.Sprintf("Tavan aşıldı: %d seri daha anomali eşiğini geçti ama tik başına açılış tavanı (%d) doldu — "+
+		"her biri için ayrı Problem açılmadı. Örnek: %s. Kaynak %s · sorgu %s. Sel sürüyorsa tavanı ayarlardan yükseltin ya da groupBy'ı daraltın.",
+		overflow, cap, strings.Join(sample, ", "), t.SourceName, t.Query)
+	if hasOpen {
+		open.Value = float64(overflow)
+		open.Threshold = float64(cap)
+		open.Description = desc
+		if err := s.store.UpsertProblem(ctx, *open); err != nil {
+			log.Printf("[anomaly/external] cap-refresh %s: %v", ruleID, err)
+		}
+		return
+	}
+	p := chstore.Problem{
+		ID:          newID(),
+		RuleID:      ruleID,
+		RuleName:    "Anomaly · " + displayMetric(metric) + " · tavan aşıldı",
+		Severity:    "critical", // sel, tek başına P1: N ayrı alarmın yerine geçiyor
+		Service:     subject,
+		Kind:        chstore.ProblemKindExternal,
+		Metric:      metric,
+		Value:       float64(overflow),
+		Threshold:   float64(cap),
+		Comparator:  ">",
+		Status:      "open",
+		Description: desc,
+		StartedAt:   now.UnixNano(),
+	}
+	if err := s.store.UpsertProblem(ctx, p); err != nil {
+		log.Printf("[anomaly/external] cap-open %s: %v", ruleID, err)
+		return
+	}
+	log.Printf("[anomaly/external] CAPPED %s · %s: %d seri tavana (%d) takıldı", subject, metric, overflow, cap)
+	if s.notifier != nil {
+		go s.notifier.SendProblemAlert(context.Background(), p)
+	}
 }
 
 // seasonalFor (v0.10.231, D6) — hedefin bütün serileri için aynı-dilim

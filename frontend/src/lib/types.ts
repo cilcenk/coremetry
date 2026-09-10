@@ -6645,6 +6645,9 @@ export interface AnomalySensitivityConfig {
   metrics: Record<string, AnomalyMetricSensitivity>;
   // Açılmak için üst üste ateşlemesi gereken 5-dk bucket sayısı.
   dwellBuckets: number;
+  // v0.10.587 — dış seri hattında (Influx/Oracle) tek tikte açılabilecek
+  // YENİ Problem sayısı; aşımda tek özet Problem. 0 = varsayılan (20).
+  externalOpenCapPerTick?: number;
   // Bu |z|'nin üstü critical. Dedektör YALNIZ critical verdict'te
   // Problem açtığı için (v0.9.193) bu fiilen açılma eşiğidir.
   criticalZ: number;

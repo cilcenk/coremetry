@@ -2184,13 +2184,6 @@ func stage2NeedsSafetySlice(holders string) bool {
 	return holders == ""
 }
 
-// stage2IsBounded is the invariant that must hold when the statement is
-// handed to ClickHouse: one of the two bounds is present. False here
-// means an unbounded `GROUP BY trace_id` over the whole window.
-func stage2IsBounded(holders string) bool {
-	return holders != ""
-}
-
 // countModeAllowsMV reports whether the requested count mode leaves the
 // trace_summary_5m fast path open. Only the modes needing NO window-wide
 // aggregation qualify: "skip" and the empty default. "approx" and

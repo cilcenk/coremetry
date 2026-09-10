@@ -367,29 +367,6 @@ func (s *Store) populateTeams(ctx context.Context, derived map[string]ServiceTea
 	return updated, nil
 }
 
-// derivePodIdentitySQL — v0.9.531 pod-adı yedeği için ham malzeme:
-// servis başına gözlemlenen pod kimlikleri + satır sayıları. Kimlik
-// zinciri deploys.go'daki instanceIdExpr ile aynı (k8s.pod.name →
-// service.instance.id → host_name kolonu). Pencere + LIMIT +
-// max_execution_time deriveDeploymentSQL ile aynı bütçe.
-const derivePodIdentitySQL = `
-SELECT service_name, pod, count() AS c
-FROM (
-  SELECT service_name,
-    multiIf(
-      res_values[indexOf(res_keys, 'k8s.pod.name')] != '',        res_values[indexOf(res_keys, 'k8s.pod.name')],
-      res_values[indexOf(res_keys, 'service.instance.id')] != '', res_values[indexOf(res_keys, 'service.instance.id')],
-      host_name != '',                                            host_name,
-      '') AS pod
-  FROM spans
-  WHERE time >= ? AND time <= ?
-  LIMIT 2000000
-)
-WHERE pod != ''
-GROUP BY service_name, pod
-LIMIT 100000
-SETTINGS max_execution_time = 25`
-
 // deploymentFromPodName — v0.9.531. Pod adından deployment adı, YALNIZ
 // emin olunan şekillerde; emin değilse "".
 //

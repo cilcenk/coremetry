@@ -198,14 +198,6 @@ func exportIntervalCacheKey(name, service string, filters []FilterExpr) string {
 	return b.String()
 }
 
-// metricExportInterval returns the cached/probed export interval for a
-// metric (optionally service-scoped — a metric can ship at different
-// cadences per service). 0 = unknown → caller applies no clamp; a
-// probe failure must never break the chart read.
-func (s *Store) metricExportInterval(ctx context.Context, name, service string) int {
-	return s.metricExportIntervalFiltered(ctx, name, service, nil, true)
-}
-
 // metricExportIntervalFiltered — v0.9.687 (filtre kapsamı) + v0.9.689
 // (grouped ayrımı).
 //

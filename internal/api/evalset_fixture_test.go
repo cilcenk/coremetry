@@ -211,6 +211,8 @@ func evalSystemPrompt(surface string) (string, bool) {
 }
 
 // evalJSONSurface — JSON kipinde çağrılan yüzeyler (canlı yolla aynı).
+//
+//nolint:unused // v0.10.636: yalnız `-tags evalset` ile derlenen evalset_test.go çağırır; varsayılan build'da U1000 yanlış pozitif.
 func evalJSONSurface(surface string) bool {
 	switch surface {
 	case "IntentClassify", "RCAVerdict", "NLToQuery", "CHQueryOptimize":

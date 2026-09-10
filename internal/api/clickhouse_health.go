@@ -570,15 +570,6 @@ func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
 // summary helpers — used by the panel header to surface single
 // at-a-glance numbers without forcing the operator to read every
 // row.
-func (h CHHealth) maxMergeElapsed() float64 {
-	max := 0.0
-	for _, m := range h.Merges {
-		if m.ElapsedSec > max {
-			max = m.ElapsedSec
-		}
-	}
-	return max
-}
 func (h CHHealth) maxPartCount() uint64 {
 	var max uint64
 	for _, p := range h.PartHotspots {

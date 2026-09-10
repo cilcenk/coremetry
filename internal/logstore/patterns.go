@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 )
 
 // patterns.go — v0.10.296 (docs/audit/log-search.md Dilim 2, B3):
@@ -297,10 +296,6 @@ func PatternSearchQuery(template string) string {
 	}
 	return strings.Join(terms, " AND ")
 }
-
-// patternsBudget — örnekleme turu tavanı (sayfa başına Search kendi
-// bütçesini de taşır).
-const patternsBudget = 10 * time.Second
 
 // PatternsMaxGroups — v0.10.508 (C6): taban örneklemesinde grup tavanı
 // (limit'in kırpması tabanı "yok" göstermesin).

@@ -221,45 +221,6 @@ func (s *Store) onCluster() string {
 	return " ON CLUSTER `" + s.cfg.ClusterName + "`"
 }
 
-// engine returns the storage-engine clause for a high-volume table:
-//
-//	single-node: `<base>()`           (e.g. MergeTree())
-//	cluster:     `Replicated<base>(zk_path, replica)`
-//
-// `name` is used as the trailing path component in ZK so each table
-// gets its own coordination znode. The {shard} / {replica} macros
-// are resolved by ClickHouse from the per-server `macros` config
-// (operator must define those macros on each replica's <macros>
-// section in config.xml).
-func (s *Store) engine(base, name string) string {
-	if !s.clusterMode() {
-		return base + "()"
-	}
-	prefix := strings.TrimRight(s.cfg.ReplicaPath, "/")
-	if prefix == "" {
-		prefix = "/clickhouse/tables"
-	}
-	return fmt.Sprintf("Replicated%s('%s/{shard}/%s', '{replica}')",
-		base, prefix, name)
-}
-
-// shardKey returns the SQL expression placed in `Distributed(...,
-// shard_key)`. Default `rand()` distributes evenly with no
-// locality; an operator can override to e.g. `cityHash64(trace_id)`
-// so spans belonging to the same trace co-locate on one shard
-// (faster `GROUP BY trace_id`, slightly less even row-per-shard).
-//
-// Deprecated: callers should use shardKeyFor(tableName) instead so
-// trace-locality expressions don't get applied to tables that
-// lack a `trace_id` column. Kept as a thin wrapper for any non-
-// table-aware caller.
-func (s *Store) shardKey() string {
-	if k := strings.TrimSpace(s.cfg.ShardKey); k != "" {
-		return k
-	}
-	return "rand()"
-}
-
 // tablesWithoutTraceID — high-volume tables + MVs whose CH
 // schema does NOT project a `trace_id` column. When the
 // operator configures COREMETRY_CH_SHARD_KEY with a

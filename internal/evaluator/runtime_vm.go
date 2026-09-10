@@ -37,14 +37,6 @@ import (
 	"github.com/cilcenk/coremetry/internal/vmetrics"
 )
 
-// runtimeVMGroupBy — seri kimliği: servis + pod coalesce zinciri.
-// Sıra vmPodFromTuple'ın okuduğu konumlarla ÇAKILI.
-// v0.10.374 — the pure pieces moved to vmetrics/runtime_pods.go so the
-// anomaly investigation and the MCP pod-health tool read JVM pods from
-// the SAME translation; the names below stay as thin delegations (the
-// evaluator's tests pin them).
-var runtimeVMGroupBy = vmetrics.RuntimePodGroupBy
-
 func vmPodFromTuple(groupKey []string) string { return vmetrics.PodFromTuple(groupKey) }
 
 func vmGCDerive(sumSec, cnt, windowSec float64) (pauseMs, sharePct, ratePerMin float64) {

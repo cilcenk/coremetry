@@ -188,13 +188,6 @@ func metricSeriesKeyExpr(hasFp bool) string {
 	return `toString(` + synthetic + `)`
 }
 
-// metricTemporality — metriğin OTLP aggregation temporality'sini probe'lar
-// ('cumulative' | 'delta' | ”). Boş/bilinmeyen → çağıran cumulative sayar
-// (OTLP default). Bounded (max_execution_time=3, time-pruned).
-func (s *Store) metricTemporality(ctx context.Context, name, service string) string {
-	return s.metricTemporalityFiltered(ctx, name, service, nil)
-}
-
 // temporalityProbeWhere — temporality probunun WHERE'i (saf, testli).
 //
 // v0.9.669 (v0.9.668'de AÇTIĞIM hata) — prob, ana sorgunun BAKTIĞI

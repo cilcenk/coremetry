@@ -226,12 +226,10 @@ func stat(id, title, agg string, opts ...statOpt) panel {
 
 type statOpt func(*statCfg)
 
-func unit(u string) statOpt        { return func(c *statCfg) { c.Unit = u } }
-func decimals(n int) statOpt       { return func(c *statCfg) { c.Decimals = n } }
-func dsl(s string) statOpt         { return func(c *statCfg) { c.Span.DSL = s } }
-func field(f string) statOpt       { return func(c *statCfg) { c.Span.Field = f } }
-func groupByOpt(gb string) statOpt { return func(c *statCfg) { c.Span.GroupBy = gb } } //nolint:unused // reserved
-func filtersOpt(f string) statOpt  { return func(c *statCfg) { c.Span.Filters = f } }  //nolint:unused // reserved
+func unit(u string) statOpt  { return func(c *statCfg) { c.Unit = u } }
+func decimals(n int) statOpt { return func(c *statCfg) { c.Decimals = n } }
+func dsl(s string) statOpt   { return func(c *statCfg) { c.Span.DSL = s } }
+func field(f string) statOpt { return func(c *statCfg) { c.Span.Field = f } }
 
 // line is the time-series spanmetric panel.
 func line(id, title string, w int, cfg spanCfg) panel {

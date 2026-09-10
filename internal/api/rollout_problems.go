@@ -20,12 +20,6 @@ import (
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
 
-// rolloutRowServices — satır → span cluster değerleri (EffectiveID'nin
-// SpanClusterKeys'i); registry'de yoksa boş.
-type rolloutRowServices struct {
-	clusters []string
-}
-
 // countProblemsCaused — SAF: her satır için başlangıcından beri açık ve
 // satırın servislerinde olan problem sayısı. svcByKey RolloutServicesBatch
 // çıktısı; clustersByRow satırın span cluster değerleri (registry

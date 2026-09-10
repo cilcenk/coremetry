@@ -14,7 +14,6 @@ import (
 )
 
 type (
-	rcaEvidenceKind    = rca.EvidenceKind
 	rcaEvidenceRef     = rca.EvidenceRef
 	rcaEvidenceCatalog = rca.EvidenceCatalog
 	rcaCatalogExtras   = rca.CatalogExtras

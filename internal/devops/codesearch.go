@@ -487,11 +487,6 @@ func huntSearchWindows(
 	return out, notes
 }
 
-// errCodeSearchLimit — hata-kodu token'ı başına değil TOPLAM arama tavanı.
-// Frame aramasıyla aynı gerekçe (codeSearchLimit): arama pahalı, asıl
-// kanıt pencereleri başka yoldan da geliyor.
-const errCodeSearchLimit = DefaultCodeSearchLimit // v0.10.353 — ayar (searchLimit) yönetir
-
 // huntErrorCodeWindows — hata-kodu token'larıyla DİL-BAĞIMSIZ organizasyon
 // araması (v0.10.100). Frame aramasından farkı: sorgu bir sınıf.metot değil
 // hata kodunun kendisi, hedef satır da frame'in satırı değil token'ın

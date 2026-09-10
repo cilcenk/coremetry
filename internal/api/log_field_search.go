@@ -30,14 +30,10 @@ import (
 const guidedLogFieldSample = 20
 
 var (
-	// logFieldQuotedRe — tırnaklı değer: "…", '…', “…”, ‘…’, `…`.
-	logFieldQuotedRe = regexp.MustCompile("[\"“”'‘’`]([^\"“”'‘’`]{1,256})[\"“”'‘’`]")
 	// logFieldWordRe — `<alan> alanında|field'ında|attribute|attr|anahtarında`.
 	logFieldWordRe = regexp.MustCompile(`(?i)(?:^|[\s(,;])([a-z_][a-z0-9_.-]*[a-z0-9_])\s+(?:alan|field|attribute|attr|anahtar)`)
 	// logFieldKQLRe — açık `alan:"değer"` / `alan:değer` yazımı.
 	logFieldKQLRe = regexp.MustCompile(`(?:^|\s)([a-zA-Z_][\w.-]*):(?:"([^"]{1,256})"|([^\s"]{1,256}))`)
-	// logFieldSuffixApostropheRe — iki harf arasındaki apostrof (Türkçe ek).
-	logFieldSuffixApostropheRe = regexp.MustCompile(`(\pL)['‘’](\pL)`)
 	// logFieldDoubleQuotedRe / logFieldSingleQuotedRe — v0.10.443: tırnaklı
 	// değer HAM metinden okunur (ek apostrofu içerik bozmasın: "/api/x'y"
 	// aynen kalır). Tek tırnak yalnız sözcük sınırında açılır/kapanır —

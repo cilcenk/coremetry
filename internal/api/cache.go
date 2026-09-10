@@ -9,8 +9,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-
-	"golang.org/x/sync/singleflight"
 )
 
 // Multi-tier caching for the hot-read API endpoints:
@@ -671,14 +669,6 @@ func (s *Server) StartCacheInvalidation(ctx context.Context) {
 			}
 		}
 	}()
-}
-
-// Singleflight + L1 are initialised once per Server. Both are
-// goroutine-safe by design; no further wiring needed from
-// callers — serveCached uses them implicitly.
-type cacheTier struct {
-	sf singleflight.Group
-	l1 *l1Cache
 }
 
 // cacheStats records per-tier hit counts and the hottest keys

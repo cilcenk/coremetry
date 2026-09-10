@@ -163,19 +163,6 @@ func (s *ESStore) closePIT(ctx context.Context, pitID string) {
 // query (cheap: simple atoi), so a config change takes effect on
 // next /api/logs/patterns request without a pod restart.
 
-// shardSizeFromEnv returns COREMETRY_LOGS_PATTERNS_SHARD_SIZE
-// (positive int) or the default. Lower = faster + less accurate;
-// billion-doc installs that still time out can drop to e.g. 5000
-// to keep the per-shard scoring window tight.
-func shardSizeFromEnv(def int) int {
-	if v := strings.TrimSpace(os.Getenv("COREMETRY_LOGS_PATTERNS_SHARD_SIZE")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return n
-		}
-	}
-	return def
-}
-
 // esTimeoutFromEnv returns COREMETRY_LOGS_PATTERNS_ES_TIMEOUT
 // (e.g. "20s") or the default. ES soft-timeout — when reached,
 // ES returns whatever it has computed so far + timed_out:true,
@@ -2438,17 +2425,6 @@ func buildPatternTokenQuery(tokens []string, bodyField string) string {
 		parts = append(parts, fmt.Sprintf(`%s:"%s"`, bodyField, t))
 	}
 	return strings.Join(parts, " OR ")
-}
-
-// withKeywordVariants emits both the base field name AND its
-// `.keyword` subfield form for each input, so terms aggregations
-// hit whichever shape the index actually has.
-func withKeywordVariants(names ...string) []string {
-	out := make([]string, 0, len(names)*2)
-	for _, n := range names {
-		out = append(out, n, n+".keyword")
-	}
-	return out
 }
 
 // buildQuery constructs the ES bool/must query corresponding to a Filter.

@@ -36,21 +36,6 @@ import (
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
 
-// exceptionBurstMinRate — P1 için dakikadaki en az olay.
-//
-// 200 seçildi: gürültülü ama sağlıklı bir servisin ürettiği tekrarlayan
-// uyarı tipik olarak bu mertebenin altında kalıyor; 200/dk'yı aşan bir
-// exception grubu neredeyse her zaman kırılmış bir bağımlılık ya da bir
-// yeniden-deneme fırtınası demek. Operatörün ölçtüğü olay ~938/dk.
-const exceptionBurstMinRate = 200.0
-
-// exceptionBurstMinTotal — hız ne olursa olsun gereken taban hacim.
-//
-// Hız tek başına yeterli değil: 5 saniyede 20 olay da 240/dk eder ama
-// P1 değildir. Taban, kısa ömürlü küçük grupların hız kapısından
-// sızmasını engelliyor.
-const exceptionBurstMinTotal = 1000
-
 // exceptionBurstFloor — ömür bundan kısaysa bu değer kullanılır.
 //
 // first_seen == last_seen olan bir grup (tek bir toplu yazımda gelen

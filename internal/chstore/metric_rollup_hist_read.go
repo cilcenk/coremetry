@@ -99,15 +99,6 @@ func foldRollupHist(rows []histRollupRow, q float64) (pts []SpanMetricPoint, ski
 	return pts, skipped
 }
 
-// tryRollupHistogramQuantile — tekil sarmalayıcı: çoklunun [q] hâli.
-func (s *Store) tryRollupHistogramQuantile(ctx context.Context, f MetricQueryFilter, q float64) ([]SpanMetricSeries, bool) {
-	out, ok := s.tryRollupHistogramQuantiles(ctx, f, []float64{q})
-	if !ok {
-		return nil, false
-	}
-	return out[0], true
-}
-
 // tryRollupHistogramQuantiles — ok=false → çağıran ham yola aynen devam.
 //
 // v0.9.768: SQL + satır çekimi TEK; satırlar belleğe alınıp her q için aynı

@@ -394,14 +394,3 @@ func findWatcherRule(rules []chstore.AlertRule, id string) *chstore.AlertRule {
 	}
 	return nil
 }
-
-// watcherRuleExists reports whether id names a watcher rule in the list —
-// the shared predicate of watcherHistory's cached + cache-bypassed checks.
-func watcherRuleExists(rules []chstore.AlertRule, id string) bool {
-	for _, rule := range rules {
-		if rule.ID == id && rule.Metric == "watcher" {
-			return true
-		}
-	}
-	return false
-}

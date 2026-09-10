@@ -1071,25 +1071,6 @@ func (e *Evaluator) evaluateLogQuery(ctx context.Context, r chstore.AlertRule) {
 	e.settleCountAlert(ctx, r, now, float64(page.Total), "log_query", desc, nil)
 }
 
-// Escalation thresholds — how long a problem can stay open at
-// each severity before the sweep bumps it up a tier. Chosen
-// for the bank-oncall flow:
-//
-//   - info → warning after 15 min — gives a heads-up that
-//     should have been triaged but wasn't.
-//   - warning → critical after 30 min — paging-grade signal
-//     that no human has acknowledged in half an hour.
-//   - critical stays critical (no further tier).
-//
-// Measured from started_at, so a freshly-opened critical
-// stays at critical naturally (it has nowhere higher to go),
-// and an info opened 45 min ago lands at critical on the
-// first sweep after restart.
-const (
-	escalateInfoToWarningAfter     = 15 * time.Minute
-	escalateWarningToCriticalAfter = 30 * time.Minute
-)
-
 // escalateStaleProblems walks every open problem and bumps
 // severity when it's lingered past the threshold. Per-tier
 // guards mean each problem escalates at most twice end-to-end

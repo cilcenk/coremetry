@@ -32,9 +32,10 @@ jobs:
       # ADVISORY (v0.7.49): ESLint over the existing ~108-finding baseline
       # (incl. real react-hooks/rules-of-hooks violations queued as bug-fixes).
       # Non-blocking until triaged; drop the `|| echo` to make it a gate.
-      - name: ESLint (advisory)
-        working-directory: frontend
-        run: npx eslint src || echo "::warning title=eslint::lint findings — triage (non-blocking)"
+      # v0.10.626 — ESLint artık GERÇEK kapı (denetim §4.4 #2): 0 hata, uyarılar
+      # geçer (238 uyarı tabanı ayrı ratchet işi). `|| echo` advisory'si kalktı.
+      - name: ESLint
+        run: npx eslint src
       # First frontend test gate (v0.7.25). Vitest over the pure lib/ helpers
       # that carry incident history (unit formatters, timeRangeToNs now()-trap,
       # escapeHTML XSS, dashboard-var expansion). Runs before the build so a
@@ -80,6 +81,10 @@ jobs:
         run: go vet ./...
       - name: go build
         run: go build ./...
+      # v0.10.626 — release imajı statik (Dockerfile CGO_ENABLED=0); cgo'suz
+      # derleme CI'da hiç kontrol edilmiyordu, ilk kez sürüm anında düşerdi.
+      - name: go build (CGO_ENABLED=0, release imajıyla aynı)
+        run: CGO_ENABLED=0 go build ./...
       # v0.10.625 — api.go BÜYÜMEZ (ratchet): taban .claude/baselines/api_go_lines;
       # büyüme ve indirilmemiş taban ikisi de kırmızı (GUARD_STRICT_RATCHET=1).
       - name: api.go büyüme kapısı (ratchet)
@@ -89,6 +94,12 @@ jobs:
       # forgotten local run could ship a regression undetected. This is the gate.
       - name: go test
         run: go test ./...
+      # v0.10.626 — CLAUDE.md release akışının iki kapısı CI'da yoktu:
+      # make audit (9 grep kontrolü, 🔴 = kırmızı) ve go mod tidy farkı.
+      - name: make audit (repo kuralları)
+        run: make audit
+      - name: go mod tidy -diff
+        run: go mod tidy -diff
 
       # v0.9.584 — GERÇEK ClickHouse'a karşı tip duman testi.
       #

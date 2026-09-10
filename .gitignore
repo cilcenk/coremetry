@@ -117,3 +117,5 @@ ds-bundle/
 .mcp.json
 .claude/agent-memory/
 scratchpad/
+# v0.10.626 — Copilot modernize log'ları (untracked artefakt)
+.github/modernize/

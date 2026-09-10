@@ -36,6 +36,7 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		SeverityMin: f.SeverityMin,
 		TraceID:     f.TraceID,
 		SpanID:      f.SpanID,
+		TraceIDs:    f.TraceIDs, // v0.10.584 — çoğul liste artık CH'ye ULAŞIYOR
 		HasTrace:    f.HasTrace, // v0.8.406 — trace-only filter
 
 		Limit:     f.Limit,
@@ -320,18 +321,17 @@ func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	}
 	if f.TraceID != "" {
 		wc += " AND trace_id = ?"
-		args = append(args, f.TraceID)
+		args = append(args, strings.ToLower(strings.TrimSpace(f.TraceID))) // v0.10.584 — ES paritesi
 	}
 	// v0.5.271 — multi-trace filter for the DQL cross-signal
 	// join. AND-merge with the single-trace TraceID; mostly
 	// they're mutually exclusive in practice (UI uses one,
 	// join executor uses the other).
-	if len(f.TraceIDs) > 0 {
-		placeholders := strings.TrimRight(strings.Repeat("?,", len(f.TraceIDs)), ",")
-		wc += " AND trace_id IN (" + placeholders + ")"
-		for _, id := range f.TraceIDs {
-			args = append(args, id)
-		}
+	// v0.10.584 — logsWhere ile AYNI gövde (normalize + tavan): iki yerde
+	// ayrı kurulan yüklem birinde düzelir diğerinde eksik kalırdı.
+	if expr, ids := chstore.LogTraceIDsConjunct(f.TraceIDs); expr != "" {
+		wc += " AND " + expr
+		args = append(args, ids...)
 	}
 	if f.HasTrace {
 		wc += " AND trace_id != ''" // v0.8.406 — trace-only filter
@@ -628,7 +628,7 @@ func (s *CHStore) FieldStats(ctx context.Context, f Filter, field string, limit 
 	}
 	if f.TraceID != "" {
 		wc += " AND trace_id = ?"
-		args = append(args, f.TraceID)
+		args = append(args, strings.ToLower(strings.TrimSpace(f.TraceID))) // v0.10.584 — ES paritesi
 	}
 	args = append(args, limit)
 

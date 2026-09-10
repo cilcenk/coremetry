@@ -116,11 +116,7 @@ bunu tarıyor (v0.9.1304). Kural İKİ koşullu (ORDER BY'da değil **VE**
 yeniden yazımda değişiyor); tarama yalnız birincisini mekanik görür, ikincisi
 gerekçeyle sicile yazılır.
 
-⚠️ **Açık bulgu (v0.9.1304 ölçümü, düzeltilmedi):** `problems` 4560 id'nin
-**21'i**, `anomaly_events` 185'in **28'i** birden çok gün-partition'ında.
-`started_at` bir yerlerde yeniden yazılıyor. Doğru düzeltme oralarda
-PARTITION BY'ı düşürmek DEĞİL, **yazıcının `started_at`'i yeniden yazmasını
-durdurmak** — ayrı dilim.
+✅ **v0.9.1304'ün açık bulgusu KAPANDI (v0.9.1306 → 0009 → v0.9.1335; doküman düzeltmesi v0.10.665).** `problems` / `anomaly_events` çoklu-partition kayması yazıcı hatası DEĞİLDİ: shard-yerel state tabloları + bağlantı kayması (teşhis `partition_dedup_test.go` başlığında). 0009 birleştirmesi kapattı, v0.9.1335 iki tablonun PARTITION BY'ını söktü (mevcut kurulumlar `migrations/0010`); bugün DDL'de partition yok, FINAL id'ye göre kesin. Yeniden kuyruğa ALMA; prod doğrulaması: `SELECT table, uniqExact(partition) FROM system.parts WHERE active AND table IN ('problems','anomaly_events') GROUP BY table` → her ikisi 1.
 
 **P2.** `toDate()`'i saatlik/dakikalık matematiğin etrafına **sarma**
 (v0.6.36 birim-karıştırma tuzağı; `retention_test.go`).

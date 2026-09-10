@@ -40,8 +40,8 @@ mutasyon 19 — hepsi DELETE, küçük durum tabloları). Ayrıntılı şema sö
 4. **Sözlük (dictionary) hiç kullanılmıyor** — küçük, yavaş değişen arama tabloları
    (`service_metadata`, `team_contacts`, `metric_catalog`) FINAL'lı okuma/JOIN yerine
    sözlük adayı.
-5. **RMT + FINAL doğru desen; risk partition anahtarı sürüklenmesi** (`problems` /
-   `anomaly_events` çok-partition çapaları, açık bulgu v0.9.1304).
+5. **RMT + FINAL doğru desen; partition sürüklenmesi bulgusu kapalı** (v0.9.1306/1335,
+   0009/0010 — bu dokümanın ilk sürümü bayat bulguyu tekrar etmişti, v0.10.665 düzeltti).
 6. **Muhtemel darboğaz: parça (part) baskısı** — 33 MV × günlük partition × N ingest
    pod'unun async tamponu, 2 shard üzerinde merge yükü. Önce ölç, sonra tasarla.
 
@@ -177,35 +177,38 @@ WHERE type = 'QueryFinish' AND event_time > now() - INTERVAL 1 DAY AND query ILI
 GROUP BY h ORDER BY n * ms DESC LIMIT 10;
 ```
 
-### 5. Değişken durum: RMT(version)+FINAL doğru; partition anahtarı sürüklenmesini yazıcıda kapat
+### 5. Değişken durum: RMT(version)+FINAL doğru — "partition sürüklenmesi" bulgusu KAPALI (düzeltme v0.10.665)
 
-**What** 36 RMT tablosu `FINAL` ile okunuyor (328 kullanım) — desen resmî.
-Açık bulgu: `problems` (4560 id'nin 21'i) ve `anomaly_events` (185'in 28'i) birden
-çok gün-partition'ında — `started_at` bir yerde yeniden yazılıyor. Düzeltme
-PARTITION BY'ı düşürmek değil, yazıcının `started_at`'i sabit tutması.
+**What** 36 RMT tablosu `FINAL` ile okunuyor (328 kullanım) — desen resmî. Bu
+dokümanın ilk sürümü v0.9.1304'ün açık bulgusunu ("`problems`/`anomaly_events`
+çok-partition, `started_at` yeniden yazılıyor, yazıcıyı düzelt") tekrar
+ediyordu; koda karşı doğrulandı ve BAYAT: v0.9.1306 teşhisi kök nedeni
+topolojide buldu (shard-yerel state tabloları + bağlantı kayması — yazıcı
+suçsuz), 0009 birleştirmesi kapattı, v0.9.1335 iki tablonun PARTITION BY'ını
+söktü (mevcut kurulumlar `migrations/0010`). Bugün DDL'de partition yok →
+FINAL id'ye göre kesin; `do_not_merge_across_partitions_select_final` riski
+kalmadı. Yazıcılar `started_at`'i taşıyor (anomaly.go `hasOpen` → mevcut
+satır; `UpsertAnomalyEvents` FINAL taşıma okuması).
 
-**Why** FINAL partition'lar arası birleştirmeyi varsayılan ayarla yapar;
-`do_not_merge_across_partitions_select_final=1` açıldığında aynı anahtarın iki
-partition'daki kopyası iki satır olarak döner (ölçüm v0.9.1304). Doğruluğun bir
-sunucu ayarına asılı olması kabul edilemez.
+**Why** Yanlış reçete dokümanda durdukça uygulanır; kalan tek iş prod'da
+0010'un uygulandığını doğrulamak.
 
-**How** `UpsertProblem`/anomali yazıcısında `started_at` yalnız ilk kayıtta
-set edilir (mevcut satırdan taşınır — invariant #4 tam-satır replace); regresyon
-testi: aynı id iki upsert → tek partition. Mevcut kopyalar için tek seferlik
-`OPTIMIZE … FINAL` yetmez (partition'lar arası birleşmez): eski kopyalar TTL ile
-düşer ya da `DELETE FROM … WHERE version < …` (lightweight delete) ile temizlenir.
+**How** Aşağıdaki sorgu prod'da her iki tablo için 1 dönmeli; >1 ise
+`migrations/0010` uygulanmamıştır (veri koruyan repartition göçü, operatör).
 
-**Category** official (RMT+FINAL) · derived (yazıcı düzeltmesi)
+**Category** official (RMT+FINAL) · derived (kapanış tespiti)
 
 **Confidence** high
 
 **Source**
 - https://clickhouse.com/docs/en/guides/replacing-merge-tree
+- `internal/chstore/partition_dedup_test.go` (teşhis ve muhafız)
 
 **Validation**
 ```sql
-SELECT id, uniqExact(toDate(started_at)) AS days FROM problems FINAL
-GROUP BY id HAVING days > 1 ORDER BY days DESC LIMIT 20;   -- hedef: 0 satır
+SELECT table, uniqExact(partition) AS partitions, count() AS parts
+FROM system.parts WHERE active AND table IN ('problems', 'anomaly_events')
+GROUP BY table;   -- beklenen: partitions = 1 (partition'sız tablo)
 ```
 
 ### 6. Mutasyonlar: 19 DELETE küçük durum tablolarında — sınırlı, kabul; lightweight DELETE'e geçiş düşük öncelik
@@ -300,7 +303,7 @@ SELECT table, max(active_parts) FROM (SELECT table, count() AS active_parts FROM
 | Şimdi (ölçüm, düşük risk) | Yapısal (spec + pilot ister) |
 |---|---|
 | Öneri 1/2/8 doğrulama sorgularını `/admin/clickhouse`'a taşı; `BatchSize` 10k→50k A/B | Öneri 3: korelatör rollup'ları refreshable MV pilotu (tek tablo, 24 s A/B) |
-| Öneri 5: `started_at` yeniden yazımını kapatan yazıcı düzeltmesi + regresyon testi | Öneri 4: `service_metadata` sözlüğü (boot DDL + okuma yolu değişimi) |
+| Öneri 5: prod'da `migrations/0010` doğrulaması (tek sorgu) | Öneri 4: `service_metadata` sözlüğü (boot DDL + okuma yolu değişimi) |
 | Öneri 6: `system.mutations` izlemesi | Öneri 7: ≥ 4 shard'da shard anahtarı kararı |
 
 Belirsiz olanlar açıkça belirtildi: refreshable MV'nin kümedeki koordinasyonu ve

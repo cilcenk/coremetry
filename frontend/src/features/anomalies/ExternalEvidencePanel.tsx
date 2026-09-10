@@ -13,6 +13,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Spinner, Empty } from '@/components/Spinner';
+import { externalSummaryKind, externalSummaryNote } from '@/lib/problemSubject'; // v0.10.598
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { TimeChart } from '@/components/charts/TimeChart';
@@ -51,10 +52,15 @@ export function ExternalEvidencePanel({ problem, window: win }: {
   problem: Problem;
   window?: { fromNs: number; toNs: number };
 }) {
+  // v0.10.598 — ÖZET Problem'ler (tavan/düştü/küme) hipotez satırı HİÇ
+  // almaz; onlar için "kanıt henüz toplanmadı" bir vaat, /rootcause isteği
+  // boşa. Türü kural önekinden tanı, isteği hiç atma, dürüst açıklama çiz.
+  const summary = externalSummaryKind(problem.ruleId);
   const rc = useQuery({
     queryKey: ['problem-rootcause', problem.id],
     queryFn: () => api.problemRootCause(problem.id),
     staleTime: 30_000,
+    enabled: !summary,
   });
   const deep = rc.data?.hypothesis?.deep;
   const ext = deep?.external;
@@ -92,6 +98,10 @@ export function ExternalEvidencePanel({ problem, window: win }: {
   const dtP = useDataTable<PodHit>({ storageKey: 'ext-evidence-pods', columns: POD_COLS, rows: pods });
   const dtS = useDataTable<LogSignature>({ storageKey: 'ext-evidence-sigs', columns: SIG_COLS, rows: sigs });
 
+  if (summary) {
+    const n = externalSummaryNote(summary);
+    return <Empty icon="ℹ" title={n.title}>{n.body}</Empty>;
+  }
   if (rc.isPending) return <Spinner />;
   if (rc.error) {
     return <div style={{ fontSize: 12, color: 'var(--err)' }}>Kanıt zinciri yüklenemedi — {String(rc.error)}</div>;

@@ -1127,9 +1127,18 @@ func (e *Evaluator) sweepStaleProblems(ctx context.Context) {
 		log.Printf("[evaluator] stale sweep: list: %v", err)
 		return
 	}
+	// v0.10.592 — poller'ın sahiplendiği Problem'ler (ext-down / ext-cap)
+	// süpürülmez: yaşam döngüleri poll anında touch/resolve ile yönetiliyor;
+	// poll aralığı 3×interval'ı aşan kaynakta süpürme onları "source silent"
+	// diye kapatıp bir sonraki poll'da yeniden açtırırdı — ayara bağlı
+	// flapping. Karar SAF (staleSweepCandidates), testte pinli.
+	toClose, skipped := staleSweepCandidates(stale)
+	if len(skipped) > 0 {
+		log.Printf("[evaluator] stale sweep: %d poller-owned problem(s) skipped (lifecycle belongs to the source poller)", len(skipped))
+	}
 	resolved := 0
-	for i := range stale {
-		p := stale[i]
+	for i := range toClose {
+		p := toClose[i]
 		chstore.MarkResolved(&p, time.Now().UnixNano())
 		// Mark the resolution reason inline so an operator
 		// auditing /problems sees why this row closed without
@@ -1150,6 +1159,21 @@ func (e *Evaluator) sweepStaleProblems(ctx context.Context) {
 	if resolved > 0 {
 		log.Printf("[evaluator] stale sweep: resolved %d problem(s) with silent sources", resolved)
 	}
+}
+
+// staleSweepCandidates — SAF: bayat listeden süpürülecekler ve poller'a ait
+// olduğu için ATLANANLAR. Sıra korunur. chstore.PollerOwnedRule tek karar
+// noktası; seri Problem'leri (anomaly:ext:…) süpürülmeye devam eder — kaynak
+// susunca onların "source silent" kapanışı dürüst sinyaldir.
+func staleSweepCandidates(stale []chstore.Problem) (toClose, skipped []chstore.Problem) {
+	for _, p := range stale {
+		if chstore.PollerOwnedRule(p.RuleID) {
+			skipped = append(skipped, p)
+			continue
+		}
+		toClose = append(toClose, p)
+	}
+	return toClose, skipped
 }
 
 // appendStaleSuffix tags the resolution reason onto the

@@ -5,11 +5,11 @@ package chstore
 // problem_telemetry.go'ya ayrıldı; sebep orada yazılı. hash/fnv ve sort
 // onlarla birlikte gitti.
 import (
+	"strings"
 	"context"
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -101,6 +101,17 @@ const (
 	// `ext:<kaynak>/<grup değerleri>`: servis değil, env şeridine girmez,
 	// servis sayfası linki yok (db emsali).
 	ProblemKindExternal = "external"
+
+	// v0.10.592 — POLLER'IN SAHİPLENDİĞİ kural önekleri. Bu Problem'lerin
+	// yaşam döngüsünü dış kaynak poller'ı yönetir (ReportSourceHealth /
+	// applyOpenCap: aç, her poll'da touch, ilk başarıda/aşım bitince resolve).
+	// Evaluator'ın bayat süpürmesi (3 × interval) bunları ATLAR: poll aralığı
+	// 180 s'yi aşan bir kaynakta iki touch arası süpürme eşiğini geçer, Problem
+	// "source silent" diye kapanıp bir sonraki poll'da yeniden açılırdı —
+	// ayara bağlı flapping. Seri Problem'leri (anomaly:ext:<kaynak>/…) BİLEREK
+	// dışarıda: kaynak susunca onların "source silent" kapanışı DÜRÜST sinyal.
+	RuleExtDownPrefix = "anomaly:ext-down:"
+	RuleExtCapPrefix  = "anomaly:ext-cap:"
 )
 
 // ProblemSubjectKind — bir satırın özne türü, boş değeri normalize eder.
@@ -1422,6 +1433,12 @@ func (s *Store) ListStaleOpenProblems(ctx context.Context, staleCutoff time.Time
 // OpenProblemKey — OpenProblemsSnapshot map anahtarı. Dışa açık:
 // evaluator aynı anahtarla lookup yapar (tablo-testli).
 func OpenProblemKey(ruleID, service string) string { return ruleID + "|" + service }
+
+// PollerOwnedRule — SAF: kuralın yaşam döngüsü poller'a mı ait (bayat süpürme
+// dışı). Yalnız ext-down / ext-cap; seri kuralı (anomaly:ext:…) DEĞİL.
+func PollerOwnedRule(ruleID string) bool {
+	return strings.HasPrefix(ruleID, RuleExtDownPrefix) || strings.HasPrefix(ruleID, RuleExtCapPrefix)
+}
 
 // NewOpenProblems (v0.10.228) — dilimden snapshot; openProblemsSnapshotUncached
 // ile AYNI indirgeme (reduceLatestProblem: (rule, service) başına en yeni).

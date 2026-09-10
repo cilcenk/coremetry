@@ -151,7 +151,7 @@ func (s *ExternalScanner) ReportSourceHealth(ctx context.Context, sourceID, sour
 		return
 	}
 	subject := ExternalSubject(sourceName, nil)
-	ruleID := "anomaly:ext-down:" + subject
+	ruleID := chstore.RuleExtDownPrefix + subject // v0.10.592 — süpürme dışı önek, chstore'da tek
 	if lastError == "" {
 		if s.downStreak[sourceID] == 0 {
 			return
@@ -358,7 +358,7 @@ func externalOpenCap(cfg chstore.AnomalySensitivityConfig) int {
 func (s *ExternalScanner) applyOpenCap(ctx context.Context, t ExternalTarget, metric string, now time.Time,
 	openSnap *chstore.OpenProblems, cap, overflow int, sample []string) {
 	subject := ExternalSubject(t.SourceName, nil)
-	ruleID := "anomaly:ext-cap:" + subject + ":" + metric
+	ruleID := chstore.RuleExtCapPrefix + subject + ":" + metric // v0.10.592
 	open := openSnap.ByKey(ruleID, subject)
 	hasOpen := open != nil && open.ID != ""
 	if overflow <= 0 {

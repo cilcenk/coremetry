@@ -96,6 +96,9 @@ type ExternalScanReport struct {
 	// Capped (v0.10.587) — anomali eşiğini geçtiği hâlde tik başına açılış
 	// tavanına takılan, Problem AÇILMAYAN seri sayısı. Özet Problem'e girer.
 	Capped int
+	// Clustered (v0.10.597) — aynı ilk boyutta ≥ clusterMinMembers taze açılış
+	// tek küme Problem'inde toplandı; üyelerin bireysel Problem'i açılmadı.
+	Clustered int
 }
 
 type externalStore interface {
@@ -261,14 +264,6 @@ func (s *ExternalScanner) Scan(ctx context.Context, t ExternalTarget) (ExternalS
 	// yine açılırdı — tavan bir sel kapısı değil, sel geciktirici olurdu.
 	// Refresh/resolve/touch tavana GİRMEZ: açık Problem'ler yaşamaya devam
 	// eder, yoksa evaluator'ın bayat süpürmesi "source silent" diye kapatır.
-	type pendingSeries struct {
-		sr      chstore.SpanMetricSeries
-		subject string
-		ruleID  string
-		open    *chstore.Problem
-		hasOpen bool
-		oc      anomalyOutcome
-	}
 	pending := make([]pendingSeries, 0, len(series))
 	for _, sr := range series {
 		rep.Series++
@@ -303,9 +298,43 @@ func (s *ExternalScanner) Scan(ctx context.Context, t ExternalTarget) (ExternalS
 		}
 		return pa.ruleID < pb.ruleID
 	})
+	// v0.10.597 — KÜMELEME, tavandan ÖNCE. groupBy'ın İLK boyutu (Oracle'da
+	// operasyon) aynı olan ≥ clusterMinMembers taze açılış tek küme
+	// Problem'inde toplanır; üyelerin bireysel Problem'i AÇILMAZ ve tavan
+	// yuvası yemez. Tek boyutlu groupBy'da her seri kendi anahtarı —
+	// kümeleme anlamsız, atlanır. Servis tarafındaki topoloji kümesinin
+	// (clustering.go) dış-kaynak ikizi: orada propagation, burada ortak üst
+	// boyut suçlu.
+	suppressed := map[int]bool{}
+	clusters := map[string][]int{}
+	if len(t.GroupBy) >= 2 {
+		byKey := map[string][]int{}
+		order := []string{}
+		for _, i := range newOpens {
+			k := externalClusterKey(t.SourceName, pending[i].sr.GroupKey)
+			if _, seen := byKey[k]; !seen {
+				order = append(order, k)
+			}
+			byKey[k] = append(byKey[k], i)
+		}
+		for _, k := range order {
+			if len(byKey[k]) >= clusterMinMembers {
+				clusters[k] = byKey[k]
+				for _, i := range byKey[k] {
+					suppressed[i] = true
+				}
+			}
+		}
+	}
+	remaining := newOpens[:0:0]
+	for _, i := range newOpens {
+		if !suppressed[i] {
+			remaining = append(remaining, i)
+		}
+	}
 	allowed := make(map[int]bool, cap)
 	var cappedSample []string
-	for k, i := range newOpens {
+	for k, i := range remaining {
 		if k < cap {
 			allowed[i] = true
 			continue
@@ -315,6 +344,10 @@ func (s *ExternalScanner) Scan(ctx context.Context, t ExternalTarget) (ExternalS
 		}
 	}
 	for i, ps := range pending {
+		if suppressed[i] {
+			rep.Clustered++
+			continue
+		}
 		if ps.oc.Action == "open" && !ps.hasOpen && !allowed[i] {
 			rep.Capped++
 			continue
@@ -330,8 +363,125 @@ func (s *ExternalScanner) Scan(ctx context.Context, t ExternalTarget) (ExternalS
 			})
 		}
 	}
+	// Küme yaşam döngüsü: anahtarında hâlâ anomali olan küme açılır/yenilenir,
+	// hiç anomalisi kalmayan açık küme resolve olur.
+	activeKeys := map[string]bool{}
+	if len(t.GroupBy) >= 2 {
+		for _, ps := range pending {
+			if ps.oc.Action == "open" {
+				activeKeys[externalClusterKey(t.SourceName, ps.sr.GroupKey)] = true
+			}
+		}
+	}
+	s.applyExternalClusters(ctx, t, metric, now, openSnap, pending, clusters, activeKeys)
 	s.applyOpenCap(ctx, t, metric, now, openSnap, cap, rep.Capped, cappedSample)
 	return rep, nil
+}
+
+// pendingSeries — Scan'in birinci fazında değerlendirilmiş bir seri; ikinci
+// faz (kümeleme + tavan + apply) ve applyExternalClusters bunun üstünde
+// çalışır. v0.10.597'de fonksiyon-yerelden paket düzeyine taşındı.
+type pendingSeries struct {
+	sr      chstore.SpanMetricSeries
+	subject string
+	ruleID  string
+	open    *chstore.Problem
+	hasOpen bool
+	oc      anomalyOutcome
+}
+
+// externalClusterKey — küme öznesi: ext:<kaynak>/<ilk boyut değeri>.
+func externalClusterKey(source string, groupKey []string) string {
+	if len(groupKey) == 0 {
+		return ExternalSubject(source, nil)
+	}
+	return ExternalSubject(source, groupKey[:1])
+}
+
+// externalClusterDescMax — gerekçeye giren üye sayısı; kalanı sayıyla söylenir.
+const externalClusterDescMax = 10
+
+// applyExternalClusters — küme Problem'leri. Kimlik anahtara sabit
+// (clusterProblemID(key)): tazelemeler aynı satıra biner. Üyeler taze
+// açılış adayları; anahtarında hiç anomali kalmayınca resolve.
+func (s *ExternalScanner) applyExternalClusters(ctx context.Context, t ExternalTarget, metric string, now time.Time,
+	openSnap *chstore.OpenProblems, pending []pendingSeries, clusters map[string][]int, activeKeys map[string]bool) {
+	if len(t.GroupBy) < 2 {
+		return
+	}
+	// Açık kümelerden anahtarı sakinleşenler kapanır.
+	seenKeys := map[string]bool{}
+	for _, ps := range pending {
+		k := externalClusterKey(t.SourceName, ps.sr.GroupKey)
+		if seenKeys[k] {
+			continue
+		}
+		seenKeys[k] = true
+		if activeKeys[k] {
+			continue
+		}
+		if open := openSnap.ByKey(clusterRulePrefix+k, k); open != nil && open.ID != "" {
+			chstore.MarkResolved(open, now.UnixNano())
+			if err := s.store.UpsertProblem(ctx, *open); err != nil {
+				log.Printf("[anomaly/external] cluster-resolve %s: %v", k, err)
+			}
+		}
+	}
+	keys := make([]string, 0, len(clusters))
+	for k := range clusters {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		idx := clusters[k]
+		members := make([]openCandidate, 0, len(idx))
+		labels := make([]string, 0, len(idx))
+		for _, i := range idx {
+			members = append(members, openCandidate{Service: pending[i].subject, Metric: metric, Outcome: pending[i].oc})
+			if len(labels) < externalClusterDescMax {
+				labels = append(labels, strings.Join(pending[i].sr.GroupKey, "/"))
+			}
+		}
+		desc := fmt.Sprintf("%d seri aynı anda anomali eşiğini geçti (ortak üst boyut: %s) — tek küme Problem'i, üyeler ayrı açılmadı. Üyeler: %s",
+			len(idx), strings.TrimPrefix(k, ExternalMetricPrefix), strings.Join(labels, ", "))
+		if len(idx) > externalClusterDescMax {
+			desc += fmt.Sprintf(" (+%d daha)", len(idx)-externalClusterDescMax)
+		}
+		desc += fmt.Sprintf(". Kaynak %s · sorgu %s.", t.SourceName, t.Query)
+		sev := clusterSeverity(members, "")
+		if open := openSnap.ByKey(clusterRulePrefix+k, k); open != nil && open.ID != "" {
+			open.Value = float64(len(idx))
+			open.Severity = sev
+			open.Description = desc
+			if err := s.store.UpsertProblem(ctx, *open); err != nil {
+				log.Printf("[anomaly/external] cluster-refresh %s: %v", k, err)
+			}
+			continue
+		}
+		p := chstore.Problem{
+			ID:          clusterProblemID(k),
+			RuleID:      clusterRulePrefix + k,
+			RuleName:    "Anomaly · " + displayMetric(metric) + " · küme",
+			Severity:    sev,
+			Service:     k,
+			Kind:        chstore.ProblemKindExternal,
+			Metric:      metric,
+			Value:       float64(len(idx)),
+			Threshold:   float64(clusterMinMembers),
+			Comparator:  ">=",
+			Status:      "open",
+			Description: desc,
+			StartedAt:   now.UnixNano(),
+		}
+		if err := s.store.UpsertProblem(ctx, p); err != nil {
+			log.Printf("[anomaly/external] cluster-open %s: %v", k, err)
+			continue
+		}
+		log.Printf("[anomaly/external] CLUSTER %s · %s: %d üye", k, metric, len(idx))
+		if s.notifier != nil {
+			go s.notifier.SendProblemAlert(context.Background(), p)
+		}
+	}
 }
 
 // externalCapSample — özet Problem gerekçesine giren örnek özne sayısı.

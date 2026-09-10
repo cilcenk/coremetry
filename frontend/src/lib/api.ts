@@ -2590,6 +2590,8 @@ export const api = {
     maxDataPoints?: number;
     groupBy?: string[];
     filters?: string;
+    /** v0.10.655 — gruplu (OR / iç içe) yüklem; /traces + count ile aynı kodek. Düz filters ile AND. */
+    filterGroup?: string;
     dsl?: string;
     /** v0.9.601 — serbest metin yüklemi. spanMetric'in ?search='iyle AYNI
      *  alana gider; eksikliği /traces hacim şeridinin bu yüzeye
@@ -2625,6 +2627,7 @@ export const api = {
         // notu ile v0.10.484'ün Root/Errors bayrakları tip'te vardı, tel'de
         // yoktu ([[feedback-tested-but-unreachable]]). Sunucu (api.go
         // spanMetricBatch) üçünü de okur.
+        filterGroup: body.filterGroup, // v0.10.655
         search:  body.search,
         rootOnly: body.rootOnly,
         hasError: body.hasError,

@@ -75,6 +75,7 @@ import { traceHref } from '@/lib/traceHref';
 import { VolumeChart } from '@/components/traces/VolumeChart';
 import { STRIP_STATS, STRIP_STAT_DEFAULT, parseStripStat, stripStatHeaderLabel, type StripStat } from '@/components/traces/stripStat';
 import { stripScope, volumeUnitFor } from '@/components/traces/volumeSeries';
+import { groupLeaves } from '@/lib/urlState';
 import { LatencyScatter } from '@/components/traces/LatencyScatter';
 import { ShapesView } from '@/components/traces/ShapesView';
 import { SvcBadge, DurationBar, fmtDur } from '@/components/traces/shared';
@@ -647,12 +648,12 @@ function TracesPageInner() {
     // kardinaliteyle biner.
     // v0.9.715 (operatör: "barlar çok küçülmüş") — bar bütçesi: ~12px/bar.
     const step = stepForPoints(windowSec, barPanelMaxDataPoints(1));
-    // The header volume chart rides /api/spans/metric, which is a flat-filters
-    // surface (filterGroup is a /traces + /aggregate + /facets capability in
-    // v0.8.x gap-2 — spanMetric isn't wired for it). When a grouped OR/nested
-    // filter is active we therefore omit the flat filters here rather than send
-    // a misleading partial predicate; the table + aggregate below still apply
-    // the full group. The chart reflects the service/search context only.
+    // v0.10.655 (operatör, prod: "filtreli sorguda 34 trace, histogram milyon")
+    // — metric-batch artık filterGroup alıyor: gruplu kipte grup olduğu gibi
+    // gider (düz advFilters DEĞİL, çünkü grup onların üst kümesi), bağlam
+    // çipleri (env/cluster/kind) düz filters'ta kalır ve sunucu ikisini AND'ler.
+    // Öncesi: gruplu kipte düz filtreler bilerek atlanıyordu ve şerit servisin
+    // tüm evrenini çiziyordu.
     // v0.8.383 — the env context ALWAYS rides the chart's flat filters
     // (spanMetric's filter compiler maps deployment.environment →
     // deploy_env): env is global context like service/search, not part
@@ -668,7 +669,7 @@ function TracesPageInner() {
     // gelmiyor") — kind kısıtı YALNIZ filtre giriş span'ında yaşayan
     // anahtarlardaysa; db./messaging./… ya da serbest metin varsa şerit
     // eşleşen span'leri sayar (volumeSeries.ts stripScope başlığı).
-    if (stripScope(chartFilters, effectiveTraceSearch(filter) ?? '') === 'entry') {
+    if (stripScope([...chartFilters, ...groupLeaves(grouped ? advGroup : null)], effectiveTraceSearch(filter) ?? '') === 'entry') {
       chartFilters.push({ k: 'kind', op: 'IN', v: ['server', 'consumer'] });
     }
     if (env) chartFilters.push({ k: 'deployment.environment', op: '=', v: [env] });
@@ -681,6 +682,7 @@ function TracesPageInner() {
       // v0.10.523 — listeyle AYNI terim (kimlik kutusundaki değer dahil).
       search: effectiveTraceSearch(filter),
       filters: chartFilters.length ? JSON.stringify(chartFilters) : undefined,
+      filterGroup: grouped ? (advGroupParam || undefined) : undefined, // v0.10.655
       dsl: filter.service ? `service.name = "${filter.service.replace(/"/g, '\\"')}"` : undefined,
     };
     let cancelled = false;
@@ -697,7 +699,7 @@ function TracesPageInner() {
     // filtreli sonucu gösterirdi.
     api.spanMetricBatch({
       from: common.from, to: common.to, step: common.step,
-      search: common.search, filters: common.filters, dsl: common.dsl,
+      search: common.search, filters: common.filters, filterGroup: common.filterGroup, dsl: common.dsl,
       // v0.10.484 (operatör: "Root seçince histogram değişmiyor") — tablonun
       // iki bayrağı şeride de gider; effect bağımlılığında da (yeniden çekim).
       rootOnly: filter.rootOnly || undefined,
@@ -720,7 +722,7 @@ function TracesPageInner() {
       })
       .catch((e: unknown) => { if (!cancelled && !isCanceled(e)) setVolSeries(null); });
     return () => { cancelled = true; ctl.abort(); };
-  }, [view, listRangeNs, filter.service, filter.search, filter.traceId, filter.rootOnly, filter.hasError, env, clusterScope, advFilters, grouped, stripStat]); // v0.10.484, v0.10.513 stripStat, v0.10.523 traceId
+  }, [view, listRangeNs, filter.service, filter.search, filter.traceId, filter.rootOnly, filter.hasError, env, clusterScope, advFilters, grouped, advGroupParam, stripStat]); // v0.10.655 advGroupParam // v0.10.484, v0.10.513 stripStat, v0.10.523 traceId
 
   // v0.9.637 — anahtar önerisi YALNIZ boş sonuçta çekilir. CLAUDE.md
   // ES/CH maliyet disiplini: liste boyunca prefetch yok, poll yok —

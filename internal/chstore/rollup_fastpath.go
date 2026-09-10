@@ -59,6 +59,9 @@ func narrowRollupEligible(f SpanMetricBatchFilter) (narrowRollupQuery, bool) {
 	if f.From.IsZero() || f.To.IsZero() || len(f.Aggs) == 0 {
 		return q, false
 	}
+	if f.FilterRoot != nil { // v0.10.655 — grup (OR / iç içe) dar rollup boyutlarına oturmaz
+		return q, false
+	}
 	for _, fe := range f.Filters {
 		col, ok := narrowFilterCol[fe.Key]
 		if !ok || len(fe.Values) == 0 {

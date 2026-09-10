@@ -202,3 +202,16 @@ export function rebuildPreserving(
   }
   return u.toString();
 }
+
+/**
+ * groupLeaves — v0.10.655: gruplu filtrenin (OR / iç içe, ≤1 seviye) tüm
+ * yaprak çiplerini düz liste olarak döndürür. Yüklem DEĞİL (OR anlamı
+ * kaybolur); yalnız "hangi anahtarlar var" sorusu için — /traces şeridi
+ * kind kısıtını (giriş span'ı mı, eşleşen span mı) buna göre verir.
+ */
+export function groupLeaves(g: FilterGroup | null | undefined): FilterExpr[] {
+  if (!g) return [];
+  const out: FilterExpr[] = [...(g.filters ?? [])];
+  for (const sub of g.groups ?? []) out.push(...groupLeaves(sub));
+  return out;
+}

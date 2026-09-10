@@ -16,7 +16,7 @@ describe('effectiveTraceSearch', () => {
     const src = readFileSync(resolve(__dirname, '../pages/Traces.tsx'), 'utf8');
     expect((src.match(/search: effectiveTraceSearch\(filter\)/g) ?? []).length).toBeGreaterThanOrEqual(4);
     expect(src).not.toMatch(/search: filter\.search \|\| /);
-    expect(src).toContain("stripScope(chartFilters, effectiveTraceSearch(filter) ?? '')");
+    expect(src).toContain("stripScope([...chartFilters, ...groupLeaves(grouped ? advGroup : null)], effectiveTraceSearch(filter) ?? '')");
     // şerit effect'i kimlik kutusunu da izler
     expect(src).toMatch(/\[view, listRangeNs, filter\.service, filter\.search, filter\.traceId, filter\.rootOnly/);
   });

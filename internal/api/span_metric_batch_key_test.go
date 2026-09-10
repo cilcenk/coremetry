@@ -151,3 +151,20 @@ func TestSortEndpointsByP99Delta(t *testing.T) {
 		t.Fatalf("sıra yanlış: %s, %s, %s", got[0].Path, got[1].Path, got[2].Path)
 	}
 }
+
+// v0.10.655 — filterGroup anahtara girer: aynı düz filters, farklı grup →
+// farklı anahtar (v0.5.187 hash-all-inputs); grup boşsa girdi eskiyle aynı.
+func TestSpanMetricBatchKeyFilterGroup(t *testing.T) {
+	flat := `[{"k":"deployment.environment","op":"=","v":["prod"]}]`
+	if spanMetricBatchFilterKeyInput(flat, "") != flat {
+		t.Fatal("filterGroup boşken anahtar girdisi değişmemeli (mevcut önbellek girdileri korunur)")
+	}
+	g1 := spanMetricBatchFilterKeyInput(flat, `{"join":"OR","filters":[{"k":"db.system","op":"=","v":["oracle"]}]}`)
+	g2 := spanMetricBatchFilterKeyInput(flat, `{"join":"OR","filters":[{"k":"db.system","op":"=","v":["postgresql"]}]}`)
+	a := spanMetricBatchKey(tFrom, tTo, 60, 0, 0, nil, g1, "", "", nil)
+	b := spanMetricBatchKey(tFrom, tTo, 60, 0, 0, nil, g2, "", "", nil)
+	c := spanMetricBatchKey(tFrom, tTo, 60, 0, 0, nil, flat, "", "", nil)
+	if a == b || a == c {
+		t.Fatalf("farklı filterGroup aynı anahtarı üretti: %s / %s / %s", a, b, c)
+	}
+}

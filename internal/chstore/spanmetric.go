@@ -703,6 +703,9 @@ func (s *Store) tryOperationMVFastPathMulti(ctx context.Context, f SpanMetricBat
 	// Shared gate (v0.8.425) — a `name = Y` filter (the operation-
 	// scoped legacy batch: dsl service.name+name, groupBy []) rides
 	// the MV now instead of falling to a raw-spans scan.
+	if f.FilterRoot != nil { // v0.10.655 — gruplu yüklem MV'de ifade edilemez
+		return nil, false
+	}
 	plan, ok := operationMVGate(f.GroupBy, f.Filters)
 	if !ok {
 		return nil, false
@@ -871,6 +874,9 @@ func spanMetricBatchWhere(f SpanMetricBatchFilter, winK, effWin int) whereClause
 		wc.add("time <= ?", f.To)
 	}
 	ApplyFilters(&wc, f.Filters)
+	if f.FilterRoot != nil { // v0.10.655 — grup yüklemi düz filtrelerle AND
+		ApplyFilterGroup(&wc, *f.FilterRoot)
+	}
 	// v0.10.484 — /traces Root / Errors bayrakları (tablo ile aynı küme).
 	if f.RootOnly {
 		wc.add(rootSpanPredicate) // v0.10.611 — kolon parent_id (parent_span_id YOK, prod CH 47)
@@ -888,7 +894,12 @@ func spanMetricBatchWhere(f SpanMetricBatchFilter, winK, effWin int) whereClause
 // series without inspecting types.
 type SpanMetricBatchFilter struct {
 	Filters []FilterExpr
-	GroupBy []string
+	// FilterRoot — v0.10.655: gruplu (OR / iç içe) yüklem; tek-agg yolundaki
+	// SpanMetricFilter.FilterRoot'un batch karşılığı. Düz Filters ile AND'lenir
+	// (env/cluster/kind bağlam çipleri düz gelir); varken MV/rollup fast-path
+	// kapalı (grup MV boyutlarına oturmaz). /traces histogramı bunu taşır.
+	FilterRoot *FilterGroup
+	GroupBy    []string
 	// RootOnly / HasError — v0.10.484 (operatör: "trace histogramı Root/Errors
 	// seçince değişmiyor"): /traces hacim şeridi tablonun iki bayrağını
 	// taşımıyordu. RootOnly = parent_span_id boş (kök span), HasError =

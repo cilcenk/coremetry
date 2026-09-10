@@ -15,9 +15,41 @@ env:
   IMAGE_NAME: ${{ github.repository }}   # cosretr/coremetry (org transferi 2026-09-10)
 
 jobs:
+  # v0.10.626 — YAYIN ÖNCESİ DOĞRULAMA (denetim §4.1): release.yml CI'a bağlı
+  # değildi, kırmızı main'den de imaj/chart basıyordu. docker ve helm bu
+  # job'a `needs` ile bağlı; kapılar ci.yml'in çekirdeğiyle aynı.
+  gate:
+    name: Gate (build + test before publish)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Frontend typecheck + build
+        working-directory: frontend
+        run: |
+          npm ci || npm install
+          npx tsc --noEmit
+          npm run build
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          check-latest: true
+          cache: true
+      - name: Go vet + build + test
+        run: |
+          go vet ./...
+          CGO_ENABLED=0 go build ./...
+          go test ./...
+      - name: make audit
+        run: make audit
   docker:
     name: Build + push Docker image
     runs-on: ubuntu-latest
+    needs: [gate]
     # continue-on-error: a failed Docker push (typically a
     # GHCR write_package permission_denied when the orphan
     # package from a prior repo deletion blocks the new
@@ -94,6 +126,7 @@ jobs:
     # lets the chart ship even when Docker hits the orphan-
     # package permission issue.
     runs-on: ubuntu-latest
+    needs: [gate]
     # Helm OCI push goes to the same GHCR registry, so it can
     # trip the same orphan-package permission issue. Allow it
     # to fail without killing the GitHub Release step.

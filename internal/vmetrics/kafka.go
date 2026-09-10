@@ -257,6 +257,43 @@ func KafkaQuery(m KafkaMetric, sc KafkaScope, groupBy []string) (chstore.MetricQ
 	}, nil
 }
 
+// KafkaDiscoveryMetric — v0.10.609: "bu topic'e kim dokunuyor" sorusunun
+// metriği; ikisi de topic etiketli, her istemcide var (send/consumed rate).
+func KafkaDiscoveryMetric(side string) (KafkaMetric, bool) {
+	switch side {
+	case "producer":
+		return KafkaMetricByName("kafka.producer.record_send_rate")
+	case "consumer":
+		return KafkaMetricByName("kafka.consumer.records_consumed_rate")
+	}
+	return KafkaMetric{}, false
+}
+
+// KafkaDiscoverFilter — v0.10.609 (operatör-bildirimi: log topic'inin
+// tüketicisi span üretmiyor, kapsam yalnız span'dan geliyordu → tüm tüketici
+// panelleri "kapsam boş"). Topic etiketli bir metrikten servis KEŞFİ: kapsamı
+// topic sınırlar (servis listesi YOK — aranan şey o liste; kardinalite topic
+// başına istemci sayısı), service.name kırılımı, TEK nokta (mdp 1; değer
+// değil varlık), düz seri. SAF.
+func KafkaDiscoverFilter(m KafkaMetric, topic string, from, to time.Time) (chstore.MetricQueryFilter, error) {
+	t := strings.TrimSpace(topic)
+	if t == "" {
+		return chstore.MetricQueryFilter{}, fmt.Errorf("%s: keşif için topic zorunlu", m.Name)
+	}
+	if !hasLabel(m, "topic") {
+		return chstore.MetricQueryFilter{}, fmt.Errorf("%s: topic label'ı yok, keşif metriği olamaz", m.Name)
+	}
+	if from.IsZero() || to.IsZero() || !to.After(from) {
+		return chstore.MetricQueryFilter{}, fmt.Errorf("%s: pencere geçersiz (from<to şart)", m.Name)
+	}
+	return chstore.MetricQueryFilter{
+		Name:    m.Name,
+		Filters: []chstore.FilterExpr{{Key: "topic", Op: "=", Values: []string{t}}},
+		GroupBy: []string{"service.name"}, Aggregation: "max",
+		From: from, To: to, MaxDataPoints: 1, PlainSeries: true,
+	}, nil
+}
+
 func uniqSorted(in []string) []string {
 	seen := make(map[string]bool, len(in))
 	out := make([]string, 0, len(in))

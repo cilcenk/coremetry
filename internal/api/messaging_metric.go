@@ -41,6 +41,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"sort"
@@ -167,7 +168,90 @@ type messagingClientsResponse struct {
 	Note         string                      `json:"note"`
 	Producers    []string                    `json:"producers"`
 	Consumers    []string                    `json:"consumers"`
-	Blocks       map[string]kafkaMetricBlock `json:"blocks"`
+	// v0.10.609 — span'de görünmeyip topic etiketli metrikten keşfedilen
+	// servisler (Producers/Consumers bunları da içerir). ScopeTruncated:
+	// birleşim msgScopeServiceCap'e kırpıldı (sorgu uzunluğu).
+	DiscoveredProducers []string                    `json:"discoveredProducers,omitempty"`
+	DiscoveredConsumers []string                    `json:"discoveredConsumers,omitempty"`
+	ScopeTruncated      bool                        `json:"scopeTruncated,omitempty"`
+	Blocks              map[string]kafkaMetricBlock `json:"blocks"`
+}
+
+// msgScopeServiceCap — v0.10.609: kapsam servis tavanı. Kapsam VM'e
+// `service_name=~"^(a|b|…)$"` olarak gider; caller SQL'i zaten 200'de
+// kesiyor, keşif eklenince 400'e çıkabilirdi (VM -search.maxQueryLen 16 KB
+// sınıfı, 607). Span servisleri ÖNCE (sayfanın konusu), keşfedilenler kalan yere.
+const msgScopeServiceCap = 200
+
+// mergeKafkaScope — SAF: span kümesi + keşfedilenler, sıralı, tavanlı.
+// added = span'de OLMAYIP kapsama giren keşfedilenler.
+func mergeKafkaScope(span, discovered []string, cap int) (all, added []string, truncated bool) {
+	seen := map[string]bool{}
+	all = []string{}
+	added = []string{}
+	for _, s := range span {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		all = append(all, s)
+	}
+	for _, s := range discovered {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		if len(all) >= cap {
+			truncated = true
+			continue
+		}
+		all = append(all, s)
+		added = append(added, s)
+	}
+	if len(all) > cap {
+		all = all[:cap]
+		truncated = true
+	}
+	sort.Strings(all)
+	sort.Strings(added)
+	return all, added, truncated
+}
+
+// discoverKafkaServices — v0.10.609: topic etiketli metrikten servis keşfi
+// (vmetrics.KafkaDiscoverFilter). Hata = boş küme + log (keşif yardımcıdır,
+// cevabı düşürmez); GroupKey[0] = service.name (GroupBy ile hizalı).
+func discoverKafkaServices(ctx context.Context, src metricSource, side, topic string, from, to time.Time, env string) []string {
+	m, ok := vmetrics.KafkaDiscoveryMetric(side)
+	if !ok {
+		return nil
+	}
+	f, err := vmetrics.KafkaDiscoverFilter(m, topic, from, to)
+	if err != nil {
+		return nil
+	}
+	if env != "" {
+		f = withEnvFilter(f, env, src)
+	}
+	series, err := src.QueryMetric(ctx, f)
+	if err != nil {
+		log.Printf("[messaging] %s keşfi (%s): %v", side, topic, err)
+		return nil
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, s := range series {
+		if len(s.GroupKey) == 0 {
+			continue
+		}
+		name := strings.TrimSpace(s.GroupKey[0])
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 type serviceKafkaClientsResponse struct {
@@ -232,7 +316,7 @@ func runKafkaQuestions(ctx context.Context, src metricSource, qs []vmetrics.Kafk
 		b.Unit, b.Kind, b.Agg = m.Unit, m.Kind, m.Agg
 		sc := scopeFor(m)
 		if sc == nil {
-			b.Error = "kapsam boş: span tarafında " + m.Side + " servisi yok"
+			b.Error = "kapsam boş: span tarafında da topic etiketli metrikte de " + m.Side + " servisi yok"
 			blocks[i] = b
 			continue
 		}
@@ -320,9 +404,26 @@ func buildMessagingClients(ctx context.Context, src metricSource, p messagingCli
 		}
 		p.Mdp = 2
 	}
-	resp.Producers, resp.Consumers = splitCallerRoles(callers)
+	spanP, spanC := splitCallerRoles(callers)
+	// v0.10.609 — kapsam = span ∪ topic etiketli metrikten keşif (operatör-
+	// bildirimi: log topic'inin tüketicisi span üretmiyor ama kafka-clients
+	// metriği üretiyor; yalnız span'la tüm tüketici panelleri "kapsam boş"
+	// kalıyordu). Keşif her sette koşar (2 kısa VM sorgusu, cevap cache'li).
+	var truncP, truncC bool
+	resp.Producers, resp.DiscoveredProducers, truncP = mergeKafkaScope(spanP,
+		discoverKafkaServices(ctx, src, "producer", p.Destination, p.From, p.To, p.Env), msgScopeServiceCap)
+	resp.Consumers, resp.DiscoveredConsumers, truncC = mergeKafkaScope(spanC,
+		discoverKafkaServices(ctx, src, "consumer", p.Destination, p.From, p.To, p.Env), msgScopeServiceCap)
+	resp.ScopeTruncated = truncP || truncC
+	if len(resp.DiscoveredProducers) > 0 || len(resp.DiscoveredConsumers) > 0 {
+		caveat += fmt.Sprintf(" Kapsama topic etiketli metrikten keşfedilen %d üretici / %d tüketici eklendi (span'de görünmüyorlar).",
+			len(resp.DiscoveredProducers), len(resp.DiscoveredConsumers))
+	}
+	if resp.ScopeTruncated {
+		caveat += fmt.Sprintf(" Kapsam ilk %d servisle sınırlı (sorgu uzunluğu).", msgScopeServiceCap)
+	}
 	if len(resp.Producers) == 0 && len(resp.Consumers) == 0 {
-		resp.Note = kafkaClientsNote(resp.Source, false, false, "span tarafında bu topic için üretici/tüketici görülmedi; metrik sorgusu atılmadı.", caveat)
+		resp.Note = kafkaClientsNote(resp.Source, false, false, "span tarafında da topic etiketli metrikte de bu topic için üretici/tüketici görülmedi; metrik sorgusu atılmadı.", caveat)
 		return resp, nil
 	}
 	scopeFor := func(m vmetrics.KafkaMetric) *vmetrics.KafkaScope {

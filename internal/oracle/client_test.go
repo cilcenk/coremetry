@@ -96,7 +96,11 @@ func TestBuildSampleQuery_Contract(t *testing.T) {
 	if !strings.Contains(sqlText, "WHERE MCA_ERR_TIMESTAMP >= :1 AND MCA_ERR_TIMESTAMP < :2") {
 		t.Fatalf("zaman yüklemi bind'li değil: %q", sqlText)
 	}
-	if len(args) != 3 || args[0] != any(from) || args[1] != any(to) || args[2] != any("T") {
+	// v0.10.601 — bind değerleri kaynağın DUVAR SAATİ (bindTime): go-ora
+	// time.Time'ı bileşenleriyle gönderir, dilimsiz kolona UTC anı bağlamak
+	// 3 saat kaydırırdı. Varsayılan dilim Europe/Istanbul.
+	loc, _ := time.LoadLocation(DefaultTimezone)
+	if len(args) != 3 || args[0] != any(bindTime(from, loc, false)) || args[1] != any(bindTime(to, loc, false)) || args[2] != any("T") {
 		t.Fatalf("arg sırası: %#v", args)
 	}
 	// Tip süzgeci bind'li.

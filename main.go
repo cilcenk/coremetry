@@ -1114,6 +1114,17 @@ func main() {
 		influxLeader.SetOnAcquire(func() { influxWorker.Tick(ctx) })
 		influxLeader.Start(chstore.WithQueryTag(ctx, "worker:influx-poller"))
 		go influxWorker.Run(ctx, influxLeader.IsLeader)
+		// v0.10.601 — Oracle hata tablosu poll işçisi (Aşama 2): yalnız worker
+		// lideri, influx ile aynı kira/ilk-tik sözleşmesi. Sağlık kancası dış
+		// tarayıcıya gider → 3 ardışık hata "kaynak düştü" Problem'i (588).
+		oracleWorker := oracle.NewWorker(oracleSvc, store, store)
+		oracleWorker.SetHealthHook(func(ctx context.Context, src oracle.SourceConfig, lastErr string) {
+			extScanner.ReportSourceHealth(ctx, src.ID, src.Name, lastErr, time.Now())
+		})
+		oracleLeader := cache.NewLeaderHolder(lockImpl, "oracle-poller", cache.LeaderTTL(30*time.Second))
+		oracleLeader.SetOnAcquire(func() { oracleWorker.Tick(ctx) })
+		oracleLeader.Start(chstore.WithQueryTag(ctx, "worker:oracle-poller"))
+		go oracleWorker.Run(ctx, oracleLeader.IsLeader)
 		// v0.10.140 — Thanos etiketi periyodik doğrulama (auto eşleme
 		// brief'i): 10 dk'da bir, yalnız lider; sonuç bellekte, Settings
 		// rozetinde ilan edilir. Entity bayrağından BAĞIMSIZ.

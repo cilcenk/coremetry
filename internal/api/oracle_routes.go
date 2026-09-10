@@ -131,6 +131,9 @@ func (s *Server) testOracleSource(w http.ResponseWriter, r *http.Request) {
 // "son hata" bu pod'da koşmuş bağlantı testinin izidir. Uydurma bir
 // "sağlıklı" satırı basmıyoruz.
 type oracleStatusPayload struct {
+	// v0.10.601 — worker liderinin poll durumu (system_settings blobu; influx
+	// v0.10.333 duruşu). nil = henüz yayın yok.
+	Poll *oracle.WorkerStatusSnapshot `json:"poll,omitempty"`
 	Sources     []oracle.SourceStatus `json:"sources"`
 	GeneratedAt int64                 `json:"generatedAt"`
 }
@@ -142,6 +145,25 @@ func (s *Server) getOracleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, oracleStatusPayload{
 		Sources:     s.oracle.Status(),
+		Poll:        s.oraclePollStatus(r.Context()),
 		GeneratedAt: time.Now().UnixMilli(),
 	})
+}
+
+// oraclePollStatus — v0.10.601: poll işçisi yalnız worker liderinde koşar;
+// Settings'i servis eden API pod'u durumu blobdan okur. Hata = nil (durum
+// ucu poll blobu yüzünden 500 vermez).
+func (s *Server) oraclePollStatus(ctx context.Context) *oracle.WorkerStatusSnapshot {
+	if s.store == nil {
+		return nil
+	}
+	raw, err := s.store.GetSetting(ctx, oracle.WorkerStatusKey)
+	if err != nil {
+		return nil
+	}
+	snap, ok := oracle.DecodeWorkerStatus(raw)
+	if !ok {
+		return nil
+	}
+	return snap
 }

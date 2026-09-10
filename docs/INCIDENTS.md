@@ -342,3 +342,26 @@ kodlanır; kural yokken ham geçiş bayt-aynı (`HasMetricDropRules` hızlı yol
 Sayaç `vm_metrics_forward_filtered`. Ders: bir sinyalin İKİ yazma hedefi
 varsa ingest politikası her ikisinin de önünde durmalı; ham-geçiş
 optimizasyonu politika noktasını atlamanın gerekçesi olamaz.
+
+### v0.10.611 — /traces histogramı Root bayrağı olmayan kolonu sorguluyordu (4 gün sessiz)
+
+v0.10.484 `/traces` hacim şeridinin Root/Errors bayraklarını batch
+span-metrik sorgusuna taşıdı ve kök yüklemini `parent_span_id = ''` yazdı;
+`spans` tablosunda kolon `parent_id` (DDL; MV'ler ve GetTraces
+`parent_id = '' OR parent_id = '0000000000000000'`). Root bayrağı ham yolu
+zorladığı için MV/rollup fast-path'leri devreye girmedi ve her Root'lu
+histogram prod'da ClickHouse code 47 "Unknown expression or function
+identifier `parent_span_id`" aldı. Kullanıcıya görünen: şerit boş; ilan
+edilen: hiçbir şey — hata yalnız kendi telemetrimizde (coremetry-api
+exception grubu) birikti ve operatör 10 Eylül'de oradan fark etti.
+Neden test görmedi: WHERE kurucusu metodun içine gömülüydü, saf seam yoktu;
+v0.9.601'in `searchPredicate` kaynak-tarama pini bile o gövdeyi tarıyordu
+ama kolon ADINI kimse DDL'e karşı doğrulamıyordu.
+Çare: `rootSpanPredicate` tek sabit (repo.go ile aynı yazım — histogram ile
+tablo aynı küme), `spanMetricBatchWhere` saf kurucu, regresyon testi
+RootOnly'yi gerçek kolonla pinler ve chstore+api kaynağında yorum dışı
+`parent_span_id` yasağı koyar (olmayan kolon tek yazımla da dönmesin).
+Ders: bir SQL yüklemi ekleyen dilim yüklemi saf kurucuya koyar ve kolon adını
+DDL'e karşı pinler; "ham yolu zorlayan" bayraklar en az test edilen yoldur,
+çünkü lokal veri fast-path'te kalır. Dogfood exception listesi bu sınıfın
+tek erken uyarısı — boş bırakılmamalı.

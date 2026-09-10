@@ -13,7 +13,7 @@ import { stripTsComments } from '../styles/zLayers.test';
 
 describe('shouldAutoCommit', () => {
   it('does NOT commit on the first keystroke from empty (the reported bug)', () => {
-    // "b" is the first char of "bsa-config-server"; even if "b" were a known
+    // "b" is the first char of "shop-config-server"; even if "b" were a known
     // 1-char option, a single-char change must not auto-commit.
     expect(shouldAutoCommit('', 'b', true)).toBe(false);
   });

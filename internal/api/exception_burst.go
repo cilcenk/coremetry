@@ -4,7 +4,7 @@
 // exception grubu P2 göründü.
 //
 //	com.ibm.msg.client.jakarta.jms.DetailedInvalidDestinationException
-//	service   bsa-cashmanagement-cashflow-prod
+//	service   shop-treasury-cashflow-prod
 //	first     04.08.2026 12:49:31
 //	last      04.08.2026 13:01:36
 //	toplam    11.260          → ~938 olay/dakika

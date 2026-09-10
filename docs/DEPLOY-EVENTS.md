@@ -21,7 +21,7 @@ curl -sS -X POST "$COREMETRY_URL/api/operator-events" \
   -H "Content-Type: application/json" \
   -d '{
     "kind": "deploy",
-    "service": "bsa-cashpayment-eft-prod",
+    "service": "shop-cashpayment-wire-prod",
     "label": "release-2026.08.21.3",
     "link": "'"$RELEASE_RELEASEWEBURL"'"
   }'

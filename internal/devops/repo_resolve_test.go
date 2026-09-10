@@ -297,8 +297,8 @@ func TestResolveRepoProjectFromPrefix(t *testing.T) {
 	}{
 		{
 			"varsayılan önek → BSA",
-			"bsa-cashmanagement-cashflow-prod", nil,
-			"cashmanagement-cashflow", "BSA",
+			"bsa-treasury-cashflow-prod", nil,
+			"treasury-cashflow", "BSA",
 		},
 		{
 			"ortam eki proje türetmesini etkilemez",

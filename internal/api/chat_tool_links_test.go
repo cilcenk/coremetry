@@ -25,9 +25,9 @@ func TestToolCallLink(t *testing.T) {
 		tool, args, wantHref string
 		wantOK               bool
 	}{
-		{"get_service_health", `{"service":"bsa-pay"}`, "/service?name=bsa-pay", true},
+		{"get_service_health", `{"service":"shop-pay"}`, "/service?name=shop-pay", true},
 		{"get_service_health", `{}`, "", false}, // servissiz overview linki anlamsız
-		{"get_operation_health", `{"service":"bsa-pay","sort":"p99"}`, "/endpoints?service=bsa-pay", true},
+		{"get_operation_health", `{"service":"shop-pay","sort":"p99"}`, "/endpoints?service=shop-pay", true},
 		{"search_traces", `{"service":"a b"}`, "/traces?service=a+b", true}, // escape
 		{"search_traces", `{}`, "/traces", true},
 		{"search_logs", `{"service":"x","query":"error AND payment"}`, "/logs?service=x&q=error+AND+payment", true},

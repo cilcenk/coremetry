@@ -58,12 +58,12 @@ describe('saflık', () => {
 // v0.9.1226 — servis bağlam devri artık yalnız /service|/pod değil.
 describe('serviceFromRoute', () => {
   it('reads ?name= (then ?service=) on /service', () => {
-    expect(serviceFromRoute('/service', '?name=bsa-x&service=y')).toBe('bsa-x');
+    expect(serviceFromRoute('/service', '?name=shop-x&service=y')).toBe('shop-x');
     expect(serviceFromRoute('/service/backtrace', '?service=y')).toBe('y');
   });
   it('reads ?service= on every service-carrying list route', () => {
     for (const p of ['/traces', '/endpoints', '/logs', '/inbox', '/metrics', '/explore', '/clusters', '/profiling']) {
-      expect(serviceFromRoute(p, '?service=bsa-pay')).toBe('bsa-pay');
+      expect(serviceFromRoute(p, '?service=shop-pay')).toBe('shop-pay');
     }
   });
   it('stays blind on non-service routes and without the param', () => {

@@ -153,7 +153,7 @@ func metricThroughputPlan(service, metric, jobLabel string, from, to time.Time, 
 //
 // Composes correctly with the endpoint's own suffix-derived env
 // (serviceNameAttempts): on a suffix-less service (checkout) it is the
-// only env constraint; on a suffix service (bsa-deposit-uat) it is an
+// only env constraint; on a suffix service (shop-deposit-uat) it is an
 // extra conjunct on top of the suffix env — redundant when they agree,
 // honestly empty when they disagree. Copies the slice so a stored/base
 // filter is never mutated.
@@ -711,13 +711,13 @@ func (a svcAttempt) Label() string {
 // serviceNameAttempts — service_name kolonu denemeleri, GÜVEN SIRASIYLA.
 //
 // v0.9.679. Operatörün SQL çıktısı belirleyiciydi: metric_points'te 1494
-// servis var ve HEPSİ EKSİZ (bsa-chequenotes-notespayment,
-// bsa-creditcard-ccfinancial…), oysa Coremetry'nin servis listesi
+// servis var ve HEPSİ EKSİZ (shop-giftcards-cardpayment,
+// shop-creditcard-finance…), oysa Coremetry'nin servis listesi
 // trace'ten gelen EKLİ adı gösteriyor (...-uat). Eşleşme ancak eksiz
 // adla kurulabiliyor.
 //
-// SESSİZ TEHLİKE: "bsa-deposit-uat" ve "bsa-deposit-prod" ikisi de
-// "bsa-deposit"e iniyor. Aynı kurulum birden çok ortam taşıyorsa eksiz
+// SESSİZ TEHLİKE: "shop-deposit-uat" ve "shop-deposit-prod" ikisi de
+// "shop-deposit"e iniyor. Aynı kurulum birden çok ortam taşıyorsa eksiz
 // eşleşme onları BİRLEŞTİRİR — uat sayfasında prod trafiği görünür ve
 // sayı makul olduğu için kimse fark etmez.
 //

@@ -93,12 +93,12 @@ func TestVolumeSpikeDecision(t *testing.T) {
 func TestVolumeSpikeProblem(t *testing.T) {
 	cfg := chstore.DefaultSelfHealth()
 	p := volumeSpikeProblem(chstore.ServiceVolume{
-		Service: "bsa-mobile-login-prod",
+		Service: "shop-mobile-login-prod",
 		Cur:     1_200_000,
 		Prev:    210_000,
 	}, cfg)
 
-	if p.id != "self-volume-spike:bsa-mobile-login-prod" {
+	if p.id != "self-volume-spike:shop-mobile-login-prod" {
 		t.Fatalf("kimlik = %q", p.id)
 	}
 	if p.ruleID != selfVolumeRuleID {
@@ -106,7 +106,7 @@ func TestVolumeSpikeProblem(t *testing.T) {
 	}
 	// Servis DOLU: /problems satırı çalışan bir servis bağlantısı ve
 	// takım sahipliği zenginleştirmesi kazanır.
-	if p.service != "bsa-mobile-login-prod" {
+	if p.service != "shop-mobile-login-prod" {
 		t.Fatalf("service = %q, servis adı taşınmadı", p.service)
 	}
 	if p.severity != "warning" {
@@ -168,10 +168,10 @@ func TestVolumeSpikeNeverEscalates(t *testing.T) {
 // 1,2 milyon arasındaki farkı söylemez ve müdahale kararı o farka bağlı.
 func TestVolumeSpikeReason(t *testing.T) {
 	got := volumeSpikeReason(chstore.ServiceVolume{
-		Service: "bsa-mobile-login-prod", Cur: 1_200_000, Prev: 210_000,
+		Service: "shop-mobile-login-prod", Cur: 1_200_000, Prev: 210_000,
 	}, 5.714, 4.0, 24)
 	for _, s := range []string{
-		"bsa-mobile-login-prod",
+		"shop-mobile-login-prod",
 		"son 24 saatte", "1.200.000 span",
 		"önceki 24 saat: 210.000",
 		"5.7×", "eşik 4.0×",

@@ -135,7 +135,7 @@ func TestResolveFrameLinksUnconfigured(t *testing.T) {
 		frame("com.banka.odeme.Kart", "cek", "Kart.java", 42),
 		frame("java.util.Optional", "orElseThrow", "Optional.java", 403),
 	}
-	got := New().ResolveFrameLinks(context.Background(), "bsa-odeme-prod", PinRead{}, frames, "")
+	got := New().ResolveFrameLinks(context.Background(), "bsa-payment-prod", PinRead{}, frames, "")
 	if got.Configured {
 		t.Fatal("Configured=true, oysa BaseURL boş")
 	}

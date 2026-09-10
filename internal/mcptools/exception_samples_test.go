@@ -60,7 +60,7 @@ func TestCapRunesSpoken(t *testing.T) {
 
 func TestExSampleRowsShapeAndCaps(t *testing.T) {
 	longStack := strings.Repeat("çerçeve\n", 500) // 4000 rune
-	rows, anyCut := exSampleRows("bsa-pay", "java.lang.NullPointerException", []chstore.ExceptionSample{{
+	rows, anyCut := exSampleRows("shop-pay", "java.lang.NullPointerException", []chstore.ExceptionSample{{
 		TraceID:    "abc123",
 		SpanID:     "def456",
 		Time:       1700000000000000000,
@@ -73,7 +73,7 @@ func TestExSampleRowsShapeAndCaps(t *testing.T) {
 		t.Fatalf("1 satır beklenirdi, %d geldi", len(rows))
 	}
 	r := rows[0]
-	if r.Service != "bsa-pay" || r.ExType != "java.lang.NullPointerException" {
+	if r.Service != "shop-pay" || r.ExType != "java.lang.NullPointerException" {
 		t.Errorf("servis/tip satıra taşınmamış: %+v", r)
 	}
 	if r.TraceID != "abc123" || r.SpanID != "def456" || r.SpanName != "POST /api/v1/pay" {

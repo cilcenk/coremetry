@@ -74,7 +74,7 @@ type Config struct {
 	DisplayAttribute string `json:"displayAttribute"`
 	// TeamAttribute (v0.8.430) — which directory attribute feeds
 	// users.team on login. Operator-reported: the default
-	// department→ou fallback surfaced the TOP division ("TEKNOLOJİ")
+	// department→ou fallback surfaced the TOP division ("TECHNOLOGY")
 	// for every user because AD stores the division there; the actual
 	// sub-team lives elsewhere (use /api/settings/ldap/inspect to find
 	// where). "" = legacy department→ou; the special value "dn-ou"

@@ -40,7 +40,7 @@ func tputFilter() chstore.MetricQueryFilter {
 		Aggregation: "sum",
 		Filters: []chstore.FilterExpr{{
 			Key: "job", Op: "=~",
-			Values: []string{chstore.JobServiceRegex("bsa-deposit-uat")},
+			Values: []string{chstore.JobServiceRegex("shop-deposit-uat")},
 		}},
 	}
 }
@@ -67,7 +67,7 @@ func TestBuildCountRatePromQLShape(t *testing.T) {
 	// The identity filter rides along. An arm that lost it would answer the
 	// operator's question about one service with every service's traffic —
 	// plausible, wrong, unquestioned.
-	if !strings.Contains(q, "job=~") || !strings.Contains(q, "bsa-deposit") {
+	if !strings.Contains(q, "job=~") || !strings.Contains(q, "shop-deposit") {
 		t.Errorf("identity matcher missing from the selector: %s", q)
 	}
 	// And a rollup window is present. `[0s]` would be accepted by VM and
@@ -88,7 +88,7 @@ func TestCountRateKeepsTheTwoSpellingRegexIntact(t *testing.T) {
 	}
 	// v0.9.673's rule: BOTH the suffixed and the stripped spelling are
 	// candidates, because the same install carries each on a different label.
-	for _, want := range []string{"bsa-deposit-uat", "bsa-deposit"} {
+	for _, want := range []string{"shop-deposit-uat", "shop-deposit"} {
 		if !strings.Contains(q, want) {
 			t.Errorf("identity alternation lost %q — v0.9.673: aynı kurulumda her iki biçim "+
 				"birden var, yalnız birini aramak ötekini kaçırır: %s", want, q)

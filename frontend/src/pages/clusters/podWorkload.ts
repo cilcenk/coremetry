@@ -5,7 +5,7 @@
 // alfabesindense (rakam + sessiz harfler) ya da tamamen sayıysa
 // soyulur; kalan son segment rs-hash'e benziyorsa o da soyulur.
 // Tutmayan ada DOKUNULMAZ. Prefix DEĞİL eşitlik için kullanılır:
-// "bsa-login" servisi "bsa-login-prep-…" pod'unu YAKALAMAZ (kardeş
+// "shop-login" servisi "shop-login-prep-…" pod'unu YAKALAMAZ (kardeş
 // servis öneki tuzağı) — soyulmuş ad birebir karşılaştırılır.
 const RAND5 = /^[0-9bcdfghjklmnpqrstvwxz]{5}$/;
 const RS_HASH = /^[0-9a-f]{8,10}$/;
@@ -25,8 +25,8 @@ export function podWorkloadName(pod: string): string {
 
 // Enstrümantasyon-enjeksiyon varyant ekleri (v0.9.56, operatör ekran
 // görüntüsü kanıtı — OpenShift konsolundaki gerçek filo adlandırması):
-// aynı servisin "bsa-callcenter-core-prep" VE
-// "bsa-callcenter-core-prep-oneagent" deployment'ları koşuyor
+// aynı servisin "shop-callcenter-core-prep" VE
+// "shop-callcenter-core-prep-oneagent" deployment'ları koşuyor
 // (Dynatrace OneAgent enjeksiyonu ayrı deployment üretir). Varyant eki
 // soyulup servise eşlenir; "-batch"/"-uat" gibi kardeş İŞ YÜKLERİ
 // listede DEĞİL — onlar ayrı servistir, prefix eşleşmesi bilinçli yok.
@@ -75,8 +75,8 @@ export function stripEnvSuffix(service: string): string {
 // adı; PromQL pod=~"<deploy>-.*" seçicisinin yedeği buradan beslenir.
 // Neden servis adı değil: BFF'te servis adı env ekli, pod'lar eksiz —
 // gözlemlenen pod'un kendi iş-yükü adı her zaman DOĞRU önektir ve
-// kardeş-önek tuzağı taşımaz (bsa-login-prep pod'unun iş yükü
-// bsa-login-prep'tir, bsa-login değil). Eşitlikte alfabetik ilk
+// kardeş-önek tuzağı taşımaz (shop-login-prep pod'unun iş yükü
+// shop-login-prep'tir, shop-login değil). Eşitlikte alfabetik ilk
 // (deterministik — map sırasına bırakılmaz).
 export function dominantWorkload(pods: string[]): string {
   const counts = new Map<string, number>();
@@ -150,8 +150,8 @@ export function podMatchesService(
   }
   // v0.9.535 — env eki soyulmuş İKİNCİ aday (operatör direktifi):
   // servis mobile-loans-bff-prod, iş yükü mobile-loans-bff. Yine
-  // EŞİTLİK — kardeş disiplini korunur: bsa-login-prod soyulunca
-  // bsa-login olur ama bsa-login-prep pod'unun iş yükü bsa-login-prep
+  // EŞİTLİK — kardeş disiplini korunur: shop-login-prod soyulunca
+  // shop-login olur ama shop-login-prep pod'unun iş yükü shop-login-prep
   // olduğu için eşleşmez.
   const stripped = stripEnvSuffix(service);
   return stripped !== service && workloadMatchesService(podWorkloadName(p.pod), stripped);

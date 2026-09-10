@@ -40,11 +40,11 @@ func TestIsP1ExceptionCandidate(t *testing.T) {
 func TestExceptionAsProblem(t *testing.T) {
 	g := chstore.ExceptionGroup{
 		Fingerprint: "abcd1234", Type: "java.sql.SQLException",
-		Message: "ORA-03113", Service: "bsa-cards", Occurrences: 950,
+		Message: "ORA-03113", Service: "shop-cards", Occurrences: 950,
 		FirstSeen: 123,
 	}
 	p := exceptionAsProblem(g)
-	if p.ID != "exception:abcd1234" || p.Service != "bsa-cards" {
+	if p.ID != "exception:abcd1234" || p.Service != "shop-cards" {
 		t.Errorf("kimlik/servis: %+v", p)
 	}
 	if p.Severity != "warning" || p.Metric != "exception" {

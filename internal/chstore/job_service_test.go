@@ -185,20 +185,20 @@ func TestMetricNameProbeTokensCapped(t *testing.T) {
 // Meslektaşının Prometheus çıktısı: job = "<namespace>/<deployment>" ve
 // deployment kısmı ortam ekini TAŞIYOR:
 //
-//	deposit/bsa-deposit-commondeposithesapsl-uat
+//	deposit/shop-deposit-commonaccountsvc-uat
 //
 // Ama Metric Explorer ekran görüntüsündeki `name` etiketi ekSİZ:
 //
-//	bsa-chatbot-ai-integration      (servis: ...-uat)
+//	shop-chatbot-ai-integration      (servis: ...-uat)
 //
 // Aynı kurulumda iki biçim birden. Tek biçimi aramak diğerini kaçırır.
 func TestJobServiceRegexMatchesBothEnvSuffixForms(t *testing.T) {
 	// (1) Ek TAŞIYAN job değeri — namespace önekli.
-	re := regexp.MustCompile(JobServiceRegex("bsa-deposit-commondeposithesapsl-uat"))
+	re := regexp.MustCompile(JobServiceRegex("shop-deposit-commonaccountsvc-uat"))
 	for _, v := range []string{
-		"deposit/bsa-deposit-commondeposithesapsl-uat", // operatörün gerçek job'ı
-		"bsa-deposit-commondeposithesapsl-uat",         // öneksiz
-		"bsa-deposit-commondeposithesapsl",             // ek soyulmuş (name etiketi biçimi)
+		"deposit/shop-deposit-commonaccountsvc-uat", // operatörün gerçek job'ı
+		"shop-deposit-commonaccountsvc-uat",         // öneksiz
+		"shop-deposit-commonaccountsvc",             // ek soyulmuş (name etiketi biçimi)
 	} {
 		if !re.MatchString(v) {
 			t.Errorf("%q eşleşmeliydi", v)
@@ -206,20 +206,20 @@ func TestJobServiceRegexMatchesBothEnvSuffixForms(t *testing.T) {
 	}
 
 	// (2) Servis adı ekli, etiket eksiz — ekran görüntüsündeki durum.
-	re2 := regexp.MustCompile(JobServiceRegex("bsa-chatbot-ai-integration-uat"))
-	if !re2.MatchString("bsa-chatbot-ai-integration") {
+	re2 := regexp.MustCompile(JobServiceRegex("shop-chatbot-ai-integration-uat"))
+	if !re2.MatchString("shop-chatbot-ai-integration") {
 		t.Error("eksiz `name` değeri eşleşmeliydi — v0.9.672'ye kadar kaçıyordu")
 	}
 }
 
 // Gevşemedik: ek alternatifi eklemek KOMŞU servisleri içeri almamalı.
 func TestJobServiceRegexStillRejectsNeighbours(t *testing.T) {
-	re := regexp.MustCompile(JobServiceRegex("bsa-deposit-commondeposithesapsl-uat"))
+	re := regexp.MustCompile(JobServiceRegex("shop-deposit-commonaccountsvc-uat"))
 	for _, v := range []string{
-		"deposit/legacy-bsa-deposit-commondeposithesapsl-uat", // ad uzantısı
-		"deposit/bsa-deposit-commondeposithesapsl-uat-v2",     // sonek
-		"deposit/bsa-deposit-commondeposithesapsl-prod",       // BAŞKA ortam
-		"deposit/bsa-deposit",                                 // kısaltma
+		"deposit/legacy-shop-deposit-commonaccountsvc-uat", // ad uzantısı
+		"deposit/shop-deposit-commonaccountsvc-uat-v2",     // sonek
+		"deposit/shop-deposit-commonaccountsvc-prod",       // BAŞKA ortam
+		"deposit/shop-deposit",                                 // kısaltma
 	} {
 		if re.MatchString(v) {
 			t.Errorf("%q eşleşmemeliydi — yanlış servisin trafiği karışır", v)
@@ -229,7 +229,7 @@ func TestJobServiceRegexStillRejectsNeighbours(t *testing.T) {
 
 func TestStripEnvSuffix(t *testing.T) {
 	cases := map[string]string{
-		"bsa-deposit-commondeposithesapsl-uat": "bsa-deposit-commondeposithesapsl",
+		"shop-deposit-commonaccountsvc-uat": "shop-deposit-commonaccountsvc",
 		"svc-prod":                             "svc",
 		"svc-int":                              "svc",
 		"svc-prep":                             "svc",

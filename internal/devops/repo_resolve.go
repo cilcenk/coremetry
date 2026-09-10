@@ -15,7 +15,7 @@ import (
 //     deriver'ların yazdığı alanlar insan girdisini ezmez.)
 //  2. Yoksa ad konvansiyonu: yapılandırılabilir bir ÖNEK (varsayılan
 //     "bsa-") + chstore'un ORTAM EKİ (-prod/-int/-uat/-prep) soyulur.
-//     bsa-digital-mobile-pushconfirm-prod → digital-mobile-pushconfirm
+//     shop-digital-mobile-pushconfirm-prod → digital-mobile-pushconfirm
 //
 // Neden yapılandırılabilir: önek ve branş sırası kuruluma özgü. Kodda
 // sabitlenirse ikinci müşteri için yeni sürüm gerekir; ayarda durursa

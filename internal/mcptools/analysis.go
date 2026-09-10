@@ -369,7 +369,7 @@ func getTopologyTool(d Deps) mcp.Tool {
 			"describe it as a Coremetry service. " +
 			"Environment (source_env / target_env) is an ANNOTATION, not a filter: the aggregate merges the same service across environments, so there is " +
 			"no env argument here and you must never claim an edge was env-scoped. " +
-			"The Topology page's operator-hidden noise patterns (logging / bsa-style kafka topics) are NOT applied here, so plumbing topics can appear as " +
+			"The Topology page's operator-hidden noise patterns (logging / shop-style kafka topics) are NOT applied here, so plumbing topics can appear as " +
 			"`queue:` targets — do not present them as findings unless the operator asked about them. " +
 			"An empty result is NOT an error: you get reasons instead.",
 		InputSchema: map[string]any{

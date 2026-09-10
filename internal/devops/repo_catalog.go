@@ -175,7 +175,7 @@ func nearestRepoNames(want string, have []string) []string {
 		score := commonPrefixLen(wn, hn)
 		if strings.Contains(hn, wn) || strings.Contains(wn, hn) {
 			// İçerme, önek uzunluğundan güçlü bir sinyal: "cashflow"
-			// isterken "bsa-cashflow-api" tam da aranan depodur.
+			// isterken "shop-cashflow-api" tam da aranan depodur.
 			score += 100
 		}
 		if score < repoNearMinPrefix {

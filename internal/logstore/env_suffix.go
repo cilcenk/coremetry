@@ -20,7 +20,7 @@ import "strings"
 // servisi farklı adlarla aramamalı.
 //
 // Yalnız KUYRUKTAKİ bilinen ekler soyulur. Ad ortasındaki "prod"
-// (bsa-digital-limitcore-prod-oneagent) ve bilinmeyen varyantlar
+// (shop-digital-limitcore-prod-oneagent) ve bilinmeyen varyantlar
 // ("-production") dokunulmadan kalır — soyma ne kadar gevşek olursa
 // yanlış servisin logunu getirme riski o kadar büyür.
 //

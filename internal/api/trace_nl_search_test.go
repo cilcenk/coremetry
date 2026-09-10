@@ -33,7 +33,7 @@ func TestSplitPairFragments(t *testing.T) {
 }
 
 func TestRoutePairRequests(t *testing.T) {
-	services := []string{"checkout-service", "payment-service", "bsa-login-external-prod", "bsa-login-internal-prod"}
+	services := []string{"checkout-service", "payment-service", "shop-login-external-prod", "shop-login-internal-prod"}
 	r := routeGuidedIntent("checkout-service'den payment-service'e giden isteklerin tamamını göster", services, nil, nil, "")
 	if r.Intent != guidedPairRequests || r.PairFrom != "checkout-service" || r.PairTo != "payment-service" || r.PairToKind != "service" || r.Service != "checkout-service" {
 		t.Fatalf("servis çifti: %+v", r)
@@ -43,7 +43,7 @@ func TestRoutePairRequests(t *testing.T) {
 		t.Fatal("aile rotasına kaçmamalı")
 	}
 	r = routeGuidedIntent("login external servisinden osbprod (osbprod.example.com) giden istekleri bul", services, nil, nil, "")
-	if r.Intent != guidedPairRequests || r.PairFrom != "bsa-login-external-prod" || r.PairTo != "osbprod" || r.PairToKind != "node" {
+	if r.Intent != guidedPairRequests || r.PairFrom != "shop-login-external-prod" || r.PairTo != "osbprod" || r.PairToKind != "node" {
 		t.Fatalf("dış düğüm hedefi: %+v", r)
 	}
 	// Belirsiz kaynak → sor; çipler diğer yarıyı taşır ve yeniden çözülür.

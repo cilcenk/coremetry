@@ -72,14 +72,14 @@ afterEach(() => {
 
 describe('ServiceMap focus = servis sekmesi görünümü (v0.9.1252)', () => {
   it('?focus= varken FocusedNeighborhood çizer, harita çizmez', () => {
-    const el = mount('/service-map?focus=bsa-pay');
+    const el = mount('/service-map?focus=shop-pay');
     const fn = byTestId(el, 'focused-neighborhood');
-    expect(fn?.dataset.focus).toBe('bsa-pay');
+    expect(fn?.dataset.focus).toBe('shop-pay');
     expect(byTestId(el, 'flow-graph-map')).toBeNull();
   });
 
   it('hops/eonly kodekleri servis sekmesiyle aynı paramlardan okunur', () => {
-    const el = mount('/service-map?focus=bsa-pay&hops=3&eonly=1');
+    const el = mount('/service-map?focus=shop-pay&hops=3&eonly=1');
     const fn = byTestId(el, 'focused-neighborhood');
     expect(fn?.dataset.hops).toBe('3');
     expect(fn?.dataset.eonly).toBe('true');

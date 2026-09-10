@@ -46,10 +46,10 @@ function render(d: ServiceMetricThroughput): string {
 /** base — the "metric exists, nothing matched" branch, the operator's case. */
 function base(over: Partial<ServiceMetricThroughput> = {}): ServiceMetricThroughput {
   return {
-    service: 'bsa-deposit-uat',
+    service: 'shop-deposit-uat',
     metric: 'http.server.request.duration',
     jobLabel: 'job',
-    pattern: '^(.*/)?(bsa-deposit-uat|bsa-deposit)$',
+    pattern: '^(.*/)?(shop-deposit-uat|shop-deposit)$',
     metricExists: true,
     matched: 0,
     ...over,
@@ -96,11 +96,11 @@ describe('MetricThroughputNote — kaynak rozeti', () => {
       source: 'vm',
       triedLabels: ['k8s_deployment_name', 'service_name'],
       presentKeys: ['job'],
-      sampleJobs: ['deposit/bsa-deposit-uat'],
-      sampleServices: ['bsa-deposit-uat'],
+      sampleJobs: ['deposit/shop-deposit-uat'],
+      sampleServices: ['shop-deposit-uat'],
     }));
     expect(txt).toContain('k8s_deployment_name');
     expect(txt).toContain('service_name');
-    expect(txt).toContain('deposit/bsa-deposit-uat');
+    expect(txt).toContain('deposit/shop-deposit-uat');
   });
 });

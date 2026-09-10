@@ -119,11 +119,11 @@ func TestShortCorrValue(t *testing.T) {
 
 func TestEnvFromServiceName(t *testing.T) {
 	cases := map[string]string{
-		"bsa-mobile-login-int":  "int",
-		"bsa-mobile-login-uat":  "uat",
-		"bsa-mobile-login-prep": "prep",
-		"bsa-mobile-login-prod": "",
-		"bsa-mobile-login":      "",
+		"shop-mobile-login-int":  "int",
+		"shop-mobile-login-uat":  "uat",
+		"shop-mobile-login-prep": "prep",
+		"shop-mobile-login-prod": "",
+		"shop-mobile-login":      "",
 		"BSA-MOBILE-LOGIN-INT":  "int", // büyük harf
 		// SONEK araması, alt dize DEĞİL: "integration-service" içinde
 		// "int" geçiyor ama sonu "-int" değil. Alt dize araması burayı

@@ -43,7 +43,7 @@ func TestExtractRequestIDCandidates(t *testing.T) {
 		},
 		{
 			"anahtar kelime yoksa YAKALAMA — serbest uzun token avlanmaz",
-			"Deploy v1.4.0-build.20260806 sonrası hata arttı; pod bsa-cc-7d9f84c6b4-x2v1 etkilendi.",
+			"Deploy v1.4.0-build.20260806 sonrası hata arttı; pod shop-cc-7d9f84c6b4-x2v1 etkilendi.",
 			nil,
 		},
 		{
@@ -81,7 +81,7 @@ func TestRequestIDLinks(t *testing.T) {
 	text := "Request ID:\n" + rid
 
 	t.Run("prod servis → default şablon, etiket ortamı söyler", func(t *testing.T) {
-		links := requestIDLinks(text, "bsa-creditcard-ccmanagement-prod", tpls, nil)
+		links := requestIDLinks(text, "shop-creditcard-management-prod", tpls, nil)
 		if len(links) != 1 {
 			t.Fatalf("link sayısı %d", len(links))
 		}
@@ -95,7 +95,7 @@ func TestRequestIDLinks(t *testing.T) {
 	})
 
 	t.Run("-uat soneki uat şablonuna gider", func(t *testing.T) {
-		links := requestIDLinks(text, "bsa-chatbot-uat", tpls, nil)
+		links := requestIDLinks(text, "shop-chatbot-uat", tpls, nil)
 		if len(links) != 1 || !strings.Contains(links[0].Href, "logs-uat.example.com") {
 			t.Fatalf("uat yönlendirmesi: %+v", links)
 		}

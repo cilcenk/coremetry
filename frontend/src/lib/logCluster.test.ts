@@ -11,8 +11,8 @@ describe('clusterEntryOfLog', () => {
       resourceAttributes: { 'k8s.cluster.name': 'prod-eu' },
       attributes: { 'openshift.labels.cluster': 'other' },
     })).toEqual({ key: 'k8s.cluster.name', value: 'prod-eu' });
-    expect(clusterEntryOfLog({ attributes: { 'openshift.labels.cluster': 'ocpma' } }))
-      .toEqual({ key: 'openshift.labels.cluster', value: 'ocpma' });
+    expect(clusterEntryOfLog({ attributes: { 'openshift.labels.cluster': 'ocp-eu' } }))
+      .toEqual({ key: 'openshift.labels.cluster', value: 'ocp-eu' });
   });
   it('boş dize değer sayılmaz — zincir yürür', () => {
     expect(clusterOfLog({ resourceAttributes: { 'openshift.labels.cluster': '', 'kubernetes.cluster_name': 'dr' } })).toBe('dr');

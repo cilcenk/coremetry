@@ -154,7 +154,7 @@ func TestLatencyFamilyChangesTheRenderedAvgExpression(t *testing.T) {
 			Aggregation: "avg",
 			GroupBy:     []string{"http.route"},
 			Filters: []chstore.FilterExpr{
-				{Key: "service.name", Op: "=", Values: []string{"bsa-checkout"}},
+				{Key: "service.name", Op: "=", Values: []string{"shop-checkout"}},
 			},
 			StepSeconds: 60,
 		}, promOpts{})

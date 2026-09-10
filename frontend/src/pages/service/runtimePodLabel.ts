@@ -31,7 +31,7 @@ export function podClusterOf(groupKey: string[]): string {
 
 // withClusterPrefix — cluster önekini YALNIZ ayırt ediciyken basar.
 //
-// Tek cluster'lı serviste her etikete "ocpma · " eklemek gürültü —
+// Tek cluster'lı serviste her etikete "ocp-eu · " eklemek gürültü —
 // operatörün sorusu "hangisi hangi cluster'da", cevabı ancak birden çok
 // cluster varken anlamlı. Cluster'ı boş olan seri (attr basmayan ~%1-2)
 // önek almaz; etiketi değişmediği için rengi de stabil kalır.

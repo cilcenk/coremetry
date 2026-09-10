@@ -32,10 +32,10 @@ func TestLooksStatefulSetName(t *testing.T) {
 		// StatefulSet: ordinal ile biter.
 		{"tek haneli ordinal", "kafka-0", true},
 		{"çift haneli ordinal", "kafka-12", true},
-		{"uzun ad", "bsa-core-postgres-0", true},
+		{"uzun ad", "shop-core-postgres-0", true},
 
 		// Deployment: replicaset hash + rastgele sonek.
-		{"deployment pod'u", "bsa-mobile-login-prod-59df758cc-scdwq", false},
+		{"deployment pod'u", "shop-mobile-login-prod-59df758cc-scdwq", false},
 		{"kısa rastgele sonek", "svc-abc12", false},
 		{"hash biter", "api-7d4f9c", false},
 

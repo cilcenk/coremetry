@@ -3,11 +3,11 @@ import { podWorkloadName, workloadMatchesService, podMatchesService, stripEnvSuf
 
 // v0.9.56 — servis-adı↔pod-adı yedek eşleşmesinin çekirdeği; backend
 // stripPodSuffixes ile aynı davranış (operatör vakası:
-// bsa-adkservices-login-prep-<rs>-<rand> → bsa-adkservices-login-prep).
+// shop-partnerservices-login-prep-<rs>-<rand> → shop-partnerservices-login-prep).
 describe('podWorkloadName', () => {
   it('strips deployment rs-hash + random suffix', () => {
-    expect(podWorkloadName('bsa-adkservices-login-prep-6bd9df6c4d-x2b1z'))
-      .toBe('bsa-adkservices-login-prep');
+    expect(podWorkloadName('shop-partnerservices-login-prep-6bd9df6c4d-x2b1z'))
+      .toBe('shop-partnerservices-login-prep');
   });
   it('strips daemonset random suffix only', () => {
     expect(podWorkloadName('node-exporter-x2b1z')).toBe('node-exporter');
@@ -16,9 +16,9 @@ describe('podWorkloadName', () => {
     expect(podWorkloadName('kafka-2')).toBe('kafka');
   });
   it('sibling prefix stays distinct (equality contract)', () => {
-    // "bsa-login" servisi bu pod'a eşleşmemeli — soyulmuş ad
-    // "bsa-login-prep"tir, prefix değil eşitlik karşılaştırılır.
-    expect(podWorkloadName('bsa-login-prep-6bd9df6c4d-x2b1z')).toBe('bsa-login-prep');
+    // "shop-login" servisi bu pod'a eşleşmemeli — soyulmuş ad
+    // "shop-login-prep"tir, prefix değil eşitlik karşılaştırılır.
+    expect(podWorkloadName('shop-login-prep-6bd9df6c4d-x2b1z')).toBe('shop-login-prep');
   });
   it('leaves non-conforming names untouched', () => {
     expect(podWorkloadName('gateway')).toBe('gateway');
@@ -34,15 +34,15 @@ describe('podWorkloadName', () => {
 // -uat kardeş iş yükleri eşlenmez.
 describe('workloadMatchesService (gerçek filo adları)', () => {
   const cases: [string, string, boolean][] = [
-    ['bsa-callcenter-core-prep-oneagent-665867d649-7qmqp', 'bsa-callcenter-core-prep', true],
-    ['bsa-callcenter-core-prep-6f8744665f-k2tcj', 'bsa-callcenter-core-prep', true],
-    ['bsa-callcenter-login-prep-oneagent-6479476b7d-9wcrp', 'bsa-callcenter-login-prep', true],
-    ['bsa-callcenter-channelparameters-prep-oneagent-dc565bf68-h7bnf', 'bsa-callcenter-channelparameters-prep', true], // 9-hex rs
+    ['shop-callcenter-core-prep-oneagent-665867d649-7qmqp', 'shop-callcenter-core-prep', true],
+    ['shop-callcenter-core-prep-6f8744665f-k2tcj', 'shop-callcenter-core-prep', true],
+    ['shop-callcenter-login-prep-oneagent-6479476b7d-9wcrp', 'shop-callcenter-login-prep', true],
+    ['shop-callcenter-channelparameters-prep-oneagent-dc565bf68-h7bnf', 'shop-callcenter-channelparameters-prep', true], // 9-hex rs
     // Kardeş iş yükleri: AYRI servis — eşleşmemeli.
-    ['bsa-callcenter-core-prep-batch-7f5c96cd4b-gtg2f', 'bsa-callcenter-core-prep', false],
-    ['bsa-callcenter-integration-uat-784c99c57d-dmpvz', 'bsa-callcenter-integration', false],
+    ['shop-callcenter-core-prep-batch-7f5c96cd4b-gtg2f', 'shop-callcenter-core-prep', false],
+    ['shop-callcenter-integration-uat-784c99c57d-dmpvz', 'shop-callcenter-integration', false],
     // Alakasız pod hiç eşleşmez.
-    ['httpd-test-595cbb999d-2p4dn', 'bsa-callcenter-core-prep', false],
+    ['httpd-test-595cbb999d-2p4dn', 'shop-callcenter-core-prep', false],
   ];
   for (const [pod, svc, want] of cases) {
     it(`${pod} ↔ ${svc} → ${want}`, () => {
@@ -60,52 +60,52 @@ describe('podMatchesService', () => {
   const P = (pod: string, namespace = 'callcenter', service?: string) =>
     ({ pod, namespace, service });
   const opts = (o: Partial<{ service: string; deploy: string; ns: string; podNames: Set<string> | null }>) =>
-    ({ service: 'bsa-core-prep', deploy: '', ns: '', podNames: null, ...o });
+    ({ service: 'shop-core-prep', deploy: '', ns: '', podNames: null, ...o });
 
   it('REGRESYON: depRow var ama podNames prefix-eşleşen pod\'u kaçırıyor → yine eşleşir', () => {
     // Eski kilitli zincirde bu FALSE dönerdi (podSet.has=false, prefix
     // yedeğine düşmezdi) — cluster boş görünürdü. Şimdi prefix yakalar.
-    const pod = P('bsa-core-prep-6f8744665f-k2tcj');
-    const podNames = new Set(['bsa-core-prep-aaaa111111-zzzzz']); // farklı pod
-    expect(podMatchesService(pod, opts({ deploy: 'bsa-core-prep', ns: 'callcenter', podNames })))
+    const pod = P('shop-core-prep-6f8744665f-k2tcj');
+    const podNames = new Set(['shop-core-prep-aaaa111111-zzzzz']); // farklı pod
+    expect(podMatchesService(pod, opts({ deploy: 'shop-core-prep', ns: 'callcenter', podNames })))
       .toBe(true);
   });
 
   it('REGRESYON: applyDeployKSM zero-serisi → podNames boş Set → prefix yine eşleşir', () => {
-    const pod = P('bsa-core-prep-6f8744665f-k2tcj');
-    expect(podMatchesService(pod, opts({ deploy: 'bsa-core-prep', ns: 'callcenter', podNames: new Set() })))
+    const pod = P('shop-core-prep-6f8744665f-k2tcj');
+    expect(podMatchesService(pod, opts({ deploy: 'shop-core-prep', ns: 'callcenter', podNames: new Set() })))
       .toBe(true);
   });
 
   it('podSet, prefix\'in kaçırdığı özel-adlı pod\'u yakalar (union geniş)', () => {
     const pod = P('legacy-worker-xyz'); // "<deploy>-" öneki taşımıyor
     const podNames = new Set(['legacy-worker-xyz']);
-    expect(podMatchesService(pod, opts({ deploy: 'bsa-core-prep', ns: 'callcenter', podNames })))
+    expect(podMatchesService(pod, opts({ deploy: 'shop-core-prep', ns: 'callcenter', podNames })))
       .toBe(true);
   });
 
   it('ns süzgeci: farklı namespace\'in pod\'u dışlanır (ns türetildiyse)', () => {
-    const pod = P('bsa-core-prep-6f8744665f-k2tcj', 'other-ns');
-    expect(podMatchesService(pod, opts({ deploy: 'bsa-core-prep', ns: 'callcenter', podNames: new Set() })))
+    const pod = P('shop-core-prep-6f8744665f-k2tcj', 'other-ns');
+    expect(podMatchesService(pod, opts({ deploy: 'shop-core-prep', ns: 'callcenter', podNames: new Set() })))
       .toBe(false);
   });
 
   it('deploy var, ne üyelik ne prefix → eşleşmez (daraltma korunur)', () => {
     const pod = P('unrelated-app-6f8744665f-k2tcj');
-    expect(podMatchesService(pod, opts({ deploy: 'bsa-core-prep', ns: 'callcenter', podNames: new Set() })))
+    expect(podMatchesService(pod, opts({ deploy: 'shop-core-prep', ns: 'callcenter', podNames: new Set() })))
       .toBe(false);
   });
 
   it('yedek mod (deploy yok): isim-eşitliği eşleşir, kardeş eşleşmez', () => {
-    const hit = P('bsa-core-prep-6f8744665f-k2tcj');
-    expect(podMatchesService(hit, opts({ service: 'bsa-core-prep' }))).toBe(true);
-    const sibling = P('bsa-core-prep-batch-7f5c96cd4b-gtg2f');
-    expect(podMatchesService(sibling, opts({ service: 'bsa-core-prep' }))).toBe(false);
+    const hit = P('shop-core-prep-6f8744665f-k2tcj');
+    expect(podMatchesService(hit, opts({ service: 'shop-core-prep' }))).toBe(true);
+    const sibling = P('shop-core-prep-batch-7f5c96cd4b-gtg2f');
+    expect(podMatchesService(sibling, opts({ service: 'shop-core-prep' }))).toBe(false);
   });
 
   it('yedek mod: enrichment service alanı eşleşir', () => {
-    const pod = P('renamed-pod-abc', 'callcenter', 'bsa-core-prep');
-    expect(podMatchesService(pod, opts({ service: 'bsa-core-prep' }))).toBe(true);
+    const pod = P('renamed-pod-abc', 'callcenter', 'shop-core-prep');
+    expect(podMatchesService(pod, opts({ service: 'shop-core-prep' }))).toBe(true);
   });
 });
 
@@ -118,12 +118,12 @@ describe('stripEnvSuffix', () => {
   it('bilinen env ekleri kuyruktayken soyulur', () => {
     expect(stripEnvSuffix('mobile-loans-bff-prod')).toBe('mobile-loans-bff');
     expect(stripEnvSuffix('mobile-overview-prod')).toBe('mobile-overview');
-    expect(stripEnvSuffix('bsa-login-int')).toBe('bsa-login');
+    expect(stripEnvSuffix('shop-login-int')).toBe('shop-login');
     expect(stripEnvSuffix('svc-uat')).toBe('svc');
     expect(stripEnvSuffix('svc-prep')).toBe('svc');
   });
   it('ad ortasındaki env sözcüğü DOKUNULMAZ', () => {
-    expect(stripEnvSuffix('bsa-digital-limitcore-prod-oneagent')).toBe('bsa-digital-limitcore-prod-oneagent');
+    expect(stripEnvSuffix('shop-digital-limitcore-prod-oneagent')).toBe('shop-digital-limitcore-prod-oneagent');
     expect(stripEnvSuffix('prod-gateway')).toBe('prod-gateway');
   });
   it('bilinmeyen ek / eksiz ad aynen kalır', () => {
@@ -149,10 +149,10 @@ describe('podMatchesService — env eki soyulmuş aday (v0.9.535)', () => {
       { service: 'mobile-overview-prod', ...noOpts },
     )).toBe(true);
   });
-  it('kardeş disiplini: bsa-login-prod, bsa-login-prep podunu ALMAZ', () => {
+  it('kardeş disiplini: shop-login-prod, shop-login-prep podunu ALMAZ', () => {
     expect(podMatchesService(
-      { pod: 'bsa-login-prep-6bd9df6c4d-x2b1z', namespace: 'x' },
-      { service: 'bsa-login-prod', ...noOpts },
+      { pod: 'shop-login-prep-6bd9df6c4d-x2b1z', namespace: 'x' },
+      { service: 'shop-login-prod', ...noOpts },
     )).toBe(false);
   });
   it('bilinmeyen kuyruk eşleşmez: mobile-overview-web pod, overview-prod servis', () => {
@@ -163,8 +163,8 @@ describe('podMatchesService — env eki soyulmuş aday (v0.9.535)', () => {
   });
   it('eski davranış bozulmadı: BSA tam eşitlik hâlâ tutar', () => {
     expect(podMatchesService(
-      { pod: 'bsa-digital-limitcore-prod-864cd95d87-q9dt9', namespace: 'x' },
-      { service: 'bsa-digital-limitcore-prod', ...noOpts },
+      { pod: 'shop-digital-limitcore-prod-864cd95d87-q9dt9', namespace: 'x' },
+      { service: 'shop-digital-limitcore-prod', ...noOpts },
     )).toBe(true);
   });
 });

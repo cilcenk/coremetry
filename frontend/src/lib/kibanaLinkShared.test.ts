@@ -42,9 +42,9 @@ describe('buildKQLFromFilter', () => {
   // Ortam ekli servis adları: bazı pipeline'lar konteyneri eksiz
   // adlandırıyor, backend svcValues'da ikisini de deniyor.
   it('ortam ekli adın eksiz hâlini de arıyor', () => {
-    const kql = buildKQLFromFilter({ ...base, service: 'bsa-loan-prod' });
-    expect(kql).toContain('"bsa-loan-prod"');
-    expect(kql).toContain('"bsa-loan"');
+    const kql = buildKQLFromFilter({ ...base, service: 'shop-loan-prod' });
+    expect(kql).toContain('"shop-loan-prod"');
+    expect(kql).toContain('"shop-loan"');
   });
 
   // Ek YOKSA aynı değeri iki kez sormamalı.

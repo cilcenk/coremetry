@@ -75,11 +75,11 @@ func TestIdentityLabelCandidatesHonoursExplicit(t *testing.T) {
 // oysa servis listesi trace'ten gelen EKLİ adı gösteriyor. Eşleşme
 // ancak eksiz adla kurulabiliyor.
 //
-// Ama eksiz ad ORTAMLARI BİRLEŞTİRİR: bsa-deposit-uat ve
-// bsa-deposit-prod ikisi de bsa-deposit'e iner. Sayı makul göründüğü
+// Ama eksiz ad ORTAMLARI BİRLEŞTİRİR: shop-deposit-uat ve
+// shop-deposit-prod ikisi de shop-deposit'e iner. Sayı makul göründüğü
 // için kimse fark etmez — bu yüzden önce ortamla kısıtlanıyor.
 func TestServiceNameAttemptsOrderAndEnvConstraint(t *testing.T) {
-	got := serviceNameAttempts("bsa-deposit-uat")
+	got := serviceNameAttempts("shop-deposit-uat")
 
 	// Beklenen sayı SABİTTEN türüyor: tam ad + her ortam yazımı +
 	// kısıtsız son çare. Elle sayı yazmak, EnvAttrKeys büyüdüğünde
@@ -90,7 +90,7 @@ func TestServiceNameAttemptsOrderAndEnvConstraint(t *testing.T) {
 	}
 
 	// 1) TAM ad, kısıtsız — en güvenli, hiç belirsizlik yok.
-	if got[0].Service != "bsa-deposit-uat" || len(got[0].Filters) != 0 || got[0].EnvAmbiguous {
+	if got[0].Service != "shop-deposit-uat" || len(got[0].Filters) != 0 || got[0].EnvAmbiguous {
 		t.Errorf("ilk deneme tam ad ve kısıtsız olmalı: %+v", got[0])
 	}
 
@@ -100,7 +100,7 @@ func TestServiceNameAttemptsOrderAndEnvConstraint(t *testing.T) {
 	// ayrıştırmayı sessizce kapatırdı.
 	for i, wk := range chstore.EnvAttrKeys {
 		a := got[i+1]
-		if a.Service != "bsa-deposit" {
+		if a.Service != "shop-deposit" {
 			t.Errorf("deneme %d eksiz ad olmalı: %q", i+1, a.Service)
 		}
 		if len(a.Filters) != 1 || a.Filters[0].Key != wk {
@@ -135,7 +135,7 @@ func TestServiceNameAttemptsOrderAndEnvConstraint(t *testing.T) {
 
 	// Son) kısıtsız eksiz ad — ama BELİRSİZ İŞARETLİ.
 	last := got[len(got)-1]
-	if last.Service != "bsa-deposit" || len(last.Filters) != 0 {
+	if last.Service != "shop-deposit" || len(last.Filters) != 0 {
 		t.Errorf("son deneme kısıtsız eksiz ad olmalı: %+v", last)
 	}
 	if !last.EnvAmbiguous {
@@ -188,16 +188,16 @@ func TestServiceNameAttemptsEmpty(t *testing.T) {
 // Etiket operatöre HANGİ yolun tuttuğunu söylemeli — belirsiz eşleşme
 // özellikle görünür olmalı.
 func TestSvcAttemptLabel(t *testing.T) {
-	all := serviceNameAttempts("bsa-deposit-uat")
-	if l := all[0].Label(); l != "service_name=bsa-deposit-uat" {
+	all := serviceNameAttempts("shop-deposit-uat")
+	if l := all[0].Label(); l != "service_name=shop-deposit-uat" {
 		t.Errorf("tam ad etiketi: %q", l)
 	}
-	if l := all[1].Label(); l != "service_name=bsa-deposit +resource.deployment.environment.name" {
+	if l := all[1].Label(); l != "service_name=shop-deposit +resource.deployment.environment.name" {
 		t.Errorf("ortam kısıtlı etiket: %q", l)
 	}
 	// SON deneme belirsiz olan — indeksi EnvAttrKeys uzunluğuna bağlı,
 	// elle yazmak listeyi büyütünce yanlış denemeye bakardı.
-	if l := all[len(all)-1].Label(); l != "service_name=bsa-deposit (ortam kısıtsız)" {
+	if l := all[len(all)-1].Label(); l != "service_name=shop-deposit (ortam kısıtsız)" {
 		t.Errorf("belirsiz etiket ortam kısıtsızlığını SÖYLEMELİ: %q", l)
 	}
 }

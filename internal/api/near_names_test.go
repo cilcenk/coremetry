@@ -10,15 +10,15 @@ import (
 // deterministik gidiş-dönüşü, takım kodu toleransı, sınıflandırıcı takım slotu.
 
 func TestNearNames(t *testing.T) {
-	live := []string{"bsa-login-external-prod", "bsa-login-internal-prod", "checkout-service", "payment-service", "mobile-commercial-bff-prod", "inventory"}
+	live := []string{"shop-login-external-prod", "shop-login-internal-prod", "checkout-service", "payment-service", "mobile-commercial-bff-prod", "inventory"}
 	cases := map[string]struct {
 		q    string
 		want []string
 	}{
 		"tam eş":                   {"checkout-service", []string{"checkout-service"}},
 		"önek":                     {"checkout", []string{"checkout-service"}},
-		"jeton kapsaması (boşluk)": {"login external", []string{"bsa-login-external-prod"}},
-		"kısmi jeton → iki aday":   {"login", []string{"bsa-login-external-prod", "bsa-login-internal-prod"}},
+		"jeton kapsaması (boşluk)": {"login external", []string{"shop-login-external-prod"}},
+		"kısmi jeton → iki aday":   {"login", []string{"shop-login-external-prod", "shop-login-internal-prod"}},
 		"yazım hatası":             {"chekout-service", []string{"checkout-service"}},
 		"çok kısa":                 {"ap", nil},
 		"katalogda yok":            {"zzqx", nil},
@@ -36,9 +36,9 @@ func TestNearNames(t *testing.T) {
 }
 
 func TestServiceCandidates(t *testing.T) {
-	services := []string{"bsa-login-external-prod", "bsa-login-internal-prod", "checkout-service", "mobile-commercial-bff-prod"}
+	services := []string{"shop-login-external-prod", "shop-login-internal-prod", "checkout-service", "mobile-commercial-bff-prod"}
 	envs := []string{"prod", "uat"}
-	if got := serviceCandidates("login external servisinde hata var mı", services, envs, 8); strings.Join(got, ",") != "bsa-login-external-prod" {
+	if got := serviceCandidates("login external servisinde hata var mı", services, envs, 8); strings.Join(got, ",") != "shop-login-external-prod" {
 		t.Fatalf("tek aday çözülmeli: %v", got)
 	}
 	if got := serviceCandidates("login servisinde hata var mı", services, envs, 8); len(got) != 2 {
@@ -55,7 +55,7 @@ func TestServiceCandidates(t *testing.T) {
 // Router: belirsiz ad → ask_service (adaylar + sorulan niyet); tek bulanık ad
 // → doğrudan o servis; adsız/uydurma → eski davranış.
 func TestRouteGuidedIntentAsksOnAmbiguousService(t *testing.T) {
-	services := []string{"bsa-login-external-prod", "bsa-login-internal-prod", "checkout-service"}
+	services := []string{"shop-login-external-prod", "shop-login-internal-prod", "checkout-service"}
 	envs := []string{"prod"}
 	// Sağlık/hata şekli + parça adı: aile rotası ÖNCE (v0.9.192 — iki servis
 	// yan yana); sorma yalnız ailenin bakmadığı şekillerde (neden/yavaş/deploy/log).
@@ -68,7 +68,7 @@ func TestRouteGuidedIntentAsksOnAmbiguousService(t *testing.T) {
 		t.Fatalf("belirsiz ad sormalı: %+v", r)
 	}
 	r = routeGuidedIntent("login external neden yavaş", services, envs, nil, "")
-	if r.Intent != guidedRootCause || r.Service != "bsa-login-external-prod" {
+	if r.Intent != guidedRootCause || r.Service != "shop-login-external-prod" {
 		t.Fatalf("tek bulanık ad çözülmeli: %+v", r)
 	}
 	r = routeGuidedIntent("bugün hava nasıl", services, envs, nil, "")
@@ -140,7 +140,7 @@ func TestParseIntentTeamServices(t *testing.T) {
 		t.Fatal("uydurma takım none olmalı")
 	}
 	// Yaklaşık servis adı → ask_service, adaylar canlı katalogdan.
-	r, _, ok = parseIntentJSON(`{"intent":"service_health","service":"login external"}`, []string{"bsa-login-external-prod", "checkout-service"}, nil, nil, "")
+	r, _, ok = parseIntentJSON(`{"intent":"service_health","service":"login external"}`, []string{"shop-login-external-prod", "checkout-service"}, nil, nil, "")
 	if !ok || r.Intent != guidedAskService || r.AskIntent != guidedServiceHealth || len(r.ServiceOptions) != 1 {
 		t.Fatalf("yaklaşık ad: ok=%v %+v", ok, r)
 	}

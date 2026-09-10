@@ -128,7 +128,7 @@ func TestTruncRunes(t *testing.T) {
 // exception yüzeyindeki eksik yarısı).
 func TestPickExceptionStack(t *testing.T) {
 	deep := strings.Repeat("at com.bsa.App.run(App.java:10)\n", 100) // >1800 rune
-	fp, raw, svc := pickExceptionStack([]string{"", deep}, "log-stack", "bsa-log-svc")
+	fp, raw, svc := pickExceptionStack([]string{"", deep}, "log-stack", "shop-log-svc")
 	if raw != deep {
 		t.Fatalf("örnek stack HAM taşınmalı (len=%d), kırpık geldi (len=%d)", len(deep), len(raw))
 	}
@@ -139,8 +139,8 @@ func TestPickExceptionStack(t *testing.T) {
 		t.Fatalf("örnekten gelen stack'te servis override olmamalı: %q", svc)
 	}
 
-	fp, raw, svc = pickExceptionStack([]string{"", ""}, "log-stack", "bsa-log-svc")
-	if raw != "log-stack" || svc != "bsa-log-svc" {
+	fp, raw, svc = pickExceptionStack([]string{"", ""}, "log-stack", "shop-log-svc")
+	if raw != "log-stack" || svc != "shop-log-svc" {
 		t.Fatalf("log-fallback beklenirdi: raw=%q svc=%q", raw, svc)
 	}
 	if fp != "" {

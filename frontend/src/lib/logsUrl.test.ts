@@ -187,8 +187,8 @@ describe('logsRangeParam — K3 ölü from/to parametresi', () => {
 // v0.9.1248 — tek-doküman kalıcı linki saf çekirdeği.
 describe('doc permalink', () => {
   it('builds with service + env, omits empties', () => {
-    expect(buildDocPermalink({ timestamp: 170e16, id: 42, serviceName: 'bsa-x' }, 'uat'))
-      .toBe('/logs?doc=1700000000000000000.42&docsvc=bsa-x&env=uat');
+    expect(buildDocPermalink({ timestamp: 170e16, id: 42, serviceName: 'shop-x' }, 'uat'))
+      .toBe('/logs?doc=1700000000000000000.42&docsvc=shop-x&env=uat');
     expect(buildDocPermalink({ timestamp: 5, id: 7 }, ''))
       .toBe('/logs?doc=5.7');
   });

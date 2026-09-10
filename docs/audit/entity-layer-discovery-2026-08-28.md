@@ -131,7 +131,7 @@ DEĞİL. Engel yok; ama iki not: (i) prod dış Distributed CH'de chstore'un
 `cluster` MATERIALIZED kolonu `spans_local`'a **inmemiş olabilir**
 (v0.8.185/186 sınıfı; `hasClusterCol` boot probe'u) — inmediyse her cluster
 okuması 6-yol dizi türetimiyle koşar (v0.9.692 ölçümü: kolon 137 → 8.7 MiB,
-81 → 11 ms); `probe E` bunu sorar. (ii) "ocpma çıkıyor, ocpmb çıkmıyor"
+81 → 11 ms); `probe E` bunu sorar. (ii) "ocp-eu çıkıyor, ocp-us çıkmıyor"
 (v0.9.138) bazı cluster'ların span'lerinde tanımlayıcının eksik/uyumsuz
 olduğunu gösterdi — A2(c) tablosu bunu cluster cluster kanıtlar.
 

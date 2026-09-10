@@ -129,13 +129,13 @@ func TestStripLogEnvSuffix(t *testing.T) {
 		// Operatörün gerçek vakası.
 		{"mobile-overview-bff-prod", "mobile-overview-bff"},
 		{"mobile-loans-bff-prod", "mobile-loans-bff"},
-		{"bsa-login-int", "bsa-login"},
+		{"shop-login-int", "shop-login"},
 		{"svc-uat", "svc"},
 		{"svc-prep", "svc"},
 
 		// Ad ORTASINDAKİ ek dokunulmaz — soyma ne kadar gevşek olursa
 		// yanlış servisin logunu getirme riski o kadar büyür.
-		{"bsa-digital-limitcore-prod-oneagent", "bsa-digital-limitcore-prod-oneagent"},
+		{"shop-digital-limitcore-prod-oneagent", "shop-digital-limitcore-prod-oneagent"},
 		{"prod-gateway", "prod-gateway"},
 
 		// Bilinmeyen varyant ve eksiz ad aynen kalır.

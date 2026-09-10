@@ -39,7 +39,7 @@ func TestOpHealthSort(t *testing.T) {
 
 func TestOpHealthRows(t *testing.T) {
 	rows := opHealthRows([]chstore.EndpointRow{{
-		Service: "bsa-pay", Path: "/api/v1/pay", Method: "POST",
+		Service: "shop-pay", Path: "/api/v1/pay", Method: "POST",
 		Calls: 1000, Errors: 12, ErrorRate: 1.2,
 		AvgMs: 45.5, P50Ms: 30, P95Ms: 120, P99Ms: 480.25, ReqPerMin: 16.7,
 	}})

@@ -21,12 +21,12 @@ func TestFilterHiddenTopologyEdges(t *testing.T) {
 	patterns := []string{"kafka:log*", "kafka:bsa*"}
 
 	in := []chstore.ServiceTopologyEdge{
-		edge("bsa-mgts-smssender", "oracle@orabcore-prod"),             // kept
-		edge("bsa-mgts-smssender", "kafka:log.service.bsa.stat"),       // hidden child
-		edge("kafka:bsa.kafka.core.cfg", "bsa-customer-maininq-prod"),  // hidden parent
-		edge("bsa-framework-batchjob", "queue:kafka:bsa.log.core.svc"), // queue: prefix stripped → hidden
-		edge("bsa-callcenter-core", "bsa-bpm-kbds"),                    // kept
-		edge("bsa-loan-consumer", "kafka:payments.orders"),             // kafka but NOT log*/bsa* → kept
+		edge("shop-msg-smssender", "oracle@orabcore-prod"),             // kept
+		edge("shop-msg-smssender", "kafka:log.service.bsa.stat"),       // hidden child
+		edge("kafka:bsa.kafka.core.cfg", "shop-customer-profile-prod"),  // hidden parent
+		edge("shop-framework-batchjob", "queue:kafka:bsa.log.core.svc"), // queue: prefix stripped → hidden
+		edge("shop-callcenter-core", "shop-bpm-workflow"),                    // kept
+		edge("shop-loan-consumer", "kafka:payments.orders"),             // kafka but NOT log*/bsa* → kept
 	}
 
 	// No patterns → passthrough. Checked FIRST because the filter
@@ -42,7 +42,7 @@ func TestFilterHiddenTopologyEdges(t *testing.T) {
 		t.Fatalf("kept %d edges, want 3: %+v", len(out), out)
 	}
 	wantChildren := map[string]bool{
-		"oracle@orabcore-prod": true, "bsa-bpm-kbds": true, "kafka:payments.orders": true,
+		"oracle@orabcore-prod": true, "shop-bpm-workflow": true, "kafka:payments.orders": true,
 	}
 	for _, e := range out {
 		if !wantChildren[e.ChildNode] {

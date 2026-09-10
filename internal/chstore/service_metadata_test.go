@@ -149,8 +149,8 @@ func TestDeploymentFromPodName(t *testing.T) {
 	cases := []struct{ name, pod, want string }{
 		// Asıl hedef: Deployment şekli (rand5 + rs-hash birlikte).
 		{"BFF prod pod'u", "mobile-loans-bff-6b8f49b9d5-8hrtj", "mobile-loans-bff"},
-		{"BSA pod'u (env ekli deployment)", "bsa-digital-limitcore-prod-864cd95d87-q9dt9", "bsa-digital-limitcore-prod"},
-		{"oneagent yan pod'u ayrı aday üretir", "bsa-digital-limitcore-prod-oneagent-7d98d8b99d-m6r8f", "bsa-digital-limitcore-prod-oneagent"},
+		{"BSA pod'u (env ekli deployment)", "shop-digital-limitcore-prod-864cd95d87-q9dt9", "shop-digital-limitcore-prod"},
+		{"oneagent yan pod'u ayrı aday üretir", "shop-digital-limitcore-prod-oneagent-7d98d8b99d-m6r8f", "shop-digital-limitcore-prod-oneagent"},
 
 		// StatefulSet: kısa sayısal ordinal.
 		{"statefulset-0", "chc-0", "chc"},

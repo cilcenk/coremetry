@@ -68,3 +68,19 @@ export function settleStoppedTurn(t: ChatTurn): ChatTurn {
     stopped: true,
   };
 }
+
+/** v0.10.648 — akış terminal olaysız kapandığında balona düşen metin. */
+export const STREAM_TRUNCATED_ERROR = 'Akış tamamlanmadan kapandı — cevap yarım olabilir.';
+
+/**
+ * settleTruncatedTurn — v0.10.648 (ai-ui-patterns bulgusu #1). readSSE temiz
+ * EOF'ta sessiz çözülür; sunucu terminal olay (answer/error/done) basmadan
+ * kapandıysa (pod restart, panic, proxy) tur sonsuza dek `pending` kalırdı:
+ * "yazıyor▌" asılı, takip çipi yok, input kilitli. Akan metin KORUNUR, arıza
+ * İLAN edilir (bu kez kırmızı: kullanıcının kararı değil). Terminal olay
+ * gelmişse (pending=false) dokunmaz — idempotent.
+ */
+export function settleTruncatedTurn(t: ChatTurn): ChatTurn {
+  if (!t.pending) return t;
+  return { ...t, pending: false, error: t.error ?? STREAM_TRUNCATED_ERROR };
+}

@@ -40,6 +40,7 @@ type Emitter struct {
 	mu          sync.Mutex
 	headersSent bool
 	frames      int
+	terminal    bool // v0.10.648: answer/error/done gitti mi — Close bunun yokluğunda error basar
 	hb          *Heartbeat
 }
 
@@ -84,6 +85,9 @@ func (e *Emitter) Emit(event string, payload any) {
 	fmt.Fprintf(e.w, "event: %s\ndata: %s\n\n", event, b)
 	e.f.Flush()
 	e.frames++
+	if event == "done" || event == "error" || event == "answer" {
+		e.terminal = true
+	}
 }
 
 // Started — en az bir çerçeve düştü mü. Hata yolunun "gerçek HTTP hatası
@@ -96,10 +100,24 @@ func (e *Emitter) Started() bool {
 
 // Close — heartbeat'i durdurur ve goroutine'in bittiğini BEKLER;
 // idempotent, nil-güvenli.
+//
+// v0.10.648 — akış BAŞLADI ama terminal olay (answer/error/done) gitmediyse
+// istemciye `event: error` basar: pod restart / panic / proxy kapatması
+// sonrası readSSE temiz EOF görür ve tur sonsuza dek `pending` kalırdı
+// ("yazıyor▌" asılı, takip çipi yok). Terminal olay gittiyse ya da hiç
+// çerçeve düşmediyse (çağıran gerçek HTTP statüsü basar) hiçbir şey yazmaz.
 func (e *Emitter) Close() {
 	if e == nil {
 		return
 	}
+	e.mu.Lock()
+	if e.frames > 0 && !e.terminal {
+		b, _ := json.Marshal(map[string]string{"error": "stream closed before completion"})
+		fmt.Fprintf(e.w, "event: error\ndata: %s\n\n", b)
+		e.f.Flush()
+		e.terminal = true
+	}
+	e.mu.Unlock()
 	e.hb.Stop()
 }
 

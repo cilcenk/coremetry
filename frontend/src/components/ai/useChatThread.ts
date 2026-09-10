@@ -3,7 +3,7 @@ import { api } from '@/lib/api';
 import { appendChatBlock } from '@/lib/chatBlocks';
 import type { PageContext } from '@/lib/types';
 import type { ChatMessage, ChatTurn } from '@/lib/types';
-import { isAbortError, settleStoppedTurn } from './chatAbort';
+import { isAbortError, settleStoppedTurn, settleTruncatedTurn } from './chatAbort';
 import {
   PERSIST_DEBOUNCE_MS, hasCompletedExchange, persistMessages, restoreTurns,
 } from './chatPersist';
@@ -221,6 +221,8 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
         o.toMs || undefined, o.profile || undefined, // v0.10.183 — model profili
         convIdRef.current || undefined, // v0.10.478 — konuşma kimliği (sunucu bağlam state'i)
         o.page || undefined, o.pinnedPage || undefined); // v0.10.539 — sayfa bağlamı + pin
+      // v0.10.648 — terminal olaysız EOF: tur asılı kalmasın (chatAbort.ts).
+      patchLast(settleTruncatedTurn);
     } catch (err) {
       // v0.10.23 — İPTAL ARIZA DEĞİL. Durdurulan bir fetch AbortError
       // fırlatıyor; ayırmazsak operatörün kasıtlı eylemi kırmızı bir

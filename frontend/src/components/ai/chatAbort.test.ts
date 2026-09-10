@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { isAbortError, settleStoppedTurn } from './chatAbort';
+import { isAbortError, settleStoppedTurn, settleTruncatedTurn, STREAM_TRUNCATED_ERROR } from './chatAbort';
 import type { ChatTurn } from '@/lib/types';
 
 // v0.10.23 — Copilot denetimi: iptal affordance'ı YOKTU. AbortController
@@ -116,5 +116,32 @@ describe('durdurulan tur YARIM olduğunu söyler', () => {
     // Tur ELENMEMELİ: operatör ona atıfta bulunabilir ("az önceki listeyi
     // tamamla"); elenirse o atıf bağlamsız kalır.
     expect(src).not.toContain('filter(t => !t.error && !t.stopped)');
+  });
+});
+
+describe('settleTruncatedTurn (v0.10.648 — terminal olaysız EOF)', () => {
+  it('pending tur: akan metin korunur, arıza ilan edilir, pending düşer', () => {
+    const t = settleTruncatedTurn(turn({ text: 'checkout p95 480ms ve' }));
+    expect(t.pending).toBe(false);
+    expect(t.text).toBe('checkout p95 480ms ve');
+    expect(t.error).toBe(STREAM_TRUNCATED_ERROR);
+  });
+  it('terminal olay gelmiş tur (pending=false): dokunulmaz', () => {
+    const done = turn({ text: 'tam cevap', pending: false });
+    expect(settleTruncatedTurn(done)).toBe(done);
+  });
+  it('sunucunun bastığı error ezilmez', () => {
+    const t = settleTruncatedTurn(turn({ error: 'deadline' }));
+    expect(t.error).toBe('deadline');
+    expect(t.pending).toBe(false);
+  });
+  it('BAĞLANMA: useChatThread readSSE çözüldükten sonra settleTruncatedTurn çağırır', () => {
+    // Saf yardımcı yeşilken hook'ta çağrılmaması bug'ı aynen bırakır
+    // ("test edilmiş ama ulaşılamaz" sınıfı).
+    const src = readFileSync(new URL('./useChatThread.ts', import.meta.url), 'utf8');
+    const call = src.indexOf('patchLast(settleTruncatedTurn)');
+    expect(call).toBeGreaterThan(-1);
+    expect(call).toBeGreaterThan(src.indexOf('await api.copilotChat('));
+    expect(call).toBeLessThan(src.indexOf('} catch (err) {', src.indexOf('await api.copilotChat(')));
   });
 });

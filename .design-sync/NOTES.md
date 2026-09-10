@@ -12,7 +12,10 @@
 - Font: `Red Hat Text` yalnız redhat temasında ve LOKAL kuruluysa
   (fallback zinciri) — `[FONT_MISSING]` uyarısı. Operatör woff2 ekleyeceğini
   söyledi (2026-08-29); dosyalar gelince `cfg.extraFonts` ile taşınacak.
-  Gelene dek uyarı bilinçli açık.
+  Gelene dek uyarı bilinçli açık. 2026-08-31 yeniden senkronunda repo
+  yeniden tarandı (`find` woff2/woff/RedHat) — dosyalar HÂLÂ yok; tek
+  başvuru `globals.css:302`, `[data-theme="redhat"] body` altında tam
+  fallback zinciriyle. Kalem operatörde açık.
 - Chromium: `~/Library/Caches/ms-playwright/chromium_headless_shell-1234`
   (.ds-sync içine `playwright` kuruldu).
 

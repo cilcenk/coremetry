@@ -674,3 +674,4 @@ Repo dışında operatöre teslim: `leak-raw.txt` (1524 satır, maskesiz) — bu
 
 Bağımlılık: Dependabot 8 orta → 2 (632 go-ntlmssp/react-router-dom/vitest/postcss; 633 tarayıcı OTel seti 2.11/0.222). Kalan 2 = react-router v6 aralığı, düzeltme 7.18.3 major (router göçü) — **operatör**. Açık Dependabot PR'ları: #46 Go 21 paket (dep bump disiplini → operatör), #44 npm grubu (632/633 sonrası bayat), #41 actions v7 (**operatör**). docs/DECISIONS.md v0.7→v0.10.629 42 kayıt (635).
 
+

@@ -466,9 +466,19 @@ defaults.
 
 ## Development
 
-Backend (Go 1.25+):
+Contributor docs (read in this order): [CONTRIBUTING.md](CONTRIBUTING.md)
+(gates, commit/tag format, PR template) · [docs/local-dev.md](docs/local-dev.md)
+(prerequisites, compose stack, dev loop, minikube) · [docs/ENV.md](docs/ENV.md)
+(every `COREMETRY_*` variable) · [SECURITY.md](SECURITY.md) · the
+`/codebase-tour` skill ([.claude/skills/codebase-tour/SKILL.md](.claude/skills/codebase-tour/SKILL.md))
+for the reading order, invariants and glossary · [CLAUDE.md](CLAUDE.md) for the
+hard constraints an AI pair follows.
+
+Backend (Go 1.25+). The binary embeds `frontend/dist` (`//go:embed`), so a
+fresh clone needs the UI built once before `go build` succeeds:
 
 ```bash
+make build-ui                      # frontend → frontend/dist (once, or after UI changes)
 go build ./... && ./coremetry --config config.yaml
 ```
 
@@ -482,10 +492,12 @@ npm run build        # production build (TypeScript check + Vite bundle)
 npm run build:analyze # bundle treemap → dist/bundle-analysis.html
 ```
 
-Tests:
+Tests (CI runs the frontend suite in UTC — do the same locally):
 
 ```bash
 go test ./...
+cd frontend && TZ=UTC npx vitest run && npm run lint
+make audit                         # repo-specific static checks; 🔴 blocks a tag
 ```
 
 ---

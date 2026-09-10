@@ -478,3 +478,21 @@ describe('ChatBubble — tool kanıtı (Faz 4.3)', () => {
     expect(qa('button').filter(b => (b.textContent ?? '').includes('get_')).length).toBe(1);
   });
 });
+
+describe('akış ortası hata (v0.10.649)', () => {
+  it('error gelince o ana kadar akan metin KALIR, ⚠ altına iner', async () => {
+    await mount(asst('checkout p95 480 ms ve', { error: 'deadline exceeded', pending: false }));
+    expect(text()).toContain('checkout p95 480 ms ve');
+    expect(text()).toContain('⚠');
+    expect(text()).not.toContain('yazıyor');
+  });
+  it('metinsiz hata: yalnız ⚠, "yazıyor" yok', async () => {
+    await mount(asst('', { error: 'boom', pending: false }));
+    expect(text()).toContain('⚠');
+    expect(text()).not.toContain('yazıyor');
+  });
+  it('kullanıcı balonunda hata olduğu gibi (metin yerine ⚠)', async () => {
+    await mount({ role: 'user', text: 'soru', error: 'x' } as ChatTurn);
+    expect(text()).toContain('⚠');
+  });
+});

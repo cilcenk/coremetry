@@ -83,8 +83,11 @@ describe('chatErrorText', () => {
 describe('ChatBubble kablolaması', () => {
   const src = readFileSync(new URL('./ChatBubble.tsx', import.meta.url), 'utf8');
 
-  it('hata dalı chatErrorText kullanıyor', () => {
-    expect(src).toContain('chatErrorText(turn.error)');
+  it('hata dalı chatErrorText kullanıyor (v0.10.649: ChatErrorLine bileşeni üzerinden)', () => {
+    // Hata satırı bileşene çıktı; ipucu KABLOLAMASI orada. Her iki dal
+    // (kullanıcı balonu, asistan balonu) bileşeni turn.error ile çağırır.
+    expect(src).toContain('chatErrorText(error)');
+    expect(src.split('<ChatErrorLine error={turn.error}').length - 1).toBeGreaterThanOrEqual(2);
   });
 
   it('ham metni tooltip olarak taşıyor', () => {

@@ -492,24 +492,10 @@ export function ChatBubble({ turn }: { turn: ChatTurn }) {
         {!isUser && !!turn.stepDetails?.length && (
           <ToolStepsPanel details={turn.stepDetails} error={turn.error} turnDone={!turn.pending} evId={evId} setEvId={setEvId} />
         )}
-        {turn.error ? (
-          /* v0.10.22 — HAM SAĞLAYICI METNİ DEĞİL. Operatör
-             `dial tcp …: connection refused` blob'undan ne yapacağını
-             çıkaramıyordu; aiErrorHint v0.9.200'den beri duruyor ama
-             yalnız AIAnalysisPanel kullanıyordu. Ham metin SİLİNMİYOR,
-             tooltip'e iniyor (chatErrorText.ts). */
-          (() => {
-            const ev = chatErrorText(turn.error);
-            return (
-              <span style={{ color: isUser ? '#fff' : 'var(--err)' }}
-                title={ev.raw ?? undefined}>
-                ⚠ {ev.text}
-              </span>
-            );
-          })()
-        ) : isUser ? (
-          turn.text
-        ) : turn.text ? (
+        {isUser ? (
+          turn.error ? <ChatErrorLine error={turn.error} isUser /> : turn.text
+        ) : (<>
+        {turn.text ? (
           // Asistan metni: hafif markdown (escape'li) + tablo/fence/başlık/
           // liste blokları (v0.9.1148) + gömülü canlı grafikler (```chart```)
           // + akış sürüyorsa imleç.
@@ -553,9 +539,18 @@ export function ChatBubble({ turn }: { turn: ChatTurn }) {
               </div>
             )}
           </>
-        ) : turn.pending ? (
+        ) : null}
+        {/* v0.10.649 — akış ortası `error` AKAN METNİ GİZLEMEZ (ai-ui-patterns #2):
+            sunucu deadline/overflow'da deltalardan SONRA error basabiliyor
+            (copilot_chat.go); eski ternary yalnız ⚠ çiziyor, okunan metni
+            siliyordu. Metin üstte kalır, ⚠ altına iner. */}
+        {turn.error && (
+          <div style={{ marginTop: turn.text ? 6 : 0 }}><ChatErrorLine error={turn.error} isUser={false} /></div>
+        )}
+        {!turn.text && !turn.error && turn.pending && (
           <span style={{ color: 'var(--text3)' }}>yazıyor<span className="cm-ai-cursor" /></span>
-        ) : ''}
+        )}
+        </>)}
       </div>
 
       {/* Kaynak chip'leri (RAG dayanağı). v0.9.515 (operatör): doküman
@@ -619,5 +614,21 @@ export function ChatBubble({ turn }: { turn: ChatTurn }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * ChatErrorLine — v0.10.22 — HAM SAĞLAYICI METNİ DEĞİL. Operatör
+ * `dial tcp …: connection refused` blob'undan ne yapacağını çıkaramıyordu;
+ * aiErrorHint v0.9.200'den beri duruyor ama yalnız AIAnalysisPanel
+ * kullanıyordu. Ham metin SİLİNMİYOR, tooltip'e iniyor (chatErrorText.ts).
+ * v0.10.649'da bileşene çıkarıldı: metinle birlikte de çizilir.
+ */
+function ChatErrorLine({ error, isUser }: { error: string; isUser: boolean }) {
+  const ev = chatErrorText(error);
+  return (
+    <span style={{ color: isUser ? '#fff' : 'var(--err)' }} title={ev.raw ?? undefined}>
+      ⚠ {ev.text}
+    </span>
   );
 }

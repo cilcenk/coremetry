@@ -4,7 +4,7 @@
 // gecikme ort. (istemciler arası ortalama) / maks., rebalance toplam, son
 // poll maks. Blok boş → null (karo "—", sessiz 0 yok).
 import type { ClusterNamedSeries, KafkaMetricBlock, ServiceKafkaClients } from '@/lib/types';
-import { kafkaLastValue, kafkaSeriesLabel } from '@/features/dependencies/kafkaClients';
+import { kafkaLastValue, kafkaShortLabels } from '@/features/dependencies/kafkaClients';
 
 export const SERVICE_KAFKA_SERIES_CAP = 12;
 
@@ -48,9 +48,11 @@ export function kafkaStrip(blocks: Record<string, KafkaMetricBlock> | null | und
 /** SpanMetricSeries (ns) → MetricArea'nın ClusterNamedSeries'i (unix s). */
 export function kafkaToNamedSeries(block: KafkaMetricBlock | null | undefined, cap = SERVICE_KAFKA_SERIES_CAP): { series: ClusterNamedSeries[]; total: number } {
   const all = block?.series ?? [];
+  const shown = all.slice(0, cap);
+  const names = kafkaShortLabels(shown); // v0.10.595 — grafikte kısa etiket
   return {
-    series: all.slice(0, cap).map(s => ({
-      name: kafkaSeriesLabel(s.groupKey),
+    series: shown.map((s, i) => ({
+      name: names[i],
       points: (s.points ?? []).map(p => ({ bucket: Math.round(p.time / 1e9), value: p.value })),
     })),
     total: all.length,

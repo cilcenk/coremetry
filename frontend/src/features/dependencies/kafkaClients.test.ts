@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { kafkaBlockItems, kafkaChartItems, kafkaDegradeTR, kafkaLastRows, kafkaLastValue, kafkaPanelUnit, kafkaScopeNoteTR, kafkaSeriesLabel, KAFKA_SERIES_CAP } from './kafkaClients';
+import { kafkaBlockItems, kafkaChartItems, kafkaDegradeTR, kafkaLastRows, kafkaLastValue, kafkaPanelUnit, kafkaScopeNoteTR, kafkaSeriesLabel, KAFKA_SERIES_CAP, kafkaShortLabels } from './kafkaClients';
 import type { KafkaMetricBlock, MessagingClients } from '@/lib/types';
 
 // v0.10.551 — çekmece "Kafka istemcileri" saf çekirdeği.
@@ -62,5 +62,51 @@ describe('kafkaClients', () => {
     expect(kafkaScopeNoteTR('services')).toMatch(/topic'e göre süzülemez/);
     expect(kafkaScopeNoteTR('topic')).toBeNull();
     expect(kafkaScopeNoteTR(undefined)).toBeNull();
+  });
+});
+
+// v0.10.595 — grafik/tooltip etiketleri okunabilir. Operatör ekranı: altı
+// tooltip'in her satırı "servis · consumer-…-<uuid>-7" idi. Kural:
+//   1. blokta TÜM serilerde aynı olan sütun düşer (kapsam zaten başlıkta),
+//      ama en az bir sütun kalır
+//   2. UUID ilk 8 karaktere iner, sondaki -N örnek indeksi KALIR
+//   3. kısaltma iki seriyi aynı yapıyorsa o seriler TAM etikete düşer —
+//      okunabilirlik tekilliği yemez
+// Son-değer tablosu TAM etiketi korur (sütunu var); grafikler kısa.
+describe('kafkaShortLabels', () => {
+  const sr = (...gk: string[]) => ({ groupKey: gk, points: [] });
+  it('ortak servis sütunu düşer, UUID kısalır, indeks kalır', () => {
+    const got = kafkaShortLabels([
+      sr('shop-consumer', 'consumer-shop-orders-21c6f42c-aff6-45f7-9ee6-ac66938990cf-7'),
+      sr('shop-consumer', 'consumer-shop-orders-3b3399b9-c636-466d-b9fc-e08d3d15773b-7'),
+    ]);
+    expect(got).toEqual(['consumer-shop-orders-21c6f42c…-7', 'consumer-shop-orders-3b3399b9…-7']);
+  });
+  it('tek sütun ASLA düşmez', () => {
+    expect(kafkaShortLabels([sr('shop-consumer'), sr('shop-consumer')])).toEqual(['shop-consumer', 'shop-consumer']);
+  });
+  it('kısaltma çakıştırırsa TAM etikete düşer', () => {
+    const got = kafkaShortLabels([
+      sr('s', 'c-21c6f42c-aff6-45f7-9ee6-ac66938990cf-1'),
+      sr('s', 'c-21c6f42c-0000-0000-0000-000000000000-1'), // ilk 8 aynı → çakışma
+      sr('s', 'c-deadbeef-aff6-45f7-9ee6-ac66938990cf-1'),
+    ]);
+    // Tam etiket ORTAK sütunu da geri getirir — ayırt edicilik okunabilirliği yener.
+    expect(got[0]).toBe('s · c-21c6f42c-aff6-45f7-9ee6-ac66938990cf-1');
+    expect(got[1]).toBe('s · c-21c6f42c-0000-0000-0000-000000000000-1');
+    expect(got[2]).toBe('c-deadbeef…-1');
+  });
+  it('boş anahtar (tümü), tek seri kısa kalır', () => {
+    expect(kafkaShortLabels([sr()])).toEqual(['(tümü)']);
+    // Tek seride servis sütunu 'ortak' sayılır ve düşer: kapsam başlıkta, kural tutarlı.
+    expect(kafkaShortLabels([sr('svc', 'client-1')])).toEqual(['client-1']);
+  });
+  it('kafkaBlockItems grafik adları KISA, tablo tam', () => {
+    const block = {
+      metric: 'm', label: 'l', unit: '1', kind: 'gauge', agg: 'sum', groupBy: ['service.name', 'client_id'],
+      series: [sr('shop-consumer', 'c-21c6f42c-aff6-45f7-9ee6-ac66938990cf-7'), sr('shop-consumer', 'c-3b3399b9-c636-466d-b9fc-e08d3d15773b-7')],
+    } as KafkaMetricBlock;
+    expect(kafkaBlockItems(block).items.map(i => i.name)).toEqual(['c-21c6f42c…-7', 'c-3b3399b9…-7']);
+    expect(kafkaLastRows({ x: block }, ['x'])[0].key).toContain('shop-consumer · c-');
   });
 });

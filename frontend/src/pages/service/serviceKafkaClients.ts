@@ -22,6 +22,12 @@ export interface KafkaStrip {
   latencyMaxMs: number | null;
   rebalancePerHour: number | null;
   lastPollSecMax: number | null;
+  // v0.10.583 — 582'nin üç yeni sorusu. Sunucudan geliyorlardı ama şerit
+  // sabit anahtar listesiyle çizdiği için EKRANDA HİÇ GÖRÜNMÜYORLARDI —
+  // "test edilmiş ama ulaşılamaz" sınıfı. Üçü de "neden" metriği.
+  pollGapMaxMs: number | null;          // consumer_poll_gap_max
+  fetchThrottleAvgMs: number | null;    // consumer_fetch_throttle_avg
+  rebalanceLatencyAvgMs: number | null; // consumer_rebalance_latency_avg
 }
 
 export function kafkaStrip(blocks: Record<string, KafkaMetricBlock> | null | undefined): KafkaStrip {
@@ -33,6 +39,9 @@ export function kafkaStrip(blocks: Record<string, KafkaMetricBlock> | null | und
     latencyMaxMs: max(lastValues(b.producer_request_latency_max)),
     rebalancePerHour: sum(lastValues(b.consumer_rebalance_rate)),
     lastPollSecMax: max(lastValues(b.consumer_last_poll)),
+    pollGapMaxMs: max(lastValues(b.consumer_poll_gap_max)),
+    fetchThrottleAvgMs: avg(lastValues(b.consumer_fetch_throttle_avg)),
+    rebalanceLatencyAvgMs: avg(lastValues(b.consumer_rebalance_latency_avg)),
   };
 }
 

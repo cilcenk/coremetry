@@ -17,8 +17,16 @@ describe('serviceKafkaClients', () => {
       producer_request_latency_max: blk([[['p1'], [50]], [['p2'], [90, 70]]]),
       consumer_rebalance_rate: blk([[['c1'], [0.5]], [['c2'], [1]]]),
       consumer_last_poll: blk([[['c1'], [2]], [['c2'], [40]]]),
+      // v0.10.583 — 582'nin üç yeni sorusu artık şeride ULAŞIYOR.
+      consumer_poll_gap_max: blk([[['c1'], [1500]], [['c2'], [120000]]]),
+      consumer_fetch_throttle_avg: blk([[['c1'], [0]], [['c2'], [30]]]),
+      consumer_rebalance_latency_avg: blk([[['c1'], [800]], [['c2'], [1200]]]),
     });
-    expect(s).toEqual({ producerConnections: 6, consumerConnections: null, latencyAvgMs: 20, latencyMaxMs: 70, rebalancePerHour: 1.5, lastPollSecMax: 40 });
+    expect(s).toEqual({
+      producerConnections: 6, consumerConnections: null, latencyAvgMs: 20, latencyMaxMs: 70,
+      rebalancePerHour: 1.5, lastPollSecMax: 40,
+      pollGapMaxMs: 120000, fetchThrottleAvgMs: 15, rebalanceLatencyAvgMs: 1000,
+    });
     expect(kafkaStripEmpty(s)).toBe(false);
     expect(kafkaStripEmpty(kafkaStrip(undefined))).toBe(true);
   });

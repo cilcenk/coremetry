@@ -29,7 +29,6 @@ import { ExternalLinksTab } from './settings/ExternalLinksTab';
 import { DevOpsTab } from './settings/DevOpsTab';
 import { McpServersTab } from './settings/McpServersTab';
 import { ClustersTab } from './settings/ClustersTab';
-import { InfluxTab } from './settings/InfluxTab';
 import { OracleTab } from './settings/OracleTab';
 import { EntitiesTab } from './settings/EntitiesTab';
 import { ElasticTab } from './settings/ElasticTab';
@@ -72,7 +71,6 @@ const TAB_COMPS: Record<string, ComponentType> = {
   'trace-facets': TraceFacetsTab,
   'external-links': ExternalLinksTab,
   'clusters': ClustersTab,
-  'influx': InfluxTab,
   'oracle': OracleTab,
   'entities': EntitiesTab,
   'elastic': ElasticTab,

@@ -175,7 +175,7 @@ export function ExternalEvidencePanel({ problem, window: win }: {
                     <td className="num mono">{r.durationNs > 0 ? fmtDur(r.durationNs / 1e6) : '—'}</td>
                     <td className="num">{r.spans || '—'}</td>
                     <td>{r.missing
-                      ? <span className="badge b-gray" title="Trace id Influx'tan geldi ama bu pencerede CH'de span'i yok (retention ya da henüz gelmedi)">CH'de yok</span>
+                      ? <span className="badge b-gray" title="Trace id dış kaynaktan geldi ama bu pencerede CH'de span'i yok (retention ya da henüz gelmedi)">CH'de yok</span>
                       : <span className={`badge ${r.errorSpans > 0 ? 'b-err' : 'b-ok'}`}>{r.errorSpans > 0 ? `${r.errorSpans} hata` : 'ok'}</span>}</td>
                   </tr>
                 ))}

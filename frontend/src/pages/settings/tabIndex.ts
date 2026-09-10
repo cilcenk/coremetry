@@ -19,7 +19,6 @@ export const SETTINGS_TAB_INDEX: SettingsTabRef[] = [
   { slug: 'trace-facets', label: 'Trace facet’leri' }, // v0.10.303
   { slug: 'external-links', label: 'Dış linkler' }, // v0.10.345
   { slug: 'clusters', label: 'Remote clusters' },
-  { slug: 'influx', label: 'Influx kaynakları' },
   { slug: 'oracle', label: 'Oracle hata tablosu' }, // v0.10.580
   { slug: 'entities', label: 'K8s entity katmanı' },
   { slug: 'elastic', label: 'Elasticsearch logs' },

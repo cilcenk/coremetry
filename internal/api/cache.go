@@ -569,14 +569,6 @@ func (s *Server) reloadConfigOnSignal(ctx context.Context, svc string) {
 				log.Printf("[cache] config-reload victoria-metrics: %v", err)
 			}
 		}
-	// v0.10.222 — InfluxDB kaynak listesi. Case uçla AYNI sürümde (thanos
-	// v0.9.237 dersi); D2'de worker lideri yeni kaynağı 30 s poll'süz görsün.
-	case "influx":
-		if s.influx != nil {
-			if err := s.influx.LoadPersisted(ctx, s.store); err != nil {
-				log.Printf("[cache] config-reload influx: %v", err)
-			}
-		}
 	// v0.10.580 — Oracle kaynak listesi. Case UÇLA AYNI SÜRÜMDE (thanos
 	// v0.9.237 dersi: dinleyicisiz publish peer pod'ları 30 s poll'a
 	// bırakır). config_reload_test.go bu eşleşmeyi zaten kapıyor.

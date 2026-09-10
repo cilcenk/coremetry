@@ -23,7 +23,7 @@ func TestStaleSweepCandidates(t *testing.T) {
 		{ID: "c", RuleID: "anomaly:ext:ggfail/OP1/E1:ext:tfail_adet"}, // seri Problem'i — SÜPÜRÜLÜR
 		{ID: "d", RuleID: chstore.RuleExtCapPrefix + "ext:ggfail:ext:tfail_adet"},
 	}
-	toClose, skipped := staleSweepCandidates(stale)
+	toClose, skipped := staleSweepCandidates(stale, nil) // nil = 592 davranışı
 	ids := func(ps []chstore.Problem) string {
 		var b []string
 		for _, p := range ps {
@@ -37,8 +37,23 @@ func TestStaleSweepCandidates(t *testing.T) {
 	if got := ids(skipped); got != "b,d" {
 		t.Fatalf("atlananlar b,d (ext-down, ext-cap), %q", got)
 	}
-	if tc, sk := staleSweepCandidates(nil); len(tc) != 0 || len(sk) != 0 {
+	if tc, sk := staleSweepCandidates(nil, nil); len(tc) != 0 || len(sk) != 0 {
 		t.Fatal("boş girdi boş çıktı")
+	}
+	// v0.10.605 — canlılık: oracle-errlog yaşıyor, ggfail silinmiş → d (ggfail
+	// ext-cap) SÜPÜRÜLÜR, b (oracle ext-down) muaf kalır. Özne ext-cap'ten
+	// metriksiz çıkarılır ("ext:ggfail:ext:tfail_adet" → "ext:ggfail").
+	live := func(subject string) bool { return subject == "ext:oracle-errlog" }
+	toClose, skipped = staleSweepCandidates(stale, live)
+	if got := ids(toClose); got != "a,c,d" {
+		t.Fatalf("ölü kaynağın ext-cap'i süpürülmeli: a,c,d bekleniyor, %q", got)
+	}
+	if got := ids(skipped); got != "b" {
+		t.Fatalf("yalnız canlı kaynağın ext-down'ı muaf: b bekleniyor, %q", got)
+	}
+	none := func(string) bool { return false }
+	if tc, sk := staleSweepCandidates(stale, none); len(tc) != 4 || len(sk) != 0 {
+		t.Fatalf("hiç kaynak yaşamıyorsa hepsi süpürülür: %d/%d", len(tc), len(sk))
 	}
 }
 
@@ -54,7 +69,7 @@ func TestSweepStaleProblemsUsesCandidates(t *testing.T) {
 	}
 	end := strings.Index(code[start:], "\n}\n")
 	body := code[start : start+end]
-	if !strings.Contains(body, "toClose, skipped := staleSweepCandidates(stale)") {
+	if !strings.Contains(body, "toClose, skipped := staleSweepCandidates(stale, e.pollerSourceLive)") {
 		t.Fatal("süpürücü staleSweepCandidates'ı çağırmıyor — poller Problem'leri yine süpürülür")
 	}
 	if !strings.Contains(body, "for i := range toClose {") || strings.Contains(body, "for i := range stale {") {

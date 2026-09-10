@@ -1440,6 +1440,28 @@ func PollerOwnedRule(ruleID string) bool {
 	return strings.HasPrefix(ruleID, RuleExtDownPrefix) || strings.HasPrefix(ruleID, RuleExtCapPrefix)
 }
 
+// PollerOwnedSubject — v0.10.605: poller-sahipli kuralın ÖZNESİ (`ext:<kaynak
+// adı>`, anomaly.ExternalSubject(ad, nil)). ext-down kuralı öznenin
+// kendisi; ext-cap kuralı `<özne>:<metrik>` taşır ve metrik adı iki nokta
+// içerebilir (ext:tfail_adet) — özne ilk İKİ parçadır (kaynak adında iki
+// nokta yok: NAME_RE). Süpürücü bununla "kaynak hâlâ yaşıyor mu" sorar:
+// silinen kaynağın Problem'leri muafiyetten çıkar. ok=false → poller-sahipli
+// değil.
+func PollerOwnedSubject(ruleID string) (string, bool) {
+	if rest, ok := strings.CutPrefix(ruleID, RuleExtDownPrefix); ok {
+		return rest, rest != ""
+	}
+	rest, ok := strings.CutPrefix(ruleID, RuleExtCapPrefix)
+	if !ok {
+		return "", false
+	}
+	parts := strings.SplitN(rest, ":", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", false
+	}
+	return parts[0] + ":" + parts[1], true
+}
+
 // NewOpenProblems (v0.10.228) — dilimden snapshot; openProblemsSnapshotUncached
 // ile AYNI indirgeme (reduceLatestProblem: (rule, service) başına en yeni).
 // Dış anomali tarayıcısının testi ve store'suz çağıranlar için. Girdi

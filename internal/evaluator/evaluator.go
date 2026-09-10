@@ -31,6 +31,8 @@ type Evaluator struct {
 	// vmetrics — v0.9.1213: JVM GC alarmlarının VM dönüşü. nil = VM
 	// kurulmamış, GC değerlendirmesi emekli kalır (runtime_vm.go).
 	vmetrics *vmetrics.Service
+	// pollerSourceLive — v0.10.605 (SetPollerSourceLive); nil = tüm poller Problem'leri muaf.
+	pollerSourceLive func(subject string) bool
 	interval time.Duration
 	lock     cache.Lock
 	leader   *cache.LeaderHolder // v0.5.429
@@ -165,6 +167,13 @@ func (e *Evaluator) SetLogs(logs logstore.Store) { e.logs = logs }
 // (vmetrics kurulmadıysa) — runtime GC değerlendirmesi o durumda
 // v0.9.1075 emekliliğinde kalır.
 func (e *Evaluator) SetVMetrics(vm *vmetrics.Service) { e.vmetrics = vm }
+
+// SetPollerSourceLive — v0.10.605: "bu poller kaynağı (özne ext:<ad>) hâlâ
+// etkin mi?" sorusu. Bayat süpürme muafiyeti (592) yalnız YAŞAYAN kaynak
+// için: silinen/kapatılan kaynağın ext-down/ext-cap Problem'leri artık
+// süpürülür — yoksa hiçbir poller onları resolve etmez ve sonsuza dek açık
+// kalırlardı. nil = 592 davranışı (hepsi muaf).
+func (e *Evaluator) SetPollerSourceLive(fn func(subject string) bool) { e.pollerSourceLive = fn }
 
 // Start runs the evaluation loop until ctx is cancelled. Built-in rules
 // are seeded by every replica — that's safe (UpsertAlertRule is idempotent
@@ -1132,7 +1141,7 @@ func (e *Evaluator) sweepStaleProblems(ctx context.Context) {
 	// poll aralığı 3×interval'ı aşan kaynakta süpürme onları "source silent"
 	// diye kapatıp bir sonraki poll'da yeniden açtırırdı — ayara bağlı
 	// flapping. Karar SAF (staleSweepCandidates), testte pinli.
-	toClose, skipped := staleSweepCandidates(stale)
+	toClose, skipped := staleSweepCandidates(stale, e.pollerSourceLive)
 	if len(skipped) > 0 {
 		log.Printf("[evaluator] stale sweep: %d poller-owned problem(s) skipped (lifecycle belongs to the source poller)", len(skipped))
 	}
@@ -1165,9 +1174,13 @@ func (e *Evaluator) sweepStaleProblems(ctx context.Context) {
 // olduğu için ATLANANLAR. Sıra korunur. chstore.PollerOwnedRule tek karar
 // noktası; seri Problem'leri (anomaly:ext:…) süpürülmeye devam eder — kaynak
 // susunca onların "source silent" kapanışı dürüst sinyaldir.
-func staleSweepCandidates(stale []chstore.Problem) (toClose, skipped []chstore.Problem) {
+//
+// v0.10.605 — muafiyet YAŞAYAN kaynağa bağlı: live(özne) false dönerse
+// (kaynak silinmiş/kapatılmış) Problem süpürülür; kaynağı yaşatan poller
+// yok, resolve edecek kimse yok. live nil = hepsi muaf (592).
+func staleSweepCandidates(stale []chstore.Problem, live func(subject string) bool) (toClose, skipped []chstore.Problem) {
 	for _, p := range stale {
-		if chstore.PollerOwnedRule(p.RuleID) {
+		if subject, owned := chstore.PollerOwnedSubject(p.RuleID); owned && (live == nil || live(subject)) {
 			skipped = append(skipped, p)
 			continue
 		}

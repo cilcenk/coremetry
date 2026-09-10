@@ -31,10 +31,11 @@ import {
   hasOracleErrors, parseTypeFilter, typeFilterToText, numFromForm, numToForm,
   ORACLE_DEFAULT_PORT, ORACLE_DEFAULT_TIMESTAMP_COLUMN, ORACLE_DEFAULT_TYPE_COLUMN,
   ORACLE_DEFAULT_MAX_OPEN_CONNS, ORACLE_DEFAULT_QUERY_TIMEOUT_SEC, ORACLE_DEFAULT_INTERVAL_SEC,
+  ORACLE_DEFAULT_TIMEZONE, ORACLE_MAPPING_FIELDS, ORACLE_COLUMN_DISABLED,
   type OracleFieldErrors,
 } from './oracleForm';
 import type {
-  OracleSource, OracleSourceSnapshot, OracleSourceStatus, OracleStatusPayload, OracleTestResult,
+  OraclePollStatus, OracleSource, OracleSourceSnapshot, OracleSourceStatus, OracleStatusPayload, OracleTestResult,
 } from '@/lib/types';
 
 /** Bağlantı biçimi form durumda AYRI tutulur: yalnız `dsn` doluluğundan
@@ -66,6 +67,8 @@ export function OracleTab() {
   // Durum: sekme açılışında bir kez + elle yenile. Poll YOK — ayar sekmesi.
   const [status, setStatus] = useState<OracleStatusPayload | null>(null);
   const [statusErr, setStatusErr] = useState<string | null>(null);
+  // v0.10.603 — alan eşlemesi 14 kutu; varsayılan katlı (çoğu kurulum §5 adlarını kullanır).
+  const [showCols, setShowCols] = useState<Record<number, boolean>>({});
 
   const loadStatus = () => {
     setStatusErr(null);
@@ -169,8 +172,9 @@ export function OracleTab() {
       <h2 className="oracle-title">Oracle hata tablosu</h2>
       <p className="oracle-note">
         Bir Oracle hata tablosunu (ör. <code>&lt;ŞEMA&gt;.MCA_TERROR_LOG</code>) dış kaynak
-        olarak bağlar. <b>Bu aşama yalnız tanım ve bağlantı testidir</b>: periyodik okuma,
-        metrik yazımı ve Problem üretimi sonraki sürümlerde gelir. Şema, tablo ve kolon
+        olarak bağlar. Satırlar <b>periyodik olarak okunur</b> (worker lideri, kalıcı
+        watermark), Coremetry'de saklanır ve ilgili trace'in Logs sekmesinde <b>oracle</b>
+        rozetiyle görünür; Problem üretimi sonraki aşamada. Şema, tablo ve kolon
         adları koda gömülü değildir — hepsi buradan yönetilir. Sorgu daima{' '}
         <b>salt-okunur</b>, zaman aralığıyla sınırlı ve satır tavanlıdır; değerler bind
         edilir. Şifre <b>saklanır ama geri gösterilmez</b>; alternatifi referanstır
@@ -207,6 +211,35 @@ export function OracleTab() {
                   )}
                 </div>
               )}
+
+              {src.id && src.enabled && (() => {
+                // v0.10.603 — işçi durumu (v0.10.601 blobu): worker lideri hangi
+                // pod'da olursa olsun görünür. Yok = henüz yayın yok; uydurma
+                // "sağlıklı" basılmaz.
+                const ps: OraclePollStatus | undefined = status?.poll?.sources.find(x => x.sourceId === src.id);
+                return (
+                  <div className="oracle-status">
+                    {ps ? (
+                      <>
+                        Son okuma <b>{fmtDateTime(ps.lastPollAt)}</b>
+                        {' · '}{ps.lastRows} satır okundu, {ps.lastMapped} yazıldı
+                        {ps.lastNoTimestamp > 0 && <> · <span className="is-err">{ps.lastNoTimestamp} zamansız satır düştü</span></>}
+                        {ps.lastBadTraceId > 0 && <> · {ps.lastBadTraceId} geçersiz trace id</>}
+                        {' · '}watermark <b>{fmtDateTime(ps.watermarkNs / 1e6)}</b>
+                        {ps.capped && <> · <span className="badge b-warn">tavana çarptı — devam ediyor</span></>}
+                        {ps.lastError
+                          ? <> · <span className="is-err">{ps.lastError}</span></>
+                          : <> · <span className="is-ok">okuma sağlıklı</span></>}
+                        {status?.poll?.pod && <> · pod <code>{status.poll.pod}</code></>}
+                      </>
+                    ) : (
+                      <span className="is-quiet">
+                        İşçi bu kaynak için henüz durum yayınlamadı — kaynak kaydedildi mi, worker lideri koşuyor mu?
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div className="oracle-src__head">
                 <Field label="Kaynak adı" value={src.name} required
@@ -320,6 +353,46 @@ export function OracleTab() {
                     : "Serbest ifade; `;` `--` `/*` yasak — bunlar sorgunun zaman yüklemini ve satır tavanını susturur."} />
               </div>
 
+              <div className="oracle-sub">Zaman</div>
+              <div className="oracle-row">
+                <Field label="Zaman dilimi" value={src.timezone ?? ''} error={err.timezone}
+                  onChange={e => patch(i, { timezone: e.target.value })}
+                  placeholder={ORACLE_DEFAULT_TIMEZONE}
+                  hint={err.timezone ? undefined
+                    : `Dilimsiz TIMESTAMP bu dilimde okunur; boş = ${ORACLE_DEFAULT_TIMEZONE}. Yanlış dilim = sabit saat kayması.`} />
+                <label className="oracle-check">
+                  <input type="checkbox" checked={!!src.timestampHasZone}
+                    onChange={e => patch(i, { timestampHasZone: e.target.checked })} />
+                  <span>Zaman kolonu dilimli (TIMESTAMP WITH TIME ZONE)</span>
+                </label>
+              </div>
+
+              <div className="oracle-sub">
+                Alan eşlemesi{' '}
+                <Button type="button" variant="ghost" size="sm"
+                  onClick={() => setShowCols(sc => ({ ...sc, [i]: !sc[i] }))}>
+                  {showCols[i] ? 'gizle' : 'göster'}
+                </Button>
+              </div>
+              {showCols[i] && (
+                <>
+                  <div className="oracle-q">
+                    Boş kutu = varsayılan kolon; <code>{ORACLE_COLUMN_DISABLED}</code> = bu alan
+                    tabloda yok. Zaman ve tip kolonları yukarıdaki kutulardan. Tüketilmeyen her
+                    kolon satırda olduğu gibi attribute olarak kalır.
+                  </div>
+                  {err.columns && <div className="oracle-q is-err">{err.columns}</div>}
+                  <div className="oracle-row">
+                    {ORACLE_MAPPING_FIELDS.map(f => (
+                      <Field key={f.field} label={f.target} className="is-narrow"
+                        value={src.columns?.[f.field] ?? ''}
+                        onChange={e => patch(i, { columns: { ...(src.columns ?? {}), [f.field]: e.target.value } })}
+                        placeholder={f.column} />
+                    ))}
+                  </div>
+                </>
+              )}
+
               <div className="oracle-sub">Sınırlar</div>
               <div className="oracle-row">
                 <Field label="Bağlantı havuzu" className="is-narrow" inputMode="numeric" error={err.maxOpenConns}
@@ -336,7 +409,7 @@ export function OracleTab() {
                   value={numToForm(src.intervalSec)}
                   onChange={e => patch(i, { intervalSec: numFromForm(e.target.value) })}
                   placeholder={String(ORACLE_DEFAULT_INTERVAL_SEC)}
-                  hint={err.intervalSec ? undefined : `10-3600; boş = ${ORACLE_DEFAULT_INTERVAL_SEC} (sonraki aşama kullanır)`} />
+                  hint={err.intervalSec ? undefined : `10-3600; boş = ${ORACLE_DEFAULT_INTERVAL_SEC} (poll aralığı)`} />
               </div>
 
               <div className="oracle-actions">

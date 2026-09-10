@@ -197,44 +197,17 @@ describe('log deseni — ızgara yuvası (streams.tsx)', () => {
   });
 });
 
-describe('yavaş sorgu — satır yuvası + satır-içi explain SÖKÜMÜ (SlowQueries)', () => {
+describe('yavaş sorgu — yuva SÖKÜLDÜ (v0.10.652, operatör) + satır-içi explain SÖKÜMÜ (SlowQueries)', () => {
   const src = read('pages/SlowQueries.tsx');
 
-  it('kanca SORGU türüyle çağrılmış, yuva tablo satırı', () => {
-    expect(src).toContain("from '@/components/ai/insightRow'");
-    expect(src).toMatch(/useInsightRow\('slow-query'\)/);
-    expect(src).toContain('<InsightRowChip');
-    expect(src).toContain('<InsightRowSlot');
-  });
-
-  it('kimlik `?stmt=` kodeğinden türüyor — üçüncü bir yazılış yok', () => {
-    // Satırın (service, statement) `key`i kart kimliği OLAMAZ: pencereler
-    // arası kalıcı değil ve sunucu onu ayrıştıramaz (400).
-    expect(src).toMatch(/const insightId = r\.stmtHash/);
-    expect(src).toContain('encodeStmtParam({ hash: r.stmtHash, system: dbSystem })');
-    const el = element(src, 'InsightRowSlot');
-    expect(el).toContain('kind="slow-query"');
-    expect(el).toContain('id={insightId}');
-    expect(el).toContain('onClose={insight.close}');
-    // colSpan 11 = 1 (chevron) + 10 kolon; yanlış sayı kartı tablonun
-    // dışına taşırır (tableLayout:fixed + colgroup).
-    expect(el).toContain('colSpan={11}');
-  });
-
-  it('kart SAYFANIN penceresini taşıyor (1sa varsayılanına düşmüyor)', () => {
-    const el = element(src, 'InsightRowSlot');
-    expect(el, 'windowSec düşmüş — kart satırdan başka sayı gösterir')
-      .toContain('windowSec={windowSec}');
-    // Pencere memoize edilmiş türev: timeRangeToNs'in ham çağrısı
-    // v0.5.184 sınıfı (her render'da yeni "şimdi" → sonsuz refetch).
-    expect(src).toMatch(/const windowSec = useMemo\(/);
-  });
-
-  it('kimliksiz satırda çip HİÇ çizilmez (kart 400 almasın)', () => {
-    const i = src.indexOf('<InsightRowChip');
-    expect(src.slice(Math.max(0, i - 200), i)).toMatch(/insightId && \(/);
-    const j = src.indexOf('<InsightRowSlot');
-    expect(src.slice(Math.max(0, j - 200), j)).toMatch(/insightId && insight\.openId === insightId &&/);
+  it('insight çipi/yuvası bu sayfada YOK; trace araması satır kolonunda', () => {
+    // v0.9.1137'de gelen "Ne oldu?" çipi + kart yuvası operatör isteğiyle
+    // söküldü; kart kimliği kodeği (encodeStmtParam) yalnız çekmecede yaşar.
+    expect(src).not.toContain("from '@/components/ai/insightRow'");
+    expect(src).not.toMatch(/useInsightRow\(/);
+    expect(src).not.toContain('<InsightRowChip');
+    expect(src).not.toContain('<InsightRowSlot');
+    expect(src).toContain('slowQueryTracesHref(r, range)');
   });
 
   it('satır-içi ✨ Explain paneli GERİ GELMEDİ', () => {

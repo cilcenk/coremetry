@@ -12,20 +12,18 @@ import { Button } from '@/components/ui';
 // verisi useSlowQueries üzerinden (React Query) geliyor.
 import { useSlowQueries } from '@/lib/queries';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
-import { encodeFilters } from '@/lib/urlState';
-import { tracesPivotHref } from '@/lib/pivotHref';
+import { slowQueryTracesHref } from '@/pages/slowqueries/tracesHref';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
-import { encodeStmtParam, stmtDetailHref } from '@/pages/slowqueries/stmtParam';
+import { stmtDetailHref } from '@/pages/slowqueries/stmtParam';
 import { useStmtParamRedirect } from '@/pages/slowqueries/useStmtParamRedirect';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { SlowQueryRow, TimeRange } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
 import { serviceHref } from '@/lib/serviceHref';
 import { PageShell } from '@/components/ui/PageShell';
-// v0.9.1137 (AI Faz 2.4) — satır-içi ✨ Explain yerine insight kartı.
-// AIFeedbackButtons importu KALKTI: 👍/👎 artık kartın altbilgisinde.
-import { useInsightRow, InsightRowChip, InsightRowSlot } from '@/components/ai/insightRow';
+// v0.9.1137 (AI Faz 2.4) satır-içi ✨ Explain yerine insight kartı gelmişti;
+// v0.10.652 (operatör) kart yuvası + "Ne oldu?" çipi bu sayfadan söküldü.
 
 // Columns for the shared sortable + resizable DataTable primitive.
 // Default order matches the backend's total-wall-clock sort so the
@@ -45,6 +43,8 @@ const SLOW_COLS: DataTableColumn<SlowQueryRow>[] = [
   { id: 'p99Ms',      label: 'P99 ms',     sortValue: r => r.p99Ms,      numeric: true, width: 90 },
   { id: 'totalMs',    label: 'Total time', sortValue: r => r.totalMs,    numeric: true, width: 110 },
   { id: 'errorCount', label: 'Errors',     sortValue: r => r.errorCount, numeric: true, width: 90 },
+  // v0.10.652 (operatör) — trace araması satırın kendisinde, en sağda; link kolonu sıralanmaz.
+  { id: 'traces',     label: 'Traces',     width: 80 },
 ];
 
 // v0.9.1137 (AI Faz 2.4) — SATIR-İÇİ ✨ EXPLAIN SÖKÜLDÜ.
@@ -103,18 +103,6 @@ export default function SlowQueriesPage() {
   const rows: SlowQueryRow[] | null | undefined =
     rowsQ.isPending ? undefined : rowsQ.isError ? null : rowsQ.data ?? [];
   const [expanded, setExpanded] = useState<string | null>(null);
-  // v0.9.1137 (AI Faz 2.4) — dördüncü insight yuvası. Açık kart ADRESTE
-  // (`?insight=slow-query:<hash>[|<system>]`), yani paylaşılan link aynı
-  // sınıfın kartını açar. Kimlik satırın KENDİ kimliği: `?stmt=`
-  // çekmecesinin kodeği (encodeStmtParam) — üçüncü bir yazılış yok.
-  const insight = useInsightRow('slow-query');
-  // Kartın kanıt penceresi = SAYFANIN penceresi. `from/to` zaten memoize
-  // (timeRangeToNs bare çağrısı v0.5.184 sınıfı), buradaki türetme de
-  // aynı memo'ya asılıyor: kart 1sa varsayılanına düşerse 6sa'lık bir
-  // sayfada satırdakinden BAŞKA sayı gösterirdi.
-  const windowSec = useMemo(
-    () => Math.max(60, Math.round((to - from) / 1e9)), [from, to]);
-
   const systems = rows
     ? Array.from(new Set(rows.map(r => r.dbSystem).filter(Boolean))).sort()
     : [];
@@ -214,15 +202,6 @@ export default function SlowQueriesPage() {
                 {dt.sortedRows.map(r => {
                   const key = `${r.service}::${r.statement}`;
                   const isExpanded = expanded === key;
-                  // insightId — kartın öznesi: ifade SINIFININ kalıcı kimliği,
-                  // satırın (service, statement) çiftinden TÜRETİLMİŞ `key`
-                  // DEĞİL. Aynı sınıfı çekmeceye açan kodeğin aynısı
-                  // (encodeStmtParam) ve `system` de aynı şekilde SAYFA
-                  // FİLTRESİ ('' = motorlar arası katlanmış, katalogun
-                  // varsayılanı) — kart ile çekmece aynı kapsamı anlatsın.
-                  const insightId = r.stmtHash
-                    ? encodeStmtParam({ hash: r.stmtHash, system: dbSystem })
-                    : null;
                   const totalSec = r.totalMs / 1000;
                   const totalLabel = totalSec >= 60
                     ? `${(totalSec / 60).toFixed(1)} min`
@@ -301,12 +280,18 @@ export default function SlowQueriesPage() {
                         <td className="num mono" style={{
                           color: r.errorCount > 0 ? 'var(--err)' : 'var(--text3)',
                         }}>{fmtNum(r.errorCount)}</td>
+                        {/* v0.10.652 (operatör) — trace araması her satırda, en sağda. */}
+                        <td>
+                          <Link to={slowQueryTracesHref(r, range)} onClick={e => e.stopPropagation()}
+                            title="Bu sorguyu içeren trace'leri ara" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                            Traces →
+                          </Link>
+                        </td>
                       </tr>
                       {isExpanded && (
                         <tr key={key + ':sample'}>
-                          {/* v0.9.265 — 10, not 9: the P50 column landed
-                              between Avg and P99. */}
-                          <td colSpan={11} style={{
+                          {/* 12 = 1 (chevron) + 11 kolon (v0.10.652 Traces). */}
+                          <td colSpan={12} style={{
                             background: 'var(--bg2)', padding: 12,
                           }}>
                             <div style={{
@@ -321,57 +306,10 @@ export default function SlowQueriesPage() {
                               color: 'var(--text2)',
                             }}>{r.sampleStatement}</pre>
                             <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', fontSize: 11, color: 'var(--text3)' }}>
-                              <Link to={(() => {
-                                // v0.5.200 — also disable rootOnly so
-                                // the filter actually returns rows.
-                                // Root spans are typically the
-                                // incoming HTTP request and don't
-                                // carry db.statement; the DB span is
-                                // a CHILD span. With rootOnly=true
-                                // (default) the LIKE matched zero
-                                // rows. Earlier v0.5.195 encoded a
-                                // proper FilterExpr but missed this.
-                                const snippet = r.sampleStatement.slice(0, 60);
-                                const f = encodeFilters([
-                                  { k: 'db.statement', op: 'LIKE', v: [snippet] },
-                                ]);
-                                return tracesPivotHref({
-                                  window: range, service: r.service,
-                                  filters: f, view: 'list',
-                                });
-                              })()}>
-                                Search traces with this query →
-                              </Link>
                               <span>Max: {r.maxMs.toFixed(0)} ms · P95: {r.p95Ms.toFixed(0)} ms · P50: {r.p50Ms.toFixed(0)} ms</span>
-                              <span style={{ flex: 1 }} />
-                              {/* v0.9.1137 (AI Faz 2.4) — eski ✨ Explain/Re-ask
-                                  düğmesinin YERİNDE insight çipi. Aynı yer
-                                  bilinçli: operatörün kas hafızası orada ve
-                                  örnek ifadeyi görmek ile "bunu anlat" demek
-                                  aynı bağlamda kalıyor.
-                                  `insightId` YOKSA çip HİÇ çizilmez — pre-D1
-                                  bir önbellek girdisinden gelen satırın kalıcı
-                                  kimliği yok, ve kimliksiz bir kart açmak
-                                  sunucuya 400 attırırdı (stmtDetailHref'in
-                                  null dönüşüyle aynı disiplin). */}
-                              {insightId && (
-                                <InsightRowChip open={insight.openId === insightId}
-                                  onToggle={() => insight.toggle(insightId)}
-                                  title="Bu sorgu sınıfı için sinyalleri topla ve neden yavaş olduğunu anlat (AI)" />
-                              )}
                             </div>
                           </td>
                         </tr>
-                      )}
-                      {/* Kart, örnek satırının ALTINDA ve KENDİ `<tr>`sinde.
-                          Koşulu YALNIZ `openId`: örnek satırı kapatmak kartı
-                          düşürmez, çünkü kartın öznesi ifade SINIFI — ve
-                          paylaşılan bir `?insight=` linki satır genişletilmemiş
-                          olsa da kartı açmalı. */}
-                      {insightId && insight.openId === insightId && (
-                        <InsightRowSlot kind="slow-query" id={insightId}
-                          colSpan={11} windowSec={windowSec}
-                          onClose={insight.close} />
                       )}
                     </Fragment>
                   );

@@ -3608,6 +3608,9 @@ thead th:hover .th-remove { opacity: 1; }
 .kiosk-span .ps-kv td:last-child { color: var(--text); }
 .kiosk-span__num { color: var(--info); }
 .kiosk-span__cols { gap: var(--sp-8); }
+/* v0.10.686 (operatör: "Tempo'da attribute sütunlarının çevresinde hafif
+   çerçeve var") — iki sütun kutulu: ince kenarlık, küçük yarıçap, iç dolgu. */
+.kiosk-span__cols > div { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--sp-3) var(--sp-4); min-width: 0; }
 .kiosk-span__cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: var(--sp-6); }
 .kiosk-span__col-title { font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin-bottom: var(--sp-3); }
 .kiosk-span__empty { color: var(--text3); font-size: var(--fs-xs); }

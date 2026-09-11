@@ -19,3 +19,11 @@ describe('KioskSpanPanel (v0.10.681)', () => {
     expect(src).toContain('<LogTable logs={spanLogs} hideTraceColumn />');
   });
 });
+
+// v0.10.686 — Tempo: attribute sütunları çerçeveli.
+describe('KioskSpanPanel sütun çerçevesi (v0.10.686)', () => {
+  it('iki sütun ince kenarlıkla kutulu (globals.css)', () => {
+    const css = readFileSync(resolve(__dirname, '../../styles/globals.css'), 'utf8');
+    expect(css).toContain('.kiosk-span__cols > div { border: 1px solid var(--border);');
+  });
+});

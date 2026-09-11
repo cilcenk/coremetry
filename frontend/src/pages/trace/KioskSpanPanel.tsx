@@ -4,6 +4,7 @@ import { CopyButton } from '@/components/CopyButton';
 import { SvcBadge } from '@/components/traces/shared';
 import { LogTable } from '@/components/LogTable';
 import { groupSpanAttrs, groupResourceAttrs } from '@/lib/spanAttrGroups';
+import { formatAttrValue } from './kioskModel';
 import { spanHasError } from '@/lib/otel';
 import { fmtNs, tsLong, displaySpanName } from '@/lib/utils';
 import type { LogRow, SpanRow } from '@/lib/types';
@@ -104,7 +105,10 @@ function AttrGroup({ label, entries }: { label: string; entries: [string, string
     <details open className="kiosk-span__group">
       <summary className="ps-sec-title">{label} <span className="kiosk-span__cnt">{entries.length}</span></summary>
       <table className="ps-kv"><tbody>
-        {entries.map(([k, v]) => <tr key={k}><td>{k}</td><td>{v}</td></tr>)}
+        {entries.map(([k, v]) => {
+          const f = formatAttrValue(v); // v0.10.686 — Tempo: dizge tırnaklı, sayı mavi
+          return <tr key={k}><td>{k}</td><td className={f.numeric ? 'kiosk-span__num' : undefined}>{f.text}</td></tr>;
+        })}
       </tbody></table>
     </details>
   );

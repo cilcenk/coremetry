@@ -43,3 +43,18 @@ export function bundleLogsState(b: TraceBundleResponse | undefined, isError: boo
     oracleError: !!b.oracle?.degraded,
   };
 }
+
+// toggleSpanSelection — v0.10.685 (operatör: "tekrar üzerine basınca
+// kapanmıyor"): aynı satıra ikinci tık seçimi kaldırır (Tempo davranışı).
+export function toggleSpanSelection(prev: string | null, id: string): string | null {
+  return prev === id ? null : id;
+}
+
+// formatAttrValue — v0.10.686: Tempo gösterimi — düz ondalık sayılar
+// tırnaksız ve "numeric" (UI mavi), her şey tırnaklı dizge. Yalnız düz
+// ondalık (1e3, 0x10 dizge kalır): amaç port/sayaç gibi alanları ayırt
+// etmek, tip çıkarımı değil.
+export function formatAttrValue(v: string): { text: string; numeric: boolean } {
+  if (/^-?\d+(\.\d+)?$/.test(v)) return { text: v, numeric: true };
+  return { text: '"' + v + '"', numeric: false };
+}

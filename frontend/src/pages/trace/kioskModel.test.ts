@@ -48,3 +48,25 @@ describe('bundleLogsState', () => {
     expect(st.oracleRows).toEqual([]);
   });
 });
+
+// v0.10.685 — operatör: "bir kez açtığımda span detayı tekrar üzerine basınca
+// kapanmıyor" → aynı satıra ikinci tık seçimi kaldırır (Tempo davranışı).
+import { toggleSpanSelection, formatAttrValue } from './kioskModel';
+describe('toggleSpanSelection (v0.10.685)', () => {
+  it('aynı id → null, farklı id → yeni id', () => {
+    expect(toggleSpanSelection(null, 'a')).toBe('a');
+    expect(toggleSpanSelection('a', 'a')).toBeNull();
+    expect(toggleSpanSelection('a', 'b')).toBe('b');
+  });
+});
+
+// v0.10.686 — Tempo gösterimi: dizge tırnaklı, sayı düz + mavi.
+describe('formatAttrValue (v0.10.686)', () => {
+  it('sayı düz ve numeric, dizge tırnaklı', () => {
+    expect(formatAttrValue('50051')).toEqual({ text: '50051', numeric: true });
+    expect(formatAttrValue('-1.5')).toEqual({ text: '-1.5', numeric: true });
+    expect(formatAttrValue('grpc')).toEqual({ text: '"grpc"', numeric: false });
+    expect(formatAttrValue('')).toEqual({ text: '""', numeric: false });
+    expect(formatAttrValue('1e3')).toEqual({ text: '"1e3"', numeric: false }); // yalnız düz ondalık
+  });
+});

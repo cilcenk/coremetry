@@ -8,7 +8,7 @@ import { TraceWaterfall } from '@/components/TraceWaterfall';
 import { TraceLogsPanel } from './trace/TraceLogsPanel';
 import { KioskSpanPanel } from './trace/KioskSpanPanel'; // v0.10.681 — alt span detayı
 import { useEscLayer } from '@/lib/escLayer';
-import { pickRootSpan, bundleLogsState, KIOSK_LOG_LIMIT_DEFAULT, KIOSK_LOG_LIMIT_MAX } from './trace/kioskModel';
+import { pickRootSpan, bundleLogsState, toggleSpanSelection, KIOSK_LOG_LIMIT_DEFAULT, KIOSK_LOG_LIMIT_MAX } from './trace/kioskModel';
 import { useTraceBundle } from '@/lib/queries';
 import { perSpanLogSignals, spanEventLogRows, splitGrpcMessageEvents } from '@/lib/traceEventLogs';
 import { STORAGE_KEYS, getRaw, setRaw } from '@/lib/storage';
@@ -150,7 +150,7 @@ export function TraceKiosk() {
       <TraceWaterfall
         spans={spans}
         selectedId={selectedId}
-        onSelect={setSelectedId}
+        onSelect={id => setSelectedId(prev => toggleSpanSelection(prev, id))} // v0.10.685 — tekrar tık kapatır
         analysis={analysis}
         revealSpanId={revealSpanId}
         logSignals={logSignals}

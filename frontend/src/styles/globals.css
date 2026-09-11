@@ -3598,6 +3598,16 @@ thead th:hover .th-remove { opacity: 1; }
 .kiosk-span__group { margin-bottom: var(--sp-4); }
 .kiosk-span__group > summary { cursor: pointer; list-style: revert; margin-bottom: var(--sp-2); }
 .kiosk-span__cnt { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: var(--sp-2); border-radius: 9px; background: var(--bg2); color: var(--text2); font-size: var(--fs-3xs); text-align: center; text-transform: none; letter-spacing: 0; }
+/* v0.10.686 (operatör: "Tempo'da yazılar daha iyi, Coremetry'de çok büyük
+   alanlar kalıyor") — kiosk attribute tabloları Tempo yoğunluğunda: anahtar
+   sütunu İÇERİĞE sığar (width:1% + nowrap; paylaşılan .ps-kv'nin 140-320px
+   anahtar kuralı burada geçersiz), 11.5px mono, dar satır; sayı mavi. */
+.kiosk-span .ps-kv { font-size: 11.5px; line-height: 1.35; }
+.kiosk-span .ps-kv td { padding: 2px 0; }
+.kiosk-span .ps-kv td:first-child { width: 1%; min-width: 0; max-width: none; white-space: nowrap; padding-right: var(--sp-8); color: var(--text2); }
+.kiosk-span .ps-kv td:last-child { color: var(--text); }
+.kiosk-span__num { color: var(--info); }
+.kiosk-span__cols { gap: var(--sp-8); }
 .kiosk-span__cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: var(--sp-6); }
 .kiosk-span__col-title { font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin-bottom: var(--sp-3); }
 .kiosk-span__empty { color: var(--text3); font-size: var(--fs-xs); }

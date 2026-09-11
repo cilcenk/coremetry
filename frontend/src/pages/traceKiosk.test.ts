@@ -16,6 +16,7 @@ describe('TraceKiosk (v0.10.675)', () => {
   it('seçili span için alt panel + Esc katmanı', () => {
     expect(kiosk).toContain('<KioskSpanPanel');
     expect(kiosk).toContain('renderDetail={id =>'); // v0.10.682 — satır-içi
+    expect(kiosk).toContain('setSelectedId(prev => toggleSpanSelection(prev, id))'); // v0.10.685 — tekrar tık kapatır
     expect(kiosk).toContain('useEscLayer(!!selectedSpan, () => setSelectedId(null))');
   });
   it('krom bileşenlerini ithal etmez', () => {

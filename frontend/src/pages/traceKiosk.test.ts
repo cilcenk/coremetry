@@ -12,6 +12,11 @@ const trace = readFileSync(resolve(__dirname, 'Trace.tsx'), 'utf8');
 const panel = readFileSync(resolve(__dirname, 'trace/TraceLogsPanel.tsx'), 'utf8');
 
 describe('TraceKiosk (v0.10.675)', () => {
+  // v0.10.681 — alt span paneli: seçili span → KioskSpanPanel, Esc kapatır.
+  it('seçili span için alt panel + Esc katmanı', () => {
+    expect(kiosk).toContain('<KioskSpanPanel');
+    expect(kiosk).toContain('useEscLayer(!!selectedSpan, () => setSelectedId(null))');
+  });
   it('krom bileşenlerini ithal etmez', () => {
     for (const bad of ["from '@/components/Topbar'", 'AIExplainButton', 'ExternalLinkButtons', 'SharePopover', "from '@/components/SpanDetail'", 'EventSource']) {
       expect(kiosk).not.toContain(bad);

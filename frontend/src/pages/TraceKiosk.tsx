@@ -6,6 +6,8 @@ import { CopyButton } from '@/components/CopyButton';
 import { SvcBadge } from '@/components/traces/shared';
 import { TraceWaterfall } from '@/components/TraceWaterfall';
 import { TraceLogsPanel } from './trace/TraceLogsPanel';
+import { KioskSpanPanel } from './trace/KioskSpanPanel'; // v0.10.681 — alt span detayı
+import { useEscLayer } from '@/lib/escLayer';
 import { pickRootSpan, bundleLogsState, KIOSK_LOG_LIMIT_DEFAULT, KIOSK_LOG_LIMIT_MAX } from './trace/kioskModel';
 import { useTraceBundle } from '@/lib/queries';
 import { perSpanLogSignals, spanEventLogRows, splitGrpcMessageEvents } from '@/lib/traceEventLogs';
@@ -48,6 +50,11 @@ export function TraceKiosk() {
   const spans = useMemo(() => bundle?.spans ?? [], [bundle]);
   const analysis = bundle?.analysis;
   const root = useMemo(() => pickRootSpan(spans, analysis), [spans, analysis]);
+  // v0.10.681 — seçili span'in alt paneli (Tempo düzeni); Esc kapatır.
+  const selectedSpan = useMemo(
+    () => (selectedId ? spans.find(s => s.spanId === selectedId) ?? null : null),
+    [spans, selectedId]);
+  useEscLayer(!!selectedSpan, () => setSelectedId(null));
 
   useEffect(() => {
     if (typeof window === 'undefined' || !id) return;
@@ -148,6 +155,15 @@ export function TraceKiosk() {
         revealSpanId={revealSpanId}
         logSignals={logSignals}
       />
+      {selectedSpan && (
+        <KioskSpanPanel
+          span={selectedSpan}
+          traceStartNs={Number.isFinite(minT) ? minT : selectedSpan.startTime}
+          logs={logsState.logs ?? []}
+          eventRows={eventRows}
+          onClose={() => setSelectedId(null)}
+        />
+      )}
       <div className="trace-kiosk__logs">
         <div className="trace-kiosk__logs-head">
           <span>Logs</span>

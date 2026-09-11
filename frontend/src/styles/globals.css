@@ -3582,6 +3582,22 @@ thead th:hover .th-remove { opacity: 1; }
 .trace-kiosk__brand-spacer { flex: 1; }
 .trace-kiosk__brand-link { font-size: var(--fs-sm); font-weight: 600; color: var(--accent2); text-decoration: none; padding: var(--sp-2) var(--sp-4); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg1); }
 .trace-kiosk__brand-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* v0.10.681 — kiosk span paneli (Tempo'nun alt detayının ikizi): şelalenin
+   altında, iki sütun attribute grupları (.ps-* tabloları SpanDetail ile ortak). */
+.kiosk-span { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg1); padding: var(--sp-4) var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-3); }
+.kiosk-span__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); }
+.kiosk-span__name { font-weight: 600; color: var(--text); font-size: var(--fs-md); }
+.kiosk-span__meta { color: var(--text2); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.kiosk-span__facts { display: flex; flex-wrap: wrap; gap: var(--sp-3) var(--sp-6); font-size: var(--fs-xs); color: var(--text2); font-variant-numeric: tabular-nums; }
+.kiosk-span__facts b { color: var(--text); font-weight: 600; }
+.kiosk-span__group { margin-bottom: var(--sp-4); }
+.kiosk-span__group > summary { cursor: pointer; list-style: revert; margin-bottom: var(--sp-2); }
+.kiosk-span__cnt { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: var(--sp-2); border-radius: 9px; background: var(--bg2); color: var(--text2); font-size: var(--fs-3xs); text-align: center; text-transform: none; letter-spacing: 0; }
+.kiosk-span__cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: var(--sp-6); }
+.kiosk-span__col-title { font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin-bottom: var(--sp-3); }
+.kiosk-span__empty { color: var(--text3); font-size: var(--fs-xs); }
+.kiosk-span__exc { font-size: var(--fs-xs); margin-bottom: var(--sp-3); }
+.kiosk-span__stack { font-size: var(--fs-3xs); max-height: 260px; overflow: auto; background: var(--bg2); padding: var(--sp-3); border-radius: var(--radius-xs); white-space: pre-wrap; }
 
 /* v0.10.676 — Traces NAME hücresinde satır-içi kiosk düğmesi: satır hover'ında
    ya da klavye odağında görünür; Link'in dışında, hücreye mutlak konumlu. */

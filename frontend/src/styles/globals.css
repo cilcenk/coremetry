@@ -1346,6 +1346,9 @@ tbody td.row-cell, [data-density] tbody td.row-cell { padding: 0; }
 .crumbs__cur { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 /* /trace özet şeridi (v0.10.219): rozet · id · durum · sayılar · başlangıç · eylemler. */
 .trace-summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-5) var(--sp-6); margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-6); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg1); }
+/* v0.10.678 — trace toplam süresi: şeridin en belirgin sayısı (operatör isteği);
+   Trace.tsx özet şeridi + TraceKiosk başlığı aynı sınıfı kullanır. */
+.trace-summary__dur { font-weight: 700; font-size: var(--fs-lg); color: var(--text); font-variant-numeric: tabular-nums; letter-spacing: 0.01em; }
 /* Pinned action column (v0.8.573 — Endpoints "Traces"). Wide tables
    overflow .table-wrap's horizontal scroll and the scrollbar renders
    below ALL the rows, so a trailing drill-through column was invisible

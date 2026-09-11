@@ -509,7 +509,11 @@ function TraceDetailInner() {
             <>
               <span className={`badge ${hasErr ? 'b-err' : 'b-ok'}`}>{hasErr ? 'ERROR' : 'OK'}</span>
               {errSpans > 0 && <span className="cell-hint">{errSpans} error span{errSpans === 1 ? '' : 's'}</span>}
-              <span style={{ color: 'var(--text2)', fontSize: 12 }}>{spans.length} spans · {svcCount} service{svcCount === 1 ? '' : 's'} · {fmtNs(totalNs)}</span>
+              {/* v0.10.678 (operatör: "trace'in toplam süresini daha net görebilsek") —
+                  süre gri sayım satırından ayrıldı; tarih gibi (v0.10.347) şeridin
+                  okunan sayısı. totalNs = ilk span başlangıcı → son span bitişi. */}
+              <span className="trace-summary__dur" title="Trace toplam süresi: ilk span başlangıcından son span bitişine">⏱ {fmtNs(totalNs)}</span>
+              <span style={{ color: 'var(--text2)', fontSize: 12 }}>{spans.length} spans · {svcCount} service{svcCount === 1 ? '' : 's'}</span>
               {/* v0.10.347 (operatör: "en üstteki tarih daha belirgin olabilir") —
                   trace zamanı ikincil gri yazı değil, şeridin okunan sayısı. */}
               {root && <span style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }} title="Trace başlangıcı (kök span)">{tsLong(root.startTime)}</span>}

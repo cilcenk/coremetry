@@ -106,7 +106,8 @@ export function TraceKiosk() {
         </span>
         <span className={`badge ${hasErr ? 'b-err' : 'b-ok'}`}>{hasErr ? 'ERROR' : 'OK'}</span>
         {errSpans > 0 && <span className="cell-hint">{errSpans} error span{errSpans === 1 ? '' : 's'}</span>}
-        <span>{spans.length} spans · {svcCount} service{svcCount === 1 ? '' : 's'} · {fmtNs(totalNs)}</span>
+        <span className="trace-summary__dur" title="Trace toplam süresi: ilk span başlangıcından son span bitişine">⏱ {fmtNs(totalNs)}</span>
+        <span>{spans.length} spans · {svcCount} service{svcCount === 1 ? '' : 's'}</span>
         {root && <span title="Trace başlangıcı (kök span)">{tsLong(root.startTime)}</span>}
         <code className="trace-kiosk__id">{id}<CopyButton value={id} title="Copy trace ID" /></code>
         {bundle.source === 'tempo' && <span className="badge b-info" title="source: Tempo fallback">Tempo</span>}

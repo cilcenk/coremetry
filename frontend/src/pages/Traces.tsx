@@ -31,6 +31,7 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { FilterQueryBox } from '@/components/FilterQueryBox';
 import { FilterGroupBuilder } from '@/components/FilterGroupBuilder';
 import { Button } from '@/components/ui/Button';
+import { IconButton } from '@/components/ui'; // v0.10.676 — satır-içi kiosk düğmesi
 import { Chip } from '@/components/ui/Chip';
 import { Pager } from '@/components/Pager';
 import { ColumnManager } from '@/components/ColumnManager';
@@ -1468,6 +1469,21 @@ function TracesPageInner() {
                           className={ownLink ? undefined : 'row-cell'}
                           style={{ background: t.hasError ? 'color-mix(in srgb, var(--err) 8%, transparent)' : undefined }}>
                           {ownLink ? cell : <Link to={href} state={{ from: loc.pathname + loc.search }} className={id === 'operation' ? 'row-link row-link--name' : 'row-link'}>{cell}</Link>}
+                          {/* v0.10.676 — kiosk modu: NAME hücresinde hover/odakta görünen
+                              ⧉ düğmesi, /trace?id=…&kiosk=1'i YENİ PENCEREDE açar (kromsuz
+                              şelale + loglar; kabuk dalı AppShell, sayfa TraceKiosk).
+                              noopener: pencereler bağımsız (sessionStorage/opener yok).
+                              Link'in DIŞINDA — <a> içinde <button> geçersiz HTML. */}
+                          {id === 'operation' && (
+                            <IconButton className="row-kiosk"
+                              aria-label="Kiosk görünümünde aç (yeni pencere)"
+                              title="Kiosk: kromsuz tam ekran şelale + loglar, yeni pencerede"
+                              icon={<span aria-hidden="true">⧉</span>}
+                              onClick={e => {
+                                e.preventDefault(); e.stopPropagation();
+                                window.open(traceHref(t.traceId, { kiosk: true, pageRange: range }), '_blank', 'noopener,noreferrer');
+                              }} />
+                          )}
                         </td>
                       );
                     })}

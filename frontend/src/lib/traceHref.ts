@@ -86,6 +86,12 @@ export interface TraceHrefOpts {
   tab?: 'logs' | null;
   /** Group similar sibling spans — /trace's `?xn=1` (v0.9.1277). */
   groupSimilar?: boolean;
+  /**
+   * v0.10.676 — kiosk modu (`?kiosk=1`): kromsuz tam ekran şelale + loglar
+   * (pages/TraceKiosk.tsx; kabuk dalı AppShell + lib/kioskMode.ts). Yeni
+   * pencerede açılmak için üretilir; okuyucu Trace.tsx varsayılan export'u.
+   */
+  kiosk?: boolean;
 }
 
 /**
@@ -123,6 +129,7 @@ export function traceHref(id: string, opts: TraceHrefOpts = {}): string {
   if (opts.span) q.set('span', opts.span);
   if (opts.tab === 'logs') q.set('tab', 'logs');
   if (opts.groupSimilar) q.set('xn', '1');
+  if (opts.kiosk) q.set('kiosk', '1');
   if (opts.pageRange) {
     const enc = pageRangeParam(opts.pageRange);
     if (enc) q.set('range', enc);

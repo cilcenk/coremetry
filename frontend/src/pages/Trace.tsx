@@ -412,6 +412,9 @@ function TraceDetailInner() {
   // v0.10.360 (operatör: "en yukarı koy demedim") — Compare / Logs / Share /
   // Export JSON + kritik yol özeti breadcrumb satırının SAĞINDA, gri alanda;
   // v0.10.354'ün topbar yuvası geri alındı.
+  // v0.10.676 — kiosk href tek yerde (Trace.identityMenu.pin testi ham
+  // window.open çağrılarını dar pencerede tarar; uzun argüman sığmıyordu).
+  const kioskHref = traceHref(id, { kiosk: true, span: selectedId, pageRange: range });
   const traceActions = spans && spans.length > 0 ? (
 
               <>
@@ -467,6 +470,14 @@ function TraceDetailInner() {
                   title="Download this trace as JSON (full span list with attributes + events)"
                   leftIcon={<IconDownload />}>
                   <span>Export JSON</span>
+                </Button>
+                {/* v0.10.676 — kiosk modu: aynı trace'i (seçili span dahil) kromsuz
+                    tam ekran şelale + loglar olarak YENİ PENCEREDE açar
+                    (pages/TraceKiosk.tsx; kabuk dalı AppShell + lib/kioskMode.ts). */}
+                <Button variant="secondary" size="sm"
+                  onClick={() => window.open(kioskHref, '_blank', 'noopener,noreferrer')}
+                  title="Kiosk: kromsuz tam ekran şelale + loglar, yeni pencerede">
+                  <span>⧉ Kiosk</span>
                 </Button>
               </>
   ) : null;

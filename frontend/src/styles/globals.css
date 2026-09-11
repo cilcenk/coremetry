@@ -3572,6 +3572,12 @@ thead th:hover .th-remove { opacity: 1; }
 .trace-kiosk__logs { border-top: 1px solid var(--border); padding-top: var(--sp-3); }
 .trace-kiosk__logs-head { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--text2); padding-bottom: var(--sp-2); }
 
+/* v0.10.676 — Traces NAME hücresinde satır-içi kiosk düğmesi: satır hover'ında
+   ya da klavye odağında görünür; Link'in dışında, hücreye mutlak konumlu. */
+.row-cell { position: relative; }
+.row-kiosk { position: absolute; right: var(--sp-2); top: 50%; transform: translateY(-50%); opacity: 0; }
+tr:hover .row-kiosk, .row-kiosk:focus-visible { opacity: 1; }
+
 /* ══ DAR EKRAN KATMANI (v0.9.980) ══════════════════════════════════════
    Dar ekran denetimi DALGA 2. Bu katman dosyanın SONUNDA duruyor ve bu
    KASITLI: `[data-density="compact"] .controls input { font-size: 11px }`

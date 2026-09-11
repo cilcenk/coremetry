@@ -112,3 +112,17 @@ describe('traceHref — an event window must not COMPILE as a page range', () =>
     expect(params(href).has('range')).toBe(false);
   });
 });
+
+// v0.10.676 — kiosk modu: `kiosk=1` yalnız istenince, diğer anahtarlar aynen
+// (Trace.tsx varsayılan export'u okur; AppShell kabuk dalı lib/kioskMode.ts).
+describe('traceHref — kiosk (v0.10.676)', () => {
+  it('kiosk:true → kiosk=1; span/range ile birlikte taşınır', () => {
+    const p = params(traceHref('t1', { kiosk: true, span: 's1', pageRange: { preset: '6h' } }));
+    expect(p.get('kiosk')).toBe('1');
+    expect([...p.keys()].sort()).toEqual(['id', 'kiosk', 'range', 'span']);
+  });
+  it('kiosk yoksa anahtar hiç yazılmaz', () => {
+    expect(params(traceHref('t1', { kiosk: false })).has('kiosk')).toBe(false);
+    expect(traceHref('t1')).toBe('/trace?id=t1');
+  });
+});

@@ -2,7 +2,8 @@ import { Fragment, useState, type ReactNode } from 'react';
 import { chatErrorText } from './chatErrorText';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { AIFeedbackButtons } from './AIFeedbackButtons';
-import { chartBlocks, mergeBlockLinks } from '@/lib/chatBlocks';
+import { chartBlocks, mergeBlockLinks, traceListBlocks } from '@/lib/chatBlocks';
+import { ChatTraceList } from './ChatTraceList'; // v0.10.688 — trace_list bloğu
 import { evidenceBlocks } from '@/lib/chatEvidence'; // v0.10.558
 import { EvidenceCard } from './EvidenceCard';
 import { parseAction, actionVisible, applyActionHref } from '@/lib/pageActions';
@@ -511,6 +512,8 @@ export function ChatBubble({ turn, onRetry }: { turn: ChatTurn; onRetry?: () => 
             {!turn.pending && chartBlocks(turn.blocks).map((spec, i) => <CosreChart key={`blk-${i}`} spec={spec as CosreChartSpec} />)}
             {/* v0.10.558 — kök-neden rotasının yapısal kanıt kartı (operatör mockup onayı) */}
             {!turn.pending && evidenceBlocks(turn.blocks).map((ev, i) => <EvidenceCard key={`ev-${i}`} ev={ev} />)}
+            {/* v0.10.688 — endpoint trace listesi: deterministik tablo (D6), satır = trace linki */}
+            {!turn.pending && traceListBlocks(turn.blocks).map((tl, i) => <ChatTraceList key={`tl-${i}`} tl={tl} />)}
             {/* v0.10.542 — action bloğu: yalnız tool sonucundan (sunucu chat_actions.go),
                 yalnız hedef sayfa açıkken; URL birleşimi + replace:true, yeni sekme yok. */}
             {!turn.pending && (turn.blocks ?? []).filter(b => b.type === 'action').map(b => {

@@ -105,8 +105,11 @@ func applyContextMutation(c ChatContext, m contextMutation) (guidedRoute, int64,
 	case "errors":
 		c.ErrorsOnly = true
 		switch last.Intent {
-		case guidedTraceSearch, guidedFamilyTraces:
+		case guidedTraceSearch, guidedFamilyTraces, guidedEndpointTraces:
 			last.TraceErrorsOnly = true
+			return last, rangeS, c, true
+		case guidedEndpointCandidates: // v0.10.688 — "sadece hatalı olanlar" onay sayılır
+			last.Intent, last.TraceErrorsOnly = guidedEndpointTraces, true
 			return last, rangeS, c, true
 		case guidedSlowTraces:
 			if last.Service == "" {

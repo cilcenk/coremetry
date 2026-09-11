@@ -1,6 +1,6 @@
 // chatBlocks.ts — v0.10.541 (Faz 3.3a): tipli blok biriktirme, SAF.
 // Aynı id ikinci kez gelirse (final güncellemesi) yerine geçer; sıra seq.
-import type { ChatTypedBlock, ChatAnswerLink, CosreChartSpecLike } from './types';
+import type { ChatTypedBlock, ChatAnswerLink, CosreChartSpecLike, ChatTraceListPayload } from './types';
 
 export function appendChatBlock(blocks: ChatTypedBlock[] | undefined, b: ChatTypedBlock): ChatTypedBlock[] {
   const rest = (blocks ?? []).filter(x => x.id !== b.id);
@@ -26,4 +26,10 @@ export function mergeBlockLinks(links: ChatAnswerLink[] | undefined, blocks: Cha
     }
   }
   return out;
+}
+
+/** v0.10.688 — trace_list blokları (endpoint_traces.go); şekil doğrulanır, bozuk yük atlanır. */
+export function traceListBlocks(blocks: ChatTypedBlock[] | undefined): ChatTraceListPayload[] {
+  return (blocks ?? []).filter(b => b.type === 'trace_list').map(b => b.payload as ChatTraceListPayload)
+    .filter(p => p && Array.isArray(p.traces) && typeof p.deepLink === 'string');
 }

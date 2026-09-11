@@ -166,8 +166,12 @@ func contextPatchFromRoute(c ChatContext, route guidedRoute, rangeS int64, expli
 	if route.Intent == guidedNamespaceServices && route.FindQuery != "" && !route.FindList {
 		c.Namespace = route.FindQuery
 	}
-	if route.Intent == guidedFamilyTraces || route.Intent == guidedTraceSearch || route.Intent == guidedSlowTraces {
+	if route.Intent == guidedFamilyTraces || route.Intent == guidedTraceSearch || route.Intent == guidedSlowTraces || route.Intent == guidedEndpointTraces {
 		c.ErrorsOnly = route.TraceErrorsOnly
+	}
+	if (route.Intent == guidedEndpointCandidates || route.Intent == guidedEndpointTraces) && route.SearchText != "" { // v0.10.688
+		c.SearchText = route.SearchText
+		c.Filters = nil
 	}
 	if route.Intent == guidedTraceSearch && route.SearchText != "" {
 		c.SearchText = route.SearchText

@@ -5752,6 +5752,11 @@ export type ChatBlockType = 'text' | 'table' | 'chart' | 'trace_list' | 'link' |
 /** chart bloğunun gövdesi — components/cosreChartSpec.ts CosreChartSpec ile aynı alanlar (Go guidedChartSpec). */
 export interface CosreChartSpecLike { title?: string; service: string; operation?: string; agg: string; unit?: string; rangeS?: number; groupBy?: string; fromNs?: number; toNs?: number; compare?: { kind?: string; shiftS: number }; source?: 'span' | 'metric' }
 export interface ChatTypedBlock { id: string; type: ChatBlockType; seq: number; final: boolean; payload: unknown }
+// ChatTraceListPayload — v0.10.688: `trace_list` bloğu (internal/api/
+// endpoint_traces.go traceListPayload). Deterministik trace tablosu (D6):
+// satır = trace linki, deepLink aynı süzgeçle /traces, truncated = limit dolu.
+export interface ChatTraceListRow { traceId: string; startTime: number; serviceName: string; rootName: string; durationMs: number; spanCount: number; hasError: boolean }
+export interface ChatTraceListPayload { query: string; window: { fromNs: number; toNs: number }; traces: ChatTraceListRow[]; deepLink: string; truncated: boolean }
 
 // ProblemInsight — GET /api/problems/{id}/insight (v0.10.562, internal/api/problem_insight.go):
 // deterministik insight şeridi; hücre bilinmiyorsa null (şerit "—" basar).

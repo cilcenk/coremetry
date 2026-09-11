@@ -3479,6 +3479,9 @@ thead th:hover .th-remove { opacity: 1; }
   white-space: nowrap;
 }
 .cm-md-table tbody tr { cursor: default; }
+/* v0.10.688 — sohbette trace listesi bloğu (ChatTraceList). */
+.cm-trace-list { margin-top: var(--sp-3); overflow-x: auto; }
+.cm-trace-list__more { margin-top: var(--sp-2); font-size: var(--fs-xs); }
 .cm-md-table tbody tr:hover { background: transparent; }
 .cm-md-table tbody td {
   padding: 5px 8px; max-width: none;

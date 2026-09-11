@@ -260,6 +260,9 @@ type guidedRoute struct {
 	// v0.10.476 (F3-5, trace_nl_search.go) — değerin bulunduğu attribute anahtarları
 	// (bundle yazar; link süzgeç çipine döner).
 	SearchKeys []string
+	// v0.10.688 (endpoint_traces.go) — endpoint_candidates turunun adayları
+	// (bundle yazar; çipler ve trace cevabının başlığı okur).
+	EndpointOptions []endpointCandidate
 	// v0.10.479 (F4-2) — namespace_services: yalnız pod listesi ("bunun pod'ları").
 	FindPods bool
 }
@@ -449,6 +452,7 @@ func hasGuidedSignal(msg string) bool {
 		hasTeamSelfSignal(toks) || hasPodSignal(toks) ||
 		hasShiftSignal(msg, toks) || hasDBSignal(toks) || hasMessagingSignal(toks) ||
 		hasWhySignal(toks) || hasPeriodSignal(toks) || // v0.10.438 (D3)
+		hasEndpointRequestSignal(toks) || // v0.10.688 — "X isteklerini getir"
 		// v0.9.537 — açık trace ID'si ya da "trace" kökü (prefix:
 		// Türkçe ekli hâlleri de yakalar — "tracei", "trace'in";
 		// ekrandaki trace'e bağlamdan gitmek için, ctxTrace çözümü
@@ -1019,6 +1023,15 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 			}
 		}
 	}
+	// v0.10.688 — "X isteklerini getir": yolunda X geçen endpoint adayları (SOR);
+	// "/yol trace'lerini getir" (aday çipi) → doğrudan trace listesi (endpoint_traces.go).
+	if q, confirmed, ok := extractEndpointRequest(raw, msg, toks, services, envs, svc); ok {
+		r := guidedRoute{Intent: guidedEndpointCandidates, SearchText: q, Env: env, TraceErrorsOnly: hasErrorSignal(toks)}
+		if confirmed {
+			r.Intent = guidedEndpointTraces
+		}
+		return r
+	}
 	// v0.10.436 (D2b) — "X servisinde içinde <parça> geçen trace'ler".
 	if frag, isSQL, ok := extractTraceSearch(raw, toks); ok {
 		tsvc := svc
@@ -1440,7 +1453,8 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// hak eder ("mobile bff'yi bulabilir misin lütfen" 6 jeton, mayNameTeam 5'te
 	// keser).
 	findCue := hasFindSignal(guidedTokens(norm))
-	if !hasGuidedSignal(norm) && !followCue && !mayNameTeam(norm) && !absShape && !findCue {
+	affirm := isAffirmative(norm) // v0.10.688 — çıplak "evet" bağlamdaki aday turunu onaylar
+	if !hasGuidedSignal(norm) && !followCue && !mayNameTeam(norm) && !absShape && !findCue && !affirm {
 		return false, false // zero-cost fast path: no catalogue read
 	}
 	svcNames, envNames := s.guidedServiceNames(ctx), s.guidedEnvNames(ctx)
@@ -1451,6 +1465,22 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// → aktif bağlamın son rotası klonlanır, alan değişir, aynı dispatch; router'ın
 	// bunları yeni soru sanmasından ÖNCE (chat_followups.go).
 	if st := chatContextFromCtx(ctx); st != nil && st.ctx.LastRoute != nil {
+		// v0.10.688 — ONAY: son tur endpoint adaylarıysa "evet/tamam/hepsi/olur/ok/getir"
+		// aynı sorguyla trace listesine gider (tur-arası durum yok; LastRoute yeter).
+		if affirm {
+			if er, ok := endpointAffirmativeRoute(st.ctx); ok {
+				rs := st.ctx.RangeS
+				if rs <= 0 {
+					rs = endpointWindowS
+				}
+				emitGuidedContextStep(emit, "onay: endpoint trace'leri (bağlam)")
+				handled, ok = s.runGuidedRoute(ctx, emit, er, rs, question, msgs, explain, ctxService, ctxOperation, "", anchorTo)
+				if handled {
+					s.noteChatContextRoute(ctx, er, rs, false)
+				}
+				return handled, ok
+			}
+		}
 		explicitEntity := extractServiceEntity(norm, svcNames, envNames) != "" || hasNamespaceWord(guidedTokens(norm))
 		if m, ok := detectContextMutation(norm, guidedTokens(norm), st.ctx, explicitEntity); ok {
 			if mr, mrange, next, ok := applyContextMutation(st.ctx, m); ok {
@@ -1578,6 +1608,13 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 			rangeS = 12 * 3600
 		}
 	}
+	// v0.10.688 — endpoint rotaları varsayılan son 1 saat (operatör kararı); açık
+	// pencere ve "son 6 saate genişlet" kipi kazanır.
+	if route.Intent == guidedEndpointCandidates || route.Intent == guidedEndpointTraces {
+		if _, explicit := guidedRangeSExplicit(norm); !explicit {
+			rangeS = endpointWindowS
+		}
+	}
 	// v0.10.33 — ÇIPA. Eskiden koşulsuz `time.Now()`du: operatör dün gece
 	// 03:00-04:00'a zoom yapıp soru sorduğunda, sohbet aynı UZUNLUKTA ama
 	// BUGÜNKÜ pencereyi cevaplıyordu. Sayılar gerçek olduğu için hata
@@ -1630,6 +1667,10 @@ func (s *Server) runGuidedRoute(ctx context.Context, emit func(string, any), rou
 	}
 	if route.Intent == guidedNamespaceServices { // v0.10.470 (F2-3)
 		return s.guidedNamespaceServicesAnswer(ctx, emit, route, from, to, rangeS)
+	}
+	// v0.10.688 — endpoint adayları / trace listesi: LLM'siz (endpoint_traces.go).
+	if route.Intent == guidedEndpointCandidates || route.Intent == guidedEndpointTraces {
+		return s.guidedEndpointAnswer(ctx, emit, route, from, to, rangeS)
 	}
 	if route.Intent == guidedOpenPage {
 		links := dedupLinksByHref(guidedAnswerLinks(route, linkWindowBetween(from, to)))

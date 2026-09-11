@@ -135,6 +135,10 @@ func withBlockSeq(emit func(string, any), seq *blocks.Sequencer) func(string, an
 			emit("block", seq.Next(blocks.TypeEvidence, payload))
 			return
 		}
+		if kind == "trace_list" && seq != nil { // v0.10.688 — endpoint trace listesi (FE tablo)
+			emit("block", seq.Next(blocks.TypeTraceList, payload))
+			return
+		}
 		emit(kind, payload)
 	}
 }

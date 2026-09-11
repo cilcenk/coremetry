@@ -123,6 +123,16 @@ func guidedSuggestions(route guidedRoute) []string {
 		return askServiceChipFor(route) // v0.10.436 (D2) — çift/arama çipleri diğer yarıyı taşır
 	}
 	switch route.Intent {
+	case guidedEndpointCandidates: // v0.10.688 — onay + aday çipleri (deterministik yönlenir)
+		if len(route.EndpointOptions) == 0 {
+			return []string{"Son 6 saate genişlet", "Son 24 saate genişlet"}
+		}
+		return endpointCandidateChips(route)
+	case guidedEndpointTraces: // v0.10.688 — kipler (chat_followups.go)
+		if route.TraceErrorsOnly {
+			return []string{"Son 6 saate genişlet", "Son 24 saate genişlet"}
+		}
+		return []string{"Sadece hatalı olanlar", "Son 6 saate genişlet", "Son 24 saate genişlet"}
 	case guidedServiceHealth:
 		return []string{
 			svc + " en yavaş trace'ler?",
@@ -388,6 +398,8 @@ func guidedAnswerLinkTargets(route guidedRoute) []guidedAnswerLink {
 			return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?service=" + svcQ + "&severity=17"}}
 		}
 		return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?severity=17"}}
+	case guidedEndpointCandidates, guidedEndpointTraces: // v0.10.688 — aynı süzgeçle /traces
+		return []guidedAnswerLink{{Label: "Trace'ler (" + route.SearchText + ")", Href: endpointTracesHref(route.SearchText, route.TraceErrorsOnly)}}
 	case guidedNamespaceServices: // v0.10.470 (F2-3) — handler linkleri kendisi kurar
 		return []guidedAnswerLink{{Label: "Clusters", Href: "/clusters"}}
 	case guidedFamilyTraces: // v0.10.465 (D2) — aynı süzgeçle /traces

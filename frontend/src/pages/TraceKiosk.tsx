@@ -13,6 +13,9 @@ import { STORAGE_KEYS, getRaw, setRaw } from '@/lib/storage';
 import { spanHasError } from '@/lib/otel';
 import { fmtNs, tsLong, displaySpanName } from '@/lib/utils';
 import { logsHref } from '@/lib/logsUrl';
+import { useBranding } from '@/lib/branding';
+import { TelescopeIcon } from '@/components/TelescopeIcon';
+import { Wordmark } from '@/components/Wordmark';
 
 // TraceKiosk — v0.10.675 (trace kiosk modu Dilim 4; audit §2.4 yol B, §9).
 //
@@ -30,6 +33,11 @@ import { logsHref } from '@/lib/logsUrl';
 export function TraceKiosk() {
   const [searchParams] = useSearchParams();
   const id = searchParams.get('id') ?? '';
+  // v0.10.679 (operatör: "paylaşım görünümündeki gibi Coremetry adı ve logo da
+  // olsa") — marka şeridi; özel marka (Settings → Branding) varsa onun
+  // logosu/adı, yoksa OTel işareti + iki tonlu Wordmark (PublicTrace/Sidebar
+  // ile aynı öğeler).
+  const brand = useBranding();
   const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('span'));
   const [revealSpanId] = useState<string | null>(() => searchParams.get('span'));
   // "Daha fazla" = limit 500 → 1000 (sunucu tavanı); anahtar değişir, eski
@@ -99,6 +107,15 @@ export function TraceKiosk() {
 
   return (
     <div className="trace-kiosk">
+      <div className="trace-kiosk__brand">
+        {brand.logoDataUri
+          ? <img className="trace-kiosk__logo" src={brand.logoDataUri} alt="" />
+          : <TelescopeIcon size={26} />}
+        <div>
+          <div className="trace-kiosk__brand-name"><Wordmark name={brand.appName} /></div>
+          <div className="trace-kiosk__brand-sub">Trace kiosk · salt-okunur görünüm</div>
+        </div>
+      </div>
       <div className="trace-kiosk__head">
         {root && <SvcBadge name={root.serviceName} />}
         <span className="trace-kiosk__title" title={root ? displaySpanName(root) : id}>

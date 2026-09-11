@@ -3574,6 +3574,11 @@ thead th:hover .th-remove { opacity: 1; }
 .trace-kiosk__id { font-size: var(--fs-xs); color: var(--text2); background: var(--bg2); padding: 2px 6px; border-radius: var(--radius-sm); }
 .trace-kiosk__logs { border-top: 1px solid var(--border); padding-top: var(--sp-3); }
 .trace-kiosk__logs-head { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--text2); padding-bottom: var(--sp-2); }
+/* v0.10.679 — kiosk marka şeridi (PublicTrace başlığının ikizi): logo + ad + alt satır. */
+.trace-kiosk__brand { display: flex; align-items: center; gap: var(--sp-5); padding-bottom: var(--sp-4); border-bottom: 1px solid var(--border); }
+.trace-kiosk__logo { height: 26px; width: auto; max-width: 120px; }
+.trace-kiosk__brand-name { font-size: var(--fs-lg); font-weight: 700; letter-spacing: 0.3px; color: var(--text); }
+.trace-kiosk__brand-sub { font-size: var(--fs-xs); color: var(--text3); }
 
 /* v0.10.676 — Traces NAME hücresinde satır-içi kiosk düğmesi: satır hover'ında
    ya da klavye odağında görünür; Link'in dışında, hücreye mutlak konumlu. */

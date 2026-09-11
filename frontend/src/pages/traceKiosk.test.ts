@@ -26,6 +26,13 @@ describe('TraceKiosk (v0.10.675)', () => {
   it('/logs bağlantısı üreticiden (logsHref), ham yol yazılmaz', () => {
     expect(kiosk).toContain('logsHref({');
   });
+  // v0.10.679 — marka şeridi: özel logo varsa o, yoksa OTel işareti; ad Wordmark'tan.
+  it('marka şeridi: useBranding + logo fallback + Wordmark', () => {
+    expect(kiosk).toContain('const brand = useBranding();');
+    expect(kiosk).toContain('brand.logoDataUri');
+    expect(kiosk).toContain('<TelescopeIcon size={26} />');
+    expect(kiosk).toContain('<Wordmark name={brand.appName} />');
+  });
 });
 
 describe('BAĞLANMA', () => {

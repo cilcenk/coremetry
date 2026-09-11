@@ -22,6 +22,9 @@ import { TraceExplainNudge } from './ai/TraceExplainNudge';
 import { useChatThread } from './ai/useChatThread';
 import { useStickToBottom } from './ai/stickToBottom';
 import { chatInputSubmitKey, autoGrowTextarea, CHAT_INPUT_MAX_PX } from './ai/chatInputKey';
+import { useNameCompletion } from './ai/useNameCompletion'; // v0.10.687 — D4 ad tamamlama
+import { NameCompletionPopup } from './ai/NameCompletionPopup';
+import { applyCompletion } from './ai/chatCompletion';
 import { useCopilotConfig } from './ai/useCopilotEnabled'; // v0.10.483
 import { AI_DRAWER_WIDTH } from './ai/answerCard'; // v0.10.461
 import { AIDrawerBody } from './ai/AIDrawerBody'; // v0.10.483 — ✨ Explain gövdesi aynı çekmecede
@@ -122,6 +125,10 @@ export function CopilotChat() {
   // v0.9.182 — Alternatif A: sayfa-içi tam-boy expand (operatör seçimi).
   const [expanded, setExpanded] = useState(false);
   const [input, setInput] = useState('');
+  // v0.10.687 — D4 ad tamamlama: imleç konumu + aday listesi (sunucu araması).
+  const [caret, setCaret] = useState(0);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const completion = useNameCompletion(input, caret);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Context-awareness (v0.9.164) — bulunulan sayfanın servisi. Mesaj servis
@@ -326,6 +333,20 @@ export function CopilotChat() {
   if (!enabled) return null;
 
   const submit = (text: string) => { setInput(''); pinBottom(); void send(text); };
+  const acceptCompletion = (name: string) => {
+    if (!completion.cq || !name) return;
+    const r = applyCompletion(input, completion.cq, name);
+    setInput(r.text);
+    completion.dismiss();
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(r.caret, r.caret);
+      setCaret(r.caret);
+      autoGrowTextarea(el);
+    });
+  };
 
 
   return (
@@ -587,20 +608,42 @@ export function CopilotChat() {
             {/* v0.10.664 — <textarea>: Enter gönderir, Shift+Enter yeni satır (stack
                 trace / SQL yapıştırılabilir); akarken KİLİTLİ DEĞİL — gönderim
                 mevcut akışı durdurup yeni soruyu gönderir (useChatThread). */}
-            <textarea
-              value={input}
-              rows={1}
-              onChange={e => setInput(e.target.value)}
-              onInput={e => autoGrowTextarea(e.currentTarget)}
-              onKeyDown={e => { if (chatInputSubmitKey(e)) { e.preventDefault(); submit(input); } }}
-              placeholder="CoSRE'ye sor… (Shift+Enter: yeni satır)"
-              autoFocus
-              style={{
-                flex: 1, padding: '7px 10px', fontSize: 13, lineHeight: '18px',
-                background: 'var(--bg)', color: 'var(--text)', fontFamily: 'inherit',
-                border: '1px solid var(--border)', borderRadius: 6,
-                resize: 'none', maxHeight: CHAT_INPUT_MAX_PX, overflowY: 'auto',
-              }} />
+            {/* v0.10.687 — D4: '@ad' ya da tireli token yazınca servis adı adayları
+                girişin ÜSTÜNDE; ↑↓ gezinir, Enter/Tab ekler (göndermez), Esc kapatır. */}
+            <div className="chat-composer-field">
+              {completion.open && (
+                <NameCompletionPopup id="chat-complete" items={completion.items} highlight={completion.highlight}
+                  onPick={acceptCompletion} onHover={completion.setHighlight} />
+              )}
+              <textarea
+                ref={textareaRef}
+                value={input}
+                rows={1}
+                onChange={e => { setInput(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); }}
+                onSelect={e => setCaret(e.currentTarget.selectionStart ?? 0)}
+                onInput={e => autoGrowTextarea(e.currentTarget)}
+                onKeyDown={e => {
+                  if (completion.open) {
+                    if (e.key === 'ArrowDown') { e.preventDefault(); completion.move(1); return; }
+                    if (e.key === 'ArrowUp') { e.preventDefault(); completion.move(-1); return; }
+                    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); acceptCompletion(completion.items[completion.highlight]); return; }
+                    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); completion.dismiss(); return; }
+                  }
+                  if (chatInputSubmitKey(e)) { e.preventDefault(); submit(input); }
+                }}
+                placeholder="CoSRE'ye sor… (Shift+Enter: yeni satır · @servis adı tamamlar)"
+                autoFocus
+                aria-autocomplete="list"
+                aria-controls="chat-complete"
+                aria-expanded={completion.open}
+                aria-activedescendant={completion.open ? `chat-complete-${completion.highlight}` : undefined}
+                style={{
+                  flex: 1, padding: '7px 10px', fontSize: 13, lineHeight: '18px',
+                  background: 'var(--bg)', color: 'var(--text)', fontFamily: 'inherit',
+                  border: '1px solid var(--border)', borderRadius: 6,
+                  resize: 'none', maxHeight: CHAT_INPUT_MAX_PX, overflowY: 'auto',
+                }} />
+            </div>
             {/* v0.10.23 — DURDUR. AbortController zaten kuruluydu ama
                 hiçbir affordance'a bağlı değildi; yerel gemma4 tek GPU'da
                 koştuğu için istenmeyen bir 5-turlu döngü, operatörün

@@ -2564,6 +2564,10 @@ button.accent.copied {
 }
 .cb-row-on { background: var(--bg3); }
 .cb-row-cur { color: var(--accent2); }
+/* v0.10.687 — CoSRE girişi ad tamamlama: popup girişin ÜSTÜNDE (composer
+   çekmecenin dibinde; aşağı açılsa ekran dışına taşardı). */
+.chat-composer-field { position: relative; flex: 1; display: flex; min-width: 0; }
+.chat-complete { top: auto; bottom: calc(100% + 4px); right: 0; max-width: none; }
 .cb-row-empty {
   color: var(--text3);
   font-size: 11px;

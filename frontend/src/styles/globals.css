@@ -3579,6 +3579,9 @@ thead th:hover .th-remove { opacity: 1; }
 .trace-kiosk__logo { height: 26px; width: auto; max-width: 120px; }
 .trace-kiosk__brand-name { font-size: var(--fs-lg); font-weight: 700; letter-spacing: 0.3px; color: var(--text); }
 .trace-kiosk__brand-sub { font-size: var(--fs-xs); color: var(--text3); }
+.trace-kiosk__brand-spacer { flex: 1; }
+.trace-kiosk__brand-link { font-size: var(--fs-sm); font-weight: 600; color: var(--accent2); text-decoration: none; padding: var(--sp-2) var(--sp-4); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg1); }
+.trace-kiosk__brand-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 /* v0.10.676 — Traces NAME hücresinde satır-içi kiosk düğmesi: satır hover'ında
    ya da klavye odağında görünür; Link'in dışında, hücreye mutlak konumlu. */

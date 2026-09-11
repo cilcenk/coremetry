@@ -115,6 +115,12 @@ export function TraceKiosk() {
           <div className="trace-kiosk__brand-name"><Wordmark name={brand.appName} /></div>
           <div className="trace-kiosk__brand-sub">Trace kiosk · salt-okunur görünüm</div>
         </div>
+        <div className="trace-kiosk__brand-spacer" />
+        {/* v0.10.680 (operatör: "sağ tarafta log izleme linki de olsa") — bu
+            trace'in logları tam Logs sayfasında, yeni pencerede; URL üreticiden
+            (logsHref: traceId + span penceresi ±). */}
+        <a className="trace-kiosk__brand-link" href={allLogsHref} target="_blank" rel="noopener noreferrer"
+          title="Bu trace'in loglarını Logs sayfasında aç (yeni pencere)">≡ Logs ↗</a>
       </div>
       <div className="trace-kiosk__head">
         {root && <SvcBadge name={root.serviceName} />}

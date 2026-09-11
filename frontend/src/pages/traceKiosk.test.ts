@@ -33,6 +33,10 @@ describe('TraceKiosk (v0.10.675)', () => {
     expect(kiosk).toContain('<TelescopeIcon size={26} />');
     expect(kiosk).toContain('<Wordmark name={brand.appName} />');
   });
+  // v0.10.680 — marka şeridinin sağında Logs bağlantısı: üreticiden href, yeni pencere.
+  it('marka şeridi sağında Logs bağlantısı (logsHref, yeni pencere)', () => {
+    expect(kiosk).toContain('className="trace-kiosk__brand-link" href={allLogsHref} target="_blank" rel="noopener noreferrer"');
+  });
 });
 
 describe('BAĞLANMA', () => {

@@ -2825,6 +2825,22 @@ export interface OracleLogsResponse {
   total: number;
 }
 
+// TraceBundleResponse — v0.10.672: GET /api/traces/{id}/bundle
+// (trace_bundle.go, kiosk modu). /api/traces/{id} alanları + log ve Oracle
+// bacakları TEK gövdede; log penceresi sunucuda span'lerden kuruldu
+// (`window`, unix ns) — istemci penceresiz istek atmaz. `logs` /api/logs
+// tel şekliyle aynı (degraded/reason dahil); `oracle` /api/oracle/errors
+// şekli + kendi degraded/reason'ı. `truncated` dürüstlük bayrakları:
+// spans = 50k tavanı, logs = total > sayfa ya da alt-sınır, oracle = limit
+// doldu (Oracle ucu kesilme sinyali taşımadığı için sezgisel).
+export interface TraceBundleResponse extends TraceDetailResponse {
+  logs: LogsResponse;
+  oracle: OracleLogsResponse & { degraded?: boolean; reason?: string };
+  truncated: { spans: boolean; logs: boolean; oracle: boolean };
+  window?: { from: number; to: number };
+  logLimit: number;
+}
+
 export interface LogsResponse {
   total: number;
   logs: LogRow[];

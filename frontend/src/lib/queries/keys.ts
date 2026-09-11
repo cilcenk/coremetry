@@ -117,6 +117,13 @@ export const keys = {
                    ['spans', 'exemplar', svc, op, from, to, kind] as const,
   },
 
+  // v0.10.672 — kiosk bundle (GET /api/traces/{id}/bundle). Limitler
+  // anahtarda: 500'lük cevap 1000 isteyene servis edilmesin.
+  traces: {
+    bundle:      (id: string, logLimit: number, oracleLimit: number) =>
+                   ['traces', 'bundle', id, logLimit, oracleLimit] as const,
+  },
+
   deploys: {
     forService:  (svc: string, from: number, to: number) =>
                    ['deploys', svc, from, to] as const,

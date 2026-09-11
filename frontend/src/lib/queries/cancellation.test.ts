@@ -52,6 +52,10 @@ const HEAVY: { file: string; hooks: string[] }[] = [
     file: '../../pages/explore/useExploreQueries.ts',
     hooks: ['api.resolveMetric(', 'api.spanMetricTopN(', 'api.metricQueryFull('],
   },
+  // v0.10.672 — kiosk bundle: span taraması (≤20 s) + ES pivot + Oracle tek
+  // istekte; kiosk penceresi kapanınca ya da limit değişince eski istek
+  // kesilmeli.
+  { file: 'trace.ts', hooks: ['api.traceBundle('] },
 ];
 
 // stripComments — kaynağı YORUMSUZ okur.

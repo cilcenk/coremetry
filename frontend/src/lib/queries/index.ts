@@ -56,6 +56,7 @@ export {
 } from './slos';
 export { useEventStream } from './eventStream';
 export { useExemplar, useExemplarFetcher } from './spans';
+export { useTraceBundle } from './trace'; // v0.10.672 — kiosk bundle
 export { useUsers, useCustomRoles } from './users';
 export { useOperatorEvents, useDeleteOperatorEvent, useNotificationLog } from './events';
 export { useInbox, useInboxCount } from './inbox';

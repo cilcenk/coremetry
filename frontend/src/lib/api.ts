@@ -2,7 +2,7 @@ import type {
   OracleLogsResponse,
   McpServersSnapshot, McpServerInput, McpServerTestResult,
   PurgeResult,
-  Service, ServiceEdge, TracesResponse, TracesExtrasResponse, TraceDetailResponse,
+  Service, ServiceEdge, TracesResponse, TracesExtrasResponse, TraceDetailResponse, TraceBundleResponse,
   LogsResponse, LogFieldStats, NotificationLogEntry, MetricInfo, MetricNameSearchResult,
   MetricPoint, HealthInfo, SortColumn, SortOrder,
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
@@ -784,6 +784,12 @@ export const api = {
   // gerçekten iptal edilsin (yanıtı atmak yetmez; süperseded sorgu CH'de
   // max_execution_time'a kadar koşuyordu).
   trace:     (id: string, signal?: AbortSignal) => get<TraceDetailResponse>(`/api/traces/${id}`, signal),
+  // v0.10.672 — kiosk modu: span + log + Oracle tek istekte (trace_bundle.go).
+  // logLimit varsayılan 500, tavan 1000 (sunucu clamp'ler); qs() boşları atar.
+  traceBundle: (id: string, opts: { logLimit?: number; oracleLimit?: number } = {}, signal?: AbortSignal) => {
+    const q = qs(opts);
+    return get<TraceBundleResponse>(`/api/traces/${id}/bundle${q ? '?' + q : ''}`, signal);
+  },
 
   // v0.8.332 (pivot Phase 3) — real OTLP exemplars for a metric window
   // (GET /api/exemplars, pivot Phase 2). Either a comma-separated

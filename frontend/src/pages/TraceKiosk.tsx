@@ -154,16 +154,18 @@ export function TraceKiosk() {
         analysis={analysis}
         revealSpanId={revealSpanId}
         logSignals={logSignals}
+        renderDetail={id => (selectedSpan && selectedSpan.spanId === id ? (
+          /* v0.10.682 — panel tıklanan satırın HEMEN altında (Tempo), şelalenin
+             altında değil (operatör düzeltmesi). */
+          <KioskSpanPanel
+            span={selectedSpan}
+            traceStartNs={Number.isFinite(minT) ? minT : selectedSpan.startTime}
+            logs={logsState.logs ?? []}
+            eventRows={eventRows}
+            onClose={() => setSelectedId(null)}
+          />
+        ) : null)}
       />
-      {selectedSpan && (
-        <KioskSpanPanel
-          span={selectedSpan}
-          traceStartNs={Number.isFinite(minT) ? minT : selectedSpan.startTime}
-          logs={logsState.logs ?? []}
-          eventRows={eventRows}
-          onClose={() => setSelectedId(null)}
-        />
-      )}
       <div className="trace-kiosk__logs">
         <div className="trace-kiosk__logs-head">
           <span>Logs</span>

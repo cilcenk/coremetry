@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useVirtualizer, observeElementRect, observeElementOffset, elementScroll, observeWindowRect, observeWindowOffset, windowScroll, type VirtualizerOptions } from '@tanstack/react-virtual';
 import { findScrollParent, offsetWithinScrollParent } from '@/lib/scrollParent';
 import { TraceMinimap } from './traces/TraceMinimap';
@@ -176,10 +177,17 @@ export function TraceWaterfall({
   spans, selectedId, onSelect, defaultCollapsed, groupSimilar = false,
   onGroupSimilarChange,
   criticalPathIds, matchIds, focusIds, evidenceIds, logSignals, onLogsClick, linkedSpanIds, analysis, revealSpanId,
+  renderDetail,
 }: {
   spans: SpanRow[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  // v0.10.682 (kiosk; operatör: "detay aynı span'ın altında açılsın") —
+  // verilirse SEÇİLİ satırın içinde, satır içeriğinin altında çizilir
+  // (Tempo düzeni). Ölçülen eleman satırın kendisi olduğu için sanal kipte
+  // yükseklik doğru; detaya tık satır seçimini tetiklemez. Vermeyen
+  // çağıranlar (Trace.tsx, TraceCompare) aynen.
+  renderDetail?: (spanId: string) => ReactNode;
   // When true, every span that has children starts collapsed —
   // the user sees only the root row(s) and clicks ▶ to drill in.
   // Used by the service-structure view so the operator scans
@@ -736,6 +744,7 @@ export function TraceWaterfall({
           'wf-row',
           s.statusCode === 'error' ? 'wf-err' : '',
           sel ? 'wf-sel' : '',
+          sel && renderDetail ? 'wf-has-detail' : '',
           onCritical ? 'wf-critical' : '',
           anyId(evidenceIds) ? 'wf-evidence' : '',
           filterActive && onMatch ? 'wf-match' : '',
@@ -948,6 +957,13 @@ export function TraceWaterfall({
                 </span>
               )}
             </div>
+            {sel && renderDetail && (
+              /* v0.10.682 — satır-içi detay (Tempo): satır sarar, tam genişlik;
+                 tık yayılımı kesik (× kapat düğmesi seçimi geri açmasın). */
+              <div className="wf-row-detail" onClick={e => e.stopPropagation()}>
+                {renderDetail(pickId)}
+              </div>
+            )}
           </div>
         );
       })}

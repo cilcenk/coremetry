@@ -15,6 +15,7 @@ describe('TraceKiosk (v0.10.675)', () => {
   // v0.10.681 — alt span paneli: seçili span → KioskSpanPanel, Esc kapatır.
   it('seçili span için alt panel + Esc katmanı', () => {
     expect(kiosk).toContain('<KioskSpanPanel');
+    expect(kiosk).toContain('renderDetail={id =>'); // v0.10.682 — satır-içi
     expect(kiosk).toContain('useEscLayer(!!selectedSpan, () => setSelectedId(null))');
   });
   it('krom bileşenlerini ithal etmez', () => {

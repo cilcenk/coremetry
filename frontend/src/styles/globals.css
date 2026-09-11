@@ -1472,6 +1472,11 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .wf-row:hover { background: var(--bg2); }
 .wf-row.wf-sel { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .wf-row.wf-sel .wf-stripe { width: 3px; filter: brightness(1.25); opacity: 0.95; }
+/* v0.10.682 — satır-içi span detayı (TraceWaterfall renderDetail): seçili
+   satır sarar, detay tam genişlikte satırın altında (Tempo düzeni). */
+.wf-row.wf-has-detail { flex-wrap: wrap; }
+.wf-row-detail { flex: 0 0 100%; cursor: default; border-top: 1px solid var(--border); border-left: 3px solid var(--accent); background: var(--bg2); padding: var(--sp-4) var(--sp-5) var(--sp-5) var(--sp-6); }
+.wf-row-detail .kiosk-span { border: 0; border-radius: 0; background: transparent; padding: 0; }
 .wf-row.wf-err .wf-name { color: var(--err); }
 /* Error span — whole-row low-opacity red tint (Tempo latest).
    Replaces the previous 1.6px red inset frame around the duration

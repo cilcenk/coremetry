@@ -3562,6 +3562,16 @@ thead th:hover .th-remove { opacity: 1; }
   padding: var(--sp-6) var(--sp-8); max-width: 420px;
 }
 
+/* v0.10.675 — TraceKiosk sayfası (pages/TraceKiosk.tsx): tek sütun, şelale
+   üstte + loglar altta, sayfa kaydırması (#main overflow:auto). Kromsuz:
+   başlık şeridi yalnız kimlik + durum + süre + kaynak rozeti. */
+.trace-kiosk { display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5); min-width: 0; }
+.trace-kiosk__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--text2); }
+.trace-kiosk__title { font-weight: 600; color: var(--text); font-size: var(--fs-md); }
+.trace-kiosk__id { font-size: var(--fs-xs); color: var(--text2); background: var(--bg2); padding: 2px 6px; border-radius: var(--radius-sm); }
+.trace-kiosk__logs { border-top: 1px solid var(--border); padding-top: var(--sp-3); }
+.trace-kiosk__logs-head { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--text2); padding-bottom: var(--sp-2); }
+
 /* ══ DAR EKRAN KATMANI (v0.9.980) ══════════════════════════════════════
    Dar ekran denetimi DALGA 2. Bu katman dosyanın SONUNDA duruyor ve bu
    KASITLI: `[data-density="compact"] .controls input { font-size: 11px }`

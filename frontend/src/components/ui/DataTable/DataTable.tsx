@@ -100,11 +100,16 @@ export interface DataTableServer {
   onSort?: (s: SortState) => void;
 }
 
-export function useDataTable<T>({ storageKey, columns: declaredColumns, rows, initialSort, serverSort, onSortChange, urlSortFallback, onOpen, searchRef, columnModel, selection: selectionOpt, server, getRowHref }: {
+export function useDataTable<T>({ storageKey, columns: declaredColumns, rows, initialSort, persistSort = true, serverSort, onSortChange, urlSortFallback, onOpen, searchRef, columnModel, selection: selectionOpt, server, getRowHref }: {
   storageKey: string;
   columns: DataTableColumn<T>[];
   rows: T[];
   initialSort?: SortState;
+  // persistSort (v0.10.669) — false: sıralama localStorage'dan OKUNMAZ ve
+  // YAZILMAZ; URL `s_<storageKey>` yine kazanır, oturum içi tıklama çalışır,
+  // yeni ziyaret initialSort'a döner. Traces gibi "en yeni önce" anlamı
+  // taşıyan tablolar için; genişlikler etkilenmez. Varsayılan true.
+  persistSort?: boolean;
   /** v0.10.249 — sıra/gizli modeli (lib/columnModel). Genişlik imzası bildirilen kolonlardan. */
   columnModel?: { value: ColumnModel | null; onChange?: (next: ColumnModel) => void };
   /** v0.10.249 — satır seçimi; getRowId zorunlu (indeks anahtarı sıralamada kırılır). */
@@ -157,7 +162,7 @@ export function useDataTable<T>({ storageKey, columns: declaredColumns, rows, in
   const urlKey = `s_${storageKey}`;
   const urlSort = searchParams.get(urlKey);
   const [sort, setSortState] = useState<SortState>(() =>
-    resolveInitialSort(storageKey, urlSort, initialSort, urlSortFallback));
+    resolveInitialSort(storageKey, urlSort, initialSort, urlSortFallback, persistSort));
   // v0.9.695 — kalıcı genişlikler KOLON TANIMINA MÜHÜRLÜ.
   //
   // İmza, yakalandığı kolon kümesiyle uyuşmuyorsa genişlikler atılıyor.
@@ -169,8 +174,8 @@ export function useDataTable<T>({ storageKey, columns: declaredColumns, rows, in
     readPersistedWidths(getItem<unknown>(widthLSKey, null), layoutSig));
 
   useEffect(() => {
-    setItem(sortLSKey, sort);
-  }, [sort, sortLSKey]);
+    if (persistSort) setItem(sortLSKey, sort); // v0.10.669 — persistSort:false yazmaz
+  }, [sort, sortLSKey, persistSort]);
   useEffect(() => {
     setItem(widthLSKey, { sig: layoutSig, widths: colWidths });
   }, [colWidths, widthLSKey, layoutSig]);
@@ -347,14 +352,19 @@ export function useDataTable<T>({ storageKey, columns: declaredColumns, rows, in
 // Order: URL `s_<storageKey>` (a shared link reproduces the sender's sort) >
 // urlSortFallback (an older URL schema the page decoded — still link intent) >
 // localStorage (the viewer's personal default) > initialSort.
+//
+// v0.10.669 — persist=false: localStorage basamağı atlanır (URL > fallback >
+// initialSort). Traces "her ziyarette start time desc" için.
 export function resolveInitialSort(
   storageKey: string,
   urlSort: string | null,
   initialSort?: SortState,
   urlSortFallback?: SortState | null,
+  persist = true,
 ): SortState {
+  const fallback = initialSort ?? { id: null, dir: 'desc' };
   return parseSortParam(urlSort) ?? urlSortFallback
-    ?? getItem(dtSortKey(storageKey), initialSort ?? { id: null, dir: 'desc' });
+    ?? (persist ? getItem(dtSortKey(storageKey), fallback) : fallback);
 }
 
 // ColResizeHandle — drop-in resize grip for tables that keep their OWN

@@ -1015,6 +1015,10 @@ function TracesPageInner() {
     columns,
     rows: displayRows,
     initialSort: { id: sort, dir: order },
+    // v0.10.669 (operatör: "liste start time desc olsun") — trace gezgini için
+    // "en yeni önce" bir tercih değil sayfanın anlamı: localStorage'daki eski
+    // başlık tıklaması yeni ziyareti ezmesin. URL `s_traces-list` yine kazanır.
+    persistSort: false,
     onOpen: (t) => openTrace(t),
     // v0.10.251 — sunucu demeti: j son satırda sonraki sayfa, k ilk satırda
     // önceki (onPageBoundary v0.9.1018 — bu sayfa hiç bağlamamıştı).

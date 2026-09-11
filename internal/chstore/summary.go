@@ -103,6 +103,31 @@ func operationNamesLike(pattern string) string {
 	return like
 }
 
+// operationNamesFallbackPlan — SAF (v0.10.667): ham-span fallback'inin ek
+// WHERE parçası + argümanları, sayfa ORDER BY'ı ve (jokersiz desende) önek
+// sıralamasının bind argümanı. MV yolundaki operationNamesQuery ile aynı
+// kurallar; iki yol ayrışırsa degrade kurulum farklı liste görürdü.
+func operationNamesFallbackPlan(service, pattern string) (extra string, args []any, orderBy string, orderArg *string) {
+	if service != "" {
+		extra += " AND service_name = ?"
+		args = append(args, service)
+	} else {
+		extra += " AND service_name NOT IN ?"
+		args = append(args, selfTelemetryServices)
+	}
+	if like := operationNamesLike(pattern); like != "" {
+		extra += " AND name ILIKE ?"
+		args = append(args, like)
+	}
+	orderBy = "name"
+	if pattern != "" && !strings.ContainsAny(pattern, "*?") {
+		orderBy = "startsWith(lowerUTF8(name), lowerUTF8(?)) DESC, name"
+		p := pattern
+		orderArg = &p
+	}
+	return extra, args, orderBy, orderArg
+}
+
 func (s *Store) ListOperationNames(ctx context.Context, service, pattern string, limit, offset int) ([]string, int, error) {
 	if limit <= 0 {
 		limit = 200
@@ -121,7 +146,7 @@ func (s *Store) ListOperationNames(ctx context.Context, service, pattern string,
 		// v0.8.234 — same MV-empty fallback as ListServiceNames (see the
 		// comment there): degraded external-Distributed installs keep
 		// their OperationPicker instead of an empty dropdown.
-		return s.operationNamesFromSpans(ctx, service, like, limit, offset)
+		return s.operationNamesFromSpans(ctx, service, pattern, limit, offset)
 	}
 
 	args := append([]any{}, wc.args...)
@@ -251,12 +276,18 @@ func (s *Store) ListServiceNames(ctx context.Context, pattern string, limit, off
 // count: the picker total is a "+N more" hint, and an exact
 // count(DISTINCT) would be a second full pass over the window.
 func rawPickerSQL(col, extraWhere string) (countQ, pageQ string) {
+	return rawPickerSQLOrdered(col, extraWhere, col)
+}
+
+// rawPickerSQLOrdered — v0.10.667: sayfa sorgusunun ORDER BY'ı parametre
+// (operasyon fallback'i önek eşleşmesini öne alır; sayım sorgusu etkilenmez).
+func rawPickerSQLOrdered(col, extraWhere, orderBy string) (countQ, pageQ string) {
 	base := " FROM spans WHERE time >= ?" + extraWhere
 	countQ = "SELECT uniq(" + col + ")" + base +
 		" SETTINGS max_execution_time = 10"
 	pageQ = "SELECT " + col + base +
 		" GROUP BY " + col +
-		" ORDER BY " + col +
+		" ORDER BY " + orderBy +
 		" LIMIT ? OFFSET ?" +
 		" SETTINGS max_execution_time = 10"
 	return countQ, pageQ
@@ -306,23 +337,22 @@ func (s *Store) serviceNamesFromSpans(ctx context.Context, like string, limit, o
 // serviceNamesFromSpans (v0.8.234). The optional service filter rides
 // the (service_name, time) primary-key prefix, so even at billions of
 // rows the scan is service-scoped.
-func (s *Store) operationNamesFromSpans(ctx context.Context, service, like string, limit, offset int) ([]string, int, error) {
-	extra := ""
-	args := []any{time.Now().Add(-rawPickerWindow)}
-	if service != "" {
-		extra += " AND service_name = ?"
-		args = append(args, service)
-	}
-	if like != "" {
-		extra += " AND name ILIKE ?"
-		args = append(args, like)
-	}
-	countQ, pageQ := rawPickerSQL("name", extra)
+//
+// v0.10.667 — MV yoluyla (operationNamesQuery) AYNI sözleşme: servissiz
+// aramada öz-telemetri dışı, jokersiz aramada önek eşleşmesi önce.
+func (s *Store) operationNamesFromSpans(ctx context.Context, service, pattern string, limit, offset int) ([]string, int, error) {
+	extra, whereArgs, orderBy, orderArg := operationNamesFallbackPlan(service, pattern)
+	args := append([]any{time.Now().Add(-rawPickerWindow)}, whereArgs...)
+	countQ, pageQ := rawPickerSQLOrdered("name", extra, orderBy)
 	var total uint64
 	if err := s.telemetryReadConn().QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	pargs := append(append([]any{}, args...), limit, offset)
+	pargs := append([]any{}, args...)
+	if orderArg != nil {
+		pargs = append(pargs, *orderArg) // ORDER BY bind'ı WHERE'den sonra, LIMIT'ten önce
+	}
+	pargs = append(pargs, limit, offset)
 	rows, err := s.telemetryReadConn().Query(ctx, pageQ, pargs...)
 	if err != nil {
 		return nil, 0, err

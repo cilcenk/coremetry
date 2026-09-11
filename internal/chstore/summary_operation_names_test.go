@@ -62,3 +62,31 @@ func TestOperationNamesQueryPrefixFirstWithoutWildcard(t *testing.T) {
 		t.Fatalf("boş desende önek sıralaması olmamalı: %q", order3)
 	}
 }
+
+// v0.10.667 — ham-span fallback'i MV yoluyla aynı sözleşmeyi taşır.
+// Mutasyon (ölçüldü): plan'daki NOT IN'i kaldırmak bu testi düşürür.
+func TestOperationNamesFallbackPlanMatchesMVPath(t *testing.T) {
+	extra, args, orderBy, orderArg := operationNamesFallbackPlan("", "bsa-mobile")
+	if !strings.Contains(extra, "service_name NOT IN ?") || !strings.Contains(extra, "name ILIKE ?") {
+		t.Fatalf("servissiz fallback: öz-telemetri dışı + ILIKE bekleniyor: %q", extra)
+	}
+	if len(args) != 2 || args[1] != "%bsa-mobile%" {
+		t.Fatalf("argümanlar (servis listesi, like): %v", args)
+	}
+	if !strings.HasPrefix(orderBy, "startsWith(lowerUTF8(name)") || orderArg == nil || *orderArg != "bsa-mobile" {
+		t.Fatalf("jokersiz: önek sıralaması + bind: %q %v", orderBy, orderArg)
+	}
+	_, pageQ := rawPickerSQLOrdered("name", extra, orderBy)
+	if !strings.Contains(pageQ, "ORDER BY startsWith(lowerUTF8(name)") || !strings.Contains(pageQ, "NOT IN ?") {
+		t.Fatalf("sayfa SQL'i planı taşımalı:\n%s", pageQ)
+	}
+	extra2, _, orderBy2, orderArg2 := operationNamesFallbackPlan("coremetry-frontend", "pay*")
+	if strings.Contains(extra2, "NOT IN") || orderBy2 != "name" || orderArg2 != nil {
+		t.Fatalf("servisli + jokerli: dışlama yok, alfabetik: %q %q", extra2, orderBy2)
+	}
+	// Eski imza korunur: servis seçicisi rawPickerSQL ile alfabetik kalır.
+	_, svcPage := rawPickerSQL("service_name", "")
+	if !strings.Contains(svcPage, "ORDER BY service_name") {
+		t.Fatalf("rawPickerSQL varsayılanı kolon sıralaması: %s", svcPage)
+	}
+}

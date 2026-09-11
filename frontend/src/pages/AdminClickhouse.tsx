@@ -18,6 +18,7 @@ import type {
   StateUnifyPreflightResult, StateUnifyRun, StateUnifyTable,
   StateRepartPreflightResult, StateRepartRun, StateRepartTable,
   TraceBackfillDay, TraceBackfillRun,
+  CHMeasurePartsRow, // v0.10.683 — ölçüm paneli
 } from '@/lib/types';
 
 // AdminClickhouse — v0.5.329. Datadog-style CH self-stats:
@@ -718,6 +719,7 @@ export default function AdminClickhousePage() {
                 okunuyorlar: giriş dengeliyken CPU dengesizse cevap
                 sorgu yolunda değil, yazma/merge tarafındadır. */}
             <NodeWorkPanel />
+            <MeasurePanel />
 
             {/* v0.9.770 — rollup kurulum sihirbazı. Topolojinin hemen
                 altında değil BURADA: operatör önce kümenin sağlıklı
@@ -2521,6 +2523,173 @@ function EntityLayerWizardPanel() {
             ))}
           </ul>
         </div>
+      )}
+    </Section>
+  );
+}
+
+// ── ClickHouse ölçümleri — v0.10.683 (kuyruk 1; mimari denetim
+// docs/audit/clickhouse-architecture-advisor-2026-09-10.md öneri 1/2/8).
+// Sayfanın diğer panelleri tablo-bazlı part hotspot / merge / async insert
+// gösterir; burası HOST bazında parça baskısını (partition başına en çok
+// parça = parts_to_delay_insert sinyali), DelayedInserts/RejectedInserts
+// sayaçlarını, async tamponları ve insert boyutu medyanını (query_log
+// açıksa) getirir. BatchSize çipi A/B bağlamı: hangi değer ölçülüyor.
+// Dürüstlük: query_log kapalıysa slot "kullanılamıyor" der; sayaçlar
+// kümülatif, saat başına hız uptime'dan türetilir (restart eden node'da
+// uptime küçüktür, hız o pencereyi anlatır).
+const MEASURE_PARTS_COLS: DataTableColumn<CHMeasurePartsRow>[] = [
+  { id: 'host',       label: 'Host',                 sortValue: p => p.host,  naturalDir: 'asc',  width: 150 },
+  { id: 'table',      label: 'Table',                sortValue: p => p.table, naturalDir: 'asc',  width: 240 },
+  { id: 'partitions', label: 'Partitions',           sortValue: p => p.partitions,           numeric: true, naturalDir: 'desc', width: 110 },
+  { id: 'parts',      label: 'Parts',                sortValue: p => p.parts,                numeric: true, naturalDir: 'desc', width: 100 },
+  { id: 'maxpp',      label: 'Max parts / partition', sortValue: p => p.maxPartsPerPartition, numeric: true, naturalDir: 'desc', width: 170 },
+  { id: 'rows',       label: 'Rows',                 sortValue: p => p.rows,                 numeric: true, naturalDir: 'desc', width: 130 },
+];
+
+// partsTone — parts_to_delay_insert varsayılanı 24.x'te 1000 (eski
+// sürümlerde 150/300): 300'de uyar, 1000'de kırmızı.
+function partsTone(maxPP: number): string {
+  return maxPP >= 1000 ? 'b-err' : maxPP >= 300 ? 'b-warn' : 'b-ok';
+}
+function perHour(v: number, uptimeS: number): string {
+  return uptimeS > 0 ? fmtNum(Math.round(v / (uptimeS / 3600))) : '—';
+}
+
+function MeasurePanel() {
+  const q = useQuery({
+    queryKey: ['ch-measure'],
+    queryFn: () => api.chMeasure(),
+    refetchInterval: 30_000, staleTime: 25_000,
+  });
+  const data = q.isPending ? undefined : q.isError ? null : q.data ?? null;
+  const dt = useDataTable<CHMeasurePartsRow>({
+    storageKey: 'ch-measure-parts', columns: MEASURE_PARTS_COLS,
+    rows: data?.parts ?? [], initialSort: { id: 'maxpp', dir: 'desc' },
+  });
+  const worstPP = data?.parts.reduce((m, p) => Math.max(m, p.maxPartsPerPartition), 0) ?? 0;
+  const delayed = data?.events.reduce((n, e) => n + e.delayedInserts, 0) ?? 0;
+  const rejected = data?.events.reduce((n, e) => n + e.rejectedInserts, 0) ?? 0;
+
+  return (
+    <Section title="ClickHouse ölçümleri · parça baskısı & batch">
+      <p className="cell-hint">
+        Mimari denetim (v0.10.646) öneri 1/2/8 doğrulama sorguları, host bazında. BatchSize A/B'sinin
+        ölçüm zemini: batch büyüdükçe partition başına parça ve DelayedInserts düşmeli, insert başına satır artmalı.
+      </p>
+      {data === undefined && <Spinner />}
+      {data === null && <EmptyNote text="Ölçüm okunamadı" />}
+      {data && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span className="badge b-info" title="Yürürlükteki consumer BatchSize (COREMETRY_INGEST_BATCH_SIZE). Denetim önerisi: 10k → 50k A/B.">
+              BatchSize {fmtNum(data.batchSize)} satır
+            </span>
+            <span className="badge b-gray">{data.mode === 'cluster' ? `küme · ${data.cluster}` : 'tek node'}</span>
+            <span className={`badge ${partsTone(worstPP)}`} title="Partition başına en çok aktif parça (tüm host × tablo). parts_to_delay_insert'e yaklaşma = önce batch boyutu, sonra MV sayısı.">
+              max parts/partition {fmtNum(worstPP)}
+            </span>
+            <span className={`badge ${delayed > 0 ? 'b-warn' : 'b-ok'}`} title="system.events DelayedInserts (kümülatif, tüm host'lar): parça baskısı yüzünden yavaşlatılan insert sayısı.">
+              DelayedInserts {fmtNum(delayed)}
+            </span>
+            <span className={`badge ${rejected > 0 ? 'b-err' : 'b-ok'}`} title="system.events RejectedInserts (kümülatif): parts_to_throw_insert aşıldı, insert REDDEDİLDİ.">
+              RejectedInserts {fmtNum(rejected)}
+            </span>
+            {!data.queryLogAvailable && (
+              <span className="badge b-warn" title={data.insertSizeNote || 'system.query_log okunamadı'}>
+                query_log kapalı — insert boyutu ölçülemiyor
+              </span>
+            )}
+          </div>
+
+          <h4 style={{ margin: '10px 0 6px' }}>Parça baskısı · host × tablo</h4>
+          {data.partsNote && <EmptyNote text={data.partsNote} />}
+          {data.parts.length > 0 && (
+            <div className="table-wrap is-fit">
+              <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                <DataTableColgroup dt={dt} />
+                <DataTableHead dt={dt} />
+                <tbody>
+                  {dt.sortedRows.map(p => (
+                    <tr key={p.host + '/' + p.table}>
+                      <td className="mono" style={{ fontSize: 11 }} title={p.host}>{p.host || '—'}</td>
+                      <td className="mono" title={p.table}>{p.table}</td>
+                      <td className="num mono">{fmtNum(p.partitions)}</td>
+                      <td className="num mono">{fmtNum(p.parts)}</td>
+                      <td className="num mono"><span className={`badge ${partsTone(p.maxPartsPerPartition)}`}>{fmtNum(p.maxPartsPerPartition)}</span></td>
+                      <td className="num mono">{fmtNum(p.rows)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <h4 style={{ margin: '14px 0 6px' }}>system.events · host başına (kümülatif; /sa = uptime'a bölünmüş)</h4>
+          {data.eventsNote && <EmptyNote text={data.eventsNote} />}
+          {data.events.length > 0 && (
+            <div className="table-wrap is-fit">
+              <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                <thead><tr><th>Host</th><th className="num">Uptime</th><th className="num">DelayedInserts</th><th className="num">RejectedInserts</th><th className="num">InsertedRows /sa</th><th className="num">MergedRows /sa</th><th className="num">merge/insert</th></tr></thead>
+                <tbody>
+                  {data.events.map(e => (
+                    <tr key={e.host}>
+                      <td className="mono" style={{ fontSize: 11 }}>{e.host || '—'}</td>
+                      <td className="num mono">{fmtUptime(e.uptimeS)}</td>
+                      <td className="num mono"><span className={`badge ${e.delayedInserts > 0 ? 'b-warn' : 'b-ok'}`}>{fmtNum(e.delayedInserts)}</span></td>
+                      <td className="num mono"><span className={`badge ${e.rejectedInserts > 0 ? 'b-err' : 'b-ok'}`}>{fmtNum(e.rejectedInserts)}</span></td>
+                      <td className="num mono" title={`kümülatif ${fmtNum(e.insertedRows)}`}>{perHour(e.insertedRows, e.uptimeS)}</td>
+                      <td className="num mono" title={`kümülatif ${fmtNum(e.mergedRows)}`}>{perHour(e.mergedRows, e.uptimeS)}</td>
+                      <td className="num mono" title="MergedRows / InsertedRows — yazma çarpanı; MV sayısı ve batch boyutu bunu büyütür/küçültür.">
+                        {e.insertedRows > 0 ? (e.mergedRows / e.insertedRows).toFixed(2) + '×' : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <h4 style={{ margin: '14px 0 6px' }}>Async insert tamponları · host başına</h4>
+          {data.asyncNote && <EmptyNote text={data.asyncNote} />}
+          {!data.asyncNote && data.async.length === 0 && <p className="cell-hint">Şu an tamponda bekleyen async insert yok (host listede yoksa tamponu boştur).</p>}
+          {data.async.length > 0 && (
+            <div className="table-wrap is-fit">
+              <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                <thead><tr><th>Host</th><th className="num">Tampon</th><th className="num">Bayt</th></tr></thead>
+                <tbody>
+                  {data.async.map(a => (
+                    <tr key={a.host}>
+                      <td className="mono" style={{ fontSize: 11 }}>{a.host || '—'}</td>
+                      <td className="num mono">{fmtNum(a.buffers)}</td>
+                      <td className="num mono">{fmtBytes(a.bytes)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <h4 style={{ margin: '14px 0 6px' }}>Insert boyutu · spans, son 1 saat (query_log)</h4>
+          {!data.queryLogAvailable && <EmptyNote text={data.insertSizeNote || 'system.query_log kapalı'} />}
+          {data.queryLogAvailable && data.insertSize.length === 0 && <p className="cell-hint">Son 1 saatte spans insert kaydı yok.</p>}
+          {data.insertSize.length > 0 && (
+            <div className="table-wrap is-fit">
+              <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                <thead><tr><th>Host</th><th className="num">Satır / insert (medyan)</th><th className="num">Insert sayısı</th></tr></thead>
+                <tbody>
+                  {data.insertSize.map(i => (
+                    <tr key={i.host}>
+                      <td className="mono" style={{ fontSize: 11 }}>{i.host || '—'}</td>
+                      <td className="num mono" title="Denetim: 10k–100k bandı; 10k alt sınırda.">{fmtNum(Math.round(i.rowsPerInsert))}</td>
+                      <td className="num mono">{fmtNum(i.inserts)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </Section>
   );

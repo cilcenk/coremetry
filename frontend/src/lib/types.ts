@@ -3455,6 +3455,32 @@ export interface RollupActionResult {
   ok: boolean;
 }
 
+// CHMeasureResponse — v0.10.683: GET /api/admin/clickhouse/measure
+// (clickhouse_measure.go; mimari denetim 646 öneri 1/2/8). Host bazında
+// parça baskısı, system.events sayaçları (kümülatif + uptime), async insert
+// tamponları ve query_log'dan insert boyutu (queryLogAvailable=false →
+// prod'da log_queries=0, slot kullanılamıyor). batchSize = yürürlükteki
+// consumer BatchSize (A/B bağlamı).
+export interface CHMeasurePartsRow { host: string; table: string; partitions: number; parts: number; rows: number; maxPartsPerPartition: number; }
+export interface CHMeasureEventsRow { host: string; uptimeS: number; delayedInserts: number; rejectedInserts: number; insertedRows: number; mergedRows: number; }
+export interface CHMeasureAsyncRow { host: string; buffers: number; bytes: number; }
+export interface CHMeasureInsertRow { host: string; rowsPerInsert: number; inserts: number; }
+export interface CHMeasureResponse {
+  mode: 'cluster' | 'standalone';
+  cluster?: string;
+  generatedAt: number;
+  batchSize: number;
+  parts: CHMeasurePartsRow[];
+  partsNote?: string;
+  events: CHMeasureEventsRow[];
+  eventsNote?: string;
+  async: CHMeasureAsyncRow[];
+  asyncNote?: string;
+  insertSize: CHMeasureInsertRow[];
+  insertSizeNote?: string;
+  queryLogAvailable: boolean;
+}
+
 // ── 0011 entity katmanı şeması sihirbazı (v0.10.134) — chstore/entity_layer_admin.go ──
 export interface EntityLayerObjectStatus {
   name: string;

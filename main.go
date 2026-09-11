@@ -1356,6 +1356,7 @@ func main() {
 	srv.SetVersion(Version)
 	srv.SetBuildVersion(BuildVersion)
 	srv.SetBackgroundConfig(cfg.Background)
+	api.SetIngestBatchSize(cfg.Ingestion.BatchSize) // v0.10.683 — /admin/clickhouse ölçüm paneli A/B bağlamı
 	srv.SetTempo(tempoSvc)
 	srv.SetThanos(thanosSvc)
 	srv.SetEntity(entitySettings, entitySyncer)

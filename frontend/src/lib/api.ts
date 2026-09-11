@@ -3,6 +3,7 @@ import type {
   McpServersSnapshot, McpServerInput, McpServerTestResult,
   PurgeResult,
   Service, ServiceEdge, TracesResponse, TracesExtrasResponse, TraceDetailResponse, TraceBundleResponse,
+  CHMeasureResponse,
   LogsResponse, LogFieldStats, NotificationLogEntry, MetricInfo, MetricNameSearchResult,
   MetricPoint, HealthInfo, SortColumn, SortOrder,
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
@@ -3350,6 +3351,10 @@ export const api = {
   // v0.9.543 — node iş dağılımı: CPU · merge · insert · fetch host
   // başına, HAM kümülatif. Pencereyi istemci açar (lib/chNodeWork):
   // 5 günlük ortalama son saatlerdeki rejim değişimini seyreltiyor.
+  // v0.10.683 — mimari denetim (646) öneri 1/2/8 ölçümleri: host bazında
+  // parça baskısı, DelayedInserts/RejectedInserts, async tamponlar, insert
+  // boyutu (query_log açıksa). Sunucu 30 s cache.
+  chMeasure: () => get<CHMeasureResponse>('/api/admin/clickhouse/measure'),
   chNodeWork: () =>
     get<{
       nodes: import('./chNodeWork').NodeWorkRaw[];

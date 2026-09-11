@@ -133,8 +133,9 @@ describe('SpanDetail kablolaması', () => {
     }
   });
 
-  it('INFO bölümünde Endpoint satırı var', () => {
+  // v0.10.692 — Info bölümü künye satırına eridi; Endpoint linki orada.
+  it('künye satırında Endpoint linki var', () => {
     expect(src).toContain('spanEndpointHref(spanLinkCtx)');
-    expect(src).toContain('<td>Endpoint</td>');
+    expect(src).toContain('<b>Endpoint:</b> <Link to={endpointLink.href}');
   });
 });

@@ -23,9 +23,19 @@ describe('Trace sayfası satır-içi span detayı (v0.10.691)', () => {
     expect(detail).toContain('{!inline && <div className="span-panel-resizer"');
     expect(detail).toContain('inline = false');
   });
-  it('CSS: satır-içi panel statik, gövde çok sütun, geniş bölümler tam satır', () => {
+  it('CSS: satır-içi panel statik; gövde kiosk düzeni (grid serpme yok)', () => {
     expect(css).toContain('#span-panel.span-panel-inline { position: static;');
-    expect(css).toContain('.span-panel-inline #span-panel-body { padding: 0; display: grid;');
-    expect(css).toContain('.span-panel-inline .ps-sec-wide { grid-column: 1 / -1; }');
+    expect(css).not.toContain('.span-panel-inline #span-panel-body { padding: 0; display: grid;');
+    expect(css).toContain('.span-panel-inline .ps-kv td:first-child { width: 1%;');
+  });
+  // v0.10.692 — operatör: "kiosk'taki gösterim daha güzel; üç parça dağınık".
+  it('SpanDetail gövdesi kiosk düzeni: künye satırı + iki sütun gruplu attribute', () => {
+    expect(detail).toContain('className="kiosk-span__facts"');
+    expect(detail).toContain('className="kiosk-span__cols"');
+    expect(detail).toContain('Span attributes <span className="kiosk-span__cnt">{attrCount}</span>');
+    expect(detail).toContain('Resource attributes <span className="kiosk-span__cnt">{resCount}</span>');
+    expect(detail).toContain('groupResourceAttrs(span.resourceAttributes)');
+    expect(detail).not.toContain('<Section title="Info">');
+    expect(detail).not.toContain('title={`Resource (${res.length})`}');
   });
 });

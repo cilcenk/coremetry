@@ -2,11 +2,11 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useEscLayer } from '@/lib/escLayer';
 import { Link } from 'react-router-dom';
 import type { SpanLinkEntry } from '@/lib/spanLinks';
-import { groupSpanAttrs } from '@/lib/spanAttrGroups';
+import { groupSpanAttrs, groupResourceAttrs } from '@/lib/spanAttrGroups';
 import { traceHref } from '@/lib/traceHref';
 import type { SpanRow, ProfileRow, SpanHotspotsResponse, LogRow, TimeRange } from '@/lib/types';
 import { selfTimeMs } from '@/lib/selfTime';
-import { tsLong, tsShort, sevName, sevClass, displaySpanName } from '@/lib/utils';
+import { tsLong, tsShort, fmtNs, sevName, sevClass, displaySpanName } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { getRaw, setRaw } from '@/lib/storage';
 import { logsRangeParam, logsHref } from '@/lib/logsUrl';
@@ -64,7 +64,12 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   pageRange?: TimeRange;
 }) {
   const attrGroups = useMemo(() => groupSpanAttrs(span.attributes), [span.attributes]);
-  const res = Object.entries(span.resourceAttributes ?? {});
+  // v0.10.692 — resource attribute'ları da gruplu (Service/Deployment/Container/
+  // Kubernetes/Host/…; lib/spanAttrGroups groupResourceAttrs) — kiosk paneliyle aynı.
+  const resGroups = useMemo(() => groupResourceAttrs(span.resourceAttributes), [span.resourceAttributes]);
+  const attrCount = attrGroups.reduce((n, g) => n + g.entries.length, 0);
+  const resCount = resGroups.reduce((n, g) => n + g.entries.length, 0);
+  const traceStartNs = (traceSpans ?? []).reduce((m, x) => (x.startTime > 0 && x.startTime < m ? x.startTime : m), Infinity);
   const allEvents = span.events ?? [];
 
   // OTel SemConv: exception data lives in events named "exception" with
@@ -272,102 +277,73 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
         <button className="ps-close" onClick={onClose}>✕</button>
       </div>
       <div id="span-panel-body">
-        {/* AI explain (v0.5.144). Per-span LLM summary — backend
-            sends only target + parent + direct children + error
-            siblings so the prompt stays tight. Works with any
-            configured copilot backend including a local LLM
-            (Ollama / vLLM / LM Studio) via the openai-compatible
-            base_url. Auto-hides when copilot isn't configured. */}
+        {/* v0.10.692 (operatör: "kiosk'taki span attribute gösterimi daha güzel;
+            trace detayındaki üç parça hâlinde dağınık") — gövde KioskSpanPanel
+            düzeniyle AYNI: künye satırı (Service · Duration · Start Time · Kind ·
+            Status · Library · Span ID · Parent), eylem, solda Span attributes /
+            sağda Resource attributes (katlanabilir, sayaçlı gruplar; satırlar
+            linkli + kopyalı), altta geniş bölümler. Eski "Info" ve düz "Resource"
+            bölümleri buraya eridi. */}
+        <div className="kiosk-span__facts">
+          <span><b>Service:</b> {serviceLinks ? <Link to={serviceHref(span.serviceName)}>{span.serviceName}</Link> : span.serviceName}</span>
+          {endpointLink && <span><b>Endpoint:</b> <Link to={endpointLink.href} title="Bu endpoint'in sayfasını aç">{endpointLink.label}</Link></span>}
+          <span><b>Duration:</b> {span.durationMs.toFixed(3)} ms{traceSpans && traceSpans.length > 0 && (() => {
+            const self = selfTimeMs(span, traceSpans);
+            const pct = span.durationMs > 0 ? (self / span.durationMs) * 100 : 100;
+            return <span title="Öz süre: çocukların kapsamadığı kısım"> · self {self.toFixed(3)} ms (%{pct.toFixed(0)})</span>;
+          })()}</span>
+          <span><b>Start Time:</b> {Number.isFinite(traceStartNs) ? `+${fmtNs(Math.max(0, span.startTime - traceStartNs))} ` : ''}({tsLong(span.startTime)})</span>
+          <span><b>Kind:</b> {span.kind || 'internal'}</span>
+          <span><b>Status:</b> {span.statusCode || 'unset'}{span.statusMessage ? ` — ${span.statusMessage}` : ''}</span>
+          {span.scopeName && <span><b>Library:</b> {span.scopeName}</span>}
+          {span.peerService && <span><b>Peer:</b> {span.peerService}</span>}
+          <span><b>Span ID:</b> <code className="trace-kiosk__id">{span.spanId}<CopyButton value={span.spanId} title="Copy span ID" /></code></span>
+          {span.parentSpanId && <span><b>Parent:</b> <code className="trace-kiosk__id">{span.parentSpanId}</code></span>}
+          {baseP50 !== null && (
+            <span title={`Median duration of ${span.serviceName} · ${displaySpanName(span)} over the 24h before this span`}>
+              <b>Baseline p50 (24h):</b> {baseP50 >= 1000 ? `${(baseP50 / 1000).toFixed(2)} s` : `${baseP50.toFixed(baseP50 < 10 ? 2 : 0)} ms`}{' '}
+              {span.durationMs / baseP50 >= 1.5
+                ? <span className="badge b-err">×{(span.durationMs / baseP50).toFixed(1)} slower</span>
+                : <span className="badge b-ok">normal</span>}
+            </span>
+          )}
+        </div>
+        {/* AI explain (v0.5.144). Per-span LLM summary — backend sends only
+            target + parent + direct children + error siblings so the prompt
+            stays tight. Auto-hides when copilot isn't configured. v0.9.477 —
+            cevap tek sağ-kenar AI çekmecesinde (?ai=span:<traceId>:<spanId>). */}
         {span.traceId && span.spanId && (
-          <div style={{ marginBottom: 12 }}>
-            {/* v0.9.477 — cevap artık tek sağ-kenar AI çekmecesinde
-                (?ai=span:<traceId>:<spanId>); panel içinde satır-içi bir
-                metin bloğu daha açıp paneli uzatmıyoruz. */}
+          <div className="kiosk-span__actions">
             <AIExplainButton subject={{ kind: 'span', id: span.traceId, spanId: span.spanId }}
               label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain this span</span></>} />
           </div>
         )}
-        {/* Attributes — what the application code emitted; usually
-            the most informative bit when debugging an unfamiliar span.
-            "Info" (service/kind/timing/IDs) below: shape of the row,
-            useful but rarely the answer to "what was this span doing?". */}
-        {/* v0.10.277 (Dilim 1e) — attribute'lar semconv gruplarıyla
-            (HTTP / Database / Messaging / RPC / Network / Infra / Custom);
-            saf gruplama lib/spanAttrGroups.ts. Grup içi sıra giriş sırası. */}
-        {attrGroups.map(g => (
-          <Section key={g.key} title={<>Attributes · {g.label} <span style={{ color: 'var(--text3)', fontWeight: 400 }}>({g.entries.length})</span></>}>
-            <KV>{g.entries.map(([k, v]) => <Row key={k} k={k} v={v} copyable />)}</KV>
-          </Section>
-        ))}
-
-        <Section title="Info">
-          <KV>
-            <Row k="Service" v={span.serviceName} copyable />
-            {/* v0.10.34 (operatör isteği) — ENDPOINT, servisin hemen
-                yanında ve servis gibi TIKLANABİLİR. Endpoint kendi
-                sayfası olan bir varlık (RED, baseline, trace listesi);
-                trace'ten oraya kenar yoktu. Yalnız giriş span'lerinde ve
-                yalnız ŞABLONLANMIŞ yol varken çıkıyor — ham yoldan
-                (url.path) kurulan bir link var olmayan bir endpoint'e
-                götürürdü (spanEntityLinks.ts). */}
-            {endpointLink && (
-              <tr>
-                <td>Endpoint</td>
-                <td style={{ wordBreak: 'break-all' }}>
-                  <Link to={endpointLink.href} title="Bu endpoint'in sayfasını aç">
-                    {endpointLink.label}
-                  </Link>
-                </td>
-              </tr>
-            )}
-            <Row k="Kind" v={span.kind} copyable />
-            <Row k="Duration" v={`${span.durationMs.toFixed(3)} ms`} copyable />
-            {/* v0.9.1273 — öz süre: çocukların kapsamadığı kısım. %'si
-                "vakit BURADA mı geçti, altta mı" sorusunun tek-bakış
-                cevabı — %90+ self = bu span'in kendisi; %10 self =
-                çocuklara in. Çakışan async çocuklar birleşimle bir kez
-                düşülür (naif toplam negatif/saçma değer üretirdi). */}
-            {traceSpans && traceSpans.length > 0 && (() => {
-              const self = selfTimeMs(span, traceSpans);
-              const pct = span.durationMs > 0 ? (self / span.durationMs) * 100 : 100;
-              return (
-                <Row k="Self time"
-                  v={`${self.toFixed(3)} ms (%${pct.toFixed(0)})`}
-                  copyable />
-              );
-            })()}
-            {baseP50 !== null && (
-              <tr>
-                <td>Baseline p50 (24h)</td>
-                <td title={`Median duration of ${span.serviceName} · ${displaySpanName(span)} over the 24h before this span`}>
-                  {baseP50 >= 1000 ? `${(baseP50 / 1000).toFixed(2)} s` : `${baseP50.toFixed(baseP50 < 10 ? 2 : 0)} ms`}{' '}
-                  {span.durationMs / baseP50 >= 1.5
-                    ? <span className="badge b-err">×{(span.durationMs / baseP50).toFixed(1)} slower</span>
-                    : <span className="badge b-ok">normal</span>}
-                </td>
-              </tr>
-            )}
-            <Row k="Start" v={tsLong(span.startTime)} copyable />
-            <Row k="Trace ID" v={span.traceId} mono copyable />
-            <Row k="Span ID" v={span.spanId} mono copyable />
-            {span.parentSpanId && <Row k="Parent" v={span.parentSpanId} mono copyable />}
-            {span.dbSystem && <Row k="DB System" v={span.dbSystem} copyable />}
-            {span.dbStatement && <Row k="DB Statement" v={span.dbStatement} pre copyable />}
-            {span.httpMethod && <Row k="HTTP" v={`${span.httpMethod} ${span.httpRoute ?? ''} ${span.httpStatus ?? ''}`} copyable />}
-            {span.peerService && <Row k="Peer" v={span.peerService} copyable />}
-            {span.statusMessage && <Row k="Status msg" v={span.statusMessage} copyable />}
-          </KV>
-        </Section>
+        <div className="kiosk-span__cols">
+          <div>
+            <div className="kiosk-span__col-title">Span attributes <span className="kiosk-span__cnt">{attrCount}</span></div>
+            {attrGroups.length === 0 && <div className="kiosk-span__empty">Attribute yok.</div>}
+            {attrGroups.map(g => (
+              <details key={g.key} open className="kiosk-span__group">
+                <summary className="ps-sec-title">{g.label} <span className="kiosk-span__cnt">{g.entries.length}</span></summary>
+                <KV>{g.entries.map(([k, v]) => <Row key={k} k={k} v={v} copyable />)}</KV>
+              </details>
+            ))}
+          </div>
+          <div>
+            <div className="kiosk-span__col-title">Resource attributes <span className="kiosk-span__cnt">{resCount}</span></div>
+            {resGroups.length === 0 && <div className="kiosk-span__empty">Resource attribute yok.</div>}
+            {resGroups.map(g => (
+              <details key={g.key} open className="kiosk-span__group">
+                <summary className="ps-sec-title">{g.label} <span className="kiosk-span__cnt">{g.entries.length}</span></summary>
+                <KV>{g.entries.map(([k, v]) => <Row key={k} k={k} v={v} copyable />)}</KV>
+              </details>
+            ))}
+          </div>
+        </div>
 
         {serviceLinks && k8sOn && (
-          <Section title="Kubernetes">
+          <Section wide title="Kubernetes">
             <SpanK8sSection span={span} clusters={entityClusters} range={pageRange} />
-          </Section>
-        )}
-
-        {res.length > 0 && (
-          <Section title={`Resource (${res.length})`}>
-            <KV>{res.map(([k, v]) => <Row key={k} k={k} v={String(v)} copyable />)}</KV>
           </Section>
         )}
 

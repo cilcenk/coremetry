@@ -1926,10 +1926,16 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
    tam satır; anahtar sütunu içeriğe sığar (kiosk 685 kuralı). */
 #span-panel.span-panel-inline { position: static; width: auto; max-width: none; box-shadow: none; border: 0; border-radius: 0; background: transparent; overflow: visible; display: block; }
 .span-panel-inline #span-panel-head { position: static; padding: 4px 0 8px; background: transparent; z-index: auto; }
-.span-panel-inline #span-panel-body { padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--sp-3) var(--sp-8); align-items: start; }
+/* v0.10.692 — gövde artık KioskSpanPanel düzeni (künye → eylem → iki sütun
+   gruplu attribute → geniş bölümler); grid serpme (691) kaldırıldı. Tablo
+   yoğunluğu kiosk 685 kuralı; iki sütun kutusu 686 çerçevesi (kiosk-span__cols). */
+.span-panel-inline #span-panel-body { padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
 .span-panel-inline .ps-sec { margin-bottom: 0; min-width: 0; }
-.span-panel-inline .ps-sec-wide { grid-column: 1 / -1; }
-.span-panel-inline .ps-kv td:first-child { width: 1%; min-width: 0; max-width: none; white-space: nowrap; padding-right: var(--sp-6); }
+.span-panel-inline .ps-kv { font-size: 11.5px; line-height: 1.35; }
+.span-panel-inline .ps-kv td { padding: 2px 0; }
+.span-panel-inline .ps-kv td:first-child { width: 1%; min-width: 0; max-width: none; white-space: nowrap; padding-right: var(--sp-8); color: var(--text2); }
+.kiosk-span__actions { display: flex; gap: var(--sp-3); }
+#span-panel .kiosk-span__facts { padding: 0 0 var(--sp-2); }
 .ps-sec { margin-bottom: 14px; }
 .ps-sec-title { font-size: 10px; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
 .ps-kv { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: auto; }

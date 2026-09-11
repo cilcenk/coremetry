@@ -133,7 +133,6 @@ func (s *Store) ListOperationNames(ctx context.Context, service, pattern string,
 		limit = 200
 	}
 	wc, orderBy := operationNamesQuery(service, pattern)
-	like := operationNamesLike(pattern)
 
 	var total uint64
 	if err := s.telemetryReadConn().QueryRow(ctx,

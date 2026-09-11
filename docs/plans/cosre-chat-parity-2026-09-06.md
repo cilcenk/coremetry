@@ -37,9 +37,9 @@ Diğer bulgular:
 | D1 | **Bul/aç varlık kademesi** | Yeni niyet `find_entity`: çıplak ad, `bul/göster/aç/listele/hangi` fiilleri → canlı katalogda `nearNames` (servis · operasyon · pod · takım; trace/span/request id zaten var). Cevap = kompakt kart (ad, env, sahip takım, canlı RED — `service_summary_5m`) + çipler: Sağlık · Yavaş trace'ler · Hatalı trace'ler · Hata logları · Sayfayı aç (`open`). 2+ aday → aday çipleri (ask_service deseni, AskIntent=find). "servisleri listele" → trafiğe göre ilk 10 + /services. | ~2 saat |
 | D2 | **Aile rotası trace'i çalmasın** | "hatalı/yavaş trace(ler)(i getir)" + aile → aile kapsamlı trace_search / slow_traces (çok-servis filtre, /traces?services=…); family_health yalnız sağlık şekilleri. | ~1 saat |
 | D3 | **Tool eşleşmesi + sınıflandırıcı** | `list_services`/`list_operations` `name_contains` → jeton/bulanık eşleşme (`nearNames`), cevapta `matched_by`; tool açıklaması "kullanıcı ifadesini AYNEN geç" (mcp-builder / tool-design). Sınıflandırıcı promptuna çıplak-ad örnekleri → `find_entity`. | ~1 saat |
-| D4 | **Girişte ad tamamlama** | `CopilotChat` + `AIDrawer` girişi: ≥3 karakter → sunucu taraflı debounced aday listesi (mevcut servis araması; picker kuralı), ok/Enter kanonik adı yerleştirir → router tam eş. | ~2 saat |
+| D4 ✅ v0.10.687 | **Girişte ad tamamlama** | `CopilotChat` + `AIDrawer` girişi: ≥3 karakter → sunucu taraflı debounced aday listesi (mevcut servis araması; picker kuralı), ok/Enter kanonik adı yerleştirir → router tam eş. | ~2 saat |
 | D5 | **Bağlam çipi** | Aktif varlık girişin üstünde kaldırılabilir çip ("mobile-commercial-bff-prod ×"); "hataları?", "yavaş mı?" ona çözülür; × = bağlamı sıfırla. (conversation-memory: entity memory, görünür.) | ~1 saat |
-| D6 | **Trace listesi cevabı** | Liste sonuçlarında LLM anlatımı YOK: deterministik tablo (Start time · Service · Name · Süre · Durum, satır=link) + "Daha fazla → /traces" aynı filtreyle. Anlatım yalnız analiz sorularında. | ~2 saat |
+| D6 ✅ v0.10.688 (endpoint rotasında `trace_list` bloğu; diğer liste rotaları açık) | **Trace listesi cevabı** | Liste sonuçlarında LLM anlatımı YOK: deterministik tablo (Start time · Service · Name · Süre · Durum, satır=link) + "Daha fazla → /traces" aynı filtreyle. Anlatım yalnız analiz sorularında. | ~2 saat |
 | D7 | **Evalset** | `intent.json` 7 → ~40: çıplak ad, Türkçe ekler ('yi/'nin), yazım hatası, tire/boşluk varyantı, bul/listele fiilleri, aile+trace; `-tags evalset` sürüm kapısında. | ~1 saat |
 | D8 | **Serbest döngü koruması** | router none + sınıflandırıcı none → serbest döngüden ÖNCE ucuz varlık taraması; varlık varsa D1 kartı + "ne sormak istedin?" çipleri (tahmin eden LLM yerine). | ~30 dk (D1'e bağlı) |
 
@@ -58,3 +58,7 @@ mcp-apps-builder (ChatGPT uygulamaları).
 1. D1 kartında canlı RED olsun mu (bir MV okuması, cache'li) — öneri: evet.
 2. D4 tetikleyici: `@` öneki mi, 3 karakterden sonra otomatik mi — öneri: otomatik + klavye gezinmesi.
 3. Testler yalnız sentetik adlarla (müşteri servis adları repoya girmez).
+
+## Durum 2026-09-11
+
+D4 (687: `@`/tireli token, sunucu araması, ↑↓/Enter/Tab/Esc) ve D6'nın ilk yarısı (688: `endpoint_candidates` → onay → `endpoint_traces`, `trace_list` bloğu + ChatTraceList tablosu) gemide. Yeni desen: **onaylı aday turu** — çipler kendi başına yönlenen tam cümleler, çıplak "evet" ChatContext.LastRoute'tan (tur-arası durum yok). Açık: slow_traces / family_traces / trace_search cevaplarının da `trace_list` bloğuna geçmesi (anlatım yalnız analiz sorularında).

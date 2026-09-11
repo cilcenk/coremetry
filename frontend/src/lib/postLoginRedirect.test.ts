@@ -33,6 +33,11 @@ describe('sanitizeRedirect', () => {
     expect(sanitizeRedirect(url)).toBe(url);
   });
 
+  it('kiosk derin bağlantısını korur (v0.10.673 — /trace?id=…&kiosk=1)', () => {
+    const url = '/trace?id=0af7651916cd43dd8448eb211c80319c&kiosk=1&span=b7ad6b7169203331&tab=logs';
+    expect(sanitizeRedirect(url)).toBe(url);
+  });
+
   it('rejects absolute and protocol-relative URLs (open redirect)', () => {
     expect(sanitizeRedirect('https://evil.example/phish')).toBeNull();
     expect(sanitizeRedirect('//evil.example/phish')).toBeNull();

@@ -3546,6 +3546,22 @@ thead th:hover .th-remove { opacity: 1; }
 [data-kiosk="1"] #sidebar { display: none; }
 [data-kiosk="1"] .announcement-banner { display: none; }
 
+/* v0.10.673 — kiosk-ÇIPLAK dal (lib/kioskMode.ts: yalnız /trace?kiosk=1).
+   Kabuk Sidebar/CopilotChat/Toaster'ı hiç MOUNT ETMEZ (CSS gizleme değil);
+   #app/#main kimlikleri kalır ki sayfa düzeni (flex, overflow) aynen işlesin.
+   .session-ended: oturum bitince donmuş görünümün ÜSTÜNDE kart (overlay). */
+.kiosk-bare #main { padding: 0; }
+.session-ended {
+  position: fixed; inset: 0; z-index: var(--z-modal);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--backdrop); /* modal-backdrop ile aynı token (colorLeaks / bgZero kapıları) */
+}
+.session-ended-card {
+  background: var(--bg1); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-modal);
+  padding: var(--sp-6) var(--sp-8); max-width: 420px;
+}
+
 /* ══ DAR EKRAN KATMANI (v0.9.980) ══════════════════════════════════════
    Dar ekran denetimi DALGA 2. Bu katman dosyanın SONUNDA duruyor ve bu
    KASITLI: `[data-density="compact"] .controls input { font-size: 11px }`

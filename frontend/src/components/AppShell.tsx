@@ -8,8 +8,10 @@ import { CopilotChat } from './CopilotChat';
 import { GlobalShortcuts } from './GlobalShortcuts';
 import { Toaster } from './Toaster';
 import { useAuth } from './AuthProvider';
+import { SessionEndedCard } from './SessionEndedCard';
 import { useEventStream } from '@/lib/queries';
 import { isPublicPath } from '@/lib/auth-paths';
+import { isKioskBare } from '@/lib/kioskMode';
 import { useBranding } from '@/lib/branding';
 import { PageLoader } from './Spinner';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -74,8 +76,13 @@ export function isPathAllowed(pathname: string, allowedPages: string[]): boolean
 export function AppShell() {
   const { pathname, search } = useLocation();
   const navigate = useNavigate();
-  const { user, loading } = useAuth();
+  const { user, loading, sessionEnded, relogin } = useAuth();
   const isPublic = isPublicPath(pathname);
+  // v0.10.673 — kiosk-ÇIPLAK dal (yalnız /trace?kiosk=1, lib/kioskMode.ts):
+  // kimlikli ama kromsuz; SSE aşağıda bu bayrakla kapanır, Sidebar (health
+  // 5 s + inbox 30 s poll'ları), CopilotChat, kısayollar, Toaster mount
+  // edilmez. Dashboard'un ?kiosk=1'i (v0.9.779, salt CSS) buraya GİRMEZ.
+  const kioskBare = isKioskBare(pathname, search);
   // Subscribe so a saved branding update (from Settings) flows
   // through document.title + --accent immediately. Return value
   // unused here — applyBranding() inside the hook is the
@@ -87,7 +94,7 @@ export function AppShell() {
   // problem.open / problem.resolve / anomaly.* events and
   // invalidates the matching React Query caches so live state
   // changes show up in <1s. Closes on logout / unmount.
-  useEventStream(!!user && !isPublic);
+  useEventStream(!!user && !isPublic && !kioskBare);
 
   // v0.8.525 — 'g <x>' navigation shortcuts consolidated into the
   // single GlobalShortcuts registry (mounted below). This inline block
@@ -149,6 +156,22 @@ export function AppShell() {
   if (!user) {
     // AuthProvider is in the middle of redirecting to /login.
     return null;
+  }
+  if (kioskBare) {
+    // v0.10.673 — kiosk-çıplak kabuk: #app/#main kimlikleri kalır (sayfa
+    // düzeni flex/overflow aynen), krom ve akış bileşenlerinin HİÇBİRİ
+    // mount edilmez (appShellKiosk.test.ts pinler). Oturum bitince kart
+    // donmuş görünümün üstünde; AuthProvider user'ı düşürmez.
+    return (
+      <div id="app" className="kiosk-bare">
+        <div id="main">
+          {sessionEnded && <SessionEndedCard onRelogin={relogin} />}
+          <ErrorBoundary key={pathname}>
+            <Outlet />
+          </ErrorBoundary>
+        </div>
+      </div>
+    );
   }
   return (
     <div id="app">

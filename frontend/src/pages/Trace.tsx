@@ -643,11 +643,17 @@ function TraceDetailInner() {
                       criticalPathIds={criticalPathIds} matchIds={spanMatchIds}
                       focusIds={critFocus && criticalPath ? criticalPath.ids : undefined}
                       linkedSpanIds={linkedIds} analysis={analysis} revealSpanId={revealSpanId}
-                      logSignals={logSignals} onLogsClick={() => setTab('logs')} />
+                      logSignals={logSignals} onLogsClick={() => setTab('logs')}
+                      /* v0.10.691 (operatör: "inline gösterim trace'te iyiymiş, Coremetry
+                         içindeki trace'lerde de yapalım") — span detayı sağda yüzen panel
+                         yerine TIKLANAN SATIRIN ALTINDA (kiosk 682 deseni; TraceWaterfall
+                         renderDetail). Aynı SpanDetail, inline kipi. */
+                      renderDetail={id => (sel && sel.spanId === id ? (
+                        <SpanDetail inline span={sel} onClose={closeSpanPanel} traceSpans={spans ?? undefined}
+                          logsFrom={logWin?.from} logsTo={logWin?.to} pageRange={range}
+                          links={linkIndex.get(sel.spanId)} onSelectSpan={setSelectedId} />
+                      ) : null)} />
                   </div>
-                  {sel && <SpanDetail span={sel} onClose={closeSpanPanel} traceSpans={spans ?? undefined}
-                    logsFrom={logWin?.from} logsTo={logWin?.to} pageRange={range}
-                    links={linkIndex.get(sel.spanId)} onSelectSpan={setSelectedId} />}
                 </div>
               </>
             )}

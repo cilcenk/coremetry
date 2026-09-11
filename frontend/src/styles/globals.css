@@ -1919,6 +1919,17 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .ps-close { cursor: pointer; color: var(--text2); font-size: 16px; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; border-radius: 3px; flex-shrink: 0; background: transparent; border: none; padding: 0; }
 .ps-close:hover { background: var(--bg3); color: var(--text); }
 #span-panel-body { padding: 12px 14px; }
+/* v0.10.691 (operatör: "inline gösterim trace'te iyiymiş, Coremetry içindeki
+   trace'lerde de yapalım") — SpanDetail satır-içi kip: sağda yüzen panel
+   yerine tıklanan satırın altında (TraceWaterfall renderDetail); bölümler
+   geniş ekranda çok sütun (Tempo), geniş bölümler (exception/event/log/profil)
+   tam satır; anahtar sütunu içeriğe sığar (kiosk 685 kuralı). */
+#span-panel.span-panel-inline { position: static; width: auto; max-width: none; box-shadow: none; border: 0; border-radius: 0; background: transparent; overflow: visible; display: block; }
+.span-panel-inline #span-panel-head { position: static; padding: 4px 0 8px; background: transparent; z-index: auto; }
+.span-panel-inline #span-panel-body { padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--sp-3) var(--sp-8); align-items: start; }
+.span-panel-inline .ps-sec { margin-bottom: 0; min-width: 0; }
+.span-panel-inline .ps-sec-wide { grid-column: 1 / -1; }
+.span-panel-inline .ps-kv td:first-child { width: 1%; min-width: 0; max-width: none; white-space: nowrap; padding-right: var(--sp-6); }
 .ps-sec { margin-bottom: 14px; }
 .ps-sec-title { font-size: 10px; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
 .ps-kv { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: auto; }

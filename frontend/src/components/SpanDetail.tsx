@@ -36,7 +36,7 @@ const SPAN_LOG_WINDOW_BUFFER_NS = 60_000_000_000;
 // @timestamp'ler pencere dışında kalmasın.
 const LOGS_LINK_EXTRA_NS = 15 * 60_000_000_000;
 
-export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = true, traceSpans, pageRange, links, onSelectSpan }: {
+export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = true, inline = false, traceSpans, pageRange, links, onSelectSpan }: {
   span: SpanRow;
   // v0.10.274 (Dilim 1a) — bu span'in OTel link'leri (lib/spanLinks indeksi).
   links?: SpanLinkEntry;
@@ -53,6 +53,8 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   // the anonymous /public/trace viewer must not advertise in-app
   // navigation its recipients can't open.
   serviceLinks?: boolean;
+  /** v0.10.691 — satır-içi kip: sabit sağ panel yok, resizer yok; şelale satırının altında çok sütunlu. */
+  inline?: boolean;
   // v0.9.1273 (Dynatrace-parite #4) — trace'in TÜM span'leri; verilirse
   // Self time satırı çizilir (aralık-birleşimli öz süre, lib/selfTime).
   // Bağımsız mount'lar (span'siz) satırı hiç görmez.
@@ -254,11 +256,12 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   return (
     <SpanK8sCtx.Provider value={k8sCtx}>
     <ServiceLinkCtx.Provider value={spanLinkCtx}>
-    <div id="span-panel" style={{ width: panelW }}>
-      <div className="span-panel-resizer"
+    <div id="span-panel" className={inline ? 'span-panel-inline' : undefined} style={inline ? undefined : { width: panelW }}>
+      {/* v0.10.691 — satır-içi kipte yüzen panel de tutamaç da yok. */}
+      {!inline && <div className="span-panel-resizer"
            title="Drag to resize · double-click to reset"
            onPointerDown={onResizeStart}
-           onDoubleClick={onResetWidth} />
+           onDoubleClick={onResetWidth} />}
       <div id="span-panel-head">
         <div className="ps-title" title={displaySpanName(span) === span.name ? span.name : `raw: ${span.name}`}>
           {displaySpanName(span)}{' '}
@@ -369,7 +372,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
         )}
 
         {(exceptions.length > 0 || hasInlineException) && (
-          <Section title={`Exceptions (${exceptions.length || 1})`}>
+          <Section wide title={`Exceptions (${exceptions.length || 1})`}>
             {exceptions.map((e, i) => (
               <ExceptionView key={i}
                 service={span.serviceName}
@@ -393,7 +396,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
         )}
 
         {otherEvents.length > 0 && (
-          <Section title={`Events (${otherEvents.length})`}>
+          <Section wide title={`Events (${otherEvents.length})`}>
             {otherEvents.map((e, i) => (
               <div key={i} className="ps-event">
                 <b>{e.name}</b>{' '}
@@ -415,7 +418,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
         {links && (links.outgoing.length + links.incoming.length) > 0 && (
           /* v0.10.274 — Links: trace-düzeyi şerit spanId'yi atıyordu; burada
              span başına giden (→) ve gelen (←) link'ler, attribute'larıyla. */
-          <Section title={`Links (${links.outgoing.length + links.incoming.length})`}>
+          <Section wide title={`Links (${links.outgoing.length + links.incoming.length})`}>
             {[...links.outgoing.map(l => ({ dir: 'out' as const, l })), ...links.incoming.map(l => ({ dir: 'in' as const, l }))].map(({ dir, l }, i) => {
               const otherTrace = dir === 'out' ? l.linkedTraceId : l.traceId;
               const otherSpan = dir === 'out' ? l.linkedSpanId : l.spanId;
@@ -459,7 +462,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
           </Section>
         )}
 
-        <Section title={
+        <Section wide title={
           <>
             Logs ({spanLogs.length})
             {/* v0.8.484 — operatör-reported: link &from/&to geçiyordu ama
@@ -516,7 +519,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
             attribution per-row at this granularity, so it
             opens the most recent profile in the window). */}
         {spanHotspots && spanHotspots.profilesUsed > 0 && spanHotspots.hotspots.length > 0 && (
-          <Section title={`Top methods in span window (${spanHotspots.profilesUsed} profiles merged)`}>
+          <Section wide title={`Top methods in span window (${spanHotspots.profilesUsed} profiles merged)`}>
             <BreakdownBar b={spanHotspots.breakdown} />
             <table className="ps-kv" style={{ width: '100%', fontSize: 11 }}>
               <tbody>
@@ -541,7 +544,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
         )}
 
         {profiles.length > 0 && (
-          <Section title={`Profiles in window (${profiles.length})`}>
+          <Section wide title={`Profiles in window (${profiles.length})`}>
             {profiles.map(p => (
               <Link key={p.profileId} to={`/profile?id=${p.profileId}`}
                 className="ps-event"
@@ -564,9 +567,9 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   );
 }
 
-function Section({ title, children }: { title: React.ReactNode; children: React.ReactNode }) {
+function Section({ title, children, wide }: { title: React.ReactNode; children: React.ReactNode; wide?: boolean }) {
   return (
-    <div className="ps-sec">
+    <div className={wide ? 'ps-sec ps-sec-wide' : 'ps-sec'}>
       <div className="ps-sec-title">{title}</div>
       {children}
     </div>

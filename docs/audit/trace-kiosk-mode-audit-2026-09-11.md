@@ -561,5 +561,28 @@ kullanıcıya görünen eylem (5) en sona kalır ki yarım özellik prod'a çık
 
 ## Durum
 
-2026-09-11 — audit yazıldı, **onay bekliyor**; kod yok. Onay + 1-12 cevapları
-gelince §10 sırasıyla dilimlenir.
+2026-09-11 — audit yazıldı (v0.10.670). Operatör "Önerini yapalım" ile
+onayladı; §11 soruları önerilen cevaplarla kapandı: (1) kabuksuz dal yalnız
+`/trace` · (2) v1 şelale + loglar, SpanDetail yok · (3) `/api/traces/{id}/bundle`
+· (4) şelale üstte + loglar altta, aynı anda · (5) tek anahtar 15 s (slot-başı
+`cachedJSON` ham JSON döndürdüğü için span'leri ikinci kez çözmek gerekirdi;
+`/trace` sayfası cache'i paylaşılmaz — kiosk ayrı pencere) · (6) yalnız kiosk
+· (7) overlay kart, aynı pencerede `/login` → dönüş · (8) 500 → 1000 "daha
+fazla", ötesi `/logs` bağlantısı · (9) Oracle bundle'da · (10) Tempo bütçesi
+aynen · (11) `noopener` · (12) ölçüm operatörde.
+
+**GEMİDE (2026-09-11):**
+
+| Dilim | Sürüm | İçerik |
+|---|---|---|
+| 1 | v0.10.671 | `GET /api/traces/{id}/bundle` (`trace_bundle.go`, defter kaydı; `traceDetailPayload` paylaşımı; WaitGroup; truncated/window) |
+| 2 | v0.10.672 | `TraceBundleResponse`, `api.traceBundle`, `useTraceBundle`, `keys.traces.bundle`, iptal kapısı |
+| 3 | v0.10.673 | `lib/kioskMode.ts` `isKioskBare`; AppShell kiosk-çıplak dalı (SSE/poll/krom yok); AuthProvider `sessionEnded`/`relogin`; `SessionEndedCard` |
+| 4 | v0.10.675 | `pages/TraceKiosk.tsx` + saf `kioskModel`; `TraceLogsPanel` → `pages/trace/` (Trace.tsx 1607→1445) |
+| 5 | v0.10.676 | `traceHref({kiosk:true})`; Traces NAME hücresi ⧉ + Trace detayı "⧉ Kiosk" (yeni pencere, noopener) |
+
+Araya giren operatör bug'ı: v0.10.674 (palet kimlik araması küçük harf).
+
+**Operatörde:** §7.4 ölçümü (önce/sonra, 5 tekrar medyan), prod h2/h1
+teşhisi; kiosk penceresinde 401 kartı ve "daha fazla" davranışının gerçek
+ES arka ucuyla doğrulanması.

@@ -12,6 +12,7 @@ import { computeCriticalPath } from '@/lib/criticalPath';
 import { traceRepeatGroups, type TraceRepeatGroup } from '@/lib/traceRepeats';
 import { CopyButton } from '@/components/CopyButton';
 import { TraceLogsPanel } from './trace/TraceLogsPanel'; // v0.10.675 — kiosk ile paylaşılan panel
+import { toggleSpanSelection } from './trace/kioskModel'; // v0.10.693
 import { TraceKiosk } from './TraceKiosk'; // v0.10.675 — ?kiosk=1 dalı
 import { AIExplainButton } from '@/components/ai/AIExplainButton';
 import { renderExternalLink, collectLinkCtx, pickGroupedLinks, identityKeysFromLinks, identityOverrideCtx, shortIdentity, identityRoleTR, type ExternalLinkCtx } from '@/lib/externalLinks';
@@ -636,7 +637,8 @@ function TraceDetailInner() {
                       critFocus={critFocus} onCritFocus={setCritFocus}
                       repeatGroups={repeatGroups}
                       onRepeatChip={g => { setSpanFilter(g.name); setGroupSimilar(true); }} />
-                    <TraceWaterfall spans={spans} selectedId={selectedId} onSelect={setSelectedId}
+                    <TraceWaterfall spans={spans} selectedId={selectedId}
+                      onSelect={id => setSelectedId(prev => toggleSpanSelection(prev, id))} // v0.10.693 — tekrar tık kapatır (kiosk 685)
                       evidenceIds={evidenceIds}
                       groupSimilar={groupSimilar}
                       onGroupSimilarChange={setGroupSimilar}

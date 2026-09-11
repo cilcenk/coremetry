@@ -13,6 +13,10 @@ const detail = readFileSync(resolve(__dirname, '../components/SpanDetail.tsx'), 
 const css = readFileSync(resolve(__dirname, '../styles/globals.css'), 'utf8');
 
 describe('Trace sayfası satır-içi span detayı (v0.10.691)', () => {
+  // v0.10.693 — operatör: "tekrar basınca kapanmıyor" → aynı satıra ikinci tık seçimi kaldırır.
+  it('aynı satıra tekrar tık paneli kapatır (toggle)', () => {
+    expect(trace).toContain('onSelect={id => setSelectedId(prev => toggleSpanSelection(prev, id))}');
+  });
   it('SpanDetail renderDetail ile satırın altında; kardeş render yok', () => {
     expect(trace).toContain('renderDetail={id => (sel && sel.spanId === id ? (');
     expect(trace).toContain('<SpanDetail inline span={sel}');

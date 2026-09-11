@@ -432,6 +432,17 @@ func (s *Server) serveLogsSearch(w http.ResponseWriter, r *http.Request, q url.V
 		// query errors still fail loudly (only ErrBackendSlow degrades), and
 		// the non-trace search path below is byte-for-byte unchanged.
 		if f.TraceID != "" {
+			// v0.10.690 (operatör, prod): Logs sayfası traceId ile pencere GÖNDERMİYORDU
+			// (tüm saklama süresi) → ES 3 sn pivot bütçesini aşıp "backend yavaş";
+			// kiosk/trace sayfası span'lere çapalı pencereyle aynı logları alıyordu.
+			// Pencere yoksa trace'in kendi penceresi trace_summary_5m'den (kademeli,
+			// ≤3 sn; GetTrace ile aynı yol) → sorgu sınırlı. Bulunamazsa eski yol.
+			derived := false
+			if f.From.IsZero() && f.To.IsZero() {
+				if lo, hi, ok := s.store.TraceWindow(ctx, f.TraceID); ok {
+					f, derived = traceLogsWindowFallback(f, lo, hi)
+				}
+			}
 			page, err := logstore.SearchWithTimeout(ctx, s.logs, f, 0)
 			if err != nil {
 				if errors.Is(err, logstore.ErrBackendSlow) {
@@ -452,7 +463,12 @@ func (s *Server) serveLogsSearch(w http.ResponseWriter, r *http.Request, q url.V
 					s.logs.Backend(), f.Service, f.TraceID, err)
 				return nil, err
 			}
-			return logsSearchPayload(page), nil
+			out := logsSearchPayload(page)
+			if derived {
+				// Dürüstlük: istemci pencere göndermedi, sunucu trace'in penceresini kullandı.
+				out["traceWindow"] = map[string]int64{"fromNs": f.From.UnixNano(), "toNs": f.To.UnixNano()}
+			}
+			return out, nil
 		}
 		// v0.8.350 (HA 🟡6) — the MAIN search path now degrades like the
 		// trace branch above: slow/unreachable backend → 200
@@ -1098,4 +1114,14 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 		}
 		return series, nil
 	})
+}
+
+// traceLogsWindowFallback — SAF (v0.10.690): yalnız İKİ sınır da boşken
+// trace penceresini uygular; istemcinin gönderdiği pencere asla ezilmez.
+func traceLogsWindowFallback(f logstore.Filter, lo, hi time.Time) (logstore.Filter, bool) {
+	if !f.From.IsZero() || !f.To.IsZero() || lo.IsZero() || hi.IsZero() || !hi.After(lo) {
+		return f, false
+	}
+	f.From, f.To = lo, hi
+	return f, true
 }

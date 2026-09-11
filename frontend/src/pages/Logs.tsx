@@ -26,6 +26,7 @@ import { RenderedMarkdown } from '@/components/Markdown';
 import { Pager } from '@/components/Pager';
 import { ShareButton } from '@/components/ShareButton';
 import { buildKibanaURL, buildKQLFromFilter } from '@/lib/kibanaLink';
+import { logsUseTimeRange } from '@/lib/logsTraceWindow'; // v0.10.690
 import type { KibanaSettings } from '@/lib/types';
 import { useLogs } from '@/lib/queries';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
@@ -447,7 +448,9 @@ function LogsInner() {
   // stays true forever and the page is stuck on the skeleton.
   // Memoise on the range / traceId-filter so the values only
   // refresh when the operator actually changes the inputs.
-  const useTimeRange = !filter.traceId;
+  // v0.10.690 — traceId + mutlak aralık → pencere gönderilir (derin bağlantı);
+  // göreli aralıkta sunucu trace'in penceresini çözer (lib/logsTraceWindow.ts).
+  const useTimeRange = logsUseTimeRange(filter.traceId, range);
   const { from, to } = useMemo(
     () => useTimeRange ? timeRangeToNs(range) : { from: undefined, to: undefined },
     // nowTick: ↻ tıkı göreli pencereyi şimdiye taşır (v0.10.440, B3).
@@ -933,7 +936,7 @@ function LogsInner() {
             value={draft.traceId}
             onChange={e => setDraft({ ...draft, traceId: e.target.value.trim().toLowerCase().replace(/^0x/, '') })}
             onKeyDown={e => e.key === 'Enter' && apply()}
-            title="Filter logs to a single trace. Time range is ignored when this is set — searches across full retention."
+            title="Filter logs to a single trace. An absolute (custom) range is honoured; with a relative range the server derives the trace's own window (falls back to full retention)."
             className="mono"
             style={{ width: 180, fontSize: 12 }} />
           {/* v0.8.406 — operator ask: "sadece trace'i olan loglar".

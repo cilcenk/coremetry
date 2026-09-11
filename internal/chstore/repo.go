@@ -4599,6 +4599,41 @@ func (s *Store) FindTraceIDBySpan(ctx context.Context, spanID string, from, to t
 	return traceID, nil
 }
 
+// TraceWindow — v0.10.690: trace'in zaman penceresi (±5 dk marj) trace_summary_5m'den,
+// KADEMELİ ve ZAMAN SINIRLI (24 sa → 7 g → 90 g, adım başına max_execution_time 3;
+// GetTrace'in v0.9.578 yolu). ok=false: bulunamadı ya da probe zaman aşımı —
+// çağıran kendi son çaresini uygular (GetTrace: retention tabanı; logs: eski
+// sınırsız arama). Bloom/granül budaması yok (trace_id ORDER BY sonunda), o
+// yüzden pencere daraltması partisyon budamasıdır.
+func (s *Store) TraceWindow(ctx context.Context, traceID string) (lo, hi time.Time, ok bool) {
+	var winStart time.Time
+	var winEndNanos int64
+	for _, step := range traceWindowSteps {
+		since := time.Now().Add(-step)
+		err := s.telemetryReadConn().QueryRow(ctx, `
+			SELECT minMerge(trace_start_state), toInt64(maxMerge(trace_end_state))
+			FROM trace_summary_5m
+			WHERE trace_id = ? AND time_bucket >= ?
+			SETTINGS max_execution_time = 3`,
+			// time_bucket DateTime (DateTime64 DEĞİL): toStartOfInterval
+			// saniye grenli INTERVAL ile düz DateTime üretiyor. Nanosaniyeli
+			// bir argüman code 53 ile reddedilir — v0.9.578'de tam bu oldu.
+			traceID, chDateTimeArg(since)).Scan(&winStart, &winEndNanos)
+		if err != nil {
+			// Zaman aşımı/hata: daha GENİŞ pencere daha da yavaş olur,
+			// denemeye devam etmek anlamsız. Sınırsız taramaya düşme —
+			// aşağıdaki son çare TTL sınırını uyguluyor.
+			log.Printf("[trace] %s pencere araması başarısız (%s içinde): %v", traceID, step, err)
+			break
+		}
+		if lo, hi, ok := traceTimeBound(winStart, winEndNanos); ok {
+			return lo, hi, true
+		}
+		// Satır yok: trace bu pencerede değil, bir sonrakini dene.
+	}
+	return time.Time{}, time.Time{}, false
+}
+
 func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error) {
 	// v0.8.210 — derive the trace's time window from trace_summary_5m (the
 	// aggregate, far smaller than raw spans) so the spans scan is time-bounded
@@ -4634,34 +4669,13 @@ func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error)
 	// trace'lerin ezici çoğunluğu tazedir, yani ilk adım pratikte
 	// hemen isabet eder; eski bir trace için ikinci/üçüncü adımın
 	// bedeli yalnız o istekte ödenir.
-	var winStart time.Time
-	var winEndNanos int64
 	bounded := false
-	for _, step := range traceWindowSteps {
-		since := time.Now().Add(-step)
-		err := s.telemetryReadConn().QueryRow(ctx, `
-			SELECT minMerge(trace_start_state), toInt64(maxMerge(trace_end_state))
-			FROM trace_summary_5m
-			WHERE trace_id = ? AND time_bucket >= ?
-			SETTINGS max_execution_time = 3`,
-			// time_bucket DateTime (DateTime64 DEĞİL): toStartOfInterval
-			// saniye grenli INTERVAL ile düz DateTime üretiyor. Nanosaniyeli
-			// bir argüman code 53 ile reddedilir — v0.9.578'de tam bu oldu.
-			traceID, chDateTimeArg(since)).Scan(&winStart, &winEndNanos)
-		if err != nil {
-			// Zaman aşımı/hata: daha GENİŞ pencere daha da yavaş olur,
-			// denemeye devam etmek anlamsız. Sınırsız taramaya düşme —
-			// aşağıdaki son çare TTL sınırını uyguluyor.
-			log.Printf("[trace] %s pencere araması başarısız (%s içinde): %v", traceID, step, err)
-			break
-		}
-		if lo, hi, ok := traceTimeBound(winStart, winEndNanos); ok {
-			where += " AND time >= ? AND time <= ?"
-			args = append(args, lo, hi)
-			bounded = true
-			break
-		}
-		// Satır yok: trace bu pencerede değil, bir sonrakini dene.
+	// v0.10.690 — pencere probe'u TraceWindow'a ayrıldı: /api/logs/search'ün
+	// penceresiz trace araması da aynı sınırlı yolu kullanır.
+	if lo, hi, ok := s.TraceWindow(ctx, traceID); ok {
+		where += " AND time >= ? AND time <= ?"
+		args = append(args, lo, hi)
+		bounded = true
 	}
 	if !bounded {
 		// SON ÇARE — yine de SINIRLI. Pencereyi çözemedik ama spans

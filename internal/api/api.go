@@ -7484,11 +7484,7 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 			}
 			f.Services = envServices
 		}
-		items, err := s.store.ListExceptionGroups(ctx, f)
-		if err != nil {
-			return nil, err
-		}
-		total, err := s.store.CountExceptionGroups(ctx, f)
+		items, total, pg, err := s.listExceptionGroupsPage(ctx, f) // v0.10.703 — sort=priority: exception_priority_sort.go
 		if err != nil {
 			return nil, err
 		}
@@ -7502,11 +7498,13 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 		for i := range items {
 			items[i].Priority, items[i].PriorityReason = exceptionPriority(items[i])
 		}
+		items = pg.apply(items, total) // öncelik hesabından SONRA: sırala + dilimle (yalnız sort=priority)
 		return map[string]any{
 			"items":  items,
 			"total":  total,
-			"limit":  f.Limit,
-			"offset": f.Offset,
+			"limit":  pg.Limit,
+			"offset": pg.Offset,
+			"capped": pg.Capped,
 		}, nil
 	})
 }

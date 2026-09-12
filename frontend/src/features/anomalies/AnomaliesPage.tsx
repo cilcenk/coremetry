@@ -53,10 +53,13 @@ const TABS: { key: string; label: string; hint: string }[] = [
 // ORDER BY runs in ClickHouse across the whole paginated set). The
 // DataTable column ids below are exactly these values, so dt.sort.id
 // forwards straight to the fetch after a sanitize.
-type SortKey = 'state' | 'type' | 'service' | 'occurrences' | 'firstSeen' | 'lastSeen' | 'assignee';
+type SortKey = 'priority' | 'state' | 'type' | 'service' | 'occurrences' | 'firstSeen' | 'lastSeen' | 'assignee';
 const SORT_KEYS: readonly SortKey[] =
-  ['state', 'type', 'service', 'occurrences', 'firstSeen', 'lastSeen', 'assignee'];
-const DEFAULT_EXC_SORT = { id: 'lastSeen' as SortKey, dir: 'desc' as const };
+  ['priority', 'state', 'type', 'service', 'occurrences', 'firstSeen', 'lastSeen', 'assignee'];
+// v0.10.703 (operatör 2026-09-13) — varsayılan ÖNCELİK: Problems inbox gibi
+// P1 patlamalar ilk sayfada; "last seen" sırası yüzlerce tek seferlik grubu
+// öne alıyor, 700+ occurrence'lı P1'i sonraki sayfalara itiyordu.
+const DEFAULT_EXC_SORT = { id: 'priority' as SortKey, dir: 'desc' as const };
 
 // Exception inbox columns — shared DataTable primitive in serverSort
 // mode (Services template, v0.8.251): the hook owns the sort UX, the
@@ -66,7 +69,10 @@ const DEFAULT_EXC_SORT = { id: 'lastSeen' as SortKey, dir: 'desc' as const };
 // ordering (worst at top) stays server-side — see
 // exceptionGroupsOrderBy's multiIf.
 const EXC_COLS: DataTableColumn<ExceptionGroup>[] = [
-  { id: 'state',       label: 'State',       sortValue: g => g.state,       naturalDir: 'desc', width: 132 },
+  // v0.10.703 — öncelik kendi sütununda (Problems inbox PRIO ile aynı anatomi);
+  // sıralama sunucuda (exception_priority_sort.go), sortValue yalnız işaret.
+  { id: 'priority',    label: 'Prio',        sortValue: g => g.priority ?? '', naturalDir: 'desc', width: 60 },
+  { id: 'state',       label: 'State',       sortValue: g => g.state,       naturalDir: 'desc', width: 108 },
   { id: 'type',        label: 'Exception',   sortValue: g => g.type,        naturalDir: 'asc', flex: true },
   { id: 'service',     label: 'Service',     sortValue: g => g.service,     naturalDir: 'asc',  width: 150 },
   { id: 'occurrences', label: 'Occurrences', sortValue: g => g.occurrences, numeric: true,      width: 100 },
@@ -227,7 +233,9 @@ export default function ProblemsPage() {
   // (old column schema, hand-edited URL) never reaches the backend
   // ORDER BY. Must precede the fetch effect that consumes it.
   const dt = useDataTable<ExceptionGroup>({
-    storageKey: 'exception-inbox',
+    // v0.10.703 — anahtar v2: eski kalıcı sıra (lastSeen) yeni öncelik
+    // varsayılanını gölgelemesin; genişlikler sıfırlanır (bilinçli).
+    storageKey: 'exception-inbox-v2',
     columns: EXC_COLS,
     rows: data ?? [],
     serverSort: true,
@@ -564,7 +572,8 @@ export default function ProblemsPage() {
                             ? <ChevronDown size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />
                             : <ChevronRight size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />}
                         </td>
-                        <td className="row-cell"><Link to={excHref} replace className="row-link" onClick={e => e.stopPropagation()}><StateBadge s={g.state} />{g.priority && <>{' '}<PriorityBadge p={g.priority} reason={g.priorityReason} /></>}</Link></td>
+                        <td className="row-cell"><Link to={excHref} replace className="row-link" onClick={e => e.stopPropagation()}>{g.priority ? <PriorityBadge p={g.priority} reason={g.priorityReason} /> : <span style={{ color: 'var(--text3)' }}>—</span>}</Link></td>
+                        <td className="row-cell"><Link to={excHref} replace className="row-link" onClick={e => e.stopPropagation()}><StateBadge s={g.state} /></Link></td>
                         <td className="row-cell">
                           <Link to={excHref} replace className="row-link" onClick={e => e.stopPropagation()}>
                           <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 11.5, color: 'var(--err)' }}>
@@ -656,7 +665,7 @@ export default function ProblemsPage() {
                       </tr>
                       {open && (
                         <tr>
-                          <td colSpan={isAdmin ? 9 : 8} style={{
+                          <td colSpan={isAdmin ? 10 : 9} style={{
                             background: 'var(--bg1)', padding: '10px 16px',
                             borderTop: '1px solid var(--border)',
                           }}>

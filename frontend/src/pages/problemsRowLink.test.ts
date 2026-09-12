@@ -34,8 +34,8 @@ describe('/problems satırları gerçek link', () => {
     const src = read('features/anomalies/AnomaliesPage.tsx');
     expect(src).toContain('const excHref = excDetailHref(location.pathname, searchParams, g.fingerprint);');
     const links = src.match(/<Link to=\{excHref\} replace className="row-link" onClick=\{e => e\.stopPropagation\(\)\}>/g) ?? [];
-    // State · type+message · occurrences · first seen · last seen
-    expect(links.length, 'düz hücre sayısı değişti — sözleşmeyi güncelle').toBe(5);
+    // Prio (v0.10.703) · State · type+message · occurrences · first seen · last seen
+    expect(links.length, 'düz hücre sayısı değişti — sözleşmeyi güncelle').toBe(6);
     expect(src).toContain('<tr {...rowActivation(() => openExcDetail(g))}'); // v0.10.451 — klavye eşdeğeriyle
   });
 

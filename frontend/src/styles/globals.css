@@ -3645,6 +3645,16 @@ thead th:hover .th-remove { opacity: 1; }
    ya da klavye odağında görünür; Link'in dışında, hücreye mutlak konumlu. */
 .row-cell { position: relative; }
 .row-kiosk { position: absolute; right: var(--sp-2); top: 50%; transform: translateY(-50%); opacity: 0; }
+/* v0.10.697 — Operations tablosu tek geniş trend grafiği (TrendSpark):
+   çubuk = çağrı (turuncu, yarı saydam), kırmızı pay = hata, çizgi = p99. */
+.trend-spark { position: relative; display: inline-block; vertical-align: middle; }
+.trend-spark svg { display: block; overflow: visible; }
+.trend-spark .ts-bar { fill: var(--orange); opacity: .45; }
+.trend-spark .ts-err { fill: var(--err); }
+.trend-spark .ts-p99 { fill: none; stroke: var(--teal); stroke-width: 1.5; stroke-linejoin: round; }
+.trend-spark .ts-cur { fill: var(--teal); }
+.trend-spark__tt { position: absolute; left: 0; bottom: calc(100% + 4px); z-index: var(--z-tooltip); white-space: nowrap; font-size: var(--fs-3xs); color: var(--text); background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius-xs); padding: 2px 6px; box-shadow: var(--shadow-pop); pointer-events: none; }
+.trend-spark-btn { padding: 1px 2px; }
 tr:hover .row-kiosk, .row-kiosk:focus-visible { opacity: 1; }
 
 /* ══ DAR EKRAN KATMANI (v0.9.980) ══════════════════════════════════════

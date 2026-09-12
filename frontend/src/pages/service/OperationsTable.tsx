@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Sparkline } from '@/components/Sparkline';
+import { TrendSpark } from '@/components/TrendSpark'; // v0.10.697
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { EventMarkers } from '@/components/EventMarkers';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
@@ -51,7 +52,7 @@ export type OpMetricKey = 'calls' | 'errors' | 'p99';
 // bir boşluk olarak görünüyordu. 110 + space-between: içerik kolonun
 // çoğunu doldurur, kalan pay üç grafiğin ARASINA eşit dağılır —
 // metrikler ayrışır, boşluk kasıtlı durur.
-const SPARK_W = 110;
+const TREND_W = 160; // v0.10.697 — tek geniş trend grafiği
 
 const TREND_C = {
   calls:  'var(--orange)',
@@ -59,13 +60,6 @@ const TREND_C = {
   p99:    'var(--teal)',
 } as const;
 
-// v0.9.888 — kroma `.btn-bare` sınıfına taşındı; burada yalnız YERLEŞİM
-// kaldı. Eski hâli `all: unset` değildi ama aynı sonucu veriyordu:
-// element-seviyesi buton kuralını satır içi stille ezmek. Sınıf hem
-// :focus-visible halkasını yaşatıyor hem de üç kopyayı teke indiriyor.
-const miniSparkBtn: React.CSSProperties = {
-  padding: '1px 2px', marginRight: 2,
-};
 
 const OP_COLS: DataTableColumn<OperationSummary>[] = [
   { id: 'name',      label: 'Operation', sortValue: r => r.name,            naturalDir: 'asc', flex: true },
@@ -82,7 +76,7 @@ const OP_COLS: DataTableColumn<OperationSummary>[] = [
   // v0.9.498 — 190px üç sparkline'a yetmiyordu (3×80 + boşluk ≈ 250) ve
   // hangisinin hangi metrik olduğunu söyleyen hiçbir şey yoktu. Genişlik
   // gerçek içeriğe çekildi, her mini grafiğe renk lekesi + etiket eklendi.
-  { id: 'trend',     label: 'Trend',     width: 350 },
+  { id: 'trend',     label: 'Trend',     width: 200 },
   { id: 'impact',    label: 'Impact',    sortValue: r => impactOf(r),       numeric: true,      width: 130 },
   { id: 'spanCount', label: 'Calls',     sortValue: r => r.spanCount,       numeric: true,      width: 96 },
   { id: 'errorRate', label: 'Err %',     sortValue: r => r.errorRate,       numeric: true,      width: 84 },
@@ -493,37 +487,18 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                       değişir. flex:1 ile üç grafik kolon NE GENİŞLİKTE OLURSA
                       OLSUN yayılır. */}
                   <td>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%' }}>
-                    <button
-                      type="button"
+                    {/* v0.10.697 (operatör, prod: "sparkline'lar kullanışsız") — üç 30 px
+                        mikro grafik yerine TEK geniş trend (TrendSpark): çubuklar çağrı,
+                        kırmızı pay hata, çizgi p99, hover'da kova değerleri. Veri aynı
+                        (sparkline / errorsSparkline / p99Sparkline, yeni sorgu yok). Tık:
+                        modal (calls odağı; errors/p99 sekmeleri modalda). Mockup onaylı;
+                        tek commit, geri alması tek adım. */}
+                    <button type="button"
                       onClick={() => { setOpFocus('calls'); setOpDetail(op); }}
-                      title={`Calls — ${fmtNum(op.spanCount)} · tıkla: bu metriğin grafiği`}
-                      className="btn-bare" style={miniSparkBtn}
-                    >
-                      <Sparkline values={op.sparkline ?? []} color={TREND_C.calls}
-                        width={SPARK_W} title="" />
+                      title={`Calls ${fmtNum(op.spanCount)} · Err %${op.errorRate.toFixed(2)} · P99 ${op.p99DurationMs.toFixed(0)}ms · tıkla: grafik`}
+                      className="btn-bare trend-spark-btn">
+                      <TrendSpark calls={op.sparkline ?? []} errors={op.errorsSparkline ?? []} p99={op.p99Sparkline ?? []} width={TREND_W} />
                     </button>
-                    {/* v0.9.347 — errors ve p99 sparkline'ları. İkisi de ZATEN
-                        aynı yanıtta geliyordu (errorsSparkline / p99Sparkline,
-                        v0.5.392'den beri); modal açılmadığı için çizilmiyorlardı
-                        sadece. Yeni sorgu yok. */}
-                    <button type="button"
-                      onClick={() => { setOpFocus('errors'); setOpDetail(op); }}
-                      title={`Errors — %${op.errorRate.toFixed(2)} · tıkla: bu metriğin grafiği`}
-                      className="btn-bare" style={miniSparkBtn}
-                    >
-                      <Sparkline values={op.errorsSparkline ?? []}
-                        color={TREND_C.errors} width={SPARK_W} title="" />
-                    </button>
-                    <button type="button"
-                      onClick={() => { setOpFocus('p99'); setOpDetail(op); }}
-                      title={`P99 — ${op.p99DurationMs.toFixed(0)}ms · tıkla: bu metriğin grafiği`}
-                      className="btn-bare" style={miniSparkBtn}
-                    >
-                      <Sparkline values={op.p99Sparkline ?? []} color={TREND_C.p99}
-                        width={SPARK_W} title="" />
-                    </button>
-                    </div>
                   </td>
                   <td className="mono" style={{ textAlign: 'right' }}>
                     <ImpactBar value={impactOf(op)}

@@ -55,7 +55,7 @@ Sıralama ölçütü: operatörün Dynatrace alışkanlığında en çok arayaca
 | # | Boşluk | Uygulama taslağı | Boy | Korelasyon ilkesi |
 |---|---|---|---|---|
 | 1 | **Join-on-open birleştirme + incident düzeyi kök neden** — **GEMİDE** v0.10.698 (B: incident kök neden) + v0.10.699 (A: join-on-open, `clusterJoinWindow` 30 dk) | `detectAnomalyClusters` girdisine son N dk açık problemler; yeni açılış propagation-bağlantılı açık kümeye üye olsun; incident satırı üye hipotezlerin en yüksek güvenli TopSuspect'ini taşısın | M | ✔ doğrudan |
-| 2 | **Temporal korelasyon çarpanı + 3 hop + dikey zincir** — dilim 1 GÖLGE GEMİDE v0.10.700 (faktör + gerekçe + ayar; sıra değişmez); dilim 2 (3 hop + prompt) sırada | `propagationMaxHops` vidası 2→3; 5 dk hata-serisi korelasyonunu (`ChangedService.Score`) propagation skoruna çarpan; `RankNodeCauses` adayı `causal_chain` adımı olarak verdict prompt'una | M | ✔ doğrudan |
+| 2 | **Temporal korelasyon çarpanı + 3 hop + dikey zincir** — **GEMİDE** v0.10.700 (dilim 1 gölge: faktör + gerekçe + ayar) + v0.10.701 (dilim 2: 3 hop, prompt/katalog zamansal satır, causal_chain node yönergesi) | `propagationMaxHops` vidası 2→3; 5 dk hata-serisi korelasyonunu (`ChangedService.Score`) propagation skoruna çarpan; `RankNodeCauses` adayı `causal_chain` adımı olarak verdict prompt'una | M | ✔ doğrudan |
 | 3 | **Endpoint/route hedefli alert rule** | `RuleTarget`'a `http_route` türü; ölçü `spanmetrics_1m` (service, route) state'lerinden; Endpoints satırından "alarm kur" | S-M | kısmen |
 | 4 | **OTLP/infra metrikleri için adaptif baseline** | `metricPolicies` desenine `jvm_heap_pct`, `gc_pause_ms`, `cpu_pct` (metricSource seam'i); mevcut dwell/seasonal kapıları aynen | M | ✔ (infra anomalisi hipoteze kanıt) |
 | 5 | **Problem modeli: kategori + görüntü kimliği + etkilenen varlıklar** | `rule_id` önek → `category` türetici (okuma anı, saf); `display_id` sıralı sayaç (boot-ALTER, iki-boot); `affectedEntities[]` = blast-radius callers ∪ AffectedPods ∪ cluster üyeleri | S-M | kısmen |
@@ -121,5 +121,9 @@ Karar operatörde; öneri **B** (mockup ile).
   `on`); Settings → Anomaly seçici. Operatör prod'da gölgeyi izleyip açar.
 - Ribbon: kalıcı hipotez adayları artık çiziliyor (`lib/rootCauseCandidates.ts`;
   bugüne dek yalnız canlı correlations çiziliyordu) — kind rozeti + ⏱ gerekçe.
-- Dilim 2 (sırada): `propagationMaxHops` 3, prompt/katalog aday satırına
-  zamansal gerekçe, verdict `causal_chain`'e node adımı yönergesi.
+- **Dilim 2 GEMİDE v0.10.701:** `propagationMaxHops` 2→3 (hop-3 = 0.25×pay
+  çarpımı, `TestRank3HopDecay`); zamansal gerekçe üç prompt yüzeyinde aday
+  satırına " · " ile eklenir (hipotez bloğu TR, hakem kanıt kataloğu, Explain
+  düzyazı) — gerekçesiz satır bayt-özdeş; hakem sistem prompt'una NEDENSEL
+  ZİNCİR paragrafı (node adayı ayrı adım, "leads by" nedene yakın, "rose
+  after it" semptom). Anahtar hâlâ operatörde (`temporalRanking` shadow).

@@ -126,9 +126,17 @@ func BuildEvidenceCatalog(h *chstore.RootCauseHypothesis) EvidenceCatalog {
 
 	// ── 1. Baş şüpheli ────────────────────────────────────────────────
 	if h.TopSuspect != "" {
-		addPos(h.TopSuspect, fmt.Sprintf(
+		txt := fmt.Sprintf(
 			"korelasyon motorunun baş şüphelisi: %s (skor %.1f, güven %.2f)",
-			h.TopSuspect, h.TopScore, h.Confidence))
+			h.TopSuspect, h.TopScore, h.Confidence)
+		// v0.10.701 — zamansal gerekçe (önde mi / sonra mı) hakeme de iner.
+		for _, c := range h.Candidates {
+			if c.Service == h.TopSuspect && c.TemporalReason != "" {
+				txt += " · " + c.TemporalReason
+				break
+			}
+		}
+		addPos(h.TopSuspect, txt)
 	}
 
 	// ── 2. Diğer adaylar ──────────────────────────────────────────────
@@ -143,6 +151,9 @@ func BuildEvidenceCatalog(h *chstore.RootCauseHypothesis) EvidenceCatalog {
 		txt += ")"
 		if c.Reason != "" {
 			txt += " — " + c.Reason
+		}
+		if c.TemporalReason != "" {
+			txt += " · " + c.TemporalReason // v0.10.701
 		}
 		addPos(c.Service, txt)
 	}

@@ -28,7 +28,7 @@ import (
 //	score(D)          = share(S→D)
 //	score(E via S→D→E) = decay · share(S→D) · share(D→E)
 //
-// Capped at propagationMaxHops ("decayed 2-hop") and cycle-guarded with
+// Capped at propagationMaxHops (decayed 3-hop since v0.10.701) and cycle-guarded with
 // an on-path set so S→D→S can't loop. When a service is reachable by
 // more than one path, the STRONGEST single path wins (max, not sum) —
 // "the best single explanation", and it keeps the score in [0,1].
@@ -41,8 +41,11 @@ const (
 	// propagationDecay weights each extra hop — a 2-hop suspect carries
 	// half the score the same error share would at 1 hop.
 	propagationDecay = 0.5
-	// propagationMaxHops bounds the transitive walk (decayed 2-hop).
-	propagationMaxHops = 2
+	// propagationMaxHops bounds the transitive walk. v0.10.701 (Dynatrace
+	// paritesi #2, dilim 2): 2 → 3. Üçüncü hop mevcut formülden 0.25×pay
+	// çarpımı alır; zamansal çarpan (temporal.go, v0.10.700) uzak hop'un
+	// yanlış pozitifini aşağı iter — ikisi bu yüzden aynı dilim.
+	propagationMaxHops = 3
 )
 
 // ScoredCause is one root-cause candidate for a triggering service: the

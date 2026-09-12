@@ -883,6 +883,17 @@ farklıdır; kanıt destekliyorsa ikisini de yaz.
 bir ÇÖZÜM değildir (mitigate olabilir). Topolojide olmayan bir varlığı
 hedef gösterme.
 
+NEDENSEL ZİNCİR (causal_chain):
+- Adımları tetikleyiciden en DERİN varlığa doğru sırala; her adımın
+  evidence alanına en az bir kanıt kimliği yaz.
+- Katalogda "node:" önekli aynı-node adayı varsa ve kanıt destekliyorsa
+  onu AYRI bir adım olarak yaz (entity = node kimliği, effect = ortak
+  kiracıların birlikte bozulması). Dikey eksen yatay çağrı zincirinin
+  bir halkasıdır, alternatifi değil.
+- Aday satırındaki zamansal gerekçe sırayı söyler: "leads by" olan aday
+  nedene daha yakındır; "rose after it" olan aday SEMPTOMDUR, zincirin
+  başına koyma.
+
 Çıktı YALNIZ JSON olsun. title, summary, remediation.action alanlarını
 TÜRKÇE yaz; kimlikleri (E1, N2) ve enum değerlerini İNGİLİZCE bırak.`
 

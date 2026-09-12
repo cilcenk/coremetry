@@ -51,6 +51,11 @@ func HypothesisPromptBlockTR(h *chstore.RootCauseHypothesis) string {
 	if top != nil && top.Reason != "" {
 		line += " — " + top.Reason
 	}
+	// v0.10.701 — zamansal gerekçe (gölgede de görünür: model "önde mi,
+	// sonra mı" bilgisini sıralamadan bağımsız okur).
+	if top != nil && top.TemporalReason != "" {
+		line += " · " + top.TemporalReason
+	}
 	sb.WriteString(line + "\n")
 
 	// Propagation path (anchor → … → suspect) when the scorer recorded one.
@@ -88,6 +93,9 @@ func HypothesisPromptBlockTR(h *chstore.RootCauseHypothesis) string {
 		label += ")"
 		if c.Reason != "" {
 			label += " — " + c.Reason
+		}
+		if c.TemporalReason != "" {
+			label += " · " + c.TemporalReason // v0.10.701
 		}
 		others = append(others, label)
 		if len(others) >= maxHypothesisCandidates {

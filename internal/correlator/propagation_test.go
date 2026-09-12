@@ -167,3 +167,27 @@ func TestRootCauseRankViaLiveGraph(t *testing.T) {
 		t.Errorf("live RootCauseRank disagrees with scorer: %+v", cs)
 	}
 }
+
+// v0.10.701 (parite #2, dilim 2) — 3. hop artık puanlanır: decay² · pay
+// çarpımı; 4. hop hâlâ dışarıda (TestRankMaxHopsCap tavan-bağımsız pinler).
+func TestRank3HopDecay(t *testing.T) {
+	cs := causeMap(RankRootCausesFromEdges([]chstore.ServiceEdgePair{
+		e("S", "D", 100, 10),
+		e("D", "E", 50, 4),
+		e("E", "F", 20, 2),
+		e("F", "G", 10, 1),
+	}, "S"))
+	f, ok := cs["F"]
+	if !ok || !approx(f.Score, 0.25) || f.Hops != 3 {
+		t.Fatalf("F 3-hop skor 0.25 olmalı, got %+v", f)
+	}
+	if want := []string{"S", "D", "E", "F"}; len(f.Path) != 4 || f.Path[3] != want[3] {
+		t.Fatalf("F yolu S→D→E→F olmalı, got %v", f.Path)
+	}
+	if _, scored := cs["G"]; scored {
+		t.Fatal("4. hop puanlanmamalı")
+	}
+	if propagationMaxHops != 3 {
+		t.Fatalf("propagationMaxHops 3 olmalı (v0.10.701), %d", propagationMaxHops)
+	}
+}

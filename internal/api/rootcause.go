@@ -440,6 +440,9 @@ func buildRootCausePrompt(h *chstore.RootCauseHypothesis) string {
 		if reason == "" {
 			reason = "no reason recorded"
 		}
+		if tr := strings.TrimSpace(c.TemporalReason); tr != "" {
+			reason += " · " + tr // v0.10.701 — zamansal gerekçe
+		}
 		fmt.Fprintf(&b, "  %d. %s (score %.1f%s) — %s\n", i+1, c.Service, c.Score, hops, reason)
 	}
 	return b.String()

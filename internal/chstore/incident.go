@@ -33,6 +33,10 @@ type Incident struct {
 	// isn't tagged with cluster attrs. Multi-cluster
 	// incidents render with multiple chips.
 	Clusters []string `json:"clusters,omitempty"`
+	// RootCause (v0.10.698) — bağlı problemlerin kalıcı hipotezlerinden
+	// en yüksek güvenli TopSuspect; okuma-anı (incident_rootcause.go).
+	// nil = adı olan / eşiği aşan hipotez yok → FE "—".
+	RootCause *RootCauseSummary `json:"rootCause,omitempty"`
 }
 
 type IncidentEvent struct {

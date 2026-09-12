@@ -17,6 +17,7 @@ import { metricQuery } from '@/lib/metricQuery';
 import { tsLong } from '@/lib/utils';
 import type { Incident } from '@/lib/types';
 import { serviceHref, eventLifespanWindow } from '@/lib/serviceHref';
+import { incidentRootCauseLabel } from '@/lib/incidentRootCause';
 import { Button } from '@/components/ui/Button';
 import { PageShell } from '@/components/ui/PageShell';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
@@ -165,6 +166,7 @@ function Inner() {
   };
 
   const elapsedNs = (inc.resolvedAt ?? Date.now() * 1_000_000) - inc.startedAt;
+  const cause = incidentRootCauseLabel(inc.rootCause);
 
   // Impact chart series (error-rate over the incident window) → OverviewChart
   // shape: times in unix seconds, one red area series. Deploy marker = the
@@ -207,6 +209,16 @@ function Inner() {
         <h1 style={{ fontSize: 20, margin: '0 0 4px' }}>{inc.title}</h1>
         <div className="meta-row" style={{ marginBottom: 18 }}>
           {inc.service && <span className="chip"><span className="k">service</span><b className="mono">{inc.service}</b></span>}
+          {/* v0.10.698 — bağlı problemlerin en güvenli hipotezi; şüpheli
+              servisin olay penceresine link. Yoksa çip çizilmez. */}
+          {cause && (
+            <span className="chip" title={`Likely cause: ${cause.suspect} · confidence ${cause.pct}`}>
+              <span className="k">root cause</span>
+              <Link className="mono" to={serviceHref(cause.suspect, { range: eventLifespanWindow(inc) })}
+                style={{ fontWeight: 600, color: 'var(--text)' }}>{cause.suspect}</Link>
+              <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{cause.pct}</span>
+            </span>
+          )}
           <span className="chip"><span className="k">started</span><b className="mono">{tsLong(inc.startedAt)}</b></span>
           <span className="chip"><span className="k">duration</span><b>{fmtDuration(elapsedNs)}{inc.resolvedAt ? '' : ' (ongoing)'}</b></span>
           {inc.assignee && <span className="chip"><span className="k">assignee</span><b>{inc.assignee}</b></span>}

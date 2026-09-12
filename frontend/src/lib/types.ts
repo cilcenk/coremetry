@@ -235,6 +235,9 @@ export interface Incident {
   // k8s/openshift clusters the service was active in around
   // the incident — enriched at read time on the server.
   clusters?: string[];
+  // v0.10.698 — bağlı problemlerin hipotezlerinden en yüksek güvenli
+  // TopSuspect (server, okuma-anı). Yok = "—" (uydurma yok).
+  rootCause?: RootCauseSummary;
 }
 
 export interface IncidentEvent {

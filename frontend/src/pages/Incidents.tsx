@@ -10,6 +10,7 @@ import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
 import { useIncidents, useCreateIncident } from '@/lib/queries';
 import { tsLong, fmtNum } from '@/lib/utils';
+import { incidentRootCauseLabel, incidentRootCauseSort } from '@/lib/incidentRootCause';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { Incident, IncidentStatus } from '@/lib/types';
@@ -23,6 +24,8 @@ const INCIDENT_COLS: DataTableColumn<Incident>[] = [
   { id: 'severity', label: 'Severity', sortValue: i => i.severity, naturalDir: 'asc', width: 120 },
   { id: 'title',    label: 'Title',    sortValue: i => i.title,    naturalDir: 'asc', width: 320 },
   { id: 'service',  label: 'Service',  sortValue: i => i.service,  naturalDir: 'asc', width: 180 },
+  // v0.10.698 — bağlı problemlerin en güvenli hipotezi (server); yoksa "—".
+  { id: 'cause',    label: 'Root cause', sortValue: i => incidentRootCauseSort(i.rootCause), numeric: true, naturalDir: 'desc', width: 200 },
   { id: 'started',  label: 'Started',  sortValue: i => i.startedAt, naturalDir: 'desc', width: 170 },
   { id: 'duration', label: 'Duration', sortValue: i => (i.resolvedAt ? i.resolvedAt - i.startedAt : Number.MAX_SAFE_INTEGER), numeric: true, naturalDir: 'desc', width: 120 },
 ];
@@ -157,6 +160,9 @@ export default function IncidentsPage() {
                       {i.service || '—'}
                       <ClusterChipsRef clusters={i.clusters} />
                     </td>
+                    <td className="mono" style={{ fontSize: 12 }}>
+                      <IncidentCause rc={i.rootCause} />
+                    </td>
                     <td className="mono" style={{ fontSize: 11 }}>{tsLong(i.startedAt)}</td>
                     <td className="mono" style={{ textAlign: 'right' }}>
                       {fmtDuration(i.startedAt, i.resolvedAt)}
@@ -172,6 +178,18 @@ export default function IncidentsPage() {
         )}
       </PageShell>
     </>
+  );
+}
+
+// v0.10.698 — "shop-db · 75%"; alan yoksa "—" (ribbon ile aynı dürüstlük:
+// eşik altı hipotez sunucuda elendi, burada uydurulmaz).
+function IncidentCause({ rc }: { rc: Incident['rootCause'] }) {
+  const l = incidentRootCauseLabel(rc);
+  if (!l) return <span style={{ color: 'var(--text3)' }}>—</span>;
+  return (
+    <span title={`Likely cause: ${l.suspect} · confidence ${l.pct}`}>
+      {l.suspect} <span style={{ color: 'var(--text3)' }}>· {l.pct}</span>
+    </span>
   );
 }
 

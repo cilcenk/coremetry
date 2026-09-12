@@ -1,0 +1,86 @@
+# Dynatrace paritesi — Services · Problems · Predictive analytics (2026-09-12)
+
+**Taban:** v0.10.695 · **Yöntem:** operatörün yüklediği Dynatrace skill'leri
+(`dt-obs-services`, `dt-obs-problems`, `dt-obs-predictive-analytics`) yetenek
+listesi olarak alındı; her madde koddan `dosya:satır` ile doğrulandı (iki
+salt-okunur keşif). **Durum:** rapor; kod değişikliği yok. Önceki parite
+denetimi `docs/plans/dynatrace-parity-2026-08-21.md` (EK B1 #1/#6 kapandı,
+#3/#4/#5 açık).
+
+Durum sözlüğü: **VAR** = Dynatrace'teki soru Coremetry'de aynı kalitede
+cevaplanır · **KISMİ** = cevaplanır ama sınırlı · **YOK**.
+
+---
+
+## 1. Application Services
+
+| Yetenek | Durum | Yüzey | Boşluk |
+|---|---|---|---|
+| RED (rate / error / p50-p95-p99), servis + operasyon | VAR | `service_summary_5m`, `operation_summary_5m`, `spanmetrics_1m`; `/api/services`, `/api/endpoints`, `POST /api/spans/metric-batch`; Services/Endpoints/Overview | — |
+| Cluster / env yan yana kıyas | KISMİ | `/api/services/{name}/clusters` tablo (err/avg/p99) | MV'lerde cluster ve env boyutu yok → filtre ham span taramasına düşer (`servicesUseMV`, `errEndpointsMVEnv`); env altında sparkline kapalı; p50/p95 ve zaman serisi yok |
+| SLA / SLO | VAR | `slo.go` availability+latency, burn-rate 2 pencere, budget forecast, autocreate; `/slos` | — |
+| Sağlık skoru | KISMİ | `scoreHealth` 3 renk (critical problem / err>5 / err>1) | Sayısal 0-100 skor yok; latency ve SLO durumu skora girmiyor |
+| Messaging (publish/receive/process/failure) | VAR | `messaging_summary_5m` operation boyutlu, e2e p95, Kafka istemci kataloğu, `/messaging` | Consumer-group **broker** lag yok (yalnız istemci JMX görüşü); Kafka dışı sistemlerde lag yok |
+| Service mesh (Istio/Envoy overhead) | YOK | — | Hiç temel yok |
+| Runtime metrikleri | KISMİ | `RuntimeCharts.tsx` JVM (heap/GC/threads), .NET, Go temel | Node.js (event loop), Python, PHP yok; Go goroutines, JVM class yok; runtime alarmları emekli (v0.9.1075) |
+| Statik eşik / anomali / kıyas | VAR (endpoint eşiği KISMİ) | alert_rules p95/error_rate/rate, MAD-z + 14 g mevsimsel, `compare=prior`, CoSRE window_compare | Route/endpoint bazlı statik eşik yok (`RuleTarget` yalnız db_statement, kafka_client) |
+
+## 2. Problems (Davis)
+
+| Yetenek | Durum | Yüzey | Boşluk |
+|---|---|---|---|
+| Problem modeli | KISMİ | `problem.go` Kind service/db/external, P1-P3 + reason, RootCause özeti, blast radius, deploy | Kategori (AVAILABILITY/ERROR/SLOWDOWN/RESOURCE) alanı yok (rule_id önekinden türetilebilir); görüntü kimliği (P-1234) yok; etkilenen kullanıcı sayısı yok; host/node öznesi yok |
+| Korelasyon / birleştirme | KISMİ | Anomali kümeleme (≥3 üye, kaynak servis), exception fırtınası, incident otomatik gruplama (30 dk / 1-hop), çapraz-sinyal füzyon | Dakikalara yayılan kaskadda erken açılanlar ayrı kalır (join-on-open yok); incident kök-neden çapası değil; nedensellik skorlu birleştirme yok |
+| Kök neden | VAR | `topology_edges_5m` korelatör (2 hop, decay), deploy ≫ propagation ≫ co-firing füzyonu, DeepEvidence playbook, LLM verdict (auto v0.9.1281), etki (error share) | Temporal korelasyon çarpanı yok; host/process zincir adımı değil (yalnız node co-tenancy); kullanıcı etkisi yok |
+| Yaşam döngüsü & trend | KISMİ | open→ack→resolved, snooze, `sweepStaleProblems`, benzer problem şeridi, `/shift`, gürültülü kural sayfası | MTTR/MTTA yok; problem zaman serisi/trend yok (`listProblemBuckets` yalnız sayım); "tekrarlayan" rozeti/filtresi yok |
+| Çapraz alan | KISMİ | DB/external/K8s pod/rollout/log kanıtı/sentetik | Host/node özneli problem yok; external/db düğümü topoloji grafında değil |
+
+## 3. Predictive analytics
+
+| Yetenek | Durum | Yüzey | Boşluk |
+|---|---|---|---|
+| Forecast | KISMİ | SLO bütçe tükenme saati; DB kapasite ETA (lineer, R²≥0.6, ≤24 sa); CH disk ETA gün | Genel metrik forecast primitifi yok; mevsimsel/trend ayrışması yok; güven bandı yok; grafik üstünde çizilmiyor |
+| Değişim / yenilik | KISMİ | MAD-z spike, log pattern new/spike, trace op new_error/error_spike, op p99 sıçraması, davranış motoru rejim kayması, `/api/correlate` "ne değişti" | Change-point (CUSUM/PELT) yok; step vs trend-onset ayrımı yok; şablon spike ertelenmiş |
+| Eşik / adaptif / mevsimsel | KISMİ | statik kurallar + Watcher import; MAD-z openZ 3.5 / resolveZ 1.5; 14 g gün-sınıfı mevsimsel; hassasiyet ayarları | OTLP/infra metrikleri (JVM heap, CPU) için öğrenilmiş baseline yok — yalnız sabit eşik; kural editöründe "baseline mi eşik mi" seçimi yok |
+| Sinyal karakterizasyonu | KISMİ (zayıf) | 7 g `MetricBaseline` → suggest threshold; SLO autocreate | Mevsimsellik/gürültü/trend profili yüzeyi yok; dedektör önerisi yok |
+| Doygunluğa kaç gün | KISMİ | DB, CH disk | Host CPU/mem, pod/JVM heap, cluster, CH tablo büyümesi için projeksiyon yok |
+
+---
+
+## 4. Öncelikli boşluklar (birleşik sıralama)
+
+Sıralama ölçütü: operatörün Dynatrace alışkanlığında en çok arayacağı şey ×
+"korelasyon farklılaştırıcıdır" ilkesine hizmet (docs/DECISIONS.md).
+
+| # | Boşluk | Uygulama taslağı | Boy | Korelasyon ilkesi |
+|---|---|---|---|---|
+| 1 | **Join-on-open birleştirme + incident düzeyi kök neden** | `detectAnomalyClusters` girdisine son N dk açık problemler; yeni açılış propagation-bağlantılı açık kümeye üye olsun; incident satırı üye hipotezlerin en yüksek güvenli TopSuspect'ini taşısın | M | ✔ doğrudan |
+| 2 | **Temporal korelasyon çarpanı + 3 hop + dikey zincir** | `propagationMaxHops` vidası 2→3; 5 dk hata-serisi korelasyonunu (`ChangedService.Score`) propagation skoruna çarpan; `RankNodeCauses` adayı `causal_chain` adımı olarak verdict prompt'una | M | ✔ doğrudan |
+| 3 | **Endpoint/route hedefli alert rule** | `RuleTarget`'a `http_route` türü; ölçü `spanmetrics_1m` (service, route) state'lerinden; Endpoints satırından "alarm kur" | S-M | kısmen |
+| 4 | **OTLP/infra metrikleri için adaptif baseline** | `metricPolicies` desenine `jvm_heap_pct`, `gc_pause_ms`, `cpu_pct` (metricSource seam'i); mevcut dwell/seasonal kapıları aynen | M | ✔ (infra anomalisi hipoteze kanıt) |
+| 5 | **Problem modeli: kategori + görüntü kimliği + etkilenen varlıklar** | `rule_id` önek → `category` türetici (okuma anı, saf); `display_id` sıralı sayaç (boot-ALTER, iki-boot); `affectedEntities[]` = blast-radius callers ∪ AffectedPods ∪ cluster üyeleri | S-M | kısmen |
+| 6 | **Genel forecast primitifi + "kaç gün" chip'i** | `capacityETA` + `diskETADays` → tek `forecast` paketi (lineer + haftalık mevsimsel ortalama, R² kapısı, ±band); Hosts/Clusters/AdminClickhouse'da chip; `self-*` ailesine host-disk/pod-heap ETA | M | ✘ |
+| 7 | **MTTR/MTTA + problem zaman serisi** | `/api/problems/series` (`noisy_rules` medyan süre mantığı), Problems sayfasında trend şeridi | S | ✘ |
+| 8 | **Cluster/env boyutlu RED rollup** | `service_env_summary_5m` (cluster, deploy_env) MV; `servicesUseMV` kapısı kalkar; ClusterBreakdown'a p50/p95 + seri; `/clickhouse-schema` iki-boot | L | ✘ |
+| 9 | **Node.js / Python runtime kartları + Go goroutines** | `RuntimeCharts.tsx` FAMILIES'e nodejs (eventloop.delay/utilization, heap) ve python | S | ✘ |
+| 10 | **Broker-side consumer-group lag** | VM'de `kafka_consumergroup_lag` ailesi `KafkaCatalog`'a `Side:"broker"`; topic çekmecesinde group lag; `kafka_group_lag` alert hedefi | M | ✘ |
+| — | Sayısal sağlık skoru (0-100) | `scoreHealth` → error_rate + p99/baseline + SLO burn + açık problem ağırlıkları | M | ✘ |
+| — | Service mesh | Istio `istio_requests_total` VM ailesi + sidecar span ayrımı | L | ✘ (temel yok; sıraya alınmadı) |
+
+**Öneri:** 1 → 2 (ikisi de korelasyon çekirdeği, spec ister) · ardından 3 ve
+5 (küçük, görünür) · 4 (adaptif baseline'ı infra'ya taşımak) · 6-7 (Davis
+görünürlüğü). 8/9/10 operatör önceliğine göre.
+
+## 5. Operatör UX bulgusu (2026-09-12, prod ekran görüntüsü)
+
+Servis → **Operations** sekmesindeki TREND sütunu: satır başına üç mikro
+sparkline (calls · errors · p99) 30 px yükseklikte, okunmuyor ("kullanışsız").
+Seçenekler — Operations tablosu "klasik" yüzey, mockup-first + tek commit
+geri alınabilir kuralı geçerli:
+
+- **A.** TREND sütununu kaldır; satır başındaki 📈 zaten grafiği açıyor.
+- **B.** Tek geniş sparkline: çağrı çubukları (hata payı kırmızı) + p99 çizgisi,
+  ~160 px, hover'da değer. Dynatrace/Datadog "top requests" düzeni.
+- **C.** Sütunu kapalı varsayılan yap (kolon yöneticisinde seçilebilir).
+
+Karar operatörde; öneri **B** (mockup ile).

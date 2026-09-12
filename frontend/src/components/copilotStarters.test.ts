@@ -35,9 +35,18 @@ describe('başlangıç çipleri', () => {
     expect(starters.length).toBeGreaterThan(0);
   });
 
-  // v0.9.579'un dersi: sekiz çip menüydü. Üç, araç.
-  it('en fazla ÜÇ çip — menü hissi eşiği', () => {
-    expect(starters.length).toBeLessThanOrEqual(3);
+  // v0.9.579'un dersi: sekiz çip menüydü. v0.10.702 (operatör: "önerileri
+  // zenginleştirelim") — tavan BEŞ; her çip LLM'siz yönlenir
+  // (copilot_starters_test.go Go tarafında pinler), menü değil araç.
+  it('en fazla BEŞ çip — menü hissi eşiği', () => {
+    expect(starters.length).toBeLessThanOrEqual(5);
+  });
+
+  // v0.10.702 — eklenen iki konu.
+  it('açık problemler ve log hataları çipleri var', () => {
+    const joined = starters.join(' | ').toLowerCase();
+    expect(joined).toContain('problem');
+    expect(joined).toContain('log hata');
   });
 
   // Operatörün adıyla istediği üç soru.

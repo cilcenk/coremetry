@@ -7480,3 +7480,17 @@ export interface PageContext {
   activeFilters?: PageFilter[];
   search?: string;
 }
+
+// ── CoSRE başlangıç veri çipleri (v0.10.702, mirrors Go api.copilotStarter) ──
+// Boş sohbette kullanıcının takımından üretilen 0-2 çip: en kötü servis +
+// o servisin en çok hata alan yolu. `question` gönderilen tam cümle.
+export interface CopilotStarter {
+  chip: string;
+  question: string;
+  kind: 'service_health' | 'endpoint_errors';
+}
+export interface CopilotStartersResponse {
+  starters: CopilotStarter[];
+  team?: string;
+  rangeS?: number;
+}

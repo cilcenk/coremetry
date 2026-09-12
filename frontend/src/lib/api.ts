@@ -1,5 +1,5 @@
 import type {
-  OracleLogsResponse,
+OracleLogsResponse,
   McpServersSnapshot, McpServerInput, McpServerTestResult,
   PurgeResult,
   Service, ServiceEdge, TracesResponse, TracesExtrasResponse, TraceDetailResponse, TraceBundleResponse,
@@ -40,7 +40,9 @@ import type {
   OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
   ExceptionTriageConfig, ProblemPriorityConfig, FailureSLOConfig, MetricExclusions, AnomalyTrackedConfig,
   InsightKind, InsightResponse, InsightSignal, InsightLink, InsightChartSpec,
-  AnomalySensitivityConfig, TailPoint , MetricCompareReport , LogPatternsResult, LogTemplate, TraceFacet, TraceFacetsResponse, DBSlowQueryConfig, StatementSearchRow } from './types';
+  AnomalySensitivityConfig, TailPoint , MetricCompareReport , LogPatternsResult, LogTemplate, TraceFacet, TraceFacetsResponse, DBSlowQueryConfig, StatementSearchRow,
+  CopilotStartersResponse,
+} from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // withMetricSource — v0.9.1151 deneme modu. Sayfa URL'sindeki
 // ?metricsrc=vm|ch işaretini metrik uçlarının sorgu dizesine basar. TEK
@@ -2056,6 +2058,9 @@ export const api = {
   // yüzeyleri bu alanı hiç göremez. baseUrl/apiKey burada YOK ve
   // olmayacak — o yüzey admin'e özel getAISettings.
   copilotConfig:         () => get<{ enabled: boolean; model?: string; profiles?: { id: string; label?: string; model?: string }[]; defaultProfile?: string }>(`/api/copilot/config`),
+  // v0.10.702 — boş sohbetin veri çipleri (takımın en kötü servisi + yolu).
+  copilotStarters:       (rangeS?: number, signal?: AbortSignal) =>
+    get<CopilotStartersResponse>(`/api/copilot/starters${qs({ range_s: rangeS })}`, signal),
   // v0.6.53 — agentic chatbot stream. POST + SSE (EventSource is
   // GET-only, so we read the fetch body stream and parse SSE frames
   // by hand). onEvent fires per `event:`/`data:` frame; the promise

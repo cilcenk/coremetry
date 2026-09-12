@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { mergeOpenHref } from '@/lib/openHref'; // v0.10.460
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useCopilotStarters } from '@/lib/queries/copilot'; // v0.10.702
 import { api } from '@/lib/api';
 import { pageContext } from '@/lib/pageContext';
 import { hasPinnableContext, legacyFromPinned, pinLabelTR, readPin, writePin } from '@/lib/pinnedContext';
@@ -79,8 +80,12 @@ const FOLLOWUPS = [
 // trace'ler, deploy etkisi, pod'lar).
 const STARTERS = [
   'Takımımın servisleri nasıl?',
+  // v0.10.702 (operatör: "ilk sohbet önerileri zenginleşsin") — iki çip
+  // daha; ikisi de LLM'siz yönlenir (copilot_starters_test pinler).
+  'Takımımın açık problemleri?',
   "Takımımın exception'ları?",
   "En yavaş trace'ler?",
+  'Son 1 saatteki log hataları?',
 ];
 
 // CoSRE markası — v0.10.498 (operatör: "direkt OpenTelemetry iconu olsun";
@@ -313,6 +318,22 @@ export function CopilotChat() {
 
   // v0.10.650 — yalnız dipteyken yapış (stickToBottom.ts); soru gönderimi pin'ler.
   const pinBottom = useStickToBottom(scrollRef, [turns, open]);
+  // v0.10.702 — VERİ çipleri: takımın en kötü servisi + o servisin en çok
+  // hata alan yolu (sunucu, 60 s). Yalnız çekmece açık + sohbet boşken.
+  const dataStarters = useCopilotStarters(drawerOpen && enabled === true && turns.length === 0);
+  // v0.10.702 — şablon çipi: composer'ı doldurur, GÖNDERMEZ; imleç başta,
+  // operatör yolu yazar ("/api/x hatalı trace'lerini getir" → endpoint_traces).
+  const prefillEndpoint = () => {
+    const tpl = " hatalı trace'lerini getir";
+    setInput(tpl);
+    setCaret(0);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(0, 0);
+    });
+  };
 
   // Explain→chat köprüsü (v0.9.165): satır-içi explain panelleri (çekmece
   // OLMAYAN yüzeyler, örn. AnomalyDetailDrawer) bir global event atar; chat
@@ -579,9 +600,22 @@ export function CopilotChat() {
                       ✨ {ctxStarter.chip}
                     </Chip>
                   )}
+                  {/* v0.10.702 — takımdan üretilen veri çipleri (varsa):
+                      en kötü servisin sağlığı + en çok hata alan yolunun
+                      hatalı trace'leri. Vurgulu: o an gerçekten yanan şey. */}
+                  {dataStarters.map(st => (
+                    <Chip key={st.question} pill tone="accent" onClick={() => submit(st.question)}
+                      title={st.question}>
+                      {st.kind === 'endpoint_errors' ? '⚠ ' : '♥ '}{st.chip}
+                    </Chip>
+                  ))}
                   {STARTERS.map(q => (
                     <Chip key={q} pill onClick={() => submit(q)}>{q}</Chip>
                   ))}
+                  {/* v0.10.702 — şablon: composer'a doldurur, yol operatörden. */}
+                  <Chip pill onClick={prefillEndpoint} title="Yolu yaz: /api/... hatalı trace'lerini getir">
+                    ⌨ …/yol hatalı trace'leri
+                  </Chip>
                 </div>
               </div>
             )}

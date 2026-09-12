@@ -55,7 +55,7 @@ Sıralama ölçütü: operatörün Dynatrace alışkanlığında en çok arayaca
 | # | Boşluk | Uygulama taslağı | Boy | Korelasyon ilkesi |
 |---|---|---|---|---|
 | 1 | **Join-on-open birleştirme + incident düzeyi kök neden** — **GEMİDE** v0.10.698 (B: incident kök neden) + v0.10.699 (A: join-on-open, `clusterJoinWindow` 30 dk) | `detectAnomalyClusters` girdisine son N dk açık problemler; yeni açılış propagation-bağlantılı açık kümeye üye olsun; incident satırı üye hipotezlerin en yüksek güvenli TopSuspect'ini taşısın | M | ✔ doğrudan |
-| 2 | **Temporal korelasyon çarpanı + 3 hop + dikey zincir** | `propagationMaxHops` vidası 2→3; 5 dk hata-serisi korelasyonunu (`ChangedService.Score`) propagation skoruna çarpan; `RankNodeCauses` adayı `causal_chain` adımı olarak verdict prompt'una | M | ✔ doğrudan |
+| 2 | **Temporal korelasyon çarpanı + 3 hop + dikey zincir** — dilim 1 GÖLGE GEMİDE v0.10.700 (faktör + gerekçe + ayar; sıra değişmez); dilim 2 (3 hop + prompt) sırada | `propagationMaxHops` vidası 2→3; 5 dk hata-serisi korelasyonunu (`ChangedService.Score`) propagation skoruna çarpan; `RankNodeCauses` adayı `causal_chain` adımı olarak verdict prompt'una | M | ✔ doğrudan |
 | 3 | **Endpoint/route hedefli alert rule** | `RuleTarget`'a `http_route` türü; ölçü `spanmetrics_1m` (service, route) state'lerinden; Endpoints satırından "alarm kur" | S-M | kısmen |
 | 4 | **OTLP/infra metrikleri için adaptif baseline** | `metricPolicies` desenine `jvm_heap_pct`, `gc_pause_ms`, `cpu_pct` (metricSource seam'i); mevcut dwell/seasonal kapıları aynen | M | ✔ (infra anomalisi hipoteze kanıt) |
 | 5 | **Problem modeli: kategori + görüntü kimliği + etkilenen varlıklar** | `rule_id` önek → `category` türetici (okuma anı, saf); `display_id` sıralı sayaç (boot-ALTER, iki-boot); `affectedEntities[]` = blast-radius callers ∪ AffectedPods ∪ cluster üyeleri | S-M | kısmen |
@@ -104,3 +104,22 @@ Karar operatörde; öneri **B** (mockup ile).
   bildirimi kaynağa. Kayan-pencere simülasyon testi
   `clustering_join_test.go` (kaskad t0/t+2/t+4, 31 dk kenarı, determinizm).
 - Ayrı kalem: merged üyenin ekibine küme haberi (519 ekip yönlendirmesi).
+
+## 7. #2 uygulama notları (v0.10.700, dilim 1 / gölge)
+
+- `correlator/temporal.go`: `ComputeTemporalFactor` — birinci farklar
+  üzerinde Spearman, lag 0..2 kova (aday önde), onset sırası cezası
+  (aday tetikleyiciden sonra sıçradıysa ×0.5), <6 dolu kova → nötr 0.5.
+- `Synthesize`: Tier 2 (yapısal komşu, Kind=="") adayına `Structural /
+  Temporal / TemporalReason` yazılır; `TemporalApply` ile
+  `Score = Structural × (0.5 + 0.5·t)`. Reason metni gölgede AYNEN kalır
+  (üç metin pini korunur), gerekçe ayrı alanda.
+- Seri okuması `chstore.ServiceErrorRateSeries5m` (service_summary_5m,
+  IN ≤12, LIMIT 300 BY, 10 s); işçi pencere [onset−60m, son tam kova),
+  tavan 3 saat. İşçi iki anchor yolunda Synthesize ÖNCESİ `attachTemporal`.
+- Anahtar `anomaly_sensitivity.temporalRanking` (`shadow` varsayılan /
+  `on`); Settings → Anomaly seçici. Operatör prod'da gölgeyi izleyip açar.
+- Ribbon: kalıcı hipotez adayları artık çiziliyor (`lib/rootCauseCandidates.ts`;
+  bugüne dek yalnız canlı correlations çiziliyordu) — kind rozeti + ⏱ gerekçe.
+- Dilim 2 (sırada): `propagationMaxHops` 3, prompt/katalog aday satırına
+  zamansal gerekçe, verdict `causal_chain`'e node adımı yönergesi.

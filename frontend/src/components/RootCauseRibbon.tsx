@@ -5,12 +5,13 @@ import { Spinner, Empty } from './Spinner';
 import { IconFlame } from './icons';
 import { api } from '@/lib/api';
 import type {
-  RootCauseSummary, RootCause, AnomalyRootCause, ScoredCause, RCAVerdict,
+  RootCauseSummary, RootCause, AnomalyRootCause, RCAVerdict,
   PersistedRCAVerdict,
 } from '@/lib/types';
 import { RCAVerdictPanel } from './RCAVerdictPanel';
 import { fmtDurShort, fmtDateTime } from '@/lib/utils';
 import { serviceHref } from '@/lib/serviceHref';
+import { ribbonCandidates } from '@/lib/rootCauseCandidates';
 import { traceHref } from '@/lib/traceHref';
 
 // RootCauseRibbon (rc #3) — the in-page "Root cause: <suspect> (NN%) ▸" chip on
@@ -200,7 +201,9 @@ function ExpandedBody({ rc, window: win }: {
   // The persisted ranking isn't on the live fan-out; the candidates the operator
   // cares about here are the correlated services (the same signal the worker
   // ranks). Map them to the ScoredCause-shaped reason lines the ribbon shows.
-  const candidates = candidatesFromBundle(rc);
+  // v0.10.700 — kalıcı hipotez adayları varsa onlar (hop/kind/zamansal
+  // gerekçe taşır), yoksa canlı correlations (eski yol).
+  const candidates = ribbonCandidates(rc);
   const nothing = candidates.length === 0 && !rc.recentDeploy && !rc.exemplar;
 
   if (nothing) {
@@ -239,17 +242,25 @@ function ExpandedBody({ rc, window: win }: {
                 <Link to={serviceHref(c.service, { range: win })} style={{ fontWeight: 600, flex: '0 0 auto' }}>
                   {c.service}
                 </Link>
-                <span className="badge b-info" style={{ fontSize: 10 }}>{Math.round(c.score)}</span>
+                <span className="badge b-info" style={{ fontSize: 10 }}>{c.scoreLabel}</span>
                 {c.hops > 0 && (
                   <span className="badge b-gray" style={{ fontSize: 10 }}>
                     {c.hops} hop{c.hops === 1 ? '' : 's'}
                   </span>
                 )}
+                {c.kind && <span className="badge b-gray" style={{ fontSize: 10 }}>{c.kind}</span>}
                 {c.reason && (
                   <span style={{ color: 'var(--text2)', flex: 1, minWidth: 0,
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    title={c.reason}>
+                    title={c.temporalReason ? `${c.reason} · ${c.temporalReason}` : c.reason}>
                     {c.reason}
+                  </span>
+                )}
+                {/* v0.10.700 — zamansal çarpan gerekçesi (gölge: sıra
+                    değişmez, yalnız gösterilir). */}
+                {c.temporalReason && (
+                  <span className="badge b-gray" style={{ fontSize: 10, flex: '0 0 auto' }} title={c.temporalReason}>
+                    ⏱ {c.temporalReason}
                   </span>
                 )}
               </div>
@@ -470,23 +481,6 @@ function Label({ children }: { children: React.ReactNode }) {
       {children}
     </div>
   );
-}
-
-// candidatesFromBundle derives the ranked candidate list the expand shows from
-// the live fan-out's correlated services — the same downstream-suspect signal
-// the worker's persisted hypothesis ranks, surfaced here from the on-demand
-// bundle so the expand always reflects the current window. Self is filtered out;
-// reasons come from the correlation's own change descriptions.
-function candidatesFromBundle(rc: RootCause | AnomalyRootCause): ScoredCause[] {
-  return rc.correlations
-    .filter(c => c.service && c.service !== rc.service)
-    .map(c => ({
-      service: c.service,
-      score: c.score,
-      hops: 0,
-      reason: c.reasons?.[0],
-    }))
-    .sort((a, b) => b.score - a.score);
 }
 
 // pct — 0..1 fraction → whole-number percent string.

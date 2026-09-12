@@ -171,6 +171,18 @@ type SynthesisInput struct {
 	// deploy sürümüyle eşleşen aday deploy adayına KATLANIR (tek satır,
 	// puan yükselir), eşleşmeyen ayrı Kind="rollout" adayı olur.
 	Rollouts []RolloutCandidate
+
+	// TemporalFactors — v0.10.700 (parite #2, dilim 1): servis → zamansal
+	// çarpan (ComputeTemporalFactor). Worker yalnız YAPISAL komşular
+	// (Kind == "") için doldurur; eksik servis = ölçülmedi, aday alanları
+	// boş kalır. nil = bu anchor için hiç okunmadı.
+	TemporalFactors map[string]TemporalFactor
+	// TemporalApply — false = GÖLGE: Score yapısal kalır, Structural /
+	// Temporal / TemporalReason yalnız YAZILIR (sıra bayt-özdeş). true =
+	// Score = Structural × (0.5 + 0.5·t): uyumu sıfır aday yapısalın yarısını
+	// korur, tam uyumlu aday tamamını; nötr (0.5) aday 0.75. Operatör
+	// anahtarı chstore.AnomalySensitivityConfig.TemporalRanking.
+	TemporalApply bool
 }
 
 // RolloutCandidate — anomaly paketinin rollout.Scored'dan indirgediği
@@ -376,14 +388,27 @@ func Synthesize(
 				reason = fmt.Sprintf("same-node placement — %.0f%% of co-tenant services also firing",
 					nb.Score*100)
 			}
-			cands = append(cands, chstore.ScoredCause{
+			sc := chstore.ScoredCause{
 				Service: nb.Service,
 				Score:   propTierBase * nb.Score,
 				Hops:    nb.Hops,
 				Path:    nb.Path,
 				Kind:    nb.Kind,
 				Reason:  reason,
-			})
+			}
+			// v0.10.700 — zamansal çarpan yalnız çağrı-grafiği adayına
+			// (node/rollout adayının serisi yok). Gölgede Score'a
+			// dokunulmaz; Reason da AYNEN kalır (metin pinleri korunur),
+			// gerekçe ayrı alanda.
+			if tf, ok := in.TemporalFactors[nb.Service]; ok && nb.Kind == "" {
+				sc.Structural = sc.Score
+				sc.Temporal = tf.Factor
+				sc.TemporalReason = tf.Reason
+				if in.TemporalApply {
+					sc.Score = sc.Structural * (0.5 + 0.5*tf.Factor)
+				}
+			}
+			cands = append(cands, sc)
 		}
 	}
 

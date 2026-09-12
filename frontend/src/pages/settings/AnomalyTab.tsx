@@ -456,6 +456,24 @@ function SensitivitySection() {
               kalanlar bir sonraki tikte çözülür.
             </div>
           </div>
+          {/* v0.10.700 — kök neden hipotezinde zamansal çarpan. Gölge
+              (varsayılan): faktör ve gerekçe adaya yazılır, sıra değişmez;
+              açık: skor = yapısal × (0.5 + 0.5·t). Önce gölgede izle. */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 4 }}>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 13, color: 'var(--text)' }}>Zamansal kök neden sıralaması</span>
+              <select value={cfg.temporalRanking === 'on' ? 'on' : 'shadow'}
+                onChange={e => setCfg({ ...cfg, temporalRanking: e.target.value === 'on' ? 'on' : 'shadow' })}>
+                <option value="shadow">Gölge — ölç, sıralamayı değiştirme</option>
+                <option value="on">Açık — skor = yapısal × zamansal</option>
+              </select>
+            </label>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, marginLeft: 24, lineHeight: 1.5 }}>
+              Aday servisin 5 dk hata-oranı serisi tetikleyiciyle birlikte hareket ediyor mu, önde mi
+              (0–10 dk). Gölgede yalnız aday satırında gerekçe olarak görünür; açıkken uyumsuz aday
+              yapısal skorunun yarısını korur, tam uyumlu aday tamamını. Varsayılan gölge.
+            </div>
+          </div>
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 4 }}>
             <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input type="checkbox" checked={cfg.attachToIncident !== false}

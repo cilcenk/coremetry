@@ -207,7 +207,8 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 			break
 		}
 		synthIn := synthInputForAnomaly(ev, in)
-		s.enrichDeployImpact(ctx, ev.Service, &synthIn) // v0.9.1059
+		s.enrichDeployImpact(ctx, ev.Service, &synthIn)                // v0.9.1059
+		s.attachTemporal(ctx, ev.Service, ev.StartedAt, now, &synthIn) // v0.10.700 zamansal çarpan (gölge)
 		h := correlator.Synthesize(
 			"anomaly", ev.ID, ev.Service, now.UnixNano(),
 			synthIn,
@@ -249,8 +250,9 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 			bundle := buildEvidenceBundle(p, in)
 			synthIn := synthInputForProblem(p, bundle)
 			appendNodeCauses(&synthIn, in, p.Service)
-			s.enrichDeployImpact(ctx, p.Service, &synthIn) // v0.9.1059
-			rolloutEv := s.rolloutCauses(ctx, p, &synthIn) // v0.10.242
+			s.enrichDeployImpact(ctx, p.Service, &synthIn)               // v0.9.1059
+			rolloutEv := s.rolloutCauses(ctx, p, &synthIn)               // v0.10.242
+			s.attachTemporal(ctx, p.Service, p.StartedAt, now, &synthIn) // v0.10.700 zamansal çarpan (gölge)
 			h := correlator.Synthesize(
 				"problem", p.ID, p.Service, now.UnixNano(),
 				synthIn,

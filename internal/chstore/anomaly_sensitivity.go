@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"strings"
 )
 
 // AnomalySensitivityConfig — anomali DEDEKTÖRÜNÜN eşikleri
@@ -79,6 +80,31 @@ type AnomalySensitivityConfig struct {
 	// Anomaly. Kapalıyken dedektör AÇIK kalan service_silent problemlerini
 	// bir sonraki tikte çözer (incident kaskadı onları kapatır).
 	ServiceSilent *bool `json:"serviceSilent,omitempty"`
+	// TemporalRanking — v0.10.700 (Dynatrace paritesi #2): kök neden
+	// hipotezinde zamansal çarpan. "shadow" (varsayılan, boş dahil) =
+	// faktör ve gerekçe adaya YAZILIR, sıra/skor değişmez — prod'da bir
+	// hafta izlenir; "on" = Score = Structural × (0.5 + 0.5·t), baş
+	// şüpheli değişebilir. Bilinmeyen değer Normalize'da shadow'a iner.
+	TemporalRanking string `json:"temporalRanking,omitempty"`
+}
+
+const (
+	TemporalRankingModeShadow = "shadow"
+	TemporalRankingModeOn     = "on"
+)
+
+// normalizeTemporalRanking — bilinmeyen/boş → shadow; büyük-küçük harf
+// toleranslı.
+func normalizeTemporalRanking(v string) string {
+	if strings.EqualFold(strings.TrimSpace(v), TemporalRankingModeOn) {
+		return TemporalRankingModeOn
+	}
+	return TemporalRankingModeShadow
+}
+
+// TemporalRankingOn — nil-güvenli okuma: yalnız açıkça "on".
+func (c AnomalySensitivityConfig) TemporalRankingOn() bool {
+	return normalizeTemporalRanking(c.TemporalRanking) == TemporalRankingModeOn
 }
 
 // ServiceSilentEnabled — nil ⇒ KAPALI (AttachToIncident'ın tersi; gerekçe alanda).
@@ -375,6 +401,7 @@ func NormalizeAnomalySensitivity(c AnomalySensitivityConfig) AnomalySensitivityC
 		// tahmin etmek zorunda kalmaz.
 		AttachToIncident: boolPtr(c.AttachesToIncident()),
 		ServiceSilent:    boolPtr(c.ServiceSilentEnabled()),
+		TemporalRanking:  normalizeTemporalRanking(c.TemporalRanking), // v0.10.700
 		// v0.9.935 — davranış bölümü kendi kelepçesinden geçer. Eksik
 		// bölüm (bu sürümden ESKİ her settings satırı) varsayılanını
 		// alır: sıfır-değerli bir AnomalyBehaviorConfig aralık dışıdır,

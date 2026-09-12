@@ -943,6 +943,12 @@ export interface ScoredCause {
   // v0.10.94 node kinds; v0.10.242 'rollout' = özne bir rollout kaydı
   // ("rollout:<cluster>/<ns>/<workload>@<rev>"), servis değil.
   kind?: string;
+  // v0.10.700 — zamansal çarpan (gölge): structural = çarpan öncesi skor,
+  // temporal = t (0..1, 0.5 nötr), temporalReason = gerekçe. temporalReason
+  // yoksa ölçülmedi (temporal=0 "uyum yok" ile karışmasın).
+  structural?: number;
+  temporal?: number;
+  temporalReason?: string;
 }
 
 // RootCauseHypothesis — the full persisted ranking for one anchor (mirrors Go
@@ -6651,6 +6657,9 @@ export interface AnomalySensitivityConfig {
   // v0.10.543 — service_silent dedektörü; VARSAYILAN KAPALI (operatör kararı):
   // okuma `=== true` (attachToIncident'ın tersi).
   serviceSilent?: boolean;
+  // v0.10.700 — kök neden hipotezinde zamansal çarpan: 'shadow' (varsayılan,
+  // yok dahil) yalnız yazar, 'on' skoru çarpar. Okuma `=== 'on'`.
+  temporalRanking?: 'shadow' | 'on';
   // v0.9.936 — davranış motoru AŞAMA 1'in vidaları. Üstteki alanlar
   // ANİ sapmayı (5-dk pencere, 24s geçmiş) ayarlıyor; bu bölüm KALICI
   // davranış değişimini (haftanın saati baseline'ı, 28 gün).

@@ -166,6 +166,13 @@ type ScoredCause struct {
 	// çağrı grafiği şüphelisi, "node" = aynı-node yerleşim adayı.
 	Kind   string `json:"kind,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// v0.10.700 (parite #2, dilim 1) — zamansal çarpan. Structural = çarpan
+	// ÖNCESİ skor, Temporal = t ∈ [0,1] (0.5 nötr), TemporalReason gerekçe.
+	// TemporalReason boşsa ölçülmedi (Temporal=0 "uyum yok" ile karışmasın).
+	// candidates JSON'unda yaşar — ALTER yok, eski satırlar boş açılır.
+	Structural     float64 `json:"structural,omitempty"`
+	Temporal       float64 `json:"temporal,omitempty"`
+	TemporalReason string  `json:"temporalReason,omitempty"`
 }
 
 // UpsertHypothesis records (or refreshes) the synthesized hypothesis for one

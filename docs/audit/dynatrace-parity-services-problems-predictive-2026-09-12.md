@@ -54,7 +54,7 @@ Sıralama ölçütü: operatörün Dynatrace alışkanlığında en çok arayaca
 
 | # | Boşluk | Uygulama taslağı | Boy | Korelasyon ilkesi |
 |---|---|---|---|---|
-| 1 | **Join-on-open birleştirme + incident düzeyi kök neden** | `detectAnomalyClusters` girdisine son N dk açık problemler; yeni açılış propagation-bağlantılı açık kümeye üye olsun; incident satırı üye hipotezlerin en yüksek güvenli TopSuspect'ini taşısın | M | ✔ doğrudan |
+| 1 | **Join-on-open birleştirme + incident düzeyi kök neden** — **GEMİDE** v0.10.698 (B: incident kök neden) + v0.10.699 (A: join-on-open, `clusterJoinWindow` 30 dk) | `detectAnomalyClusters` girdisine son N dk açık problemler; yeni açılış propagation-bağlantılı açık kümeye üye olsun; incident satırı üye hipotezlerin en yüksek güvenli TopSuspect'ini taşısın | M | ✔ doğrudan |
 | 2 | **Temporal korelasyon çarpanı + 3 hop + dikey zincir** | `propagationMaxHops` vidası 2→3; 5 dk hata-serisi korelasyonunu (`ChangedService.Score`) propagation skoruna çarpan; `RankNodeCauses` adayı `causal_chain` adımı olarak verdict prompt'una | M | ✔ doğrudan |
 | 3 | **Endpoint/route hedefli alert rule** | `RuleTarget`'a `http_route` türü; ölçü `spanmetrics_1m` (service, route) state'lerinden; Endpoints satırından "alarm kur" | S-M | kısmen |
 | 4 | **OTLP/infra metrikleri için adaptif baseline** | `metricPolicies` desenine `jvm_heap_pct`, `gc_pause_ms`, `cpu_pct` (metricSource seam'i); mevcut dwell/seasonal kapıları aynen | M | ✔ (infra anomalisi hipoteze kanıt) |
@@ -84,3 +84,23 @@ geri alınabilir kuralı geçerli:
 - **C.** Sütunu kapalı varsayılan yap (kolon yöneticisinde seçilebilir).
 
 Karar operatörde; öneri **B** (mockup ile).
+
+**Sonuç (2026-09-12):** B onaylandı ve gemide v0.10.697 (`TrendSpark`).
+
+## 6. #1 uygulama notları (v0.10.698 + v0.10.699)
+
+- **B — incident kök neden:** `chstore/incident_rootcause.go`
+  (`IncidentProblemIDs` tek sorgu + `GetHypotheses("problem")` tek sorgu +
+  saf `pickIncidentRootCause`: adı olan, eşik 0.05 üstü, max güven → max
+  skor → ad). `Incident.rootCause` okuma-anı; liste kolonu + detay çipi.
+  Yalnız hipotezler (küme SourceScore karıştırılmadı); warning-only
+  incident dürüstçe "—".
+- **A — join-on-open:** `recentOpenCandidates` (son 30 dk açılmış bireysel
+  `anomaly:<svc>:<metrik>` satırları, bu tik çözülenler hariç) aday
+  listesine katılır; küme yazıldıktan sonra `mergeIntoCluster` üyeleri
+  `resolved` + "· merged into anomaly-cluster:<src>" ekiyle kapatır
+  (kolon yok); küme `StartedAt` = en eski katılan üye. Bildirim: bireysel
+  anomali resolve'u bugün de bildirmiyor, merge de sessiz; kümenin tek
+  bildirimi kaynağa. Kayan-pencere simülasyon testi
+  `clustering_join_test.go` (kaskad t0/t+2/t+4, 31 dk kenarı, determinizm).
+- Ayrı kalem: merged üyenin ekibine küme haberi (519 ekip yönlendirmesi).

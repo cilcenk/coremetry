@@ -593,7 +593,11 @@ func (d *Detector) scan(ctx context.Context) {
 	openSvc := map[string]bool{}
 	sourceSeverity := map[string]string{}
 	var freshOpens []openCandidate
+	resolving := map[string]bool{}
 	for _, pa := range pending {
+		if pa.oc.Action == "resolve" {
+			resolving["anomaly:"+pa.service+":"+pa.metric+"|"+pa.service] = true
+		}
 		if pa.oc.Action != "open" {
 			continue
 		}
@@ -605,11 +609,31 @@ func (d *Detector) scan(ctx context.Context) {
 			freshOpens = append(freshOpens, openCandidate{Service: pa.service, Metric: pa.metric, Outcome: pa.oc})
 		}
 	}
+	// v0.10.699 (parite #1, dilim A) — JOIN-ON-OPEN: son clusterJoinWindow
+	// içinde AÇILMIŞ bireysel anomali problemleri de aday (bu tik
+	// çözülenler hariç). Kaskad dakikalara yayıldığında erken açılanlar
+	// artık kümeye katılır (resolved + "merged into"), üçüncü servis
+	// geldiğinde üç ayrı Problem kalmaz. Katılan servisler bu tik "açık"
+	// sayılır ki yeni açılan küme aynı tikte resolveStaleClusters'a
+	// düşmesin (kaynağın kendi problemi hysteresis bandında olabilir).
+	trackedSet := map[string]bool{}
+	for _, m := range tracked {
+		trackedSet[m] = true
+	}
+	joined := recentOpenCandidates(snap.All(), time.Now(), clusterJoinWindow, resolving, trackedSet)
+	for _, c := range joined {
+		openSvc[c.Service] = true
+		if c.Outcome.Severity == "critical" || sourceSeverity[c.Service] == "" {
+			sourceSeverity[c.Service] = c.Outcome.Severity
+		}
+	}
+	cands := append(append([]openCandidate{}, freshOpens...), joined...)
 	suppressed := map[string]bool{}
-	if len(freshOpens) >= clusterMinMembers {
+	merged := map[string]bool{}
+	if len(cands) >= clusterMinMembers {
 		if adj, aerr := d.store.GetServiceAdjacencyWeighted(ctx, evidenceWindow); aerr == nil {
-			if clusters := detectAnomalyClusters(freshOpens, adj, clusterMinMembers); len(clusters) > 0 {
-				suppressed = d.applyClusters(ctx, clusters, snap, sens, sourceSeverity)
+			if clusters := detectAnomalyClusters(cands, adj, clusterMinMembers); len(clusters) > 0 {
+				suppressed, merged = d.applyClusters(ctx, clusters, cands, snap, sens, sourceSeverity)
 			}
 		} else {
 			log.Printf("[anomaly] cluster adjacency okuması: %v — bu tik kümeleme yok", aerr)
@@ -618,13 +642,19 @@ func (d *Detector) scan(ctx context.Context) {
 	// Kaynak-sinyal yaşam döngüsü: kaynağı toparlanmış kümeler kapanır.
 	d.resolveStaleClusters(ctx, snap, openSvc)
 	for _, pa := range pending {
+		ex := snap.ByKey("anomaly:"+pa.service+":"+pa.metric, pa.service)
+		hasEx := ex != nil && ex.ID != ""
+		// v0.10.699 — bu tik kümeye KATILAN satıra dokunma: tazeleme onu
+		// tam-satır replace ile status=open'a geri yazar, çözüm de zaten
+		// merge ekiyle yazıldı.
+		if hasEx && merged[ex.ID] {
+			continue
+		}
 		// Bastırma yalnız TAZE açılışlara: kümelenen servislerin yeni
 		// bireysel problemi açılmaz; önceden açık satırların tazeleme/
 		// çözülmesi normal akar.
-		if pa.oc.Action == "open" && suppressed[pa.service] {
-			if ex := snap.ByKey("anomaly:"+pa.service+":"+pa.metric, pa.service); ex == nil || ex.ID == "" {
-				continue
-			}
+		if pa.oc.Action == "open" && suppressed[pa.service] && !hasEx {
+			continue
 		}
 		d.applyOutcome(ctx, pa.service, pa.metric, pa.oc, snap, sens)
 	}

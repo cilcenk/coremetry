@@ -23,10 +23,121 @@ import (
 const clusterMinMembers = 3
 
 // openCandidate — bu tikte "open" kararı almış bir (servis, metrik).
+//
+// v0.10.699 (parite #1, dilim A) — Existing: aday bu tikin TAZE açılışı
+// değil, son clusterJoinWindow içinde AÇILMIŞ bireysel problem
+// (join-on-open). nil = taze. Tespit (detectAnomalyClusters) ikisini
+// ayırt etmez; fark yan etkide: taze üye bastırılır, önceden açık üye
+// kümeye KATILIR (resolved + "merged into" eki, mergeIntoCluster).
 type openCandidate struct {
-	Service string
-	Metric  string
-	Outcome anomalyOutcome
+	Service  string
+	Metric   string
+	Outcome  anomalyOutcome
+	Existing *chstore.Problem
+}
+
+// clusterJoinWindow — v0.10.699. Dakikalara yayılan kaskadda ERKEN açılan
+// bireysel problemler (db t0, caller t+2, caller t+4) bugüne dek kümeye
+// hiç giremiyordu: aday yalnız taze açılıştı, üçüncü servis geldiğinde
+// ilk ikisi çoktan kendi satırındaydı → üç ayrı Problem. Artık son 30 dk
+// içinde AÇILMIŞ bireysel anomali problemleri de aday. 30 dk = incident
+// groupingWindow (aynı olay ölçeği); sabit, ayar değil (spec açık soru 2).
+//
+// Kayan-pencere dersi (v0.10.199): üyelik problemin GÖZLENMİŞ açılış
+// anına (StartedAt) bağlı, pencere kenarına değil — pencereden çıkan
+// bir problem zaten ya merge edilmiştir (resolved, aday değil) ya da
+// hiç kümelenmemiştir; tikler arası flip üretmez (clustering_join_test).
+const clusterJoinWindow = 30 * time.Minute
+
+// recentOpenCandidates — SAF. Snapshot'taki açık BİREYSEL metrik anomali
+// problemlerinden (rule_id tam olarak "anomaly:<svc>:<metrik>", metrik
+// izlenen listede — küme / external / service_silent satırları dışarıda)
+// pencere içinde açılmış ve bu tik çözülmeyenleri aday yapar. Sıralı
+// (servis, metrik) → determinizm.
+func recentOpenCandidates(all []*chstore.Problem, now time.Time, window time.Duration, resolving map[string]bool, tracked map[string]bool) []openCandidate {
+	cutoff := now.Add(-window).UnixNano()
+	var out []openCandidate
+	for _, p := range all {
+		if p == nil || p.ID == "" || p.Status != "open" || p.Service == "" || p.Metric == "" {
+			continue
+		}
+		if !tracked[p.Metric] || p.Kind == chstore.ProblemKindExternal {
+			continue
+		}
+		if p.RuleID != "anomaly:"+p.Service+":"+p.Metric {
+			continue
+		}
+		if p.StartedAt < cutoff || resolving[p.RuleID+"|"+p.Service] {
+			continue
+		}
+		out = append(out, openCandidate{Service: p.Service, Metric: p.Metric, Outcome: outcomeOfProblem(p), Existing: p})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Service != out[j].Service {
+			return out[i].Service < out[j].Service
+		}
+		return out[i].Metric < out[j].Metric
+	})
+	return out
+}
+
+// outcomeOfProblem — açık satırdan aday sonucu: yön comparator'dan
+// (v0.9.978: '<' = dropped), değer/baseline satırdaki value/threshold.
+func outcomeOfProblem(p *chstore.Problem) anomalyOutcome {
+	dir := "spiked"
+	if strings.TrimSpace(p.Comparator) == "<" {
+		dir = "dropped"
+	}
+	return anomalyOutcome{Action: "open", Severity: p.Severity, Direction: dir, Current: p.Value, Median: p.Threshold}
+}
+
+// mergeTargets — SAF. Kümeye katılan ÖNCEDEN AÇIK bireysel problemler:
+// üyelerin Existing'i + KAYNAĞIN kendi aday satırlarının Existing'i
+// (kaynak Members dışında tutulduğundan cands'tan bulunur). ID'ye göre
+// tekrarsız + sıralı.
+func mergeTargets(cl anomalyCluster, cands []openCandidate) []*chstore.Problem {
+	seen := map[string]bool{}
+	var out []*chstore.Problem
+	add := func(p *chstore.Problem) {
+		if p == nil || p.ID == "" || seen[p.ID] {
+			return
+		}
+		seen[p.ID] = true
+		out = append(out, p)
+	}
+	for _, m := range cl.Members {
+		add(m.Existing)
+	}
+	for _, c := range cands {
+		if c.Service == cl.Source {
+			add(c.Existing)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// mergedNote — açıklama eki (saf): kaç önceden-açık satırın katıldığı
+// DÜRÜSTÇE yazılır; operatör "bu problemler nereye gitti" sorusunu
+// küme satırından cevaplar.
+func mergedNote(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return " " + itoaClusters(n) + " previously opened problem(s) were merged into this cluster (join-on-open)."
+}
+
+// clusterStartedAt — küme açılışı kaskadın GÖZLENMİŞ başlangıcı: katılan
+// en eski bireysel problemin StartedAt'i (Davis: problem start = ilk
+// olay). Yalnız AÇILIŞTA; tazelemede mevcut satırın zamanı korunur.
+func clusterStartedAt(nowNs int64, targets []*chstore.Problem) int64 {
+	start := nowNs
+	for _, t := range targets {
+		if t != nil && t.StartedAt > 0 && t.StartedAt < start {
+			start = t.StartedAt
+		}
+	}
+	return start
 }
 
 // anomalyCluster — tespit edilen bir küme. Source aday kümesinin
@@ -235,19 +346,23 @@ func detectAnomalyClusters(cands []openCandidate, weightedAdj []chstore.ServiceE
 // ── R3: yan etkiler (v0.9.1070) ────────────────────────────────────────
 
 // applyClusters — tespit edilen kümeleri Problem'e çevirir; bastırılan
-// servis kümesini döndürür (bu tikin TAZE bireysel açılışları atlanır —
-// önceden açık problemler DOKUNULMAZ, tazeleme/çözülme normal akar).
+// servis kümesini ve bu tik kümeye KATILAN (resolved) problem id'lerini
+// döndürür. Taze üye bastırılır (bireysel problemi açılmaz); önceden
+// açık üye (v0.10.699 join-on-open) küme satırı yazıldıktan SONRA
+// mergeIntoCluster ile kapatılır — küme yazılamazsa kimse kapatılmaz.
 // Spec kararları: kaynak başına TEK problem + TEK bildirim; yaşam
 // döngüsü kaynak sinyaline bağlı (resolveStaleClusters).
-func (d *Detector) applyClusters(ctx context.Context, clusters []anomalyCluster, snap *chstore.OpenProblems, cfg chstore.AnomalySensitivityConfig, sourceSeverity map[string]string) map[string]bool {
-	suppressed := map[string]bool{}
+func (d *Detector) applyClusters(ctx context.Context, clusters []anomalyCluster, cands []openCandidate, snap *chstore.OpenProblems, cfg chstore.AnomalySensitivityConfig, sourceSeverity map[string]string) (suppressed, merged map[string]bool) {
+	suppressed = map[string]bool{}
+	merged = map[string]bool{}
 	for _, cl := range clusters {
 		id := clusterProblemID(cl.Source)
 		suppressed[cl.Source] = true
 		for _, m := range cl.Members {
 			suppressed[m.Service] = true
 		}
-		desc := clusterDescription(cl)
+		targets := mergeTargets(cl, cands)
+		desc := clusterDescription(cl) + mergedNote(len(targets))
 		sev := clusterSeverity(cl.Members, sourceSeverity[cl.Source])
 		memberSvc := map[string]bool{}
 		for _, m := range cl.Members {
@@ -259,7 +374,9 @@ func (d *Detector) applyClusters(ctx context.Context, clusters []anomalyCluster,
 			existing.Severity = sev
 			if err := d.store.UpsertProblem(ctx, *existing); err != nil {
 				log.Printf("[anomaly] cluster refresh %s: %v", id, err)
+				continue
 			}
+			d.mergeIntoCluster(ctx, id, targets, merged)
 			continue
 		}
 		p := chstore.Problem{
@@ -274,14 +391,14 @@ func (d *Detector) applyClusters(ctx context.Context, clusters []anomalyCluster,
 			Comparator:  ">",
 			Status:      "open",
 			Description: desc,
-			StartedAt:   time.Now().UnixNano(),
+			StartedAt:   clusterStartedAt(time.Now().UnixNano(), targets),
 		}
 		if err := d.store.UpsertProblem(ctx, p); err != nil {
 			log.Printf("[anomaly] cluster open %s: %v", id, err)
 			continue
 		}
-		log.Printf("[anomaly] CLUSTER OPENED %s — %d services (score %.2f)",
-			cl.Source, len(memberSvc)+1, cl.SourceScore)
+		log.Printf("[anomaly] CLUSTER OPENED %s — %d services (score %.2f, %d merged)",
+			cl.Source, len(memberSvc)+1, cl.SourceScore, len(targets))
 		if cfg.AttachesToIncident() {
 			if _, err := d.store.AttachProblemToIncident(ctx, p); err != nil {
 				log.Printf("[anomaly] cluster incident attach: %v", err)
@@ -290,8 +407,30 @@ func (d *Detector) applyClusters(ctx context.Context, clusters []anomalyCluster,
 		if d.notifier != nil {
 			go d.notifier.SendProblemAlert(context.Background(), p)
 		}
+		d.mergeIntoCluster(ctx, id, targets, merged)
 	}
-	return suppressed
+	return suppressed, merged
+}
+
+// mergeIntoCluster — v0.10.699. Önceden açık bireysel problemi kümeye
+// katar: resolved + açıklama eki "· merged into anomaly-cluster:<src>"
+// (kolon yok, spec açık soru 1). Bildirim YOK — bireysel anomali
+// resolve'u da bugün bildirim göndermiyor (applyOutcome resolve dalı);
+// kümenin tek bildirimi kaynağa gider. merged[id] = true → scan aynı
+// tikte bu satırı tazelemez (tam-satır replace onu open'a geri yazardı).
+func (d *Detector) mergeIntoCluster(ctx context.Context, clusterID string, targets []*chstore.Problem, merged map[string]bool) {
+	now := time.Now().UnixNano()
+	for _, t := range targets {
+		cp := *t
+		cp.Description = strings.TrimRight(cp.Description, " ") + " · merged into " + clusterID
+		chstore.MarkResolved(&cp, now)
+		if err := d.store.UpsertProblem(ctx, cp); err != nil {
+			log.Printf("[anomaly] merge %s into %s: %v", t.ID, clusterID, err)
+			continue
+		}
+		merged[t.ID] = true
+		log.Printf("[anomaly] MERGED %s · %s → %s", t.Service, t.Metric, clusterID)
+	}
 }
 
 // resolveStaleClusters — kaynak sinyaliyle yaşam (spec kararı a):

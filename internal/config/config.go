@@ -459,7 +459,12 @@ var defaults = Config{
 	// when all workers are mid-flush. ByteBudgetMB 512 additionally
 	// caps each of the 5 consumers by BYTES (≈2.5GB total worst case)
 	// so fat items can't turn that headroom into an OOMKill (v0.8.355).
-	Ingestion: IngestionConfig{BatchSize: 10_000, BufferSize: 500_000, FlushInterval: 5 * time.Second, Workers: 8, ByteBudgetMB: 512}, // v0.10.240 — 2 s → 5 s: part churn (perf audit ING-3); COREMETRY_INGEST_FLUSH_INTERVAL ile geçersiz kılınır
+	// v0.10.695 — BatchSize 10k → 50k VARSAYILAN (operatör kararı 2026-09-12; CH mimari
+	// denetimi 646 öneri 1: resmî rehber 10k–100k, 10k alt sınırdaydı). Prod ölçüm
+	// paneli (683) tek koordinatör host'ta 46 günde DelayedInserts 116K + RejectedInserts
+	// 1.8K gösterdi — parça baskısı; daha büyük batch = daha az parça. Byte bütçesi
+	// (512 MB) ve tampon (500k) aynen; COREMETRY_INGEST_BATCH_SIZE ile geçersiz kılınır.
+	Ingestion: IngestionConfig{BatchSize: 50_000, BufferSize: 500_000, FlushInterval: 5 * time.Second, Workers: 8, ByteBudgetMB: 512}, // v0.10.240 — 2 s → 5 s: part churn (perf audit ING-3); COREMETRY_INGEST_FLUSH_INTERVAL ile geçersiz kılınır
 	Auth: AuthConfig{
 		TokenTTL:        24 * time.Hour,
 		InitialAdmin:    "admin@coremetry.local",

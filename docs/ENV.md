@@ -96,7 +96,7 @@ Sütunlar: **Okunduğu yer** · **Yokken / varsayılan** · **Etki** · **Rol** 
 
 | Değişken | Okunduğu yer | Yokken / varsayılan | Etki | Rol | Gizli |
 |---|---|---|---|---|---|
-| `COREMETRY_INGEST_BATCH_SIZE` | `config.go:664` | `10000` | CH INSERT batch boyutu. | ingest | hayır |
+| `COREMETRY_INGEST_BATCH_SIZE` | `config.go:664` | `50000` | CH INSERT batch boyutu (v0.10.695: 10k → 50k, CH denetimi 646). | ingest | hayır |
 | `COREMETRY_INGEST_BUFFER_SIZE` | `config.go:654` | `500000` | Sinyal başına kanal kapasitesi; dolunca gRPC `ResourceExhausted` ("buffer full"). Sürekli doluyorsa darboğaz CH'dir. | ingest | hayır |
 | `COREMETRY_INGEST_WORKERS` | `config.go:659` | `8` | Sinyal başına paralel flusher; CH pool türetimine girer (`5 × workers + 8`). | ingest | hayır |
 | `COREMETRY_INGEST_FLUSH_INTERVAL` | `config.go:669` | `5s` (yerleşik, v0.10.240); repo `config.yaml` `2s` yazar | Batch dolmasa da flush aralığı. | ingest | hayır |

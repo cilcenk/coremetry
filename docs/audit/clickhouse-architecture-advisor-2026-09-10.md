@@ -302,7 +302,7 @@ SELECT table, max(active_parts) FROM (SELECT table, count() AS active_parts FROM
 
 | Şimdi (ölçüm, düşük risk) | Yapısal (spec + pilot ister) |
 |---|---|
-| ~~Öneri 1/2/8 doğrulama sorgularını `/admin/clickhouse`'a taşı~~ **GEMİDE v0.10.683** (`/api/admin/clickhouse/measure`: host × tablo parça baskısı, DelayedInserts/RejectedInserts, async tampon, insert boyutu — query_log kapalıysa "kullanılamıyor" ilan edilir; BatchSize çipi). `BatchSize` 10k→50k A/B **operatörde**: `COREMETRY_INGEST_BATCH_SIZE=50000` ile 24 sa, panelde max parts/partition ↓, DelayedInserts ↓, satır/insert ↑ beklenir | Öneri 3: korelatör rollup'ları refreshable MV pilotu (tek tablo, 24 s A/B) |
+| ~~Öneri 1/2/8 doğrulama sorgularını `/admin/clickhouse`'a taşı~~ **GEMİDE v0.10.683** (`/api/admin/clickhouse/measure`: host × tablo parça baskısı, DelayedInserts/RejectedInserts, async tampon, insert boyutu — query_log kapalıysa "kullanılamıyor" ilan edilir; BatchSize çipi). `BatchSize` 10k→50k **VARSAYILAN oldu v0.10.695** (operatör kararı 2026-09-12; prod paneli 683: koordinatör host'ta 46 günde DelayedInserts 116K, RejectedInserts 1.8K, merge/insert 9-11×). Deploy sonrası panelde DelayedInserts artışı durmalı, satır/insert ↑ (query_log açıksa) | Öneri 3: korelatör rollup'ları refreshable MV pilotu (tek tablo, 24 s A/B) |
 | Öneri 5: prod'da `migrations/0010` doğrulaması (tek sorgu) | Öneri 4: `service_metadata` sözlüğü (boot DDL + okuma yolu değişimi) |
 | Öneri 6: `system.mutations` izlemesi | Öneri 7: ≥ 4 shard'da shard anahtarı kararı |
 

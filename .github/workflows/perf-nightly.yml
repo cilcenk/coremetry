@@ -28,14 +28,14 @@ jobs:
     timeout-minutes: 45
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
       - name: Restore previous night's baseline
         id: baseline
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: perf/baseline
           key: perf-baseline-${{ github.run_id }}
@@ -69,7 +69,7 @@ jobs:
         run: |
           mkdir -p perf/baseline
           [ -f perf/out/nightly.json ] && cp perf/out/nightly.json perf/baseline/latest.json || true
-      - uses: actions/cache/save@v5
+      - uses: actions/cache/save@v6
         if: always()
         with:
           path: perf/baseline

@@ -583,6 +583,4 @@ aynen · (11) `noopener` · (12) ölçüm operatörde.
 
 Araya giren operatör bug'ı: v0.10.674 (palet kimlik araması küçük harf).
 
-**Operatörde:** §7.4 ölçümü (önce/sonra, 5 tekrar medyan), prod h2/h1
-teşhisi; kiosk penceresinde 401 kartı ve "daha fazla" davranışının gerçek
-ES arka ucuyla doğrulanması.
+**Prod doğrulaması (operatör, 2026-09-12):** kiosk açılışı (liste ⧉ + detay düğmesi), satır-içi panel + toggle, loglar/"daha fazla", Logs bağlantısı (690 sonrası), oturum kartı, ölçüm ve h2/h1 teşhisi — 7 madde **OK**. Cilalar 678–693 (süre vurgusu, marka şeridi, Logs bağlantısı, Tempo düzeninde satır-içi span paneli; aynı düzen normal trace sayfasına 691–693) gemide.

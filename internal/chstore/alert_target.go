@@ -43,6 +43,9 @@ type RuleTarget struct {
 	Service  string `json:"service,omitempty"`
 	Topic    string `json:"topic,omitempty"`
 	ClientID string `json:"clientId,omitempty"`
+	// http_route alanı (v0.10.705): http.route şablonu ("/api/pay"); Service
+	// ile birlikte kimlik. Method MV'de yok, kapsam dışı.
+	Route string `json:"route,omitempty"`
 }
 
 // IsKafkaClientMetric — kafka_client hedefinin metrik ailesi.
@@ -82,6 +85,9 @@ func ValidateRuleTarget(r AlertRule) error {
 		if IsKafkaClientMetric(r.Metric) {
 			return fmt.Errorf("metric %s requires a kafka_client target", r.Metric)
 		}
+		if IsHTTPRouteMetric(r.Metric) {
+			return fmt.Errorf("metric %s requires an http_route target", r.Metric)
+		}
 		return nil
 	}
 	t := r.Target
@@ -115,6 +121,20 @@ func ValidateRuleTarget(r AlertRule) error {
 		}
 		if len(t.ClientID) > 200 {
 			return fmt.Errorf("target.clientId too long")
+		}
+		return nil
+	case RuleTargetHTTPRoute: // v0.10.705
+		if strings.TrimSpace(t.Service) == "" {
+			return fmt.Errorf("target.service is required for an http_route target")
+		}
+		if !ValidRouteTarget(t.Route) {
+			return fmt.Errorf("target.route must be an http.route starting with '/' (2-500 chars, no whitespace)")
+		}
+		if !IsHTTPRouteMetric(r.Metric) {
+			return fmt.Errorf("http_route target requires an http_route_* metric (http_route_p95_ms | http_route_p99_ms | http_route_error_rate | http_route_rate), got %q", r.Metric)
+		}
+		if r.Threshold <= 0 {
+			return fmt.Errorf("threshold must be > 0")
 		}
 		return nil
 	}

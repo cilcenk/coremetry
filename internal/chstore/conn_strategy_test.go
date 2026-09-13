@@ -223,6 +223,9 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// v0.10.331 — SAF telemetri: db_statement_summary_5m pencere ölçüsü + SQL
 		// arama (hedefli kural). Kural satırları problem.go ana bağlantıda kalır.
 		"alert_target.go": true,
+		// v0.10.705 — SAF telemetri: spanmetrics_1m route pencere ölçüsü
+		// (http_route hedefli kural). Kural satırları problem.go'da kalır.
+		"alert_target_route.go": true,
 		// TAŞINMAZ ÜÇÜNCÜ SINIF: sysstats.go + cluster.go system.* okuyor.
 		// Bunlar NODE-LOKAL tablolar; RoundRobin'e verilirse disk/utilizasyon
 		// panelleri her çağrıda BAŞKA node'u raporlar (SQL konsolunun in-order

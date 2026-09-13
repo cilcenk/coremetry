@@ -41,8 +41,20 @@ export const KAFKA_METRICS = [
   { v: 'kafka_producer_error_rate', label: 'Gönderim hatası (kayıt/sn)' },
 ];
 export const isKafkaMetric = (m: string | undefined) => !!m && m.startsWith('kafka_');
+// v0.10.705 — http_route hedefli kural metrikleri (Dynatrace paritesi #3);
+// ölçü spanmetrics_1m (service, http.route), env-agnostik.
+export const HTTP_ROUTE_METRICS = [
+  { v: 'http_route_p95_ms', label: 'Route p95 (ms)' },
+  { v: 'http_route_p99_ms', label: 'Route p99 (ms)' },
+  { v: 'http_route_error_rate', label: 'Route error rate (%)' },
+  { v: 'http_route_rate', label: 'Route request rate (/s)' },
+];
+export const isHttpRouteMetric = (m: string | undefined) => !!m && m.startsWith('http_route_');
+export const httpRouteUnit = (m: string | undefined) =>
+  m === 'http_route_error_rate' ? '%' : m === 'http_route_rate' ? '/s' : 'ms';
 export const targetMetrics = (kind: string | undefined) =>
-  kind === 'kafka_client' ? KAFKA_METRICS : kind === 'db_statement' ? DB_STMT_METRICS : METRICS;
+  kind === 'http_route' ? HTTP_ROUTE_METRICS
+    : kind === 'kafka_client' ? KAFKA_METRICS : kind === 'db_statement' ? DB_STMT_METRICS : METRICS;
 export const COMPARATORS = ['>', '>=', '<', '<='];
 export const SEVERITIES = ['info', 'warning', 'critical'];
 

@@ -35,6 +35,8 @@ import { traceHref } from '@/lib/traceHref';
 import { PageControls } from '@/components/ui/PageControls';
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
+import { useAuth } from '@/components/AuthProvider';
+import { RouteAlertModal } from '@/pages/alerts/RouteAlertModal'; // v0.10.705
 import { PageShell } from '@/components/ui/PageShell';
 
 // /endpoints — operator-asked v0.5.365. Cross-service inbound
@@ -381,6 +383,11 @@ export default function EndpointsPage() {
   // The hook must precede the query that consumes dt.sort, so its
   // rows come through a state mirror synced from the query result.
   const [tableRows, setTableRows] = useState<EndpointRow[]>([]);
+  // v0.10.705 — route hedefli alarm (yalnız yazma rolü, yalnız HTTP sekmesi:
+  // RPC satırının kimliği span adı, http.route değil).
+  const { user } = useAuth();
+  const canEditRules = user?.role === 'admin' || user?.role === 'editor';
+  const [alertRow, setAlertRow] = useState<EndpointRow | null>(null);
   // Column visibility (v0.8.574, audit seçenek 3) — URL is the source
   // of truth (?cols=, Logs contract: absent = all visible) so Copy
   // link / SavedViewsBar reproduce the exact column set. Read directly
@@ -925,6 +932,12 @@ export default function EndpointsPage() {
                                 ✖
                               </Link>
                             )}
+                            {/* v0.10.705 — bu route için eşik alarmı (editör/admin). */}
+                            {canEditRules && entry === 'http' && (
+                              <IconButton size="sm" icon={<span aria-hidden="true">⚠</span>} aria-label="Bu route için alarm kuralı"
+                                title="Bu route için eşik alarmı: p95/p99/hata oranı/hız eşiği geçince Problem"
+                                onClick={e => { e.stopPropagation(); setAlertRow(r); }} />
+                            )}
                           </span>
                         </td>}
                       </tr>
@@ -987,6 +1000,10 @@ export default function EndpointsPage() {
             </div>
             )}
           </>
+        )}
+        {alertRow && (
+          <RouteAlertModal open onClose={() => setAlertRow(null)} env={env || undefined}
+            target={{ service: alertRow.service, route: alertRow.path }} />
         )}
       </PageShell>
     </>

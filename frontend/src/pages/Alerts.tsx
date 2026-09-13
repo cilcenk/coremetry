@@ -16,7 +16,7 @@ import type { AlertRule } from '@/lib/types';
 import { logsHref } from '@/lib/logsUrl';
 import {
   METRICS, COMPARATORS, SEVERITIES, WINDOWS, emptyDraft, TEMPLATES,
-  type UserPreset, DB_STMT_METRICS, isDbStmtMetric, targetMetrics } from './alerts/constants';
+  type UserPreset, DB_STMT_METRICS, isDbStmtMetric, targetMetrics, httpRouteUnit } from './alerts/constants';
 import { ThresholdField } from './alerts/ThresholdField';
 import { StatementPicker } from './alerts/StatementPicker';
 import { NotifyTeamsField } from './alerts/NotifyTeamsField';
@@ -32,7 +32,8 @@ import { PageShell } from '@/components/ui/PageShell';
 // buradan okuyor ki kolon GÖRÜNENE göre sıralansın (ham `metric` alanı
 // 'log_query' / 'watcher' değerleriyle rozetlerden bambaşka bir düzen verir).
 function alertTypeLabel(r: AlertRule): string {
-  return r.target?.kind === 'kafka_client' ? 'KAFKA CLIENT' // v0.10.554
+  return r.target?.kind === 'http_route' ? 'HTTP ROUTE' // v0.10.705
+    : r.target?.kind === 'kafka_client' ? 'KAFKA CLIENT' // v0.10.554
     : r.target ? 'DB STATEMENT'
     : r.metric === 'watcher' ? 'ES WATCHER'
     : r.metric === 'log_query' ? 'WATCHER'
@@ -459,7 +460,12 @@ export default function AlertsPage() {
                   placeholder="e.g. High error rate on api-gateway" />
               </Field>
               <Field label={draft.target ? 'Service' : 'Service (empty = all)'}>
-                {draft.target?.kind === 'kafka_client'
+                {draft.target?.kind === 'http_route'
+                  ? <div className="mono" style={{ fontSize: 12, color: 'var(--text2)', padding: '6px 0' }}
+                      title="Route hedefi Endpoints satırından kurulur; kapsam burada değiştirilmez.">
+                      {draft.target.service} · {draft.target.route}
+                    </div>
+                  : draft.target?.kind === 'kafka_client'
                   ? <div className="mono" style={{ fontSize: 12, color: 'var(--text2)', padding: '6px 0' }}
                       title="Kafka istemci hedefi çekmece/Infra panelinden kurulur; kapsam burada değiştirilmez.">
                       {draft.target.service}{draft.target.topic ? ` · topic ${draft.target.topic}` : ' · tüm topic\'ler'}{draft.target.clientId ? ` · istemci ${draft.target.clientId}` : ''}
@@ -477,7 +483,7 @@ export default function AlertsPage() {
               </Field>
               {/* v0.10.331 — hedef: belirli bir DB ifadesi (SQL arayıp seç). Seçilince
                   metrik ailesi db_stmt_* (p95 varsayılan), servis = tüm çağıranlar. */}
-              {draft.target?.kind !== 'kafka_client' && (
+              {draft.target?.kind !== 'kafka_client' && draft.target?.kind !== 'http_route' && (
               <Field label="Target — DB statement (optional)">
                 <StatementPicker value={draft.target} service={draft.service ?? ''} onChange={t => setDraft(d => ({
                   ...d, target: t, service: t ? '' : d.service,
@@ -500,7 +506,7 @@ export default function AlertsPage() {
                   {COMPARATORS.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </Field>
-              <Field label={draft.target?.kind === 'kafka_client' ? 'Threshold' : draft.target ? 'Threshold (ms)' : 'Threshold'}>
+              <Field label={draft.target?.kind === 'http_route' ? `Threshold (${httpRouteUnit(draft.metric)})` : draft.target?.kind === 'kafka_client' ? 'Threshold' : draft.target ? 'Threshold (ms)' : 'Threshold'}>
                 {draft.target ? (
                   <input type="number" min={1} step={50} value={draft.threshold ?? 1000}
                     onChange={e => setDraft({ ...draft, threshold: Number(e.target.value) })} />
@@ -667,6 +673,7 @@ export default function AlertsPage() {
                   const isEsWatcher = r.metric === 'watcher';
                   // v0.10.331 — hedefli kural (DB ifadesi): örnek SQL + ölçü.
                   const isTarget = !!r.target;
+                  const isRoute = r.target?.kind === 'http_route'; // v0.10.705
                   return (
                   <tr key={r.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 40px' }}>
                     <td>
@@ -676,9 +683,15 @@ export default function AlertsPage() {
                         <div className="mono" style={{ fontSize: 10, color: 'var(--text3)' }} title="Bu kural açılınca mail alacak ekipler (Settings → Team routing adresleri)">{notifySummary(r.notify)}</div>
                       ) : null}
                     </td>
-                    <td className="mono">{isTarget ? '— all callers —' : (r.service || (isWatcher || isEsWatcher ? '— logs —' : '— all —'))}</td>
+                    <td className="mono">{isRoute ? r.target!.service : isTarget ? '— all callers —' : (r.service || (isWatcher || isEsWatcher ? '— logs —' : '— all —'))}</td>
                     <td className="mono" style={{ maxWidth: 380 }}>
-                      {isTarget ? (
+                      {isRoute ? (
+                        <>
+                          <span className="badge b-gray mono" style={{ fontSize: 10, marginRight: 6 }}>route</span>
+                          <code className="mono cell-ellipsis" title={isRoute ? `${r.target!.service} ${r.target!.route}` : ''} style={{ maxWidth: 220, fontSize: 11, verticalAlign: 'middle' }}>{r.target!.route}</code>
+                          <span style={{ color: 'var(--text3)', marginLeft: 6 }}>{r.metric.replace('http_route_', '').replace('_ms', '')} {r.comparator} {r.threshold} {httpRouteUnit(r.metric)}</span>
+                        </>
+                      ) : isTarget ? (
                         <>
                           <span className="badge b-gray mono" style={{ fontSize: 10, marginRight: 6 }}>{r.target!.dbSystem || 'db'}{r.target!.dbName && r.target!.dbName !== 'default' ? ` · ${r.target!.dbName}` : ''}</span>
                           <code className="mono cell-ellipsis" title={r.target!.sample || r.target!.stmtHash} style={{ maxWidth: 220, fontSize: 11, verticalAlign: 'middle' }}>{r.target!.sample || `#${r.target!.stmtHash}`}</code>

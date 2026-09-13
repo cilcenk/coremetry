@@ -56,7 +56,7 @@ Sıralama ölçütü: operatörün Dynatrace alışkanlığında en çok arayaca
 |---|---|---|---|---|
 | 1 | **Join-on-open birleştirme + incident düzeyi kök neden** — **GEMİDE** v0.10.698 (B: incident kök neden) + v0.10.699 (A: join-on-open, `clusterJoinWindow` 30 dk) | `detectAnomalyClusters` girdisine son N dk açık problemler; yeni açılış propagation-bağlantılı açık kümeye üye olsun; incident satırı üye hipotezlerin en yüksek güvenli TopSuspect'ini taşısın | M | ✔ doğrudan |
 | 2 | **Temporal korelasyon çarpanı + 3 hop + dikey zincir** — **GEMİDE** v0.10.700 (dilim 1 gölge: faktör + gerekçe + ayar) + v0.10.701 (dilim 2: 3 hop, prompt/katalog zamansal satır, causal_chain node yönergesi) | `propagationMaxHops` vidası 2→3; 5 dk hata-serisi korelasyonunu (`ChangedService.Score`) propagation skoruna çarpan; `RankNodeCauses` adayı `causal_chain` adımı olarak verdict prompt'una | M | ✔ doğrudan |
-| 3 | **Endpoint/route hedefli alert rule** | `RuleTarget`'a `http_route` türü; ölçü `spanmetrics_1m` (service, route) state'lerinden; Endpoints satırından "alarm kur" | S-M | kısmen |
+| 3 | **Endpoint/route hedefli alert rule** — **GEMİDE** v0.10.705 (`http_route` hedefi, spanmetrics_1m ölçüsü, Endpoints ⚠ + detay düğmesi) | `RuleTarget`'a `http_route` türü; ölçü `spanmetrics_1m` (service, route) state'lerinden; Endpoints satırından "alarm kur" | S-M | kısmen |
 | 4 | **OTLP/infra metrikleri için adaptif baseline** | `metricPolicies` desenine `jvm_heap_pct`, `gc_pause_ms`, `cpu_pct` (metricSource seam'i); mevcut dwell/seasonal kapıları aynen | M | ✔ (infra anomalisi hipoteze kanıt) |
 | 5 | **Problem modeli: kategori + görüntü kimliği + etkilenen varlıklar** | `rule_id` önek → `category` türetici (okuma anı, saf); `display_id` sıralı sayaç (boot-ALTER, iki-boot); `affectedEntities[]` = blast-radius callers ∪ AffectedPods ∪ cluster üyeleri | S-M | kısmen |
 | 6 | **Genel forecast primitifi + "kaç gün" chip'i** | `capacityETA` + `diskETADays` → tek `forecast` paketi (lineer + haftalık mevsimsel ortalama, R² kapısı, ±band); Hosts/Clusters/AdminClickhouse'da chip; `self-*` ailesine host-disk/pod-heap ETA | M | ✘ |
@@ -127,3 +127,21 @@ Karar operatörde; öneri **B** (mockup ile).
   düzyazı) — gerekçesiz satır bayt-özdeş; hakem sistem prompt'una NEDENSEL
   ZİNCİR paragrafı (node adayı ayrı adım, "leads by" nedene yakın, "rose
   after it" semptom). Anahtar hâlâ operatörde (`temporalRanking` shadow).
+
+## 8. #3 uygulama notları (v0.10.705)
+
+- `RuleTarget.Kind = http_route` (+ `Route`), kimlik (service, http.route);
+  method MV'de yok, RPC ve imza kipi kapsam dışı. Metrik ailesi önekli:
+  `http_route_p95_ms | p99_ms | error_rate | rate` (düz adlar servis kuralıyla
+  çakışmasın). Doğrulama `ValidateRuleTarget` üçüncü dalı; şema yok
+  (target_json).
+- Ölçü `chstore.RouteWindowStats`: spanmetrics_1m, giriş-span yüklemi,
+  1 dk grid'e hizalı [now−w, now) yalnız tam kovalar, tDigest idx 3/4;
+  rate = calls / kapsanan sn. Env-agnostik (MV'de deploy_env yok) — modal
+  satır env altında okunduysa söyler.
+- Evaluator: özne servis, Kind=service (Kafka emsali); MinSamples =
+  penceredeki çağrı; açıklama `/endpoint?service=&path=` yolunu taşır.
+- FE: RouteAlertModal (Statement/Kafka klonu, karşılaştırıcı seçilebilir —
+  hız düşüşü için `<`), Endpoints satırı ⚠ (editor/admin, yalnız HTTP
+  sekmesi), EndpointDetail başlığında "⚠ Alarm oluştur" (imza kipi hariç),
+  /alerts "HTTP ROUTE" rozeti + salt-okunur kapsam.

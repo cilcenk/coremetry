@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { navHref } from '@/lib/navHref';
 import { Topbar } from '@/components/Topbar';
@@ -23,6 +23,9 @@ import {
   SplitSection, WhereTheTimeGoesSection, CallersSection,
 } from '@/pages/endpoints/detailSections';
 import { PageShell } from '@/components/ui/PageShell';
+import { Button } from '@/components/ui/Button';
+import { useAuth } from '@/components/AuthProvider';
+import { RouteAlertModal } from '@/pages/alerts/RouteAlertModal'; // v0.10.705
 
 // /endpoint — the full-page endpoint detail (v0.9.839).
 //
@@ -71,6 +74,10 @@ export default function EndpointDetailPage() {
     return next;
   }, { replace: true });
   const { range, setRange, handleZoom, handleZoomReset } = usePageZoomRange('1h');
+  // v0.10.705 — route hedefli alarm modalı; yalnız yazma rolü görür.
+  const { user } = useAuth();
+  const canEditRules = user?.role === 'admin' || user?.role === 'editor';
+  const [alertOpen, setAlertOpen] = useState(false);
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   // v0.9.1044 (Ş3 paritesi) — operatör olayları TEK fetch'te; üç RED
   // karosu aynı chart-içi bölge dizisini paylaşır (eski hâl: karo başına
@@ -190,6 +197,13 @@ export default function EndpointDetailPage() {
               onları `.sec`ten `.accent`e taşıdı — a.accent = button.accent
               yüzeyi + a.sec anatomisi (globals.css). */}
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, fontSize: 12 }}>
+            {/* v0.10.705 — route hedefli alarm (editör/admin; HTTP route, imza kipi değil). */}
+            {canEditRules && !entry && !refObj.sig && (
+              <Button variant="secondary" size="sm" onClick={() => setAlertOpen(true)}
+                title="Bu route için eşik alarmı: p95/p99/hata oranı/hız eşiği geçince Problem">
+                ⚠ Alarm oluştur
+              </Button>
+            )}
             {!entry && (
               <select value={detailSrc} onChange={e => setDetailSrc(e.target.value as 'span' | 'metric')}
                 aria-label="RED şeridinin kaynağı"
@@ -296,6 +310,10 @@ export default function EndpointDetailPage() {
           spans only; outbound client spans count under the callee.
           P50/P95/P99 are true window quantiles (tdigest).
         </div>
+        {alertOpen && (
+          <RouteAlertModal open onClose={() => setAlertOpen(false)} env={env || undefined}
+            target={{ service: refObj.service, route: refObj.path }} />
+        )}
       </PageShell>
     </>
   );

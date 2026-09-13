@@ -3692,7 +3692,9 @@ export interface HistogramResult {
 export interface RuleTarget {
   // v0.10.554 — kafka_client: servisin Kafka istemcisi (topic/clientId isteğe
   // bağlı daraltma); değer VM'den. db_statement: stmtHash zorunlu.
-  kind: 'db_statement' | 'kafka_client';
+  // v0.10.705 — http_route: bir servisin tek http.route'u (service + route);
+  // ölçü spanmetrics_1m, metrik http_route_* ailesi.
+  kind: 'db_statement' | 'kafka_client' | 'http_route';
   dbSystem?: string;
   dbName?: string;
   stmtHash?: string;
@@ -3700,6 +3702,7 @@ export interface RuleTarget {
   service?: string;
   topic?: string;
   clientId?: string;
+  route?: string;
 }
 // /api/db/statements/search satırı (SQL arama seçici).
 export interface StatementSearchRow {

@@ -43,7 +43,7 @@ describe('DB statement hedefli kural', () => {
     const picker = readFileSync(resolve(__dirname, 'StatementPicker.tsx'), 'utf8');
     expect(picker).toContain('api.searchStatements(term, 20, ctl.signal, service)');
     expect(alerts).toContain("service={draft.service ?? ''}");
-    expect(types).toMatch(/export interface RuleTarget \{[\s\S]*?kind: 'db_statement' \| 'kafka_client';/); // v0.10.554
+    expect(types).toMatch(/export interface RuleTarget \{[\s\S]*?kind: 'db_statement' \| 'kafka_client' \| 'http_route';/); // v0.10.554 + v0.10.705
     expect(types).toMatch(/export interface AlertRule \{[^}]*target\?: RuleTarget;/);
   });
 });

@@ -70,6 +70,8 @@ func (e *Evaluator) evaluateTargetRule(ctx context.Context, r chstore.AlertRule,
 		e.evaluateDBStatementTargetRule(ctx, r, openSnap)
 	case chstore.RuleTargetKafkaClient: // v0.10.554
 		e.evaluateKafkaTargetRule(ctx, r, openSnap)
+	case chstore.RuleTargetHTTPRoute: // v0.10.705
+		e.evaluateHTTPRouteTargetRule(ctx, r, openSnap)
 	}
 }
 

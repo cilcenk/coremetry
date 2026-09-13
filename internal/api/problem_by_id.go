@@ -64,7 +64,15 @@ func (s *Server) getProblemByID(w http.ResponseWriter, r *http.Request) {
 	// kimliği taşıyor — tek girdi, tamamı anahtarda (cache-key
 	// sözleşmesi).
 	s.serveCached(w, r, "problem:byid:v1:"+id, 15*time.Second, func(ctx context.Context) (any, error) {
-		p, err := s.store.GetProblem(ctx, id)
+		var p *chstore.Problem
+		var err error
+		if chstore.IsProblemDisplayID(id) {
+			// v0.10.706 — görüntü kimliği ("P-xxxxx"): palet/arama buradan
+			// gelir; ham id yolu aynen.
+			p, err = s.store.GetProblemByDisplayID(ctx, id)
+		} else {
+			p, err = s.store.GetProblem(ctx, id)
+		}
 		if err != nil {
 			return nil, err
 		}

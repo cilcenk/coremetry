@@ -14,7 +14,7 @@ import { tsLong, fmtFixed, fmtAgoNs } from '@/lib/utils';
 import { IconSparkles } from '@/components/icons';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { derivedTeamTitle } from '@/lib/problemSubject';
-import { decodeCsvSet, encodeCsvSet, readInboxTeam, INBOX_TEAM_PARAM } from '@/lib/inboxUrl';
+import { decodeCsvSet, encodeCsvSet, readInboxTeam, INBOX_TEAM_PARAM, INBOX_CAT_PARAM, INBOX_CAT_ALL, INBOX_CAT_LABEL } from '@/lib/inboxUrl';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { useDataTable, DataTableHead, DataTableColgroup, resolveInitialSort, ResetLayoutButton } from '@/components/ui/DataTable';
 import { FacetMultiSelect } from '@/components/ui/FacetMultiSelect';
@@ -170,6 +170,8 @@ export default function InboxPage() {
         : 'open';
   const rawPrio = searchParams.get('prio');
   const rawKind = searchParams.get('kind');
+  const rawCat = searchParams.get(INBOX_CAT_PARAM); // v0.10.706
+  const catSet = useMemo(() => new Set(decodeCsvSet(rawCat, INBOX_CAT_ALL, INBOX_CAT_ALL)), [rawCat]);
   const prioSet = useMemo(() => new Set(decodeCsvSet(rawPrio, PRIO_ALL, PRIO_DEFAULT)), [rawPrio]);
   const kindSet = useMemo(
     () => new Set(decodeCsvSet(rawKind, KIND_ALL, KIND_DEFAULT) as InboxKind[]),
@@ -301,6 +303,14 @@ export default function InboxPage() {
   const allPrio = () => setParam('prio', encodeCsvSet(new Set(PRIO_ALL), PRIO_ALL, PRIO_DEFAULT));
   const soloKind = (k: InboxKind) => setParam('kind', encodeCsvSet(new Set([k]), KIND_ALL, KIND_DEFAULT));
   const allKind = () => setParam('kind', encodeCsvSet(new Set(KIND_ALL), KIND_ALL, KIND_DEFAULT));
+  // v0.10.706 — kategori çipi; varsayılan tümü (param silinir).
+  const toggleCat = (c: string) => {
+    const next = new Set(catSet);
+    if (next.has(c)) { if (next.size === 1) return; next.delete(c); } else next.add(c);
+    setParam(INBOX_CAT_PARAM, encodeCsvSet(next, INBOX_CAT_ALL, INBOX_CAT_ALL));
+  };
+  const soloCat = (c: string) => setParam(INBOX_CAT_PARAM, encodeCsvSet(new Set([c]), INBOX_CAT_ALL, INBOX_CAT_ALL));
+  const allCat = () => setParam(INBOX_CAT_PARAM, null);
   const setServiceFilter = (v: string) => setParam('service', v || null);
   const setSearchFilter = (v: string) => setParam('q', v || null);
   const setOwnerFilter = (v: string) => setParam('owner', v || null);
@@ -427,8 +437,9 @@ export default function InboxPage() {
     if (!data) return data;
     return data.filter(it =>
       prioSet.has(it.priority) &&
-      kindSet.has(it.kind));
-  }, [data, prioSet, kindSet]);
+      kindSet.has(it.kind) &&
+      catSet.has(it.category ?? 'CUSTOM')); // v0.10.706
+  }, [data, prioSet, kindSet, catSet]);
 
   // Deep-link into the source surface with the specific row
   // focused — Problems drawer for problems, expanded exception
@@ -554,6 +565,15 @@ export default function InboxPage() {
   // "Exceptions 0" on a queue that held thousands: the page was 300 incidents,
   // so every other chip read zero and the numbers argued the queue was empty.
   // Falls back to page-derived counts only while no server payload exists yet.
+  // v0.10.706 — kategori sayıları sayfadan (kind/prio süzgeci sonrası değil,
+  // ham veriden: çip "ne var"ı söylesin).
+  // Memo'suz: ≤300 satır, her render'da ucuz; `data` koşullu olduğu için
+  // useMemo bağımlılık uyarısı üretirdi (sayfadaki mevcut sınıf).
+  const catCounts: Record<string, number> = {};
+  for (const it of data ?? []) {
+    const c = it.category ?? 'CUSTOM';
+    catCounts[c] = (catCounts[c] ?? 0) + 1;
+  }
   const counts = useMemo(() => {
     const fromServer = inboxQ.data?.counts;
     if (fromServer) return fromServer;
@@ -688,6 +708,13 @@ export default function InboxPage() {
               onToggle={k => toggleKind(k as InboxKind)}
               onSolo={k => soloKind(k as InboxKind)} onAll={allKind} />
           )}
+          {/* v0.10.706 — kategori (Davis sınıfı). Sayılar sayfadaki
+              satırlardan (sunucu sayımı yok; sözlük küçük, ucuz). */}
+          <FacetMultiSelect label="Kategori"
+            options={INBOX_CAT_ALL.map(c => ({
+              value: c, label: INBOX_CAT_LABEL[c], count: catCounts[c] ?? 0 }))}
+            selected={catSet as Set<string>}
+            onToggle={toggleCat} onSolo={soloCat} onAll={allCat} />
 
           {/* v0.9.525 — first-seen penceresi. Küçük sabit küme → düz
               <select> (frontend-conventions: ≤10 değer picker istemez). */}
@@ -946,7 +973,11 @@ export default function InboxPage() {
                     <td>
                       <PriorityBadge p={it.priority} reason={it.priorityReason} />
                     </td>
-                    <td style={{ fontSize: 11, color: 'var(--text3)' }}>{it.source}</td>
+                    <td style={{ fontSize: 11, color: 'var(--text3)' }} title={it.displayId}>
+                      {it.source}
+                      {/* v0.10.706 — kategori rozeti kaynağın altında (sütun eklenmedi). */}
+                      {it.category && <div className="mono" style={{ fontSize: 9, letterSpacing: 0.3 }}>{it.category}</div>}
+                    </td>
                     <td>
                       {/* v0.9.860 (UX denetimi K1) — satırın kendi olay
                           penceresi taşınır; aksi hâlde servis sayfası

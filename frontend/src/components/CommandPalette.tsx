@@ -19,7 +19,7 @@ import {
 } from '@/lib/actions';
 import { toast } from '@/lib/toast';
 import { traceHref } from '@/lib/traceHref';
-import { paletteIdentityQuery, identityTracesHref } from '@/lib/paletteIdentity';
+import { paletteIdentityQuery, identityTracesHref, paletteProblemId, problemDisplayHref } from '@/lib/paletteIdentity';
 import { Button, LinkButton } from '@/components/ui';
 
 // CommandPalette — global Cmd-K / Ctrl-K spotlight (v0.5.162).
@@ -428,6 +428,14 @@ export function CommandPalette() {
       // kalıba uyabilir; kimlik seçeneği kaybolmaz ama önüne geçmez.
       // v0.10.674 — değer HAM sorgudan (`query`), küçük harfli `q`dan DEĞİL:
       // sunucu eşitliği harf-duyarlı, "…vzXA…" → "…vzxa…" sıfır satırdı.
+      // v0.10.706 — problem görüntü kimliği ("P-3f9a2") → Inbox host'u açar.
+      const pid = paletteProblemId(query);
+      if (pid) {
+        scored = [
+          ...scored,
+          { kind: 'page', label: `Problem ${pid}`, hint: 'Görüntü kimliğiyle problemi aç', to: problemDisplayHref(pid), score: 720 },
+        ];
+      }
       const idv = paletteIdentityQuery(query);
       if (idv) {
         scored = [

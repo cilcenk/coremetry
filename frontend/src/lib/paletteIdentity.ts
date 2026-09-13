@@ -23,3 +23,17 @@ export function paletteIdentityQuery(rawQuery: string): string | null {
 export function identityTracesHref(v: string): string {
   return `/traces?traceId=${encodeURIComponent(v)}`;
 }
+
+// v0.10.706 — problem görüntü kimliği: "P-3f9a2" (harf duyarsız; kanonik
+// küçük harf). /inbox?problem=P-… → sunucu GetProblemByDisplayID çözer.
+export const PROBLEM_DISPLAY_ID_RE = /^[Pp]-[0-9A-Za-z]{1,7}$/;
+
+export function paletteProblemId(rawQuery: string): string | null {
+  const v = rawQuery.trim();
+  if (!PROBLEM_DISPLAY_ID_RE.test(v)) return null;
+  return 'P-' + v.slice(2).toLowerCase();
+}
+
+export function problemDisplayHref(displayId: string): string {
+  return `/inbox?problem=${encodeURIComponent(displayId)}`;
+}

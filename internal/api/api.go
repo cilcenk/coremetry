@@ -10040,6 +10040,7 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 	// users that's 3 RPS just for the badge. 5s TTL collapses the load.
 	// Priority set hashed via excludeKeyDigest (sorted + FNV) so two
 	// distinct subsets cannot collide on the cache key — cf. v0.5.187.
+	cats, catMap := parseProblemCategories(q.Get("category")) // v0.10.706 — problems_read_filters.go
 	prioMap := make(map[string]bool, len(prios))
 	for _, p := range prios {
 		prioMap[p] = true
@@ -10050,8 +10051,8 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 	// P1s": on prod, with ~800 open problems, a P1 selection could show a
 	// fraction of what exists and nothing said so.
 	sqlLimit := problemScanLimit(f.Limit, len(prios) > 0 && len(prios) < 3)
-	key := fmt.Sprintf("problems:v2:status=%s:svc=%s:sev=%s:prio=%s:owner=%s:sre=%s:env=%s:cluster=%s:limit=%d:scan=%d",
-		f.Status, f.Service, f.Severity, excludeKeyDigest(prioMap), ownerTeam, sreTeam, f.Env, clusterFilter, f.Limit, sqlLimit)
+	key := fmt.Sprintf("problems:v3:status=%s:svc=%s:sev=%s:prio=%s:cat=%s:owner=%s:sre=%s:env=%s:cluster=%s:limit=%d:scan=%d",
+		f.Status, f.Service, f.Severity, excludeKeyDigest(prioMap), excludeKeyDigest(catMap), ownerTeam, sreTeam, f.Env, clusterFilter, f.Limit, sqlLimit)
 	// v0.8.471 — count ile aynı gerekçe (liste p95 903ms/max 3s → STALE ~10ms).
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
 		// v0.9.342 — team and cluster both resolve to a SERVICE SET, so they
@@ -10140,19 +10141,8 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 		// not stored on the CH row. Default "P3" matches the
 		// frontend's fallback for un-bucketed rows so the chip
 		// behaviour is consistent across read and render.
-		if len(prios) > 0 {
-			keep := make([]chstore.Problem, 0, len(probs))
-			for _, p := range probs {
-				bucket := p.Priority
-				if bucket == "" {
-					bucket = "P3"
-				}
-				if prioMap[bucket] {
-					keep = append(keep, p)
-				}
-			}
-			probs = keep
-		}
+		probs = filterProblemsByPriority(probs, prios, prioMap)
+		probs = filterProblemsByCategory(probs, cats, catMap) // v0.10.706
 		// Team filter — v0.9.342 pushed this into SQL (scan.Services above).
 		// Kept as a second pass because the SQL narrow is skipped when the
 		// catalog read fails, and because a service can be added to a team

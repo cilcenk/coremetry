@@ -2187,6 +2187,8 @@ export interface KibanaSettings {
 // merged queue never showed: an operator working from /inbox could miss an
 // open incident entirely while the sidebar's own /incidents badge counted it.
 export type InboxKind = 'problem' | 'exception' | 'httperror' | 'anomaly' | 'incident';
+// v0.10.706 — Dynatrace paritesi #5: satır kategorisi (okuma-anı, sunucu türetir).
+export type ProblemCategory = 'AVAILABILITY' | 'ERROR' | 'SLOWDOWN' | 'RESOURCE' | 'CUSTOM';
 /** v0.9.1342 — ÖZNE ŞERİDİ. `InboxKind` ile aynı şey DEĞİL:
  *  InboxKind satırın KAYNAĞI, bu satırın NEYİ anlattığı. Ayrı bir tip
  *  olması bilinçli — ikisi de string olsaydı derleyici karışıklığı
@@ -2213,6 +2215,9 @@ export interface InboxItem {
   startedAt: number;
   lastSeen: number;
   assignee?: string;
+  // v0.10.706 — kategori (her tür) + görüntü kimliği "P-xxxxx" (yalnız problem).
+  category?: ProblemCategory;
+  displayId?: string;
   // Team chips from service_metadata. OwnerTeam = product
   // owners (auto-assigned on Problem open), SRETeam = on-call
   // group. Either / both can be empty when no catalog row.
@@ -3940,6 +3945,10 @@ export interface EvaluatorHealth {
 
 export interface Problem {
   id: string;
+  // v0.10.706 — okuma-anı: kategori + görüntü kimliği ("P-xxxxx", türetilmiş,
+  // sıralı değil; /api/problems/{id} ve palet bunu çözer).
+  category?: ProblemCategory;
+  displayId?: string;
   // Runbook URL — composed at read time on the backend from
   // the firing alert rule (preferred) or the service catalog
   // metadata (fallback). Empty when neither carries one.

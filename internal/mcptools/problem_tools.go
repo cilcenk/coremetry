@@ -48,7 +48,8 @@ func truncateRunes(s string, max int) string {
 // problemView — get_problem / similar_problems ortak zarf satırı (sınırlı).
 func problemView(p chstore.Problem) map[string]any {
 	out := map[string]any{
-		"id": p.ID, "ruleId": p.RuleID, "ruleName": p.RuleName, "severity": p.Severity,
+		"id": p.ID, "displayId": chstore.ProblemDisplayID(p.ID), "category": chstore.ProblemCategory(p), // v0.10.706
+		"ruleId": p.RuleID, "ruleName": p.RuleName, "severity": p.Severity,
 		"service": p.Service, "kind": p.Kind, "metric": p.Metric, "value": p.Value,
 		"threshold": p.Threshold, "status": p.Status, "startedAt": p.StartedAt,
 		"description": truncateRunes(p.Description, problemDescriptionMax),
@@ -94,7 +95,7 @@ func getProblemTool(d Deps) mcp.Tool {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"problem_id": map[string]any{"type": "string", "description": "The Problem id (the 'id' field from list_problems). Required."},
+				"problem_id": map[string]any{"type": "string", "description": "The Problem id (the 'id' field from list_problems) or its display id 'P-xxxxx'. Required."},
 			},
 			"required": []string{"problem_id"},
 		},
@@ -109,7 +110,13 @@ func getProblemTool(d Deps) mcp.Tool {
 			if a.ProblemID == "" {
 				return nil, fmt.Errorf("problem_id is required")
 			}
-			p, err := d.Store.GetProblem(ctx, a.ProblemID)
+			var p *chstore.Problem
+			var err error
+			if chstore.IsProblemDisplayID(a.ProblemID) { // v0.10.706 — "P-xxxxx"
+				p, err = d.Store.GetProblemByDisplayID(ctx, a.ProblemID)
+			} else {
+				p, err = d.Store.GetProblem(ctx, a.ProblemID)
+			}
 			if err != nil {
 				return nil, err
 			}

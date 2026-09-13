@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { decodeCsvSet, encodeCsvSet, readInboxTeam, INBOX_TEAM_PARAM } from './inboxUrl';
+import { INBOX_CAT_ALL, INBOX_CAT_PARAM, decodeCsvSet, encodeCsvSet, readInboxTeam, INBOX_TEAM_PARAM } from './inboxUrl';
 
 // v0.8.291 — /inbox facets move to the URL. Pin the codec: absent = default,
 // invalid tokens dropped, order canonicalised to `allowed`, default selection
@@ -115,5 +115,17 @@ describe('Inbox sayfası ?team= kablolaması', () => {
 
   it('daraltma sayıldığı yerde de sayılıyor (scanCapped uyarısı)', () => {
     expect(src).toMatch(/const anyFilter = [^\n]*teamFilter/);
+  });
+});
+
+// v0.10.706 — kategori çipi sözlüğü sunucuyla aynı sıra; varsayılan tümü →
+// param silinir.
+describe('inbox kategori çipi', () => {
+  it('sözlük ve varsayılan', () => {
+    expect([...INBOX_CAT_ALL]).toEqual(['AVAILABILITY', 'ERROR', 'SLOWDOWN', 'RESOURCE', 'CUSTOM']);
+    expect(INBOX_CAT_PARAM).toBe('cat');
+    expect(encodeCsvSet(new Set(INBOX_CAT_ALL), INBOX_CAT_ALL, INBOX_CAT_ALL)).toBeNull();
+    expect(decodeCsvSet('ERROR,bogus', INBOX_CAT_ALL, INBOX_CAT_ALL)).toEqual(['ERROR']);
+    expect(decodeCsvSet(null, INBOX_CAT_ALL, INBOX_CAT_ALL)).toHaveLength(5);
   });
 });

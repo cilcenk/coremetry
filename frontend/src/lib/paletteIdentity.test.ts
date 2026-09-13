@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { paletteIdentityQuery, identityTracesHref } from './paletteIdentity';
+import { paletteIdentityQuery, identityTracesHref, paletteProblemId, problemDisplayHref } from './paletteIdentity';
 
 // v0.10.674 — operatör (prod): "aynı function_id global search'ten
 // bulunmuyor ama Traces sayfasında girince buluyor". Kök neden: komut
@@ -40,5 +40,22 @@ describe('BAĞLANMA (CommandPalette.tsx)', () => {
     const line = src.slice(src.lastIndexOf('\n', i), src.indexOf('\n', i));
     expect(line).toContain('identityTracesHref(idv)');
     expect(line).not.toContain('encodeURIComponent(q)');
+  });
+});
+
+// v0.10.706 — problem görüntü kimliği paletten açılır.
+describe('paletteProblemId', () => {
+  it('P-… kalıbını tanır, küçük harfe normalize eder', () => {
+    expect(paletteProblemId(' p-3F9A2 ')).toBe('P-3f9a2');
+    expect(paletteProblemId('P-1z141z3')).toBe('P-1z141z3');
+  });
+  it('kalıp dışını reddeder', () => {
+    expect(paletteProblemId('P-')).toBeNull();
+    expect(paletteProblemId('P-12345678')).toBeNull();
+    expect(paletteProblemId('3fa9c2d1e4b5a6f7')).toBeNull();
+    expect(paletteProblemId('Q-abc')).toBeNull();
+  });
+  it('href inbox host\'una gider', () => {
+    expect(problemDisplayHref('P-3f9a2')).toBe('/inbox?problem=P-3f9a2');
   });
 });

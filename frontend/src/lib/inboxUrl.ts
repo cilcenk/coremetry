@@ -57,3 +57,11 @@ export function encodeCsvSet(values: Iterable<string>, allowed: readonly string[
   }
   return ordered.join(',');
 }
+
+// v0.10.706 — kategori çipi (?cat=): sunucu sözlüğüyle aynı sıra; varsayılan
+// TÜMÜ (param yok = süzgeç yok). Codec kind/prio ile aynı (decode/encodeCsvSet).
+export const INBOX_CAT_PARAM = 'cat';
+export const INBOX_CAT_ALL = ['AVAILABILITY', 'ERROR', 'SLOWDOWN', 'RESOURCE', 'CUSTOM'] as const;
+export const INBOX_CAT_LABEL: Record<(typeof INBOX_CAT_ALL)[number], string> = {
+  AVAILABILITY: 'Availability', ERROR: 'Error', SLOWDOWN: 'Slowdown', RESOURCE: 'Resource', CUSTOM: 'Custom',
+};

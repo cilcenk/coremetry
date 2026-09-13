@@ -240,6 +240,10 @@ type Problem struct {
 	// Driven by the same logic that sets Priority; surfaces in
 	// the UI tooltip so the rule is auditable, not magic.
 	PriorityReason string `json:"priorityReason,omitempty"`
+	// Category / DisplayID (v0.10.706, Dynatrace paritesi #5) — okuma-anı,
+	// EnrichProblemsWithPriority doldurur (problem_category.go). Saklanmaz.
+	Category  string `json:"category,omitempty"`
+	DisplayID string `json:"displayId,omitempty"`
 	// AISummary (v0.5.254) — short LLM-generated context blurb
 	// answering "why did this fire + what to look at first". Filled
 	// asynchronously by the problemExplainer goroutine within ~30s
@@ -322,8 +326,39 @@ func EnrichProblemsWithPriority(problems []Problem) []Problem {
 	for i := range problems {
 		p := &problems[i]
 		p.Priority, p.PriorityReason = computePriority(*p, now, cfg)
+		// v0.10.706 — aynı döngü: kategori + görüntü kimliği (okuma-anı).
+		p.Category = ProblemCategory(*p)
+		p.DisplayID = ProblemDisplayID(p.ID)
 	}
 	return problems
+}
+
+// GetProblemByDisplayID — v0.10.706: "P-xxxxx" → satır. Görüntü kimliği
+// saklanmadığı için son 90 günün id'leri (LIMIT 5000, en yeni önce) taranır
+// ve ilk eşleşme (= en yeni) döner; çakışma politikası bu. Yok → (nil, nil).
+func (s *Store) GetProblemByDisplayID(ctx context.Context, disp string) (*Problem, error) {
+	want := NormalizeProblemDisplayID(disp)
+	rows, err := s.conn.Query(ctx, `
+		SELECT id FROM problems FINAL
+		WHERE started_at >= now() - INTERVAL 90 DAY
+		ORDER BY started_at DESC
+		LIMIT 5000
+		SETTINGS max_execution_time = 10`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		if ProblemDisplayID(id) == want {
+			_ = rows.Close()
+			return s.GetProblem(ctx, id)
+		}
+	}
+	return nil, rows.Err()
 }
 
 // computePriority SAF kalır: config parametre olarak gelir, global

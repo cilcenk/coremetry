@@ -63,6 +63,12 @@ type InboxItem struct {
 	Status   string `json:"status"` // open | acknowledged | resolved (problems);
 	// open | regressed (exceptions); active | cleared (anomalies)
 	Clusters []string `json:"clusters,omitempty"`
+	// Category / DisplayID (v0.10.706, Dynatrace paritesi #5) — satır
+	// sınıfı (AVAILABILITY|ERROR|SLOWDOWN|RESOURCE|CUSTOM; problem satırı
+	// chstore.ProblemCategory, diğer türler inboxDerivedCategory) ve
+	// problem satırının görüntü kimliği (yalnız kind=problem).
+	Category  string `json:"category,omitempty"`
+	DisplayID string `json:"displayId,omitempty"`
 
 	// v0.9.255 — enrichment results the inbox was already PAYING for and
 	// then dropping. listInbox runs EnrichProblemsWithRunbooks /
@@ -230,6 +236,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// place that hurts most: the default view.
 	kinds := normalizeInboxSet(q.Get("kind"), inboxKindsAll)
 	prios := normalizeInboxSet(q.Get("prio"), inboxPriosAll)
+	cats := normalizeInboxSet(q.Get("cat"), chstore.ProblemCategories) // v0.10.706
 	// v0.9.525 (operatör isteği: "son 1 gün veya 2 saat seçebilmek
 	// isterim") — İLK GÖRÜLME penceresi. StartedAt dört türde de "ilk
 	// görülme" taşır (problem started_at, exception first_seen, incident/
@@ -266,7 +273,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// with the total). Without the bump a pre-upgrade array could still be
 	// sitting under this key and would deserialize into the new shape as an
 	// empty page.
-	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, team, env, limit, sortID, sortDir, minOcc, kinds, prios, subject) + ":since=" + since
+	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, team, env, limit, sortID, sortDir, minOcc, kinds, prios, subject) + ":since=" + since + ":cat=" + strings.Join(cats, ",")
 	// v0.9.228 — 10s → 15s. v0.9.220 gave the inbox list a 30s poll; at a 10s
 	// TTL the SWR window is ttl×staleFactor = 30s and the Redis entry expires
 	// at 30s too, so each poll arrived at age = 30s + previous latency —
@@ -812,6 +819,14 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			counts[k] = n
 		}
 		items = applyInboxFacets(items, kinds, prios)
+		// v0.10.706 — kategori: problem satırı zenginleştirmeden geldi
+		// (problemToInbox), diğer türler saf türetimle; sonra çip süzgeci.
+		for i := range items {
+			if items[i].Category == "" {
+				items[i].Category = inboxDerivedCategory(items[i])
+			}
+		}
+		items = applyInboxCategoryFacet(items, cats)
 
 		// Rank the WHOLE candidate set before the cap (v0.9.318 scan fix +
 		// v0.9.319 server sort). Sorting after the cap would rank a page,
@@ -1158,6 +1173,49 @@ func applyInboxFacets(items []InboxItem, kinds, prios []string) []InboxItem {
 	kept := items[:0]
 	for _, it := range items {
 		if keepKind[it.Kind] && keepPrio[it.Priority] {
+			kept = append(kept, it)
+		}
+	}
+	return kept
+}
+
+// inboxDerivedCategory — v0.10.706: problem olmayan satırların sınıfı.
+// exception/httperror → ERROR (kod atıyor); anomali → türüne göre (log
+// deseni/yeni şablon = ERROR; trace_op gecikme = SLOWDOWN, hata = ERROR);
+// incident → CUSTOM (karışık üye). SAF.
+func inboxDerivedCategory(it InboxItem) string {
+	switch it.Kind {
+	case "exception", "httperror":
+		return chstore.CategoryError
+	case "anomaly":
+		if it.Anomaly != nil {
+			k := strings.ToLower(it.Anomaly.Kind + " " + it.Anomaly.Pattern)
+			if strings.Contains(k, "latency") || strings.Contains(k, "slow") || strings.Contains(k, "p99") {
+				return chstore.CategorySlowdown
+			}
+		}
+		return chstore.CategoryError
+	case "problem":
+		if it.Problem != nil {
+			return chstore.ProblemCategory(chstore.Problem{RuleID: it.Problem.RuleID, Metric: it.Problem.Metric, Kind: it.SubjectKind})
+		}
+		return chstore.CategoryCustom
+	}
+	return chstore.CategoryCustom
+}
+
+// applyInboxCategoryFacet — ?cat= çipi; tam sözlük = süzgeç yok.
+func applyInboxCategoryFacet(items []InboxItem, cats []string) []InboxItem {
+	if len(cats) >= len(chstore.ProblemCategories) {
+		return items
+	}
+	keep := make(map[string]bool, len(cats))
+	for _, c := range cats {
+		keep[c] = true
+	}
+	kept := items[:0]
+	for _, it := range items {
+		if keep[it.Category] {
 			kept = append(kept, it)
 		}
 	}
@@ -1617,6 +1675,8 @@ func problemToInbox(p chstore.Problem) InboxItem {
 		Assignee:       p.Assignee,
 		Status:         p.Status,
 		Clusters:       p.Clusters,
+		Category:       p.Category,  // v0.10.706 — EnrichProblemsWithPriority doldurdu
+		DisplayID:      p.DisplayID, // v0.10.706
 		// v0.9.255 — see the field comments: these were computed by the
 		// enrichment chain in listInbox and then discarded here.
 		RunbookURL:   p.RunbookURL,

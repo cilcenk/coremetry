@@ -61,6 +61,17 @@ export function InboxTriageDrawer({ item, onClose, onOpenSource }: {
         <span className="badge b-gray" style={{ fontSize: 10 }}>
           {(item?.source ?? 'ITEM').toUpperCase()}
         </span>
+        {/* v0.10.706 — kategori + görüntü kimliği (tıkla-kopyala). */}
+        {item?.category && (
+          <span className="badge b-gray" style={{ fontSize: 10 }} title="Kategori (Davis sınıfı)">{item.category}</span>
+        )}
+        {item?.displayId && (
+          <span className="badge b-gray mono" style={{ fontSize: 10, cursor: 'copy' }}
+            title="Görüntü kimliği — kopyalamak için tıkla; palete yazınca bu problem açılır"
+            onClick={() => { void navigator.clipboard?.writeText(item.displayId!); }}>
+            {item.displayId}
+          </span>
+        )}
         {item?.service && (
           /* v0.9.860 (UX denetimi K1) — öğenin kendi penceresi (başlangıç →
              son görülme, ±tampon) linke biner. */

@@ -7506,3 +7506,23 @@ export interface CopilotStartersResponse {
   team?: string;
   rangeS?: number;
 }
+
+// ── Problem affected entities (v0.10.707, mirrors Go api.affectedEntity) ──
+export interface AffectedEntity {
+  kind: 'service' | 'pod' | 'cluster';
+  id: string;
+  calls?: number;
+  errors?: number;
+  errorRate?: number;
+  hasOpenProblem?: boolean;
+  count?: number;
+}
+export interface ProblemAffectedResponse {
+  problemId: string;
+  displayId: string;
+  service: string;
+  windowFromNs: number;
+  windowToNs: number;
+  entities: AffectedEntity[];
+  total: number;
+}

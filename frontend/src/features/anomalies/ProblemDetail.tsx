@@ -13,6 +13,7 @@ import { AIExplainButton } from '@/components/ai/AIExplainButton';
 import { RenderedMarkdown } from '@/components/Markdown';
 import { useAiEvidence } from '@/components/ai/aiEvents';
 import { RootCausePanel } from '@/components/RootCausePanel';
+import { AffectedEntitiesList } from '@/components/AffectedEntitiesList'; // v0.10.707
 import { ProblemRunbookPanel } from '@/components/ProblemRunbookPanel';
 import { ProblemNotifyPanel } from './ProblemNotifyPanel';
 import { IconSparkles } from '@/components/icons';
@@ -911,6 +912,10 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
               {(problem.clusters ?? []).map(c => (
                 <span key={c} className="pb-pill"><span className="dot" /> <span className="mono">{c}</span></span>
               ))}
+            </div>
+                      {/* v0.10.707 — etkilenen varlıklar: çağıranlar ∪ hipotez pod'ları ∪ cluster'lar. */}
+            <div style={{ marginTop: 10 }}>
+              <AffectedEntitiesList problemId={problem.id} service={problem.service} window={probWindow} />
             </div>
           </Sect>
 

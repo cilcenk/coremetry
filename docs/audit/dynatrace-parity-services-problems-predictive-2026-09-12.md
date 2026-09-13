@@ -58,7 +58,7 @@ Sıralama ölçütü: operatörün Dynatrace alışkanlığında en çok arayaca
 | 2 | **Temporal korelasyon çarpanı + 3 hop + dikey zincir** — **GEMİDE** v0.10.700 (dilim 1 gölge: faktör + gerekçe + ayar) + v0.10.701 (dilim 2: 3 hop, prompt/katalog zamansal satır, causal_chain node yönergesi) | `propagationMaxHops` vidası 2→3; 5 dk hata-serisi korelasyonunu (`ChangedService.Score`) propagation skoruna çarpan; `RankNodeCauses` adayı `causal_chain` adımı olarak verdict prompt'una | M | ✔ doğrudan |
 | 3 | **Endpoint/route hedefli alert rule** — **GEMİDE** v0.10.705 (`http_route` hedefi, spanmetrics_1m ölçüsü, Endpoints ⚠ + detay düğmesi) | `RuleTarget`'a `http_route` türü; ölçü `spanmetrics_1m` (service, route) state'lerinden; Endpoints satırından "alarm kur" | S-M | kısmen |
 | 4 | **OTLP/infra metrikleri için adaptif baseline** | `metricPolicies` desenine `jvm_heap_pct`, `gc_pause_ms`, `cpu_pct` (metricSource seam'i); mevcut dwell/seasonal kapıları aynen | M | ✔ (infra anomalisi hipoteze kanıt) |
-| 5 | **Problem modeli: kategori + görüntü kimliği + etkilenen varlıklar** — dilim 1 GEMİDE v0.10.706 (kategori + `P-xxxxx`, okuma-anı, şema yok); dilim 2 (etkilenen varlıklar) sırada | `rule_id` önek → `category` türetici (okuma anı, saf); `display_id` sıralı sayaç (boot-ALTER, iki-boot); `affectedEntities[]` = blast-radius callers ∪ AffectedPods ∪ cluster üyeleri | S-M | kısmen |
+| 5 | **Problem modeli: kategori + görüntü kimliği + etkilenen varlıklar** — **GEMİDE** v0.10.706 (kategori + `P-xxxxx`) + v0.10.707 (`/api/problems/{id}/affected`: çağıranlar ∪ hipotez pod'ları ∪ cluster'lar; çekmece + detay) | `rule_id` önek → `category` türetici (okuma anı, saf); `display_id` sıralı sayaç (boot-ALTER, iki-boot); `affectedEntities[]` = blast-radius callers ∪ AffectedPods ∪ cluster üyeleri | S-M | kısmen |
 | 6 | **Genel forecast primitifi + "kaç gün" chip'i** | `capacityETA` + `diskETADays` → tek `forecast` paketi (lineer + haftalık mevsimsel ortalama, R² kapısı, ±band); Hosts/Clusters/AdminClickhouse'da chip; `self-*` ailesine host-disk/pod-heap ETA | M | ✘ |
 | 7 | **MTTR/MTTA + problem zaman serisi** | `/api/problems/series` (`noisy_rules` medyan süre mantığı), Problems sayfasında trend şeridi | S | ✘ |
 | 8 | **Cluster/env boyutlu RED rollup** | `service_env_summary_5m` (cluster, deploy_env) MV; `servicesUseMV` kapısı kalkar; ClusterBreakdown'a p50/p95 + seri; `/clickhouse-schema` iki-boot | L | ✘ |
@@ -162,5 +162,10 @@ Karar operatörde; öneri **B** (mockup ile).
   incident → CUSTOM (`inboxDerivedCategory`). FE: "Kategori" çipi (`?cat=`),
   SOURCE altında rozet, çekmece başlığında kategori + tıkla-kopyala `P-…`,
   palete `P-3f9a2` yazınca problem açılır.
-- Dilim 2 (sırada): `GET /api/problems/{id}/affected` (blast-radius
-  çağıranlar ∪ hipotez pod'ları ∪ cluster) çekmece/detayda aç-üzerine-getir.
+- **Dilim 2 GEMİDE v0.10.707:** `GET /api/problems/{id}/affected` (kendi
+  dosyası, route defteri, 60 s cache, `P-…` kabul): pencere onset−1h..çözüm|
+  şimdi (≤24 s); saf `buildAffectedEntities` = blast-radius çağıranlar (çağrı
+  desc, ≤25, kendi problemi açık olan işaretli) ∪ hipotez `Deep.AffectedPods`
+  ∪ `Clusters`, tekrarsız, özne dışarıda. FE `AffectedEntitiesList` çekmece
+  (yalnız problem satırı) + detay Blast radius bölümünde; servissiz problem
+  dürüst "—". #5 KAPANDI (küme üyeleri yapısal alan olarak ertelendi).

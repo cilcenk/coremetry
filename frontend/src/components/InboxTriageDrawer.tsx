@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/ui';
 import { Empty } from '@/components/Spinner';
 import { RootCauseRibbon } from '@/components/RootCauseRibbon';
+import { AffectedEntitiesList } from '@/components/AffectedEntitiesList'; // v0.10.707
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
 import { keys } from '@/lib/queries/keys';
@@ -129,6 +130,10 @@ function DrawerBody({ item, onClose, onOpenSource }: {
           <RootCauseRibbon anchor={rc.anchor} id={rc.id} summary={undefined} defaultOpen
           window={inboxItemWindow(item)} />
         </div>
+      )}
+      {/* v0.10.707 — etkilenen varlıklar (yalnız problem satırı; aç-üzerine-getir). */}
+      {item.kind === 'problem' && item.problem && (
+        <AffectedEntitiesList problemId={item.problem.id} service={item.service} window={w ?? undefined} />
       )}
       {(item.kind === 'exception' || item.kind === 'httperror') && item.exception && (
         <div style={{

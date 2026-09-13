@@ -161,3 +161,14 @@ export function useProblemInsight(id: string) {
     staleTime: 30_000,
   });
 }
+
+// v0.10.707 — etkilenen varlıklar; yalnız çekmece/detay açıkken (enabled),
+// staleTime = sunucu TTL (60 s).
+export function useProblemAffected(id: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.problems.affected(id),
+    queryFn: ({ signal }) => api.problemAffected(id, signal),
+    enabled: enabled && !!id,
+    staleTime: 60_000,
+  });
+}

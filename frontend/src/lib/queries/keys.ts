@@ -67,6 +67,7 @@ export const keys = {
     // v0.10.260 — inbox blast-radius toplu ucu; servis kümesi sıralı (anahtar kararlı).
     blastRadius: (services: string[], since: string) => ['problems', 'blast-radius', since, services] as const,
     insight:     (id: string) => ['problems', 'insight', id] as const, // v0.10.562
+    affected:    (id: string) => ['problems', 'affected', id] as const, // v0.10.707
     list:        (filter: { status?: string; service?: string; ownerTeam?: string; sreTeam?: string; env?: string; limit?: number }) =>
                    ['problems', 'list', filter] as const,
     // v0.9.825 — tekil kayıt (bildirim derin linki yedek yolu).

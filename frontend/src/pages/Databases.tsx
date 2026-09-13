@@ -8,6 +8,7 @@ import { Topbar } from '@/components/Topbar';
 import { TableSkeleton } from '@/components/Skeleton';
 import { Button } from '@/components/ui/Button';
 import { DependenciesTable, type DepRow } from '@/components/DependenciesTable';
+import { depRowMatches, normalizeDepSearch } from '@/lib/depRowFilter';
 import { databaseDetailHref, legacyDatabaseRowTarget } from '@/pages/databases/databaseParam';
 import { receiverHorizonNotice, spanHorizonNotice } from '@/pages/databases/horizonNotice';
 import { api } from '@/lib/api';
@@ -239,6 +240,16 @@ export default function DatabasesPage() {
     callers: d.callers ?? [],
     source: d.source,
   });
+  // v0.10.704 — başlık sayacı tablonun q/msys filtresini GÖRÜR: aynı saf
+  // predicate (lib/depRowFilter.ts). Filtre yokken "N", varken "X / N".
+  const tableRows = useMemo(() => spanRows.map(toRow), [spanRows]);
+  const callerTerm = normalizeDepSearch(sp.get('q'));
+  const callerSystem = sp.get('msys') ?? '';
+  const callerCountLabel = useMemo(() => {
+    if (!callerTerm && !callerSystem) return String(tableRows.length);
+    const n = tableRows.filter(r => depRowMatches(r, callerTerm, callerSystem)).length;
+    return `${n} / ${tableRows.length}`;
+  }, [tableRows, callerTerm, callerSystem]);
 
   return (
     <>
@@ -353,7 +364,7 @@ export default function DatabasesPage() {
         {ov && (
           <>
             <SectionHeader
-              title={`Called from services (${spanRows.length})`}
+              title={`Called from services (${callerCountLabel})`}
               subtitle={`Derived from spans with a populated `}
               code="db.system"
               tail=" attribute. Satır tıkı veritabanı detay SAYFASINI açar." />
@@ -364,7 +375,7 @@ export default function DatabasesPage() {
                   : 'No service-emitted database spans in this window. Wire an OTel SDK into one of the application services to see this section populate.'}
               </EmptyHint>
             ) : (
-              <DependenciesTable rows={spanRows.map(toRow)} kind="db" range={range} onRowNavigate={openDatabasePage} />
+              <DependenciesTable rows={tableRows} kind="db" range={range} onRowNavigate={openDatabasePage} />
             )}
 
             <div style={{ height: 24 }} />

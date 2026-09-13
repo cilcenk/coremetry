@@ -11,6 +11,7 @@ import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { trendsEnabled, latencyPresent, depRowKey, resolveTrends } from '@/lib/depsTable';
 import { msgP99Delta } from '@/lib/msgBalance';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/ui/DataTable';
+import { depRowMatches, normalizeDepSearch } from '@/lib/depRowFilter';
 import { stickyLeftOffsets } from '@/lib/dataTable';
 import { DetailDrawer } from '@/features/dependencies/DetailDrawer';
 import { useDepTrends } from '@/lib/queries/dependencies';
@@ -150,7 +151,9 @@ export function DependenciesTable({
     return next;
   }, { replace: true });
   const setSystemFilter = (v: string) => setParam('msys', v);
-  const setSearch = (v: string) => setParam('q', v);
+  // v0.10.704 — yalnız boşluktan oluşan değer parametre olarak yazılmaz
+  // (URL/kayıtlı görünüm "q= " taşımasın); input'ta yazım aynen kalır.
+  const setSearch = (v: string) => setParam('q', v.trim() === '' ? '' : v);
   // Which row's drawer is open. Stores `system|cluster|name` so the
   // drawer survives sort + filter changes (stable identifiers).
   // Controlled mode (v0.8.364) hands ownership to the parent so
@@ -196,18 +199,12 @@ export function DependenciesTable({
     return inst;
   };
 
+  // v0.10.704 — predicate saf ve paylaşılan (lib/depRowFilter.ts): sayfa
+  // başlığındaki "Called from services (X / N)" sayacı da aynı fonksiyonu
+  // kullanır; db adı artık koşulsuz eşleşir (denetim bulgusu 1).
   const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return rows.filter(r => {
-      if (systemFilter && r.system !== systemFilter) return false;
-      if (term) {
-        return r.system.toLowerCase().includes(term)
-            || (r.cluster ?? '').toLowerCase().includes(term)
-            || nameOf(r).toLowerCase().includes(term)
-            || r.callers.some(c => c.toLowerCase().includes(term));
-      }
-      return true;
-    });
+    const term = normalizeDepSearch(search);
+    return rows.filter(r => depRowMatches(r, term, systemFilter));
   }, [rows, systemFilter, search]);
 
   // Shared sortable + resizable table. Columns built per-render so the
